@@ -12,6 +12,8 @@
 
 - Parse userscript headers (name, `@match`, etc.) from scanned files
   instead of just listing the relative path.
-- Make the userscript viewer editable (switch from `<pre><code>` to
-  a real editor like CodeMirror) and add a "Save" path that writes
-  back through the directory handle.
+- Watch for upstream changes to Chrome's `file://` directory-listing
+  HTML format that could break `parseListing`.
+- Editing path: if we ever want in-app edits, we'll need either FSA
+  handles (re-introduces per-session re-grant) or a Native Messaging
+  helper. `file://` URLs are read-only from the extension side.

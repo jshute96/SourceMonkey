@@ -1,68 +1,32 @@
-// Directory store + userscript scanning + per-script read access.
+// Directory store + userscript scanning + per-script read.
 //
-// We use the File System Access API: each directory is registered via
-// showDirectoryPicker(), which both grants us read permission and
-// gives us a FileSystemDirectoryHandle we can persist in IndexedDB.
-// Across reloads the handle round-trips; permission may need to be
-// re-requested via user gesture (queryPermission → requestPermission).
+// A "directory" is just an absolute filesystem path the user typed in,
+// stored in chrome.storage.local. We enumerate contents and read
+// individual files by fetching the corresponding file:// URL.
 //
-// Two stores, because no single one does both jobs:
-//   - chrome.storage.local: user-visible list ({id, name}) for rendering
-//     and removal — small, fast, syncs with the options-page UI.
-//   - IndexedDB: the handle itself, keyed by id. Handles aren't valid
-//     in chrome.storage but are structured-cloneable into IndexedDB.
+// Why XMLHttpRequest instead of fetch(): fetch() treats
+// chrome-extension:// → file:// as cross-origin and returns an opaque
+// response (status 0, unreadable body). XHR doesn't apply that
+// restriction. For file:// XHRs, `status` stays 0 even on success
+// (there's no HTTP layer), so we infer success from `onload` plus a
+// non-empty responseText.
+//
+// Requirements:
+//   - manifest: "file:///*" in host_permissions
+//   - user: enabled "Allow access to file URLs" on chrome://extensions
+// The toggle is persistent across browser sessions, so unlike the File
+// System Access API there is no per-session re-grant.
 
-const DB_NAME = 'vibemonkey';
-const DB_VERSION = 1;
-const HANDLE_STORE = 'directoryHandles';
 const STORAGE_KEY = 'directories';
 
 export interface DirectoryEntry {
   id: string;
-  name: string; // handle.name at the time of add — just for display
+  path: string; // absolute filesystem path entered by the user
 }
 
 export interface FoundScript {
   name: string;         // leaf file name, e.g. "foo.user.js"
   relativePath: string; // path relative to the directory root, e.g. "sub/foo.user.js"
-}
-
-// ---------- IndexedDB plumbing ----------
-
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(HANDLE_STORE)) {
-        db.createObjectStore(HANDLE_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function idbRequest<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-export async function saveHandle(id: string, handle: FileSystemDirectoryHandle): Promise<void> {
-  const db = await openDb();
-  await idbRequest(db.transaction(HANDLE_STORE, 'readwrite').objectStore(HANDLE_STORE).put(handle, id));
-}
-
-export async function loadHandle(id: string): Promise<FileSystemDirectoryHandle | undefined> {
-  const db = await openDb();
-  return idbRequest(db.transaction(HANDLE_STORE, 'readonly').objectStore(HANDLE_STORE).get(id));
-}
-
-export async function deleteHandle(id: string): Promise<void> {
-  const db = await openDb();
-  await idbRequest(db.transaction(HANDLE_STORE, 'readwrite').objectStore(HANDLE_STORE).delete(id));
 }
 
 // ---------- chrome.storage.local wrappers ----------
@@ -76,26 +40,79 @@ export async function setDirectories(directories: DirectoryEntry[]): Promise<voi
   await chrome.storage.local.set({ [STORAGE_KEY]: directories });
 }
 
-// ---------- Permission ----------
+// ---------- URL / path helpers ----------
 
-// FileSystemHandle's queryPermission/requestPermission aren't in the
-// standard DOM typings, so narrow via this interface rather than `any`.
-interface HandleWithPermission {
-  queryPermission(opts: { mode: 'read' | 'readwrite' }): Promise<PermissionState>;
-  requestPermission(opts: { mode: 'read' | 'readwrite' }): Promise<PermissionState>;
+// Build a file:// URL from an absolute filesystem path, percent-encoding
+// each segment so spaces and other reserved characters produce a valid
+// URL. POSIX paths get the conventional `file://` + leading slash.
+export function pathToFileUrl(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\/+$/, '');
+  const encoded = trimmed.split('/').map(encodeURIComponent).join('/');
+  return encoded.startsWith('/') ? `file://${encoded}` : `file:///${encoded}`;
 }
 
-export async function hasReadPermission(handle: FileSystemHandle): Promise<boolean> {
-  const h = handle as unknown as HandleWithPermission;
-  return (await h.queryPermission({ mode: 'read' })) === 'granted';
+export function joinPath(base: string, child: string): string {
+  return base.replace(/\/+$/, '') + '/' + child;
 }
 
-// requestPermission() requires a user gesture; only call this from an
-// event handler that was triggered by user interaction.
-export async function ensureReadPermission(handle: FileSystemHandle): Promise<boolean> {
-  if (await hasReadPermission(handle)) return true;
-  const h = handle as unknown as HandleWithPermission;
-  return (await h.requestPermission({ mode: 'read' })) === 'granted';
+// ---------- File / directory fetch ----------
+
+export function fetchFileUrlText(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url);
+    xhr.responseType = 'text';
+    xhr.onload = () => {
+      // For file:// XHRs the status is always 0; non-empty responseText
+      // is our signal that the read actually returned content.
+      if (xhr.responseText) resolve(xhr.responseText);
+      else reject(new Error(`empty response from ${url}`));
+    };
+    xhr.onerror = () => reject(new Error(`network error fetching ${url}`));
+    xhr.send();
+  });
+}
+
+// ---------- Directory listing parser ----------
+
+export interface ListingEntry {
+  name: string;
+  isDir: boolean;
+}
+
+// Chrome's file:// directory listing is an HTML page that injects
+// entries via JavaScript calls like:
+//   addRow("name", "url", isdir, size, "size_str", date, "date_str")
+// where `isdir` is 0/1 (older Chrome) or true/false. We pull the name
+// (first arg) and the third positional argument to classify entries.
+//
+// This is intentionally tolerant: Chrome's exact listing format isn't
+// a stable contract, so the regex matches the common shape and ignores
+// any addRow calls it can't parse.
+export function parseListing(html: string): ListingEntry[] {
+  const entries: ListingEntry[] = [];
+  const re = /addRow\("((?:\\.|[^"\\])*)"\s*,\s*"(?:\\.|[^"\\])*"\s*,\s*(0|1|true|false)\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    let name: string;
+    try {
+      // The captured first argument is a JS string literal body —
+      // JSON.parse round-trips the standard \" \\ \n \uXXXX escapes.
+      name = JSON.parse('"' + m[1] + '"');
+    } catch {
+      continue;
+    }
+    if (name === '..' || name === '.') continue;
+    const isDir = m[2] === '1' || m[2] === 'true';
+    entries.push({ name, isDir });
+  }
+  return entries;
+}
+
+async function listDirectory(absolutePath: string): Promise<ListingEntry[]> {
+  // Chrome only serves the directory listing for URLs ending with `/`.
+  const url = pathToFileUrl(absolutePath) + '/';
+  return parseListing(await fetchFileUrlText(url));
 }
 
 // ---------- Scanning ----------
@@ -103,23 +120,20 @@ export async function ensureReadPermission(handle: FileSystemHandle): Promise<bo
 export const MAX_SCAN_DEPTH = 2; // levels of subdirectory below the root
 
 export async function scanForUserScripts(
-  handle: FileSystemDirectoryHandle,
+  absolutePath: string,
   depth = 0,
   prefix = '',
 ): Promise<FoundScript[]> {
+  const entries = await listDirectory(absolutePath);
   const results: FoundScript[] = [];
-  // entries() is async-iterable; the TS DOM lib types it loosely.
-  const entries = (handle as unknown as {
-    entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
-  }).entries();
-  for await (const [name, child] of entries) {
-    if (child.kind === 'file' && name.endsWith('.user.js')) {
-      results.push({ name, relativePath: prefix + name });
-    } else if (child.kind === 'directory' && depth < MAX_SCAN_DEPTH) {
+  for (const entry of entries) {
+    if (!entry.isDir && entry.name.endsWith('.user.js')) {
+      results.push({ name: entry.name, relativePath: prefix + entry.name });
+    } else if (entry.isDir && depth < MAX_SCAN_DEPTH) {
       const sub = await scanForUserScripts(
-        child as FileSystemDirectoryHandle,
+        joinPath(absolutePath, entry.name),
         depth + 1,
-        prefix + name + '/',
+        prefix + entry.name + '/',
       );
       results.push(...sub);
     }
@@ -128,21 +142,14 @@ export async function scanForUserScripts(
   return results;
 }
 
-// ---------- File read ----------
+// Read a single userscript's contents given the directory's absolute
+// path and the relative path returned by scanForUserScripts.
+export function readScript(absoluteDir: string, relativePath: string): Promise<string> {
+  return fetchFileUrlText(pathToFileUrl(joinPath(absoluteDir, relativePath)));
+}
 
-// Walk a relative path within a directory handle and return the
-// referenced file's text contents. Caller must have read permission.
-export async function readFileFromDirectory(
-  rootHandle: FileSystemDirectoryHandle,
-  relativePath: string,
-): Promise<string> {
-  const parts = relativePath.split('/').filter((p) => p.length > 0);
-  if (parts.length === 0) throw new Error('empty relative path');
-  let dir = rootHandle;
-  for (let i = 0; i < parts.length - 1; i++) {
-    dir = await dir.getDirectoryHandle(parts[i]);
-  }
-  const fileHandle = await dir.getFileHandle(parts[parts.length - 1]);
-  const file = await fileHandle.getFile();
-  return file.text();
+// Build a file:// URL for a specific scanned script (used for display
+// and for the viewer to fetch on its own when needed).
+export function scriptFileUrl(absoluteDir: string, relativePath: string): string {
+  return pathToFileUrl(joinPath(absoluteDir, relativePath));
 }
