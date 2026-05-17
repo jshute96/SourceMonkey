@@ -22,8 +22,10 @@
 
 import {
   fetchFileUrlText,
+  joinPath,
   scanForUserScripts,
   scriptFileUrl,
+  statFromListing,
 } from './directories.js';
 import {
   getValue,
@@ -49,6 +51,12 @@ export interface StoredScript {
   status: ScriptStatus;
   errorMessage?: string;
   size: number | null;   // UTF-8 byte length; null when status === 'missing'
+  // Modification time as reported by Chrome's directory listing on the
+  // last successful scan. Opaque integer used only for equality —
+  // combined with `size`, it lets refresh skip refetching a file whose
+  // listing-reported size+mtime are unchanged. Optional because older
+  // listings / older stored rows may not have it.
+  fsMtime?: number;
   headerText: string;
   bodyText: string;
   header: ParsedHeader | null;
@@ -80,9 +88,14 @@ export function isScriptEnabled(script: StoredScript): boolean {
 // ---------- Pure helpers (exported for unit tests) ----------
 
 // What the orchestrator hands back from each per-file load attempt.
+//   - `ok` : freshly fetched content
+//   - `error`: fetch attempted and failed
+//   - `unchanged`: we skipped the fetch because the directory listing
+//     reported the same size+mtime as the stored entry
 export type FetchResult =
   | { ok: true; source: string }
-  | { ok: false; errorMessage: string };
+  | { ok: false; errorMessage: string }
+  | { unchanged: true };
 
 // Pull `@match` / `@exclude` / `@include` lists out of a parsed header.
 // These feed the future page-matching/injection logic.
@@ -205,22 +218,33 @@ export function buildInitialErrorEntry(args: {
 
 // Flip an existing entry to `missing`. Preserves content for the
 // viewer and the (future) injector; nulls out size so the table
-// renders "MISSING".
+// renders "MISSING". Also turns the per-script enabled flag off so a
+// script whose file vanished stops being injected — the row stays in
+// storage (for the viewer) but won't run. If the file later returns,
+// rebuildSource preserves the now-false `enabled` so the user has to
+// explicitly opt back in.
 export function applyMissing(existing: StoredScript): StoredScript {
   const next: StoredScript = {
     ...existing,
     status: 'missing',
     size: null,
+    enabled: false,
   };
   delete next.errorMessage;
   return next;
+}
+
+interface ScanEntry {
+  relativePath: string;
+  size?: number;
+  mtime?: number;
 }
 
 interface RebuildArgs {
   sourceId: string;
   sourcePath: string;
   existing: StoredScript[];
-  scan: { relativePath: string }[];
+  scan: ScanEntry[];
   fetchResults: Map<string, FetchResult>;  // keyed by relativePath
   now: number;
   newId?: () => string;
@@ -244,7 +268,7 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
     const id = prior?.id ?? newId();
     const fileUrl = scriptFileUrl(args.sourcePath, found.relativePath);
     const fr = args.fetchResults.get(found.relativePath);
-    if (fr && fr.ok) {
+    if (fr && 'ok' in fr && fr.ok) {
       const built = buildScriptFromText({
         id,
         sourceId: args.sourceId,
@@ -255,18 +279,43 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
       });
       // Preserve the user's per-script enabled choice across refreshes.
       if (prior) built.enabled = prior.enabled;
+      // Record the listing's mtime so the next refresh can decide to
+      // skip a refetch.
+      if (found.mtime !== undefined) built.fsMtime = found.mtime;
       out.push(built);
-    } else if (fr) {
-      // Failed fetch. If we had prior content, keep it.
+    } else if (fr && 'unchanged' in fr) {
+      // Optimization path: the listing's size+mtime matched the prior
+      // entry, so we never fetched. Reuse the prior entry verbatim.
+      // (Defensive fallback if there's somehow no prior: treat as a
+      // fresh-fetch failure — shouldn't happen because the orchestrator
+      // only emits `unchanged` when prior exists.)
       if (prior) {
-        out.push(applyFetchError(prior, fr.errorMessage));
+        const next = { ...prior };
+        if (found.mtime !== undefined) next.fsMtime = found.mtime;
+        if (found.size !== undefined) next.size = found.size;
+        out.push(next);
       } else {
         out.push(buildInitialErrorEntry({
           id,
           sourceId: args.sourceId,
           relativePath: found.relativePath,
           fileUrl,
-          errorMessage: fr.errorMessage,
+          errorMessage: 'unchanged marker with no prior entry',
+          now: args.now,
+        }));
+      }
+    } else if (fr) {
+      // Failed fetch. If we had prior content, keep it.
+      const errorMessage = 'errorMessage' in fr ? fr.errorMessage : 'unknown error';
+      if (prior) {
+        out.push(applyFetchError(prior, errorMessage));
+      } else {
+        out.push(buildInitialErrorEntry({
+          id,
+          sourceId: args.sourceId,
+          relativePath: found.relativePath,
+          fileUrl,
+          errorMessage,
           now: args.now,
         }));
       }
@@ -379,6 +428,11 @@ export async function removeSource(id: string): Promise<void> {
 // vanished files as `missing`. Persists the updated source row plus
 // every script row in one set call, and removes script rows that
 // dropped out (which currently doesn't happen — `missing` rows stay).
+//
+// Optimisation: if Chrome's directory listing reports the same size +
+// mtime as the stored entry, we skip the fetch entirely and reuse the
+// prior entry verbatim. This keeps "external tool wrote a userscript;
+// run refresh" cheap when most files are unchanged.
 export async function refreshSource(
   id: string,
 ): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
@@ -386,7 +440,7 @@ export async function refreshSource(
   if (!prior) return null;
   const { source, scripts: existingScripts } = prior;
 
-  let scan: { relativePath: string; name: string }[] = [];
+  let scan: { relativePath: string; size?: number; mtime?: number }[] = [];
   let scanError: string | undefined;
   try {
     scan = await scanForUserScripts(source.path);
@@ -395,10 +449,11 @@ export async function refreshSource(
   }
 
   let fetchResults = new Map<string, FetchResult>();
-  // Fetch every scanned file in parallel. If the scan itself failed,
-  // scan is empty and we skip straight to marking everything missing.
+  // Fetch every scanned file in parallel except those whose size+mtime
+  // are already current. If the scan itself failed, scan is empty and
+  // we skip straight to marking everything missing.
   if (!scanError) {
-    fetchResults = await fetchAllInParallel(source.path, scan.map((s) => s.relativePath));
+    fetchResults = await fetchOrSkipInParallel(source.path, scan, existingScripts);
   }
 
   const now = Date.now();
@@ -433,48 +488,118 @@ export async function refreshSource(
   return { source: nextSource, scripts };
 }
 
-// Refetch a single script. On success the entry is rewritten in full.
-// On failure we preserve the prior content and just flip the status.
-// Does NOT re-scan the parent dir, so this can't promote a script to
-// `missing` — that's the directory-level Refresh's job.
+// Refetch a single script. Goes through the same per-file pipeline as
+// the directory-level Refresh (fetchOrSkipInParallel → rebuildSource)
+// so the two paths can't drift — same skip rules, same fsMtime
+// handling, same enabled-preservation, same error shape. The single-
+// file path additionally lists the file's parent dir once so it has
+// the size+mtime needed by the skip check.
+//
+// Note: does NOT re-scan the parent dir for VANISHED files, so this
+// can't promote a script to `missing` — that's the directory-level
+// Refresh's job. (If the file is gone, the fetch will fail and the
+// result is `status: 'error'`.)
 export async function refreshScript(scriptId: string): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
   if (!prior) return null;
-  const now = Date.now();
-  let next: StoredScript;
+  const sourceRow = await getRaw<StoredSource>(sourceKey(prior.sourceId));
+  if (!sourceRow) return null;
+
+  // Build a single-entry scan. Look up the file's size/mtime via a
+  // targeted directory listing so the unchanged-skip check has the
+  // same inputs it would have during a Refresh All. If the listing
+  // fails or the file isn't in it, the scan entry stays bare and
+  // fetchOrSkipInParallel will always fetch (correct, just unskipped).
+  const slash = prior.relativePath.lastIndexOf('/');
+  const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
+  const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
+  const dirAbs = subDir ? joinPath(sourceRow.path, subDir) : sourceRow.path;
+  const scan: { relativePath: string; size?: number; mtime?: number }[] = [
+    { relativePath: prior.relativePath },
+  ];
   try {
-    const source = await fetchFileUrlText(prior.fileUrl);
-    next = buildScriptFromText({
-      id: prior.id,
-      sourceId: prior.sourceId,
-      relativePath: prior.relativePath,
-      fileUrl: prior.fileUrl,
-      source,
-      now,
-    });
-    next.enabled = prior.enabled;
-  } catch (err) {
-    next = applyFetchError(prior, describeError(err));
+    const stat = await statFromListing(dirAbs, fileName);
+    if (stat) {
+      if (stat.size !== undefined) scan[0].size = stat.size;
+      if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
+    }
+  } catch {
+    /* listing failed; scan stays bare → always-fetch */
   }
+
+  const fetchResults = await fetchOrSkipInParallel(sourceRow.path, scan, [prior]);
+  const result = rebuildSource({
+    sourceId: prior.sourceId,
+    sourcePath: sourceRow.path,
+    existing: [prior],
+    scan,
+    fetchResults,
+    now: Date.now(),
+  });
+  const next = result[0];
+  if (!next) return null;
   await chrome.storage.local.set({ [scriptKey(scriptId)]: next });
   return next;
 }
 
-async function fetchAllInParallel(
+// Fetch each scanned file in parallel UNLESS the listing's size+mtime
+// match the prior stored entry — in which case we emit `unchanged`
+// without doing any I/O. The skip requires both:
+//   - the listing actually reported size and mtime (older Chromes may
+//     not), AND
+//   - the prior entry was status: 'ok' and had a matching size+fsMtime
+// Anything else falls through to a fetch so we never miss a real
+// update. A prior error/missing entry always refetches so it has a
+// chance to recover.
+async function fetchOrSkipInParallel(
   sourcePath: string,
-  relativePaths: string[],
+  scan: { relativePath: string; size?: number; mtime?: number }[],
+  existing: StoredScript[],
 ): Promise<Map<string, FetchResult>> {
+  const byPath = new Map(existing.map((s) => [s.relativePath, s]));
   const results = await Promise.all(
-    relativePaths.map(async (rel): Promise<[string, FetchResult]> => {
+    scan.map(async (found): Promise<[string, FetchResult]> => {
+      const prior = byPath.get(found.relativePath);
+      const canSkip =
+        prior != null &&
+        prior.status === 'ok' &&
+        found.size !== undefined && found.mtime !== undefined &&
+        prior.size === found.size &&
+        prior.fsMtime === found.mtime;
+      if (canSkip) {
+        return [found.relativePath, { unchanged: true }];
+      }
       try {
-        const source = await fetchFileUrlText(scriptFileUrl(sourcePath, rel));
-        return [rel, { ok: true, source }];
+        const source = await fetchFileUrlText(scriptFileUrl(sourcePath, found.relativePath));
+        return [found.relativePath, { ok: true, source }];
       } catch (err) {
-        return [rel, { ok: false, errorMessage: describeError(err) }];
+        return [found.relativePath, { ok: false, errorMessage: describeError(err) }];
       }
     }),
   );
   return new Map(results);
+}
+
+// Refresh every registered source in parallel. Returns the new state
+// per source so callers can compute "what changed" without a second
+// read. A failed source-level refresh (e.g. one directory's scan
+// throws) doesn't take the rest down — its slot in the result map is
+// just absent, and the source's `scanError` field carries the reason.
+export async function refreshAllSources(): Promise<
+  Map<string, { source: StoredSource; scripts: StoredScript[] }>
+> {
+  const sources = await getSources();
+  const entries = await Promise.all(
+    sources.map(async (s) => {
+      const r = await refreshSource(s.id);
+      return [s.id, r] as const;
+    }),
+  );
+  const out = new Map<string, { source: StoredSource; scripts: StoredScript[] }>();
+  for (const [id, r] of entries) {
+    if (r) out.set(id, r);
+  }
+  return out;
 }
 
 function describeError(err: unknown): string {

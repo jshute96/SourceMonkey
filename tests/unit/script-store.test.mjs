@@ -175,6 +175,15 @@ test('applyMissing nulls size, clears errorMessage, and preserves content', () =
   assert.equal(missing.bodyText, ok.bodyText);
 });
 
+test('applyMissing disables the script so a vanished file stops running', () => {
+  // The directory-level Refresh promotes vanished files to missing;
+  // we want them silently stopped, not still injected from cached
+  // content. The user has to manually re-enable if the file returns.
+  const ok = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  assert.equal(ok.enabled, true);
+  assert.equal(applyMissing(ok).enabled, false);
+});
+
 test('buildInitialErrorEntry leaves content empty', () => {
   const entry = buildInitialErrorEntry({
     id: 'sc-2',
@@ -346,6 +355,70 @@ test('rebuildSource preserves the prior `enabled` flag across a successful refre
 test('buildScriptFromText defaults `enabled` to true on a brand-new entry', () => {
   const entry = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   assert.equal(entry.enabled, true);
+});
+
+test('rebuildSource: unchanged marker preserves the prior entry and records fsMtime', () => {
+  const prior = buildScriptFromText({
+    id: 'a-id',
+    sourceId: 'src-1',
+    relativePath: 'a.user.js',
+    fileUrl: 'file:///dir/a.user.js',
+    source: VALID_SCRIPT,
+    now: 50,
+  });
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: '/dir',
+    existing: [prior],
+    scan: [{ relativePath: 'a.user.js', size: prior.size, mtime: 1700 }],
+    fetchResults: new Map([
+      ['a.user.js', { unchanged: true }],
+    ]),
+    now: 999,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result.length, 1);
+  // Content + status preserved verbatim — no re-parse, no loadedAt bump.
+  assert.equal(result[0].status, 'ok');
+  assert.equal(result[0].loadedAt, prior.loadedAt);
+  assert.equal(result[0].bodyText, prior.bodyText);
+  // fsMtime captured from the listing for the next refresh's skip check.
+  assert.equal(result[0].fsMtime, 1700);
+});
+
+test('rebuildSource: successful fetch stores fsMtime from the scan', () => {
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: '/dir',
+    existing: [],
+    scan: [{ relativePath: 'a.user.js', size: 100, mtime: 4200 }],
+    fetchResults: new Map([
+      ['a.user.js', { ok: true, source: VALID_SCRIPT }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].fsMtime, 4200);
+});
+
+test('rebuildSource: missing path also disables the entry', () => {
+  // Mirrors applyMissing's behavior end-to-end via rebuildSource.
+  const existing = [
+    buildScriptFromText({
+      id: 'a-id', sourceId: 'src-1', relativePath: 'a.user.js',
+      fileUrl: 'file:///dir/a.user.js', source: VALID_SCRIPT, now: 50,
+    }),
+  ];
+  const result = rebuildSource({
+    sourceId: 'src-1', sourcePath: '/dir',
+    existing,
+    scan: [],
+    fetchResults: new Map(),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].status, 'missing');
+  assert.equal(result[0].enabled, false);
 });
 
 test('rebuildSource creates an initial error entry when a new file fails to fetch', () => {

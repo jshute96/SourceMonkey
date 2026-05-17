@@ -26,9 +26,23 @@ test('parseListing extracts files and directories, skipping ..', () => {
   `;
   const entries = parseListing(html);
   assert.deepEqual(entries, [
-    { name: 'foo.user.js', isDir: false },
-    { name: 'sub', isDir: true },
-    { name: 'readme.md', isDir: false },
+    { name: 'foo.user.js', isDir: false, size: 1234, mtime: 5678 },
+    { name: 'sub', isDir: true, size: 0, mtime: 0 },
+    { name: 'readme.md', isDir: false, size: 9, mtime: 1 },
+  ]);
+});
+
+test('parseListing tolerates rows without size/mtime', () => {
+  // Some older Chrome builds emitted shorter addRow calls. The refresh
+  // pipeline copes with missing size/mtime by falling back to always-
+  // refetch, so the parser must just leave the fields undefined.
+  const html = `
+    <script>addRow("a.user.js", "a.user.js", 0);</script>
+    <script>addRow("b.user.js", "b.user.js", 0, 100);</script>
+  `;
+  assert.deepEqual(parseListing(html), [
+    { name: 'a.user.js', isDir: false },
+    { name: 'b.user.js', isDir: false, size: 100 },
   ]);
 });
 
@@ -38,15 +52,15 @@ test('parseListing accepts true/false for the isdir argument', () => {
     <script>addRow("dir", "dir/", true, 0, "", 0, "");</script>
   `;
   assert.deepEqual(parseListing(html), [
-    { name: 'a.user.js', isDir: false },
-    { name: 'dir', isDir: true },
+    { name: 'a.user.js', isDir: false, size: 1, mtime: 1 },
+    { name: 'dir', isDir: true, size: 0, mtime: 0 },
   ]);
 });
 
 test('parseListing decodes escaped names', () => {
   const html = `<script>addRow("with \\"quote\\".user.js", "x", 0, 1, "1", 1, "d");</script>`;
   assert.deepEqual(parseListing(html), [
-    { name: 'with "quote".user.js', isDir: false },
+    { name: 'with "quote".user.js', isDir: false, size: 1, mtime: 1 },
   ]);
 });
 

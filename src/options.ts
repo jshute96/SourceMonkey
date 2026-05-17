@@ -19,6 +19,7 @@ import {
   getSources,
   isScriptEnabled,
   isSourceEnabled,
+  refreshAllSources,
   refreshSource,
   removeSource,
   setScriptEnabled,
@@ -33,6 +34,7 @@ const directoriesEl = document.getElementById('directories')!;
 const addForm = document.getElementById('add-form') as HTMLFormElement;
 const addInput = document.getElementById('add-path') as HTMLInputElement;
 const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonElement;
+const refreshAllBtn = document.getElementById('refresh-all') as HTMLButtonElement;
 const versionEl = document.getElementById('version');
 
 if (versionEl) {
@@ -44,7 +46,20 @@ addForm.addEventListener('submit', (event) => {
   void onAddDirectory(addInput.value);
 });
 
-void render();
+refreshAllBtn.addEventListener('click', () => void onRefreshAll());
+
+void bootstrap();
+
+// `?refresh` in the URL triggers a refresh-all as soon as the initial
+// render is done. Lets external tools poke the extension via
+//   google-chrome chrome-extension://<id>/options.html?refresh
+// after they've written new userscripts.
+async function bootstrap(): Promise<void> {
+  await render();
+  if (new URLSearchParams(location.search).has('refresh')) {
+    await onRefreshAll();
+  }
+}
 
 // ---------- Initial render ----------
 
@@ -269,6 +284,10 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
   btn.disabled = true;
   btn.textContent = 'Refreshing…';
   try {
+    // Snapshot the prior scripts so we can highlight rows that
+    // actually changed after the refresh lands.
+    const before = await getSourceWithScripts(id);
+    const priorScripts = before?.scripts ?? [];
     await refreshSource(id);
     // Refresh may have added/removed scripts, flipped statuses, etc.
     // Rebuild just this one section so the rest of the page (other
@@ -278,6 +297,8 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     if (section && latest) {
       const fresh = await renderSourceSection(latest);
       section.replaceWith(fresh);
+      const after = await getSourceWithScripts(id);
+      applyChangeHighlights(fresh, priorScripts, after?.scripts ?? []);
     } else {
       // Section gone or source disappeared — fall back to button reset.
       btn.disabled = false;
@@ -288,6 +309,83 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     btn.textContent = prevText;
     throw err;
   }
+}
+
+// Refresh every registered directory in parallel, then re-render each
+// section in place and flash any rows that changed. Triggered by the
+// header "Refresh All" button and by ?refresh in the URL.
+async function onRefreshAll(): Promise<void> {
+  setRefreshAllBusy(true);
+  try {
+    // Snapshot each source's prior scripts before kicking off the
+    // refresh so we can compute "what changed" per row.
+    const sources = await getSources();
+    const priorsBySource = new Map<string, StoredScript[]>();
+    await Promise.all(sources.map(async (s) => {
+      const before = await getSourceWithScripts(s.id);
+      priorsBySource.set(s.id, before?.scripts ?? []);
+    }));
+
+    await refreshAllSources();
+
+    // Re-render each section in place. We don't blow away the whole
+    // directories list so scroll position + un-refreshed sections (if
+    // any new ones were added concurrently) stay put.
+    for (const s of sources) {
+      const section = findSection(s.id);
+      const latest = await getSource(s.id);
+      if (!section || !latest) continue;
+      const fresh = await renderSourceSection(latest);
+      section.replaceWith(fresh);
+      const after = await getSourceWithScripts(s.id);
+      applyChangeHighlights(fresh, priorsBySource.get(s.id) ?? [], after?.scripts ?? []);
+    }
+  } finally {
+    setRefreshAllBusy(false);
+  }
+}
+
+// Decide per script whether it changed in a refresh and tag the
+// corresponding row with the matching highlight class. The color
+// persists on the row until the next refresh re-renders the section.
+//
+// Classification:
+//   - newly-added         → row-updated (green)  if ok; else row-failed (red)
+//   - went missing        → row-failed
+//   - re-read AND now ok  → row-updated
+//   - re-read AND errored → row-failed
+//   - status changed but no re-read (rare) → color by next.status
+//   - otherwise           → no flash (unchanged path: cheap-skip
+//                            optimization, OR genuine no-op)
+function applyChangeHighlights(
+  section: HTMLElement,
+  prior: StoredScript[],
+  next: StoredScript[],
+): void {
+  const priorById = new Map(prior.map((s) => [s.id, s]));
+  for (const n of next) {
+    const cls = classifyChange(priorById.get(n.id), n);
+    if (!cls) continue;
+    const row = section.querySelector<HTMLTableRowElement>(
+      `tr[data-script-id="${cssEscape(n.id)}"]`,
+    );
+    if (row) row.classList.add(cls);
+  }
+}
+
+function classifyChange(
+  prior: StoredScript | undefined,
+  next: StoredScript,
+): 'row-updated' | 'row-failed' | null {
+  if (!prior) {
+    return next.status === 'ok' ? 'row-updated' : 'row-failed';
+  }
+  if (next.status === 'missing' && prior.status !== 'missing') return 'row-failed';
+  if (next.status === 'missing') return null;             // was already missing
+  const reread = next.loadedAt !== prior.loadedAt;
+  const statusChanged = next.status !== prior.status;
+  if (!reread && !statusChanged) return null;
+  return next.status === 'ok' ? 'row-updated' : 'row-failed';
 }
 
 async function onToggleSource(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
@@ -455,6 +553,11 @@ function setBulkBusy(btn: HTMLButtonElement, busy: boolean): void {
     delete btn.dataset.idleText;
     btn.disabled = false;
   }
+}
+
+function setRefreshAllBusy(busy: boolean): void {
+  refreshAllBtn.disabled = busy;
+  refreshAllBtn.textContent = busy ? 'Refreshing…' : 'Refresh All';
 }
 
 function setAddFormBusy(busy: boolean): void {

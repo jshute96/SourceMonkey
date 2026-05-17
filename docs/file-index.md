@@ -36,11 +36,11 @@ One-line descriptions of every source file, grouped by directory.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/background.ts` | Service worker entrypoint; per-tab badge wiring, vm:start/vm:error listener, injector + match-index bootstrap |
 | `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
-| `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners |
+| `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners, Refresh All + ?refresh trigger + change-row highlights |
 | `src/userscript.html` | Userscript viewer markup: filename, status, scrollable highlighted code box |
 | `src/userscript.ts` | Userscript viewer controller — fetches the `file://` URL via XHR and highlights it |
 | `src/directories.ts` | Directory I/O: `file://` fetch, listing parser, recursive `*.user.js` scanner, path/URL helpers |
-| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline |
+| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline (incl. size+mtime skip and refreshAllSources) |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
 | `src/match-index.ts` | In-memory cache of `ok` scripts' matching info, kept in sync with `chrome.storage.local` |

@@ -21,6 +21,8 @@
 export interface FoundScript {
   name: string;         // leaf file name, e.g. "foo.user.js"
   relativePath: string; // path relative to the directory root, e.g. "sub/foo.user.js"
+  size?: number;        // file byte size as reported by Chrome's listing (undefined if listing didn't include it)
+  mtime?: number;       // modification time as reported by Chrome's listing — opaque integer used only for equality
 }
 
 // ---------- URL / path helpers ----------
@@ -61,20 +63,28 @@ export function fetchFileUrlText(url: string): Promise<string> {
 export interface ListingEntry {
   name: string;
   isDir: boolean;
+  size?: number;     // bytes; undefined if the listing didn't supply it
+  mtime?: number;    // opaque modification-time integer for equality only
 }
 
 // Chrome's file:// directory listing is an HTML page that injects
 // entries via JavaScript calls like:
 //   addRow("name", "url", isdir, size, "size_str", date, "date_str")
-// where `isdir` is 0/1 (older Chrome) or true/false. We pull the name
-// (first arg) and the third positional argument to classify entries.
+// where `isdir` is 0/1 (older Chrome) or true/false. We pull:
+//   - the name (first arg) and the isdir flag (third) to classify;
+//   - the numeric size (fourth) and date (sixth) so the refresh
+//     pipeline can skip refetching files whose size+mtime are
+//     unchanged.
 //
 // This is intentionally tolerant: Chrome's exact listing format isn't
 // a stable contract, so the regex matches the common shape and ignores
-// any addRow calls it can't parse.
+// any addRow calls it can't parse. The size/mtime captures are
+// optional — entries without them parse but with size/mtime undefined,
+// at which point the refresh pipeline falls back to always-refetch
+// for those files.
 export function parseListing(html: string): ListingEntry[] {
   const entries: ListingEntry[] = [];
-  const re = /addRow\("((?:\\.|[^"\\])*)"\s*,\s*"(?:\\.|[^"\\])*"\s*,\s*(0|1|true|false)\b/g;
+  const re = /addRow\("((?:\\.|[^"\\])*)"\s*,\s*"(?:\\.|[^"\\])*"\s*,\s*(0|1|true|false)\b(?:\s*,\s*(-?\d+))?(?:\s*,\s*"(?:\\.|[^"\\])*")?(?:\s*,\s*(-?\d+))?/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
     let name: string;
@@ -87,7 +97,10 @@ export function parseListing(html: string): ListingEntry[] {
     }
     if (name === '..' || name === '.') continue;
     const isDir = m[2] === '1' || m[2] === 'true';
-    entries.push({ name, isDir });
+    const entry: ListingEntry = { name, isDir };
+    if (m[3] !== undefined) entry.size = Number(m[3]);
+    if (m[4] !== undefined) entry.mtime = Number(m[4]);
+    entries.push(entry);
   }
   return entries;
 }
@@ -96,6 +109,19 @@ async function listDirectory(absolutePath: string): Promise<ListingEntry[]> {
   // Chrome only serves the directory listing for URLs ending with `/`.
   const url = pathToFileUrl(absolutePath) + '/';
   return parseListing(await fetchFileUrlText(url));
+}
+
+// Targeted version of listDirectory: list a single directory and return
+// just the entry for `fileName` (or null if absent). Used by the
+// single-file refresh path so it can capture the file's current
+// size/mtime without doing a full recursive scan — keeps the
+// unchanged-file skip honest for the next Refresh All.
+export async function statFromListing(
+  absoluteDir: string,
+  fileName: string,
+): Promise<ListingEntry | null> {
+  const entries = await listDirectory(absoluteDir);
+  return entries.find((e) => e.name === fileName) ?? null;
 }
 
 // ---------- Scanning ----------
@@ -111,7 +137,10 @@ export async function scanForUserScripts(
   const results: FoundScript[] = [];
   for (const entry of entries) {
     if (!entry.isDir && entry.name.endsWith('.user.js')) {
-      results.push({ name: entry.name, relativePath: prefix + entry.name });
+      const found: FoundScript = { name: entry.name, relativePath: prefix + entry.name };
+      if (entry.size !== undefined) found.size = entry.size;
+      if (entry.mtime !== undefined) found.mtime = entry.mtime;
+      results.push(found);
     } else if (entry.isDir && depth < MAX_SCAN_DEPTH) {
       const sub = await scanForUserScripts(
         joinPath(absolutePath, entry.name),

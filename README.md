@@ -32,7 +32,21 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
   reason. If a file was loaded before but has disappeared from disk,
   the size column shows `MISSING`.
 - **Refresh** rescans the directory and reloads every script.
-  **Remove** drops the directory (and its scripts) from storage.
+  **Remove** drops the directory (and its scripts) from storage. The
+  page-level **Refresh All** button at the top runs Refresh across
+  every registered directory. Refresh is incremental — files whose
+  size and modification time match the stored copy are skipped
+  without re-reading or re-parsing. After a refresh, any row that
+  actually changed is highlighted: light green when it updated
+  successfully, light red when it errored or vanished. The color
+  stays on the row until the next refresh. A vanished
+  file is automatically disabled so it stops being injected; the
+  row stays in storage and the user can re-enable it if the file
+  comes back.
+- External tools can trigger a refresh-all by opening the options
+  page with `?refresh` in the query string, e.g.
+  `google-chrome chrome-extension://<extension-id>/options.html?refresh`
+  after writing new userscripts to disk.
 - Clicking a script name opens a viewer in a new tab showing the
   file's name, size, status, an enable toggle (greyed out when the
   parent directory is disabled), a parsed-header summary (Name /

@@ -42,6 +42,10 @@ Three key spaces in `chrome.storage.local`:
 - `status` — `'ok' | 'error' | 'missing'`.
 - `errorMessage?` — set when `status === 'error'`.
 - `size` — UTF-8 byte length; `null` when `status === 'missing'`.
+- `fsMtime?` — modification time as reported by Chrome's directory
+  listing on the last successful scan. Opaque integer used only for
+  equality. Combined with `size` it lets refresh skip refetching files
+  whose listing-reported size+mtime are unchanged.
 - `headerText`, `bodyText` — raw split of the file.
 - `header` — `ParsedHeader | null` (see [script-viewer.md](script-viewer.md)).
 - `matching` — `{matches, excludes, includes}` distilled from the
@@ -61,20 +65,31 @@ Three key spaces in `chrome.storage.local`:
   `'missing @name'`, `'missing @match or @include'`, or a
   fetch-failure message.
 - `'missing'` — file was in the scan listing previously but no
-  longer is. `size` becomes `null`.
+  longer is. `size` becomes `null` AND `enabled` is flipped to
+  `false` so a script whose file vanished stops being injected. The
+  row stays in storage (viewer keeps working); if the file returns
+  on a later refresh the prior `enabled: false` is preserved so the
+  user has to explicitly re-enable. Cleanup of long-missing rows is
+  tracked in `TODO.md`.
 
 On error or missing we **preserve the prior content** (headerText,
 bodyText, parsed header, matching). The viewer keeps working and the
-(future) injector can still run the script.
+injector can still run the script (assuming it's still enabled).
 
 ## Load / refresh pipeline
 
 Every load path goes through the same pipeline:
 
 1. List the directory via `scanForUserScripts`
-   (see [file-access.md](file-access.md)).
-2. Fetch each scanned file in parallel via XHR.
-3. For each file run, in order:
+   (see [file-access.md](file-access.md)). The listing carries each
+   file's `size` and `mtime`.
+2. For each scanned file, decide whether to fetch:
+   - **Skip** (emit `{ unchanged: true }`) if the prior stored entry
+     is `status: 'ok'` AND the listing's size+mtime match the prior
+     `size` and `fsMtime`. No fetch, no parse — the prior entry is
+     reused verbatim.
+   - **Fetch** otherwise. Errors carry `errorMessage`.
+3. For each fetched file run, in order:
    - `splitHeaderBody` (see [script-viewer.md](script-viewer.md))
    - `parseHeader`
    - `validateHeader` (`@name` + match/include present)
@@ -92,12 +107,22 @@ Every load path goes through the same pipeline:
 
 - `addSource(path)` — create an empty source row, then run
   `refreshSource`. Returns `null` if the path is already registered.
-- `refreshSource(id)` — full rescan + reload of one directory.
+- `refreshSource(id)` — full rescan + reload of one directory
+  (with the unchanged-file skip described above).
+- `refreshAllSources()` — runs `refreshSource` for every registered
+  directory in parallel. Used by the options page's "Refresh All"
+  button and by the `?refresh` URL trigger.
 - `removeSource(id)` — drop the source row + every child script row +
   rewrite the index.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
-  Doesn't re-scan the parent dir, so it can't transition a script
-  into `'missing'` — that's the directory-level Refresh's job.
+  Goes through the same `fetchOrSkipInParallel` + `rebuildSource`
+  pipeline as the directory-level Refresh (so the two paths can't
+  drift on skip rules, fsMtime handling, enabled preservation, error
+  shape — they share the per-file logic), but with a single-element
+  scan and a targeted directory-listing lookup to populate that scan's
+  size+mtime. Doesn't enumerate the whole parent dir, so it can't
+  transition a script into `'missing'` — that's the directory-level
+  Refresh's job.
 - `setSourceEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
   flip the per-source / per-script `enabled` flag with a single-row
   write. The match index picks up the change via `storage.onChanged`.
@@ -149,6 +174,34 @@ source**:
 Adding a directory triggers a full load immediately — no need to
 click Refresh after adding.
 
+A page-level **Refresh All** button at the top of the options page
+runs `refreshAllSources()` and re-renders every section in place. The
+same flow is auto-triggered when the options page is opened with
+`?refresh` in the query string — i.e. an external tool can poke the
+extension with:
+
+```
+google-chrome chrome-extension://<extension-id>/options.html?refresh
+```
+
+after writing new userscripts to disk. Combined with the unchanged-
+file skip, this is cheap when most files are untouched.
+
+### Row highlights after refresh
+
+After any refresh (single-directory or all), each row that changed
+gets a persistent background color:
+
+- **light green** (`row-updated`) — script newly added OR re-read
+  and now `'ok'`.
+- **light red** (`row-failed`) — script newly added with an error,
+  re-read with an error, or transitioned to `'missing'`.
+
+The color stays until the next refresh re-renders the section, so the
+user can leave the page and come back without losing the
+what-changed signal. Rows whose state was unchanged (including those
+covered by the size+mtime skip) are not highlighted.
+
 ### In-place updates (no full re-render)
 
 The options page does **not** re-render the whole `#directories` list
@@ -164,6 +217,8 @@ on every interaction. Each user action mutates only the affected DOM:
 - Remove → removes that section (and re-shows the placeholder if it
   was the last one).
 - Refresh → rebuilds just that one section in place.
+- Refresh All → rebuilds every section in place (one at a time, after
+  one parallel `refreshAllSources()`).
 
 While the async work is in flight the triggering control shows a small
 inline spinner (toggle labels get a `.busy-spinner` sibling; the
