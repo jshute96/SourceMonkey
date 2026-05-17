@@ -4,14 +4,34 @@
     <meta charset="utf-8" />
     <title>VibeMonkey — Options</title>
     <style>
-      body { font: 14px system-ui, sans-serif; max-width: 640px; margin: 2em auto; padding: 0 1em; }
+      body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
       h1 { margin-top: 0; }
+      h2 { font-size: 1em; margin: 0; word-break: break-all; }
+      button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
       .placeholder { color: #666; }
+      .toolbar { margin-bottom: 1em; }
+      .directory { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
+      .directory-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1em; margin-bottom: 0.5em; }
+      .directory ul { margin: 0; padding-left: 1.2em; }
+      .directory li { margin: 0.15em 0; }
+      .empty { color: #666; font-style: italic; }
+      .error { color: #b00; }
+      .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 1em; }
+      .banner strong { display: block; margin-bottom: 0.3em; }
+      .banner p { margin: 0.3em 0; }
+      .banner code { background: #fef3c7; padding: 0.15em 0.4em; border-radius: 3px; user-select: all; }
+      #version { font-size: 0.85em; color: #888; margin-top: 2em; }
     </style>
   </head>
   <body>
     <h1>VibeMonkey</h1>
-    <p class="placeholder">No scripts installed yet. (Skeleton build.)</p>
+
+    <div class="toolbar">
+      <button id="add-directory">Add directory</button>
+    </div>
+
+    <div id="directories"></div>
+
     <p id="version" class="placeholder"></p>
     <script src="options.js" type="module"></script>
   </body>

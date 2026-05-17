@@ -35,8 +35,9 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `src/manifest.json` | MV3 extension manifest |
 | `src/background.ts` | Service worker entrypoint; exposes `self.VibeMonkey` for tests |
-| `src/options.html` | Options page markup |
-| `src/options.ts` | Options page controller |
+| `src/options.html` | Options page markup: "Add directory" button + directory list container |
+| `src/options.ts` | Options page controller — wires the add/remove buttons and renders directory scans |
+| `src/directories.ts` | Directory store (chrome.storage), `file://` listing parser, and `*.user.js` scanner |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -47,6 +48,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
+| `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 
 ## Docs (`docs/`)
 

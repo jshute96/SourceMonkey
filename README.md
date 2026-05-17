@@ -2,8 +2,21 @@
 
 A userscript manager Chrome extension optimized for vibe-coding.
 
-> **Status:** Early skeleton. The extension currently builds and loads
-> but does nothing user-visible yet.
+> **Status:** Early skeleton. The options page can register local
+> directories and list the `*.user.js` files inside them, but nothing
+> is injected into pages yet.
+
+## Usage
+
+Open the options page from `chrome://extensions` → VibeMonkey →
+"Details" → "Extension options". Click **Add directory** and enter
+the absolute path to a folder containing userscripts. Each added
+directory is scanned for `*.user.js` files up to two subdirectory
+levels deep, and each finding is listed as a clickable `file://`
+link. Click **Remove** to drop a directory from the list.
+
+For directory scanning to work, enable **"Allow access to file
+URLs"** for VibeMonkey on `chrome://extensions`.
 
 ## Installation
 
