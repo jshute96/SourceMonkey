@@ -4,8 +4,9 @@ VibeMonkey is a Manifest V3 Chrome extension that manages and injects
 userscripts. This doc is the **high-level map only** — component
 details live in the topic-specific docs linked below.
 
-> **Status:** Skeleton. Components below describe the intended shape;
-> injection is not implemented yet.
+> **Status:** Skeleton. The matching + injection pipeline is wired up
+> end-to-end (badge counts matches; `chrome.userScripts` runs them).
+> `@grant` / `@require` / `@resource` support is not implemented yet.
 
 ## Components
 
@@ -17,9 +18,9 @@ details live in the topic-specific docs linked below.
                                       |
                                       v
                             +-----------------------+
-                            | chrome.scripting      |
-                            | injects userscripts   |
-                            | into matching pages   |
+                            | chrome.userScripts    |
+                            | (Chrome owns matching |
+                            |  + injection at nav)  |
                             +-----------------------+
 ```
 
@@ -46,6 +47,10 @@ details live in the topic-specific docs linked below.
   `ok` script's matching info, kept in sync with storage; lets the SW
   find matches without per-navigation storage reads. See
   [matching.md](matching.md).
+- **Injector** (`src/injector.ts`) — keeps `chrome.userScripts`'s
+  registration set in sync with the enabled-`ok` script set, and wraps
+  every body with an activation/error shim. See
+  [injection.md](injection.md).
 - **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
   — per-script viewer page rendering content from the store. See
   [script-viewer.md](script-viewer.md).
@@ -61,6 +66,9 @@ details live in the topic-specific docs linked below.
   syntax highlighting.
 - [matching.md](matching.md) — `@match`/`@include`/`@exclude`
   semantics, in-memory match index, per-tab badge + tooltip.
+- [injection.md](injection.md) — `chrome.userScripts` registration
+  lifecycle, the activation/error wrapper, opt-in requirements,
+  unsupported pattern forms.
 
 ## Build pipeline
 

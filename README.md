@@ -6,8 +6,9 @@ A userscript manager Chrome extension optimized for vibe-coding.
 > directories, persistently load every `*.user.js` it finds, and
 > open each in an in-extension viewer with syntax highlighting and a
 > parsed-header summary. The toolbar badge shows how many of your
-> scripts would match the current tab. Nothing is actually injected
-> into pages yet.
+> scripts would match the current tab, and matching scripts are now
+> actually injected via `chrome.userScripts` (no `@grant` /
+> `@require` / `@resource` support yet — `@grant none` scripts only).
 
 ## Usage
 
@@ -43,10 +44,27 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
   re-counts immediately when you flip an enable toggle on the options
   page.
 
-**One-time setup:** enable **"Allow access to file URLs"** for
-VibeMonkey on `chrome://extensions`. Without it the extension can't
-read your local directories. The toggle is persistent — once on, it
-stays on across browser restarts.
+**One-time setup:** on `chrome://extensions`, for VibeMonkey enable:
+
+- **"Allow access to file URLs"** — without it the extension can't
+  read your local directories.
+- **"Allow User Scripts"** (or, on Chrome 120–137, the page-wide
+  Developer mode toggle) — without it Chrome will refuse to inject
+  anything, though the badge will still count matches. The options
+  page surfaces a banner with a copy-pasteable details URL when this
+  toggle is off.
+
+Both toggles are persistent — once on, they stay on across browser
+restarts.
+
+Each script's body runs in Chrome's isolated `USER_SCRIPT` world:
+
+- Logs `[VibeMonkey] script "<name>" running on <url>` to the page
+  console on activation.
+- Catches **synchronous** throws from the body and logs them as
+  `[VibeMonkey] script "<name>" threw: <message>` on the page console,
+  also forwarding to the service worker log. Async failures (rejected
+  Promises, `setTimeout` throws) are not currently captured.
 
 ## Installation
 

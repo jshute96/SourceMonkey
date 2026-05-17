@@ -44,6 +44,10 @@ One-line descriptions of every source file, grouped by directory.
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
 | `src/match-index.ts` | In-memory cache of `ok` scripts' matching info, kept in sync with `chrome.storage.local` |
+| `src/injector.ts` | Syncs the enabled-`ok` script set into `chrome.userScripts` and wraps each body with an activation/error shim |
+| `src/wrapper-head.js` | Wrapper prelude (IIFE open, vars, sendMessage helper, matcher slot, vm:start, try-open) — minified to one line by the build |
+| `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, IIFE close) — minified to one line by the build |
+| `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -58,6 +62,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
+| `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at mapping, spec build, active-spec collection) |
 
 ## Docs (`docs/`)
 
@@ -69,3 +74,4 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
+| `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |

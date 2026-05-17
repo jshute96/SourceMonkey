@@ -1,0 +1,301 @@
+// Tests for src/injector.ts (compiled to dist/injector.js).
+//
+// Only the pure helpers are exercised here — the chrome.userScripts
+// runtime sync (syncRegistrations) is glue I/O and is covered by the
+// e2e smoke layer instead.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  buildRegistrationSpec,
+  buildWrappedBody,
+  collectActiveSpecs,
+  mapRunAt,
+} from '../../dist/injector.js';
+import { WRAPPER_MATCHER } from '../../dist/generated-wrappers.js';
+
+// ---------- mapRunAt ----------
+
+test('mapRunAt: explicit values map to the userScripts enum', () => {
+  assert.equal(mapRunAt('document-start'), 'document_start');
+  assert.equal(mapRunAt('document-end'), 'document_end');
+  assert.equal(mapRunAt('document-idle'), 'document_idle');
+});
+
+test('mapRunAt: document-body collapses to document_start (no exact equivalent)', () => {
+  assert.equal(mapRunAt('document-body'), 'document_start');
+});
+
+test('mapRunAt: missing / unknown values default to document_idle', () => {
+  assert.equal(mapRunAt(undefined), 'document_idle');
+  assert.equal(mapRunAt(''), 'document_idle');
+  assert.equal(mapRunAt('context-menu'), 'document_idle');
+  assert.equal(mapRunAt('whatever'), 'document_idle');
+});
+
+test('mapRunAt: case-insensitive', () => {
+  assert.equal(mapRunAt('DOCUMENT-START'), 'document_start');
+});
+
+// ---------- buildWrappedBody ----------
+
+test('buildWrappedBody: inlines body verbatim so syntax errors surface at register()', () => {
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'var foo = 1;' });
+  assert.match(wrapped, /var foo = 1;/);
+});
+
+test('buildWrappedBody: includes the id and name as JS string literals', () => {
+  const wrapped = buildWrappedBody({ id: 'abc"123', name: 'My "Script"', body: '' });
+  // JSON.stringify handles the escaping for both, so the inlined literal
+  // contains the escaped form.
+  assert.match(wrapped, /"abc\\"123"/);
+  assert.match(wrapped, /"My \\"Script\\""/);
+});
+
+test('buildWrappedBody: wraps the body in a try/catch with sendMessage', () => {
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'doThing();' });
+  assert.match(wrapped, /try {/);
+  assert.match(wrapped, /catch \(__vmErr\)/);
+  assert.match(wrapped, /type: "vm:error"/);
+  assert.match(wrapped, /type: "vm:start"/);
+});
+
+test('buildWrappedBody: swallows sendMessage promise rejections to avoid feedback loops', () => {
+  // Without a `.catch(...)` a missing receiver would surface as an
+  // Uncaught (in promise) error in the page console on every send.
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
+  assert.match(wrapped, /\.catch\(function ?\(\) ?\{\}\)/);
+});
+
+test('buildWrappedBody: head is on a single physical line so body lines stay aligned', () => {
+  // The body's line N must land at physical line N of the registered
+  // script — otherwise stack traces report meaningless line numbers.
+  // The build minifies wrapper-head.js to one line; we verify that
+  // here by checking that everything up to the body shows up as line
+  // 1 of the output.
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'LINE1\nLINE2\nLINE3' });
+  const lines = wrapped.split('\n');
+  // line 1 = head + LINE1; line 2 = LINE2; line 3 = LINE3; line 4 = tail
+  assert.match(lines[0], /LINE1$/);
+  assert.equal(lines[1], 'LINE2');
+  assert.equal(lines[2], 'LINE3');
+});
+
+test('buildWrappedBody: never inserts literal "$&" from matcher replace (no replace-backref leak)', () => {
+  // The matcher contains `s.replace(..., "\\$&")` inside a regex
+  // escape helper. If we used String.prototype.replace's two-arg form
+  // with a string replacement, $& would expand to the matched text
+  // (the placeholder), corrupting the matcher. Guard against
+  // regression by checking the placeholder doesn't survive.
+  const wrapped = buildWrappedBody({
+    id: 'x', name: 'X', body: '',
+    matching: { matches: ['https://a/*'], excludes: [], includes: ['/r/'] },
+  });
+  assert.doesNotMatch(wrapped, /__VM_MATCHER_BLOCK__/);
+});
+
+test('buildWrappedBody: does NOT install a global unhandledrejection listener', () => {
+  // A global listener would attribute page-wide and other-userscript
+  // rejections to whichever script registered it — wrong by design.
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
+  assert.doesNotMatch(wrapped, /unhandledrejection/);
+});
+
+// ---------- buildRegistrationSpec ----------
+
+// Minimal valid script the helpers can chew on.
+function makeScript(over = {}) {
+  return {
+    id: 'script-1',
+    sourceId: 'source-1',
+    relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js',
+    status: 'ok',
+    size: 10,
+    headerText: '',
+    bodyText: 'console.log("hi");',
+    header: { tags: [{ tag: 'name', value: 'Hello' }] },
+    matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+    loadedAt: 0,
+    enabled: true,
+    ...over,
+  };
+}
+
+test('buildRegistrationSpec: passes @match values through as matches', () => {
+  const spec = buildRegistrationSpec(makeScript());
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+});
+
+test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    matching: {
+      matches: [],
+      excludes: [],
+      includes: ['*://example.com/*', '/^https:\\/\\/foo\\..*$/'],
+    },
+  }));
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
+  // Wrapper carries the full matching object so it can filter at runtime.
+  assert.match(spec.js[0].code, /__vmMatchScript/);
+});
+
+test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes to wrapper', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*'],
+      excludes: ['*/admin/*', '/danger/'],
+      includes: [],
+    },
+  }));
+  assert.deepEqual(spec.excludeGlobs, ['*/admin/*']);
+  assert.match(spec.js[0].code, /__vmMatchScript/);
+});
+
+test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers to the wrapper', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    matching: { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\..*$/'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.equal(spec.includeGlobs, undefined);
+  assert.match(spec.js[0].code, /__vmMatchScript/);
+});
+
+test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher', () => {
+  const spec = buildRegistrationSpec(makeScript());
+  assert.doesNotMatch(spec.js[0].code, /__vmMatchScript/);
+});
+
+test('buildRegistrationSpec: pulls runAt from @run-at on the parsed header', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    header: {
+      tags: [
+        { tag: 'name', value: 'X' },
+        { tag: 'run-at', value: 'document-start' },
+      ],
+    },
+  }));
+  assert.equal(spec.runAt, 'document_start');
+});
+
+test('buildRegistrationSpec: defaults runAt to document_idle when @run-at is absent', () => {
+  const spec = buildRegistrationSpec(makeScript());
+  assert.equal(spec.runAt, 'document_idle');
+});
+
+test('buildRegistrationSpec: always registers in the USER_SCRIPT world', () => {
+  const spec = buildRegistrationSpec(makeScript());
+  assert.equal(spec.world, 'USER_SCRIPT');
+});
+
+test('buildRegistrationSpec: wraps the body — registered code contains the wrapper', () => {
+  const spec = buildRegistrationSpec(makeScript({ bodyText: 'doStuff();' }));
+  assert.equal(spec.js.length, 1);
+  assert.match(spec.js[0].code, /doStuff\(\);/);
+  assert.match(spec.js[0].code, /vm:start/);
+});
+
+// ---------- inline matcher (snippet inside the wrapper) ----------
+
+// The wrapper's __vmMatchScript must agree with urlMatchesScript()
+// from url-match.ts for the cases that involve regex patterns —
+// otherwise badge counts and actual injection drift apart.
+//
+// The matcher source lives in src/wrapper-matcher.js, gets minified
+// to a single line by the build, and ends with a top-level `return`
+// (it's meant to bail out of the wrapper's IIFE). We eval it inside a
+// throwaway function that swallows the return and instead hands back
+// the matcher fn for assertions.
+
+function loadMatchScript() {
+  // The matcher source ends with `var __vmMatching = ...; if
+  // (!__vmMatchScript(location.href, __vmMatching)) return;` — that's
+  // the runtime bail-out, not part of the algorithm. Lop it off and
+  // eval just the helpers so we can call __vmMatchScript directly.
+  const helpers = WRAPPER_MATCHER.split('var __vmMatching')[0];
+  // eslint-disable-next-line no-new-func
+  return new Function(helpers + ' return __vmMatchScript;')();
+}
+
+test('inline matcher: @match passes', () => {
+  const match = loadMatchScript();
+  assert.equal(match('https://example.com/x', { matches: ['https://example.com/*'], excludes: [], includes: [] }), true);
+});
+
+test('inline matcher: /regex/ @include matches when glob would not', () => {
+  const match = loadMatchScript();
+  const m = { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\.example\\.com\\/.*$/'] };
+  assert.equal(match('https://foo.example.com/page', m), true);
+  assert.equal(match('https://bar.example.com/page', m), false);
+});
+
+test('inline matcher: /regex/ @exclude beats a @match', () => {
+  const match = loadMatchScript();
+  const m = { matches: ['https://example.com/*'], excludes: ['/\\/admin\\//'], includes: [] };
+  assert.equal(match('https://example.com/admin/x', m), false);
+  assert.equal(match('https://example.com/public/x', m), true);
+});
+
+test('inline matcher: <all_urls> matches http/https/file/ftp only', () => {
+  const match = loadMatchScript();
+  const m = { matches: ['<all_urls>'], excludes: [], includes: [] };
+  assert.equal(match('https://example.com/', m), true);
+  assert.equal(match('chrome://settings', m), false);
+});
+
+// ---------- collectActiveSpecs ----------
+
+function makeSource(over = {}) {
+  return {
+    id: 'source-1',
+    path: '/p',
+    lastRefreshedAt: 0,
+    scriptIds: [],
+    enabled: true,
+    ...over,
+  };
+}
+
+test('collectActiveSpecs: skips non-ok scripts', () => {
+  const sources = new Map([['source-1', makeSource()]]);
+  const specs = collectActiveSpecs([
+    makeScript({ id: 's1', status: 'error', errorMessage: 'x' }),
+    makeScript({ id: 's2', status: 'missing' }),
+    makeScript({ id: 's3' }),
+  ], sources);
+  assert.deepEqual(specs.map((s) => s.id), ['s3']);
+});
+
+test('collectActiveSpecs: skips disabled scripts', () => {
+  const sources = new Map([['source-1', makeSource()]]);
+  const specs = collectActiveSpecs([
+    makeScript({ id: 's1', enabled: false }),
+    makeScript({ id: 's2' }),
+  ], sources);
+  assert.deepEqual(specs.map((s) => s.id), ['s2']);
+});
+
+test('collectActiveSpecs: skips every script under a disabled source', () => {
+  const sources = new Map([['source-1', makeSource({ enabled: false })]]);
+  const specs = collectActiveSpecs([
+    makeScript({ id: 's1' }),
+    makeScript({ id: 's2' }),
+  ], sources);
+  assert.deepEqual(specs.map((s) => s.id), []);
+});
+
+test('collectActiveSpecs: skips scripts whose source is missing entirely', () => {
+  const sources = new Map(); // no entries
+  const specs = collectActiveSpecs([makeScript()], sources);
+  assert.deepEqual(specs, []);
+});
+
+test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', () => {
+  const script = makeScript();
+  delete script.enabled;
+  const source = makeSource();
+  delete source.enabled;
+  const specs = collectActiveSpecs([script], new Map([['source-1', source]]));
+  assert.equal(specs.length, 1);
+});

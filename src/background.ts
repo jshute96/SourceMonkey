@@ -19,6 +19,10 @@ import {
   onCacheChanged,
   type MatchedScript,
 } from './match-index.js';
+import {
+  installMessageListener as installInjectorMessageListener,
+  syncRegistrations,
+} from './injector.js';
 
 interface VibeMonkeyApi {
   version: string;
@@ -123,9 +127,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // When the script set itself changes (user clicked Refresh, added a
 // directory, etc.) the matches for every open tab may have shifted —
-// recompute and re-badge them all.
+// recompute and re-badge them all, and re-sync chrome.userScripts so
+// Chrome's injection set reflects the new state.
 onCacheChanged(() => {
   void refreshAllOpenTabs();
+  void syncRegistrations();
 });
 
 async function refreshAllOpenTabs(): Promise<void> {
@@ -141,9 +147,12 @@ async function refreshAllOpenTabs(): Promise<void> {
 }
 
 installStorageListener();
+installInjectorMessageListener();
 // Kick off the initial cache load so the very first navigation doesn't
-// pay the read-everything cost on the critical path.
+// pay the read-everything cost on the critical path. The injector sync
+// runs in parallel so registrations are in place ASAP after SW startup.
 void ensureLoaded();
+void syncRegistrations();
 
 // background.ts is compiled as an ES module (declared via
 // `"type": "module"` in manifest.json's service_worker entry). The

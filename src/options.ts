@@ -66,6 +66,17 @@ async function render(): Promise<void> {
     bannerSlot.appendChild(renderFileAccessBanner());
   }
 
+  // The User Scripts API requires the user to flip the "Allow User
+  // Scripts" toggle (Chrome ≥138) or enable developer mode (120–137)
+  // on chrome://extensions. Until they do, every registration call
+  // throws — meaning no scripts actually inject even though the badge
+  // still counts matches. Other failures (revoked permission, etc.)
+  // surface their raw message so the user has something to grep for.
+  const userScriptsState = await probeUserScriptsApi();
+  if (!userScriptsState.usable) {
+    bannerSlot.appendChild(renderUserScriptsBanner(userScriptsState.error));
+  }
+
   const sources = await getSources();
   if (sources.length === 0) {
     const p = document.createElement('p');
@@ -245,6 +256,52 @@ function isFileSchemeAccessAllowed(): Promise<boolean> {
   });
 }
 
+// Probe whether chrome.userScripts is callable. Presence of the
+// namespace only confirms the permission is in the manifest; the user
+// still has to flip the per-extension toggle before any call works.
+// Returns the raw error message so the banner can surface anything
+// that isn't the routine "toggle is off" case.
+async function probeUserScriptsApi(): Promise<{ usable: true } | { usable: false; error?: string }> {
+  if (!chrome.userScripts) return { usable: false, error: 'chrome.userScripts is not available' };
+  try {
+    await chrome.userScripts.getScripts();
+    return { usable: true };
+  } catch (err) {
+    return { usable: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function renderUserScriptsBanner(error?: string): HTMLElement {
+  const div = document.createElement('div');
+  div.className = 'banner';
+
+  const heading = document.createElement('strong');
+  heading.textContent = 'User scripts are not allowed yet.';
+  div.appendChild(heading);
+
+  const explain = document.createElement('p');
+  explain.textContent =
+    'VibeMonkey can find matching scripts (the toolbar badge counts ' +
+    'them), but Chrome won\'t actually inject anything until you turn ' +
+    'on "Allow User Scripts" for this extension. Open its details ' +
+    'page, enable the toggle, then reload this page:';
+  div.appendChild(explain);
+
+  div.appendChild(extensionDetailsLink());
+
+  // Include the raw API error so non-routine failures (e.g. quota,
+  // revoked permission, malformed pattern bubbling up at getScripts
+  // time) aren't masked by the generic "toggle is off" copy.
+  if (error) {
+    const detail = document.createElement('p');
+    detail.className = 'banner-detail';
+    detail.textContent = `Chrome reported: ${error}`;
+    div.appendChild(detail);
+  }
+
+  return div;
+}
+
 function renderFileAccessBanner(): HTMLElement {
   const div = document.createElement('div');
   div.className = 'banner';
@@ -260,11 +317,26 @@ function renderFileAccessBanner(): HTMLElement {
     'turn it on, then reload this page:';
   div.appendChild(explain);
 
-  const code = document.createElement('code');
-  code.textContent = `chrome://extensions/?id=${chrome.runtime.id}`;
-  div.appendChild(code);
+  div.appendChild(extensionDetailsLink());
 
   return div;
+}
+
+// chrome:// URLs are blocked from <a href> navigation, so we use a
+// click handler that calls chrome.tabs.create — that path is allowed
+// from extension pages. Rendered as an <a> so it looks/behaves like
+// any other link.
+function extensionDetailsLink(): HTMLElement {
+  const url = `chrome://extensions/?id=${chrome.runtime.id}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.textContent = url;
+  a.className = 'chrome-link';
+  a.addEventListener('click', (event) => {
+    event.preventDefault();
+    void chrome.tabs.create({ url });
+  });
+  return a;
 }
 
 function makeMessage(className: string, text: string): HTMLElement {
