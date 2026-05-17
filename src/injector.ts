@@ -43,6 +43,7 @@
 // a regex pattern; pure @match / glob-only scripts skip it.
 
 import {
+  describeError,
   isScriptEnabled,
   isSourceEnabled,
   type StoredScript,
@@ -311,9 +312,4 @@ async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> 
     }
   }
   return ok;
-}
-
-function describeError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }

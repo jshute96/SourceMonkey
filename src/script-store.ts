@@ -602,7 +602,9 @@ export async function refreshAllSources(): Promise<
   return out;
 }
 
-function describeError(err: unknown): string {
+// Coerce a caught throw into a printable string. Exported so other
+// modules (notably the injector) don't have to duplicate the helper.
+export function describeError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }

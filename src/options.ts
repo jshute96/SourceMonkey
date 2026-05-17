@@ -28,6 +28,10 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import {
+  formatScriptSize,
+  formatScriptStatusLabel,
+} from './script-display.js';
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -223,15 +227,12 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
 
   const sizeCell = document.createElement('td');
   sizeCell.className = 'size-cell';
-  sizeCell.textContent = script.status === 'missing' || script.size == null
-    ? 'MISSING'
-    : formatBytes(script.size);
+  sizeCell.textContent = formatScriptSize(script);
   tr.appendChild(sizeCell);
 
   const statusCell = document.createElement('td');
   statusCell.className = 'status-cell';
-  const label = script.status === 'ok' ? 'OK' : 'ERROR';
-  statusCell.textContent = label;
+  statusCell.textContent = formatScriptStatusLabel(script.status);
   statusCell.classList.add(`status-${script.status}`);
   if (script.errorMessage) statusCell.title = script.errorMessage;
   tr.appendChild(statusCell);
@@ -728,12 +729,4 @@ function makeMessage(className: string, text: string): HTMLElement {
   p.className = className;
   p.textContent = text;
   return p;
-}
-
-// Format a byte count for the size column. Returns "1.2 KB", "950 B",
-// etc. — short enough to fit comfortably alongside filename + status.
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }

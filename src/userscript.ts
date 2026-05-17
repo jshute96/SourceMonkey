@@ -17,6 +17,10 @@ import {
   type StoredScript,
 } from './script-store.js';
 import {
+  formatScriptSize,
+  formatScriptStatusLabel,
+} from './script-display.js';
+import {
   getValue,
   getValues,
 } from './userscript-header.js';
@@ -86,13 +90,9 @@ function render(script: StoredScript): void {
   filenameEl.textContent = script.relativePath;
   document.title = `${script.relativePath} — VibeMonkey`;
 
-  sizeEl.textContent =
-    script.status === 'missing' || script.size == null
-      ? 'MISSING'
-      : formatBytes(script.size);
+  sizeEl.textContent = formatScriptSize(script);
 
-  const statusLabel = script.status === 'ok' ? 'OK' : 'ERROR';
-  statusEl.textContent = statusLabel;
+  statusEl.textContent = formatScriptStatusLabel(script.status);
   statusEl.className = `meta-status status-${script.status}`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
@@ -164,10 +164,4 @@ function showMissing(message: string): void {
   messageEl.className = 'message error';
   summaryEl.replaceChildren();
   contentEl.textContent = '';
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
