@@ -3,9 +3,9 @@
 // persistent store (chrome.storage.local) rather than re-reading the
 // file, so the content always matches what the options page shows.
 //
-// The header row at the top mirrors the options-page table columns
-// (filename / size / status) and adds a Refresh button that re-reads
-// the file and updates storage in place.
+// Layout: a thin controls row (Enable toggle + Refresh) on top, then
+// a details panel (parsed-header fields + Filename / Size / Status),
+// then the highlighted code box.
 
 import {
   getScript,
@@ -24,6 +24,7 @@ import {
   getValue,
   getValues,
 } from './userscript-header.js';
+import { joinPath } from './directories.js';
 
 declare const Prism: { highlightElement(el: Element): void };
 
@@ -31,9 +32,7 @@ const params = new URLSearchParams(location.search);
 const scriptId = params.get('script');
 
 const filenameEl = document.getElementById('filename')!;
-const metaRowEl = document.getElementById('meta-row')!;
-const sizeEl = document.getElementById('meta-size')!;
-const statusEl = document.getElementById('meta-status')!;
+const controlsRowEl = document.getElementById('meta-row')!;
 const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElement;
 const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
@@ -44,11 +43,47 @@ const contentEl = document.getElementById('content')!;
 refreshBtn.addEventListener('click', () => void onRefresh());
 enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
 
+// Static markup for the Lucide-style copy / check icons. Safe to embed
+// via innerHTML because there's no interpolation; the strings ship as
+// part of the extension bundle.
+const COPY_ICON_SVG =
+  '<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
+  '</svg>';
+const CHECK_ICON_SVG =
+  '<svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polyline points="20 6 9 17 4 12"/>' +
+  '</svg>';
+
+// One shared copy button: created once, appendChild'd into the dl on
+// each render() (appendChild moves it, so no duplication). Keeping it
+// shared means we don't have to re-wire the click handler.
+const filenameCopyBtn = (() => {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn';
+  btn.title = 'Copy filename to clipboard';
+  btn.setAttribute('aria-label', 'Copy filename to clipboard');
+  btn.innerHTML = COPY_ICON_SVG + CHECK_ICON_SVG;
+  btn.addEventListener('click', () => void onCopyFilename());
+  return btn;
+})();
+
 void load();
 
 // Source-enabled state is needed for greying the toggle. We cache it so
-// onToggle doesn't have to re-read storage.
+// onToggle doesn't have to re-read storage. sourcePath is cached for
+// the same reason — render() builds the absolute filename from it.
 let sourceEnabled = true;
+let sourcePath = '';
+let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
+// Path currently shown in the Filename cell. onCopyFilename copies
+// this rather than reading textContent, which would also break if the
+// dl ever wraps the path across multiple text nodes.
+let currentFilenamePath = '';
 
 async function load(): Promise<void> {
   if (!scriptId) {
@@ -62,6 +97,7 @@ async function load(): Promise<void> {
   }
   const source = await getSource(script.sourceId);
   sourceEnabled = source ? isSourceEnabled(source) : true;
+  sourcePath = source?.path ?? '';
   render(script);
 }
 
@@ -85,15 +121,30 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
   if (next) render(next);
 }
 
+async function onCopyFilename(): Promise<void> {
+  if (!currentFilenamePath) return;
+  try {
+    await navigator.clipboard.writeText(currentFilenamePath);
+    // .copied swaps the visible icon to a checkmark via CSS. A fresh
+    // timer per click keeps rapid double-clicks from leaving the
+    // checkmark stuck — each new click cancels the prior reset and
+    // schedules its own.
+    filenameCopyBtn.classList.add('copied');
+    if (copyResetTimer !== null) clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(() => {
+      filenameCopyBtn.classList.remove('copied');
+      copyResetTimer = null;
+    }, 1200);
+  } catch {
+    // Clipboard write can be rejected (e.g. permission denied); the
+    // path is selectable on the page, so no fallback UI is needed.
+  }
+}
+
 function render(script: StoredScript): void {
-  metaRowEl.hidden = false;
+  controlsRowEl.hidden = false;
   filenameEl.textContent = script.relativePath;
   document.title = `${script.relativePath} — VibeMonkey`;
-
-  sizeEl.textContent = formatScriptSize(script);
-
-  statusEl.textContent = formatScriptStatusLabel(script.status);
-  statusEl.className = `meta-status status-${script.status}`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
   enableCheckboxEl.disabled = !sourceEnabled;
@@ -105,7 +156,7 @@ function render(script: StoredScript): void {
   messageEl.textContent = script.errorMessage ?? '';
   messageEl.className = script.errorMessage ? 'message error' : 'message';
 
-  renderSummary(script);
+  renderDetails(script);
 
   // textContent escapes; Prism then walks the node and replaces text
   // with highlighted spans. Doing it this way (rather than innerHTML)
@@ -117,21 +168,59 @@ function render(script: StoredScript): void {
   Prism.highlightElement(contentEl);
 }
 
-function renderSummary(script: StoredScript): void {
+function renderDetails(script: StoredScript): void {
   summaryEl.replaceChildren();
-  if (!script.header) return;
 
   const dl = document.createElement('dl');
-  const name = getValue(script.header, 'name');
-  if (name) appendRow(dl, 'Name', textNode(name));
-  const description = getValue(script.header, 'description');
-  if (description) appendRow(dl, 'Description', textNode(description));
-  const matches = getValues(script.header, 'match');
-  if (matches.length) appendRow(dl, 'Match', urlList(matches));
-  const excludes = getValues(script.header, 'exclude');
-  if (excludes.length) appendRow(dl, 'Exclude', urlList(excludes));
 
-  if (dl.childElementCount > 0) summaryEl.appendChild(dl);
+  if (script.header) {
+    const name = getValue(script.header, 'name');
+    if (name) appendRow(dl, 'Name', textNode(name));
+    const description = getValue(script.header, 'description');
+    if (description) appendRow(dl, 'Description', textNode(description));
+    const matches = getValues(script.header, 'match');
+    if (matches.length) appendRow(dl, 'Match', urlList(matches));
+    const excludes = getValues(script.header, 'exclude');
+    if (excludes.length) appendRow(dl, 'Exclude', urlList(excludes));
+  }
+
+  // Absolute filesystem path: source directory + script's relative
+  // path. Skip the row entirely if the source row is gone — a bare
+  // relative path under a "Filename" label would be misleading.
+  if (sourcePath) {
+    currentFilenamePath = joinPath(sourcePath, script.relativePath);
+    appendRow(dl, 'Filename', filenameCell(currentFilenamePath));
+  } else {
+    currentFilenamePath = '';
+  }
+
+  appendRow(dl, 'Size', textNode(formatScriptSize(script)));
+
+  const status = document.createElement('span');
+  status.textContent = formatScriptStatusLabel(script.status);
+  status.className = `meta-status status-${script.status}`;
+  if (script.errorMessage) status.title = script.errorMessage;
+  appendRow(dl, 'Status', status);
+
+  summaryEl.appendChild(dl);
+}
+
+function filenameCell(path: string): Node {
+  const cell = document.createElement('span');
+  cell.className = 'filename-cell';
+
+  const pathEl = document.createElement('span');
+  pathEl.className = 'filename-text';
+  pathEl.textContent = path;
+  cell.appendChild(pathEl);
+
+  // Reuses the module-level button; appendChild moves it into the
+  // new cell. Any in-flight "Copied" flash carries across because the
+  // class lives on the button (not the cell) and the timer is still
+  // valid — the checkmark continues for the rest of its 1.2s window.
+  cell.appendChild(filenameCopyBtn);
+
+  return cell;
 }
 
 function appendRow(dl: HTMLDListElement, label: string, value: Node): void {
@@ -158,7 +247,7 @@ function urlList(items: string[]): Node {
 }
 
 function showMissing(message: string): void {
-  metaRowEl.hidden = true;
+  controlsRowEl.hidden = true;
   filenameEl.textContent = 'Not available';
   messageEl.textContent = message;
   messageEl.className = 'message error';

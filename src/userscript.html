@@ -20,8 +20,9 @@
         margin: 0 0 0.4em;
         word-break: break-all;
       }
-      /* Header row mirrors the options-page table: filename above,
-         size + status + Refresh in a single line below. */
+      /* Controls row: per-script enable toggle + Refresh button. The
+         filename, size, and status moved into the details panel below
+         where the dl gives them aligned label/value columns. */
       .meta-row {
         display: flex;
         align-items: center;
@@ -30,7 +31,6 @@
         font-size: 0.95em;
       }
       .meta-row[hidden] { display: none; }
-      .meta-label { color: #555; margin-right: 0.3em; }
       .meta-status { font-weight: 600; }
       .status-ok { color: #166534; }
       .status-error, .status-missing { color: #b00; }
@@ -42,9 +42,9 @@
       .message { margin: 0 0 0.5em; }
       .message.error { color: #b00; }
       .message:empty { display: none; }
-      /* Header summary above the code box. Hidden until parse succeeds
-         (the parser may return null for files with no metadata block,
-         in which case we just show the code). */
+      /* Details panel: parsed-header fields (when a metadata block is
+         present) plus Filename / Size / Status. Cleared via :empty
+         when there's no script. */
       #header-summary {
         margin: 0 0 0.8em;
         padding: 0.6em 0.8em;
@@ -72,6 +72,43 @@
         margin: 0;
         padding-left: 1.1em;
       }
+      /* Filename row: monospace path with a square copy-icon button
+         immediately to its right. min-width:0 lets long paths shrink
+         and wrap rather than blow out the grid column. */
+      .filename-cell {
+        display: flex;
+        align-items: center;
+        gap: 0.4em;
+        min-width: 0;
+      }
+      .filename-text {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-all;
+        min-width: 0;
+      }
+      /* Square icon-only button. Swaps the copy icon for a checkmark
+         while the .copied class is on it (set briefly after a
+         successful clipboard write). */
+      .copy-btn {
+        flex: 0 0 auto;
+        width: 1.6em;
+        height: 1.6em;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #bbb;
+        border-radius: 3px;
+        background: #fff;
+        color: #444;
+        cursor: pointer;
+      }
+      .copy-btn:hover { background: #eee; }
+      .copy-btn:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+      .copy-btn svg { width: 14px; height: 14px; display: block; }
+      .copy-btn .check-icon { display: none; color: #166534; }
+      .copy-btn.copied .copy-icon { display: none; }
+      .copy-btn.copied .check-icon { display: block; }
       /* The code box fills the rest of the viewport and scrolls. The
          padding/border give it a textbox-like look; tabindex makes it
          keyboard-focusable so it scrolls with arrow keys. */
@@ -91,8 +128,6 @@
   <body>
     <h1 id="filename"></h1>
     <div id="meta-row" class="meta-row" hidden>
-      <span><span class="meta-label">Size:</span><span id="meta-size"></span></span>
-      <span><span class="meta-label">Status:</span><span id="meta-status" class="meta-status"></span></span>
       <label id="enable-label" class="toggle" title="Enable this script">
         <input id="enable-checkbox" type="checkbox" />
         <span>Enabled</span>

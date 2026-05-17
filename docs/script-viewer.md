@@ -53,15 +53,26 @@ reports.
 ### Layout
 
 1. **Filename** (`<h1>`) — the script's `relativePath`.
-2. **Header row** — mirrors the options-page columns:
-   - `Size: <bytes>` (or `MISSING`)
-   - `Status: OK | ERROR` (color-coded)
-   - **Refresh** button → `refreshScript(scriptId)`.
+2. **Controls row** (`#meta-row`) — `Enabled` toggle + **Refresh**
+   button → `refreshScript(scriptId)`.
 3. **Error message** (`<p class="message error">`) — visible only when
    `errorMessage` is set.
-4. **Metadata summary** (`<dl>`) — Name / Description / Match /
-   Exclude pulled from the parsed header. Hidden when the script has
-   no header block.
+4. **Details panel** (`#header-summary` → `<dl>`) — labeled rows in
+   order:
+   - Parsed-header fields (when a metadata block is present):
+     - `Name`
+     - `Description`
+     - `Match`
+     - `Exclude`
+   - Always present (per script):
+     - `Filename` — absolute path (source directory +
+       `relativePath`), shown next to a square icon button that
+       copies it to the clipboard via `navigator.clipboard.writeText`.
+       The icon swaps to a checkmark for ~1.2 s on success. Row
+       omitted if the parent source row has vanished.
+     - `Size` — `formatScriptSize` output (bytes or `MISSING`).
+     - `Status` — `OK` / `ERROR` / `MISSING`, color-coded; the
+       row's `title` carries `errorMessage` when present.
 5. **Code box** (`<pre><code>`) — `headerText + '\n' + bodyText`
    highlighted by Prism.
 
