@@ -34,7 +34,11 @@
       .meta-status { font-weight: 600; }
       .status-ok { color: #166534; }
       .status-error, .status-missing { color: #b00; }
-      .meta-row button { font: inherit; padding: 0.2em 0.7em; cursor: pointer; margin-left: auto; }
+      .meta-row button { font: inherit; padding: 0.2em 0.7em; cursor: pointer; }
+      .meta-row .toggle { display: inline-flex; align-items: center; gap: 0.3em; cursor: pointer; margin-left: auto; }
+      .meta-row .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
+      .meta-row .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
+      .meta-row .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
       .message { margin: 0 0 0.5em; }
       .message.error { color: #b00; }
       .message:empty { display: none; }
@@ -89,6 +93,10 @@
     <div id="meta-row" class="meta-row" hidden>
       <span><span class="meta-label">Size:</span><span id="meta-size"></span></span>
       <span><span class="meta-label">Status:</span><span id="meta-status" class="meta-status"></span></span>
+      <label id="enable-label" class="toggle" title="Enable this script">
+        <input id="enable-checkbox" type="checkbox" />
+        <span>Enabled</span>
+      </label>
       <button id="refresh-btn" type="button">Refresh</button>
     </div>
     <p id="message" class="message"></p>

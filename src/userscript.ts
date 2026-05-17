@@ -9,7 +9,11 @@
 
 import {
   getScript,
+  getSource,
+  isScriptEnabled,
+  isSourceEnabled,
   refreshScript,
+  setScriptEnabled,
   type StoredScript,
 } from './script-store.js';
 import {
@@ -26,14 +30,21 @@ const filenameEl = document.getElementById('filename')!;
 const metaRowEl = document.getElementById('meta-row')!;
 const sizeEl = document.getElementById('meta-size')!;
 const statusEl = document.getElementById('meta-status')!;
+const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElement;
+const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 const messageEl = document.getElementById('message')!;
 const summaryEl = document.getElementById('header-summary')!;
 const contentEl = document.getElementById('content')!;
 
 refreshBtn.addEventListener('click', () => void onRefresh());
+enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
 
 void load();
+
+// Source-enabled state is needed for greying the toggle. We cache it so
+// onToggle doesn't have to re-read storage.
+let sourceEnabled = true;
 
 async function load(): Promise<void> {
   if (!scriptId) {
@@ -45,6 +56,8 @@ async function load(): Promise<void> {
     showMissing('Script not found in storage. Open it from the options page.');
     return;
   }
+  const source = await getSource(script.sourceId);
+  sourceEnabled = source ? isSourceEnabled(source) : true;
   render(script);
 }
 
@@ -62,6 +75,12 @@ async function onRefresh(): Promise<void> {
   }
 }
 
+async function onToggleEnabled(enabled: boolean): Promise<void> {
+  if (!scriptId) return;
+  const next = await setScriptEnabled(scriptId, enabled);
+  if (next) render(next);
+}
+
 function render(script: StoredScript): void {
   metaRowEl.hidden = false;
   filenameEl.textContent = script.relativePath;
@@ -75,6 +94,13 @@ function render(script: StoredScript): void {
   const statusLabel = script.status === 'ok' ? 'OK' : 'ERROR';
   statusEl.textContent = statusLabel;
   statusEl.className = `meta-status status-${script.status}`;
+
+  enableCheckboxEl.checked = isScriptEnabled(script);
+  enableCheckboxEl.disabled = !sourceEnabled;
+  enableLabelEl.classList.toggle('toggle-disabled', !sourceEnabled);
+  enableLabelEl.title = sourceEnabled
+    ? 'Enable this script'
+    : 'Source directory is disabled';
 
   messageEl.textContent = script.errorMessage ?? '';
   messageEl.className = script.errorMessage ? 'message error' : 'message';

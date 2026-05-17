@@ -54,6 +54,7 @@ export interface StoredScript {
   header: ParsedHeader | null;
   matching: ScriptMatching;
   loadedAt: number;      // epoch ms — bumped each time fresh content lands
+  enabled: boolean;      // per-script toggle; defaults true on first load
 }
 
 export interface StoredSource {
@@ -62,6 +63,18 @@ export interface StoredSource {
   lastRefreshedAt: number;
   scriptIds: string[];
   scanError?: string;    // set when the directory listing itself failed
+  enabled: boolean;      // per-source toggle; defaults true on first load
+}
+
+// Treat any pre-`enabled`-era stored entry as enabled. The schema now
+// requires `enabled: boolean`, but rows persisted before this field was
+// introduced will read back as undefined; only an explicit `false`
+// should count as disabled.
+export function isSourceEnabled(source: StoredSource): boolean {
+  return source.enabled !== false;
+}
+export function isScriptEnabled(script: StoredScript): boolean {
+  return script.enabled !== false;
 }
 
 // ---------- Pure helpers (exported for unit tests) ----------
@@ -144,6 +157,9 @@ export function buildScriptFromText(args: BuildArgs): StoredScript {
     header,
     matching,
     loadedAt: args.now,
+    // New rows default enabled; existing rows preserve their prior
+    // value via the merge in rebuildSource / refreshScript.
+    enabled: true,
   };
   if (errorMessage) entry.errorMessage = errorMessage;
   return entry;
@@ -183,6 +199,7 @@ export function buildInitialErrorEntry(args: {
     header: null,
     matching: { matches: [], excludes: [], includes: [] },
     loadedAt: args.now,
+    enabled: true,
   };
 }
 
@@ -228,14 +245,17 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
     const fileUrl = scriptFileUrl(args.sourcePath, found.relativePath);
     const fr = args.fetchResults.get(found.relativePath);
     if (fr && fr.ok) {
-      out.push(buildScriptFromText({
+      const built = buildScriptFromText({
         id,
         sourceId: args.sourceId,
         relativePath: found.relativePath,
         fileUrl,
         source: fr.source,
         now: args.now,
-      }));
+      });
+      // Preserve the user's per-script enabled choice across refreshes.
+      if (prior) built.enabled = prior.enabled;
+      out.push(built);
     } else if (fr) {
       // Failed fetch. If we had prior content, keep it.
       if (prior) {
@@ -317,6 +337,10 @@ export async function getScript(scriptId: string): Promise<StoredScript | undefi
   return await getRaw<StoredScript>(scriptKey(scriptId));
 }
 
+export async function getSource(id: string): Promise<StoredSource | undefined> {
+  return await getRaw<StoredSource>(sourceKey(id));
+}
+
 // Register a brand-new directory: mints a UUID, persists an empty
 // source row, then immediately runs a refresh to populate the scripts.
 // Returns null if a source with this path is already registered.
@@ -330,6 +354,7 @@ export async function addSource(path: string): Promise<StoredSource | null> {
     path,
     lastRefreshedAt: 0,
     scriptIds: [],
+    enabled: true,
   };
   const nextIndex = [...sources.map((s) => s.id), id];
   await chrome.storage.local.set({
@@ -427,6 +452,7 @@ export async function refreshScript(scriptId: string): Promise<StoredScript | nu
       source,
       now,
     });
+    next.enabled = prior.enabled;
   } catch (err) {
     next = applyFetchError(prior, describeError(err));
   }
@@ -454,4 +480,29 @@ async function fetchAllInParallel(
 function describeError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+// Flip a source's enabled flag without touching anything else. The
+// match-index listens for `source:<id>` changes and re-evaluates the
+// effective enabled state of every script under this source.
+export async function setSourceEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<StoredSource | null> {
+  const source = await getRaw<StoredSource>(sourceKey(id));
+  if (!source) return null;
+  const next: StoredSource = { ...source, enabled };
+  await chrome.storage.local.set({ [sourceKey(id)]: next });
+  return next;
+}
+
+export async function setScriptEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<StoredScript | null> {
+  const script = await getRaw<StoredScript>(scriptKey(id));
+  if (!script) return null;
+  const next: StoredScript = { ...script, enabled };
+  await chrome.storage.local.set({ [scriptKey(id)]: next });
+  return next;
 }

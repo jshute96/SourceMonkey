@@ -50,6 +50,14 @@ anything — but those scripts are also rejected by `validateHeader`
 upstream, so they never make it into the match index in the first
 place.
 
+### Effective enabled
+
+A script participates in matching only if **both** its own `enabled`
+flag and its parent source's `enabled` flag are true. The two toggles
+compose: turning the source off blanks the count for every script
+under it, but each script's individual choice is preserved so flipping
+the source back on restores the prior state.
+
 ## In-memory match index
 
 `src/match-index.ts` keeps an in-memory `Map<scriptId, MatchedScript>`
@@ -58,15 +66,19 @@ of every `status: 'ok'` script so the background SW never hits
 
 Lifecycle:
 
-- **Startup**: `ensureLoaded()` reads all `script:*` rows once and
-  populates the cache.
+- **Startup**: `ensureLoaded()` reads all `script:*` and `source:*`
+  rows once, populates the cache, and records which sources are
+  disabled.
 - **Updates**: `installStorageListener()` registers a
   `chrome.storage.onChanged` listener that mutates the cache in place
-  on every `set`/`remove` of a `script:*` key. Only `ok` entries are
-  kept; `error`/`missing` entries get evicted.
+  on every `set`/`remove` of a `script:*` or `source:*` key. Only `ok`
+  scripts are kept; `error`/`missing` entries get evicted. Source
+  changes flip an in-memory `disabledSources` set, which lets a
+  source toggle re-evaluate every script under it in O(1).
 - **Subscribers**: `onCacheChanged(fn)` lets the background SW re-badge
   every open tab when the script set itself changes (e.g. after a
-  directory Refresh on the options page).
+  directory Refresh on the options page or a per-source / per-script
+  enabled toggle).
 
 Per-navigation cost is one `Map` iteration + the pattern checks for
 each cached script. No I/O.

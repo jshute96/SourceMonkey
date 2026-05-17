@@ -29,6 +29,9 @@ Three key spaces in `chrome.storage.local`:
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
+- `enabled` — user-controlled on/off toggle. When `false`, every
+  script under this source is treated as effectively disabled by the
+  match index (independent of each script's own `enabled`).
 
 ### `StoredScript`
 
@@ -44,6 +47,9 @@ Three key spaces in `chrome.storage.local`:
 - `matching` — `{matches, excludes, includes}` distilled from the
   header (used eventually by injection).
 - `loadedAt` — epoch ms; bumped whenever fresh content lands.
+- `enabled` — user-controlled per-script toggle. Preserved across
+  refreshes; a script's effective enabled state is
+  `source.enabled && script.enabled`.
 
 ## Status model
 
@@ -92,6 +98,9 @@ Every load path goes through the same pipeline:
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Doesn't re-scan the parent dir, so it can't transition a script
   into `'missing'` — that's the directory-level Refresh's job.
+- `setSourceEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
+  flip the per-source / per-script `enabled` flag with a single-row
+  write. The match index picks up the change via `storage.onChanged`.
 
 ## Pure helpers (testable in isolation)
 
@@ -112,9 +121,15 @@ The options page reads from the store and renders **one section per
 source**:
 
 - Heading with the directory path.
-- **Refresh** button (next to Remove) → `refreshSource`.
+- **Enable** toggle (checkbox) for the source as a whole.
+- **Refresh** button → `refreshSource`.
 - **Remove** button → `removeSource`.
-- Table with columns **Filename | Size | Status**.
+- Table with columns **(toggle) | Filename | Size | Status**.
+  - First column is a per-script enable toggle. When the source is
+    disabled, the script toggles are visually greyed and the
+    checkbox itself is `disabled` (the underlying value is preserved
+    so flipping the source back on restores each script's prior
+    state).
   - Filename links to the viewer at
     `userscript.html?script=<scriptId>`.
   - Size shows the UTF-8 byte count, or `"MISSING"` when

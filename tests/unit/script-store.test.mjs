@@ -315,6 +315,39 @@ test('rebuildSource preserves prior content when a fetch fails on a known script
   assert.equal(result[0].loadedAt, existing[0].loadedAt); // unchanged
 });
 
+test('rebuildSource preserves the prior `enabled` flag across a successful refresh', () => {
+  const existing = [
+    {
+      ...buildScriptFromText({
+        id: 'a-id',
+        sourceId: 'src-1',
+        relativePath: 'a.user.js',
+        fileUrl: 'file:///dir/a.user.js',
+        source: VALID_SCRIPT,
+        now: 50,
+      }),
+      enabled: false, // user disabled this script some time ago
+    },
+  ];
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: '/dir',
+    existing,
+    scan: [{ relativePath: 'a.user.js' }],
+    fetchResults: new Map([
+      ['a.user.js', { ok: true, source: VALID_SCRIPT }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].enabled, false);
+});
+
+test('buildScriptFromText defaults `enabled` to true on a brand-new entry', () => {
+  const entry = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  assert.equal(entry.enabled, true);
+});
+
 test('rebuildSource creates an initial error entry when a new file fails to fetch', () => {
   const result = rebuildSource({
     sourceId: 'src-1',

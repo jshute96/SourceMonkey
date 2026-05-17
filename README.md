@@ -18,23 +18,30 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
   **Add directory**. The directory is scanned (up to two subdirectory
   levels deep) and every `*.user.js` is loaded into the extension's
   storage immediately.
-- Each directory section shows a table with **Filename**, **Size**,
-  and **Status** (`OK` or `ERROR`). A script reports `ERROR` when its
-  metadata block is missing or malformed, or when required fields
-  (`@name` plus `@match`/`@include`) aren't present — hover the
-  status cell to see the reason. If a file was loaded before but has
-  disappeared from disk, the size column shows `MISSING`.
+- Each directory section shows a table with a per-script enable
+  toggle plus **Filename**, **Size**, and **Status** (`OK` or
+  `ERROR`). The directory itself has an enable toggle next to its
+  Refresh/Remove buttons; disabling a directory greys out (and
+  effectively disables) every script under it without losing each
+  script's own choice. A script reports `ERROR` when its metadata
+  block is missing or malformed, or when required fields (`@name`
+  plus `@match`/`@include`) aren't present — hover the status cell
+  to see the reason. If a file was loaded before but has disappeared
+  from disk, the size column shows `MISSING`.
 - **Refresh** rescans the directory and reloads every script.
   **Remove** drops the directory (and its scripts) from storage.
 - Clicking a script name opens a viewer in a new tab showing the
-  file's name, size, status, a parsed-header summary (Name /
+  file's name, size, status, an enable toggle (greyed out when the
+  parent directory is disabled), a parsed-header summary (Name /
   Description / Match / Exclude), and the highlighted source. The
   viewer reads from storage; its own **Refresh** button re-reads the
   one file from disk.
 - As you browse, the VibeMonkey toolbar icon shows an orange badge
-  with the number of loaded scripts whose `@match` / `@include`
+  with the number of enabled scripts whose `@match` / `@include`
   patterns hit the current tab. Hovering the icon lists those scripts
-  in the tooltip. The count is per-tab and updates on navigation.
+  in the tooltip. The count is per-tab and updates on navigation, and
+  re-counts immediately when you flip an enable toggle on the options
+  page.
 
 **One-time setup:** enable **"Allow access to file URLs"** for
 VibeMonkey on `chrome://extensions`. Without it the extension can't

@@ -11,8 +11,12 @@ import {
   addSource,
   getSourceWithScripts,
   getSources,
+  isScriptEnabled,
+  isSourceEnabled,
   refreshSource,
   removeSource,
+  setScriptEnabled,
+  setSourceEnabled,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
@@ -77,8 +81,11 @@ async function render(): Promise<void> {
 }
 
 async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
+  const sourceOn = isSourceEnabled(source);
+
   const section = document.createElement('section');
   section.className = 'directory';
+  if (!sourceOn) section.classList.add('disabled');
 
   const header = document.createElement('div');
   header.className = 'directory-header';
@@ -89,6 +96,14 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
 
   const buttons = document.createElement('div');
   buttons.className = 'directory-buttons';
+
+  const enableLabel = makeToggle(
+    sourceOn,
+    false,
+    (next) => void onToggleSource(source.id, next),
+    'Enable scripts under this directory',
+  );
+  buttons.appendChild(enableLabel);
 
   const refreshBtn = document.createElement('button');
   refreshBtn.textContent = 'Refresh';
@@ -112,11 +127,21 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   if (source.scanError) {
     section.appendChild(makeMessage('error', `Scan failed: ${source.scanError}`));
   }
-  section.appendChild(await renderScriptTable(source));
+  section.appendChild(await renderScriptTable(source, sourceOn));
   return section;
 }
 
-async function renderScriptTable(source: StoredSource): Promise<HTMLElement> {
+async function onToggleSource(id: string, enabled: boolean): Promise<void> {
+  await setSourceEnabled(id, enabled);
+  await render();
+}
+
+async function onToggleScript(id: string, enabled: boolean): Promise<void> {
+  await setScriptEnabled(id, enabled);
+  await render();
+}
+
+async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promise<HTMLElement> {
   const data = await getSourceWithScripts(source.id);
   const scripts = data?.scripts ?? [];
 
@@ -129,7 +154,7 @@ async function renderScriptTable(source: StoredSource): Promise<HTMLElement> {
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  for (const label of ['Filename', 'Size', 'Status']) {
+  for (const label of ['', 'Filename', 'Size', 'Status']) {
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
@@ -138,13 +163,26 @@ async function renderScriptTable(source: StoredSource): Promise<HTMLElement> {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  for (const script of scripts) tbody.appendChild(renderScriptRow(script));
+  for (const script of scripts) tbody.appendChild(renderScriptRow(script, sourceOn));
   table.appendChild(tbody);
   return table;
 }
 
-function renderScriptRow(script: StoredScript): HTMLTableRowElement {
+function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowElement {
+  const scriptOn = isScriptEnabled(script);
+
   const tr = document.createElement('tr');
+  if (!sourceOn || !scriptOn) tr.classList.add('disabled');
+
+  const toggleCell = document.createElement('td');
+  toggleCell.className = 'toggle-cell';
+  toggleCell.appendChild(makeToggle(
+    scriptOn,
+    !sourceOn,    // disabled (greyed out) when the parent source is off
+    (next) => void onToggleScript(script.id, next),
+    sourceOn ? 'Enable this script' : 'Source is disabled',
+  ));
+  tr.appendChild(toggleCell);
 
   const nameCell = document.createElement('td');
   const a = document.createElement('a');
@@ -171,6 +209,28 @@ function renderScriptRow(script: StoredScript): HTMLTableRowElement {
   tr.appendChild(statusCell);
 
   return tr;
+}
+
+// A label-wrapped checkbox so the user has a generous click target.
+// `disabled: true` greys it out without losing the underlying value.
+function makeToggle(
+  checked: boolean,
+  disabled: boolean,
+  onChange: (next: boolean) => void,
+  title: string,
+): HTMLLabelElement {
+  const label = document.createElement('label');
+  label.className = 'toggle';
+  if (disabled) label.classList.add('toggle-disabled');
+  label.title = title;
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = checked;
+  cb.disabled = disabled;
+  cb.addEventListener('change', () => onChange(cb.checked));
+  label.appendChild(cb);
+  return label;
 }
 
 function viewerUrl(scriptId: string): URL {
