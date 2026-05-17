@@ -79,3 +79,4 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |
+| `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones VibeMonkey honors, which are parsed-only, and which are ignored |

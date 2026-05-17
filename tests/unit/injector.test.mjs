@@ -12,6 +12,7 @@ import {
   buildWrappedBody,
   collectActiveSpecs,
   mapRunAt,
+  resolveWorld,
 } from '../../dist/injector.js';
 import { WRAPPER_MATCHER } from '../../dist/generated-wrappers.js';
 
@@ -184,9 +185,124 @@ test('buildRegistrationSpec: defaults runAt to document_idle when @run-at is abs
   assert.equal(spec.runAt, 'document_idle');
 });
 
-test('buildRegistrationSpec: always registers in the USER_SCRIPT world', () => {
+test('buildRegistrationSpec: header without @grant defaults to MAIN world (TM-compatible @grant none)', () => {
+  // Default makeScript() has no @grant — treat like @grant none so the
+  // body can see the page's window globals (jQuery, OpenLayers, etc.).
   const spec = buildRegistrationSpec(makeScript());
+  assert.equal(spec.world, 'MAIN');
+});
+
+test('buildRegistrationSpec: @grant none → MAIN world', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'none' }] },
+  }));
+  assert.equal(spec.world, 'MAIN');
+});
+
+test('buildRegistrationSpec: any real @grant → USER_SCRIPT world', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+  }));
   assert.equal(spec.world, 'USER_SCRIPT');
+});
+
+test('buildRegistrationSpec: @inject-into page wins over @grant', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    header: {
+      tags: [
+        { tag: 'name', value: 'X' },
+        { tag: 'grant', value: 'GM_setValue' },
+        { tag: 'inject-into', value: 'page' },
+      ],
+    },
+  }));
+  assert.equal(spec.world, 'MAIN');
+});
+
+test('buildRegistrationSpec: @inject-into content wins over @grant none', () => {
+  const spec = buildRegistrationSpec(makeScript({
+    header: {
+      tags: [
+        { tag: 'name', value: 'X' },
+        { tag: 'grant', value: 'none' },
+        { tag: 'inject-into', value: 'content' },
+      ],
+    },
+  }));
+  assert.equal(spec.world, 'USER_SCRIPT');
+});
+
+// ---------- resolveWorld ----------
+
+function makeHeader(tags) {
+  return { tags };
+}
+
+test('resolveWorld: no header → MAIN (defensive default)', () => {
+  assert.equal(resolveWorld(null), 'MAIN');
+  assert.equal(resolveWorld(undefined), 'MAIN');
+});
+
+test('resolveWorld: empty header (no @grant) → MAIN', () => {
+  assert.equal(resolveWorld(makeHeader([{ tag: 'name', value: 'X' }])), 'MAIN');
+});
+
+test('resolveWorld: @inject-into page → MAIN regardless of @grant', () => {
+  const h = makeHeader([
+    { tag: 'grant', value: 'GM_xmlhttpRequest' },
+    { tag: 'inject-into', value: 'page' },
+  ]);
+  assert.equal(resolveWorld(h), 'MAIN');
+});
+
+test('resolveWorld: @inject-into content → USER_SCRIPT regardless of @grant', () => {
+  const h = makeHeader([
+    { tag: 'grant', value: 'none' },
+    { tag: 'inject-into', value: 'content' },
+  ]);
+  assert.equal(resolveWorld(h), 'USER_SCRIPT');
+});
+
+test('resolveWorld: @inject-into auto falls through to @grant logic', () => {
+  assert.equal(
+    resolveWorld(makeHeader([{ tag: 'inject-into', value: 'auto' }])),
+    'MAIN',
+  );
+  assert.equal(
+    resolveWorld(makeHeader([
+      { tag: 'inject-into', value: 'auto' },
+      { tag: 'grant', value: 'GM_setValue' },
+    ])),
+    'USER_SCRIPT',
+  );
+});
+
+test('resolveWorld: multi @grant — all "none" → MAIN, any real grant → USER_SCRIPT', () => {
+  assert.equal(
+    resolveWorld(makeHeader([
+      { tag: 'grant', value: 'none' },
+      { tag: 'grant', value: 'none' },
+    ])),
+    'MAIN',
+  );
+  assert.equal(
+    resolveWorld(makeHeader([
+      { tag: 'grant', value: 'none' },
+      { tag: 'grant', value: 'GM_setValue' },
+    ])),
+    'USER_SCRIPT',
+  );
+});
+
+test('resolveWorld: @inject-into value is case-insensitive', () => {
+  assert.equal(
+    resolveWorld(makeHeader([{ tag: 'inject-into', value: 'PAGE' }])),
+    'MAIN',
+  );
+  assert.equal(
+    resolveWorld(makeHeader([{ tag: 'inject-into', value: 'Content' }])),
+    'USER_SCRIPT',
+  );
 });
 
 test('buildRegistrationSpec: wraps the body — registered code contains the wrapper', () => {

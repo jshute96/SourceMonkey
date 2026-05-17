@@ -76,7 +76,18 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
 Both toggles are persistent — once on, they stay on across browser
 restarts.
 
-Each script's body runs in Chrome's isolated `USER_SCRIPT` world:
+Each script's body runs in either the page's own world (`MAIN`) or
+Chrome's isolated `USER_SCRIPT` world. The choice is per-script,
+following Violentmonkey's `@inject-into` and Tampermonkey's
+`@grant none` default:
+
+- `@inject-into page` → MAIN. `@inject-into content` → USER_SCRIPT.
+- Unset / `auto` → MAIN when `@grant` is absent or only `none`,
+  otherwise USER_SCRIPT. So a `@grant none` script can read the
+  page's own globals (`window.jQuery`, `window.map`, …) like in
+  Tampermonkey.
+
+The wrapper around every body:
 
 - Logs `[VibeMonkey] script "<name>" running on <url>` to the page
   console on activation.
@@ -84,6 +95,15 @@ Each script's body runs in Chrome's isolated `USER_SCRIPT` world:
   `[VibeMonkey] script "<name>" threw: <message>` on the page console,
   also forwarding to the service worker log. Async failures (rejected
   Promises, `setTimeout` throws) are not currently captured.
+
+MAIN-world scripts can't reach the SW (`chrome.runtime.sendMessage`
+is not exposed in the page world), so their `vm:start` / `vm:error`
+reports are silently dropped — the badge's "actual" classification
+stays empty for them. The activation console log still works.
+
+For the full per-tag inventory — which header fields VibeMonkey
+honors, which are parsed but not acted on, and which are ignored —
+see [docs/supported-headers.md](docs/supported-headers.md).
 
 ## Installation
 

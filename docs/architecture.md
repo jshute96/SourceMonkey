@@ -39,7 +39,9 @@ details live in the topic-specific docs linked below.
   [file-access.md](file-access.md).
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
-  See [script-viewer.md](script-viewer.md).
+  See [script-viewer.md](script-viewer.md). For which `@tag` fields
+  actually change behavior, see
+  [supported-headers.md](supported-headers.md).
 - **URL matcher** (`src/url-match.ts`) — pure
   `@match`/`@include`/`@exclude` evaluator. See
   [matching.md](matching.md).

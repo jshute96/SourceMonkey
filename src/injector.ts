@@ -49,7 +49,7 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
-import { getValue } from './userscript-header.js';
+import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_HEAD,
   WRAPPER_MATCHER,
@@ -66,6 +66,7 @@ export const VM_ERROR_MSG = 'vm:error';
 
 export type RunAt = chrome.userScripts.RunAt;
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
+export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
 
 // Map @run-at to the User Scripts API's runAt enum. document-body has
 // no exact equivalent; treat it as document_start (it fires before
@@ -80,6 +81,43 @@ export function mapRunAt(value: string | undefined): RunAt {
     default:
       return 'document_idle';
   }
+}
+
+// Decide which execution world a script should run in. Mirrors
+// Violentmonkey's `@inject-into` semantics (and Tampermonkey's default
+// for `@grant none`):
+//
+//   - `@inject-into page`        → MAIN  (page context — sees the page's
+//                                          window.X globals)
+//   - `@inject-into content`     → USER_SCRIPT (isolated)
+//   - default / `auto` / unset   → MAIN when there are no @grant entries
+//                                  (or every @grant is `none`); otherwise
+//                                  USER_SCRIPT.
+//
+// Why this default: scripts that opt out of GM_* (the `@grant none`
+// convention) expect direct page access — `window.map`, `window.jQuery`,
+// page-defined functions. Putting them in USER_SCRIPT silently breaks
+// any script that touches a page global. Tampermonkey runs `@grant none`
+// scripts in page context for the same reason.
+//
+// Limitation: MAIN-world scripts cannot call `chrome.runtime.sendMessage`,
+// so the wrapper's `vm:start` / `vm:error` reports never reach the SW.
+// The wrapper already swallows that throw; the badge's "actual"
+// classification simply stays empty for MAIN-world scripts. See
+// docs/injection.md.
+export function resolveWorld(header: ParsedHeader | null | undefined): InjectionWorld {
+  // No metadata block at all → treat like an unannotated script
+  // (effectively @grant none). validateHeader rejects scripts without a
+  // header anyway, but be defensive here so the function is total.
+  if (!header) return 'MAIN';
+  const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
+  if (injectInto === 'page') return 'MAIN';
+  if (injectInto === 'content') return 'USER_SCRIPT';
+  // `auto` or unspecified — look at @grant.
+  const grants = getValues(header, 'grant').map((g) => g.trim().toLowerCase());
+  if (grants.length === 0) return 'MAIN';
+  if (grants.every((g) => g === 'none' || g === '')) return 'MAIN';
+  return 'USER_SCRIPT';
 }
 
 function isRegexLiteral(s: string): boolean {
@@ -174,7 +212,7 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
       matching: needsWrapperFilter ? script.matching : undefined,
     }) }],
     runAt,
-    world: 'USER_SCRIPT',
+    world: resolveWorld(script.header),
   };
   if (matches.length > 0) spec.matches = matches;
   if (includeGlobs.length > 0) spec.includeGlobs = includeGlobs;

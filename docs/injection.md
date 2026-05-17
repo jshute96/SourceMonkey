@@ -92,7 +92,52 @@ source's `enabled` flag are both true, we build a
   (`document-start` / `document-body` → `document_start`,
   `document-end` → `document_end`, default / anything else →
   `document_idle`).
-- `world: 'USER_SCRIPT'` — Chrome's isolated user-script world.
+- `world` — `'MAIN'` (the page's own world) or `'USER_SCRIPT'`
+  (Chrome's isolated user-script world), resolved per script — see
+  [Execution world](#execution-world) below.
+
+### Execution world
+
+The `world` field decides whether the body runs in the page's own
+`window` (MAIN) or in Chrome's isolated user-script context
+(USER_SCRIPT). The two worlds share the DOM but have separate
+`window` objects, so a USER_SCRIPT-world script cannot see
+page-defined globals like `window.jQuery`, `window.map`, or any
+function declared by an inline `<script>` tag on the page.
+
+Resolution (`resolveWorld` in `src/injector.ts`) mirrors
+Violentmonkey's `@inject-into` and Tampermonkey's `@grant none`
+default:
+
+- `// @inject-into page` → MAIN.
+- `// @inject-into content` → USER_SCRIPT.
+- `// @inject-into auto` / unspecified → MAIN when there are no
+  `@grant` entries or every `@grant` is `none`; USER_SCRIPT
+  otherwise.
+
+Why a `@grant none` script defaults to MAIN: scripts that opt out of
+`GM_*` (the conventional `@grant none` declaration) almost always
+intend to talk to the page directly — read its globals, call its
+functions, hook its jQuery. Running them in the isolated world
+silently breaks any such script. Tampermonkey runs `@grant none`
+scripts in page context for the same reason.
+
+#### MAIN-world limitations
+
+`chrome.runtime.sendMessage` is not exposed to MAIN-world scripts.
+The wrapper's `vm:start` / `vm:error` reports therefore never reach
+the SW for MAIN scripts:
+
+- The wrapper's `__vmSend` already wraps the call in `try/catch` and
+  attaches `.catch(() => {})` to the returned promise, so the page
+  console stays clean — the report just disappears.
+- Practical effect: the per-tab badge's "actual" classification stays
+  empty for MAIN scripts. The "expected" count (from
+  `match-index.ts`) is unaffected. Script activation still logs to
+  the page console via the wrapper's `console.log`.
+
+`GM_*` is not supported anywhere yet (see Limitations); the
+`@grant`-keyed branch just future-proofs the resolver for when it is.
 
 ### /regex/ pattern forms
 
