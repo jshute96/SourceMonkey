@@ -14,12 +14,12 @@
 //   - posts vm:start / vm:error messages to the SW so the SW can log
 //     activity centrally.
 //
-// We deliberately do NOT install a global `unhandledrejection`
-// listener — it would catch the page's own promise rejections (and
-// every other userscript's) and falsely attribute them to whichever
-// script happened to register the handler. Async failures from inside
-// a body escape our try/catch as a known limitation; documented in
-// docs/injection.md.
+// In addition to that synchronous catch, the wrapper installs
+// window `error` + `unhandledrejection` listeners filtered by a
+// per-script `//# sourceURL=vibemonkey://…` marker appended to the
+// body. Errors whose stack (or filename) references our marker are
+// attributed to this script and reported as vm:error; everything else
+// on the page is ignored. See docs/injection.md.
 //
 // Requirements: manifest must include the "userScripts" permission AND
 // the user must enable the "Allow User Scripts" toggle (Chrome ≥138) or
@@ -124,6 +124,21 @@ function isRegexLiteral(s: string): boolean {
   return s.length >= 2 && s.startsWith('/') && s.endsWith('/');
 }
 
+// Build the per-script sourceURL the wrapper uses to attribute async
+// errors back to this script. Two requirements:
+//   - The string must be unique per script (we filter error events by
+//     `indexOf(sourceUrl) !== -1` against stack/filename), so we include
+//     the stored UUID.
+//   - The string must be a valid URL-shaped value because the engine
+//     parses `//# sourceURL=...` as one — slashes, colons, dots, dashes
+//     and underscores are safe; we replace everything else in the name
+//     with `_` so a script titled "Foo / Bar (v2)" still produces a
+//     well-formed sourceURL.
+function buildSourceUrl(id: string, name: string): string {
+  const safe = String(name).replace(/[^a-zA-Z0-9._-]/g, '_') || 'script';
+  return `vibemonkey://${id}/${safe}.user.js`;
+}
+
 // Wrap a userscript body with our activation/error logging shim plus
 // (optionally) the regex-aware match recheck. The wrapper runs in the
 // USER_SCRIPT world; `chrome.runtime.sendMessage` works there because
@@ -153,14 +168,19 @@ export function buildWrappedBody(args: {
   const matcherBlock = args.matching
     ? WRAPPER_MATCHER.replace('"__VM_MATCHING__"', () => JSON.stringify(args.matching!))
     : '';
+  const sourceUrl = buildSourceUrl(args.id, args.name);
   const head = WRAPPER_HEAD
     .replace('"__VM_NAME__"', () => JSON.stringify(args.name))
     .replace('"__VM_ID__"', () => JSON.stringify(args.id))
+    .replace('"__VM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
     .replace('"__VM_MATCHER_BLOCK__";', () => matcherBlock);
   // No newline between head and body so body line N stays at physical
   // line N. Tail goes on its own line after the body for readability
-  // when inspecting the registered code.
-  return head + args.body + '\n' + WRAPPER_TAIL;
+  // when inspecting the registered code. The `//# sourceURL=` directive
+  // is appended last — it labels the script in devtools AND is what the
+  // wrapper's window error listener greps for to decide whether a given
+  // error originated in this script's code.
+  return head + args.body + '\n' + WRAPPER_TAIL + '\n//# sourceURL=' + sourceUrl + '\n';
 }
 
 // Pure: build the spec we'll hand to chrome.userScripts.register for

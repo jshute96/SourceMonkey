@@ -96,11 +96,51 @@ test('buildWrappedBody: never inserts literal "$&" from matcher replace (no repl
   assert.doesNotMatch(wrapped, /__VM_MATCHER_BLOCK__/);
 });
 
-test('buildWrappedBody: does NOT install a global unhandledrejection listener', () => {
-  // A global listener would attribute page-wide and other-userscript
-  // rejections to whichever script registered it — wrong by design.
+test('buildWrappedBody: appends a # sourceURL= directive with id and sanitized name', () => {
+  // The sourceURL is what the wrapper's async-error listeners grep
+  // stack frames for, and what devtools labels the script with.
+  const wrapped = buildWrappedBody({
+    id: 'abc-123',
+    name: 'Foo / Bar (v2)',
+    body: '',
+  });
+  // Unsafe chars in the name (space, slash, parens) are folded to `_`
+  // so the resulting line is a well-formed sourceURL directive. The
+  // marker terminates the wrapped script — match end-of-string to
+  // confirm it's at the bottom where the engine expects it.
+  const expected = 'vibemonkey://abc-123/Foo___Bar__v2_.user.js';
+  assert.ok(
+    wrapped.includes('\n//# sourceURL=' + expected + '\n'),
+    `expected sourceURL directive for ${expected} in wrapped output`,
+  );
+});
+
+test('buildWrappedBody: installs window error + unhandledrejection listeners', () => {
+  // Async failures from handlers the script installs (setTimeout,
+  // addEventListener callbacks, promise chains) escape the body's
+  // try/catch. We install window-level listeners and filter by the
+  // sourceURL marker so we still get attributed reports without
+  // false-positively catching unrelated page errors.
   const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
-  assert.doesNotMatch(wrapped, /unhandledrejection/);
+  assert.match(wrapped, /addEventListener\("error"/);
+  assert.match(wrapped, /addEventListener\("unhandledrejection"/);
+  // The async-error reporter must dispatch via the existing vm:error
+  // channel so the SW's badge logic handles it just like a sync throw.
+  // The page console gets only an info-level attribution note — the
+  // native browser logging already shows the error + stack.
+  assert.match(wrapped, /caught async/);
+});
+
+test('buildWrappedBody: async-error listeners filter by the per-script sourceURL', () => {
+  // Without filtering, a MAIN-world script's listener would attribute
+  // every page error (and every other userscript's error) to itself.
+  // Filtering by the unique sourceURL string is what keeps attribution
+  // honest. Verify the wrapped output references __vmSourceUrl from
+  // both the filename check and the stack check paths.
+  const wrapped = buildWrappedBody({ id: 'abc', name: 'X', body: '' });
+  assert.match(wrapped, /indexOf\(__vmSourceUrl\)/);
+  const sourceUrl = 'vibemonkey://abc/X.user.js';
+  assert.ok(wrapped.includes(JSON.stringify(sourceUrl)));
 });
 
 // ---------- buildRegistrationSpec ----------

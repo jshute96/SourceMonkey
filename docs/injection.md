@@ -190,6 +190,11 @@ Placeholders the injector substitutes at registration time:
 
 - `"__VM_NAME__"` → JSON-encoded `@name` (or relativePath fallback).
 - `"__VM_ID__"` → JSON-encoded stored script UUID.
+- `"__VM_SOURCE_URL__"` → JSON-encoded `vibemonkey://<id>/<name>.user.js`
+  string. The injector also appends a `# sourceURL=<same>` directive
+  to the wrapped body so devtools labels the script with that URL AND
+  the wrapper's async-error listeners can attribute errors by stack
+  inspection.
 - `"__VM_MATCHER_BLOCK__";` → empty, or the minified matcher source
   (which itself contains a `"__VM_MATCHING__"` placeholder).
 - `"__VM_MATCHING__"` (inside the matcher) → JSON-encoded
@@ -208,11 +213,53 @@ Every registered body is wrapped in a tiny shim that:
 - Wraps the body in `try { … } catch (__vmErr) { … }`:
   - Logs `"[VibeMonkey] script <name> threw: …"` to the page console.
   - Sends a `{ type: 'vm:error', id, url, message }` message to the SW.
+- Installs window `"error"` and `"unhandledrejection"` listeners,
+  filtered by the per-script sourceURL (see [Async-error attribution](#async-error-attribution)
+  below).
 - All `sendMessage` calls go through `__vmSend`, which catches the
   synchronous throw AND attaches `.catch(() => {})` to the returned
   Promise. Without that, an unreachable SW would surface as an
   `Uncaught (in promise) Error: Could not establish connection` in
   every page console.
+
+### Async-error attribution
+
+The body's `try`/`catch` only catches **synchronous** throws — once
+the script returns control to the event loop, anything thrown later
+(from `setTimeout`, `addEventListener` callbacks, `fetch().then`,
+`MutationObserver`, etc.) escapes it.
+
+To catch those without falsely attributing the page's own errors to
+this script, the wrapper:
+
+- Appends `# sourceURL=vibemonkey://<id>/<safe-name>.user.js` to the
+  wrapped body. The JS engine tags stack frames originating in this
+  registered script with that URL, and devtools labels the script
+  with it.
+- Stores the same URL in `__vmSourceUrl` inside the wrapper IIFE.
+- Installs `window.addEventListener("error", …)` and
+  `…("unhandledrejection", …)`, both with the capture flag set.
+- Each listener checks the event's `filename` (for `error`) and
+  `error.stack` / `reason.stack` for the marker via `indexOf`. Only
+  hits are reported via `__vmSend({ type: 'vm:error', … })`; the
+  default page-side error logging is left in place (no
+  `preventDefault`).
+- A `WeakSet` de-dupes the error object so the same throw isn't
+  reported twice if it reaches both paths.
+
+Trade-offs:
+
+- The sync `try`/`catch` and the async listeners can both fire for a
+  single error if the body throws synchronously AND the page re-emits
+  it as a global error. The `WeakSet` keeps the listener path silent
+  in that case.
+- MAIN-world scripts share `window` with the page; the sourceURL
+  filter is what keeps attribution honest.
+- Multiple userscripts in the same world each install their own
+  listeners; only the listener whose `__vmSourceUrl` shows up in the
+  stack reports, so a single error produces a single `vm:error`.
+- Stack-trace-free rejections (e.g. `Promise.reject("string")`) can't
+  be attributed and are silently dropped — better than guessing.
 
 ### Message flow
 
@@ -239,14 +286,14 @@ the expected match set.
 
 ### Trade-offs of wrapping
 
-- The `try`/`catch` around the body only catches **synchronous**
-  throws. Async failures (rejected Promises, errors thrown out of
-  `setTimeout`) escape it. We deliberately do NOT install a global
-  `unhandledrejection` listener — it would catch the page's own
-  rejections (and every other userscript's) and falsely attribute
-  them to whichever script registered the handler. If we want async
-  coverage later it needs to be per-script-promise instrumentation,
-  not a global listener.
+- The body's `try`/`catch` only catches synchronous throws; async
+  failures are caught by the filtered window listeners described in
+  [Async-error attribution](#async-error-attribution).
+- Stack-frame filtering is the load-bearing piece. If a future Chrome
+  release strips `# sourceURL=` from `error.stack` (it never has, but
+  no spec guarantees it), the wrapper would silently stop catching
+  async errors. The unit tests for the wrapped output guard against
+  the directive being dropped during build.
 
 ## Limitations / future work
 
