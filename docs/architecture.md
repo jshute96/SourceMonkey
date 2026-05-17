@@ -115,6 +115,19 @@ The viewer uses **Prism.js** (vendored from `node_modules/prismjs` by
 content can't be interpreted as HTML markup. The default Prism theme
 is shipped as `prism.css`.
 
+### Header parsing
+
+- `src/userscript-header.ts` parses the `// ==UserScript== … //
+  ==/UserScript==` metadata block found at the top of `.user.js` files.
+- It returns a flat list of `{tag, locale?, value}` entries in source
+  order and exposes `getValue` / `getValues` / `getLocalized` / `hasTag`
+  helpers.
+- The parser is policy-free: it doesn't decide which tags can repeat
+  (`@match`, `@grant`, …) vs which are single-valued (`@name`,
+  `@version`). Callers pick the accessor that matches the tag.
+- See `references/header-reference.md` in the `tampermonkey` plugin
+  skill for the tag catalog.
+
 ### Listing-format caveat
 
 Chrome's directory-listing HTML is an undocumented format. The

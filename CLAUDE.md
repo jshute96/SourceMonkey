@@ -37,6 +37,14 @@ user before elaborating further. Default to action over planning.
 - Do not commit or push changes without getting user instructions to do so.
 - When committing, include ALL relevant changed files — check `git status` before committing to avoid missing files like TODO.md, documentation, or new files.
 
+## Reference material
+- **Tampermonkey/userscript details**: the `tampermonkey` plugin skill
+  ships a reference library covering header tags, URL matching, `GM_*`
+  APIs, sandbox modes, browser quirks, and more. Invoke it via
+  `/tampermonkey:tampermonkey` (or load the on-disk files under
+  `~/.claude/plugins/cache/wookstar-claude-plugins/tampermonkey/<ver>/skills/tampermonkey/references/`)
+  when implementing anything that touches userscript semantics.
+
 ## Code Changes
 - Use the file index to help find relevant files.
 - When changing behavior, read existing design docs to understand previous designs and intentions. Ask questions if unsure if we should change those requirements.

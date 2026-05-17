@@ -20,6 +20,14 @@ const api: VibeMonkeyApi = {
 
 (self as unknown as { VibeMonkey: VibeMonkeyApi }).VibeMonkey = api;
 
+// Clicking the toolbar icon opens the options page. We have no popup
+// configured, so onClicked fires on every action click; openOptionsPage
+// honors `options_ui.open_in_tab` (true) and focuses an existing tab
+// if one is already open.
+chrome.action.onClicked.addListener(() => {
+  chrome.runtime.openOptionsPage();
+});
+
 // background.ts is compiled as an ES module (declared via
 // `"type": "module"` in manifest.json's service_worker entry). The
 // explicit empty export keeps tsc treating this file as a module

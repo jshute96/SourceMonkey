@@ -10,8 +10,9 @@
 
 ## Local directory sources — follow-ups
 
-- Parse userscript headers (name, `@match`, etc.) from scanned files
-  instead of just listing the relative path.
+- Wire the userscript header parser (`src/userscript-header.ts`) into
+  the scan/render flow so listings show `@name` / `@match` instead of
+  just the relative path.
 - Watch for upstream changes to Chrome's `file://` directory-listing
   HTML format that could break `parseListing`.
 - Editing path: if we ever want in-app edits, we'll need either FSA

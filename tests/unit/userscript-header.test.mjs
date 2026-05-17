@@ -1,0 +1,140 @@
+// Tests for the userscript metadata-block parser in
+// src/userscript-header.ts (compiled to dist/userscript-header.js).
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  parseHeader,
+  getValue,
+  getValues,
+  getLocalized,
+  hasTag,
+} from '../../dist/userscript-header.js';
+
+const SAMPLE = `// ==UserScript==
+// @name         Hello World
+// @name:de      Hallo Welt
+// @namespace    https://example.com/scripts
+// @version      1.2.3
+// @description  Greets the page
+// @author       Jane
+// @match        https://example.com/*
+// @match        https://*.example.org/*
+// @exclude      https://example.com/admin/*
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @run-at       document-end
+// @noframes
+// ==/UserScript==
+
+(function () { 'use strict'; })();
+`;
+
+test('parseHeader extracts tags in source order', () => {
+  const h = parseHeader(SAMPLE);
+  assert.ok(h);
+  assert.equal(h.tags.length, 13);
+  assert.deepEqual(h.tags[0], { tag: 'name', value: 'Hello World' });
+  assert.deepEqual(h.tags[1], { tag: 'name', locale: 'de', value: 'Hallo Welt' });
+  assert.deepEqual(h.tags[h.tags.length - 1], { tag: 'noframes', value: '' });
+});
+
+test('getValue returns first non-localized value', () => {
+  const h = parseHeader(SAMPLE);
+  assert.equal(getValue(h, 'name'), 'Hello World');
+  assert.equal(getValue(h, 'version'), '1.2.3');
+  assert.equal(getValue(h, 'run-at'), 'document-end');
+  assert.equal(getValue(h, 'missing'), undefined);
+});
+
+test('getValue is case-insensitive on the tag name', () => {
+  const h = parseHeader(SAMPLE);
+  assert.equal(getValue(h, 'Name'), 'Hello World');
+  assert.equal(getValue(h, 'RUN-AT'), 'document-end');
+});
+
+test('getValues returns every non-localized occurrence in order', () => {
+  const h = parseHeader(SAMPLE);
+  assert.deepEqual(getValues(h, 'match'), [
+    'https://example.com/*',
+    'https://*.example.org/*',
+  ]);
+  assert.deepEqual(getValues(h, 'grant'), ['GM_setValue', 'GM_getValue']);
+  assert.deepEqual(getValues(h, 'never-there'), []);
+});
+
+test('getLocalized returns locale → value, excluding the unlocalized form', () => {
+  const h = parseHeader(SAMPLE);
+  assert.deepEqual(getLocalized(h, 'name'), { de: 'Hallo Welt' });
+  assert.deepEqual(getLocalized(h, 'description'), {});
+});
+
+test('hasTag detects flag tags without values', () => {
+  const h = parseHeader(SAMPLE);
+  assert.equal(hasTag(h, 'noframes'), true);
+  assert.equal(hasTag(h, 'unwrap'), false);
+});
+
+test('parseHeader returns null when the start marker is missing', () => {
+  assert.equal(parseHeader('// @name Foo\n// ==/UserScript==\n'), null);
+});
+
+test('parseHeader returns null when the end marker is missing', () => {
+  assert.equal(parseHeader('// ==UserScript==\n// @name Foo\n'), null);
+});
+
+test('parseHeader ignores non-tag lines inside the block', () => {
+  const src = `// ==UserScript==
+// just a regular comment, no @tag
+// @name        Foo
+//   not a tag either
+// ==/UserScript==
+`;
+  const h = parseHeader(src);
+  assert.deepEqual(h.tags, [{ tag: 'name', value: 'Foo' }]);
+});
+
+test('parseHeader stops at the end marker and ignores body tags', () => {
+  const src = `// ==UserScript==
+// @name Foo
+// ==/UserScript==
+// @name BodyImpostor
+`;
+  const h = parseHeader(src);
+  assert.deepEqual(getValues(h, 'name'), ['Foo']);
+});
+
+test('parseHeader preserves multi-token values like @resource and @require', () => {
+  const src = `// ==UserScript==
+// @resource     myCSS https://example.com/style.css
+// @require      https://cdn.example.com/lib.js#sha256=abc
+// @description  Spaces   in    the    middle
+// ==/UserScript==
+`;
+  const h = parseHeader(src);
+  assert.equal(
+    getValue(h, 'resource'),
+    'myCSS https://example.com/style.css',
+  );
+  assert.equal(
+    getValue(h, 'require'),
+    'https://cdn.example.com/lib.js#sha256=abc',
+  );
+  assert.equal(getValue(h, 'description'), 'Spaces   in    the    middle');
+});
+
+test('parseHeader tolerates CRLF line endings', () => {
+  const src = '// ==UserScript==\r\n// @name CRLF\r\n// ==/UserScript==\r\n';
+  const h = parseHeader(src);
+  assert.equal(getValue(h, 'name'), 'CRLF');
+});
+
+test('parseHeader tolerates extra whitespace around the markers', () => {
+  const src = `  //   ==UserScript==
+//    @name     Padded
+   //   ==/UserScript==
+`;
+  const h = parseHeader(src);
+  assert.equal(getValue(h, 'name'), 'Padded');
+});

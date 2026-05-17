@@ -40,6 +40,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/userscript.html` | Userscript viewer markup: filename, status, scrollable highlighted code box |
 | `src/userscript.ts` | Userscript viewer controller — fetches the `file://` URL via XHR and highlights it |
 | `src/directories.ts` | Directory store (chrome.storage), `file://` listing parser, scanner, and reader |
+| `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block (tag, locale, value) |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -51,6 +52,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
+| `tests/unit/userscript-header.test.mjs` | Unit tests for the userscript metadata-block parser |
 
 ## Docs (`docs/`)
 
