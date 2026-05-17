@@ -42,6 +42,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/directories.ts` | Directory I/O: `file://` fetch, listing parser, recursive `*.user.js` scanner, path/URL helpers |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
+| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
+| `src/match-index.ts` | In-memory cache of `ok` scripts' matching info, kept in sync with `chrome.storage.local` |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -55,6 +57,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
+| `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
 
 ## Docs (`docs/`)
 
@@ -65,3 +68,4 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, options-page render |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
+| `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |

@@ -24,8 +24,9 @@ details live in the topic-specific docs linked below.
 ```
 
 - **Service worker** (`src/background.ts`) — central event handler.
-  Today exposes `self.VibeMonkey` for tests and opens the options
-  page on toolbar click.
+  Opens the options page on toolbar click, watches tab navigation,
+  and surfaces per-tab match counts via the action badge. See
+  [matching.md](matching.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — manage
   source directories and inspect per-script status. See
   [storage.md](storage.md).
@@ -38,6 +39,13 @@ details live in the topic-specific docs linked below.
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
   See [script-viewer.md](script-viewer.md).
+- **URL matcher** (`src/url-match.ts`) — pure
+  `@match`/`@include`/`@exclude` evaluator. See
+  [matching.md](matching.md).
+- **Match index** (`src/match-index.ts`) — in-memory cache of every
+  `ok` script's matching info, kept in sync with storage; lets the SW
+  find matches without per-navigation storage reads. See
+  [matching.md](matching.md).
 - **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
   — per-script viewer page rendering content from the store. See
   [script-viewer.md](script-viewer.md).
@@ -51,6 +59,8 @@ details live in the topic-specific docs linked below.
   enumeration, format caveats.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
+- [matching.md](matching.md) — `@match`/`@include`/`@exclude`
+  semantics, in-memory match index, per-tab badge + tooltip.
 
 ## Build pipeline
 

@@ -2,9 +2,12 @@
 
 ## Skeleton
 
-- Implement userscript injection via `chrome.scripting` (read
-  `script-store` → match `@match`/`@exclude` against the active tab →
-  inject body).
+- Implement userscript injection via `chrome.scripting`: the SW
+  already computes matches per tab and surfaces the count as a badge
+  — the next step is to actually inject the matching scripts.
+- Catch SPA navigation (`chrome.webNavigation.onHistoryStateUpdated`)
+  so the badge updates when sites navigate via the History API
+  without a full document load.
 - Decide on `@grant` / `@require` / `@resource` support level.
 - Make an icon that works
 
