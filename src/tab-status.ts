@@ -41,9 +41,15 @@ export interface TabMatchState {
   // still want to flag them MISSING if they didn't.
   matches: MatchedScript[];
   actual: Record<string, ActualStatus>;
+  // Script IDs whose on-disk content has changed since the wrapper for
+  // this document ran. The badge surfaces these as RELOAD/purple so the
+  // user knows a page reload would pick up the new version. Cleared
+  // implicitly when the document is replaced (new documentId → new
+  // state). Optional so older persisted records still parse.
+  staleScriptIds?: string[];
 }
 
-export type RowStatus = 'OK' | 'ERROR' | 'MISSING' | 'UNEXPECTED';
+export type RowStatus = 'OK' | 'ERROR' | 'MISSING' | 'UNEXPECTED' | 'RELOAD';
 
 export interface BadgeRow {
   id: string;
@@ -65,6 +71,16 @@ export const BADGE_ORANGE = '#f57c00';
 export const BADGE_GREEN = '#2e7d32';
 // Red = at least one script reported an error.
 export const BADGE_RED = '#d32f2f';
+// Purple = at least one running script's source on disk has changed and
+// a reload would pick up the new version. Loses to RED (errors still
+// matter most) but wins over ORANGE. Picked bright (≈ Material
+// purple-A400) so the badge reads as a vivid "something changed"
+// signal, not a muted/inactive color.
+export const BADGE_PURPLE = '#d500f9';
+
+// Tooltip status string for RELOAD rows. Kept verbose because the
+// tooltip is the only place the user is told *what to do*.
+const RELOAD_LABEL = 'Reload to update';
 
 // Pure: derive the badge view from a tab's combined expected + actual.
 //
@@ -74,14 +90,19 @@ export const BADGE_RED = '#d32f2f';
 //       ERROR      — actual reported `error` (regardless of expected)
 //       MISSING    — expected but no `actual` entry yet
 //       UNEXPECTED — actual `started` but not in our expected set
+//       RELOAD     — a script that's started here, but its on-disk
+//                    content has changed since (would be OK otherwise)
 //   - Badge color:
 //       RED    if any script reported ERROR
+//       PURPLE else, if any RELOAD row
 //       ORANGE else, if any MISSING or UNEXPECTED
 //       GREEN  otherwise
 //   - Badge text is the size of the union of expected ∪ actual IDs.
 export function computeBadge(state: TabMatchState): BadgeView {
   const expectedById = new Map<string, MatchedScript>();
   for (const m of state.matches) expectedById.set(m.id, m);
+
+  const stale = new Set<string>(state.staleScriptIds ?? []);
 
   const allIds = new Set<string>([
     ...expectedById.keys(),
@@ -90,6 +111,7 @@ export function computeBadge(state: TabMatchState): BadgeView {
 
   let anyError = false;
   let anyMismatch = false;
+  let anyReload = false;
   const rows: BadgeRow[] = [];
   for (const id of allIds) {
     const expected = expectedById.get(id);
@@ -99,7 +121,15 @@ export function computeBadge(state: TabMatchState): BadgeView {
     const name = actual?.name ?? expected?.name ?? id;
     let status: RowStatus;
     let message: string | undefined;
-    if (actual?.state === 'error') {
+    if (actual && stale.has(id)) {
+      // Whether the wrapper reported started or errored, that report
+      // came from the OLD content. RELOAD/purple is more actionable
+      // than ERROR/red here — the on-disk fix may already address the
+      // failure, and we'd rather nudge the user to reload than to
+      // keep showing an outdated error.
+      status = 'RELOAD';
+      anyReload = true;
+    } else if (actual?.state === 'error') {
       status = 'ERROR';
       message = actual.message;
       anyError = true;
@@ -118,11 +148,16 @@ export function computeBadge(state: TabMatchState): BadgeView {
 
   let color = BADGE_GREEN;
   if (anyError) color = BADGE_RED;
+  else if (anyReload) color = BADGE_PURPLE;
   else if (anyMismatch) color = BADGE_ORANGE;
 
-  const title = ['VibeMonkey', ...rows.map((r) => `${r.name} | ${r.status}`)].join('\n');
+  const title = ['VibeMonkey', ...rows.map((r) => `${r.name} | ${formatStatus(r.status)}`)].join('\n');
 
   return { count: allIds.size, color, title, rows };
+}
+
+function formatStatus(s: RowStatus): string {
+  return s === 'RELOAD' ? RELOAD_LABEL : s;
 }
 
 // ---------- Per-tab document history ----------
@@ -223,6 +258,16 @@ export function mergeMatches(
   // Incoming wins on name updates (the cache is fresher).
   for (const m of incoming) byId.set(m.id, m);
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Pure: flag `scriptId` as stale. No-op when the wrapper hasn't
+// reported anything for this script — the SW listener uses the
+// identity-return to skip storage writes for non-running tabs.
+export function markScriptStale(state: TabMatchState, scriptId: string): TabMatchState {
+  if (!state.actual[scriptId]) return state;
+  const existing = state.staleScriptIds ?? [];
+  if (existing.includes(scriptId)) return state;
+  return { ...state, staleScriptIds: [...existing, scriptId] };
 }
 
 // Pure: merge an incoming wrapper report into the tab's `actual` map.

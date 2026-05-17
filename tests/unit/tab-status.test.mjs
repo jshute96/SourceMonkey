@@ -13,11 +13,13 @@ import {
   computeBadge,
   getCurrentState,
   getDocState,
+  markScriptStale,
   mergeMatches,
   setCurrentDoc,
   writeDocState,
   BADGE_GREEN,
   BADGE_ORANGE,
+  BADGE_PURPLE,
   BADGE_RED,
   MAX_DOCS_PER_TAB,
 } from '../../dist/tab-status.js';
@@ -142,6 +144,113 @@ test('computeBadge: prefers actual-side name over expected-side', () => {
     actual: { a: { state: 'started', name: 'NewName' } },
   });
   assert.equal(view.rows[0].name, 'NewName');
+});
+
+// ---------- computeBadge: RELOAD / PURPLE ----------
+
+test('computeBadge: started + stale → RELOAD, PURPLE, tooltip says "Reload to update"', () => {
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: {
+      a: { state: 'started', name: 'Alpha' },
+      b: { state: 'started', name: 'Beta' },
+    },
+    staleScriptIds: ['a'],
+  });
+  assert.equal(view.color, BADGE_PURPLE);
+  const alpha = view.rows.find((r) => r.name === 'Alpha');
+  assert.equal(alpha.status, 'RELOAD');
+  // The tooltip surfaces the verbose label, not the raw enum value.
+  assert.ok(view.title.includes('Alpha | Reload to update'), view.title);
+  assert.ok(view.title.includes('Beta | OK'), view.title);
+});
+
+test('computeBadge: non-stale ERROR still beats RELOAD for color', () => {
+  // Beta errored and its file on disk has NOT changed → row stays ERROR,
+  // badge stays RED. Stale alpha is still RELOAD on its row but RED
+  // wins for the overall color.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: {
+      a: { state: 'started', name: 'Alpha' },
+      b: { state: 'error', name: 'Beta', message: 'boom' },
+    },
+    staleScriptIds: ['a'],
+  });
+  assert.equal(view.color, BADGE_RED);
+  const alpha = view.rows.find((r) => r.name === 'Alpha');
+  assert.equal(alpha.status, 'RELOAD');
+  const beta = view.rows.find((r) => r.name === 'Beta');
+  assert.equal(beta.status, 'ERROR');
+});
+
+test('computeBadge: stale ERROR row becomes RELOAD', () => {
+  // The error was from outdated content; the user's fix on disk may
+  // address it. We don't keep showing red — purple/Reload to update is
+  // the more actionable signal.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: { a: { state: 'error', name: 'Alpha', message: 'boom' } },
+    staleScriptIds: ['a'],
+  });
+  assert.equal(view.color, BADGE_PURPLE);
+  assert.equal(view.rows[0].status, 'RELOAD');
+});
+
+test('computeBadge: stale id with no started report → not RELOAD (only running code reloads)', () => {
+  // The wrapper hasn't reported for `a` yet, so there is no "running
+  // code" to flag. The row stays MISSING; no RELOAD/purple.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+    staleScriptIds: ['a'],
+  });
+  assert.equal(view.color, BADGE_ORANGE);
+  assert.equal(view.rows[0].status, 'MISSING');
+});
+
+// ---------- markScriptStale ----------
+
+test('markScriptStale: marks a started script as stale', () => {
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { a: { state: 'started', name: 'A' } },
+  };
+  const next = markScriptStale(state, 'a');
+  assert.deepEqual(next.staleScriptIds, ['a']);
+  assert.notEqual(next, state);
+});
+
+test('markScriptStale: no-op when the script never reported started', () => {
+  const state = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  const next = markScriptStale(state, 'a');
+  // Same object back — callers can cheap-test for "nothing to write".
+  assert.equal(next, state);
+});
+
+test('markScriptStale: no-op when already stale', () => {
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { a: { state: 'started', name: 'A' } },
+    staleScriptIds: ['a'],
+  };
+  const next = markScriptStale(state, 'a');
+  assert.equal(next, state);
+});
+
+test('markScriptStale: an errored script also becomes stale (RELOAD wins over ERROR)', () => {
+  // A wrapper that errored was running OLD content; the on-disk fix
+  // is the actionable next step, so we promote to RELOAD.
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { a: { state: 'error', name: 'A', message: 'boom' } },
+  };
+  const next = markScriptStale(state, 'a');
+  assert.deepEqual(next.staleScriptIds, ['a']);
 });
 
 // ---------- applyScriptReport ----------

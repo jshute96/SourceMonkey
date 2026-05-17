@@ -166,6 +166,7 @@ export function buildWrappedBody(args: {
   id: string;
   name: string;
   body: string;
+  loadedAt: number;
   matching?: { matches: string[]; includes: string[]; excludes: string[] };
 }): string {
   // Pass replacements as functions so `$&` / `$1` etc. inside our
@@ -179,6 +180,11 @@ export function buildWrappedBody(args: {
   const head = WRAPPER_HEAD
     .replace('"__VM_NAME__"', () => JSON.stringify(args.name))
     .replace('"__VM_ID__"', () => JSON.stringify(args.id))
+    // The wrapper template has "__VM_LOADED_AT__" (quoted) where the
+    // loadedAt should appear. JSON.stringify on a number yields a bare
+    // numeric literal, so the surrounding quotes get replaced and the
+    // wrapper ends up with `var __vmLoadedAt = 1737051234567;`.
+    .replace('"__VM_LOADED_AT__"', () => JSON.stringify(args.loadedAt))
     .replace('"__VM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
     .replace('"__VM_MATCHER_BLOCK__";', () => matcherBlock);
   // No newline between head and body so body line N stays at physical
@@ -236,6 +242,7 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
       id: script.id,
       name,
       body: script.bodyText,
+      loadedAt: script.loadedAt,
       matching: needsWrapperFilter ? script.matching : undefined,
     }) }],
     runAt,

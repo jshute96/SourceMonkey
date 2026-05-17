@@ -12,10 +12,10 @@ import {
   getSource,
   isScriptEnabled,
   isSourceEnabled,
-  refreshScript,
   setScriptEnabled,
   type StoredScript,
 } from './script-store.js';
+import { updateScript } from './script-updater.js';
 import {
   formatScriptSize,
   formatScriptStatusLabel,
@@ -107,7 +107,10 @@ async function onRefresh(): Promise<void> {
   const prior = refreshBtn.textContent;
   refreshBtn.textContent = 'Refreshing…';
   try {
-    const next = await refreshScript(scriptId);
+    // Routed through the shared updater: if a background opportunistic
+    // check is already in flight for this script, we wait for it
+    // instead of starting a second fetch.
+    const next = await updateScript(scriptId, 'manual');
     if (next) render(next);
   } finally {
     refreshBtn.disabled = false;

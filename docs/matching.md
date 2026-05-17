@@ -124,8 +124,11 @@ For each tab we:
 - **Count** — size of the union of expected and actual script IDs.
 - **Color**:
   - **RED** (`#d32f2f`) — any script reported an error.
-  - **ORANGE** (`#f57c00`) — no errors, but the expected set and the
-    actual set diverge (MISSING or UNEXPECTED entries).
+  - **PURPLE** (`#d500f9`) — no errors, but at least one running
+    script's source file on disk has changed since the wrapper for
+    this document ran. Reload the page to pick up the new version.
+  - **ORANGE** (`#f57c00`) — no errors or stale rows, but the
+    expected set and the actual set diverge (MISSING or UNEXPECTED).
   - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
     no errors.
 - **Tooltip** — `"VibeMonkey"` followed by one line per script,
@@ -137,6 +140,9 @@ For each tab we:
   - `UNEXPECTED` — wrapper sent `vm:start` but the matcher didn't
     predict it (e.g. Chrome's matching disagrees with ours, or a race
     against a script-store change).
+  - `Reload to update` — the script is running here but its source
+    on disk has changed since. The verbose label is rendered in place
+    of the raw enum so the tooltip tells the user what to do.
 
 ### Actual reports from injected wrappers
 
@@ -205,6 +211,68 @@ queue (`enqueueTabWork`). Without it, two `vm:start` messages that
 arrive in the same event-loop turn each do their own get/modify/set
 against `chrome.storage.session` and the second write loses the first
 update.
+
+## Stale-tab notification
+
+When a script's on-disk content changes — whether from a manual
+Refresh, a Refresh All, or a background opportunistic check (see
+[storage.md](storage.md#updater)) — every open tab whose current
+document is running the OLD version flips to PURPLE/RELOAD.
+
+How it works:
+
+- All refresh paths go through `script-updater.ts`, which writes via
+  `script-store.ts` to `chrome.storage.local`. Fresh content bumps the
+  row's `loadedAt`.
+- `background.ts` installs a `chrome.storage.onChanged` listener on
+  `script:*` keys; whenever `oldValue.loadedAt !== newValue.loadedAt`
+  the script id goes on a "changed" list.
+- The listener walks every persisted `tab:<tabId>` record's CURRENT
+  doc. For each changed id with any actual report (`started` OR
+  `error`), `markScriptStale` adds it to that doc's
+  `staleScriptIds`; `computeBadge` re-renders.
+- A stale ERROR row promotes to RELOAD/purple — the error came from
+  the OLD content, and the fix on disk may already address it, so
+  "Reload to update" is more actionable than continuing to show red.
+- A new document load (new `documentId`) creates a fresh state, so
+  reload naturally clears the stale flag. The wrapper for the new
+  document runs the freshly-stored content.
+
+### Closing the report-after-change race
+
+- **Symptom**: the storage write can land before the wrapper's
+  `vm:start` does, leaving `actual` empty when the listener walks the
+  tab — so nothing gets flagged.
+- **Mitigation**: every wrapper carries the `StoredScript.loadedAt`
+  it was registered with in `vm:start` / `vm:error` payloads.
+- **Comparison**: `recordScriptReport` compares the wrapper's
+  `loadedAt` against the current stored row's `loadedAt`. If the
+  stored one is newer, the wrapper ran OUTDATED code and the script
+  id is marked stale right there, ahead of the listener path.
+- **Both orderings covered**: listener-then-report goes through the
+  listener path; report-then-listener (the SW-startup or storage-fast
+  case) goes through the wrapper-loadedAt comparison.
+
+### Opportunistic checks only fire on real navigation
+
+- **Refresh path** (`refreshAllOpenTabs`, driven by `onCacheChanged`)
+  passes `trigger: 'refresh'` to `updateTabMatches` and skips the
+  opportunistic file-system check.
+- **Navigation path** (`webNavigation.onCommitted` /
+  `onHistoryStateUpdated`, plus the `chrome.tabs.onUpdated` fallback)
+  passes `trigger: 'navigation'` and runs the check.
+- **Why**: without this, editing one script would fan out into a
+  stat-and-fetch on every script on every other open tab on every
+  script-set change.
+
+Why match by `loadedAt` rather than `bodyText`:
+
+- `loadedAt` bumps iff the load pipeline built from fresh fetched
+  content. The size+mtime skip path preserves the prior row's
+  `loadedAt`, so a no-op refresh produces no badge flap.
+- `bodyText` comparison would also fire for byte-identical re-saves
+  triggered by the unchanged-skip-not-applying corner case (e.g. when
+  a directory listing doesn't include mtime).
 
 ## What this doesn't do (yet)
 

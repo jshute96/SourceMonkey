@@ -29,6 +29,7 @@ import {
   applyScriptReport,
   computeBadge,
   getDocState,
+  markScriptStale,
   mergeMatches,
   setCurrentDoc,
   writeDocState,
@@ -36,6 +37,8 @@ import {
   type TabMatchState,
   type TabRecord,
 } from './tab-status.js';
+import { requestOpportunisticScriptChecks } from './script-updater.js';
+import { getScript, type StoredScript } from './script-store.js';
 
 interface VibeMonkeyApi {
   version: string;
@@ -127,10 +130,18 @@ async function clearTabState(tabId: number): Promise<void> {
 //     after a script-set change). Treat as "same document if we have
 //     a prior state for this tab" — we want to update expected for
 //     the current URL without wiping running-script reports.
+// `trigger` distinguishes a real user navigation (where opportunistic
+// auto-update is desired — the user just interacted with a page that
+// uses these scripts) from a script-set-driven re-evaluation (where it
+// is NOT — `refreshAllOpenTabs` walks every open tab whenever the
+// match index changes, and we don't want to ping the filesystem for
+// every script on every other tab just because one of them got
+// updated).
 async function updateTabMatches(
   tabId: number,
   url: string | undefined,
   documentId: string | null,
+  trigger: 'navigation' | 'refresh',
 ): Promise<void> {
   if (!url || !INJECTABLE_SCHEME.test(url)) {
     await renderBadge(tabId, null);
@@ -149,15 +160,32 @@ async function updateTabMatches(
   const restored = prev != null;
   const matches = restored ? mergeMatches(prev.matches, incoming) : incoming;
   const actual = restored ? prev.actual : {};
-  const state: TabMatchState = { documentId: docId, url, matches, actual };
+  // A refresh-driven re-evaluation must NOT silently drop staleScriptIds —
+  // those are kept across navigation events anyway, but extra-explicit
+  // here because we're rebuilding the state object from scratch.
+  const staleScriptIds = restored && prev?.staleScriptIds ? prev.staleScriptIds : undefined;
+  const state: TabMatchState = staleScriptIds
+    ? { documentId: docId, url, matches, actual, staleScriptIds }
+    : { documentId: docId, url, matches, actual };
   const nextRecord = setCurrentDoc(record, docId, state);
   await setTabRecord(tabId, nextRecord);
-  if (incoming.length > 0) {
+  if (incoming.length > 0 && trigger === 'navigation') {
+    // Logged only on the navigation path. Refresh-triggered
+    // re-evaluations (driven by `onCacheChanged` after a script-set
+    // change) walk every open tab to update their badges; logging the
+    // match list on every tab on every script change is noisy and
+    // misleadingly suggests we're doing per-tab I/O when we're not.
     const tag = restored ? ' restored' : '';
     console.log(
       `[VibeMonkey] ${incoming.length} matching script(s) for ${url} (doc=${docId || '?'}${tag}):`,
       incoming.map((m) => m.name),
     );
+    // Opportunistic auto-update: while the user is interacting with a
+    // page that uses these scripts, ask the updater (in the background,
+    // rate-limited) whether their source files on disk have changed.
+    // Skipped for the refresh trigger so a single user edit doesn't fan
+    // out into a filesystem check on every other open tab's scripts.
+    requestOpportunisticScriptChecks(incoming.map((m) => m.id));
   }
   await renderBadge(tabId, state);
 }
@@ -197,20 +225,20 @@ function installNavigationListeners(): void {
     console.warn('[VibeMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       if (changeInfo.url) {
-        enqueueTabWork(tabId, () => updateTabMatches(tabId, changeInfo.url, null));
+        enqueueTabWork(tabId, () => updateTabMatches(tabId, changeInfo.url, null, 'navigation'));
       } else if (changeInfo.status === 'loading' && tab.url) {
-        enqueueTabWork(tabId, () => updateTabMatches(tabId, tab.url, null));
+        enqueueTabWork(tabId, () => updateTabMatches(tabId, tab.url, null, 'navigation'));
       }
     });
     return;
   }
   wn.onCommitted.addListener((d) => {
     if (d.frameId !== 0) return;
-    enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null));
+    enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
   wn.onHistoryStateUpdated.addListener((d) => {
     if (d.frameId !== 0) return;
-    enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null));
+    enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
 }
 
@@ -258,10 +286,84 @@ async function refreshAllOpenTabs(): Promise<void> {
       const url = tab.url;
       // Pass null documentId — updateTabMatches will reuse the prior
       // state's documentId, which is what we want for a script-set
-      // change (the document hasn't navigated).
-      enqueueTabWork(tabId, () => updateTabMatches(tabId, url, null));
+      // change (the document hasn't navigated). Trigger is 'refresh'
+      // so this doesn't fan out into opportunistic filesystem checks
+      // for every script on every open tab.
+      enqueueTabWork(tabId, () => updateTabMatches(tabId, url, null, 'refresh'));
     }
   }
+}
+
+// ---------- Stale-script propagation ----------
+// See docs/matching.md#stale-tab-notification for design.
+const SCRIPT_PREFIX = 'script:';
+function installStaleScriptListener(): void {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    const changedIds: string[] = [];
+    for (const [key, change] of Object.entries(changes)) {
+      if (!key.startsWith(SCRIPT_PREFIX)) continue;
+      const before = change.oldValue as StoredScript | undefined;
+      const after = change.newValue as StoredScript | undefined;
+      // Skip brand-new rows and deletions: nothing to flag stale.
+      if (!before || !after) continue;
+      // Compare loadedAt (not bodyText): it bumps iff fresh content was
+      // actually fetched, so the unchanged-skip path doesn't flap.
+      if (before.loadedAt === after.loadedAt) continue;
+      changedIds.push(key.slice(SCRIPT_PREFIX.length));
+    }
+    if (changedIds.length === 0) return;
+    void propagateStaleScripts(changedIds);
+  });
+}
+
+// Per-tab enqueue keeps stale marking ordered with concurrent
+// navigation / vm:* updates for the same tab.
+async function propagateStaleScripts(scriptIds: string[]): Promise<void> {
+  const all = await chrome.storage.session.get(null);
+  let affectedTabs = 0;
+  for (const [key, value] of Object.entries(all)) {
+    if (!key.startsWith('tab:')) continue;
+    const tabIdStr = key.slice(4);
+    const tabId = Number(tabIdStr);
+    if (!Number.isFinite(tabId)) continue;
+    const record = value as TabRecord | undefined;
+    if (!record || !('byDoc' in record)) continue;
+    // Check the current doc only — a vm:start from an older doc is rare
+    // and that doc is already invisible to the user. Keeps the loop
+    // cheap and avoids painting offscreen badges.
+    const current = record.byDoc[record.currentDocId];
+    if (!current) continue;
+    // Mark whether the wrapper reported started OR error — both ran the
+    // OLD content, and reloading would pick up the new version. Pages
+    // showing only an outdated MISSING row are intentionally NOT
+    // promoted; without an actual report there's no "running code" to
+    // be stale against, and a reload won't change what the badge shows.
+    const relevant = scriptIds.filter((id) => current.actual[id] != null);
+    if (relevant.length === 0) continue;
+    affectedTabs++;
+    enqueueTabWork(tabId, () => applyStaleToTab(tabId, relevant));
+  }
+  console.log(
+    `[VibeMonkey] stale-script change for ${scriptIds.length} script(s); ` +
+    `${affectedTabs} tab(s) flagged for reload`,
+  );
+}
+
+async function applyStaleToTab(tabId: number, scriptIds: string[]): Promise<void> {
+  const record = await getTabRecord(tabId);
+  if (!record) return;
+  const current = record.byDoc[record.currentDocId];
+  if (!current) return;
+  let next = current;
+  for (const id of scriptIds) next = markScriptStale(next, id);
+  if (next === current) return;
+  const nextRecord: TabRecord = {
+    ...record,
+    byDoc: { ...record.byDoc, [record.currentDocId]: next },
+  };
+  await setTabRecord(tabId, nextRecord);
+  await renderBadge(tabId, next);
 }
 
 // ---------- vm:start / vm:error from injected wrappers ----------
@@ -286,7 +388,10 @@ function installScriptMessageListener(): void {
     if (tabId == null) return;
     const type = (msg as { type?: unknown }).type;
     if (type !== VM_START_MSG && type !== VM_ERROR_MSG) return;
-    const payload = msg as { id: string; name?: string; url?: string; message?: string };
+    // Keep the inline cast in sync with `recordScriptReport`'s param
+    // type so a rename of the wrapper field is caught at compile time
+    // rather than silently dropping through the unknown-typed cast.
+    const payload = msg as { id: string; name?: string; url?: string; message?: string; loadedAt?: number };
     enqueueTabWork(tabId, () => recordScriptReport(tabId, sender, type, payload));
   });
 }
@@ -295,7 +400,7 @@ async function recordScriptReport(
   tabId: number,
   sender: chrome.runtime.MessageSender,
   type: typeof VM_START_MSG | typeof VM_ERROR_MSG,
-  payload: { id: string; name?: string; url?: string; message?: string },
+  payload: { id: string; name?: string; url?: string; message?: string; loadedAt?: number },
 ): Promise<void> {
   const id = payload.id;
   if (!id) return;
@@ -313,7 +418,32 @@ async function recordScriptReport(
   if (type === VM_START_MSG) {
     console.log(`[VibeMonkey] start id=${id}${tabPart} ${senderUrl}`);
   } else {
-    console.error(`[VibeMonkey] error id=${id}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+    // console.warn (not console.error) so a userscript runtime failure
+    // — which is a bug in user-supplied code we're relaying — doesn't
+    // bubble up to chrome://extensions/?errors as if VibeMonkey itself
+    // had thrown. The badge already surfaces the failure to the user;
+    // the Errors panel should be reserved for actual extension bugs.
+    console.warn(`[VibeMonkey] error id=${id}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+  }
+
+  // Closes the race where storage updates land BEFORE vm:start arrives.
+  // See docs/matching.md#closing-the-report-after-change-race.
+  // Guard against falsy loadedAt (0 / NaN) — every production write
+  // bumps loadedAt to Date.now(), so a non-positive value means an old
+  // wrapper that predates this field or a test fixture, neither of
+  // which we want to compare against.
+  const wrapperLoadedAt = typeof payload.loadedAt === 'number' && payload.loadedAt > 0
+    ? payload.loadedAt : null;
+  let isStale = false;
+  if (wrapperLoadedAt != null) {
+    const stored = await getScript(id);
+    if (stored && stored.loadedAt > wrapperLoadedAt) {
+      isStale = true;
+      console.log(
+        `[VibeMonkey] vm:${type === VM_START_MSG ? 'start' : 'error'} is from outdated content for ${name} ` +
+        `(wrapper=${wrapperLoadedAt} stored=${stored.loadedAt}); flagging tab=${tabId} as needing reload`,
+      );
+    }
   }
 
   const record = await getTabRecord(tabId);
@@ -337,7 +467,8 @@ async function recordScriptReport(
   const report: ActualStatus = type === VM_START_MSG
     ? { state: 'started', name }
     : { state: 'error', name, message: String(payload.message ?? '') };
-  const next = applyScriptReport(state, id, report);
+  let next = applyScriptReport(state, id, report);
+  if (isStale) next = markScriptStale(next, id);
   // writeDocState (not setCurrentDoc) — a late vm:* from a doc we've
   // already navigated away from updates its stored state but doesn't
   // steal the badge from the doc currently on screen.
@@ -349,6 +480,7 @@ async function recordScriptReport(
 }
 
 installStorageListener();
+installStaleScriptListener();
 installNavigationListeners();
 installScriptMessageListener();
 // Kick off the initial cache load so the very first navigation doesn't

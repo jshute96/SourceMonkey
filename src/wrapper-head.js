@@ -11,6 +11,9 @@
    Placeholders the injector substitutes at registration time:
      "__VM_NAME__"          — JSON-encoded script @name
      "__VM_ID__"            — JSON-encoded stored script UUID
+     "__VM_LOADED_AT__"     — StoredScript.loadedAt at registration,
+                              echoed in vm:start so the SW can detect
+                              wrappers running outdated content.
      "__VM_SOURCE_URL__"    — JSON-encoded sourceURL string that the
                               injector also appends to the body as a
                               `# sourceURL=` directive. Used as the
@@ -23,6 +26,7 @@
   "use strict";
   var __vmName = "__VM_NAME__";
   var __vmId = "__VM_ID__";
+  var __vmLoadedAt = "__VM_LOADED_AT__";
   var __vmSourceUrl = "__VM_SOURCE_URL__";
   /* Telemetry transport. In USER_SCRIPT world chrome.runtime.sendMessage
      is exposed (configureWorld({ messaging: true }) was called by the
@@ -85,7 +89,7 @@
        duplicating that — just note the attribution at info level so
        it's clear which VibeMonkey script is being blamed. */
     try { console.info("[VibeMonkey] caught async " + kind + " in", __vmName); } catch (_e3) {}
-    __vmSend({ type: "vm:error", id: __vmId, name: __vmName, url: location.href, message: msg });
+    __vmSend({ type: "vm:error", id: __vmId, name: __vmName, loadedAt: __vmLoadedAt, url: location.href, message: msg });
   };
   try {
     window.addEventListener("error", function (ev) {
@@ -102,5 +106,5 @@
     }, true);
   } catch (_e) {}
   try { console.log("[VibeMonkey] script", __vmName, "running on", location.href); } catch (_e) {}
-  __vmSend({ type: "vm:start", id: __vmId, name: __vmName, url: location.href });
+  __vmSend({ type: "vm:start", id: __vmId, name: __vmName, loadedAt: __vmLoadedAt, url: location.href });
   try {

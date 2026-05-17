@@ -56,12 +56,23 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
 - As you browse, the VibeMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The
-  badge color signals health: **green** when everything matches up,
-  **orange** when some scripts are missing or unexpected, **red**
-  when any script reported an error. Hovering the icon shows one line
-  per script as `"<name> | <STATUS>"` (`OK` / `ERROR` / `MISSING` /
-  `UNEXPECTED`). The state updates on navigation and re-counts
+  badge color signals health:
+  - **green** — everything matches up.
+  - **orange** — some scripts are missing or unexpected.
+  - **purple** — a running script's source on disk has changed; a
+    reload would pick up the new version.
+  - **red** — at least one script reported an error.
+
+  Hovering the icon shows one line per script as
+  `"<name> | <STATUS>"` (`OK` / `ERROR` / `MISSING` / `UNEXPECTED` /
+  `Reload to update`). The state updates on navigation and re-counts
   immediately when you flip an enable toggle on the options page.
+- **Auto-update.** While you browse a page that uses your scripts,
+  VibeMonkey checks (in the background, rate-limited, never blocking
+  navigation) whether their source files on disk have changed. Any
+  change is loaded into storage and the affected tabs flip purple
+  with a "Reload to update" tooltip — same signal you'd see after a
+  manual Refresh.
 
 **One-time setup:** on `chrome://extensions`, for VibeMonkey enable:
 

@@ -19,8 +19,6 @@ import {
   getSources,
   isScriptEnabled,
   isSourceEnabled,
-  refreshAllSources,
-  refreshSource,
   removeSource,
   setScriptEnabled,
   setScriptsEnabled,
@@ -28,6 +26,10 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import {
+  updateAllSources,
+  updateSource,
+} from './script-updater.js';
 import {
   formatScriptSize,
   formatScriptStatusLabel,
@@ -289,7 +291,10 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     // actually changed after the refresh lands.
     const before = await getSourceWithScripts(id);
     const priorScripts = before?.scripts ?? [];
-    await refreshSource(id);
+    // Goes through script-updater so a background opportunistic check
+    // already in flight for this source coalesces with our click instead
+    // of doing redundant work.
+    await updateSource(id, 'manual');
     // Refresh may have added/removed scripts, flipped statuses, etc.
     // Rebuild just this one section so the rest of the page (other
     // directories, banners, scroll position) is undisturbed.
@@ -327,7 +332,7 @@ async function onRefreshAll(): Promise<void> {
       priorsBySource.set(s.id, before?.scripts ?? []);
     }));
 
-    await refreshAllSources();
+    await updateAllSources('manual');
 
     // Re-render each section in place. We don't blow away the whole
     // directories list so scroll position + un-refreshed sections (if

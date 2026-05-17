@@ -44,12 +44,12 @@ test('mapRunAt: case-insensitive', () => {
 // ---------- buildWrappedBody ----------
 
 test('buildWrappedBody: inlines body verbatim so syntax errors surface at register()', () => {
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'var foo = 1;' });
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'var foo = 1;', loadedAt: 0 });
   assert.match(wrapped, /var foo = 1;/);
 });
 
 test('buildWrappedBody: includes the id and name as JS string literals', () => {
-  const wrapped = buildWrappedBody({ id: 'abc"123', name: 'My "Script"', body: '' });
+  const wrapped = buildWrappedBody({ id: 'abc"123', name: 'My "Script"', body: '', loadedAt: 0 });
   // JSON.stringify handles the escaping for both, so the inlined literal
   // contains the escaped form.
   assert.match(wrapped, /"abc\\"123"/);
@@ -57,7 +57,7 @@ test('buildWrappedBody: includes the id and name as JS string literals', () => {
 });
 
 test('buildWrappedBody: wraps the body in a try/catch with sendMessage', () => {
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'doThing();' });
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'doThing();', loadedAt: 0 });
   assert.match(wrapped, /try {/);
   assert.match(wrapped, /catch \(__vmErr\)/);
   assert.match(wrapped, /type: "vm:error"/);
@@ -67,8 +67,20 @@ test('buildWrappedBody: wraps the body in a try/catch with sendMessage', () => {
 test('buildWrappedBody: swallows sendMessage promise rejections to avoid feedback loops', () => {
   // Without a `.catch(...)` a missing receiver would surface as an
   // Uncaught (in promise) error in the page console on every send.
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '', loadedAt: 0 });
   assert.match(wrapped, /\.catch\(function ?\(\) ?\{\}\)/);
+});
+
+test('buildWrappedBody: embeds loadedAt as a bare numeric literal in the vm:start payload', () => {
+  // The SW uses this value to detect a wrapper running outdated content
+  // (storage's current loadedAt > wrapper's loadedAt). JSON.stringify
+  // on a number yields a bare numeric literal — confirm the quotes
+  // around the "__VM_LOADED_AT__" placeholder were stripped.
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '', loadedAt: 1737051234567 });
+  assert.match(wrapped, /__vmLoadedAt = 1737051234567/);
+  // And the vm:start payload references it (not the placeholder).
+  assert.match(wrapped, /type: "vm:start"[^}]*loadedAt: __vmLoadedAt/);
+  assert.doesNotMatch(wrapped, /__VM_LOADED_AT__/);
 });
 
 test('buildWrappedBody: head is on a single physical line so body lines stay aligned', () => {

@@ -34,6 +34,10 @@ details live in the topic-specific docs linked below.
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
   [storage.md](storage.md).
+- **Script updater** (`src/script-updater.ts`) — the single entry
+  point every refresh path goes through. Manual Refresh buttons call
+  it synchronously; the background SW calls it opportunistically when
+  a tab uses some scripts. See [storage.md](storage.md#updater).
 - **Directory I/O** (`src/directories.ts`) — `file://` fetcher,
   directory-listing parser, and recursive `*.user.js` scanner. See
   [file-access.md](file-access.md).

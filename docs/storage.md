@@ -132,6 +132,50 @@ Every load path goes through the same pipeline:
   `storage.onChanged` event (and therefore one background re-sync)
   instead of one per script.
 
+## Updater
+
+`src/script-updater.ts` is the single entry point every refresh path
+goes through, so concurrency and rate-limiting live in one place.
+
+- **`updateScript(id, mode)`**, **`updateSource(id, mode)`**,
+  **`updateAllSources(mode)`** — thin gates over the corresponding
+  `script-store` `refresh*` functions.
+- **`mode: 'manual'`** — Refresh buttons. Always runs. Awaited by the
+  caller so the UI can show a spinner and re-render.
+- **`mode: 'opportunistic'`** — the background SW calls this for each
+  script that matches a page the user just navigated to. Fire-and-
+  forget. No sooner than `UPDATE_MIN_INTERVAL_MS` (10s) after the prior
+  completion for that resource; otherwise the call returns
+  immediately with no work done.
+- **Coalescing.** Any caller that arrives while a refresh is already in
+  flight for a resource awaits the same promise instead of starting a
+  second fetch — even across modes (e.g. a manual click during a
+  background check).
+
+The actual stale-tab signal isn't driven from here. The updater just
+calls `script-store`, which writes to `chrome.storage.local`; the
+background SW's stale-script listener picks up any content change from
+the storage event itself (see
+[matching.md](matching.md#stale-tab-notification)).
+
+### Opportunistic check on navigation
+
+When `chrome.webNavigation` reports a navigation, the SW computes the
+match set as usual, then hands the matched script IDs to
+`requestOpportunisticScriptChecks`. Per-script behavior:
+
+- If a check is already in flight for this script, this caller drops
+  on the floor (the in-flight one will produce a fresh storage row).
+- Else if a previous check completed less than 10s ago, drop on the
+  floor.
+- Else `refreshScript(id)` runs in the background. The directory
+  listing supplies the file's `size` + `mtime`; if both still match the
+  stored row, no fetch happens (see `fetchOrSkipInParallel`). When they
+  don't, the new content is fetched, parsed, and written.
+
+Any write that lands a new `loadedAt` triggers the stale-script
+listener on the SW side and flips affected tabs to PURPLE/RELOAD.
+
 ## Pure helpers (testable in isolation)
 
 `script-store.ts` exports its core logic as pure functions so the

@@ -5,12 +5,20 @@
 // finds `*.user.js` files under a registered directory. All
 // persistence lives in `src/script-store.ts`; this module is pure I/O.
 //
-// Why XMLHttpRequest instead of fetch(): fetch() treats
+// Why XMLHttpRequest in page contexts: fetch() treats
 // chrome-extension:// → file:// as cross-origin and returns an opaque
 // response (status 0, unreadable body). XHR doesn't apply that
 // restriction. For file:// XHRs, `status` stays 0 even on success
 // (there's no HTTP layer), so we infer success from `onload` plus a
 // non-empty responseText.
+//
+// Service-worker fallback: MV3 service workers have no XMLHttpRequest
+// at all, so we can't use the XHR path there. fetch() does work from a
+// SW for `file://` URLs as long as the manifest grants `file:///*` in
+// host_permissions (and the user has flipped "Allow access to file
+// URLs") — the cross-origin restriction above is a document-context
+// behavior, not a SW one. We pick the path at call time by checking
+// for XHR availability.
 //
 // Requirements:
 //   - manifest: "file:///*" in host_permissions
@@ -43,6 +51,11 @@ export function joinPath(base: string, child: string): string {
 // ---------- File / directory fetch ----------
 
 export function fetchFileUrlText(url: string): Promise<string> {
+  if (typeof XMLHttpRequest !== 'undefined') return fetchFileUrlTextXhr(url);
+  return fetchFileUrlTextFetch(url);
+}
+
+function fetchFileUrlTextXhr(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('GET', url);
@@ -56,6 +69,33 @@ export function fetchFileUrlText(url: string): Promise<string> {
     xhr.onerror = () => reject(new Error(`network error fetching ${url}`));
     xhr.send();
   });
+}
+
+// Service-worker path: fetch() works for file:// URLs when the SW has
+// the matching host permission. `response.ok` is true for file://
+// fetches that succeed (Chrome synthesises status 200); a 404-style
+// missing file shows up as a network error or response.ok === false,
+// not a thrown exception, so we have to inspect both.
+async function fetchFileUrlTextFetch(url: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (err) {
+    throw new Error(`network error fetching ${url}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!response.ok && response.status !== 0) {
+    throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
+  }
+  // Opaque responses (response.type === 'opaque') have an unreadable
+  // body; surface a distinct error rather than returning empty content,
+  // so a manual refresh from a page context can succeed where the SW
+  // path fell through.
+  if (response.type === 'opaque') {
+    throw new Error(`opaque response from ${url} (file:// fetch not permitted in this context)`);
+  }
+  const text = await response.text();
+  if (!text) throw new Error(`empty response from ${url}`);
+  return text;
 }
 
 // ---------- Directory listing parser ----------
