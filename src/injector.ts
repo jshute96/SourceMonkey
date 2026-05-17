@@ -313,38 +313,6 @@ async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> 
   return ok;
 }
 
-// Install the runtime.onUserScriptMessage listener that logs
-// activation + errors posted by the wrapper. Messages from the
-// USER_SCRIPT world arrive on this dedicated event — NOT on the
-// regular chrome.runtime.onMessage event. Safe to call repeatedly.
-//
-// The event surface only exists once the "userScripts" permission is
-// active. We guard so SW startup survives older Chromes / permission-
-// revoked states without blowing up the rest of the bootstrap.
-let messageListenerInstalled = false;
-export function installMessageListener(): void {
-  if (messageListenerInstalled) return;
-  const ev = chrome.runtime.onUserScriptMessage as
-    | chrome.runtime.ExtensionMessageEvent | undefined;
-  if (!ev || typeof ev.addListener !== 'function') {
-    console.warn('[VibeMonkey] chrome.runtime.onUserScriptMessage not available; skipping listener install');
-    return;
-  }
-  messageListenerInstalled = true;
-  ev.addListener((msg, sender) => {
-    if (!msg || typeof msg !== 'object') return;
-    const type = (msg as { type?: unknown }).type;
-    const tabPart = sender.tab?.id != null ? ` tab=${sender.tab.id}` : '';
-    if (type === VM_START_MSG) {
-      const m = msg as { id: string; url: string };
-      console.log(`[VibeMonkey] start id=${m.id}${tabPart} ${m.url}`);
-    } else if (type === VM_ERROR_MSG) {
-      const m = msg as { id: string; url: string; message: string };
-      console.error(`[VibeMonkey] error id=${m.id}${tabPart} ${m.url}: ${m.message}`);
-    }
-  });
-}
-
 function describeError(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);

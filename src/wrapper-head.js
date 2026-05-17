@@ -26,5 +26,5 @@
   };
   "__VM_MATCHER_BLOCK__";
   try { console.log("[VibeMonkey] script", __vmName, "running on", location.href); } catch (_e) {}
-  __vmSend({ type: "vm:start", id: __vmId, url: location.href });
+  __vmSend({ type: "vm:start", id: __vmId, name: __vmName, url: location.href });
   try {

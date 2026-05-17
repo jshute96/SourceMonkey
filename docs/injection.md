@@ -169,10 +169,23 @@ Every registered body is wrapped in a tiny shim that:
   `Uncaught (in promise) Error: Could not establish connection` in
   every page console.
 
-The SW installs a single `chrome.runtime.onUserScriptMessage` listener
-(`installMessageListener`) that logs `vm:start` / `vm:error` events to
-the SW console with the tab ID. There is no UI surface for this yet —
-it's diagnostic only.
+### Message flow
+
+`background.ts` owns a single `chrome.runtime.onUserScriptMessage`
+listener. For each `vm:start` / `vm:error` it:
+
+- Logs the event to the SW console.
+- Looks up the sender tab's state in `chrome.storage.session` and
+  merges the report into the tab's `actual` map (script ID → `{state,
+  name, message?}`).
+- Re-renders the toolbar badge — color + tooltip — from the union of
+  expected and actual entries. See
+  [matching.md](matching.md#per-tab-badge--tooltip) for the
+  classification rules.
+
+Wrapper payloads include `id`, `name`, `url`, plus (for `vm:error`) a
+`message`. `name` lets the SW label UNEXPECTED scripts that aren't in
+the expected match set.
 
 > **Note:** messages from the USER_SCRIPT world arrive on
 > `chrome.runtime.onUserScriptMessage`, NOT the regular
@@ -200,10 +213,6 @@ it's diagnostic only.
 - **`@require` / `@resource`.** Not loaded at all. We'd fetch them at
   registration time and either prepend them to the body or use
   separate entries in `js: []`. Tracked in `TODO.md`.
-- **No per-tab status UI.** `vm:start` / `vm:error` go to the SW
-  console only. A natural next step is persisting them per-tab in
-  `chrome.storage.session` and rendering ✓/✗ marks next to each
-  matching script in the toolbar tooltip.
 - **No frame control.** We don't set `allFrames`, so scripts only run
   in the top frame. Adding `@noframes` parsing + a `allFrames` flip
   is straightforward.

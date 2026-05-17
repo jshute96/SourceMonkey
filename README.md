@@ -39,12 +39,15 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
   Description / Match / Exclude), and the highlighted source. The
   viewer reads from storage; its own **Refresh** button re-reads the
   one file from disk.
-- As you browse, the VibeMonkey toolbar icon shows an orange badge
-  with the number of enabled scripts whose `@match` / `@include`
-  patterns hit the current tab. Hovering the icon lists those scripts
-  in the tooltip. The count is per-tab and updates on navigation, and
-  re-counts immediately when you flip an enable toggle on the options
-  page.
+- As you browse, the VibeMonkey toolbar icon shows a per-tab badge
+  with the number of scripts involved on the current page (expected
+  by the matcher OR actually started by the injected wrapper). The
+  badge color signals health: **green** when everything matches up,
+  **orange** when some scripts are missing or unexpected, **red**
+  when any script reported an error. Hovering the icon shows one line
+  per script as `"<name> | <STATUS>"` (`OK` / `ERROR` / `MISSING` /
+  `UNEXPECTED`). The state updates on navigation and re-counts
+  immediately when you flip an enable toggle on the options page.
 
 **One-time setup:** on `chrome://extensions`, for VibeMonkey enable:
 

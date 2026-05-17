@@ -34,7 +34,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | MV3 extension manifest |
-| `src/background.ts` | Service worker entrypoint; exposes `self.VibeMonkey` for tests |
+| `src/background.ts` | Service worker entrypoint; per-tab badge wiring, vm:start/vm:error listener, injector + match-index bootstrap |
 | `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
 | `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners |
 | `src/userscript.html` | Userscript viewer markup: filename, status, scrollable highlighted code box |
@@ -45,6 +45,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
 | `src/match-index.ts` | In-memory cache of `ok` scripts' matching info, kept in sync with `chrome.storage.local` |
 | `src/injector.ts` | Syncs the enabled-`ok` script set into `chrome.userScripts` and wraps each body with an activation/error shim |
+| `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color) and per-tab document LRU (bfcache restore) |
 | `src/wrapper-head.js` | Wrapper prelude (IIFE open, vars, sendMessage helper, matcher slot, vm:start, try-open) — minified to one line by the build |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
@@ -63,6 +64,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at mapping, spec build, active-spec collection) |
+| `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 
 ## Docs (`docs/`)
 

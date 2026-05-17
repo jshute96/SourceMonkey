@@ -2,14 +2,9 @@
 
 ## Skeleton
 
-- Catch SPA navigation (`chrome.webNavigation.onHistoryStateUpdated`)
-  so the badge updates when sites navigate via the History API
-  without a full document load. (Chrome itself already re-runs
-  registered userscripts at the right time, so this is badge-only.)
 - Injection follow-ups — see the **Limitations / future work**
   section of [docs/injection.md](docs/injection.md): `@grant` /
-  `GM_*`, `@require` / `@resource`, per-tab injection status in the
-  tooltip, `@noframes` / `allFrames`.
+  `GM_*`, `@require` / `@resource`, `@noframes` / `allFrames`.
 - Make an icon that works
 
 ## Local directory sources — follow-ups
