@@ -81,3 +81,4 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |
 | `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones VibeMonkey honors, which are parsed-only, and which are ignored |
+| `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
