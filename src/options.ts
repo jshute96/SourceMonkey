@@ -1,10 +1,12 @@
 // Options page controller. Renders one section per registered source
-// (= directory), with Refresh + Remove buttons and a script table
-// showing filename, size, and parse status.
+// (a directory of userscripts, or a single `.user.js` file), with
+// Refresh + Remove buttons and a script table showing filename, size,
+// and parse status.
 //
-// "Add directory" submits an absolute filesystem path; the store scans
-// the directory and loads every `*.user.js` into chrome.storage
-// immediately, so the user doesn't need to click Refresh after add.
+// "Add source" submits an absolute filesystem path; the store scans
+// the directory (or stats the single file) and loads every `*.user.js`
+// into chrome.storage immediately, so the user doesn't need to click
+// Refresh after add.
 //
 // State changes (toggle, add, remove, refresh) update the DOM in
 // place: only the affected section/row mutates, and the control that
@@ -104,7 +106,7 @@ async function render(): Promise<void> {
 function emptyPlaceholder(): HTMLElement {
   const p = document.createElement('p');
   p.className = 'placeholder empty-placeholder';
-  p.textContent = 'No directories yet. Add one above.';
+  p.textContent = 'No sources yet. Add one above.';
   return p;
 }
 
@@ -128,7 +130,7 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
     sourceOn,
     false,
     (next, label) => void onToggleSource(source.id, next, label),
-    'Enable scripts under this directory',
+    'Enable scripts under this source',
   );
   enableLabel.classList.add('directory-toggle');
   header.appendChild(enableLabel);
@@ -515,8 +517,8 @@ function refreshBulkToggle(section: HTMLElement): void {
 function bulkTitle(sourceOn: boolean, allOn: boolean): string {
   if (!sourceOn) return 'Source is disabled';
   return allOn
-    ? 'Disable all scripts in this directory'
-    : 'Enable all scripts in this directory';
+    ? 'Disable all scripts in this source'
+    : 'Enable all scripts in this source';
 }
 
 function removeEmptyPlaceholder(): void {
@@ -702,7 +704,7 @@ function renderFileAccessBanner(): HTMLElement {
 
   const explain = document.createElement('p');
   explain.textContent =
-    'VibeMonkey can\'t read local directories until you enable ' +
+    'VibeMonkey can\'t read local files until you enable ' +
     '"Allow access to file URLs". Open the extension\'s details page, ' +
     'turn it on, then reload this page:';
   div.appendChild(explain);

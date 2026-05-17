@@ -14,6 +14,7 @@ import {
   pathToFileUrl,
   joinPath,
   scriptFileUrl,
+  scriptAbsolutePath,
   isSingleFilePath,
   parentDir,
   baseName,
@@ -109,5 +110,18 @@ test('scriptFileUrl uses the source path verbatim for a single-file source', () 
   assert.equal(
     scriptFileUrl('/home/me/foo bar.user.js', 'foo bar.user.js'),
     'file:///home/me/foo%20bar.user.js',
+  );
+});
+
+test('scriptAbsolutePath returns the source path for a single-file source', () => {
+  // Shared by scriptFileUrl and the viewer's Filename row so both
+  // representations of the file's location stay in lock-step.
+  assert.equal(
+    scriptAbsolutePath('/home/me/foo.user.js', 'foo.user.js'),
+    '/home/me/foo.user.js',
+  );
+  assert.equal(
+    scriptAbsolutePath('/home/me/scripts', 'sub/foo.user.js'),
+    '/home/me/scripts/sub/foo.user.js',
   );
 });

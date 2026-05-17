@@ -16,7 +16,7 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
 `chrome://extensions` → VibeMonkey → "Details" → "Extension options".
 
 - Enter the absolute path of a folder containing userscripts and click
-  **Add directory**. The directory is scanned (up to two subdirectory
+  **Add source**. The directory is scanned (up to two subdirectory
   levels deep) and every `*.user.js` is loaded into the extension's
   storage immediately. You can also point directly at a single
   `.user.js` file — it's treated as a one-script source and shows up

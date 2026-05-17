@@ -239,6 +239,13 @@ export async function scanForUserScripts(
 // source the relativePath equals the source path's basename, so the
 // join would double the name — just return the source path's URL.
 export function scriptFileUrl(sourcePath: string, relativePath: string): string {
-  if (isSingleFilePath(sourcePath)) return pathToFileUrl(sourcePath);
-  return pathToFileUrl(joinPath(sourcePath, relativePath));
+  return pathToFileUrl(scriptAbsolutePath(sourcePath, relativePath));
+}
+
+// Build the absolute filesystem path for a specific scanned script.
+// Shared by the URL builder above and the viewer's Filename row so a
+// single-file source doesn't get its basename joined twice.
+export function scriptAbsolutePath(sourcePath: string, relativePath: string): string {
+  if (isSingleFilePath(sourcePath)) return sourcePath;
+  return joinPath(sourcePath, relativePath);
 }
