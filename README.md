@@ -21,14 +21,16 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
   storage immediately.
 - Each directory section shows a table with a per-script enable
   toggle plus **Filename**, **Size**, and **Status** (`OK` or
-  `ERROR`). The directory itself has an enable toggle next to its
-  Refresh/Remove buttons; disabling a directory greys out (and
-  effectively disables) every script under it without losing each
-  script's own choice. A script reports `ERROR` when its metadata
-  block is missing or malformed, or when required fields (`@name`
-  plus `@match`/`@include`) aren't present — hover the status cell
-  to see the reason. If a file was loaded before but has disappeared
-  from disk, the size column shows `MISSING`.
+  `ERROR`). The directory itself has an enable toggle to the left of
+  its path; disabling a directory greys out (and effectively
+  disables) every script under it without losing each script's own
+  choice. The table header has a small **+** / **−** button that
+  bulk-enables or bulk-disables every script under the directory.
+  A script reports `ERROR` when its metadata block is missing or
+  malformed, or when required fields (`@name` plus `@match`/
+  `@include`) aren't present — hover the status cell to see the
+  reason. If a file was loaded before but has disappeared from disk,
+  the size column shows `MISSING`.
 - **Refresh** rescans the directory and reloads every script.
   **Remove** drops the directory (and its scripts) from storage.
 - Clicking a script name opens a viewer in a new tab showing the

@@ -13,8 +13,10 @@
       .add-form { display: flex; gap: 0.5em; margin-bottom: 1em; align-items: center; }
       .add-form input[type="text"] { flex: 1 1 auto; }
       .directory { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
-      .directory-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1em; margin-bottom: 0.5em; }
-      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; }
+      .directory-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
+      .directory-header h2 { flex: 1 1 auto; min-width: 0; }
+      .directory-toggle { flex: 0 0 auto; }
+      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; }
       .script-table { width: 100%; border-collapse: collapse; }
       .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
       .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
@@ -29,6 +31,12 @@
       .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
+      /* Bulk-toggle button in the script-table header. Sized like the
+         per-row checkbox so the column lines up. */
+      .bulk-toggle { width: 14px; height: 14px; padding: 0; font: inherit; font-weight: 700; line-height: 1; border: 1px solid #888; border-radius: 2px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+      .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
+      .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
+      .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 0.2em; }
       .status-ok { color: #166534; }
       .status-error, .status-missing { color: #b00; }
       .empty { color: #666; font-style: italic; }

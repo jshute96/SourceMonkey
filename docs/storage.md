@@ -120,16 +120,20 @@ Covered by `tests/unit/script-store.test.mjs`.
 The options page reads from the store and renders **one section per
 source**:
 
+- **Enable** toggle (checkbox) for the source as a whole, placed to
+  the left of the directory path.
 - Heading with the directory path.
-- **Enable** toggle (checkbox) for the source as a whole.
 - **Refresh** button → `refreshSource`.
 - **Remove** button → `removeSource`.
-- Table with columns **(toggle) | Filename | Size | Status**.
-  - First column is a per-script enable toggle. When the source is
-    disabled, the script toggles are visually greyed and the
-    checkbox itself is `disabled` (the underlying value is preserved
-    so flipping the source back on restores each script's prior
-    state).
+- Table with columns **(bulk toggle) | Filename | Size | Status**.
+  - Header's first cell is a small `+` / `−` bulk-toggle button:
+    flips every script under this source on (when not all are on) or
+    off (when all are on). Greyed when the source itself is off.
+  - First column of each row is a per-script enable toggle. When the
+    source is disabled, the script toggles are visually greyed and
+    the checkbox itself is `disabled` (the underlying value is
+    preserved so flipping the source back on restores each script's
+    prior state).
   - Filename links to the viewer at
     `userscript.html?script=<scriptId>`.
   - Size shows the UTF-8 byte count, or `"MISSING"` when

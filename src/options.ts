@@ -101,20 +101,24 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   const header = document.createElement('div');
   header.className = 'directory-header';
 
-  const heading = document.createElement('h2');
-  heading.textContent = source.path;
-  header.appendChild(heading);
-
-  const buttons = document.createElement('div');
-  buttons.className = 'directory-buttons';
-
+  // Per-source enable toggle sits left of the path so it visually
+  // groups with the directory it controls and aligns with the
+  // per-script toggle column below.
   const enableLabel = makeToggle(
     sourceOn,
     false,
     (next) => void onToggleSource(source.id, next),
     'Enable scripts under this directory',
   );
-  buttons.appendChild(enableLabel);
+  enableLabel.classList.add('directory-toggle');
+  header.appendChild(enableLabel);
+
+  const heading = document.createElement('h2');
+  heading.textContent = source.path;
+  header.appendChild(heading);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'directory-buttons';
 
   const refreshBtn = document.createElement('button');
   refreshBtn.textContent = 'Refresh';
@@ -160,12 +164,30 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
     return makeMessage('empty', 'No *.user.js files found.');
   }
 
+  // Header gets a bulk +/− button: clicking flips every per-script
+  // toggle. If everything is already on, it disables all; otherwise it
+  // enables all. Greyed when the parent source is disabled.
+  const allOn = scripts.every(isScriptEnabled);
+
   const table = document.createElement('table');
   table.className = 'script-table';
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  for (const label of ['', 'Filename', 'Size', 'Status']) {
+
+  const bulkHead = document.createElement('th');
+  bulkHead.className = 'toggle-cell';
+  bulkHead.appendChild(makeBulkToggle(
+    allOn,
+    !sourceOn,
+    () => void onBulkToggleScripts(scripts, !allOn),
+    sourceOn
+      ? (allOn ? 'Disable all scripts in this directory' : 'Enable all scripts in this directory')
+      : 'Source is disabled',
+  ));
+  headRow.appendChild(bulkHead);
+
+  for (const label of ['Filename', 'Size', 'Status']) {
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
@@ -177,6 +199,34 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
   for (const script of scripts) tbody.appendChild(renderScriptRow(script, sourceOn));
   table.appendChild(tbody);
   return table;
+}
+
+async function onBulkToggleScripts(scripts: StoredScript[], next: boolean): Promise<void> {
+  // Only flip the ones whose state differs — saves storage writes and
+  // avoids spurious onChanged events for unchanged rows.
+  const toFlip = scripts.filter((s) => isScriptEnabled(s) !== next);
+  await Promise.all(toFlip.map((s) => setScriptEnabled(s.id, next)));
+  await render();
+}
+
+// A checkbox-sized button with a "−" (when everything's on, so the
+// click disables) or "+" (otherwise — click enables). Distinct
+// element type from the per-row checkbox toggle so it can carry its
+// own affordance without confusing screen-readers about its state.
+function makeBulkToggle(
+  allOn: boolean,
+  disabled: boolean,
+  onClick: () => void,
+  title: string,
+): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'bulk-toggle';
+  btn.disabled = disabled;
+  btn.title = title;
+  btn.textContent = allOn ? '−' : '+';
+  btn.addEventListener('click', () => { if (!btn.disabled) onClick(); });
+  return btn;
 }
 
 function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowElement {
