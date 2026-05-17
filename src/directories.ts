@@ -1,8 +1,9 @@
-// Directory store + userscript scanning + per-script read.
+// Directory I/O for userscript sources.
 //
-// A "directory" is just an absolute filesystem path the user typed in,
-// stored in chrome.storage.local. We enumerate contents and read
-// individual files by fetching the corresponding file:// URL.
+// Owns: path → file:// URL conversion, single-file fetch, Chrome's
+// `file://` directory-listing parser, and the recursive scanner that
+// finds `*.user.js` files under a registered directory. All
+// persistence lives in `src/script-store.ts`; this module is pure I/O.
 //
 // Why XMLHttpRequest instead of fetch(): fetch() treats
 // chrome-extension:// → file:// as cross-origin and returns an opaque
@@ -17,27 +18,9 @@
 // The toggle is persistent across browser sessions, so unlike the File
 // System Access API there is no per-session re-grant.
 
-const STORAGE_KEY = 'directories';
-
-export interface DirectoryEntry {
-  id: string;
-  path: string; // absolute filesystem path entered by the user
-}
-
 export interface FoundScript {
   name: string;         // leaf file name, e.g. "foo.user.js"
   relativePath: string; // path relative to the directory root, e.g. "sub/foo.user.js"
-}
-
-// ---------- chrome.storage.local wrappers ----------
-
-export async function getDirectories(): Promise<DirectoryEntry[]> {
-  const result = await chrome.storage.local.get(STORAGE_KEY);
-  return (result[STORAGE_KEY] as DirectoryEntry[]) ?? [];
-}
-
-export async function setDirectories(directories: DirectoryEntry[]): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY]: directories });
 }
 
 // ---------- URL / path helpers ----------
@@ -142,14 +125,7 @@ export async function scanForUserScripts(
   return results;
 }
 
-// Read a single userscript's contents given the directory's absolute
-// path and the relative path returned by scanForUserScripts.
-export function readScript(absoluteDir: string, relativePath: string): Promise<string> {
-  return fetchFileUrlText(pathToFileUrl(joinPath(absoluteDir, relativePath)));
-}
-
-// Build a file:// URL for a specific scanned script (used for display
-// and for the viewer to fetch on its own when needed).
+// Build a file:// URL for a specific scanned script.
 export function scriptFileUrl(absoluteDir: string, relativePath: string): string {
   return pathToFileUrl(joinPath(absoluteDir, relativePath));
 }

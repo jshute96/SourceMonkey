@@ -26,6 +26,48 @@ export interface ParsedHeader {
 const BLOCK_START = /^[ \t]*\/\/[ \t]*==UserScript==[ \t]*$/m;
 const BLOCK_END = /^[ \t]*\/\/[ \t]*==\/UserScript==[ \t]*$/m;
 
+export type SplitError = 'no metadata block' | 'unterminated metadata block';
+
+export interface SplitResult {
+  headerText: string;  // raw block including both markers; '' on error
+  bodyText: string;    // everything after the closing marker; full source on error
+  error?: SplitError;
+}
+
+// Split a userscript source into its raw metadata block and body text.
+//
+// Failure modes:
+//   - no `==UserScript==` line          → error: 'no metadata block'
+//   - open marker but no matching close → error: 'unterminated metadata block'
+// In both cases we return headerText = '' and bodyText = the whole source so
+// callers always have something to display.
+export function splitHeaderBody(source: string): SplitResult {
+  const startMatch = BLOCK_START.exec(source);
+  if (!startMatch) {
+    return { headerText: '', bodyText: source, error: 'no metadata block' };
+  }
+  const afterStart = source.slice(startMatch.index + startMatch[0].length);
+  const endMatch = BLOCK_END.exec(afterStart);
+  if (!endMatch) {
+    return {
+      headerText: '',
+      bodyText: source,
+      error: 'unterminated metadata block',
+    };
+  }
+  const blockEnd =
+    startMatch.index + startMatch[0].length + endMatch.index + endMatch[0].length;
+  // Skip a single trailing newline after the closing marker so bodyText
+  // doesn't start with a stray blank line.
+  let bodyStart = blockEnd;
+  if (source[bodyStart] === '\r') bodyStart++;
+  if (source[bodyStart] === '\n') bodyStart++;
+  return {
+    headerText: source.slice(startMatch.index, blockEnd),
+    bodyText: source.slice(bodyStart),
+  };
+}
+
 // One metadata line: `// @tag[:locale][ value]`. The value group is
 // `.*\S` so trailing whitespace is excluded; the whole value group is
 // optional so flag tags like `@noframes` parse with value = "".

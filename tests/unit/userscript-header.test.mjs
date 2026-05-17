@@ -10,6 +10,7 @@ import {
   getValues,
   getLocalized,
   hasTag,
+  splitHeaderBody,
 } from '../../dist/userscript-header.js';
 
 const SAMPLE = `// ==UserScript==
@@ -137,4 +138,59 @@ test('parseHeader tolerates extra whitespace around the markers', () => {
 `;
   const h = parseHeader(src);
   assert.equal(getValue(h, 'name'), 'Padded');
+});
+
+test('splitHeaderBody returns the raw block and the body', () => {
+  const src = `// ==UserScript==
+// @name Foo
+// ==/UserScript==
+(function () {
+  console.log('hi');
+})();
+`;
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, undefined);
+  assert.equal(
+    result.headerText,
+    '// ==UserScript==\n// @name Foo\n// ==/UserScript==',
+  );
+  assert.equal(result.bodyText, "(function () {\n  console.log('hi');\n})();\n");
+});
+
+test('splitHeaderBody flags missing opening marker', () => {
+  const src = "console.log('no header');\n";
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, 'no metadata block');
+  assert.equal(result.headerText, '');
+  assert.equal(result.bodyText, src);
+});
+
+test('splitHeaderBody flags unterminated block', () => {
+  const src = `// ==UserScript==
+// @name Foo
+console.log('forgot the close');
+`;
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, 'unterminated metadata block');
+  assert.equal(result.headerText, '');
+  assert.equal(result.bodyText, src);
+});
+
+test('splitHeaderBody handles CRLF line endings', () => {
+  const src =
+    '// ==UserScript==\r\n// @name CRLF\r\n// ==/UserScript==\r\nbody();\r\n';
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, undefined);
+  assert.equal(
+    result.headerText,
+    '// ==UserScript==\r\n// @name CRLF\r\n// ==/UserScript==',
+  );
+  assert.equal(result.bodyText, 'body();\r\n');
+});
+
+test('splitHeaderBody returns empty bodyText when nothing follows the block', () => {
+  const src = '// ==UserScript==\n// @name Alone\n// ==/UserScript==';
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, undefined);
+  assert.equal(result.bodyText, '');
 });

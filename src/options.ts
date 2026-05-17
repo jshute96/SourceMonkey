@@ -1,20 +1,21 @@
-// Options page controller. Renders the list of registered directory
-// paths, scans each via file:// URL fetching (up to two subdir levels
-// deep), and links each finding to the userscript.html viewer.
+// Options page controller. Reads the persistent userscript store and
+// renders one section per registered source (= directory). Each
+// section has Refresh + Remove buttons and a script table showing
+// filename, size, and parse status.
 //
-// All persistence is in chrome.storage.local — no FileSystemHandles,
-// no IndexedDB. The cost is that the user must enable "Allow access
-// to file URLs" on chrome://extensions once per install; the benefit
-// is no per-session permission re-grant.
+// "Add directory" submits an absolute filesystem path; the store
+// scans the directory and loads every `*.user.js` into chrome.storage
+// immediately, so the user doesn't need to click Refresh after add.
 
 import {
-  getDirectories,
-  scanForUserScripts,
-  setDirectories,
-  scriptFileUrl,
-  type DirectoryEntry,
-  type FoundScript,
-} from './directories.js';
+  addSource,
+  getSourceWithScripts,
+  getSources,
+  refreshSource,
+  removeSource,
+  type StoredScript,
+  type StoredSource,
+} from './script-store.js';
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -28,28 +29,26 @@ if (versionEl) {
 
 addForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  void addDirectory(addInput.value);
+  void onAddDirectory(addInput.value);
 });
 
 void render();
 
-async function addDirectory(rawPath: string): Promise<void> {
+async function onAddDirectory(rawPath: string): Promise<void> {
   const path = rawPath.trim();
   if (!path) return;
-  const dirs = await getDirectories();
-  if (dirs.some((d) => d.path === path)) {
-    addInput.value = '';
-    return;
-  }
-  dirs.push({ id: crypto.randomUUID(), path });
-  await setDirectories(dirs);
+  await addSource(path);  // null = already added; we just no-op.
   addInput.value = '';
   await render();
 }
 
-async function removeDirectory(id: string): Promise<void> {
-  const dirs = await getDirectories();
-  await setDirectories(dirs.filter((d) => d.id !== id));
+async function onRemoveDirectory(id: string): Promise<void> {
+  await removeSource(id);
+  await render();
+}
+
+async function onRefreshDirectory(id: string): Promise<void> {
+  await refreshSource(id);
   await render();
 }
 
@@ -63,8 +62,8 @@ async function render(): Promise<void> {
     bannerSlot.appendChild(renderFileAccessBanner());
   }
 
-  const dirs = await getDirectories();
-  if (dirs.length === 0) {
+  const sources = await getSources();
+  if (sources.length === 0) {
     const p = document.createElement('p');
     p.className = 'placeholder';
     p.textContent = 'No directories yet. Add one above.';
@@ -72,12 +71,12 @@ async function render(): Promise<void> {
     return;
   }
 
-  for (const dir of dirs) {
-    directoriesEl.appendChild(await renderDirectory(dir));
+  for (const source of sources) {
+    directoriesEl.appendChild(await renderSourceSection(source));
   }
 }
 
-async function renderDirectory(dir: DirectoryEntry): Promise<HTMLElement> {
+async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   const section = document.createElement('section');
   section.className = 'directory';
 
@@ -85,55 +84,98 @@ async function renderDirectory(dir: DirectoryEntry): Promise<HTMLElement> {
   header.className = 'directory-header';
 
   const heading = document.createElement('h2');
-  heading.textContent = dir.path;
+  heading.textContent = source.path;
   header.appendChild(heading);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'directory-buttons';
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.textContent = 'Refresh';
+  refreshBtn.addEventListener('click', () => {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Refreshing…';
+    void onRefreshDirectory(source.id);
+  });
+  buttons.appendChild(refreshBtn);
 
   const removeBtn = document.createElement('button');
   removeBtn.textContent = 'Remove';
   removeBtn.addEventListener('click', () => {
-    void removeDirectory(dir.id);
+    void onRemoveDirectory(source.id);
   });
-  header.appendChild(removeBtn);
+  buttons.appendChild(removeBtn);
 
+  header.appendChild(buttons);
   section.appendChild(header);
-  section.appendChild(await renderScriptList(dir));
+
+  if (source.scanError) {
+    section.appendChild(makeMessage('error', `Scan failed: ${source.scanError}`));
+  }
+  section.appendChild(await renderScriptTable(source));
   return section;
 }
 
-async function renderScriptList(dir: DirectoryEntry): Promise<HTMLElement> {
-  let scripts;
-  try {
-    scripts = await scanForUserScripts(dir.path);
-  } catch (err) {
-    return makeMessage('error', `Scan failed: ${describeError(err)}`);
-  }
+async function renderScriptTable(source: StoredSource): Promise<HTMLElement> {
+  const data = await getSourceWithScripts(source.id);
+  const scripts = data?.scripts ?? [];
 
   if (scripts.length === 0) {
     return makeMessage('empty', 'No *.user.js files found.');
   }
 
-  const list = document.createElement('ul');
-  for (const script of scripts) {
-    list.appendChild(renderScriptLink(dir, script));
+  const table = document.createElement('table');
+  table.className = 'script-table';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const label of ['Filename', 'Size', 'Status']) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
   }
-  return list;
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const script of scripts) tbody.appendChild(renderScriptRow(script));
+  table.appendChild(tbody);
+  return table;
 }
 
-function renderScriptLink(dir: DirectoryEntry, script: FoundScript): HTMLElement {
-  const li = document.createElement('li');
+function renderScriptRow(script: StoredScript): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+
+  const nameCell = document.createElement('td');
   const a = document.createElement('a');
   a.textContent = script.relativePath;
-  a.href = viewerUrl(dir.path, script.relativePath).toString();
+  a.href = viewerUrl(script.id).toString();
   a.target = '_blank';
   a.rel = 'noopener';
-  li.appendChild(a);
-  return li;
+  nameCell.appendChild(a);
+  tr.appendChild(nameCell);
+
+  const sizeCell = document.createElement('td');
+  sizeCell.className = 'size-cell';
+  sizeCell.textContent = script.status === 'missing' || script.size == null
+    ? 'MISSING'
+    : formatBytes(script.size);
+  tr.appendChild(sizeCell);
+
+  const statusCell = document.createElement('td');
+  statusCell.className = 'status-cell';
+  const label = script.status === 'ok' ? 'OK' : 'ERROR';
+  statusCell.textContent = label;
+  statusCell.classList.add(`status-${script.status}`);
+  if (script.errorMessage) statusCell.title = script.errorMessage;
+  tr.appendChild(statusCell);
+
+  return tr;
 }
 
-function viewerUrl(absoluteDir: string, relativePath: string): URL {
+function viewerUrl(scriptId: string): URL {
   const url = new URL(chrome.runtime.getURL('userscript.html'));
-  url.searchParams.set('src', scriptFileUrl(absoluteDir, relativePath));
-  url.searchParams.set('name', relativePath);
+  url.searchParams.set('script', scriptId);
   return url;
 }
 
@@ -172,7 +214,10 @@ function makeMessage(className: string, text: string): HTMLElement {
   return p;
 }
 
-function describeError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+// Format a byte count for the size column. Returns "1.2 KB", "950 B",
+// etc. — short enough to fit comfortably alongside filename + status.
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }

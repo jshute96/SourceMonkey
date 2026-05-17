@@ -1,0 +1,91 @@
+# File access
+
+How VibeMonkey reads userscripts off the local filesystem. Owned by
+`src/directories.ts`; consumed by the
+[script store](storage.md) and the [viewer](script-viewer.md).
+
+## Why paths + `file://` instead of FSA
+
+The File System Access API gives clean enumeration and writable
+handles, but Chrome **does not persist permission grants across
+browser sessions** — the user must click "Grant access" each time
+the browser restarts, and there is no API to remember it.
+
+The `chrome://extensions` → **"Allow access to file URLs"** toggle,
+by contrast, is persistent. Once enabled, the extension can read any
+`file://` URL with no further prompts, for the life of the install.
+Tampermonkey's `@require file://…` feature uses this same mechanism.
+
+So the user types an **absolute path** instead of using a picker, and
+we read content via `file://` URLs.
+
+## Requirements
+
+For any reading to work the user must:
+
+- Enable **"Allow access to file URLs"** for VibeMonkey on
+  `chrome://extensions` (one-time, persistent).
+- (Already handled in the manifest) `"file:///*"` is in
+  `host_permissions`.
+
+When the toggle is off, `chrome.extension.isAllowedFileSchemeAccess()`
+returns false and the options page renders a banner with the
+extension's settings URL and instructions.
+
+## Reading a file
+
+`fetchFileUrlText(url)` uses **`XMLHttpRequest`**, not `fetch`:
+
+- `fetch` treats `chrome-extension:// → file://` as cross-origin and
+  returns an opaque response (status 0, unreadable body).
+- XHR doesn't apply that restriction.
+- For `file://` XHRs, `status` is `0` even on success (there's no
+  HTTP layer), so we treat any non-empty `responseText` as success
+  and an empty body as failure.
+
+## Directory enumeration
+
+Chrome renders `file://` directory URLs as an HTML listing page that
+contains a sequence of script calls like:
+
+```
+addRow("name", "url", isdir, size, "size_str", date, "date_str")
+```
+
+`parseListing(html)` extracts those calls with a tolerant regex:
+
+- Pulls the first arg (display name) and the third positional arg
+  (the `isdir` flag).
+- Tolerates both `0/1` (older Chrome) and `true/false` for `isdir`.
+- Decodes JS string escapes in the name via `JSON.parse('"' + … + '"')`.
+- Skips `.` and `..`.
+
+`scanForUserScripts(absolutePath)` walks recursively up to
+`MAX_SCAN_DEPTH` levels and returns every `*.user.js` it finds, sorted
+by relative path.
+
+## Listing-format caveat
+
+Chrome's directory-listing HTML is an **undocumented format**:
+
+- We match the `addRow(...)` shape we currently observe.
+- If Chrome's format changes, the unit tests in
+  `tests/unit/directories.test.mjs` break loudly rather than the
+  scanner failing silently.
+- Working around a format change would mean updating the regex (or
+  switching to a different enumeration strategy entirely; FSA is the
+  obvious fallback at the cost of per-session re-grants).
+
+## Module surface
+
+`src/directories.ts` exports only I/O helpers — no persistence:
+
+- `pathToFileUrl(absolutePath)` — percent-encode + add `file://`.
+- `joinPath(base, child)` — POSIX path join.
+- `scriptFileUrl(absoluteDir, relativePath)` — composes the above
+  for a found script.
+- `fetchFileUrlText(url)` — XHR a `file://` URL → text.
+- `parseListing(html)` — Chrome listing → `{name, isDir}[]`.
+- `scanForUserScripts(absolutePath, depth?, prefix?)` — recursive
+  `*.user.js` walk.
+- `MAX_SCAN_DEPTH` — recursion cap (currently 2).

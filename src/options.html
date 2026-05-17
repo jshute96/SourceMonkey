@@ -14,8 +14,14 @@
       .add-form input[type="text"] { flex: 1 1 auto; }
       .directory { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
       .directory-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1em; margin-bottom: 0.5em; }
-      .directory ul { margin: 0; padding-left: 1.2em; }
-      .directory li { margin: 0.15em 0; }
+      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; }
+      .script-table { width: 100%; border-collapse: collapse; }
+      .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
+      .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
+      .script-table tbody tr:last-child td { border-bottom: none; }
+      .script-table td.size-cell, .script-table td.status-cell { white-space: nowrap; width: 1%; }
+      .status-ok { color: #166534; }
+      .status-error, .status-missing { color: #b00; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
       .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 1em; }

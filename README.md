@@ -3,25 +3,37 @@
 A userscript manager Chrome extension optimized for vibe-coding.
 
 > **Status:** Early skeleton. The options page can register local
-> directories, list the `*.user.js` files inside them, and open each
-> in an in-extension viewer with syntax highlighting. Nothing is
-> injected into pages yet.
+> directories, persistently load every `*.user.js` it finds, and
+> open each in an in-extension viewer with syntax highlighting and a
+> parsed-header summary. Nothing is injected into pages yet.
 
 ## Usage
 
-Open the options page from `chrome://extensions` → VibeMonkey →
-"Details" → "Extension options". Enter the absolute path of a folder
-containing userscripts and click **Add directory**. Each added
-directory is scanned for `*.user.js` files up to two subdirectory
-levels deep, and each finding is listed as a link. Clicking a link
-opens a viewer in a new tab that shows the file's name and contents
-with JavaScript syntax highlighting. Click **Remove** to drop a
-directory from the list.
+Open the options page by clicking the VibeMonkey toolbar icon, or via
+`chrome://extensions` → VibeMonkey → "Details" → "Extension options".
+
+- Enter the absolute path of a folder containing userscripts and click
+  **Add directory**. The directory is scanned (up to two subdirectory
+  levels deep) and every `*.user.js` is loaded into the extension's
+  storage immediately.
+- Each directory section shows a table with **Filename**, **Size**,
+  and **Status** (`OK` or `ERROR`). A script reports `ERROR` when its
+  metadata block is missing or malformed, or when required fields
+  (`@name` plus `@match`/`@include`) aren't present — hover the
+  status cell to see the reason. If a file was loaded before but has
+  disappeared from disk, the size column shows `MISSING`.
+- **Refresh** rescans the directory and reloads every script.
+  **Remove** drops the directory (and its scripts) from storage.
+- Clicking a script name opens a viewer in a new tab showing the
+  file's name, size, status, a parsed-header summary (Name /
+  Description / Match / Exclude), and the highlighted source. The
+  viewer reads from storage; its own **Refresh** button re-reads the
+  one file from disk.
 
 **One-time setup:** enable **"Allow access to file URLs"** for
-VibeMonkey on `chrome://extensions`. Without it the options page
-can't read your local directories. The toggle is persistent — once
-on, it stays on across browser restarts.
+VibeMonkey on `chrome://extensions`. Without it the extension can't
+read your local directories. The toggle is persistent — once on, it
+stays on across browser restarts.
 
 ## Installation
 
