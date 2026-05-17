@@ -41,56 +41,60 @@ project grows.
 
 Users can register local directories that contain `*.user.js`
 userscripts. The options page lists every script it finds in each
-directory (up to two subdirectory levels deep).
+directory (up to two subdirectory levels deep), and each finding
+links to the userscript viewer.
 
 ### Storage
 
-- **chrome.storage.local** holds `{id, path}` per directory.
-  - `path` is an absolute filesystem path the user typed in.
-  - `id` is a generated UUID, used only as a removal key.
-- No filesystem handles are persisted — we do not use the File System
-  Access API. See "Enumeration" below for the trade-off.
+Two stores, because no single one does both jobs:
 
-### Enumeration
+- **chrome.storage.local** holds `{id, name}` per directory — the
+  user-visible list for rendering and removal. `name` is the leaf
+  directory name from `handle.name`.
+- **IndexedDB** (`vibemonkey` db, `directoryHandles` store) holds the
+  `FileSystemDirectoryHandle` keyed by `id`. Handles aren't valid in
+  `chrome.storage` but are structured-cloneable into IndexedDB.
 
-We don't use `showDirectoryPicker()` because it can't expose the
-absolute path we need for `file://` URLs. Instead the scanner uses
-plain `fetch()` against the `file://` URL of each directory:
+### Add / scan flow
 
-- Chrome renders directory `file://` URLs as an HTML listing page.
-- That page contains a sequence of `addRow(name, url, isdir, ...)`
-  script calls — one per entry.
-- `parseListing()` extracts those calls with a tolerant regex, pulling
-  out the entry name and the `isdir` flag.
+- "Add directory" calls `showDirectoryPicker({ mode: 'read' })`. The
+  picker is also what grants Chrome the read permission we'll use to
+  enumerate and read files — no `chrome://extensions` toggle needed.
+- Render loads the handle, calls `queryPermission` / `requestPermission`
+  to re-acquire read access, then walks the directory (depth ≤ 2)
+  collecting `*.user.js` files.
 
-### Requirements
+### Userscript viewer
 
-For scanning to work the user must:
+Each script link points to `userscript.html?dir=<id>&path=<rel>`.
 
-- Enable **"Allow access to file URLs"** for VibeMonkey in
-  `chrome://extensions`.
-- (Already handled in the manifest) have `"file:///*"` in
-  `host_permissions`.
+Permission is scoped per browsing context, so a fresh tab opened on
+`userscript.html` does **not** inherit the options page's grant. To
+avoid a second permission prompt on every click, the options page
+intercepts left-clicks:
 
-When either is missing, `fetch` fails and the options page surfaces
-the error inline.
+1. Read the file's contents on the options page (where the handle's
+   permission is already granted).
+2. Stash `{name, content}` in `chrome.storage.session` under a random
+   key, and append `&key=<key>` to the viewer URL.
+3. `window.open(...)` the viewer in a new tab.
 
-### Render flow
+The viewer:
 
-1. Load the directory list from `chrome.storage.local`.
-2. For each entry, `fetch` the `file://` URL, parse the listing, and
-   recurse into subdirectories up to `MAX_SCAN_DEPTH` (= 2).
-3. Sort by relative path; render one section per directory with a
-   "Remove" button and a list of `<a href="file://…">` links.
+- If `key` is present, fetches `{name, content}` from session storage,
+  clears it (one-shot), and renders.
+- Otherwise (middle-click, "open in new tab", manual reload) falls
+  back to loading the handle from IndexedDB and either reads on the
+  spot (if permission already granted) or shows a "Grant access and
+  load" button that triggers `requestPermission` from a user gesture.
 
-### Listing-format caveat
+### Syntax highlighting
 
-Chrome's directory-listing HTML is an undocumented format. The
-`parseListing` regex matches the `addRow` shape we currently observe
-and tolerates both `0/1` and `true/false` for the `isdir` argument.
-Unit tests in `tests/unit/directories.test.mjs` pin the expected
-shape — if Chrome's format changes, those tests break loudly rather
-than the scanner failing silently.
+The viewer uses **Prism.js** (vendored from `node_modules/prismjs` by
+`scripts/build.mjs` into `dist/vendor/prism/`). Content is set via
+`textContent` and then handed to `Prism.highlightElement` so file
+content can't be interpreted as HTML markup. The default Prism theme
+is shipped as `prism.css`.
 
 ## Build pipeline
 

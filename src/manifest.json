@@ -5,7 +5,7 @@
   "description": "Userscript manager optimized for vibe-coding.",
   "homepage_url": "https://github.com/jshute96/VibeMonkey",
   "permissions": ["scripting", "storage"],
-  "host_permissions": ["<all_urls>", "file:///*"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

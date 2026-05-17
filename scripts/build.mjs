@@ -34,6 +34,15 @@ await mkdir(dist, { recursive: true });
 // 2. Copy icons.
 await cp(resolve(src, 'icons'), resolve(dist, 'icons'), { recursive: true });
 
+// 2b. Vendor Prism.js (syntax highlighting for the userscript viewer).
+// We copy from node_modules at build time so we don't check the
+// library into the source tree; the userscript page loads these as
+// plain <script>/<link> tags rather than ES modules.
+const prismDir = resolve(root, 'node_modules', 'prismjs');
+await mkdir(resolve(dist, 'vendor', 'prism'), { recursive: true });
+await cp(resolve(prismDir, 'prism.js'), resolve(dist, 'vendor', 'prism', 'prism.js'));
+await cp(resolve(prismDir, 'themes', 'prism.min.css'), resolve(dist, 'vendor', 'prism', 'prism.css'));
+
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
 //    unpacked from dist/.
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));

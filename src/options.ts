@@ -1,18 +1,31 @@
-// Options page controller. Renders the list of configured directories
-// (each just an absolute filesystem path), scans each one for
-// *.user.js files up to two subdir levels deep, and links them as
-// file:// URLs.
+// Options page controller. Renders the list of registered directories
+// (each picked via showDirectoryPicker), scans each for *.user.js
+// files up to two subdir levels deep, and links each finding to a
+// userscript.html viewer.
 //
-// The directory store and scanner live in src/directories.ts; this
-// file is just the DOM glue.
+// When the user left-clicks a script link we pre-read the file's
+// content on this page (where we already have read permission for the
+// handle) and stash it in chrome.storage.session under a random key.
+// The viewer page reads from session storage by that key. This avoids
+// the viewer needing its own user-gesture permission re-grant.
+// Middle-click and "open in new tab" fall back to the viewer's own
+// handle-loading path (which will prompt for permission).
 
 import {
-  buildScriptUrl,
+  deleteHandle,
   getDirectories,
+  loadHandle,
+  readFileFromDirectory,
+  saveHandle,
   scanForUserScripts,
   setDirectories,
   type DirectoryEntry,
+  type FoundScript,
 } from './directories.js';
+
+interface WindowWithPicker {
+  showDirectoryPicker(opts?: { id?: string; mode?: 'read' | 'readwrite' }): Promise<FileSystemDirectoryHandle>;
+}
 
 const directoriesEl = document.getElementById('directories')!;
 const addButton = document.getElementById('add-directory') as HTMLButtonElement;
@@ -29,17 +42,20 @@ addButton.addEventListener('click', () => {
 void render();
 
 async function addDirectory(): Promise<void> {
-  const raw = window.prompt('Absolute path to a userscripts directory:');
-  if (!raw) return;
-  const path = raw.trim();
-  if (!path) return;
-
-  const dirs = await getDirectories();
-  if (dirs.some((d) => d.path === path)) {
-    await render();
-    return;
+  let handle: FileSystemDirectoryHandle;
+  try {
+    handle = await (window as unknown as WindowWithPicker).showDirectoryPicker({
+      id: 'vibemonkey-userscripts',
+      mode: 'read',
+    });
+  } catch (err) {
+    if ((err as DOMException)?.name === 'AbortError') return;
+    throw err;
   }
-  dirs.push({ id: crypto.randomUUID(), path });
+  const id = crypto.randomUUID();
+  await saveHandle(id, handle);
+  const dirs = await getDirectories();
+  dirs.push({ id, name: handle.name });
   await setDirectories(dirs);
   await render();
 }
@@ -47,25 +63,18 @@ async function addDirectory(): Promise<void> {
 async function removeDirectory(id: string): Promise<void> {
   const dirs = await getDirectories();
   await setDirectories(dirs.filter((d) => d.id !== id));
+  await deleteHandle(id);
   await render();
 }
 
 async function render(): Promise<void> {
   directoriesEl.textContent = '';
-
-  // Surface the file:// access state up-front: scanning won't work
-  // without "Allow access to file URLs" on, and there's no API to
-  // request it — only the chrome://extensions toggle can grant it.
-  if (!(await isFileSchemeAccessAllowed())) {
-    directoriesEl.appendChild(renderFileAccessBanner());
-  }
-
   const dirs = await getDirectories();
 
   if (dirs.length === 0) {
     const p = document.createElement('p');
     p.className = 'placeholder';
-    p.textContent = 'No directories yet. Click "Add directory" to add one.';
+    p.textContent = 'No directories yet. Click "Add directory" to pick one.';
     directoriesEl.appendChild(p);
     return;
   }
@@ -83,7 +92,7 @@ async function renderDirectory(dir: DirectoryEntry): Promise<HTMLElement> {
   header.className = 'directory-header';
 
   const heading = document.createElement('h2');
-  heading.textContent = dir.path;
+  heading.textContent = dir.name;
   header.appendChild(heading);
 
   const removeBtn = document.createElement('button');
@@ -99,15 +108,16 @@ async function renderDirectory(dir: DirectoryEntry): Promise<HTMLElement> {
 }
 
 async function renderScriptList(dir: DirectoryEntry): Promise<HTMLElement> {
+  const handle = await loadHandle(dir.id);
+  if (!handle) {
+    return makeMessage('error', 'No stored handle (Remove and re-add the directory).');
+  }
+
   let scripts;
   try {
-    scripts = await scanForUserScripts(dir.path);
+    scripts = await scanForUserScripts(handle);
   } catch (err) {
-    return makeMessage(
-      'error',
-      `Scan failed: ${describeError(err)}. ` +
-        'Make sure "Allow access to file URLs" is enabled for VibeMonkey in chrome://extensions.',
-    );
+    return makeMessage('error', `Scan failed: ${describeError(err)}`);
   }
 
   if (scripts.length === 0) {
@@ -116,44 +126,66 @@ async function renderScriptList(dir: DirectoryEntry): Promise<HTMLElement> {
 
   const list = document.createElement('ul');
   for (const script of scripts) {
-    const li = document.createElement('li');
-    const a = document.createElement('a');
-    a.href = buildScriptUrl(dir.path, script.relativePath);
-    a.textContent = script.relativePath;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    li.appendChild(a);
-    list.appendChild(li);
+    list.appendChild(renderScriptLink(dir, handle, script));
   }
   return list;
 }
 
-function isFileSchemeAccessAllowed(): Promise<boolean> {
-  return new Promise((resolve) => {
-    chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(allowed));
+function renderScriptLink(
+  dir: DirectoryEntry,
+  handle: FileSystemDirectoryHandle,
+  script: FoundScript,
+): HTMLElement {
+  const li = document.createElement('li');
+  const a = document.createElement('a');
+  a.textContent = script.relativePath;
+  a.href = viewerUrl(dir.id, script.relativePath).toString();
+  a.target = '_blank';
+  a.rel = 'noopener';
+
+  a.addEventListener('click', (event) => {
+    // Let modifier-clicks and middle-clicks fall through to default
+    // behavior; the viewer page will handle those itself.
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    void openWithPrefetch(dir.id, handle, script);
   });
+
+  li.appendChild(a);
+  return li;
 }
 
-function renderFileAccessBanner(): HTMLElement {
-  const div = document.createElement('div');
-  div.className = 'banner';
+function viewerUrl(dirId: string, relativePath: string, sessionKey?: string): URL {
+  const url = new URL(chrome.runtime.getURL('userscript.html'));
+  url.searchParams.set('dir', dirId);
+  url.searchParams.set('path', relativePath);
+  if (sessionKey) url.searchParams.set('key', sessionKey);
+  return url;
+}
 
-  const heading = document.createElement('strong');
-  heading.textContent = 'File access is disabled.';
-  div.appendChild(heading);
+async function openWithPrefetch(
+  dirId: string,
+  handle: FileSystemDirectoryHandle,
+  script: FoundScript,
+): Promise<void> {
+  try {
+    const content = await readFileFromDirectory(handle, script.relativePath);
+    const key = crypto.randomUUID();
+    await chrome.storage.session.set({
+      [sessionKeyFor(key)]: { name: script.relativePath, content },
+    });
+    window.open(viewerUrl(dirId, script.relativePath, key).toString(), '_blank');
+  } catch (err) {
+    console.error('VibeMonkey prefetch failed:', err);
+    // Fall back to letting the viewer load it via the handle.
+    window.open(viewerUrl(dirId, script.relativePath).toString(), '_blank');
+  }
+}
 
-  const explain = document.createElement('p');
-  explain.textContent =
-    'VibeMonkey can\'t read local directories until you enable ' +
-    '"Allow access to file URLs". Open the extension\'s details page and ' +
-    'toggle it on, then reload this page:';
-  div.appendChild(explain);
-
-  const code = document.createElement('code');
-  code.textContent = `chrome://extensions/?id=${chrome.runtime.id}`;
-  div.appendChild(code);
-
-  return div;
+function sessionKeyFor(key: string): string {
+  return `script:${key}`;
 }
 
 function makeMessage(className: string, text: string): HTMLElement {

@@ -10,11 +10,8 @@
 
 ## Local directory sources — follow-ups
 
-- Replace `window.prompt` with an inline path-entry form on the
-  options page.
 - Parse userscript headers (name, `@match`, etc.) from scanned files
   instead of just listing the relative path.
-- Detect when "Allow access to file URLs" is disabled and show a
-  prominent setup hint instead of the generic fetch error.
-- Watch for upstream changes to Chrome's `file://` directory-listing
-  HTML format that could break `parseListing`.
+- Make the userscript viewer editable (switch from `<pre><code>` to
+  a real editor like CodeMirror) and add a "Save" path that writes
+  back through the directory handle.
