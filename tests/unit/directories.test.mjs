@@ -14,6 +14,9 @@ import {
   pathToFileUrl,
   joinPath,
   scriptFileUrl,
+  isSingleFilePath,
+  parentDir,
+  baseName,
 } from '../../dist/directories.js';
 
 test('parseListing extracts files and directories, skipping ..', () => {
@@ -82,5 +85,29 @@ test('scriptFileUrl joins dir + relative and encodes the result', () => {
   assert.equal(
     scriptFileUrl('/home/me/scripts', 'sub/foo bar.user.js'),
     'file:///home/me/scripts/sub/foo%20bar.user.js',
+  );
+});
+
+test('isSingleFilePath recognizes *.user.js paths', () => {
+  assert.equal(isSingleFilePath('/home/me/foo.user.js'), true);
+  assert.equal(isSingleFilePath('/home/me/scripts'), false);
+  assert.equal(isSingleFilePath('/home/me/notes.txt'), false);
+});
+
+test('parentDir and baseName split an absolute path', () => {
+  assert.equal(parentDir('/home/me/foo.user.js'), '/home/me');
+  assert.equal(baseName('/home/me/foo.user.js'), 'foo.user.js');
+  // Top-level path keeps `/` as parent.
+  assert.equal(parentDir('/foo.user.js'), '/');
+  assert.equal(baseName('/foo.user.js'), 'foo.user.js');
+});
+
+test('scriptFileUrl uses the source path verbatim for a single-file source', () => {
+  // relativePath equals the basename, so the directory-style join
+  // would double the filename — the single-file branch returns the
+  // source path's URL directly.
+  assert.equal(
+    scriptFileUrl('/home/me/foo bar.user.js', 'foo bar.user.js'),
+    'file:///home/me/foo%20bar.user.js',
   );
 });

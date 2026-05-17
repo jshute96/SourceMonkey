@@ -421,6 +421,26 @@ test('rebuildSource: missing path also disables the entry', () => {
   assert.equal(result[0].enabled, false);
 });
 
+test('rebuildSource builds the right fileUrl for a single-file source', () => {
+  // Single-file sources store the *file* path in sourcePath; the scan
+  // entry's relativePath is the basename. scriptFileUrl must not
+  // double the filename — it should return the source path's URL.
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: '/home/me/foo bar.user.js',
+    existing: [],
+    scan: [{ relativePath: 'foo bar.user.js' }],
+    fetchResults: new Map([
+      ['foo bar.user.js', { ok: true, source: VALID_SCRIPT }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].fileUrl, 'file:///home/me/foo%20bar.user.js');
+  assert.equal(result[0].relativePath, 'foo bar.user.js');
+});
+
 test('rebuildSource creates an initial error entry when a new file fails to fetch', () => {
   const result = rebuildSource({
     sourceId: 'src-1',

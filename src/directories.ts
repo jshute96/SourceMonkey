@@ -48,6 +48,31 @@ export function joinPath(base: string, child: string): string {
   return base.replace(/\/+$/, '') + '/' + child;
 }
 
+// A source path that points directly at a single `.user.js` file rather
+// than a directory containing them. The rest of the pipeline treats
+// such a source as if it were a directory holding exactly one script.
+export function isSingleFilePath(path: string): boolean {
+  return path.endsWith('.user.js');
+}
+
+// Return the parent directory of an absolute POSIX path. The result
+// has no trailing slash; for a top-level path like `/foo` returns `/`.
+export function parentDir(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\/+$/, '');
+  const slash = trimmed.lastIndexOf('/');
+  if (slash < 0) return '';
+  if (slash === 0) return '/';
+  return trimmed.slice(0, slash);
+}
+
+// Return the leaf name of an absolute POSIX path (the part after the
+// last `/`). Trailing slashes are stripped first.
+export function baseName(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\/+$/, '');
+  const slash = trimmed.lastIndexOf('/');
+  return slash < 0 ? trimmed : trimmed.slice(slash + 1);
+}
+
 // ---------- File / directory fetch ----------
 
 export function fetchFileUrlText(url: string): Promise<string> {
@@ -173,6 +198,22 @@ export async function scanForUserScripts(
   depth = 0,
   prefix = '',
 ): Promise<FoundScript[]> {
+  // Single-file source: behave as if this file is the only entry in
+  // its parent directory. We still list the parent so we can capture
+  // its listing-reported size+mtime for the unchanged-file skip; if
+  // the file isn't in the listing, return [] so the refresh pipeline
+  // flags it as missing (same treatment as a vanished file in a
+  // directory source).
+  if (depth === 0 && isSingleFilePath(absolutePath)) {
+    const dir = parentDir(absolutePath);
+    const name = baseName(absolutePath);
+    const stat = await statFromListing(dir, name);
+    if (!stat || stat.isDir) return [];
+    const found: FoundScript = { name, relativePath: name };
+    if (stat.size !== undefined) found.size = stat.size;
+    if (stat.mtime !== undefined) found.mtime = stat.mtime;
+    return [found];
+  }
   const entries = await listDirectory(absolutePath);
   const results: FoundScript[] = [];
   for (const entry of entries) {
@@ -194,7 +235,10 @@ export async function scanForUserScripts(
   return results;
 }
 
-// Build a file:// URL for a specific scanned script.
-export function scriptFileUrl(absoluteDir: string, relativePath: string): string {
-  return pathToFileUrl(joinPath(absoluteDir, relativePath));
+// Build a file:// URL for a specific scanned script. For a single-file
+// source the relativePath equals the source path's basename, so the
+// join would double the name — just return the source path's URL.
+export function scriptFileUrl(sourcePath: string, relativePath: string): string {
+  if (isSingleFilePath(sourcePath)) return pathToFileUrl(sourcePath);
+  return pathToFileUrl(joinPath(sourcePath, relativePath));
 }

@@ -22,7 +22,9 @@
 
 import {
   fetchFileUrlText,
+  isSingleFilePath,
   joinPath,
+  parentDir,
   scanForUserScripts,
   scriptFileUrl,
   statFromListing,
@@ -513,7 +515,12 @@ export async function refreshScript(scriptId: string): Promise<StoredScript | nu
   const slash = prior.relativePath.lastIndexOf('/');
   const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
   const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
-  const dirAbs = subDir ? joinPath(sourceRow.path, subDir) : sourceRow.path;
+  // For a single-file source, the "scan directory" is the file's parent
+  // — sourceRow.path itself points at the file. For a directory source,
+  // it's the source path plus any subDir prefix from the relativePath.
+  const dirAbs = isSingleFilePath(sourceRow.path)
+    ? parentDir(sourceRow.path)
+    : (subDir ? joinPath(sourceRow.path, subDir) : sourceRow.path);
   const scan: { relativePath: string; size?: number; mtime?: number }[] = [
     { relativePath: prior.relativePath },
   ];
