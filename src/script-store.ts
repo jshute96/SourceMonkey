@@ -506,3 +506,25 @@ export async function setScriptEnabled(
   await chrome.storage.local.set({ [scriptKey(id)]: next });
   return next;
 }
+
+// Flip many scripts' enabled flags in a single storage write. This is
+// the bulk-toggle path: it fires exactly one `storage.onChanged` event
+// (instead of N), so the background SW's syncRegistrations runs once
+// instead of once per script — turning a 15-script toggle from
+// quadratic-feeling into a single round-trip.
+export async function setScriptsEnabled(
+  updates: { id: string; enabled: boolean }[],
+): Promise<void> {
+  if (updates.length === 0) return;
+  const keys = updates.map((u) => scriptKey(u.id));
+  const got = await getMany(keys);
+  const toSet: Record<string, unknown> = {};
+  for (const u of updates) {
+    const script = got[scriptKey(u.id)] as StoredScript | undefined;
+    if (!script) continue;          // row vanished; skip silently
+    if (script.enabled === u.enabled) continue;  // already in target state
+    toSet[scriptKey(u.id)] = { ...script, enabled: u.enabled };
+  }
+  if (Object.keys(toSet).length === 0) return;
+  await chrome.storage.local.set(toSet);
+}

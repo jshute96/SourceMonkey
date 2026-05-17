@@ -129,10 +129,26 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // directory, etc.) the matches for every open tab may have shifted —
 // recompute and re-badge them all, and re-sync chrome.userScripts so
 // Chrome's injection set reflects the new state.
+//
+// Coalesce bursts of changes so that flipping N rows in quick
+// succession (e.g. a chrome.storage.local.set that updates N script:*
+// keys → one onChanged event, OR several writes from independent
+// callers) collapses into a single sync. syncRegistrations is O(total
+// scripts) on the SW side AND issues an unregister-all/register-all
+// against chrome.userScripts, so coalescing is a meaningful win.
 onCacheChanged(() => {
-  void refreshAllOpenTabs();
-  void syncRegistrations();
+  scheduleSync();
 });
+
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleSync(): void {
+  if (syncTimer != null) return;
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    void refreshAllOpenTabs();
+    void syncRegistrations();
+  }, 50);
+}
 
 async function refreshAllOpenTabs(): Promise<void> {
   let tabs: chrome.tabs.Tab[] = [];

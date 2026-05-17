@@ -1,14 +1,20 @@
-// Options page controller. Reads the persistent userscript store and
-// renders one section per registered source (= directory). Each
-// section has Refresh + Remove buttons and a script table showing
-// filename, size, and parse status.
+// Options page controller. Renders one section per registered source
+// (= directory), with Refresh + Remove buttons and a script table
+// showing filename, size, and parse status.
 //
-// "Add directory" submits an absolute filesystem path; the store
-// scans the directory and loads every `*.user.js` into chrome.storage
+// "Add directory" submits an absolute filesystem path; the store scans
+// the directory and loads every `*.user.js` into chrome.storage
 // immediately, so the user doesn't need to click Refresh after add.
+//
+// State changes (toggle, add, remove, refresh) update the DOM in
+// place: only the affected section/row mutates, and the control that
+// triggered the change shows a small spinner while its async work is
+// in flight. The initial `render()` runs once at load to draw banners
+// and seed every section.
 
 import {
   addSource,
+  getSource,
   getSourceWithScripts,
   getSources,
   isScriptEnabled,
@@ -16,6 +22,7 @@ import {
   refreshSource,
   removeSource,
   setScriptEnabled,
+  setScriptsEnabled,
   setSourceEnabled,
   type StoredScript,
   type StoredSource,
@@ -25,6 +32,7 @@ const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
 const addForm = document.getElementById('add-form') as HTMLFormElement;
 const addInput = document.getElementById('add-path') as HTMLInputElement;
+const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonElement;
 const versionEl = document.getElementById('version');
 
 if (versionEl) {
@@ -38,23 +46,7 @@ addForm.addEventListener('submit', (event) => {
 
 void render();
 
-async function onAddDirectory(rawPath: string): Promise<void> {
-  const path = rawPath.trim();
-  if (!path) return;
-  await addSource(path);  // null = already added; we just no-op.
-  addInput.value = '';
-  await render();
-}
-
-async function onRemoveDirectory(id: string): Promise<void> {
-  await removeSource(id);
-  await render();
-}
-
-async function onRefreshDirectory(id: string): Promise<void> {
-  await refreshSource(id);
-  await render();
-}
+// ---------- Initial render ----------
 
 async function render(): Promise<void> {
   bannerSlot.textContent = '';
@@ -79,10 +71,7 @@ async function render(): Promise<void> {
 
   const sources = await getSources();
   if (sources.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'placeholder';
-    p.textContent = 'No directories yet. Add one above.';
-    directoriesEl.appendChild(p);
+    directoriesEl.appendChild(emptyPlaceholder());
     return;
   }
 
@@ -91,11 +80,21 @@ async function render(): Promise<void> {
   }
 }
 
+function emptyPlaceholder(): HTMLElement {
+  const p = document.createElement('p');
+  p.className = 'placeholder empty-placeholder';
+  p.textContent = 'No directories yet. Add one above.';
+  return p;
+}
+
+// ---------- Per-section build ----------
+
 async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   const sourceOn = isSourceEnabled(source);
 
   const section = document.createElement('section');
   section.className = 'directory';
+  section.dataset.sourceId = source.id;
   if (!sourceOn) section.classList.add('disabled');
 
   const header = document.createElement('div');
@@ -107,7 +106,7 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   const enableLabel = makeToggle(
     sourceOn,
     false,
-    (next) => void onToggleSource(source.id, next),
+    (next, label) => void onToggleSource(source.id, next, label),
     'Enable scripts under this directory',
   );
   enableLabel.classList.add('directory-toggle');
@@ -122,18 +121,12 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
 
   const refreshBtn = document.createElement('button');
   refreshBtn.textContent = 'Refresh';
-  refreshBtn.addEventListener('click', () => {
-    refreshBtn.disabled = true;
-    refreshBtn.textContent = 'Refreshing…';
-    void onRefreshDirectory(source.id);
-  });
+  refreshBtn.addEventListener('click', () => void onRefreshDirectory(source.id, refreshBtn));
   buttons.appendChild(refreshBtn);
 
   const removeBtn = document.createElement('button');
   removeBtn.textContent = 'Remove';
-  removeBtn.addEventListener('click', () => {
-    void onRemoveDirectory(source.id);
-  });
+  removeBtn.addEventListener('click', () => void onRemoveDirectory(source.id, section, removeBtn));
   buttons.appendChild(removeBtn);
 
   header.appendChild(buttons);
@@ -146,16 +139,6 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   return section;
 }
 
-async function onToggleSource(id: string, enabled: boolean): Promise<void> {
-  await setSourceEnabled(id, enabled);
-  await render();
-}
-
-async function onToggleScript(id: string, enabled: boolean): Promise<void> {
-  await setScriptEnabled(id, enabled);
-  await render();
-}
-
 async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promise<HTMLElement> {
   const data = await getSourceWithScripts(source.id);
   const scripts = data?.scripts ?? [];
@@ -164,9 +147,6 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
     return makeMessage('empty', 'No *.user.js files found.');
   }
 
-  // Header gets a bulk +/− button: clicking flips every per-script
-  // toggle. If everything is already on, it disables all; otherwise it
-  // enables all. Greyed when the parent source is disabled.
   const allOn = scripts.every(isScriptEnabled);
 
   const table = document.createElement('table');
@@ -177,14 +157,13 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
 
   const bulkHead = document.createElement('th');
   bulkHead.className = 'toggle-cell';
-  bulkHead.appendChild(makeBulkToggle(
+  const bulkBtn = makeBulkToggle(
     allOn,
     !sourceOn,
-    () => void onBulkToggleScripts(scripts, !allOn),
-    sourceOn
-      ? (allOn ? 'Disable all scripts in this directory' : 'Enable all scripts in this directory')
-      : 'Source is disabled',
-  ));
+    () => void onBulkToggleScripts(source.id, bulkBtn),
+    bulkTitle(sourceOn, allOn),
+  );
+  bulkHead.appendChild(bulkBtn);
   headRow.appendChild(bulkHead);
 
   for (const label of ['Filename', 'Size', 'Status']) {
@@ -201,38 +180,11 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
   return table;
 }
 
-async function onBulkToggleScripts(scripts: StoredScript[], next: boolean): Promise<void> {
-  // Only flip the ones whose state differs — saves storage writes and
-  // avoids spurious onChanged events for unchanged rows.
-  const toFlip = scripts.filter((s) => isScriptEnabled(s) !== next);
-  await Promise.all(toFlip.map((s) => setScriptEnabled(s.id, next)));
-  await render();
-}
-
-// A checkbox-sized button with a "−" (when everything's on, so the
-// click disables) or "+" (otherwise — click enables). Distinct
-// element type from the per-row checkbox toggle so it can carry its
-// own affordance without confusing screen-readers about its state.
-function makeBulkToggle(
-  allOn: boolean,
-  disabled: boolean,
-  onClick: () => void,
-  title: string,
-): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'bulk-toggle';
-  btn.disabled = disabled;
-  btn.title = title;
-  btn.textContent = allOn ? '−' : '+';
-  btn.addEventListener('click', () => { if (!btn.disabled) onClick(); });
-  return btn;
-}
-
 function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowElement {
   const scriptOn = isScriptEnabled(script);
 
   const tr = document.createElement('tr');
+  tr.dataset.scriptId = script.id;
   if (!sourceOn || !scriptOn) tr.classList.add('disabled');
 
   const toggleCell = document.createElement('td');
@@ -240,7 +192,7 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   toggleCell.appendChild(makeToggle(
     scriptOn,
     !sourceOn,    // disabled (greyed out) when the parent source is off
-    (next) => void onToggleScript(script.id, next),
+    (next, label) => void onToggleScript(script.id, next, label),
     sourceOn ? 'Enable this script' : 'Source is disabled',
   ));
   tr.appendChild(toggleCell);
@@ -272,12 +224,284 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   return tr;
 }
 
+// ---------- Flow handlers ----------
+
+async function onAddDirectory(rawPath: string): Promise<void> {
+  const path = rawPath.trim();
+  if (!path) return;
+
+  setAddFormBusy(true);
+  try {
+    const created = await addSource(path);
+    addInput.value = '';
+    // null = path is already registered; nothing to append.
+    if (!created) return;
+    // refreshSource ran inside addSource, but addSource returns the
+    // seed row. Re-read so we get the post-refresh scriptIds (the
+    // section render queries getSourceWithScripts anyway, but reading
+    // the latest source row keeps the StoredSource we pass in sync).
+    const latest = (await getSource(created.id)) ?? created;
+    removeEmptyPlaceholder();
+    directoriesEl.appendChild(await renderSourceSection(latest));
+  } finally {
+    setAddFormBusy(false);
+  }
+}
+
+async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  section.classList.add('removing');
+  btn.disabled = true;
+  try {
+    await removeSource(id);
+    section.remove();
+    if (directoriesEl.querySelector('.directory') == null) {
+      directoriesEl.appendChild(emptyPlaceholder());
+    }
+  } catch (err) {
+    section.classList.remove('removing');
+    btn.disabled = false;
+    throw err;
+  }
+}
+
+async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<void> {
+  const prevText = btn.textContent ?? 'Refresh';
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+  try {
+    await refreshSource(id);
+    // Refresh may have added/removed scripts, flipped statuses, etc.
+    // Rebuild just this one section so the rest of the page (other
+    // directories, banners, scroll position) is undisturbed.
+    const section = findSection(id);
+    const latest = await getSource(id);
+    if (section && latest) {
+      const fresh = await renderSourceSection(latest);
+      section.replaceWith(fresh);
+    } else {
+      // Section gone or source disappeared — fall back to button reset.
+      btn.disabled = false;
+      btn.textContent = prevText;
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = prevText;
+    throw err;
+  }
+}
+
+async function onToggleSource(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
+  setToggleBusy(label, true);
+  try {
+    await setSourceEnabled(id, enabled);
+    const section = findSection(id);
+    if (section) applySourceEnabledToDom(section, enabled);
+  } finally {
+    setToggleBusy(label, false);
+  }
+}
+
+async function onToggleScript(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
+  setToggleBusy(label, true);
+  try {
+    await setScriptEnabled(id, enabled);
+    const row = label.closest('tr') as HTMLTableRowElement | null;
+    const section = label.closest('.directory') as HTMLElement | null;
+    if (row && section) {
+      const sourceOn = !section.classList.contains('disabled');
+      row.classList.toggle('disabled', !sourceOn || !enabled);
+      refreshBulkToggle(section);
+    }
+  } finally {
+    setToggleBusy(label, false);
+  }
+}
+
+async function onBulkToggleScripts(sourceId: string, btn: HTMLButtonElement): Promise<void> {
+  const section = findSection(sourceId);
+  if (!section) return;
+
+  const checkboxes = Array.from(
+    section.querySelectorAll<HTMLInputElement>('tbody .toggle input[type="checkbox"]'),
+  );
+  if (checkboxes.length === 0) return;
+  const allOn = checkboxes.every((cb) => cb.checked);
+  const next = !allOn;
+
+  const labels = checkboxes.map((cb) => cb.closest('.toggle') as HTMLLabelElement);
+  setBulkBusy(btn, true);
+  for (const lab of labels) setToggleBusy(lab, true);
+
+  try {
+    // One bulk write → one storage.onChanged event → one
+    // syncRegistrations in the background SW. The old code wrote each
+    // script's row individually, so a 15-script flip kicked off 15
+    // full re-syncs of chrome.userScripts (each O(N)).
+    const sourceOn = !section.classList.contains('disabled');
+    const data = await getSourceWithScripts(sourceId);
+    const scripts = data?.scripts ?? [];
+    const toFlip = scripts
+      .filter((s) => isScriptEnabled(s) !== next)
+      .map((s) => ({ id: s.id, enabled: next }));
+    await setScriptsEnabled(toFlip);
+
+    // Reflect the new state in every row.
+    for (const cb of checkboxes) cb.checked = next;
+    for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
+      row.classList.toggle('disabled', !sourceOn || !next);
+    }
+  } finally {
+    for (const lab of labels) setToggleBusy(lab, false);
+    setBulkBusy(btn, false);
+    refreshBulkToggle(section);
+  }
+}
+
+// ---------- In-place DOM mutators ----------
+
+function findSection(sourceId: string): HTMLElement | null {
+  return directoriesEl.querySelector<HTMLElement>(
+    `.directory[data-source-id="${cssEscape(sourceId)}"]`,
+  );
+}
+
+// Apply a source enable/disable to its section without rebuilding it:
+// flip the section's `.disabled` class, retitle the per-script toggle
+// labels, enable/disable each per-script checkbox, and update the
+// bulk-toggle's disabled state. Per-script `enabled` values are
+// preserved in storage, so the row classes recompute from each
+// checkbox's current `checked`.
+function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
+  section.classList.toggle('disabled', !enabled);
+
+  for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
+    const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
+    const lab = row.querySelector<HTMLLabelElement>('.toggle');
+    if (!cb || !lab) continue;
+    cb.disabled = !enabled;
+    lab.classList.toggle('toggle-disabled', !enabled);
+    lab.title = enabled ? 'Enable this script' : 'Source is disabled';
+    row.classList.toggle('disabled', !enabled || !cb.checked);
+  }
+
+  refreshBulkToggle(section);
+}
+
+// Recompute the bulk-toggle's symbol/title/disabled state from the
+// current per-row checkboxes plus the section's enabled state. Called
+// after any toggle so the +/− stays in sync without a re-render.
+function refreshBulkToggle(section: HTMLElement): void {
+  const btn = section.querySelector<HTMLButtonElement>('.bulk-toggle');
+  if (!btn) return;
+  const sourceOn = !section.classList.contains('disabled');
+  const checkboxes = Array.from(
+    section.querySelectorAll<HTMLInputElement>('tbody .toggle input[type="checkbox"]'),
+  );
+  const allOn = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
+  btn.disabled = !sourceOn;
+  btn.title = bulkTitle(sourceOn, allOn);
+  // While busy the symbol is replaced by a spinner; don't overwrite it.
+  if (!btn.classList.contains('busy')) {
+    btn.textContent = allOn ? '−' : '+';
+  } else {
+    btn.dataset.idleText = allOn ? '−' : '+';
+  }
+}
+
+function bulkTitle(sourceOn: boolean, allOn: boolean): string {
+  if (!sourceOn) return 'Source is disabled';
+  return allOn
+    ? 'Disable all scripts in this directory'
+    : 'Enable all scripts in this directory';
+}
+
+function removeEmptyPlaceholder(): void {
+  directoriesEl.querySelector('.empty-placeholder')?.remove();
+}
+
+// ---------- Busy indicators ----------
+
+// Append/remove a small inline spinner inside a toggle label and
+// disable the underlying checkbox while async work is in flight. The
+// checkbox keeps its just-clicked `checked` value so the user sees
+// the intended state immediately.
+function setToggleBusy(label: HTMLLabelElement, busy: boolean): void {
+  const cb = label.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (cb) cb.disabled = busy || label.classList.contains('toggle-disabled');
+  let spinner = label.querySelector<HTMLElement>('.busy-spinner');
+  if (busy) {
+    if (!spinner) {
+      spinner = document.createElement('span');
+      spinner.className = 'busy-spinner';
+      label.appendChild(spinner);
+    }
+  } else if (spinner) {
+    spinner.remove();
+  }
+}
+
+// Replace the bulk-toggle's +/− glyph with a spinner while async work
+// is in flight. We stash the idle text on the button so
+// `refreshBulkToggle` can restore the correct symbol afterwards.
+function setBulkBusy(btn: HTMLButtonElement, busy: boolean): void {
+  if (busy) {
+    btn.dataset.idleText = btn.textContent ?? '';
+    btn.textContent = '';
+    btn.classList.add('busy');
+    btn.disabled = true;
+  } else {
+    btn.classList.remove('busy');
+    btn.textContent = btn.dataset.idleText ?? '';
+    delete btn.dataset.idleText;
+    btn.disabled = false;
+  }
+}
+
+function setAddFormBusy(busy: boolean): void {
+  addInput.disabled = busy;
+  addButton.disabled = busy;
+  let spinner = addForm.querySelector<HTMLElement>('.busy-spinner');
+  if (busy) {
+    if (!spinner) {
+      spinner = document.createElement('span');
+      spinner.className = 'busy-spinner';
+      addForm.appendChild(spinner);
+    }
+  } else if (spinner) {
+    spinner.remove();
+  }
+}
+
+// ---------- Small UI helpers ----------
+
+// A checkbox-sized button with a "−" (when everything's on, so the
+// click disables) or "+" (otherwise — click enables). Distinct
+// element type from the per-row checkbox toggle so it can carry its
+// own affordance without confusing screen-readers about its state.
+function makeBulkToggle(
+  allOn: boolean,
+  disabled: boolean,
+  onClick: () => void,
+  title: string,
+): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'bulk-toggle';
+  btn.disabled = disabled;
+  btn.title = title;
+  btn.textContent = allOn ? '−' : '+';
+  btn.addEventListener('click', () => { if (!btn.disabled) onClick(); });
+  return btn;
+}
+
 // A label-wrapped checkbox so the user has a generous click target.
 // `disabled: true` greys it out without losing the underlying value.
+// The change handler receives the new value AND the label, so flow
+// handlers can attach a spinner to it while async work is in flight.
 function makeToggle(
   checked: boolean,
   disabled: boolean,
-  onChange: (next: boolean) => void,
+  onChange: (next: boolean, label: HTMLLabelElement) => void,
   title: string,
 ): HTMLLabelElement {
   const label = document.createElement('label');
@@ -289,7 +513,7 @@ function makeToggle(
   cb.type = 'checkbox';
   cb.checked = checked;
   cb.disabled = disabled;
-  cb.addEventListener('change', () => onChange(cb.checked));
+  cb.addEventListener('change', () => onChange(cb.checked, label));
   label.appendChild(cb);
   return label;
 }
@@ -298,6 +522,13 @@ function viewerUrl(scriptId: string): URL {
   const url = new URL(chrome.runtime.getURL('userscript.html'));
   url.searchParams.set('script', scriptId);
   return url;
+}
+
+// CSS.escape isn't on every old runtime; fall back to a minimal escape
+// for the characters that show up in a UUID-shaped sourceId.
+function cssEscape(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 function isFileSchemeAccessAllowed(): Promise<boolean> {

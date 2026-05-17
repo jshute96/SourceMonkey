@@ -36,7 +36,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/background.ts` | Service worker entrypoint; exposes `self.VibeMonkey` for tests |
 | `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
-| `src/options.ts` | Options page controller — path add/remove, render, file-access banner |
+| `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners |
 | `src/userscript.html` | Userscript viewer markup: filename, status, scrollable highlighted code box |
 | `src/userscript.ts` | Userscript viewer controller — fetches the `file://` URL via XHR and highlights it |
 | `src/directories.ts` | Directory I/O: `file://` fetch, listing parser, recursive `*.user.js` scanner, path/URL helpers |

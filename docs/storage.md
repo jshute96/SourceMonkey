@@ -101,6 +101,11 @@ Every load path goes through the same pipeline:
 - `setSourceEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
   flip the per-source / per-script `enabled` flag with a single-row
   write. The match index picks up the change via `storage.onChanged`.
+- `setScriptsEnabled(updates)` — bulk variant: flips many scripts'
+  enabled flags in a **single** `chrome.storage.local.set` call.
+  Used by the options page's bulk +/− toggle so 15 flips fire one
+  `storage.onChanged` event (and therefore one background re-sync)
+  instead of one per script.
 
 ## Pure helpers (testable in isolation)
 
@@ -143,3 +148,35 @@ source**:
 
 Adding a directory triggers a full load immediately — no need to
 click Refresh after adding.
+
+### In-place updates (no full re-render)
+
+The options page does **not** re-render the whole `#directories` list
+on every interaction. Each user action mutates only the affected DOM:
+
+- Per-source toggle → flips `.disabled` on the section, retitles each
+  per-script toggle, and re-evaluates the bulk-toggle's symbol.
+- Per-script toggle → flips `.disabled` on that row + recomputes the
+  bulk-toggle symbol.
+- Bulk +/− → one `setScriptsEnabled(updates)` write (one
+  `storage.onChanged`, one background re-sync), then flips every row.
+- Add directory → appends one new section.
+- Remove → removes that section (and re-shows the placeholder if it
+  was the last one).
+- Refresh → rebuilds just that one section in place.
+
+While the async work is in flight the triggering control shows a small
+inline spinner (toggle labels get a `.busy-spinner` sibling; the
+bulk-toggle's glyph is replaced via `.bulk-toggle.busy`). The rest of
+the page — banners, other directories, scroll position — is
+undisturbed.
+
+### Background-SW sync coalescing
+
+`onCacheChanged` (in `match-index.ts`) fires for every
+`storage.onChanged` batch that touches a `source:*` or `script:*` row.
+The background SW's handler debounces by 50 ms before calling
+`syncRegistrations` + `refreshAllOpenTabs`, so several rapid changes
+collapse into one re-sync. `syncRegistrations` is O(total scripts) and
+issues an `unregister`-all/`register`-all against `chrome.userScripts`,
+so coalescing matters.
