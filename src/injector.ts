@@ -51,6 +51,7 @@ import {
 } from './script-store.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import {
+  WRAPPER_BRIDGE,
   WRAPPER_HEAD,
   WRAPPER_MATCHER,
   WRAPPER_TAIL,
@@ -63,6 +64,12 @@ const SOURCE_PREFIX = 'source:';
 // the SW. Keep these in sync with the strings the wrapper sends.
 export const VM_START_MSG = 'vm:start';
 export const VM_ERROR_MSG = 'vm:error';
+
+// Reserved registration id for the MAIN-world bridge (see
+// buildBridgeSpec). Chrome's userScripts API rejects ids that start
+// with `_`, so we use a `vibemonkey-` prefix; stored script ids are
+// UUIDs and won't collide.
+export const BRIDGE_SCRIPT_ID = 'vibemonkey-bridge';
 
 export type RunAt = chrome.userScripts.RunAt;
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
@@ -259,6 +266,43 @@ export function collectActiveSpecs(
   return out;
 }
 
+// Pure: build the registration spec for the MAIN-world bridge, or
+// return null when no MAIN-world script is active.
+//
+// Why we need this: MAIN-world wrappers can't call
+// chrome.runtime.sendMessage (chrome.runtime is undefined there), so
+// __vmSend in wrapper-head.js falls back to window.postMessage with a
+// "vibemonkey-bridge" marker. The bridge runs in USER_SCRIPT world on
+// the same page, listens for those postMessages, and forwards them to
+// the SW. Without it, MAIN-world scripts execute fine but never report
+// vm:start / vm:error, so the badge shows them as MISSING.
+//
+// Scoping. The bridge registers at `<all_urls>` and runAt
+// document_start. Narrowing to the exact union of MAIN-world scripts'
+// patterns would save the addEventListener call on unrelated pages but
+// complicates the spec (especially with regex includes) for a
+// negligible runtime cost.
+//
+// Ordering vs. wrappers. Two things protect us:
+//   - The bridge registers at document_start, so for any wrapper at
+//     document_end / document_idle the bridge listener is already
+//     installed by the time the wrapper runs.
+//   - For wrappers ALSO at document_start, postMessage queues the
+//     event in a later task — even if a MAIN wrapper happens to run
+//     before the bridge in the same task, the dispatch fires after
+//     both finish their synchronous init, so the bridge catches it.
+export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
+  const hasMainWorld = activeSpecs.some((s) => s.world === 'MAIN');
+  if (!hasMainWorld) return null;
+  return {
+    id: BRIDGE_SCRIPT_ID,
+    matches: ['<all_urls>'],
+    js: [{ code: WRAPPER_BRIDGE }],
+    runAt: 'document_start',
+    world: 'USER_SCRIPT',
+  };
+}
+
 // ---------- Runtime sync (uses chrome.userScripts) ----------
 
 let lastError: string | null = null;
@@ -323,7 +367,12 @@ export async function syncRegistrations(): Promise<void> {
   try {
     await ensureWorldConfigured();
     const { scripts, sources } = await readAll();
-    const specs = collectActiveSpecs(scripts, sources);
+    const userSpecs = collectActiveSpecs(scripts, sources);
+    const bridge = buildBridgeSpec(userSpecs);
+    // Bridge first so Chrome's registration order also reflects "this
+    // runs before MAIN wrappers" (in addition to postMessage's
+    // task-deferred dispatch covering us either way).
+    const specs = bridge ? [bridge, ...userSpecs] : userSpecs;
     const existing = await chrome.userScripts.getScripts();
     if (existing.length > 0) {
       await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });

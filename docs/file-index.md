@@ -50,6 +50,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/wrapper-head.js` | Wrapper prelude (IIFE open, vars, sendMessage helper, matcher slot, vm:start, try-open) — minified to one line by the build |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
+| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` vm:* events from MAIN-world wrappers to the SW |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)

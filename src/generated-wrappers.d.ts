@@ -8,3 +8,4 @@
 export const WRAPPER_HEAD: string;
 export const WRAPPER_TAIL: string;
 export const WRAPPER_MATCHER: string;
+export const WRAPPER_BRIDGE: string;

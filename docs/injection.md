@@ -122,19 +122,42 @@ functions, hook its jQuery. Running them in the isolated world
 silently breaks any such script. Tampermonkey runs `@grant none`
 scripts in page context for the same reason.
 
-#### MAIN-world limitations
+#### MAIN-world telemetry — the bridge
 
-`chrome.runtime.sendMessage` is not exposed to MAIN-world scripts.
-The wrapper's `vm:start` / `vm:error` reports therefore never reach
-the SW for MAIN scripts:
+`chrome.runtime.sendMessage` is not exposed to MAIN-world scripts, so
+the wrapper's `vm:start` / `vm:error` reports can't reach the SW
+directly from MAIN. To still get them through:
 
-- The wrapper's `__vmSend` already wraps the call in `try/catch` and
-  attaches `.catch(() => {})` to the returned promise, so the page
-  console stays clean — the report just disappears.
-- Practical effect: the per-tab badge's "actual" classification stays
-  empty for MAIN scripts. The "expected" count (from
-  `match-index.ts`) is unaffected. Script activation still logs to
-  the page console via the wrapper's `console.log`.
+- `__vmSend` in `wrapper-head.js` feature-detects
+  `chrome.runtime.sendMessage`. In USER_SCRIPT world it calls it
+  directly; in MAIN world it falls back to `window.postMessage({ __vm:
+  "vibemonkey-bridge", payload })`.
+- `src/wrapper-bridge.js` is a tiny USER_SCRIPT-world script registered
+  alongside user scripts. It listens for those postMessages, validates
+  the marker + `event.source === window`, and forwards the payload to
+  the SW via `chrome.runtime.sendMessage`.
+- `buildBridgeSpec` (in `src/injector.ts`) emits the bridge
+  registration when at least one active script resolves to MAIN. The
+  bridge matches `<all_urls>` and runs at `document_start` so its
+  listener is installed before any wrapper's queued postMessage event
+  dispatches.
+
+Trust model:
+
+- The bridge requires `event.source === window` plus the marker, so
+  cross-origin frames can't reach it.
+- It does **not** stop the host page from forging messages. Once any
+  MAIN-world wrapper runs, the page can observe our postMessage
+  payloads on its own window and learn the stored script `id` and any
+  `vm:error` `message` text, then send fakes with whatever marker /
+  ids it just saw.
+- A forged `vm:start` flips a script's badge entry from MISSING to OK
+  on that document; a forged `vm:error` writes an attacker-controlled
+  string into the SW console and per-tab session record. Neither
+  grants script execution or SW privilege.
+- If a real boundary is needed later, inject a per-document nonce into
+  both the MAIN wrapper's head and the bridge spec and require it on
+  incoming messages.
 
 `GM_*` is not supported anywhere yet (see Limitations); the
 `@grant`-keyed branch just future-proofs the resolver for when it is.
@@ -161,7 +184,7 @@ eval's the embedded snippet to verify the regex-relevant cases.
 
 ## The activation / error wrapper
 
-The wrapper lives in three plain JavaScript files, which the build
+The wrapper lives in several plain JavaScript files, which the build
 (`scripts/build.mjs`) minifies to a single line each and emits as
 exported constants in `dist/generated-wrappers.js`. The type
 declarations are hand-written in `src/generated-wrappers.d.ts` (tsc
@@ -176,6 +199,9 @@ into `dist/`). The fragments:
   send, IIFE close.
 - `src/wrapper-matcher.js` — the URL recheck (only inserted for
   scripts with `/regex/` patterns; see below).
+- `src/wrapper-bridge.js` — USER_SCRIPT-world relay registered
+  separately when any MAIN-world script is active (see [MAIN-world
+  telemetry — the bridge](#main-world-telemetry--the-bridge)).
 
 Why one line: the HEAD is concatenated immediately before the user's
 body with no trailing newline, so the body's line N lands at physical
@@ -216,11 +242,13 @@ Every registered body is wrapped in a tiny shim that:
 - Installs window `"error"` and `"unhandledrejection"` listeners,
   filtered by the per-script sourceURL (see [Async-error attribution](#async-error-attribution)
   below).
-- All `sendMessage` calls go through `__vmSend`, which catches the
-  synchronous throw AND attaches `.catch(() => {})` to the returned
-  Promise. Without that, an unreachable SW would surface as an
-  `Uncaught (in promise) Error: Could not establish connection` in
-  every page console.
+- All telemetry goes through `__vmSend`. In USER_SCRIPT world it uses
+  `chrome.runtime.sendMessage` (catching the sync throw and silencing
+  the returned Promise so an unreachable SW doesn't surface as
+  `Uncaught (in promise)` on every page). In MAIN world (where
+  `chrome.runtime` is undefined) it falls back to `window.postMessage`
+  with a marker the bridge picks up — see [MAIN-world telemetry — the
+  bridge](#main-world-telemetry--the-bridge).
 
 ### Async-error attribution
 

@@ -8,13 +8,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  BRIDGE_SCRIPT_ID,
+  buildBridgeSpec,
   buildRegistrationSpec,
   buildWrappedBody,
   collectActiveSpecs,
   mapRunAt,
   resolveWorld,
 } from '../../dist/injector.js';
-import { WRAPPER_MATCHER } from '../../dist/generated-wrappers.js';
+import { WRAPPER_BRIDGE, WRAPPER_MATCHER } from '../../dist/generated-wrappers.js';
 
 // ---------- mapRunAt ----------
 
@@ -129,6 +131,17 @@ test('buildWrappedBody: installs window error + unhandledrejection listeners', (
   // The page console gets only an info-level attribution note — the
   // native browser logging already shows the error + stack.
   assert.match(wrapped, /caught async/);
+});
+
+test('buildWrappedBody: __vmSend feature-detects chrome.runtime then falls back to postMessage', () => {
+  // MAIN-world scripts can't reach chrome.runtime; they need to relay
+  // through window.postMessage to a USER_SCRIPT-world bridge (see
+  // buildBridgeSpec). Both transport branches must be present in the
+  // emitted wrapper so the same compiled body works in either world.
+  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
+  assert.match(wrapped, /chrome\.runtime\.sendMessage/);
+  assert.match(wrapped, /window\.postMessage/);
+  assert.match(wrapped, /"vibemonkey-bridge"/);
 });
 
 test('buildWrappedBody: async-error listeners filter by the per-script sourceURL', () => {
@@ -398,6 +411,148 @@ test('inline matcher: <all_urls> matches http/https/file/ftp only', () => {
   const m = { matches: ['<all_urls>'], excludes: [], includes: [] };
   assert.equal(match('https://example.com/', m), true);
   assert.equal(match('chrome://settings', m), false);
+});
+
+// ---------- buildBridgeSpec ----------
+
+test('buildBridgeSpec: returns null when no MAIN-world script is active', () => {
+  // USER_SCRIPT-world scripts call chrome.runtime.sendMessage directly,
+  // so the bridge would just be dead weight. Skip the registration.
+  const specs = [
+    { id: 'a', world: 'USER_SCRIPT', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' },
+    { id: 'b', world: 'USER_SCRIPT', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle' },
+  ];
+  assert.equal(buildBridgeSpec(specs), null);
+});
+
+test('buildBridgeSpec: returns null on an empty active set', () => {
+  assert.equal(buildBridgeSpec([]), null);
+});
+
+test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-world script exists', () => {
+  const specs = [
+    { id: 'a', world: 'USER_SCRIPT', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' },
+    { id: 'b', world: 'MAIN', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle' },
+  ];
+  const bridge = buildBridgeSpec(specs);
+  assert.ok(bridge, 'expected a bridge spec');
+  assert.equal(bridge.id, BRIDGE_SCRIPT_ID);
+  assert.equal(bridge.world, 'USER_SCRIPT');
+  assert.deepEqual(bridge.matches, ['<all_urls>']);
+  // document_start so the bridge listener is installed before any
+  // MAIN-world wrapper's postMessage event can dispatch.
+  assert.equal(bridge.runAt, 'document_start');
+  // The bridge's code must reference the marker that __vmSend uses; if
+  // either side renames the marker without updating the other, all
+  // MAIN-world telemetry silently disappears.
+  assert.match(bridge.js[0].code, /vibemonkey-bridge/);
+});
+
+// ---------- wrapper-bridge: filter behavior ----------
+
+// Eval the bridge source inside a fake DOM harness. The bridge is an
+// IIFE that closes over global `window` + `chrome`; passing those as
+// parameters to a wrapping Function constructor lets us drive synthetic
+// `message` events through it and observe what reaches the SW.
+function setupBridgeHarness() {
+  const sent = [];
+  const fakeChrome = {
+    runtime: {
+      sendMessage(payload) {
+        sent.push(payload);
+        return Promise.resolve();
+      },
+    },
+  };
+  let listener = null;
+  const fakeWindow = {
+    addEventListener(type, fn, _capture) {
+      if (type === 'message') listener = fn;
+    },
+  };
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeChrome);
+  if (!listener) throw new Error('bridge did not install a message listener');
+  const dispatch = (event) => listener(event);
+  const goodEvent = (overrides = {}) => ({
+    source: fakeWindow,
+    data: { __vm: 'vibemonkey-bridge', payload: { type: 'vm:start', id: 'x', url: 'https://e/' } },
+    ...overrides,
+  });
+  return { sent, dispatch, goodEvent, fakeWindow };
+}
+
+test('wrapper-bridge: forwards well-formed vm:start events', () => {
+  const { sent, dispatch, goodEvent } = setupBridgeHarness();
+  dispatch(goodEvent());
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'vm:start');
+  assert.equal(sent[0].id, 'x');
+});
+
+test('wrapper-bridge: forwards well-formed vm:error events', () => {
+  const { sent, dispatch, goodEvent } = setupBridgeHarness();
+  dispatch(goodEvent({
+    data: { __vm: 'vibemonkey-bridge', payload: { type: 'vm:error', id: 'x', message: 'boom' } },
+  }));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'vm:error');
+  assert.equal(sent[0].message, 'boom');
+});
+
+test('wrapper-bridge: ignores messages from a different source window', () => {
+  // The page's own postMessage to *another* window (e.g. an iframe)
+  // bubbles a "message" event whose source is that other window. We
+  // only want events that originated in our window — anything else
+  // could be cross-frame relay we shouldn't act on.
+  const { sent, dispatch, goodEvent } = setupBridgeHarness();
+  dispatch(goodEvent({ source: { not: 'our window' } }));
+  assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: ignores messages without the VibeMonkey marker', () => {
+  // Any other page-issued postMessage on this window will reach our
+  // listener; the marker is what distinguishes ours from theirs.
+  const { sent, dispatch, goodEvent } = setupBridgeHarness();
+  dispatch(goodEvent({ data: { payload: { type: 'vm:start', id: 'x' } } }));
+  dispatch(goodEvent({ data: { __vm: 'something-else', payload: { type: 'vm:start', id: 'x' } } }));
+  assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: ignores messages whose payload is missing or non-object', () => {
+  const { sent, dispatch, goodEvent } = setupBridgeHarness();
+  dispatch(goodEvent({ data: { __vm: 'vibemonkey-bridge' } }));
+  dispatch(goodEvent({ data: { __vm: 'vibemonkey-bridge', payload: null } }));
+  dispatch(goodEvent({ data: { __vm: 'vibemonkey-bridge', payload: 'string-payload' } }));
+  assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: only forwards vm:start / vm:error payload types', () => {
+  // Even with the right marker, an unrecognised type must not be
+  // relayed — otherwise the bridge would let arbitrary page-supplied
+  // messages reach chrome.runtime.sendMessage and be dispatched to
+  // every onMessage listener in the SW.
+  const { sent, dispatch, goodEvent } = setupBridgeHarness();
+  dispatch(goodEvent({
+    data: { __vm: 'vibemonkey-bridge', payload: { type: 'vm:exec', code: 'evil' } },
+  }));
+  dispatch(goodEvent({
+    data: { __vm: 'vibemonkey-bridge', payload: { type: '', id: 'x' } },
+  }));
+  assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () => {
+  // Defensive: the bridge runs in USER_SCRIPT world where chrome.runtime
+  // is normally present, but if the API surface ever shifts we'd rather
+  // skip listener install than throw during page load.
+  let listener = null;
+  const fakeWindow = {
+    addEventListener(type, fn) { if (type === 'message') listener = fn; },
+  };
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'chrome', WRAPPER_BRIDGE)(fakeWindow, {});
+  assert.equal(listener, null);
 });
 
 // ---------- collectActiveSpecs ----------

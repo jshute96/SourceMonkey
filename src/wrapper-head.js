@@ -24,11 +24,25 @@
   var __vmName = "__VM_NAME__";
   var __vmId = "__VM_ID__";
   var __vmSourceUrl = "__VM_SOURCE_URL__";
+  /* Telemetry transport. In USER_SCRIPT world chrome.runtime.sendMessage
+     is exposed (configureWorld({ messaging: true }) was called by the
+     injector), so we use it directly. In MAIN world chrome.runtime is
+     undefined — we fall back to window.postMessage with the
+     "vibemonkey-bridge" marker. A separate USER_SCRIPT-world bridge
+     (see wrapper-bridge.js) listens for those and forwards to the SW.
+     postMessage is observable by the page; the activation console.log
+     already leaks the script name so this isn't a wider info surface. */
   var __vmSend = function (payload) {
     try {
-      var p = chrome.runtime.sendMessage(payload);
-      if (p && typeof p.catch === "function") p.catch(function () {});
+      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+        var p = chrome.runtime.sendMessage(payload);
+        if (p && typeof p.catch === "function") p.catch(function () {});
+        return;
+      }
     } catch (_e) {}
+    try {
+      window.postMessage({ __vm: "vibemonkey-bridge", payload: payload }, "*");
+    } catch (_e2) {}
   };
   "__VM_MATCHER_BLOCK__";
   /* Async-error attribution. Errors thrown synchronously from the body

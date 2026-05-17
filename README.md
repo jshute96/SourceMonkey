@@ -91,15 +91,18 @@ The wrapper around every body:
 
 - Logs `[VibeMonkey] script "<name>" running on <url>` to the page
   console on activation.
-- Catches **synchronous** throws from the body and logs them as
-  `[VibeMonkey] script "<name>" threw: <message>` on the page console,
-  also forwarding to the service worker log. Async failures (rejected
-  Promises, `setTimeout` throws) are not currently captured.
+- Catches synchronous throws from the body and logs them as
+  `[VibeMonkey] script "<name>" threw: <message>`, also forwarding
+  to the service worker.
+- Installs filtered `window` `error` / `unhandledrejection` listeners
+  so async failures from handlers the script installs (timers, event
+  listeners, promise chains) are attributed back to the right script
+  via a per-script `# sourceURL=` marker and reported the same way.
 
-MAIN-world scripts can't reach the SW (`chrome.runtime.sendMessage`
-is not exposed in the page world), so their `vm:start` / `vm:error`
-reports are silently dropped — the badge's "actual" classification
-stays empty for them. The activation console log still works.
+MAIN-world scripts can't reach the SW directly, so the wrapper falls
+back to `window.postMessage` and a tiny USER_SCRIPT-world bridge
+forwards those events to the service worker. The badge stays accurate
+for `@grant none` / page-world scripts.
 
 For the full per-tag inventory — which header fields VibeMonkey
 honors, which are parsed but not acted on, and which are ignored —
