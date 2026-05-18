@@ -20,7 +20,10 @@ Three pattern flavours, all implemented in `src/url-match.ts`:
 
 - **scheme**: `*` (http or https only), `http`, `https`, `file`, `ftp`.
 - **host**: `*` (any host), `*.example.com` (base domain OR any
-  subdomain), exact domain, or empty (for `file://`).
+  subdomain), exact domain, or empty (for `file://`). May include a
+  `:port` suffix — Chrome's docs disallow ports but its matcher
+  accepts them, and we follow that so the badge stays in step with
+  what Chrome actually injects. Port-less patterns match any port.
 - **path**: glob with `*`. `*` matches any chars including `/`. The
   glob runs against `pathname + search + hash` so `?id=*` works.
 

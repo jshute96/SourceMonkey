@@ -8,14 +8,18 @@
 import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extensionIdFromPath } from './extension-id';
+import { makeSwApi } from './sw-api';
 
 export type GetServiceWorker = () => Promise<Worker>;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
+export const EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
 
 // `extensionContext` is *worker-scoped* so a single Chromium window
 // (with the extension loaded) is reused across every test in the same
@@ -46,6 +50,9 @@ type TestFixtures = {
   // operations risks the handle going stale.
   getServiceWorker: GetServiceWorker;
   extensionId: string;
+  // Typed proxy over the `self.VibeMonkey` SW surface. Wipes storage
+  // between tests so each test starts from a known-clean slate.
+  vm: ReturnType<typeof makeSwApi>;
 };
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
@@ -87,7 +94,20 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   extensionContext: [
     async ({}, use) => {
-      const ctx = await chromium.launchPersistentContext('', {
+      // Use a real on-disk user-data-dir (instead of Playwright's
+      // default temp '') because we need to pre-write Preferences for
+      // the extension before Chrome launches:
+      //   - `extensions.settings.<id>.user_scripts_enabled` — Chrome
+      //     ≥138 gates chrome.userScripts behind a per-extension toggle.
+      //     Without this, the API is undefined and no injection works.
+      //     Key name discovered by grepping the Chrome binary for
+      //     `user_scripts`; matches what Chrome writes when a user
+      //     flips the UI toggle.
+      const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibemonkey-test-'));
+      writeExtensionPreferences(userDataDir, EXTENSION_ID);
+
+      const forwardSwConsole = process.env.VM_FORWARD_SW_CONSOLE === '1';
+      const ctx = await chromium.launchPersistentContext(userDataDir, {
         // Extensions require Chrome's new headless mode (--headless=new,
         // available since Chrome 112). We set headless: false so Playwright
         // doesn't inject its own --headless flag, then pass --headless=new
@@ -99,8 +119,23 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           `--load-extension=${EXTENSION_PATH}`,
         ],
       });
+      // Optional SW console forwarding so tests can use console.log
+      // in the SW for diagnostics. Off by default (noisy); flip
+      // VM_FORWARD_SW_CONSOLE=1 to enable. Each newly-spawned SW gets
+      // its own listener — MV3 workers respawn aggressively.
+      if (forwardSwConsole) {
+        const wireUp = (sw: Worker): void => {
+          sw.on('console', (msg) => {
+            process.stderr.write(`[sw ${msg.type()}] ${msg.text()}\n`);
+          });
+        };
+        ctx.serviceWorkers().forEach(wireUp);
+        ctx.on('serviceworker', wireUp);
+      }
       await use(ctx);
       await ctx.close();
+      // Best-effort cleanup; Chrome may still hold a lock briefly.
+      try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch {}
     },
     { scope: 'worker' },
   ],
@@ -135,6 +170,46 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     const id = new URL(sw.url()).host;
     await use(id);
   },
+
+  vm: async ({ getServiceWorker }, use) => {
+    const api = makeSwApi(getServiceWorker);
+    // Clean slate per test: clears chrome.storage.local + session AND
+    // unregisters every chrome.userScripts entry. Without this each
+    // test inherits the previous test's sources and the badge counts
+    // are non-deterministic.
+    await api.resetAllState();
+    await use(api);
+    // Best-effort teardown so a failure in one test doesn't poison
+    // sibling tests' bootstrap.
+    try { await api.resetAllState(); } catch {}
+  },
 });
 
 export const expect = test.expect;
+
+// Pre-seed the Chrome profile so the unpacked extension at our known ID
+// is granted the per-extension toggles that headless test runs can't
+// click. Today this is just `user_scripts_allowed` (Chrome ≥138), but
+// the same Preferences file is the right place to drop future toggles.
+//
+// Chrome writes its own Preferences on first run; ours has to be in
+// place before launch so it takes precedence. Keys observed by reading
+// what Chrome itself writes after a user flips the toggle in the UI.
+function writeExtensionPreferences(userDataDir: string, extensionId: string): void {
+  const defaultDir = path.join(userDataDir, 'Default');
+  fs.mkdirSync(defaultDir, { recursive: true });
+  const prefs = {
+    extensions: {
+      settings: {
+        [extensionId]: {
+          // Chrome ≥138 stores this when the user flips the
+          // "Allow User Scripts" toggle on chrome://extensions.
+          // Setting it pre-launch grants the permission to the
+          // already-known extension ID without UI clicks.
+          user_scripts_enabled: true,
+        },
+      },
+    },
+  };
+  fs.writeFileSync(path.join(defaultDir, 'Preferences'), JSON.stringify(prefs));
+}

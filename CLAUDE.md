@@ -57,3 +57,33 @@ user before elaborating further. Default to action over planning.
   - Unit: `node --test tests/unit/<file>.test.mjs`
   - E2E: `npx playwright test tests/e2e/<file>.spec.ts`
 - When you do need a full run, start it with Bash `run_in_background: true` so it doesn't block the turn.
+
+## Writing tests
+- **Unit vs e2e**: unit tests (`tests/unit/`) exercise pure logic against
+  the compiled `dist/*.js`. Use them for matcher/parser/store helpers.
+  E2E tests (`tests/e2e/`) drive a real headless Chromium with the
+  unpacked extension loaded; use them for anything that touches the
+  chrome.* APIs or end-to-end injection.
+- **E2E harness** (see `docs/testing.md` for the full picture):
+  - `tests/fixtures/extension.ts` exposes `extensionContext`,
+    `fixtureServer`, `extensionId`, `getServiceWorker`, and `vm`. The
+    `vm` fixture is a typed proxy over the SW's `self.VibeMonkey` test
+    surface (see `src/background.ts`).
+  - `tests/fixtures/scripts-dir.ts` builds a tmp directory of real
+    `*.user.js` files on disk so `vm.addSource(dir.path)` runs the
+    production file:// scan + fetch pipeline.
+  - The fixture pre-writes `extensions.settings.<id>.user_scripts_enabled
+    = true` into Chrome's Preferences so `chrome.userScripts` is callable
+    in headless mode (Chrome ≥138 normally requires a manual toggle).
+- **Always call `vm.syncNow()`** after any state-changing operation
+  (addSource, updateSource, setSourceEnabled, setScriptEnabled) and
+  BEFORE the navigation that should see the new state. The production
+  storage→sync path has a 50ms debounce that a fast-following navigation
+  will out-race; `syncNow` flushes it.
+- **Reset between tests**: the `vm` fixture calls `vm.resetAllState()`
+  before each test (wipes storage + unregisters every userscript). Tests
+  should clean up their tmp dirs in `afterEach`.
+- **No SW-console output by default**. Set `VM_FORWARD_SW_CONSOLE=1` to
+  stream the SW's `console.log` calls to test stderr while debugging.
+- **Prefer fresh test files for new feature areas**, with one file per
+  concern (see `tests/e2e/` for the current split).

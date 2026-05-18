@@ -145,6 +145,26 @@ test('urlMatchesScript: @exclude wins over @include', () => {
   assert.equal(urlMatchesScript('https://example.com/admin/users', m), false);
 });
 
+// Port handling. Chrome's docs say match patterns don't allow ports,
+// but Chrome's matcher accepts them and matches the corresponding port.
+// We follow Chrome here so OUR matcher (which drives the badge) stays
+// in step with what Chrome actually injects — otherwise localhost
+// development with ports paints every tab UNEXPECTED.
+test('matchPattern: port in pattern matches matching port', () => {
+  assert.equal(matchPattern('http://127.0.0.1:8080/*', 'http://127.0.0.1:8080/x'), true);
+  assert.equal(matchPattern('http://127.0.0.1:8080/*', 'http://127.0.0.1:9090/x'), false);
+});
+
+test('matchPattern: port-less pattern matches any port', () => {
+  assert.equal(matchPattern('http://127.0.0.1/*', 'http://127.0.0.1:8080/x'), true);
+  assert.equal(matchPattern('http://127.0.0.1/*', 'http://127.0.0.1/x'), true);
+});
+
+test('matchPattern: port pinning works with subdomain wildcard', () => {
+  assert.equal(matchPattern('https://*.example.com:8443/*', 'https://api.example.com:8443/x'), true);
+  assert.equal(matchPattern('https://*.example.com:8443/*', 'https://api.example.com/x'), false);
+});
+
 test('urlMatchesScript: regex-form exclude is honored', () => {
   const m = {
     matches: ['https://example.com/*'],

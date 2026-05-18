@@ -62,17 +62,38 @@ export function matchPattern(pattern: string, url: string): boolean {
 
   // Host. file:// URLs typically have an empty host; we allow `*` to
   // match that too so `file:///*` style patterns work.
-  if (host === '*') {
+  //
+  // Chrome's documented match-pattern grammar disallows ports, but
+  // Chrome's actual matcher accepts them — `http://host:port/*` will
+  // be registered and Chrome will match it against URLs on that port.
+  // Honoring that here keeps OUR matcher in step with Chrome's, which
+  // matters because the badge classification uses our matcher and would
+  // otherwise show UNEXPECTED for every wrapper Chrome happily injected.
+  // Strategy: split off a trailing `:port` if present and check
+  // hostname + port separately. Pattern hosts without a port match any
+  // port (the user opted not to constrain it).
+  const colon = host.lastIndexOf(':');
+  // Must look like host:digits — IPv6 literals are bracketed so a colon
+  // outside `[…]` is unambiguous; we don't support bracketed v6 here.
+  const hasPort = colon > 0 && /^\d+$/.test(host.slice(colon + 1));
+  const patternHost = hasPort ? host.slice(0, colon) : host;
+  const patternPort = hasPort ? host.slice(colon + 1) : '';
+  if (patternHost === '*') {
     // any host (including empty)
-  } else if (host.startsWith('*.')) {
-    const suffix = host.slice(2).toLowerCase();
+  } else if (patternHost.startsWith('*.')) {
+    const suffix = patternHost.slice(2).toLowerCase();
     const h = parsed.hostname.toLowerCase();
     if (h !== suffix && !h.endsWith('.' + suffix)) return false;
-  } else if (host === '') {
+  } else if (patternHost === '') {
     if (parsed.hostname !== '') return false;
-  } else if (parsed.hostname.toLowerCase() !== host.toLowerCase()) {
+  } else if (parsed.hostname.toLowerCase() !== patternHost.toLowerCase()) {
     return false;
   }
+  // If the pattern pinned a port, the URL must use exactly that port
+  // (after URL parsing normalises default ports — http defaults port to
+  // '', so a pattern of `http://host:80/*` won't match `http://host/`
+  // because parsed.port is ''. That mirrors Chrome's literal compare.)
+  if (patternPort !== '' && parsed.port !== patternPort) return false;
 
   // Path glob runs against pathname + query + fragment so authors can
   // target ?id=... etc.

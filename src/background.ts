@@ -14,6 +14,7 @@
 // can't be triggered from a Playwright toolbar click.
 
 import {
+  debugDumpCache,
   ensureLoaded,
   findMatchesForUrl,
   installStorageListener,
@@ -21,6 +22,7 @@ import {
   type MatchedScript,
 } from './match-index.js';
 import {
+  isUserScriptsAvailable,
   syncRegistrations,
   VM_ERROR_MSG,
   VM_START_MSG,
@@ -37,8 +39,23 @@ import {
   type TabMatchState,
   type TabRecord,
 } from './tab-status.js';
-import { requestOpportunisticScriptChecks } from './script-updater.js';
-import { getScript, type StoredScript } from './script-store.js';
+import {
+  requestOpportunisticScriptChecks,
+  updateAllSources,
+  updateScript,
+  updateSource,
+} from './script-updater.js';
+import {
+  addSource,
+  getScript,
+  getSources,
+  getSourceWithScripts,
+  removeSource,
+  setScriptEnabled,
+  setSourceEnabled,
+  type StoredScript,
+  type StoredSource,
+} from './script-store.js';
 
 interface VibeMonkeyApi {
   version: string;
@@ -47,6 +64,55 @@ interface VibeMonkeyApi {
   ping: (value?: string) => string;
   // Test/debug hook: force a tab badge refresh against an arbitrary URL.
   matchesFor: (url: string) => Promise<MatchedScript[]>;
+  // ---- E2E test surface ----
+  //
+  // These methods exist so Playwright tests can drive the extension via
+  // `serviceWorker.evaluate(...)`. MV3 service workers can't be poked
+  // from a Playwright UI action (no toolbar click); without these the
+  // tests would have to navigate to the options page for every state
+  // transition, which is both slow and couples tests to the page's DOM.
+  // All of them delegate straight to the production functions — they
+  // are not test-only logic, just convenience accessors.
+  //
+  // Production exposure: the manifest has no `externally_connectable`
+  // entry, so neither web pages nor other extensions can reach the SW
+  // to call these. Practically callable only from DevTools on an
+  // extension page or from Playwright's `serviceWorker.evaluate`.
+  addSource: (path: string) => Promise<StoredSource | null>;
+  removeSource: (id: string) => Promise<void>;
+  getSources: () => Promise<StoredSource[]>;
+  getSourceWithScripts: (id: string) => Promise<{ source: StoredSource; scripts: StoredScript[] } | null>;
+  setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
+  setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
+  updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  updateScript: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  updateAllSources: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  // Inspect the per-tab badge state Chrome would render. We pull
+  // text/title back from chrome.action and the structured TabRecord
+  // from session storage so a single round-trip gives a test
+  // everything it needs to assert on.
+  getTabState: (tabId: number) => Promise<{
+    badgeText: string;
+    badgeColor: chrome.action.ColorArray;
+    title: string;
+    record: TabRecord | null;
+  }>;
+  // Wipe local + session storage and unregister every userscript so
+  // each test starts clean.
+  resetAllState: () => Promise<void>;
+  // Force an immediate chrome.userScripts re-sync, bypassing the 50ms
+  // debounce in scheduleSync(). Tests use this after addSource /
+  // updateScript / setSourceEnabled so the navigation that follows
+  // can't out-race the debounced registration.
+  syncNow: () => Promise<{ registered: { id: string }[] }>;
+  // Diagnostic: the match-index's current view of the world. Tests use
+  // this when a badge classification looks wrong to distinguish between
+  // "matcher cache stale" and "wrapper never reported". Returns the
+  // matches for the URL plus the full cache dump for context.
+  debugMatchIndex: (url: string) => Promise<{
+    matches: { id: string; name: string }[];
+    cache: ReturnType<typeof debugDumpCache>;
+  }>;
 }
 
 const api: VibeMonkeyApi = {
@@ -55,6 +121,83 @@ const api: VibeMonkeyApi = {
   matchesFor: async (url) => {
     await ensureLoaded();
     return findMatchesForUrl(url);
+  },
+  addSource,
+  removeSource,
+  getSources,
+  getSourceWithScripts,
+  setSourceEnabled,
+  setScriptEnabled,
+  updateSource,
+  updateScript,
+  updateAllSources,
+  getTabState: async (tabId: number) => {
+    const [badgeText, badgeColor, title, record] = await Promise.all([
+      chrome.action.getBadgeText({ tabId }),
+      chrome.action.getBadgeBackgroundColor({ tabId }),
+      chrome.action.getTitle({ tabId }),
+      getTabRecord(tabId),
+    ]);
+    return { badgeText, badgeColor, title, record };
+  },
+  debugMatchIndex: async (url: string) => {
+    await ensureLoaded();
+    return {
+      matches: findMatchesForUrl(url).map((m) => ({ id: m.id, name: m.name })),
+      cache: debugDumpCache(),
+    };
+  },
+  syncNow: async () => {
+    // Cancel any pending debounced sync first — otherwise its work
+    // would fire just after we return, and a test that does addSource
+    // → syncNow → page.goto could see the registration briefly
+    // disappear mid-navigation. Tests rely on syncNow being the LAST
+    // sync until the next mutation.
+    if (syncTimer != null) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    // Mirror scheduleSync's full work — both the chrome.userScripts
+    // re-registration AND the open-tab badge recompute — so callers
+    // don't need to know which side effect they care about.
+    await Promise.all([syncRegistrations(), refreshAllOpenTabs()]);
+    if (!isUserScriptsAvailable()) return { registered: [] };
+    const list = await chrome.userScripts.getScripts();
+    return { registered: list.map((s) => ({ id: s.id })) };
+  },
+  resetAllState: async () => {
+    // Cancel any pending debounced sync first — clear() below will
+    // schedule another one via onCacheChanged, so leaving the old
+    // timer armed risks two syncs firing back-to-back and racing the
+    // next test's setup.
+    if (syncTimer != null) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    await chrome.storage.local.clear();
+    await chrome.storage.session.clear();
+    // Tear down whatever Chrome currently has registered so the next
+    // test doesn't inherit injections from the previous one. The
+    // storage.onChanged listener will also fire syncRegistrations() in
+    // response to the clear, but that races test setup — doing it
+    // ourselves here is deterministic.
+    if (chrome.userScripts) {
+      try {
+        const existing = await chrome.userScripts.getScripts();
+        if (existing.length > 0) {
+          await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    // Cancel the post-clear scheduled sync that the onChanged listener
+    // just armed. Without this it would fire ~50 ms into the next
+    // test, potentially mid-addSource.
+    if (syncTimer != null) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
   },
 };
 

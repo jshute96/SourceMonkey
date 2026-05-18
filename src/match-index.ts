@@ -153,3 +153,15 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
 export function cacheSize(): number {
   return cache.size;
 }
+
+// Test/debug: dump the current cache contents. Lets e2e tests
+// distinguish "the script never landed in the cache" from "the URL
+// pattern doesn't match" when a badge classification looks wrong.
+export function debugDumpCache(): { entries: { id: string; name: string; enabled: boolean; sourceId: string; matching: ScriptMatching }[]; disabledSources: string[] } {
+  return {
+    entries: [...cache.values()].map((e) => ({
+      id: e.id, name: e.name, enabled: e.enabled, sourceId: e.sourceId, matching: e.matching,
+    })),
+    disabledSources: [...disabledSources],
+  };
+}

@@ -58,9 +58,18 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle and an HTTP fixture server |
+| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `vm` SW-api proxy |
+| `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
+| `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
+| `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.VibeMonkey` SW test surface plus a generic `waitFor` polling helper |
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
+| `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
+| `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
+| `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
+| `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
+| `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
+| `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
@@ -84,3 +93,4 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |
 | `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones VibeMonkey honors, which are parsed-only, and which are ignored |
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
+| `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
