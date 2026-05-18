@@ -48,6 +48,31 @@ export function joinPath(base: string, child: string): string {
   return base.replace(/\/+$/, '') + '/' + child;
 }
 
+// A source path that points directly at a single `.user.js` file rather
+// than a directory containing them. The rest of the pipeline treats
+// such a source as if it were a directory holding exactly one script.
+export function isSingleFilePath(path: string): boolean {
+  return path.endsWith('.user.js');
+}
+
+// Return the parent directory of an absolute POSIX path. The result
+// has no trailing slash; for a top-level path like `/foo` returns `/`.
+export function parentDir(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\/+$/, '');
+  const slash = trimmed.lastIndexOf('/');
+  if (slash < 0) return '';
+  if (slash === 0) return '/';
+  return trimmed.slice(0, slash);
+}
+
+// Return the leaf name of an absolute POSIX path (the part after the
+// last `/`). Trailing slashes are stripped first.
+export function baseName(absolutePath: string): string {
+  const trimmed = absolutePath.replace(/\/+$/, '');
+  const slash = trimmed.lastIndexOf('/');
+  return slash < 0 ? trimmed : trimmed.slice(slash + 1);
+}
+
 // ---------- File / directory fetch ----------
 
 export function fetchFileUrlText(url: string): Promise<string> {
@@ -96,6 +121,20 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   const text = await response.text();
   if (!text) throw new Error(`empty response from ${url}`);
   return text;
+}
+
+// Best-effort "does the path point to a readable file" probe. Used to
+// turn the otherwise-cryptic "network error fetching …/" message into a
+// clearer one when the user types a path to an existing non-userscript
+// file. Returns false on any error (including non-existence and
+// permission failures) — callers should only rely on a true result.
+async function isReadableFile(absolutePath: string): Promise<boolean> {
+  try {
+    await fetchFileUrlText(pathToFileUrl(absolutePath));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Directory listing parser ----------
@@ -173,7 +212,37 @@ export async function scanForUserScripts(
   depth = 0,
   prefix = '',
 ): Promise<FoundScript[]> {
-  const entries = await listDirectory(absolutePath);
+  // Single-file source: behave as if this file is the only entry in
+  // its parent directory. We still list the parent so we can capture
+  // its listing-reported size+mtime for the unchanged-file skip; if
+  // the file isn't in the listing, return [] so the refresh pipeline
+  // flags it as missing (same treatment as a vanished file in a
+  // directory source).
+  if (depth === 0 && isSingleFilePath(absolutePath)) {
+    const dir = parentDir(absolutePath);
+    const name = baseName(absolutePath);
+    const stat = await statFromListing(dir, name);
+    if (!stat || stat.isDir) return [];
+    const found: FoundScript = { name, relativePath: name };
+    if (stat.size !== undefined) found.size = stat.size;
+    if (stat.mtime !== undefined) found.mtime = stat.mtime;
+    return [found];
+  }
+  let entries: ListingEntry[];
+  try {
+    entries = await listDirectory(absolutePath);
+  } catch (err) {
+    // Common foot-gun at the top level: the user types a path to a file
+    // whose name doesn't end with `.user.js` (e.g. `notes.md`). The
+    // listing fetch above asks Chrome for `file://…/notes.md/`, which
+    // produces an opaque "network error" message. Probe by reading the
+    // path as a plain file; if that succeeds we know the path exists
+    // but isn't a userscript, so swap in a clearer message.
+    if (depth === 0 && await isReadableFile(absolutePath)) {
+      throw new Error(`filename doesn't end with .user.js`);
+    }
+    throw err;
+  }
   const results: FoundScript[] = [];
   for (const entry of entries) {
     if (!entry.isDir && entry.name.endsWith('.user.js')) {
@@ -194,7 +263,17 @@ export async function scanForUserScripts(
   return results;
 }
 
-// Build a file:// URL for a specific scanned script.
-export function scriptFileUrl(absoluteDir: string, relativePath: string): string {
-  return pathToFileUrl(joinPath(absoluteDir, relativePath));
+// Build a file:// URL for a specific scanned script. For a single-file
+// source the relativePath equals the source path's basename, so the
+// join would double the name — just return the source path's URL.
+export function scriptFileUrl(sourcePath: string, relativePath: string): string {
+  return pathToFileUrl(scriptAbsolutePath(sourcePath, relativePath));
+}
+
+// Build the absolute filesystem path for a specific scanned script.
+// Shared by the URL builder above and the viewer's Filename row so a
+// single-file source doesn't get its basename joined twice.
+export function scriptAbsolutePath(sourcePath: string, relativePath: string): string {
+  if (isSingleFilePath(sourcePath)) return sourcePath;
+  return joinPath(sourcePath, relativePath);
 }

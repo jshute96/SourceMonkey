@@ -39,7 +39,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners, Refresh All + ?refresh trigger + change-row highlights |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, highlighted code box |
 | `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl (header fields + filename/copy/size/status) and highlighted body |
-| `src/directories.ts` | Directory I/O: `file://` fetch, listing parser, recursive `*.user.js` scanner, path/URL helpers |
+| `src/directories.ts` | Source I/O: `file://` fetch, listing parser, recursive `*.user.js` scanner (also handles single-file source paths), path/URL helpers |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline (incl. size+mtime skip and refreshAllSources) |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
 | `src/script-display.ts` | Pure display helpers shared by the options page + viewer: `formatBytes`, `formatScriptSize`, `formatScriptStatusLabel` |

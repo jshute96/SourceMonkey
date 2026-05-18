@@ -25,7 +25,10 @@ Three key spaces in `chrome.storage.local`:
 ### `StoredSource`
 
 - `id` — UUID.
-- `path` — absolute filesystem path the user typed in.
+- `path` — absolute filesystem path the user typed in. Either a
+  directory (the usual case — scanned recursively for `*.user.js`)
+  or a single `.user.js` file (treated as a one-script source; see
+  [file-access.md](file-access.md#single-file-paths)).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.

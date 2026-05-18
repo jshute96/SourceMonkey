@@ -24,7 +24,7 @@ import {
   getValue,
   getValues,
 } from './userscript-header.js';
-import { joinPath } from './directories.js';
+import { scriptAbsolutePath } from './directories.js';
 
 declare const Prism: { highlightElement(el: Element): void };
 
@@ -154,7 +154,7 @@ function render(script: StoredScript): void {
   enableLabelEl.classList.toggle('toggle-disabled', !sourceEnabled);
   enableLabelEl.title = sourceEnabled
     ? 'Enable this script'
-    : 'Source directory is disabled';
+    : 'Source is disabled';
 
   messageEl.textContent = script.errorMessage ?? '';
   messageEl.className = script.errorMessage ? 'message error' : 'message';
@@ -188,10 +188,11 @@ function renderDetails(script: StoredScript): void {
   }
 
   // Absolute filesystem path: source directory + script's relative
-  // path. Skip the row entirely if the source row is gone — a bare
-  // relative path under a "Filename" label would be misleading.
+  // path (or just the source path itself when the source is a single
+  // `.user.js` file). Skip the row entirely if the source row is gone
+  // — a bare relative path under a "Filename" label would be misleading.
   if (sourcePath) {
-    currentFilenamePath = joinPath(sourcePath, script.relativePath);
+    currentFilenamePath = scriptAbsolutePath(sourcePath, script.relativePath);
     appendRow(dl, 'Filename', filenameCell(currentFilenamePath));
   } else {
     currentFilenamePath = '';
