@@ -123,6 +123,20 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   return text;
 }
 
+// Best-effort "does the path point to a readable file" probe. Used to
+// turn the otherwise-cryptic "network error fetching …/" message into a
+// clearer one when the user types a path to an existing non-userscript
+// file. Returns false on any error (including non-existence and
+// permission failures) — callers should only rely on a true result.
+async function isReadableFile(absolutePath: string): Promise<boolean> {
+  try {
+    await fetchFileUrlText(pathToFileUrl(absolutePath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Directory listing parser ----------
 
 export interface ListingEntry {
@@ -214,7 +228,23 @@ export async function scanForUserScripts(
     if (stat.mtime !== undefined) found.mtime = stat.mtime;
     return [found];
   }
-  const entries = await listDirectory(absolutePath);
+  let entries: ListingEntry[];
+  try {
+    entries = await listDirectory(absolutePath);
+  } catch (err) {
+    // Common foot-gun at the top level: the user types a path to a file
+    // whose name doesn't end with `.user.js` (e.g. `notes.md`). The
+    // listing fetch above asks Chrome for `file://…/notes.md/`, which
+    // produces an opaque "network error" message. Probe by reading the
+    // path as a plain file; if that succeeds we know the path exists
+    // but isn't a userscript, so swap in a clearer message.
+    if (depth === 0 && await isReadableFile(absolutePath)) {
+      throw new Error(
+        `path is a file but its name doesn't end with .user.js — only *.user.js files can be added as single-file sources`,
+      );
+    }
+    throw err;
+  }
   const results: FoundScript[] = [];
   for (const entry of entries) {
     if (!entry.isDir && entry.name.endsWith('.user.js')) {
