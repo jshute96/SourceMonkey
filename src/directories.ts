@@ -239,9 +239,7 @@ export async function scanForUserScripts(
     // path as a plain file; if that succeeds we know the path exists
     // but isn't a userscript, so swap in a clearer message.
     if (depth === 0 && await isReadableFile(absolutePath)) {
-      throw new Error(
-        `path is a file but its name doesn't end with .user.js — only *.user.js files can be added as single-file sources`,
-      );
+      throw new Error(`filename doesn't end with .user.js`);
     }
     throw err;
   }
