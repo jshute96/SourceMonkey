@@ -414,6 +414,18 @@ export async function getScript(scriptId: string): Promise<StoredScript | undefi
   return await getRaw<StoredScript>(scriptKey(scriptId));
 }
 
+// Read every stored script (across all sources, regardless of status).
+// One `get(null)` scan rather than N per-source reads; used by the
+// options page + viewer to compute global log IDs in one pass.
+export async function getAllScripts(): Promise<StoredScript[]> {
+  const all = await chrome.storage.local.get(null);
+  const out: StoredScript[] = [];
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith('script:')) out.push(value as StoredScript);
+  }
+  return out;
+}
+
 export async function getSource(id: string): Promise<StoredSource | undefined> {
   return await getRaw<StoredSource>(sourceKey(id));
 }

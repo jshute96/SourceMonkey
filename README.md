@@ -141,6 +141,20 @@ modification time match the stored copy.
   falls back to the currently loaded script. The next reload will
   get the newer version.
 
+- **Debug logging.** Verbose lifecycle messages — per-navigation
+  match lists and the per-script `update check (opportunistic)` /
+  `no change` lines that fire on every navigation — are off by
+  default to keep the service-worker console quiet. Manual Refresh
+  clicks still log unconditionally. Enable the verbose lines via the
+  "Enable debug logging" checkbox at the bottom of the options page.
+- **Log IDs.** Every script gets a short, file-derived label used in
+  every SW log line and shown on the script viewer page (as **Log
+  ID**). The label is the script's basename (`foo.user.js`); if two
+  scripts share a basename they're disambiguated as `foo.user.js#1`,
+  `foo.user.js#2`, etc., and the same suffix is rendered next to the
+  filename link on the options page so you can map a log entry back
+  to its row.
+
 **One-time setup:** on `chrome://extensions`, for VibeMonkey enable:
 
 - **"Allow access to file URLs"** — without it the extension can't

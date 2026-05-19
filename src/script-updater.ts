@@ -37,6 +37,8 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import { dlog } from './debug-log.js';
+import { getScriptLogLabel } from './script-log-id.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -160,8 +162,14 @@ async function runScriptCheck(
   mode: UpdateMode,
 ): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
-  const label = scriptLabel(prior, scriptId);
-  console.log(`[VibeMonkey] update check (${mode}): ${label}`);
+  const label = getScriptLogLabel(scriptId);
+  // Manual checks fire on a deliberate user click and are infrequent;
+  // their start + "no change" outcome stays at console.log so the user
+  // gets unconditional confirmation that the click did something.
+  // Opportunistic checks fire on every navigation and are gated by the
+  // debug flag.
+  const checkLog = mode === 'manual' ? console.log : dlog;
+  checkLog(`[VibeMonkey] update check (${mode}): ${label}`);
   let next: StoredScript | null;
   try {
     next = await refreshScript(scriptId);
@@ -169,7 +177,7 @@ async function runScriptCheck(
     console.warn(`[VibeMonkey] update check failed: ${label}: ${describe(err)}`);
     throw err;
   }
-  logScriptOutcome(label, prior, next);
+  logScriptOutcome(label, prior, next, mode);
   return next;
 }
 
@@ -220,14 +228,11 @@ async function snapshotAllSourceScripts(): Promise<Map<string, Map<string, Store
 
 // ---------- Logging helpers ----------
 
-function scriptLabel(script: StoredScript | undefined, fallbackId: string): string {
-  return script?.relativePath ?? fallbackId;
-}
-
 function logScriptOutcome(
   label: string,
   prior: StoredScript | undefined,
   next: StoredScript | null,
+  mode: UpdateMode,
 ): void {
   if (!next) {
     console.warn(`[VibeMonkey] update check: ${label}: row vanished`);
@@ -243,7 +248,11 @@ function logScriptOutcome(
     const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
     console.log(`[VibeMonkey] loaded new content: ${label}${size}`);
   } else {
-    console.log(`[VibeMonkey] no change: ${label}`);
+    // "no change" pairs with the entry log: visible on manual, gated
+    // on opportunistic. Otherwise a Refresh click could log "update
+    // check" with nothing following.
+    const outcomeLog = mode === 'manual' ? console.log : dlog;
+    outcomeLog(`[VibeMonkey] no change: ${label}`);
   }
 }
 

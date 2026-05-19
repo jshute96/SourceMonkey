@@ -8,6 +8,7 @@
 // then the highlighted code box.
 
 import {
+  getAllScripts,
   getScript,
   getSource,
   isScriptEnabled,
@@ -15,6 +16,7 @@ import {
   setScriptEnabled,
   type StoredScript,
 } from './script-store.js';
+import { computeLogIds } from './script-log-id.js';
 import { updateScript } from './script-updater.js';
 import {
   formatScriptSize,
@@ -74,6 +76,32 @@ const filenameCopyBtn = (() => {
 
 void load();
 
+// Keep the displayed Log ID in sync with the global dupe set: if
+// another tab (options page, viewer of a sibling) adds or removes a
+// script that shares this basename, our `#N` would otherwise go
+// stale. Listen for any script:* mutation and re-derive.
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  let touched = false;
+  for (const key of Object.keys(changes)) {
+    if (key.startsWith('script:')) { touched = true; break; }
+  }
+  if (!touched) return;
+  void rehydrateAfterStorageChange();
+});
+
+async function rehydrateAfterStorageChange(): Promise<void> {
+  if (!scriptId) return;
+  // If THIS script was removed, drop into the not-found state.
+  const script = await getScript(scriptId);
+  if (!script) {
+    showMissing('Script not found in storage. Open it from the options page.');
+    return;
+  }
+  await refreshLogId();
+  render(script);
+}
+
 // Source-enabled state is needed for greying the toggle. We cache it so
 // onToggle doesn't have to re-read storage. sourcePath is cached for
 // the same reason — render() builds the absolute filename from it.
@@ -84,6 +112,12 @@ let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 // this rather than reading textContent, which would also break if the
 // dl ever wraps the path across multiple text nodes.
 let currentFilenamePath = '';
+// This script's log ID. Computed at load(), re-derived after refresh,
+// and kept fresh while the viewer is open by listening to
+// chrome.storage.onChanged for any script:* mutation (another tab
+// adding/removing a sibling with the same basename would otherwise
+// leave a stale `#N` on screen).
+let currentLogId = '';
 
 async function load(): Promise<void> {
   if (!scriptId) {
@@ -98,7 +132,15 @@ async function load(): Promise<void> {
   const source = await getSource(script.sourceId);
   sourceEnabled = source ? isSourceEnabled(source) : true;
   sourcePath = source?.path ?? '';
+  await refreshLogId();
   render(script);
+}
+
+async function refreshLogId(): Promise<void> {
+  if (!scriptId) return;
+  const all = await getAllScripts();
+  const map = computeLogIds(all);
+  currentLogId = map.get(scriptId) ?? '';
 }
 
 async function onRefresh(): Promise<void> {
@@ -111,7 +153,10 @@ async function onRefresh(): Promise<void> {
     // check is already in flight for this script, we wait for it
     // instead of starting a second fetch.
     const next = await updateScript(scriptId, 'manual');
-    if (next) render(next);
+    if (next) {
+      await refreshLogId();
+      render(next);
+    }
   } finally {
     refreshBtn.disabled = false;
     refreshBtn.textContent = prior ?? 'Refresh';
@@ -181,6 +226,14 @@ function renderDetails(script: StoredScript): void {
     if (name) appendRow(dl, 'Name', textNode(name));
     const description = getValue(script.header, 'description');
     if (description) appendRow(dl, 'Description', textNode(description));
+  }
+  // Log ID always renders — it's how the user maps an entry in the SW
+  // console back to this script. Sits right under the header fields
+  // so it's visible without scrolling.
+  if (currentLogId) {
+    appendRow(dl, 'Log ID', logIdCell(currentLogId));
+  }
+  if (script.header) {
     const matches = getValues(script.header, 'match');
     if (matches.length) appendRow(dl, 'Match', urlList(matches));
     const excludes = getValues(script.header, 'exclude');
@@ -207,6 +260,13 @@ function renderDetails(script: StoredScript): void {
   appendRow(dl, 'Status', status);
 
   summaryEl.appendChild(dl);
+}
+
+function logIdCell(logId: string): Node {
+  const span = document.createElement('span');
+  span.className = 'log-id-cell';
+  span.textContent = logId;
+  return span;
 }
 
 function filenameCell(path: string): Node {

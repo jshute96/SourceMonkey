@@ -37,6 +37,11 @@
       .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
       .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
       .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 0.2em; }
+      /* Dupe-basename suffix (e.g. " #2") shown after the script's
+         filename link. Empty for unique basenames so the column stays
+         clean. */
+      .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+      .log-id-suffix:not(:empty)::before { content: ' '; }
       .status-ok { color: #166534; }
       .status-error, .status-missing { color: #b00; }
       .empty { color: #666; font-style: italic; }
@@ -66,6 +71,10 @@
       .top-actions { display: flex; justify-content: flex-end; margin-bottom: 0.5em; }
       .top-actions .busy-spinner { margin-left: 0.5em; }
       #version { font-size: 0.85em; color: #888; margin-top: 2em; }
+      .settings { margin-top: 2em; padding-top: 1em; border-top: 1px solid #eee; }
+      .settings-heading { font-size: 1em; margin: 0 0 0.5em; }
+      .settings-row { display: inline-flex; align-items: center; gap: 0.5em; }
+      .settings-hint { margin: 0.3em 0 0; font-size: 0.85em; color: #666; }
     </style>
   </head>
   <body>
@@ -83,6 +92,15 @@
     </form>
 
     <div id="directories"></div>
+
+    <div id="settings" class="settings">
+      <h2 class="settings-heading">Settings</h2>
+      <label class="settings-row toggle">
+        <input id="debug-logging" type="checkbox" />
+        <span>Enable debug logging</span>
+      </label>
+      <p class="settings-hint">Logs per-navigation match lists and per-script update checks to the service-worker console. Off by default.</p>
+    </div>
 
     <p id="version" class="placeholder"></p>
     <script src="options.js" type="module"></script>

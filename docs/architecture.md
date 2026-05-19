@@ -62,6 +62,14 @@ details live in the topic-specific docs linked below.
 - **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
   — per-script viewer page rendering content from the store. See
   [script-viewer.md](script-viewer.md).
+- **Log IDs** (`src/script-log-id.ts`) — assigns each script a short
+  file-derived label (basename, with `#N` suffix on dupes) used in
+  every SW log line and shown in the options/viewer UI so users can
+  correlate console output with the rows on the options page. See
+  [logging.md](logging.md).
+- **Debug logging** (`src/debug-log.ts`) — gates the noisier
+  navigation/refresh log lines behind a storage-backed flag
+  (`vmDebugLogging`), toggled via a checkbox on the options page.
 
 ## Cross-cutting docs
 
@@ -80,6 +88,8 @@ details live in the topic-specific docs linked below.
 - [injection.md](injection.md) — `chrome.userScripts` registration
   lifecycle, the activation/error wrapper, opt-in requirements,
   unsupported pattern forms.
+- [logging.md](logging.md) — SW console-message catalog, log IDs
+  (basename + `#N` dupes), and the debug-logging gate.
 
 ## Build pipeline
 

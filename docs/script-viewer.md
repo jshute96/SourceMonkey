@@ -62,6 +62,10 @@ reports.
    - Parsed-header fields (when a metadata block is present):
      - `Name`
      - `Description`
+   - `Log ID` — short file-derived handle used in every SW log line
+     (basename, or `basename#N` for dupes). See
+     [logging.md](logging.md).
+   - Parsed-header fields, continued:
      - `Match`
      - `Exclude`
    - Always present (per script):

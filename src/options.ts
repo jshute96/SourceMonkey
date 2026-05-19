@@ -20,6 +20,7 @@
 
 import {
   addSource,
+  getAllScripts,
   getSource,
   getSourceWithScripts,
   getSources,
@@ -40,6 +41,8 @@ import {
   formatScriptSize,
   formatScriptStatusLabel,
 } from './script-display.js';
+import { DEBUG_LOGGING_KEY } from './debug-log.js';
+import { computeLogIds } from './script-log-id.js';
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -60,7 +63,43 @@ addForm.addEventListener('submit', (event) => {
 
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 
+initDebugLoggingToggle();
+
 void bootstrap();
+
+// Page-wide map of {scriptId → log ID}, refreshed whenever scripts are
+// added / removed / refreshed. Renders the `#N` dupe suffix in the
+// filename cell. Empty until `refreshLogIds()` runs.
+let currentLogIds = new Map<string, string>();
+
+async function refreshLogIds(): Promise<void> {
+  const all = await getAllScripts();
+  currentLogIds = computeLogIds(all);
+  applyLogIdSuffixesToDom();
+}
+
+function applyLogIdSuffixesToDom(): void {
+  // The point of this walk is the sections we DIDN'T just re-render:
+  // after `onRefreshDirectory` rebuilds a single section, sibling
+  // sections still display their pre-refresh suffixes. The just-
+  // rendered section's rows are already correct (renderScriptRow read
+  // the same currentLogIds), so writing the same string over them is
+  // a harmless no-op rather than the primary purpose.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    '.script-table tr[data-script-id]',
+  )) {
+    const id = row.dataset.scriptId;
+    if (!id) continue;
+    const span = row.querySelector<HTMLSpanElement>('.log-id-suffix');
+    if (!span) continue;
+    span.textContent = suffixFromLogId(currentLogIds.get(id) ?? '');
+  }
+}
+
+function suffixFromLogId(logId: string): string {
+  const hash = logId.indexOf('#');
+  return hash < 0 ? '' : logId.slice(hash);
+}
 
 // `?refresh` in the URL triggers a refresh-all as soon as the initial
 // render is done. Lets external tools poke the extension via
@@ -102,6 +141,7 @@ async function render(): Promise<void> {
     return;
   }
 
+  await refreshLogIds();
   for (const source of sources) {
     directoriesEl.appendChild(await renderSourceSection(source));
   }
@@ -231,6 +271,13 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   a.target = '_blank';
   a.rel = 'noopener';
   nameCell.appendChild(a);
+  // Dupe-suffix span, populated from currentLogIds. Empty for unique
+  // basenames so the column stays clean; non-empty (e.g. " #2") only
+  // when another script shares this basename.
+  const suffix = document.createElement('span');
+  suffix.className = 'log-id-suffix';
+  suffix.textContent = suffixFromLogId(currentLogIds.get(script.id) ?? '');
+  nameCell.appendChild(suffix);
   tr.appendChild(nameCell);
 
   const sizeCell = document.createElement('td');
@@ -266,6 +313,7 @@ async function onAddDirectory(rawPath: string): Promise<void> {
     // the latest source row keeps the StoredSource we pass in sync).
     const latest = (await getSource(created.id)) ?? created;
     removeEmptyPlaceholder();
+    await refreshLogIds();
     directoriesEl.appendChild(await renderSourceSection(latest));
   } finally {
     setAddFormBusy(false);
@@ -281,6 +329,7 @@ async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButt
     if (directoriesEl.querySelector('.directory') == null) {
       directoriesEl.appendChild(emptyPlaceholder());
     }
+    await refreshLogIds();
   } catch (err) {
     section.classList.remove('removing');
     btn.disabled = false;
@@ -307,6 +356,7 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     const section = findSection(id);
     const latest = await getSource(id);
     if (section && latest) {
+      await refreshLogIds();
       const fresh = await renderSourceSection(latest);
       section.replaceWith(fresh);
       const after = await getSourceWithScripts(id);
@@ -340,6 +390,7 @@ async function onRefreshAll(): Promise<void> {
 
     await updateAllSources('manual');
 
+    await refreshLogIds();
     // Re-render each section in place. We don't blow away the whole
     // directories list so scroll position + un-refreshed sections (if
     // any new ones were added concurrently) stay put.
@@ -644,6 +695,26 @@ function viewerUrl(scriptId: string): URL {
 function cssEscape(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
   return value.replace(/["\\]/g, '\\$&');
+}
+
+function initDebugLoggingToggle(): void {
+  const cb = document.getElementById('debug-logging') as HTMLInputElement | null;
+  if (!cb) return;
+  // Hydrate from storage so the box reflects the persisted state, then
+  // mirror future writes (from anywhere — DevTools, another options
+  // tab) so the two never drift out of sync.
+  void chrome.storage.local.get(DEBUG_LOGGING_KEY).then((got) => {
+    cb.checked = got[DEBUG_LOGGING_KEY] === true;
+  });
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    const change = changes[DEBUG_LOGGING_KEY];
+    if (!change) return;
+    cb.checked = change.newValue === true;
+  });
+  cb.addEventListener('change', () => {
+    void chrome.storage.local.set({ [DEBUG_LOGGING_KEY]: cb.checked });
+  });
 }
 
 function isFileSchemeAccessAllowed(): Promise<boolean> {

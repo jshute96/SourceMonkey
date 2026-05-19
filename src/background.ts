@@ -22,6 +22,16 @@ import {
   type MatchedScript,
 } from './match-index.js';
 import {
+  dlog,
+  installDebugLoggingListener,
+  loadDebugLoggingFlag,
+} from './debug-log.js';
+import {
+  ensureLogIdsLoaded,
+  getScriptLogLabel,
+  installScriptLogIdListener,
+} from './script-log-id.js';
+import {
   isUserScriptsAvailable,
   syncRegistrations,
   VM_ABANDONED_MSG,
@@ -323,9 +333,9 @@ async function updateTabMatches(
     // match list on every tab on every script change is noisy and
     // misleadingly suggests we're doing per-tab I/O when we're not.
     const tag = restored ? ' restored' : '';
-    console.log(
+    dlog(
       `[VibeMonkey] ${incoming.length} matching script(s) for ${url} (doc=${docId || '?'}${tag}):`,
-      incoming.map((m) => m.name),
+      incoming.map((m) => getScriptLogLabel(m.id)),
     );
     // Opportunistic auto-update: while the user is interacting with a
     // page that uses these scripts, ask the updater (in the background,
@@ -839,20 +849,21 @@ async function recordScriptReport(
   const senderDocId = (sender as { documentId?: string }).documentId ?? '';
 
   const tabPart = ` tab=${tabId}`;
+  const label = getScriptLogLabel(id);
   if (type === VM_START_MSG) {
-    console.log(`[VibeMonkey] start id=${id}${tabPart} ${senderUrl}`);
+    console.log(`[VibeMonkey] start ${label}${tabPart} ${senderUrl}`);
   } else if (type === VM_SWAPPED_MSG) {
     // The reload swap path. Log alongside vm:start so the SW console
     // tells the full story when reading a transcript.
     console.log(
-      `[VibeMonkey] swapped id=${id}${tabPart} ${senderUrl} ` +
+      `[VibeMonkey] swapped ${label}${tabPart} ${senderUrl} ` +
       `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
     );
   } else if (type === VM_ABANDONED_MSG) {
     // SW told the wrapper to skip. Surface at info-level — this is rare
     // and worth knowing about, but it isn't an error.
     console.log(
-      `[VibeMonkey] abandoned id=${id}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
+      `[VibeMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
   } else {
     // console.warn (not console.error) so a userscript runtime failure
@@ -860,7 +871,7 @@ async function recordScriptReport(
     // bubble up to chrome://extensions/?errors as if VibeMonkey itself
     // had thrown. The badge already surfaces the failure to the user;
     // the Errors panel should be reserved for actual extension bugs.
-    console.warn(`[VibeMonkey] error id=${id}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+    console.warn(`[VibeMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
   }
 
   // vm:abandoned is logging-only — there's no "actual" report to merge
@@ -931,15 +942,24 @@ async function recordScriptReport(
   }
 }
 
+// Log-ID listener and its initial load come first so subsequent
+// startup paths (vm:start arriving from a pre-existing wrapper, the
+// first navigation-driven log line) can hit the populated map. The
+// fallback in getScriptLogLabel makes this best-effort, not required
+// for correctness.
+installScriptLogIdListener();
+void ensureLogIdsLoaded();
 installStorageListener();
 installStaleScriptListener();
 installNavigationListeners();
 installScriptMessageListener();
+installDebugLoggingListener();
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.
 void ensureLoaded();
 void syncRegistrations();
+void loadDebugLoggingFlag();
 
 // background.ts is compiled as an ES module (declared via
 // `"type": "module"` in manifest.json's service_worker entry). The
