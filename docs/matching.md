@@ -240,6 +240,10 @@ How it works:
 - A new document load (new `documentId`) creates a fresh state, so
   reload naturally clears the stale flag. The wrapper for the new
   document runs the freshly-stored content.
+- A reload that triggers the [fast-path](injection.md#reload-fast-path)
+  may land the new body on THIS navigation via `vm:swapped`;
+  `clearScriptStale` removes the id from `staleScriptIds` so the badge
+  doesn't keep nagging.
 
 ### Closing the report-after-change race
 

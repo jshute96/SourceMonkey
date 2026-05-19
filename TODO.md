@@ -5,6 +5,15 @@
 - Injection follow-ups — see the **Limitations / future work**
   section of [docs/injection.md](docs/injection.md): `@grant` /
   `GM_*`, `@require` / `@resource`, `@noframes` / `allFrames`.
+- Reload fast-path: once HTTP-fetched scripts land, split the current
+  single 500ms timeout in `handleCheckPending` into a 500ms detection
+  window and a separate ~5s loading window. File:// reads finish well
+  inside 500ms so the phases collapse today, but a remote `@updateURL`
+  fetch can easily exceed that — we want to detect "an update is
+  coming" fast, then patiently wait for the body to arrive before
+  giving up and running the prior version. See
+  `docs/injection.md#vm-check-pending-handler` for the current
+  single-phase semantics.
 - Make an icon that works
 
 ## Local directory sources — follow-ups

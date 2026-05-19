@@ -64,6 +64,13 @@ const SOURCE_PREFIX = 'source:';
 // the SW. Keep these in sync with the strings the wrapper sends.
 export const VM_START_MSG = 'vm:start';
 export const VM_ERROR_MSG = 'vm:error';
+// Reload fast-path: the wrapper asks the SW whether to run its baked-in
+// body, abandon, or swap in a fresher user-code body the SW will hand
+// back. See docs/injection.md#reload-fast-path. vm:swapped / vm:abandoned
+// are the wrapper's follow-up reports for the swap / skip branches.
+export const VM_CHECK_PENDING_MSG = 'vm:check-pending';
+export const VM_SWAPPED_MSG = 'vm:swapped';
+export const VM_ABANDONED_MSG = 'vm:abandoned';
 
 // Reserved registration id for the MAIN-world bridge (see
 // buildBridgeSpec). Chrome's userScripts API rejects ids that start
@@ -346,11 +353,22 @@ async function readAll(): Promise<{ scripts: StoredScript[]; sources: Map<string
 let worldConfigured = false;
 async function ensureWorldConfigured(): Promise<void> {
   if (worldConfigured) return;
-  // configureWorld must be called before register; messaging: true is
-  // what lets our wrapper call chrome.runtime.sendMessage from the
-  // USER_SCRIPT world. Idempotent — Chrome accepts repeated calls but
-  // we still guard so we don't issue them on every sync.
-  await chrome.userScripts.configureWorld({ messaging: true });
+  // configureWorld must be called before register. Settings:
+  //   - messaging: true — lets our wrapper call
+  //     chrome.runtime.sendMessage from the USER_SCRIPT world.
+  //   - csp — relaxes the default USER_SCRIPT-world CSP (which omits
+  //     'unsafe-eval') so the reload-fast-path swap can eval the
+  //     SW-supplied body. Tampermonkey / Violentmonkey allow eval in
+  //     their script worlds too — scripts can already do anything in
+  //     this world (DOM access, GM_* eventually), so blocking eval
+  //     would be inconsistent. The CSP only applies to scripts running
+  //     in this world; it does NOT change the page's own CSP.
+  // Idempotent — Chrome accepts repeated calls but we still guard so
+  // we don't issue them on every sync.
+  await chrome.userScripts.configureWorld({
+    messaging: true,
+    csp: "script-src 'self' 'unsafe-eval'",
+  });
   worldConfigured = true;
 }
 

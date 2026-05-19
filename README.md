@@ -75,6 +75,13 @@ Open the options page by clicking the VibeMonkey toolbar icon, or via
   change is loaded into storage and the affected tabs flip purple
   with a "Reload to update" tooltip — same signal you'd see after a
   manual Refresh.
+- **Reload picks up edits on the same click.** When you explicitly
+  reload a tab whose scripts you just edited, VibeMonkey races a
+  filesystem re-check against the page load (≤500ms). If the new
+  version is ready in time, the updated body runs on that reload
+  instead of the old one. If the new script isn't ready in time,
+  falls back to the currently loaded script. The next reload will
+  get the newer version.
 
 **One-time setup:** on `chrome://extensions`, for VibeMonkey enable:
 

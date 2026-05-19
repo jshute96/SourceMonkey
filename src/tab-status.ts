@@ -270,6 +270,20 @@ export function markScriptStale(state: TabMatchState, scriptId: string): TabMatc
   return { ...state, staleScriptIds: [...existing, scriptId] };
 }
 
+// Pure: clear the stale flag for `scriptId`. Used after a vm:swapped
+// report — the wrapper just ran the latest content, so any prior
+// staleness marker for this id no longer reflects reality.
+export function clearScriptStale(state: TabMatchState, scriptId: string): TabMatchState {
+  const existing = state.staleScriptIds;
+  if (!existing || !existing.includes(scriptId)) return state;
+  const next = existing.filter((id) => id !== scriptId);
+  if (next.length === 0) {
+    const { staleScriptIds: _drop, ...rest } = state;
+    return rest;
+  }
+  return { ...state, staleScriptIds: next };
+}
+
 // Pure: merge an incoming wrapper report into the tab's `actual` map.
 // Returns a new state object (callers re-write storage with it).
 //

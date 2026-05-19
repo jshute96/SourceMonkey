@@ -21,7 +21,23 @@
                               listeners below.
      "__VM_MATCHER_BLOCK__" — empty, OR the matcher fragment (which
                               itself contains a "__VM_MATCHING__"
-                              placeholder for the matching object). */
+                              placeholder for the matching object).
+
+   Structure. The wrapper opens an outer IIFE, sets up shared helpers
+   ( __vmSend, async error attribution, the optional matcher), then
+   calls __vmAwaitDecision which round-trips a vm:check-pending message
+   to the SW. The decision callback chooses one of three paths:
+     - 'skip'    — SW says don't run anything (file gone / disabled).
+                   Wrapper exits after sending vm:abandoned.
+     - 'run-new' — SW shipped a fresher user-code body. Wrapper sends
+                   vm:swapped, then evals the new body inside the
+                   existing wrapper helpers (same __vmSourceUrl, so
+                   async error attribution still works).
+     - 'run'     — default. The baked-in body that lives between this
+                   file and wrapper-tail.js runs as before.
+   For the common case (no reload-fast-path active) the SW replies
+   {action:"run"} immediately, so the await resolves in a microtask
+   and the baked-in body executes promptly. */
 (function () {
   "use strict";
   var __vmName = "__VM_NAME__";
@@ -48,7 +64,83 @@
       window.postMessage({ __vm: "vibemonkey-bridge", payload: payload }, "*");
     } catch (_e2) {}
   };
-  "__VM_MATCHER_BLOCK__";
+  /* Round-trip vm:check-pending and hand the SW's decision (or a safety
+     timeout / fallback) to cb. Two transports:
+       - USER_SCRIPT world: direct chrome.runtime.sendMessage with the
+         returned-promise reply.
+       - MAIN world: chrome.runtime is undefined, so we postMessage a
+         request to wrapper-bridge.js (which runs in USER_SCRIPT world)
+         tagged with a fresh requestId, and await a matching
+         "vibemonkey-bridge-reply" postMessage back from the bridge.
+     The SW guards to reply quickly ( <1ms ) for the non-reload-fast-
+     path case, so the await is effectively free outside reloads. */
+  var __vmAwaitDecision = function (cb) {
+    var done = false;
+    var finish = function (decision) {
+      if (done) return;
+      done = true;
+      try { cb(decision); } catch (_e) {}
+    };
+    /* cleanup is reassigned to a listener-removal closure on the MAIN
+       branch; the USER_SCRIPT branch never installs one so the no-op
+       suffices. seal handles BOTH transports: clear timer, remove
+       listener if any, then finish. The safety timer also routes
+       through seal so it doesn't leak the bridge listener. */
+    var cleanup = function () {};
+    var safetyTimer = setTimeout(function () { seal({ action: "run" }); }, 6000);
+    var seal = function (decision) {
+      try { clearTimeout(safetyTimer); } catch (_e) {}
+      try { cleanup(); } catch (_e2) {}
+      finish(decision);
+    };
+    try {
+      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+        var p = chrome.runtime.sendMessage({
+          type: "vm:check-pending",
+          id: __vmId,
+          name: __vmName,
+          loadedAt: __vmLoadedAt,
+          url: location.href
+        });
+        if (p && typeof p.then === "function") {
+          p.then(
+            function (reply) { seal(reply && typeof reply === "object" ? reply : { action: "run" }); },
+            function () { seal({ action: "run" }); }
+          );
+        } else {
+          seal({ action: "run" });
+        }
+        return;
+      }
+      /* MAIN world: bridge request/reply protocol. The requestId nonce
+         scopes the reply to THIS wrapper so concurrent userscripts
+         each get their own. ev.source === window keeps cross-frame
+         postMessages out. */
+      var requestId = "vm-" + Math.random().toString(36).slice(2) + "-" + Date.now();
+      var listener = function (ev) {
+        try {
+          if (!ev || ev.source !== window) return;
+          var d = ev.data;
+          if (!d || d.__vm !== "vibemonkey-bridge-reply") return;
+          if (d.requestId !== requestId) return;
+          seal(d.reply && typeof d.reply === "object" ? d.reply : { action: "run" });
+        } catch (_e) {}
+      };
+      window.addEventListener("message", listener, true);
+      cleanup = function () { try { window.removeEventListener("message", listener, true); } catch (_e) {} };
+      window.postMessage({
+        __vm: "vibemonkey-bridge",
+        requestId: requestId,
+        payload: {
+          type: "vm:check-pending",
+          id: __vmId,
+          name: __vmName,
+          loadedAt: __vmLoadedAt,
+          url: location.href
+        }
+      }, "*");
+    } catch (_e3) { seal({ action: "run" }); }
+  };
   /* Async-error attribution. Errors thrown synchronously from the body
      are caught by the try/catch in wrapper-tail.js. Anything thrown
      later — from setTimeout, addEventListener callbacks, fetch().then,
@@ -74,7 +166,7 @@
     } catch (_e) {}
     return false;
   };
-  var __vmReportAsync = function (err, kind) {
+  var __vmReportAsync = function (err, kind, runtimeLoadedAt) {
     try {
       if (err && typeof err === "object" && __vmReported) {
         if (__vmReported.has(err)) return;
@@ -89,22 +181,101 @@
        duplicating that — just note the attribution at info level so
        it's clear which VibeMonkey script is being blamed. */
     try { console.info("[VibeMonkey] caught async " + kind + " in", __vmName); } catch (_e3) {}
-    __vmSend({ type: "vm:error", id: __vmId, name: __vmName, loadedAt: __vmLoadedAt, url: location.href, message: msg });
+    __vmSend({ type: "vm:error", id: __vmId, name: __vmName, loadedAt: runtimeLoadedAt, url: location.href, message: msg });
   };
-  try {
-    window.addEventListener("error", function (ev) {
-      if (!ev) return;
-      var hit = false;
+  var __vmInstallAsyncListeners = function (runtimeLoadedAt) {
+    try {
+      window.addEventListener("error", function (ev) {
+        if (!ev) return;
+        var hit = false;
+        try {
+          if (typeof ev.filename === "string" && ev.filename.indexOf(__vmSourceUrl) !== -1) hit = true;
+        } catch (_e) {}
+        if (!hit && __vmStackHasUs(ev.error)) hit = true;
+        if (hit) __vmReportAsync(ev.error || ev.message || "error", "error", runtimeLoadedAt);
+      }, true);
+      window.addEventListener("unhandledrejection", function (ev) {
+        if (ev && __vmStackHasUs(ev.reason)) __vmReportAsync(ev.reason, "unhandledrejection", runtimeLoadedAt);
+      }, true);
+    } catch (_e) {}
+  };
+  /* The matcher block (when present) checks the current URL against the
+     full Tampermonkey @match / @include / @exclude semantics — including
+     /regex/ forms the User Scripts API can't express — and `return`s
+     out of the outer IIFE on a miss. Runs BEFORE __vmAwaitDecision so
+     non-matching pages don't bother the SW with a check-in. */
+  "__VM_MATCHER_BLOCK__";
+  __vmAwaitDecision(function (__vmDecision) {
+    if (__vmDecision && __vmDecision.action === "skip") {
+      /* SW concluded we shouldn't run on this navigation (file removed,
+         script disabled mid-refresh, etc.). Tell it explicitly so the
+         badge can mark the row instead of waiting for an absent
+         vm:start. No body, no listeners, no try/catch. */
+      __vmSend({ type: "vm:abandoned", id: __vmId, name: __vmName, loadedAt: __vmLoadedAt, url: location.href, reason: (__vmDecision && __vmDecision.reason) || "skip" });
+      return;
+    }
+    if (__vmDecision && __vmDecision.action === "run-new" && typeof __vmDecision.body === "string") {
+      /* SW handed us a fresher user-code body. Try to eval it.
+
+         CSP caveat: MAIN-world wrappers run subject to the page's CSP.
+         A page that omits 'unsafe-eval' (GitHub, Google, many strict
+         apps) blocks our eval BEFORE the body parses, so we can detect
+         that case and fall through to the baked-in body — the user
+         sees the prior version this reload, which is exactly the
+         pre-fast-path behavior. USER_SCRIPT world has its own CSP
+         (configureWorld in injector.ts allows unsafe-eval) so this
+         fallback typically only triggers in MAIN.
+
+         Distinguishing "CSP refused to start the eval" from "eval
+         started, body ran, body threw" matters because the latter has
+         already produced side effects — falling back to the baked-in
+         body would double-run. The CSP block throws an EvalError-ish
+         with a marker message; we string-match for it. */
+      var __vmNewLoadedAt = typeof __vmDecision.loadedAt === "number" ? __vmDecision.loadedAt : __vmLoadedAt;
+      var __vmEvalRefused = false;
+      var __vmEvalErr = null;
       try {
-        if (typeof ev.filename === "string" && ev.filename.indexOf(__vmSourceUrl) !== -1) hit = true;
-      } catch (_e) {}
-      if (!hit && __vmStackHasUs(ev.error)) hit = true;
-      if (hit) __vmReportAsync(ev.error || ev.message || "error", "error");
-    }, true);
-    window.addEventListener("unhandledrejection", function (ev) {
-      if (ev && __vmStackHasUs(ev.reason)) __vmReportAsync(ev.reason, "unhandledrejection");
-    }, true);
-  } catch (_e) {}
-  try { console.log("[VibeMonkey] script", __vmName, "running on", location.href); } catch (_e) {}
-  __vmSend({ type: "vm:start", id: __vmId, name: __vmName, loadedAt: __vmLoadedAt, url: location.href });
-  try {
+        /* Tag the new body's stack frames with the same sourceURL the
+           listeners are filtering on, so errors thrown from the new
+           code still attribute back to this script. Direct eval (not
+           the indirect `(0, eval)` form) so the body runs in the
+           wrapper's strict-mode scope rather than at global scope —
+           that keeps var/function declarations local to the eval,
+           matching the baked-body case where they're scoped to this
+           callback function instead of polluting window. */
+        eval(__vmDecision.body + "\n//# sourceURL=" + __vmSourceUrl);
+      } catch (__vmEx) {
+        __vmEvalErr = __vmEx;
+        var __vmExMsg = (__vmEx && __vmEx.message) ? String(__vmEx.message) : String(__vmEx);
+        if (__vmExMsg.indexOf("unsafe-eval") !== -1 || __vmExMsg.indexOf("Content Security Policy") !== -1) {
+          __vmEvalRefused = true;
+        }
+      }
+      if (__vmEvalRefused) {
+        /* CSP block. Fall through to the default-run branch below so
+           the baked-in body still executes — same behavior as before
+           the fast-path existed for this navigation. */
+        try { console.info("[VibeMonkey] swap blocked by page CSP for", __vmName, "— running prior version"); } catch (_e0) {}
+      } else {
+        /* eval executed (whether or not the body threw at runtime).
+           Send the swap report so the SW updates the badge to the new
+           loadedAt; install async error listeners for any future
+           attributed errors from the new code; report the runtime
+           throw (if any) as vm:error. */
+        __vmInstallAsyncListeners(__vmNewLoadedAt);
+        try { console.log("[VibeMonkey] script", __vmName, "running on", location.href, "(swapped to newer version)"); } catch (_e) {}
+        __vmSend({ type: "vm:swapped", id: __vmId, name: __vmName, fromLoadedAt: __vmLoadedAt, loadedAt: __vmNewLoadedAt, url: location.href });
+        if (__vmEvalErr) {
+          var __vmNewMsg = (__vmEvalErr && __vmEvalErr.message) ? __vmEvalErr.message : String(__vmEvalErr);
+          try { console.error("[VibeMonkey] swapped script", __vmName, "threw:", __vmEvalErr); } catch (_e2) {}
+          __vmSend({ type: "vm:error", id: __vmId, name: __vmName, loadedAt: __vmNewLoadedAt, url: location.href, message: __vmNewMsg });
+        }
+        return;
+      }
+    }
+    /* Default path: run the baked-in body. Identical to the pre-fast-
+       path behavior — listeners + vm:start + try { body } catch. */
+    __vmInstallAsyncListeners(__vmLoadedAt);
+    try { console.log("[VibeMonkey] script", __vmName, "running on", location.href); } catch (_e) {}
+    __vmSend({ type: "vm:start", id: __vmId, name: __vmName, loadedAt: __vmLoadedAt, url: location.href });
+    try {

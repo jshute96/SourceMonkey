@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   applyScriptReport,
+  clearScriptStale,
   computeBadge,
   getCurrentState,
   getDocState,
@@ -251,6 +252,51 @@ test('markScriptStale: an errored script also becomes stale (RELOAD wins over ER
   };
   const next = markScriptStale(state, 'a');
   assert.deepEqual(next.staleScriptIds, ['a']);
+});
+
+// ---------- clearScriptStale ----------
+
+test('clearScriptStale: drops the id and the field when last one out', () => {
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { a: { state: 'started', name: 'A' } },
+    staleScriptIds: ['a'],
+  };
+  const next = clearScriptStale(state, 'a');
+  // The field is removed entirely when empty so computeBadge takes its
+  // zero-stale fast path.
+  assert.equal('staleScriptIds' in next, false);
+  assert.notEqual(next, state);
+});
+
+test('clearScriptStale: keeps other ids when one is cleared', () => {
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: {
+      a: { state: 'started', name: 'A' },
+      b: { state: 'started', name: 'B' },
+    },
+    staleScriptIds: ['a', 'b'],
+  };
+  const next = clearScriptStale(state, 'a');
+  assert.deepEqual(next.staleScriptIds, ['b']);
+});
+
+test('clearScriptStale: no-op when id is not stale', () => {
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { a: { state: 'started', name: 'A' } },
+    staleScriptIds: ['b'],
+  };
+  // Same object back so callers can cheap-test for "no write needed".
+  const next = clearScriptStale(state, 'a');
+  assert.equal(next, state);
+});
+
+test('clearScriptStale: no-op when the field is absent', () => {
+  const state = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  const next = clearScriptStale(state, 'a');
+  assert.equal(next, state);
 });
 
 // ---------- applyScriptReport ----------

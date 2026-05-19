@@ -24,11 +24,15 @@ import {
 import {
   isUserScriptsAvailable,
   syncRegistrations,
+  VM_ABANDONED_MSG,
+  VM_CHECK_PENDING_MSG,
   VM_ERROR_MSG,
   VM_START_MSG,
+  VM_SWAPPED_MSG,
 } from './injector.js';
 import {
   applyScriptReport,
+  clearScriptStale,
   computeBadge,
   getDocState,
   markScriptStale,
@@ -377,6 +381,16 @@ function installNavigationListeners(): void {
   }
   wn.onCommitted.addListener((d) => {
     if (d.frameId !== 0) return;
+    // Reload fast-path: when the user explicitly reloads (Ctrl-R, toolbar
+    // reload, location.reload) Chrome sets
+    // transitionType to "reload". We use that to opportunistically check
+    // for updated userscripts in time for THIS navigation's injection,
+    // rather than waiting for the next reload. Setup is fire-and-forget
+    // so the listener stays cheap; the wrapper's vm:check-pending
+    // round-trip is what actually waits on the result.
+    if (d.transitionType === 'reload' && d.documentId) {
+      setupReloadFastPath(d.tabId, d.documentId, d.url);
+    }
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
   wn.onHistoryStateUpdated.addListener((d) => {
@@ -387,6 +401,15 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  // Drop any reload-fast-path entries for this tab so a slow refresh
+  // doesn't hold a stale closure indefinitely. Keys are `${tabId}:`
+  // prefixed, so a string prefix match is enough.
+  const prefix = `${tabId}:`;
+  for (const [key, entry] of fastPathByDoc) {
+    if (!key.startsWith(prefix)) continue;
+    clearTimeout(entry.cleanupTimer);
+    fastPathByDoc.delete(key);
+  }
 });
 
 // When the script set itself changes (user clicked Refresh, added a
@@ -509,6 +532,223 @@ async function applyStaleToTab(tabId: number, scriptIds: string[]): Promise<void
   await renderBadge(tabId, next);
 }
 
+// ---------- Reload fast-path ----------
+//
+// See docs/injection.md#reload-fast-path. When the user explicitly
+// reloads a tab, we want updated userscripts to take effect on THIS
+// reload rather than the next one. The mechanism:
+//
+//   1. onCommitted fires with transitionType === 'reload'. We kick off
+//      manual updateScript() for every matched userscript on this URL
+//      and stash the in-flight promises in `fastPathByDoc[tabId:docId]`.
+//      Setup is async (it awaits ensureLoaded + findMatchesForUrl) but
+//      doesn't block the listener.
+//   2. The wrapper, after Chrome injects it, sends vm:check-pending
+//      and awaits the SW's reply. handleCheckPending looks up the
+//      fast-path entry, races the matching updateScript promise
+//      against RELOAD_FAST_PATH_WINDOW_MS, and replies:
+//        - {action: 'run'}             — no fast-path, refresh timed
+//                                        out, or refresh saw no change.
+//        - {action: 'run-new', body,
+//           loadedAt}                  — newer body in storage; wrapper
+//                                        evals this instead of its
+//                                        baked-in body.
+//        - {action: 'skip', reason}    — refresh-driven decision to not
+//                                        run (currently unused; held
+//                                        for future "file removed"
+//                                        semantics).
+//
+// We deliberately don't await chrome.userScripts re-registration here.
+// The storage write inside updateScript already triggers scheduleSync()
+// via the storage onChanged listener; that path handles FUTURE
+// navigations. For THIS navigation, we just hand the new bodyText
+// straight to the wrapper.
+
+const RELOAD_FAST_PATH_WINDOW_MS = 500;
+// Conservative TTL for fast-path entries that nobody consumes (script
+// got unregistered, wrapper never fired because the URL became
+// non-matching after redirect, etc.). 15s is well past any plausible
+// runAt window even on document_idle for a slow page.
+const RELOAD_FAST_PATH_TTL_MS = 15_000;
+
+interface FastPathScriptEntry {
+  promise: Promise<StoredScript | null>;
+  settled: boolean;
+  result: StoredScript | null;
+}
+
+interface FastPathEntry {
+  // Reload-commit wall-clock time, NOT setup-completed time. The 500ms
+  // window is measured from when the user clicked reload, so a slow
+  // ensureLoaded() doesn't extend the budget past what's useful — the
+  // wrapper has been waiting since reload commit, not since setup.
+  startedAt: number;
+  scripts: Map<string, FastPathScriptEntry>;
+  // Per-script "has the wrapper already consumed this entry?" guard.
+  // A wrapper that calls vm:check-pending twice (eg. after an internal
+  // retry) gets {action:'run'} the second time so we don't double-swap.
+  consumed: Set<string>;
+  cleanupTimer: ReturnType<typeof setTimeout>;
+}
+
+const fastPathByDoc = new Map<string, FastPathEntry>();
+const fastPathKey = (tabId: number, documentId: string) => `${tabId}:${documentId}`;
+
+function setupReloadFastPath(tabId: number, documentId: string, url: string): void {
+  if (!INJECTABLE_SCHEME.test(url)) return;
+  // Capture commit-time wall clock BEFORE awaiting anything; we want
+  // the 500ms window to track real elapsed time since the user hit
+  // reload, not "time since ensureLoaded resolved."
+  const startedAt = Date.now();
+  void (async () => {
+    try {
+      await ensureLoaded();
+      const matches = findMatchesForUrl(url);
+      if (matches.length === 0) return;
+      const key = fastPathKey(tabId, documentId);
+      // If an entry for this exact (tab, document) somehow already
+      // exists (rare — e.g. two onCommitted events for the same doc),
+      // leave the FIRST one in place. Wrappers from the first reload
+      // are already paired with its updateScript promises; replacing
+      // the entry would lose those promises and reset the consumed
+      // guard, causing inconsistent decisions across scripts.
+      if (fastPathByDoc.has(key)) return;
+      const scripts = new Map<string, FastPathScriptEntry>();
+      for (const m of matches) {
+        const entry: FastPathScriptEntry = {
+          // promise gets reassigned on the next line; placeholder keeps
+          // the field non-undefined for the type.
+          promise: Promise.resolve(null),
+          settled: false,
+          result: null,
+        };
+        // .then on the existing promise so we can both expose it to
+        // handleCheckPending and observe its result here. Swallow
+        // rejections — updateScript already logs failures internally
+        // and a refresh error should fall back to "run old body", not
+        // surface to the wrapper.
+        //
+        // Coalescing note: if updateTabMatches' opportunistic check
+        // (also queued by this onCommitted) reaches gate() first, its
+        // result depends on the cooldown — either it short-circuits
+        // (returns null without starting work, so our manual call
+        // proceeds fresh) or it's in-flight (and our manual call
+        // coalesces onto the same promise). Either way our `entry`
+        // observes the real refresh result; the ordering is benign.
+        entry.promise = updateScript(m.id, 'manual').then(
+          (r) => {
+            entry.settled = true;
+            entry.result = r;
+            return r;
+          },
+          () => {
+            entry.settled = true;
+            entry.result = null;
+            return null;
+          },
+        );
+        scripts.set(m.id, entry);
+      }
+      const cleanupTimer = setTimeout(() => {
+        fastPathByDoc.delete(key);
+      }, RELOAD_FAST_PATH_TTL_MS);
+      fastPathByDoc.set(key, {
+        startedAt,
+        scripts,
+        consumed: new Set(),
+        cleanupTimer,
+      });
+      console.log(
+        `[VibeMonkey] reload fast-path: checking ${matches.length} script(s) for tab=${tabId} doc=${documentId.slice(0, 8)}`,
+      );
+    } catch (err) {
+      console.warn('[VibeMonkey] reload fast-path setup failed:', err);
+    }
+  })();
+}
+
+interface CheckPendingPayload {
+  id: string;
+  name?: string;
+  loadedAt?: number;
+  url?: string;
+}
+
+type CheckPendingReply =
+  | { action: 'run' }
+  | { action: 'run-new'; body: string; loadedAt: number }
+  | { action: 'skip'; reason: string };
+
+async function handleCheckPending(
+  sender: chrome.runtime.MessageSender,
+  payload: CheckPendingPayload,
+): Promise<CheckPendingReply> {
+  const tabId = sender.tab?.id;
+  const documentId = (sender as { documentId?: string }).documentId ?? '';
+  if (tabId == null || !documentId) return { action: 'run' };
+  const key = fastPathKey(tabId, documentId);
+  const entry = fastPathByDoc.get(key);
+  if (!entry) return { action: 'run' };
+  const scriptEntry = entry.scripts.get(payload.id);
+  if (!scriptEntry) return { action: 'run' };
+  if (entry.consumed.has(payload.id)) return { action: 'run' };
+  entry.consumed.add(payload.id);
+  // If every matched script has now consumed its entry, clear the
+  // record proactively so a follow-up wrapper from a different document
+  // doesn't accidentally hit our consumed-set guard. The TTL is the
+  // backstop for the case where one wrapper never fires.
+  if (entry.consumed.size >= entry.scripts.size) {
+    clearTimeout(entry.cleanupTimer);
+    fastPathByDoc.delete(key);
+  }
+  const wrapperLoadedAt = typeof payload.loadedAt === 'number' ? payload.loadedAt : 0;
+  let refreshed: StoredScript | null = null;
+  if (scriptEntry.settled) {
+    // updateScript already finished while we were waiting on Chrome to
+    // inject the wrapper — no race needed.
+    refreshed = scriptEntry.result;
+  } else {
+    const elapsed = Date.now() - entry.startedAt;
+    const remaining = RELOAD_FAST_PATH_WINDOW_MS - elapsed;
+    if (remaining <= 0) {
+      console.log(
+        `[VibeMonkey] reload fast-path: ${payload.name ?? payload.id} window already elapsed (${elapsed}ms); running prior version`,
+      );
+      return { action: 'run' };
+    }
+    let timedOut = false;
+    const winner = await Promise.race<StoredScript | null | 'timeout'>([
+      scriptEntry.promise,
+      new Promise<'timeout'>((res) => setTimeout(() => {
+        timedOut = true;
+        res('timeout');
+      }, remaining)),
+    ]);
+    if (timedOut || winner === 'timeout') {
+      // Important: the updateScript promise keeps running. If it later
+      // finds a new version, storage.onChanged → scheduleSync still
+      // fires, so the NEXT reload will pick it up. We just give up
+      // waiting on it for THIS navigation.
+      console.log(
+        `[VibeMonkey] reload fast-path: ${payload.name ?? payload.id} update not detected within ${RELOAD_FAST_PATH_WINDOW_MS}ms; running prior version`,
+      );
+      return { action: 'run' };
+    }
+    refreshed = winner;
+  }
+  if (!refreshed) return { action: 'run' };
+  if (refreshed.status !== 'ok') return { action: 'run' };
+  if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
+  console.log(
+    `[VibeMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
+  );
+  return {
+    action: 'run-new',
+    body: refreshed.bodyText,
+    loadedAt: refreshed.loadedAt,
+  };
+}
+
 // ---------- vm:start / vm:error from injected wrappers ----------
 //
 // Messages from the USER_SCRIPT world arrive on the dedicated
@@ -525,16 +765,45 @@ function installScriptMessageListener(): void {
     console.warn('[VibeMonkey] chrome.runtime.onUserScriptMessage not available; skipping listener install');
     return;
   }
-  ev.addListener((msg, sender) => {
+  ev.addListener((msg, sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
     const tabId = sender.tab?.id;
     if (tabId == null) return;
     const type = (msg as { type?: unknown }).type;
-    if (type !== VM_START_MSG && type !== VM_ERROR_MSG) return;
+    if (type === VM_CHECK_PENDING_MSG) {
+      // Async reply path. Return true keeps the message channel open
+      // until sendResponse fires. Swallow any send failures — they
+      // typically mean the tab navigated away or the wrapper's
+      // document was torn down, in which case nobody is listening
+      // for the reply anyway.
+      const payload = msg as CheckPendingPayload;
+      handleCheckPending(sender, payload).then(
+        (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
+        (err) => {
+          console.warn('[VibeMonkey] check-pending handler threw:', err);
+          try { sendResponse({ action: 'run' }); } catch { /* receiver gone */ }
+        },
+      );
+      return true;
+    }
+    if (
+      type !== VM_START_MSG &&
+      type !== VM_ERROR_MSG &&
+      type !== VM_SWAPPED_MSG &&
+      type !== VM_ABANDONED_MSG
+    ) return;
     // Keep the inline cast in sync with `recordScriptReport`'s param
     // type so a rename of the wrapper field is caught at compile time
     // rather than silently dropping through the unknown-typed cast.
-    const payload = msg as { id: string; name?: string; url?: string; message?: string; loadedAt?: number };
+    const payload = msg as {
+      id: string;
+      name?: string;
+      url?: string;
+      message?: string;
+      loadedAt?: number;
+      fromLoadedAt?: number;
+      reason?: string;
+    };
     enqueueTabWork(tabId, () => recordScriptReport(tabId, sender, type, payload));
   });
 }
@@ -542,8 +811,20 @@ function installScriptMessageListener(): void {
 async function recordScriptReport(
   tabId: number,
   sender: chrome.runtime.MessageSender,
-  type: typeof VM_START_MSG | typeof VM_ERROR_MSG,
-  payload: { id: string; name?: string; url?: string; message?: string; loadedAt?: number },
+  type:
+    | typeof VM_START_MSG
+    | typeof VM_ERROR_MSG
+    | typeof VM_SWAPPED_MSG
+    | typeof VM_ABANDONED_MSG,
+  payload: {
+    id: string;
+    name?: string;
+    url?: string;
+    message?: string;
+    loadedAt?: number;
+    fromLoadedAt?: number;
+    reason?: string;
+  },
 ): Promise<void> {
   const id = payload.id;
   if (!id) return;
@@ -560,6 +841,19 @@ async function recordScriptReport(
   const tabPart = ` tab=${tabId}`;
   if (type === VM_START_MSG) {
     console.log(`[VibeMonkey] start id=${id}${tabPart} ${senderUrl}`);
+  } else if (type === VM_SWAPPED_MSG) {
+    // The reload swap path. Log alongside vm:start so the SW console
+    // tells the full story when reading a transcript.
+    console.log(
+      `[VibeMonkey] swapped id=${id}${tabPart} ${senderUrl} ` +
+      `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
+    );
+  } else if (type === VM_ABANDONED_MSG) {
+    // SW told the wrapper to skip. Surface at info-level — this is rare
+    // and worth knowing about, but it isn't an error.
+    console.log(
+      `[VibeMonkey] abandoned id=${id}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
+    );
   } else {
     // console.warn (not console.error) so a userscript runtime failure
     // — which is a bug in user-supplied code we're relaying — doesn't
@@ -568,6 +862,11 @@ async function recordScriptReport(
     // the Errors panel should be reserved for actual extension bugs.
     console.warn(`[VibeMonkey] error id=${id}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
   }
+
+  // vm:abandoned is logging-only — there's no "actual" report to merge
+  // and no badge change. Returning here keeps the rest of the function
+  // focused on the run / error / swapped reports.
+  if (type === VM_ABANDONED_MSG) return;
 
   // Closes the race where storage updates land BEFORE vm:start arrives.
   // See docs/matching.md#closing-the-report-after-change-race.
@@ -578,7 +877,10 @@ async function recordScriptReport(
   const wrapperLoadedAt = typeof payload.loadedAt === 'number' && payload.loadedAt > 0
     ? payload.loadedAt : null;
   let isStale = false;
-  if (wrapperLoadedAt != null) {
+  // vm:swapped means the wrapper just ran the freshest content, so a
+  // stored.loadedAt that matches the payload.loadedAt is expected and
+  // does NOT make this report stale. Skip the check for that branch.
+  if (wrapperLoadedAt != null && type !== VM_SWAPPED_MSG) {
     const stored = await getScript(id);
     if (stored && stored.loadedAt > wrapperLoadedAt) {
       isStale = true;
@@ -607,11 +909,18 @@ async function recordScriptReport(
       actual: {},
     };
   }
-  const report: ActualStatus = type === VM_START_MSG
-    ? { state: 'started', name }
-    : { state: 'error', name, message: String(payload.message ?? '') };
+  const report: ActualStatus = type === VM_ERROR_MSG
+    ? { state: 'error', name, message: String(payload.message ?? '') }
+    : { state: 'started', name };
   let next = applyScriptReport(state, id, report);
-  if (isStale) next = markScriptStale(next, id);
+  if (type === VM_SWAPPED_MSG) {
+    // The swap landed the latest body, so any prior stale marker for
+    // this id (e.g. from an earlier vm:start on this same documentId)
+    // no longer reflects reality.
+    next = clearScriptStale(next, id);
+  } else if (isStale) {
+    next = markScriptStale(next, id);
+  }
   // writeDocState (not setCurrentDoc) — a late vm:* from a doc we've
   // already navigated away from updates its stored state but doesn't
   // steal the badge from the doc currently on screen.

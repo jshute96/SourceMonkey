@@ -192,11 +192,14 @@ type-checks against the `.d.ts`; the runtime `.js` is built directly
 into `dist/`). The fragments:
 
 - `src/wrapper-head.js` — IIFE open, `__vmName` / `__vmId` /
-  `__vmSend` declarations, the matcher slot (filled per script), the
-  activation `console.log`, the `vm:start` send, and the opening
-  `try {`.
-- `src/wrapper-tail.js` — closing `catch (__vmErr) {…}`, `vm:error`
-  send, IIFE close.
+  `__vmSend` declarations, `__vmAwaitDecision` (the [reload
+  fast-path](#reload-fast-path) round-trip), the matcher slot (filled
+  per script), and the decision callback that branches into
+  run / run-new / skip. The default-run branch installs the async
+  error listeners, sends `vm:start`, and opens `try {`.
+- `src/wrapper-tail.js` — closing `catch (__vmErr) {…}` for the body,
+  the closing `})` of the decision callback, and the IIFE close
+  `})();`.
 - `src/wrapper-matcher.js` — the URL recheck (only inserted for
   scripts with `/regex/` patterns; see below).
 - `src/wrapper-bridge.js` — USER_SCRIPT-world relay registered
@@ -292,7 +295,19 @@ Trade-offs:
 ### Message flow
 
 `background.ts` owns a single `chrome.runtime.onUserScriptMessage`
-listener. For each `vm:start` / `vm:error` it:
+listener that handles these wrapper-originated message types:
+
+- `vm:check-pending` — round-trip; the SW replies with `run`,
+  `run-new`, or `skip`. See [Reload fast-path](#reload-fast-path).
+- `vm:start` — the wrapper's baked-in body started running.
+- `vm:swapped` — the wrapper ran a SW-supplied body instead. Treated
+  as `started` for badge purposes and clears any prior stale flag for
+  this script id.
+- `vm:error` — synchronous or attributed-async throw.
+- `vm:abandoned` — the wrapper exited without running anything
+  (SW replied `skip`). Logged only; no badge change.
+
+For the report types (start / swapped / error) the SW:
 
 - Logs the event to the SW console.
 - Looks up the sender tab's state in `chrome.storage.session` and
@@ -311,6 +326,120 @@ the expected match set.
 > `chrome.runtime.onUserScriptMessage`, NOT the regular
 > `chrome.runtime.onMessage` event. Listening on the wrong event
 > manifests as `"Receiving end does not exist"` on every send.
+
+## Reload fast-path
+
+When the user explicitly reloads a tab (Ctrl-R, toolbar reload,
+`location.reload()`), Chrome sets `transitionType
+=== 'reload'` on the `webNavigation.onCommitted` event. VibeMonkey uses
+that signal to opportunistically pick up edited userscripts on THIS
+reload rather than the next one.
+
+### Why this exists
+
+Without the fast-path, the flow for "edit script, reload tab" is:
+
+1. Reload commits → `vm:start` for the OLD body fires.
+2. Opportunistic refresh detects the file changed; storage updates;
+   chrome.userScripts re-registers.
+3. The badge flips to RELOAD/purple.
+4. User clicks reload AGAIN → new body finally runs.
+
+Two clicks per edit gets annoying fast. The fast-path collapses it to
+one for the common "edited file is already on disk before reload"
+case.
+
+### Setup
+
+`onCommitted` with `transitionType === 'reload'` calls
+`setupReloadFastPath(tabId, documentId, url)`. That function:
+
+- Awaits `ensureLoaded()`, then computes the URL's match set via the
+  in-memory match index (no I/O).
+- Calls `updateScript(id, 'manual')` for each match. Manual mode
+  bypasses the opportunistic 10s rate-limit.
+- Stashes the resulting promises in `fastPathByDoc[tabId:docId]` with
+  a 15s TTL cleanup timer.
+
+Setup is fire-and-forget. The listener does not block on it. If a
+wrapper's `vm:check-pending` arrives before setup populates the entry,
+it just gets the default `run` reply — the optimization is best-effort.
+
+### vm:check-pending handler
+
+When a wrapper sends `vm:check-pending` with its own `id`, `loadedAt`
+(the value baked in at registration), and `url`, the SW:
+
+1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
+   This is the common case for ordinary navigations and costs ~1–5ms
+   round-trip.
+2. Finds the script's `FastPathScriptEntry`. **Not present → reply
+   `run`.** (Script matched the URL pattern but was added/removed
+   between setup and the wrapper firing.)
+3. Marks the entry consumed (per-script guard against double-reply).
+   If every script has now consumed, deletes the entry early so a
+   follow-up wrapper from a different document isn't blocked by the
+   consumed-set.
+4. Races the script's `updateScript` promise against
+   `RELOAD_FAST_PATH_WINDOW_MS` (500ms) from setup start.
+   - Timer wins → reply `run`. The refresh keeps running in the
+     background; storage.onChanged → `scheduleSync()` will land the
+     new body for the NEXT reload.
+   - Refresh wins with `status !== 'ok'` OR `loadedAt <=
+     wrapper.loadedAt` → reply `run` (no change to apply).
+   - Refresh wins with a strictly-newer `ok` row → reply `run-new`
+     with `bodyText` and the new `loadedAt`.
+
+There is no separate 5s loading phase. The current updater does
+detection + fetch + parse + storage write in one `updateScript` call,
+and file:// reads are fast enough that 500ms covers the common case.
+If we add HTTP-fetched scripts later, a second timeout for the body
+fetch belongs here.
+
+### Wrapper protocol
+
+The wrapper-head opens an outer IIFE, runs the matcher (which `return`s
+out early on a non-match), then calls `__vmAwaitDecision`. The
+decision callback receives `{action}` and branches:
+
+- `run` — installs async error listeners, sends `vm:start`, opens
+  the `try {` that wraps the baked-in body. Tail closes it.
+- `run-new` — installs the async error listeners with the NEW
+  `loadedAt`, sends `vm:swapped`, and `eval`s the SW-supplied body
+  string with `//# sourceURL=` appended so async error attribution
+  continues to work for the new code. Errors during the new body are
+  reported as `vm:error` with the new `loadedAt`.
+- `skip` — sends `vm:abandoned` and exits without running anything.
+
+Wrapper-side safety timeout (6s) protects against the SW vanishing
+mid-handshake; on hit it defaults to `run` so the baked-in body still
+executes.
+
+### Caveats
+
+- **MAIN-world scripts** can't call `chrome.runtime.sendMessage`
+  directly, so they round-trip `vm:check-pending` via
+  `wrapper-bridge.js` using a `vibemonkey-bridge-reply` postMessage
+  keyed on a per-request nonce. The page can observe and forge these
+  postMessages — the threat model is unchanged from the existing
+  bridge (the page already runs arbitrary code in MAIN world). Where
+  the page's CSP forbids `unsafe-eval`, the swap eval throws; the
+  wrapper detects the CSP marker in the error message and falls
+  through to running the baked-in body, matching pre-fast-path
+  behavior for that site.
+- **Latency on every navigation, not just reloads.** Every wrapper
+  round-trips `vm:check-pending` regardless of `transitionType` — the
+  SW just replies `run` faster when there's no fast-path entry. For
+  USER_SCRIPT-world scripts that's ~1–5ms on the document-start
+  critical path; for MAIN-world (which routes through `wrapper-bridge.js`
+  via postMessage) it's roughly 2–3x that.
+- **Race vs. setup.** If a wrapper fires before `setupReloadFastPath`
+  finishes its `await ensureLoaded()` step, it gets `run` and the
+  reload behaves like before. The opportunistic refresh kicked off by
+  `updateTabMatches` still runs and the next reload picks up the
+  change.
+- **Cleanup.** Entries self-delete once every matched script has
+  consumed them, on a 15s TTL, and on `chrome.tabs.onRemoved`.
 
 ### Trade-offs of wrapping
 

@@ -34,7 +34,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | MV3 extension manifest |
-| `src/background.ts` | Service worker entrypoint; per-tab badge wiring, vm:start/vm:error listener, injector + match-index bootstrap |
+| `src/background.ts` | Service worker entrypoint; per-tab badge wiring, vm:* listener (incl. reload-fast-path check-pending handler), injector + match-index bootstrap |
 | `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
 | `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners, Refresh All + ?refresh trigger + change-row highlights |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, highlighted code box |
@@ -48,8 +48,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/match-index.ts` | In-memory cache of `ok` scripts' matching info, kept in sync with `chrome.storage.local` |
 | `src/injector.ts` | Syncs the enabled-`ok` script set into `chrome.userScripts` and wraps each body with an activation/error shim |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color) and per-tab document LRU (bfcache restore) |
-| `src/wrapper-head.js` | Wrapper prelude (IIFE open, vars, sendMessage helper, matcher slot, vm:start, try-open) — minified to one line by the build |
-| `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, IIFE close) — minified to one line by the build |
+| `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, vm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
+| `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, decision-callback close, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` vm:* events from MAIN-world wrappers to the SW |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
@@ -68,6 +68,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
+| `tests/e2e/reload-fast-path.spec.ts` | Reload triggers vm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
