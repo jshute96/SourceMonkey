@@ -3,7 +3,7 @@
 // Layout (one row per record, no monolithic blob):
 //
 //   "sources"          → string[]                   index of source IDs
-//   "source:<sid>"     → StoredSource               per-directory metadata
+//   "source:<sid>"     → StoredSource               per-source metadata
 //   "script:<scid>"    → StoredScript               per-script content+header
 //
 // Sources own their scripts via `scriptIds`. Scripts back-reference
@@ -22,11 +22,15 @@
 
 import {
   fetchFileUrlText,
-  isSingleFilePath,
+  fetchHttpText,
+  isHttpUrl,
+  isManifestSource,
+  isSingleFileSource,
   joinPath,
   parentDir,
   scanForUserScripts,
   scriptFileUrl,
+  sourceFsPath,
   statFromListing,
 } from './directories.js';
 import {
@@ -59,6 +63,13 @@ export interface StoredScript {
   // listing-reported size+mtime are unchanged. Optional because older
   // listings / older stored rows may not have it.
   fsMtime?: number;
+  // HTTP-source validators captured from the last successful fetch.
+  // Sent back as If-None-Match / If-Modified-Since on the next refresh
+  // so the server can answer 304 instead of resending the body. The
+  // 304 path lands in fetchOrSkipInParallel as `unchanged`, mirroring
+  // the local size+mtime skip.
+  httpEtag?: string;
+  httpLastModified?: string;
   headerText: string;
   bodyText: string;
   header: ParsedHeader | null;
@@ -72,7 +83,7 @@ export interface StoredSource {
   path: string;
   lastRefreshedAt: number;
   scriptIds: string[];
-  scanError?: string;    // set when the directory listing itself failed
+  scanError?: string;    // set when the scan itself failed (directory listing, manifest fetch, bad URL shape)
   enabled: boolean;      // per-source toggle; defaults true on first load
 }
 
@@ -90,12 +101,13 @@ export function isScriptEnabled(script: StoredScript): boolean {
 // ---------- Pure helpers (exported for unit tests) ----------
 
 // What the orchestrator hands back from each per-file load attempt.
-//   - `ok` : freshly fetched content
+//   - `ok` : freshly fetched content (with HTTP validators when available)
 //   - `error`: fetch attempted and failed
-//   - `unchanged`: we skipped the fetch because the directory listing
-//     reported the same size+mtime as the stored entry
+//   - `unchanged`: we skipped the fetch because either (file://) the
+//     listing reported the same size+mtime as the stored entry, or
+//     (http) the server answered 304 to our conditional GET
 export type FetchResult =
-  | { ok: true; source: string }
+  | { ok: true; source: string; httpEtag?: string; httpLastModified?: string }
   | { ok: false; errorMessage: string }
   | { unchanged: true };
 
@@ -132,6 +144,8 @@ interface BuildArgs {
   fileUrl: string;
   source: string;
   now: number;
+  httpEtag?: string;
+  httpLastModified?: string;
 }
 
 // Compose a `StoredScript` from freshly fetched source text. Always
@@ -177,6 +191,8 @@ export function buildScriptFromText(args: BuildArgs): StoredScript {
     enabled: true,
   };
   if (errorMessage) entry.errorMessage = errorMessage;
+  if (args.httpEtag) entry.httpEtag = args.httpEtag;
+  if (args.httpLastModified) entry.httpLastModified = args.httpLastModified;
   return entry;
 }
 
@@ -225,6 +241,11 @@ export function buildInitialErrorEntry(args: {
 // storage (for the viewer) but won't run. If the file later returns,
 // rebuildSource preserves the now-false `enabled` so the user has to
 // explicitly opt back in.
+//
+// HTTP validators (httpEtag / httpLastModified) ride along untouched.
+// The conditional-GET path is gated on `prior.status === 'ok'`, so
+// stale validators are dormant; if the entry returns and fetches
+// cleanly, buildScriptFromText overwrites them from the fresh response.
 export function applyMissing(existing: StoredScript): StoredScript {
   const next: StoredScript = {
     ...existing,
@@ -278,6 +299,8 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
         fileUrl,
         source: fr.source,
         now: args.now,
+        httpEtag: fr.httpEtag,
+        httpLastModified: fr.httpLastModified,
       });
       // Preserve the user's per-script enabled choice across refreshes.
       if (prior) built.enabled = prior.enabled;
@@ -292,7 +315,10 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
       // fresh-fetch failure — shouldn't happen because the orchestrator
       // only emits `unchanged` when prior exists.)
       if (prior) {
-        const next = { ...prior };
+        // Recompute fileUrl unconditionally — if the source's path/URL
+        // ever changes (e.g. a future edit-source UI), the prior's
+        // fileUrl would silently lie. Cheap to recompute here.
+        const next = { ...prior, fileUrl };
         if (found.mtime !== undefined) next.fsMtime = found.mtime;
         if (found.size !== undefined) next.size = found.size;
         out.push(next);
@@ -392,9 +418,10 @@ export async function getSource(id: string): Promise<StoredSource | undefined> {
   return await getRaw<StoredSource>(sourceKey(id));
 }
 
-// Register a brand-new directory: mints a UUID, persists an empty
-// source row, then immediately runs a refresh to populate the scripts.
-// Returns null if a source with this path is already registered.
+// Register a brand-new source (local path or http(s) URL): mints a
+// UUID, persists an empty source row, then immediately runs a refresh
+// to populate the scripts. Returns null if a source with this path is
+// already registered.
 export async function addSource(path: string): Promise<StoredSource | null> {
   const sources = await getSources();
   if (sources.some((s) => s.path === path)) return null;
@@ -425,16 +452,17 @@ export async function removeSource(id: string): Promise<void> {
   await chrome.storage.local.remove(removeKeys);
 }
 
-// Rescan the directory + refetch all of its scripts. Adds new files,
+// Rescan a source + refetch all of its scripts. Adds new files,
 // keeps known files (status updated based on fetch result), and flags
 // vanished files as `missing`. Persists the updated source row plus
 // every script row in one set call, and removes script rows that
 // dropped out (which currently doesn't happen — `missing` rows stay).
 //
-// Optimisation: if Chrome's directory listing reports the same size +
-// mtime as the stored entry, we skip the fetch entirely and reuse the
-// prior entry verbatim. This keeps "external tool wrote a userscript;
-// run refresh" cheap when most files are unchanged.
+// Optimisation: skip the fetch and reuse the prior entry verbatim when
+// the source can prove a file is unchanged — file:// uses Chrome's
+// directory-listing size+mtime; http(s):// uses a conditional GET
+// (304 from the server). This keeps "Refresh All" cheap when most
+// scripts are unchanged.
 export async function refreshSource(
   id: string,
 ): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
@@ -507,31 +535,41 @@ export async function refreshScript(scriptId: string): Promise<StoredScript | nu
   const sourceRow = await getRaw<StoredSource>(sourceKey(prior.sourceId));
   if (!sourceRow) return null;
 
-  // Build a single-entry scan. Look up the file's size/mtime via a
-  // targeted directory listing so the unchanged-skip check has the
-  // same inputs it would have during a Refresh All. If the listing
-  // fails or the file isn't in it, the scan entry stays bare and
-  // fetchOrSkipInParallel will always fetch (correct, just unskipped).
-  const slash = prior.relativePath.lastIndexOf('/');
-  const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
-  const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
-  // For a single-file source, the "scan directory" is the file's parent
-  // — sourceRow.path itself points at the file. For a directory source,
-  // it's the source path plus any subDir prefix from the relativePath.
-  const dirAbs = isSingleFilePath(sourceRow.path)
-    ? parentDir(sourceRow.path)
-    : (subDir ? joinPath(sourceRow.path, subDir) : sourceRow.path);
+  // Build a single-entry scan. Only local directory / single-file
+  // sources support the targeted size+mtime listing lookup; HTTP and
+  // manifest sources rely on the per-entry skip strategy inside
+  // fetchOrSkipInParallel (conditional GETs for HTTP entries, always-
+  // fetch for file:// entries reached through a manifest).
   const scan: { relativePath: string; size?: number; mtime?: number }[] = [
     { relativePath: prior.relativePath },
   ];
-  try {
-    const stat = await statFromListing(dirAbs, fileName);
-    if (stat) {
-      if (stat.size !== undefined) scan[0].size = stat.size;
-      if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
+  const usesListingStat =
+    !isHttpUrl(sourceRow.path) && !isManifestSource(sourceRow.path);
+  if (usesListingStat) {
+    const slash = prior.relativePath.lastIndexOf('/');
+    const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
+    const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
+    // For a single-file source, the "scan directory" is the file's parent
+    // — sourceRow.path itself points at the file. For a directory source,
+    // it's the source path plus any subDir prefix from the relativePath.
+    // Normalise any file:// URL form back to a raw fs path before doing
+    // path arithmetic so parentDir/joinPath behave correctly. The
+    // local-vs-HTTP gate already happened above via `usesListingStat`,
+    // so isSingleFileSource here distinguishes single-file from
+    // directory within the local case.
+    const fsRoot = sourceFsPath(sourceRow.path);
+    const dirAbs = isSingleFileSource(sourceRow.path)
+      ? parentDir(fsRoot)
+      : (subDir ? joinPath(fsRoot, subDir) : fsRoot);
+    try {
+      const stat = await statFromListing(dirAbs, fileName);
+      if (stat) {
+        if (stat.size !== undefined) scan[0].size = stat.size;
+        if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
+      }
+    } catch {
+      /* listing failed; scan stays bare → always-fetch */
     }
-  } catch {
-    /* listing failed; scan stays bare → always-fetch */
   }
 
   const fetchResults = await fetchOrSkipInParallel(sourceRow.path, scan, [prior]);
@@ -549,16 +587,24 @@ export async function refreshScript(scriptId: string): Promise<StoredScript | nu
   return next;
 }
 
-// Fetch each scanned file in parallel UNLESS the listing's size+mtime
-// match the prior stored entry — in which case we emit `unchanged`
-// without doing any I/O. The skip requires both:
-//   - the listing actually reported size and mtime (older Chromes may
-//     not), AND
-//   - the prior entry was status: 'ok' and had a matching size+fsMtime
-// Anything else falls through to a fetch so we never miss a real
-// update. A prior error/missing entry always refetches so it has a
-// chance to recover.
-async function fetchOrSkipInParallel(
+// Fetch each scanned file in parallel.
+//
+// Dispatch is per *entry URL*, not per source: a manifest source may
+// list http(s):// entries, file:// entries, or a mix, so each entry
+// picks its fetcher and skip strategy based on the resolved URL scheme.
+//
+// Scheme behaviors:
+//   - http(s)://: conditional GET. We send the prior row's ETag /
+//     Last-Modified as If-None-Match / If-Modified-Since; a server 304
+//     becomes `unchanged`, a 200 carries new validators back through
+//     FetchResult.ok for rebuildSource to persist.
+//   - file://: direct fetch. If the scan supplied size+mtime (only
+//     local-directory scans do — manifests don't), we apply the
+//     pre-fetch listing skip when those match the prior row.
+//
+// In both modes a prior error/missing entry always refetches so it has
+// a chance to recover.
+export async function fetchOrSkipInParallel(
   sourcePath: string,
   scan: { relativePath: string; size?: number; mtime?: number }[],
   existing: StoredScript[],
@@ -567,6 +613,25 @@ async function fetchOrSkipInParallel(
   const results = await Promise.all(
     scan.map(async (found): Promise<[string, FetchResult]> => {
       const prior = byPath.get(found.relativePath);
+      const url = scriptFileUrl(sourcePath, found.relativePath);
+      if (isHttpUrl(url)) {
+        try {
+          const fetched = await fetchHttpText(url, prior?.status === 'ok' ? {
+            etag: prior.httpEtag,
+            lastModified: prior.httpLastModified,
+          } : {});
+          if (fetched.kind === 'unchanged') {
+            return [found.relativePath, { unchanged: true }];
+          }
+          const ok: FetchResult = { ok: true, source: fetched.text };
+          if (fetched.etag) ok.httpEtag = fetched.etag;
+          if (fetched.lastModified) ok.httpLastModified = fetched.lastModified;
+          return [found.relativePath, ok];
+        } catch (err) {
+          return [found.relativePath, { ok: false, errorMessage: describeError(err) }];
+        }
+      }
+      // file:// (or any other non-HTTP URL fetchFileUrlText can handle).
       const canSkip =
         prior != null &&
         prior.status === 'ok' &&
@@ -577,7 +642,7 @@ async function fetchOrSkipInParallel(
         return [found.relativePath, { unchanged: true }];
       }
       try {
-        const source = await fetchFileUrlText(scriptFileUrl(sourcePath, found.relativePath));
+        const source = await fetchFileUrlText(url);
         return [found.relativePath, { ok: true, source }];
       } catch (err) {
         return [found.relativePath, { ok: false, errorMessage: describeError(err) }];
@@ -589,7 +654,7 @@ async function fetchOrSkipInParallel(
 
 // Refresh every registered source in parallel. Returns the new state
 // per source so callers can compute "what changed" without a second
-// read. A failed source-level refresh (e.g. one directory's scan
+// read. A failed source-level refresh (e.g. one source's scan
 // throws) doesn't take the rest down — its slot in the result map is
 // just absent, and the source's `scanError` field carries the reason.
 export async function refreshAllSources(): Promise<

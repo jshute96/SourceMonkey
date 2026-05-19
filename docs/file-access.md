@@ -2,7 +2,10 @@
 
 How VibeMonkey reads userscripts off the local filesystem. Owned by
 `src/directories.ts`; consumed by the
-[script store](storage.md) and the [viewer](script-viewer.md).
+[script store](storage.md) and the [viewer](script-viewer.md). For
+the `http(s)://` story (single-file URLs + JSON manifests + ETag /
+Last-Modified conditional GETs) see
+[http-sources.md](http-sources.md).
 
 ## Why paths + `file://` instead of FSA
 

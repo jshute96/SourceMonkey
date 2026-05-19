@@ -1,12 +1,16 @@
 // Options page controller. Renders one section per registered source
-// (a directory of userscripts, or a single `.user.js` file), with
-// Refresh + Remove buttons and a script table showing filename, size,
-// and parse status.
+// (a local directory of userscripts, a single `.user.js` file, an
+// http(s) `.user.js` URL, or a JSON manifest — locally as a path or
+// file:// URL, or remotely over http(s)), with Refresh + Remove
+// buttons and a script table showing filename, size, and parse
+// status.
 //
-// "Add source" submits an absolute filesystem path; the store scans
-// the directory (or stats the single file) and loads every `*.user.js`
-// into chrome.storage immediately, so the user doesn't need to click
-// Refresh after add.
+// "Add source" submits the raw string; the store classifies it by
+// shape (path vs URL, suffix) and scans accordingly, loading every
+// script it finds into chrome.storage immediately so the user doesn't
+// need to click Refresh after add. The CSS hooks (`.directory*`) and
+// the `directories` container id predate http sources — they're just
+// stable selector names now, not a claim that every section is a dir.
 //
 // State changes (toggle, add, remove, refresh) update the DOM in
 // place: only the affected section/row mutates, and the control that

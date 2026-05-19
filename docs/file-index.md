@@ -28,6 +28,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
+| `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a VibeMonkey HTTP-manifest JSON array to stdout |
 
 ## Extension Source (`src/`)
 
@@ -39,7 +40,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners, Refresh All + ?refresh trigger + change-row highlights |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, highlighted code box |
 | `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl (header fields + filename/copy/size/status) and highlighted body |
-| `src/directories.ts` | Source I/O: `file://` fetch, listing parser, recursive `*.user.js` scanner (also handles single-file source paths), path/URL helpers |
+| `src/directories.ts` | Source I/O: file:// + http(s) fetch (conditional GETs), listing parser, recursive scanner, JSON manifest parser, URL helpers |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline (incl. size+mtime skip and refreshAllSources) |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
 | `src/script-display.ts` | Pure display helpers shared by the options page + viewer: `formatBytes`, `formatScriptSize`, `formatScriptStatusLabel` |
@@ -89,6 +90,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
 | `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, options-page render |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
+| `docs/http-sources.md` | `http(s)://` single-script sources + scheme-agnostic JSON manifests (local + URL), conditional GETs |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |

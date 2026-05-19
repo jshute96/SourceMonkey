@@ -12,6 +12,7 @@ import {
   applyFetchError,
   applyMissing,
   buildInitialErrorEntry,
+  fetchOrSkipInParallel,
   rebuildSource,
 } from '../../dist/script-store.js';
 import { parseHeader } from '../../dist/userscript-header.js';
@@ -441,6 +442,63 @@ test('rebuildSource builds the right fileUrl for a single-file source', () => {
   assert.equal(result[0].relativePath, 'foo bar.user.js');
 });
 
+test('rebuildSource persists httpEtag / httpLastModified from a successful HTTP fetch', () => {
+  // The next refresh will read these back off the prior row and send
+  // them as If-None-Match / If-Modified-Since so the server can answer
+  // 304. Without this round-trip, every refresh of an HTTP source
+  // would redownload the body.
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: 'https://example.com/scripts/manifest.json',
+    existing: [],
+    scan: [{ relativePath: 'a.user.js' }],
+    fetchResults: new Map([
+      ['a.user.js', {
+        ok: true,
+        source: VALID_SCRIPT,
+        httpEtag: 'W/"abc"',
+        httpLastModified: 'Wed, 21 Oct 2025 07:28:00 GMT',
+      }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].httpEtag, 'W/"abc"');
+  assert.equal(result[0].httpLastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
+});
+
+test('rebuildSource: HTTP unchanged preserves the prior entry and its validators', () => {
+  // The HTTP path lands here when the server returned 304 to our
+  // conditional GET. fsMtime stays unused (HTTP doesn't use it); the
+  // etag/lastModified should not get cleared.
+  const prior = {
+    ...buildScriptFromText({
+      id: 'a-id',
+      sourceId: 'src-1',
+      relativePath: 'a.user.js',
+      fileUrl: 'https://example.com/scripts/a.user.js',
+      source: VALID_SCRIPT,
+      now: 50,
+    }),
+    httpEtag: 'W/"abc"',
+    httpLastModified: 'Wed, 21 Oct 2025 07:28:00 GMT',
+  };
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: 'https://example.com/scripts/manifest.json',
+    existing: [prior],
+    scan: [{ relativePath: 'a.user.js' }],
+    fetchResults: new Map([
+      ['a.user.js', { unchanged: true }],
+    ]),
+    now: 999,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].httpEtag, 'W/"abc"');
+  assert.equal(result[0].httpLastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
+  assert.equal(result[0].loadedAt, prior.loadedAt);
+});
+
 test('rebuildSource creates an initial error entry when a new file fails to fetch', () => {
   const result = rebuildSource({
     sourceId: 'src-1',
@@ -458,4 +516,103 @@ test('rebuildSource creates an initial error entry when a new file fails to fetc
   assert.equal(result[0].size, null);
   assert.equal(result[0].headerText, '');
   assert.equal(result[0].bodyText, '');
+});
+
+// ---------- fetchOrSkipInParallel: per-entry scheme dispatch ----------
+//
+// The core symmetry claim of the refactor: a manifest source can list
+// entries that resolve to http(s):// AND file:// URLs, and each entry
+// picks its fetch/skip strategy based on the RESOLVED URL's scheme —
+// not the source's. The test below wires up a manifest with one of
+// each and inspects what fetch sees.
+
+function fakeResponse({ status, headers = {}, body = '' }) {
+  const lowerHeaders = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    type: 'basic',
+    headers: { get: (k) => lowerHeaders.get(k.toLowerCase()) ?? null },
+    text: async () => body,
+  };
+}
+
+test('fetchOrSkipInParallel: mixed-scheme manifest dispatches per resolved entry URL', async () => {
+  // Manifest source at https://x/m.json with two entries:
+  //   - "foo.user.js"            → resolves to https://x/foo.user.js (HTTP)
+  //   - "file:///etc/bar.user.js" → resolves to file:///etc/bar.user.js
+  // The HTTP entry has a prior etag → fetch must include If-None-Match.
+  // The file entry has no etag → fetch must NOT include conditional headers
+  // (and must not get cache: no-store applied, which fetchHttpText sets).
+  const calls = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, init });
+    if (url.startsWith('https://')) {
+      // Simulate 304 to exercise the unchanged path.
+      return fakeResponse({ status: 304 });
+    }
+    // file:// fetch returns body.
+    return fakeResponse({ status: 200, body: 'console.log("local");' });
+  };
+  try {
+    const priorHttp = {
+      ...buildScriptFromText({
+        id: 'h-id', sourceId: 'src-1', relativePath: 'foo.user.js',
+        fileUrl: 'https://x/foo.user.js', source: VALID_SCRIPT, now: 1,
+      }),
+      httpEtag: 'W/"abc"',
+    };
+    const results = await fetchOrSkipInParallel(
+      'https://x/m.json',  // manifest source
+      [
+        { relativePath: 'foo.user.js' },
+        { relativePath: 'file:///etc/bar.user.js' },
+      ],
+      [priorHttp],
+    );
+    // HTTP entry → 304 → unchanged.
+    const httpResult = results.get('foo.user.js');
+    assert.ok(httpResult && 'unchanged' in httpResult,
+      `expected unchanged for HTTP entry, got ${JSON.stringify(httpResult)}`);
+    // file:// entry → fresh fetch with body.
+    const fileResult = results.get('file:///etc/bar.user.js');
+    assert.ok(fileResult && 'ok' in fileResult && fileResult.ok,
+      `expected ok for file entry, got ${JSON.stringify(fileResult)}`);
+    assert.equal(fileResult.source, 'console.log("local");');
+    // Inspect the calls: HTTP one must carry If-None-Match; file one must not.
+    const httpCall = calls.find((c) => String(c.url).startsWith('https://'));
+    const fileCall = calls.find((c) => String(c.url).startsWith('file://'));
+    assert.ok(httpCall, 'expected an HTTP fetch');
+    assert.ok(fileCall, 'expected a file:// fetch');
+    assert.equal(httpCall.init.headers?.['If-None-Match'], 'W/"abc"',
+      'HTTP entry should replay prior ETag as If-None-Match');
+    assert.equal(httpCall.init.cache, 'no-store',
+      'HTTP fetch should use cache: no-store');
+    // file:// path goes through fetchFileUrlText, which doesn't set
+    // headers or cache options of its own.
+    assert.equal(fileCall.init.headers, undefined);
+    assert.equal(fileCall.init.cache, undefined);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('applyMissing keeps HTTP validators dormant for later recovery', () => {
+  // Documented behavior: a vanished script row preserves httpEtag /
+  // httpLastModified even though they're unused while status is
+  // 'missing'. If the entry later reappears, buildScriptFromText
+  // overwrites the validators from the fresh response.
+  const prior = {
+    ...buildScriptFromText({
+      id: 'h-id', sourceId: 'src-1', relativePath: 'a.user.js',
+      fileUrl: 'https://x/a.user.js', source: VALID_SCRIPT, now: 1,
+    }),
+    httpEtag: 'W/"abc"',
+    httpLastModified: 'Wed, 21 Oct 2025 07:28:00 GMT',
+  };
+  const missing = applyMissing(prior);
+  assert.equal(missing.status, 'missing');
+  assert.equal(missing.httpEtag, 'W/"abc"');
+  assert.equal(missing.httpLastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
 });

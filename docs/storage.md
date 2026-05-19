@@ -48,7 +48,13 @@ Three key spaces in `chrome.storage.local`:
 - `fsMtime?` — modification time as reported by Chrome's directory
   listing on the last successful scan. Opaque integer used only for
   equality. Combined with `size` it lets refresh skip refetching files
-  whose listing-reported size+mtime are unchanged.
+  whose listing-reported size+mtime are unchanged. (file:// sources
+  only.)
+- `httpEtag?`, `httpLastModified?` — HTTP validators captured from
+  the last successful fetch. Sent on the next refresh as
+  `If-None-Match` / `If-Modified-Since` so the server can answer 304
+  instead of resending the body. (http(s):// sources only; see
+  [http-sources.md](http-sources.md).)
 - `headerText`, `bodyText` — raw split of the file.
 - `header` — `ParsedHeader | null` (see [script-viewer.md](script-viewer.md)).
 - `matching` — `{matches, excludes, includes}` distilled from the
@@ -83,15 +89,25 @@ injector can still run the script (assuming it's still enabled).
 
 Every load path goes through the same pipeline:
 
-1. List the directory via `scanForUserScripts`
-   (see [file-access.md](file-access.md)). The listing carries each
-   file's `size` and `mtime`.
-2. For each scanned file, decide whether to fetch:
-   - **Skip** (emit `{ unchanged: true }`) if the prior stored entry
-     is `status: 'ok'` AND the listing's size+mtime match the prior
-     `size` and `fsMtime`. No fetch, no parse — the prior entry is
-     reused verbatim.
-   - **Fetch** otherwise. Errors carry `errorMessage`.
+1. List the source via `scanForUserScripts`
+   (see [file-access.md](file-access.md) for local directories /
+   single files, and [http-sources.md](http-sources.md) for HTTP
+   single-files and manifests of any scheme). Local-directory scans
+   carry each file's `size` and `mtime`; URL-style scans (HTTP
+   single-file, manifest entries) don't have a pre-fetch stat step.
+2. For each scanned file, decide whether to fetch — *per resolved
+   entry URL*, not per source (so a manifest can mix schemes):
+   - **file:// skip** (emit `{ unchanged: true }`) if the prior
+     stored entry is `status: 'ok'` AND the listing's size+mtime
+     match the prior `size` and `fsMtime`. Only local-directory
+     scans supply these; file:// entries reached via a manifest
+     always fetch.
+   - **http skip** (also `{ unchanged: true }`) when the server
+     answers `304` to a conditional GET driven by the prior row's
+     `httpEtag` / `httpLastModified`.
+   - **Fetch** otherwise. Successful HTTP fetches carry the new
+     validators back through `FetchResult.ok` so they get persisted
+     on the rebuilt row. Errors carry `errorMessage`.
 3. For each fetched file run, in order:
    - `splitHeaderBody` (see [script-viewer.md](script-viewer.md))
    - `parseHeader`
@@ -110,22 +126,24 @@ Every load path goes through the same pipeline:
 
 - `addSource(path)` — create an empty source row, then run
   `refreshSource`. Returns `null` if the path is already registered.
-- `refreshSource(id)` — full rescan + reload of one directory
+- `refreshSource(id)` — full rescan + reload of one source
   (with the unchanged-file skip described above).
 - `refreshAllSources()` — runs `refreshSource` for every registered
-  directory in parallel. Used by the options page's "Refresh All"
+  source in parallel. Used by the options page's "Refresh All"
   button and by the `?refresh` URL trigger.
 - `removeSource(id)` — drop the source row + every child script row +
   rewrite the index.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildSource`
-  pipeline as the directory-level Refresh (so the two paths can't
+  pipeline as the source-level Refresh (so the two paths can't
   drift on skip rules, fsMtime handling, enabled preservation, error
   shape — they share the per-file logic), but with a single-element
-  scan and a targeted directory-listing lookup to populate that scan's
-  size+mtime. Doesn't enumerate the whole parent dir, so it can't
-  transition a script into `'missing'` — that's the directory-level
-  Refresh's job.
+  scan. For file:// sources it does a targeted directory-listing
+  lookup to populate the scan's size+mtime; for http(s):// and
+  manifest sources it skips that step and relies on the conditional
+  GET inside `fetchOrSkipInParallel` instead. Doesn't enumerate the
+  whole parent dir, so it can't transition a script into `'missing'`
+  — that's the source-level Refresh's job.
 - `setSourceEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
   flip the per-source / per-script `enabled` flag with a single-row
   write. The match index picks up the change via `storage.onChanged`.

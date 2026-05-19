@@ -15,46 +15,104 @@ A userscript manager Chrome extension optimized for vibe-coding.
 Open the options page by clicking the VibeMonkey toolbar icon, or via
 `chrome://extensions` → VibeMonkey → "Details" → "Extension options".
 
-- Enter the absolute path of a folder containing userscripts and click
-  **Add source**. The directory is scanned (up to two subdirectory
-  levels deep) and every `*.user.js` is loaded into the extension's
-  storage immediately. You can also point directly at a single
-  `.user.js` file — it's treated as a one-script source and shows up
-  the same way (heading + a one-row table).
-- Each directory section shows a table with a per-script enable
-  toggle plus **Filename**, **Size**, and **Status** (`OK` or
-  `ERROR`). The directory itself has an enable toggle to the left of
-  its path; disabling a directory greys out (and effectively
-  disables) every script under it without losing each script's own
-  choice. The table header has a small **+** / **−** button that
-  bulk-enables or bulk-disables every script under the directory.
-  A script reports `ERROR` when its metadata block is missing or
+### Registering sources
+
+Type a source into the Add Source field and click **Add source**. The
+source is scanned immediately and every userscript it produces is
+loaded into the extension's storage. A source can be any of:
+
+- An **absolute path to a directory** of userscripts. Scanned
+  recursively (up to two subdirectory levels deep); every
+  `*.user.js` becomes a row.
+- An **absolute path to a single `.user.js` file**. Shows up as a
+  one-row source.
+- A **`file://` URL** in either of the two forms above (anywhere a
+  bare path works, the URL form works too).
+- An **`http(s)://` URL ending in `.user.js`** — fetched as a single
+  remote script.
+- A **manifest**: anything whose pathname ends in `.json`. The
+  manifest is fetched and the URLs it lists become individual scripts.
+  Works at an http(s) URL, a `file://` URL, or a bare local path —
+  the same manifest file can be tested locally and then served over
+  HTTP unchanged.
+
+Each source shows up as its own section on the options page with a
+per-source enable toggle, per-script enable toggles, a **Refresh**
+button (re-scans + re-fetches just that source), and a **Remove**
+button. The page-level **Refresh All** does every source at once.
+
+### Manifest format
+
+The manifest body is JSON in one of two shapes:
+
+```json
+["foo.user.js", "sub/bar.user.js", "https://elsewhere/baz.user.js"]
+```
+
+```json
+{ "scripts": ["foo.user.js", "sub/bar.user.js"] }
+```
+
+Each entry is a URL string. Resolution rules:
+
+- **Absolute** URLs (`https://…`, `file:///…`) are used verbatim.
+- **Relative** URLs resolve against the manifest URL's parent:
+  `foo.user.js` listed in `https://example.com/scripts/manifest.json`
+  becomes `https://example.com/scripts/foo.user.js`; the same entry
+  in `/home/me/scripts/manifest.json` becomes
+  `/home/me/scripts/foo.user.js`.
+- Entries are trimmed; empty strings and duplicates are skipped.
+- A non-string entry or a body that isn't one of the two supported
+  shapes fails the whole source with a scan error.
+
+To generate a manifest from a directory of userscripts, run
+`scripts/make_manifest.sh` inside that directory and redirect stdout
+to `manifest.json` — it scans recursively for `*.user.js` and emits
+the bare-array shape.
+
+### Refresh behaviour
+
+HTTP entries (whether a top-level single-file source or reached via a
+manifest) re-fetch with conditional GETs — VibeMonkey stores each
+script's `ETag` / `Last-Modified` and sends them on the next refresh,
+so an unchanged file answers `304` and no body is re-downloaded.
+Local-directory sources skip refetches when the file's size +
+modification time match the stored copy.
+
+### Per-source UI
+
+- Each source section shows a table with a per-script enable toggle
+  plus **Filename**, **Size**, and **Status** (`OK` or `ERROR`). The
+  source itself has an enable toggle to the left of its path/URL;
+  disabling a source greys out (and effectively disables) every
+  script under it without losing each script's own choice. The table
+  header has a small **+** / **−** button that bulk-enables or
+  bulk-disables every script in that source.
+- A script reports `ERROR` when its metadata block is missing or
   malformed, or when required fields (`@name` plus `@match`/
   `@include`) aren't present — hover the status cell to see the
-  reason. If a file was loaded before but has disappeared from disk,
-  the size column shows `MISSING`.
-- **Refresh** rescans the directory and reloads every script.
-  **Remove** drops the directory (and its scripts) from storage. The
-  page-level **Refresh All** button at the top runs Refresh across
-  every registered directory. Refresh is incremental — files whose
-  size and modification time match the stored copy are skipped
-  without re-reading or re-parsing. After a refresh, any row that
-  actually changed is highlighted: light green when it updated
-  successfully, light red when it errored or vanished. The color
-  stays on the row until the next refresh. A vanished
-  file is automatically disabled so it stops being injected; the
-  row stays in storage and the user can re-enable it if the file
-  comes back.
+  reason. If a script was loaded before but no longer appears in the
+  scan (file deleted, manifest entry removed), the size column shows
+  `MISSING`.
+- After a refresh, any row that actually changed is highlighted:
+  light green when it updated successfully, light red when it errored
+  or vanished. The color stays on the row until the next refresh. A
+  vanished script is automatically disabled so it stops being
+  injected; the row stays in storage and the user can re-enable it
+  if it comes back.
 - External tools can trigger a refresh-all by opening the options
   page with `?refresh` in the query string, e.g.
   `google-chrome chrome-extension://<extension-id>/options.html?refresh`
   after writing new userscripts to disk.
 - Clicking a script name opens a viewer in a new tab showing the
   file's name, size, status, an enable toggle (greyed out when the
-  parent directory is disabled), a parsed-header summary (Name /
+  parent source is disabled), a parsed-header summary (Name /
   Description / Match / Exclude), and the highlighted source. The
-  viewer reads from storage; its own **Refresh** button re-reads the
-  one file from disk.
+  viewer reads from storage; its own **Refresh** button re-fetches
+  just this one script (from disk for local sources, over HTTP for
+  URL-backed ones). The **Location** row shows the absolute
+  filesystem path for local sources and the resolved URL for
+  URL-backed ones.
 - As you browse, the VibeMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The

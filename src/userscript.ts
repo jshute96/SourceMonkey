@@ -4,7 +4,7 @@
 // file, so the content always matches what the options page shows.
 //
 // Layout: a thin controls row (Enable toggle + Refresh) on top, then
-// a details panel (parsed-header fields + Filename / Size / Status),
+// a details panel (parsed-header fields + Location / Size / Status),
 // then the highlighted code box.
 
 import {
@@ -65,8 +65,8 @@ const filenameCopyBtn = (() => {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'copy-btn';
-  btn.title = 'Copy filename to clipboard';
-  btn.setAttribute('aria-label', 'Copy filename to clipboard');
+  btn.title = 'Copy location to clipboard';
+  btn.setAttribute('aria-label', 'Copy location to clipboard');
   btn.innerHTML = COPY_ICON_SVG + CHECK_ICON_SVG;
   btn.addEventListener('click', () => void onCopyFilename());
   return btn;
@@ -187,13 +187,13 @@ function renderDetails(script: StoredScript): void {
     if (excludes.length) appendRow(dl, 'Exclude', urlList(excludes));
   }
 
-  // Absolute filesystem path: source directory + script's relative
-  // path (or just the source path itself when the source is a single
-  // `.user.js` file). Skip the row entirely if the source row is gone
-  // — a bare relative path under a "Filename" label would be misleading.
+  // Resolved location for the script: an absolute filesystem path for
+  // file:// sources, or the fully-resolved URL for HTTP sources. Skip
+  // the row entirely if the source row is gone — a bare relative path
+  // under a "Location" label would be misleading.
   if (sourcePath) {
     currentFilenamePath = scriptAbsolutePath(sourcePath, script.relativePath);
-    appendRow(dl, 'Filename', filenameCell(currentFilenamePath));
+    appendRow(dl, 'Location', filenameCell(currentFilenamePath));
   } else {
     currentFilenamePath = '';
   }

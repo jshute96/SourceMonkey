@@ -38,9 +38,11 @@ details live in the topic-specific docs linked below.
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when
   a tab uses some scripts. See [storage.md](storage.md#updater).
-- **Directory I/O** (`src/directories.ts`) — `file://` fetcher,
-  directory-listing parser, and recursive `*.user.js` scanner. See
-  [file-access.md](file-access.md).
+- **Source I/O** (`src/directories.ts`) — `file://` fetcher,
+  directory-listing parser, recursive `*.user.js` scanner, plus the
+  `http(s)://` fetcher and JSON manifest parser. See
+  [file-access.md](file-access.md) and
+  [http-sources.md](http-sources.md).
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
   See [script-viewer.md](script-viewer.md). For which `@tag` fields
@@ -68,6 +70,9 @@ details live in the topic-specific docs linked below.
 - [file-access.md](file-access.md) — `file://` permissions, why we
   chose paths over the File System Access API, directory-listing
   enumeration, format caveats.
+- [http-sources.md](http-sources.md) — `http(s)://` URL formats,
+  scheme-agnostic manifest schema (works for local paths and
+  file:// URLs too), conditional-GET update detection.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
 - [matching.md](matching.md) — `@match`/`@include`/`@exclude`

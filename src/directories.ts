@@ -1,11 +1,21 @@
-// Directory I/O for userscript sources.
+// Source I/O for userscript sources.
 //
-// Owns: path → file:// URL conversion, single-file fetch, Chrome's
-// `file://` directory-listing parser, and the recursive scanner that
-// finds `*.user.js` files under a registered directory. All
-// persistence lives in `src/script-store.ts`; this module is pure I/O.
+// Owns: path → URL conversion, content fetch, listing parsers, and the
+// scanner that turns a source path/URL into a list of FoundScript
+// entries. All persistence lives in `src/script-store.ts`; this module
+// is pure I/O.
 //
-// Why XMLHttpRequest in page contexts: fetch() treats
+// The following source kinds all flow through the same downstream
+// pipeline:
+//   - local directory   (an absolute filesystem path; recursive scan)
+//   - local single file (an absolute path ending in .user.js)
+//   - http single file  (an http(s) URL whose pathname ends in .user.js)
+//   - manifest          (anything whose pathname ends in .json — an
+//                        absolute local path, a file:// URL, or an
+//                        http(s) URL — returning a JSON list of script
+//                        URLs that resolve against the manifest URL)
+//
+// Why XMLHttpRequest in page contexts (for file://): fetch() treats
 // chrome-extension:// → file:// as cross-origin and returns an opaque
 // response (status 0, unreadable body). XHR doesn't apply that
 // restriction. For file:// XHRs, `status` stays 0 even on success
@@ -20,7 +30,12 @@
 // behavior, not a SW one. We pick the path at call time by checking
 // for XHR availability.
 //
-// Requirements:
+// HTTP requirements:
+//   - manifest: "<all_urls>" (or a narrower http(s) pattern) in
+//     host_permissions so the SW/options page can fetch arbitrary
+//     origins without CORS blocking the response body.
+//
+// File requirements:
 //   - manifest: "file:///*" in host_permissions
 //   - user: enabled "Allow access to file URLs" on chrome://extensions
 // The toggle is persistent across browser sessions, so unlike the File
@@ -28,9 +43,95 @@
 
 export interface FoundScript {
   name: string;         // leaf file name, e.g. "foo.user.js"
-  relativePath: string; // path relative to the directory root, e.g. "sub/foo.user.js"
-  size?: number;        // file byte size as reported by Chrome's listing (undefined if listing didn't include it)
-  mtime?: number;       // modification time as reported by Chrome's listing — opaque integer used only for equality
+  relativePath: string; // path relative to the source root (basename for single-file / manifest entries)
+  size?: number;        // file byte size as reported by Chrome's listing (file:// only — undefined for HTTP)
+  mtime?: number;       // modification time as reported by Chrome's listing — opaque integer used only for equality (file:// only)
+}
+
+// ---------- Source-kind detection ----------
+
+// All source-kind checks key off the raw source string the user typed.
+// `http://` / `https://` selects an HTTP source; everything else is
+// treated as an absolute filesystem path. Suffix tests look at the URL
+// pathname (sans query/fragment) so e.g. `…/foo.user.js?v=2` still
+// classifies as a single-file source.
+
+export function isHttpUrl(source: string): boolean {
+  return /^https?:\/\//i.test(source);
+}
+
+export function isFileUrl(source: string): boolean {
+  return /^file:\/\//i.test(source);
+}
+
+// Pathname of an http(s) or file:// URL, sans query and fragment.
+// Returns '' if the string doesn't parse as a URL — callers gate on
+// isHttpUrl / isFileUrl first.
+function urlPathname(source: string): string {
+  try {
+    return new URL(source).pathname;
+  } catch {
+    return '';
+  }
+}
+
+// Pathname for *any* source-input form (raw filesystem path, file://
+// URL, or http(s):// URL). Used by suffix tests that don't care about
+// scheme.
+function sourcePathname(source: string): string {
+  if (isHttpUrl(source) || isFileUrl(source)) return urlPathname(source);
+  return source;
+}
+
+// Canonical URL form for a source input. Raw filesystem paths get
+// percent-encoded and wrapped as file://; URLs pass through. Used as
+// the base for URL.resolution of manifest entries so a local manifest
+// can list relative paths the same way an HTTP one can.
+export function sourceCanonicalUrl(source: string): string {
+  if (isHttpUrl(source) || isFileUrl(source)) return source;
+  return pathToFileUrl(source);
+}
+
+// Inverse of sourceCanonicalUrl for local inputs: a file:// URL turns
+// into the absolute filesystem path it points at; a raw path passes
+// through. Lets the local directory/single-file branches accept the
+// URL form the user typed without each branch having to special-case
+// the parse. Percent-encoded segments (e.g. `my%20scripts`) are
+// decoded so downstream path helpers see the on-disk name verbatim.
+export function sourceFsPath(source: string): string {
+  if (!isFileUrl(source)) return source;
+  try {
+    return decodeURIComponent(new URL(source).pathname);
+  } catch {
+    return source;  // unparseable URL → let the caller's I/O fail with a clearer message
+  }
+}
+
+// True for any single-file source — http(s):// URL, file:// URL, or
+// an absolute local path — whose pathname ends in `.user.js`.
+// Scheme-agnostic counterpart to `isManifestSource`. Call sites that
+// genuinely care about scheme combine this with `isHttpUrl(s)`.
+export function isSingleFileSource(source: string): boolean {
+  return sourcePathname(source).endsWith('.user.js');
+}
+
+// True for any manifest source — http(s):// URL, file:// URL, or an
+// absolute local path — whose pathname ends in `.json`. Scheme-agnostic
+// counterpart to `isSingleFileSource`.
+export function isManifestSource(source: string): boolean {
+  return sourcePathname(source).endsWith('.json');
+}
+
+// Leaf name (last path segment) of an http(s) URL — used as the
+// FoundScript.name / relativePath for an HTTP single-file source so
+// the options table shows "foo.user.js" rather than the whole URL.
+function urlBaseName(source: string): string {
+  const path = urlPathname(source);
+  const slash = path.lastIndexOf('/');
+  const last = slash < 0 ? path : path.slice(slash + 1);
+  // Decode percent-encoded segments so the user sees the filename
+  // they'd recognise; falls back to the raw segment if decoding fails.
+  try { return decodeURIComponent(last); } catch { return last; }
 }
 
 // ---------- URL / path helpers ----------
@@ -48,12 +149,6 @@ export function joinPath(base: string, child: string): string {
   return base.replace(/\/+$/, '') + '/' + child;
 }
 
-// A source path that points directly at a single `.user.js` file rather
-// than a directory containing them. The rest of the pipeline treats
-// such a source as if it were a directory holding exactly one script.
-export function isSingleFilePath(path: string): boolean {
-  return path.endsWith('.user.js');
-}
 
 // Return the parent directory of an absolute POSIX path. The result
 // has no trailing slash; for a top-level path like `/foo` returns `/`.
@@ -137,6 +232,48 @@ async function isReadableFile(absolutePath: string): Promise<boolean> {
   }
 }
 
+// ---------- HTTP fetch (with conditional GETs) ----------
+
+export interface HttpFetchOptions {
+  etag?: string;          // last-seen ETag — sent as If-None-Match
+  lastModified?: string;  // last-seen Last-Modified — sent as If-Modified-Since
+}
+
+export type HttpFetchResult =
+  | { kind: 'ok'; text: string; etag?: string; lastModified?: string }
+  | { kind: 'unchanged' };  // 304
+
+// Fetch an http(s) URL, optionally with conditional headers. A 304
+// response surfaces as `{kind: 'unchanged'}` so callers can preserve
+// the prior content without re-parsing. We use `cache: 'no-store'`
+// because we maintain our own validators (etag / lastModified) on each
+// script row — the browser HTTP cache would otherwise serve a stale
+// 200 without ever asking the server.
+export async function fetchHttpText(
+  url: string,
+  opts: HttpFetchOptions = {},
+): Promise<HttpFetchResult> {
+  const headers: Record<string, string> = {};
+  if (opts.etag) headers['If-None-Match'] = opts.etag;
+  if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified;
+
+  let response: Response;
+  try {
+    response = await fetch(url, { cache: 'no-store', headers });
+  } catch (err) {
+    throw new Error(`network error fetching ${url}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (response.status === 304) return { kind: 'unchanged' };
+  if (!response.ok) throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
+  const text = await response.text();
+  const result: HttpFetchResult = { kind: 'ok', text };
+  const etag = response.headers.get('ETag');
+  if (etag) result.etag = etag;
+  const lastModified = response.headers.get('Last-Modified');
+  if (lastModified) result.lastModified = lastModified;
+  return result;
+}
+
 // ---------- Directory listing parser ----------
 
 export interface ListingEntry {
@@ -207,26 +344,60 @@ export async function statFromListing(
 
 export const MAX_SCAN_DEPTH = 2; // levels of subdirectory below the root
 
+// Parse a manifest body. Accepts either a bare JSON array of strings
+// or `{scripts: [...]}`. Anything else is rejected with a message that
+// points at the supported shapes. Empty strings inside the list are
+// dropped so a trailing newline / typo doesn't fail the whole source.
+export function parseManifest(body: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch (err) {
+    throw new Error(`manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let arr: unknown;
+  if (Array.isArray(parsed)) {
+    arr = parsed;
+  } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { scripts?: unknown }).scripts)) {
+    arr = (parsed as { scripts: unknown[] }).scripts;
+  } else {
+    throw new Error('manifest must be a JSON array of URL strings, or `{"scripts": [...]}`');
+  }
+  const entries: string[] = [];
+  for (const item of arr as unknown[]) {
+    if (typeof item !== 'string') {
+      throw new Error('manifest entries must all be strings');
+    }
+    const trimmed = item.trim();
+    if (trimmed) entries.push(trimmed);
+  }
+  return entries;
+}
+
 export async function scanForUserScripts(
   absolutePath: string,
   depth = 0,
   prefix = '',
 ): Promise<FoundScript[]> {
-  // Single-file source: behave as if this file is the only entry in
-  // its parent directory. We still list the parent so we can capture
-  // its listing-reported size+mtime for the unchanged-file skip; if
-  // the file isn't in the listing, return [] so the refresh pipeline
-  // flags it as missing (same treatment as a vanished file in a
-  // directory source).
-  if (depth === 0 && isSingleFilePath(absolutePath)) {
-    const dir = parentDir(absolutePath);
-    const name = baseName(absolutePath);
-    const stat = await statFromListing(dir, name);
-    if (!stat || stat.isDir) return [];
-    const found: FoundScript = { name, relativePath: name };
-    if (stat.size !== undefined) found.size = stat.size;
-    if (stat.mtime !== undefined) found.mtime = stat.mtime;
-    return [found];
+  // Source-kind dispatch. Order: manifest first, then single-file,
+  // then reject any HTTP URL with an unrecognised shape; everything
+  // else falls through to the local-directory listing. The first two
+  // branches are scheme-agnostic (raw path / file:// / http(s)://
+  // handled uniformly); local directory is the only branch that
+  // rejects HTTP, because there's no remote listing API.
+  if (depth === 0) {
+    if (isManifestSource(absolutePath)) {
+      return scanManifest(sourceCanonicalUrl(absolutePath));
+    }
+    if (isSingleFileSource(absolutePath)) {
+      return scanSingleFile(absolutePath);
+    }
+    if (isHttpUrl(absolutePath)) {
+      throw new Error('URL must end in .user.js (single script) or .json (manifest)');
+    }
+    // Local-directory only. Normalise file:// → raw path once so the
+    // downstream listing + recursion all see a single form.
+    absolutePath = sourceFsPath(absolutePath);
   }
   let entries: ListingEntry[];
   try {
@@ -263,17 +434,135 @@ export async function scanForUserScripts(
   return results;
 }
 
-// Build a file:// URL for a specific scanned script. For a single-file
-// source the relativePath equals the source path's basename, so the
-// join would double the name — just return the source path's URL.
-export function scriptFileUrl(sourcePath: string, relativePath: string): string {
-  return pathToFileUrl(scriptAbsolutePath(sourcePath, relativePath));
+// ---------- Per-source-kind scanners ----------
+
+// One-entry "scan" for a single-file source (any scheme). The two
+// sub-cases differ only in how the next refresh decides to skip
+// re-fetching: local sources record listing-reported size+mtime here
+// so the same Refresh-All skip applies, while HTTP sources rely on the
+// per-entry conditional GET (`If-None-Match` / `If-Modified-Since`)
+// and so don't need anything captured at scan time. Returning [] for
+// a vanished local file lets the refresh pipeline flag the prior
+// entry as `missing` (same treatment as a vanished file in a
+// directory source).
+async function scanSingleFile(source: string): Promise<FoundScript[]> {
+  if (isHttpUrl(source)) {
+    const name = urlBaseName(source) || source;
+    return [{ name, relativePath: name }];
+  }
+  const fsPath = sourceFsPath(source);
+  const dir = parentDir(fsPath);
+  const name = baseName(fsPath);
+  const stat = await statFromListing(dir, name);
+  if (!stat || stat.isDir) return [];
+  const found: FoundScript = { name, relativePath: name };
+  if (stat.size !== undefined) found.size = stat.size;
+  if (stat.mtime !== undefined) found.mtime = stat.mtime;
+  return [found];
 }
 
-// Build the absolute filesystem path for a specific scanned script.
-// Shared by the URL builder above and the viewer's Filename row so a
-// single-file source doesn't get its basename joined twice.
+// Scheme-aware text fetcher used for the manifest body. Per-entry
+// fetches (with their own per-scheme dispatch and conditional-GET
+// handling) live in script-store.ts; this helper only needs to read
+// a body, not negotiate freshness.
+async function fetchManifestText(canonicalUrl: string): Promise<string> {
+  if (isHttpUrl(canonicalUrl)) {
+    const fetched = await fetchHttpText(canonicalUrl);
+    if (fetched.kind !== 'ok') {
+      throw new Error(`manifest fetch returned unexpected ${fetched.kind}`);
+    }
+    return fetched.text;
+  }
+  // file:// URLs (the only other scheme we accept here — pathToFileUrl
+  // wrapped any raw path before reaching us).
+  return await fetchFileUrlText(canonicalUrl);
+}
+
+// Fetch the manifest and turn each listed entry into a FoundScript.
+// Works for any manifest scheme — http(s):// or file:// — because both
+// share `new URL(entry, base)` resolution semantics and the only piece
+// that differs is the manifest-body fetch.
+//
+// `relativePath` stores the raw entry (typically a bare filename for
+// relative cases) so it survives across refreshes for stable
+// per-script IDs; the per-entry fetcher resolves it back to an
+// absolute URL via scriptFileUrl. Duplicate entries collapse to the
+// first occurrence — the manifest is the user's source of truth, so
+// we treat dupes as a harmless typo rather than an error.
+//
+// The manifest body itself is re-downloaded every refresh (no
+// If-None-Match round-trip on the manifest URL). The per-script
+// fetches still 304 individually, so the bandwidth cost is bounded.
+// See TODO.md "HTTP sources — follow-ups" for the planned fix.
+// Schemes a manifest entry's *resolved* URL is allowed to use. We
+// mirror the suffix-test policy on the source URL itself (which only
+// accepts http(s) / file: / raw path): a manifest the user added
+// shouldn't be able to escalate the SW's `<all_urls>` reach into
+// things like `data:` (arbitrary inline content), `chrome-extension:`
+// (cross-extension probing), or `blob:` (off-origin smuggling). The
+// user can always add such sources directly if they want them.
+const ALLOWED_ENTRY_SCHEMES = new Set(['http:', 'https:', 'file:']);
+
+async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
+  const body = await fetchManifestText(canonicalUrl);
+  const rawEntries = parseManifest(body);
+  const seen = new Set<string>();
+  const results: FoundScript[] = [];
+  for (const entry of rawEntries) {
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    // Resolve once: validates the URL, gates the scheme, and gives us
+    // a friendly display name. The actual fetch URL is rebuilt at
+    // refresh time via scriptFileUrl from sourceCanonicalUrl + entry.
+    let resolved: URL;
+    try {
+      resolved = new URL(entry, canonicalUrl);
+    } catch {
+      throw new Error(`manifest entry is not a valid URL: ${entry}`);
+    }
+    if (!ALLOWED_ENTRY_SCHEMES.has(resolved.protocol)) {
+      throw new Error(
+        `manifest entry scheme ${resolved.protocol} is not allowed (use http, https, or file)`,
+      );
+    }
+    // Use urlBaseName on the resolved URL so percent-encoded segments
+    // come out human-readable, mirroring scanSingleFile's HTTP path.
+    const name = urlBaseName(resolved.href) || entry;
+    results.push({ name, relativePath: entry });
+  }
+  return results;
+}
+
+// Build the fetchable URL for a specific scanned script. One branch
+// per source-kind (manifest, single-file, directory); each is
+// scheme-agnostic and works for raw paths, file:// URLs, and http(s)
+// URLs uniformly via `sourceCanonicalUrl` / `sourceFsPath`.
+//
+// Why directory uses path-joining rather than URL resolution: the
+// `relativePath` for a local directory comes from Chrome's listing
+// verbatim (e.g. `weird?name.user.js`), and URL resolution would treat
+// `?...` as a query string. `pathToFileUrl` percent-encodes per
+// segment, which survives those characters correctly. Manifest entries
+// are user-authored and expected to already be properly URL-encoded
+// when they contain special characters.
+export function scriptFileUrl(sourcePath: string, relativePath: string): string {
+  if (isManifestSource(sourcePath)) {
+    return new URL(relativePath, sourceCanonicalUrl(sourcePath)).href;
+  }
+  if (isSingleFileSource(sourcePath)) {
+    return sourceCanonicalUrl(sourcePath);
+  }
+  // Local directory.
+  return pathToFileUrl(joinPath(sourceFsPath(sourcePath), relativePath));
+}
+
+// Human-displayable location for a specific scanned script. The rule
+// is uniform: file:// → bare fs path (more readable than the
+// percent-encoded URL form), http(s):// → URL. This is what the
+// viewer's Location row shows for every source kind — including local
+// manifest entries (file://) and HTTP manifest entries (http://) —
+// without each source-kind needing its own special case.
 export function scriptAbsolutePath(sourcePath: string, relativePath: string): string {
-  if (isSingleFilePath(sourcePath)) return sourcePath;
-  return joinPath(sourcePath, relativePath);
+  const url = scriptFileUrl(sourcePath, relativePath);
+  return isFileUrl(url) ? sourceFsPath(url) : url;
 }
