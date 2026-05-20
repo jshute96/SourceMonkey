@@ -44,7 +44,11 @@ Three key spaces in `chrome.storage.local`:
 - `relativePath`, `fileUrl` — identity + how to refetch.
 - `status` — `'ok' | 'error' | 'missing'`.
 - `errorMessage?` — set when `status === 'error'`.
-- `size` — UTF-8 byte length; `null` when `status === 'missing'`.
+- `size` — UTF-8 byte length of the cached content. `0` is a valid
+  value (an empty file is a real file). `null` only when the entry
+  has never successfully loaded — i.e. its first fetch failed and
+  there's no cached body to size. `'missing'` rows keep their last
+  known size so the UI can still show how big the cached body is.
 - `fsMtime?` — modification time as reported by Chrome's directory
   listing on the last successful scan. Opaque integer used only for
   equality. Combined with `size` it lets refresh skip refetching files
@@ -74,12 +78,13 @@ Three key spaces in `chrome.storage.local`:
   `'missing @name'`, `'missing @match or @include'`, or a
   fetch-failure message.
 - `'missing'` — file was in the scan listing previously but no
-  longer is. `size` becomes `null` AND `enabled` is flipped to
-  `false` so a script whose file vanished stops being injected. The
-  row stays in storage (viewer keeps working); if the file returns
+  longer is. `enabled` flips to `false` so the script stops being
+  injected, but the row stays in storage (with content + last known
+  `size` preserved) so the viewer keeps working. If the file returns
   on a later refresh the prior `enabled: false` is preserved so the
-  user has to explicitly re-enable. Cleanup of long-missing rows is
-  tracked in `TODO.md`.
+  user has to explicitly re-enable. The options page surfaces a
+  trash-can button on missing rows (`removeScript`) for users who
+  want to clear records for files they don't expect back.
 
 On error or missing we **preserve the prior content** (headerText,
 bodyText, parsed header, matching). The viewer keeps working and the
@@ -152,6 +157,9 @@ Every load path goes through the same pipeline:
   button and by the `?refresh` URL trigger.
 - `removeSource(id)` — drop the source row + every child script row +
   rewrite the index.
+- `removeScript(id)` — drop a single script row and remove its ID
+  from the parent source's `scriptIds`. Used by the options page's
+  trash-can button on `'missing'` rows.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildSource`
   pipeline as the source-level Refresh (so the two paths can't
@@ -250,10 +258,16 @@ source**:
     prior state).
   - Filename links to the viewer at
     `userscript.html?script=<scriptId>`.
-  - Size shows the UTF-8 byte count, or `"MISSING"` when
-    `status === 'missing'`.
-  - Status shows `"OK"` or `"ERROR"`; the cell's `title` attribute
-    carries `errorMessage` for hover detail.
+  - Size shows the UTF-8 byte count of the cached content — including
+    a `"0 B"` for an empty file, and the prior size for `missing` /
+    `error` rows that retain their last-read body. Only rows that have
+    never successfully loaded (`size == null`) render as `"—"`.
+  - Status shows `"OK"`, `"ERROR"`, or `"MISSING"`; the cell's `title`
+    attribute carries `errorMessage` for hover detail.
+  - Missing rows get a small trash-can button next to the Status
+    label. It calls `removeScript` to drop the row from storage (and
+    from the parent source's `scriptIds`) — useful because a refresh
+    won't re-add a row whose file the scan no longer reports.
 
 Adding a directory triggers a full load immediately — no need to
 click Refresh after adding.

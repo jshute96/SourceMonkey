@@ -26,6 +26,7 @@ import {
   getSources,
   isScriptEnabled,
   isSourceEnabled,
+  removeScript,
   removeSource,
   setScriptEnabled,
   setScriptsEnabled,
@@ -287,12 +288,59 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
 
   const statusCell = document.createElement('td');
   statusCell.className = 'status-cell';
-  statusCell.textContent = formatScriptStatusLabel(script.status);
+  const statusText = document.createElement('span');
+  statusText.textContent = formatScriptStatusLabel(script.status);
+  statusCell.appendChild(statusText);
   statusCell.classList.add(`status-${script.status}`);
   if (script.errorMessage) statusCell.title = script.errorMessage;
+  // Trash-can affordance only for missing rows. Refresh won't recreate
+  // a missing row (the scan no longer reports the file), so the user
+  // needs an explicit way to clear records they don't want to see.
+  if (script.status === 'missing') {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-script';
+    removeBtn.textContent = '🗑';
+    removeBtn.title = 'Remove this script record';
+    removeBtn.setAttribute('aria-label', 'Remove this script record');
+    removeBtn.addEventListener('click', () => void onRemoveScript(script.id, script.sourceId, removeBtn));
+    statusCell.appendChild(removeBtn);
+  }
   tr.appendChild(statusCell);
 
   return tr;
+}
+
+async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButtonElement): Promise<void> {
+  btn.disabled = true;
+  try {
+    await removeScript(scriptId);
+    // Remove just this row in place. A full-section re-render would
+    // briefly blank out every other row and is the kind of flicker
+    // users read as "everything disappeared". The other rows are
+    // unaffected by removing one script, so there's nothing to redraw.
+    const row = directoriesEl.querySelector<HTMLTableRowElement>(
+      `section.directory[data-source-id="${sourceId}"] tr[data-script-id="${scriptId}"]`,
+    );
+    row?.remove();
+    // If this was the last script under the source, swap the table
+    // for the standard "No *.user.js files found." placeholder so the
+    // section doesn't show a dangling empty table.
+    const section = directoriesEl.querySelector<HTMLElement>(
+      `section.directory[data-source-id="${sourceId}"]`,
+    );
+    const table = section?.querySelector<HTMLTableElement>('.script-table');
+    if (table && table.querySelectorAll('tbody tr').length === 0) {
+      table.replaceWith(makeMessage('empty', 'No *.user.js files found.'));
+    }
+    await refreshLogIds();
+  } catch (err) {
+    // Surface the failure rather than swallowing it — if storage rejects
+    // (quota, disk error), the row stays, the button comes back, and the
+    // user gets at least a console line to investigate with.
+    console.error('[VibeMonkey] removeScript failed', err);
+    btn.disabled = false;
+  }
 }
 
 // ---------- Flow handlers ----------

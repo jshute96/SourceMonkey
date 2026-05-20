@@ -19,8 +19,8 @@
 // chrome-extension:// → file:// as cross-origin and returns an opaque
 // response (status 0, unreadable body). XHR doesn't apply that
 // restriction. For file:// XHRs, `status` stays 0 even on success
-// (there's no HTTP layer), so we infer success from `onload` plus a
-// non-empty responseText.
+// (there's no HTTP layer); a missing file fires `onerror`, while a
+// readable file (including a 0-byte one) fires `onload`.
 //
 // Service-worker fallback: MV3 service workers have no XMLHttpRequest
 // at all, so we can't use the XHR path there. fetch() does work from a
@@ -180,12 +180,11 @@ function fetchFileUrlTextXhr(url: string): Promise<string> {
     const xhr = new XMLHttpRequest();
     xhr.open('GET', url);
     xhr.responseType = 'text';
-    xhr.onload = () => {
-      // For file:// XHRs the status is always 0; non-empty responseText
-      // is our signal that the read actually returned content.
-      if (xhr.responseText) resolve(xhr.responseText);
-      else reject(new Error(`empty response from ${url}`));
-    };
+    // For file:// XHRs status is always 0. A readable file (including
+    // a 0-byte one) fires `onload`; a missing file fires `onerror`.
+    // Resolve with whatever responseText we got — '' is a valid result
+    // for an empty file and must not be conflated with "missing".
+    xhr.onload = () => resolve(xhr.responseText ?? '');
     xhr.onerror = () => reject(new Error(`error fetching ${url}`));
     xhr.send();
   });
@@ -214,9 +213,10 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   if (response.type === 'opaque') {
     throw new Error(`opaque response from ${url} (file:// fetch not permitted in this context)`);
   }
-  const text = await response.text();
-  if (!text) throw new Error(`empty response from ${url}`);
-  return text;
+  // An empty body here is a 0-byte file, not an error — keep it
+  // distinct from "missing" so the row renders Size=0 Status=ERROR
+  // (no metadata block) rather than getting flagged as gone.
+  return await response.text();
 }
 
 // Best-effort "does the path point to a readable file" probe. Used to

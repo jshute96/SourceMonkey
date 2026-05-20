@@ -91,9 +91,14 @@ modification time match the stored copy.
 - A script reports `ERROR` when its metadata block is missing or
   malformed, or when required fields (`@name` plus `@match`/
   `@include`) aren't present — hover the status cell to see the
-  reason. If a script was loaded before but no longer appears in the
-  scan (file deleted, manifest entry removed), the size column shows
-  `MISSING`.
+  reason. A 0-byte file shows `0 B` in the size column (still an
+  `ERROR` for the missing metadata block).
+- If a script was loaded before but no longer appears in the scan
+  (file deleted, manifest entry removed), its status becomes
+  `MISSING`. The Size column keeps showing the cached body's byte
+  count, and a small trash-can button next to the status lets you
+  clear the record for files you don't expect to come back. Refresh
+  alone won't re-add a missing row.
 - After a refresh, any row that actually changed is highlighted:
   light green when it updated successfully, light red when it errored
   or vanished. The color stays on the row until the next refresh. A

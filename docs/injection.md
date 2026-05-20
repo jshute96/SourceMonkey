@@ -21,8 +21,13 @@ Tampermonkey / Violentmonkey use in MV3. We picked it over
   `chrome.scripting` only takes file references or function objects.
 - Registration is **declarative** — we hand Chrome the
   patterns + code + runAt once, and Chrome owns matching + injection
-  from there (including for sub-frames and SPA-style navigations
-  managed by the page).
+  from there. Injection is **document-creation-scoped**, like content
+  scripts: scripts run when Chrome creates a new document for a
+  matching URL. Same-document SPA navigations
+  (`history.pushState` / `replaceState`) do **not** create a new
+  document and do **not** re-fire scripts; nor do bfcache restores
+  (back/forward into a cached document). A full reload always creates
+  a fresh document, so scripts run.
 - It runs in the dedicated `USER_SCRIPT` world, isolated from both the
   page and our content-script world (we currently use no content
   scripts).

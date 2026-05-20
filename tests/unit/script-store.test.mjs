@@ -165,12 +165,15 @@ test('applyFetchError preserves content and flips status', () => {
   assert.equal(errored.loadedAt, ok.loadedAt);
 });
 
-test('applyMissing nulls size, clears errorMessage, and preserves content', () => {
+test('applyMissing preserves size + content, clears errorMessage', () => {
+  // The file is gone but we still hold its last-read bytes — keep the
+  // cached size so the Size column reflects the preserved content,
+  // distinct from genuine "unknown size" rows.
   const ok = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   const errored = applyFetchError(ok, 'read failed');
   const missing = applyMissing(errored);
   assert.equal(missing.status, 'missing');
-  assert.equal(missing.size, null);
+  assert.equal(missing.size, ok.size);
   assert.equal(missing.errorMessage, undefined);
   assert.equal(missing.headerText, ok.headerText);
   assert.equal(missing.bodyText, ok.bodyText);
@@ -292,8 +295,9 @@ test('rebuildSource flags vanished scripts as missing and keeps their content', 
   assert.equal(result[0].status, 'ok');
   assert.equal(result[1].relativePath, 'b.user.js');
   assert.equal(result[1].status, 'missing');
-  assert.equal(result[1].size, null);
-  // Missing entry keeps the prior body so the viewer still works.
+  // Missing entry keeps the prior body + size so the viewer still
+  // works and the Size column reflects the cached content.
+  assert.equal(result[1].size, existing[1].size);
   assert.equal(result[1].bodyText, existing[1].bodyText);
 });
 

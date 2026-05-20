@@ -14,12 +14,14 @@ export function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Text shown in the "Size" cell. `missing` scripts (or any row with no
-// known size) display "MISSING" so the user sees at-a-glance that the
-// underlying file is gone, regardless of whether the cached content is
-// still around.
+// Text shown in the "Size" cell. Size is independent of status:
+// `missing` rows still carry the size of their cached content,
+// `error` rows that retain prior content still show its byte count,
+// and a 0-byte file shows "0 B" (distinct from missing). Only rows
+// that have never successfully loaded — `size == null` — render as
+// "—" to signal "unknown".
 export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>): string {
-  if (script.status === 'missing' || script.size == null) return 'MISSING';
+  if (script.size == null) return '—';
   return formatBytes(script.size);
 }
 
