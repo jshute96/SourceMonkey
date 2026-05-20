@@ -113,6 +113,21 @@ source row is tracked in `TODO.md`.
 - **Single-file sources can't vanish**: the URL either fetches or
   errors; there's no listing for it to disappear from.
 
+## Query-string propagation
+
+- The manifest URL's query string is propagated onto each *same-origin
+  relative* entry's resolved URL.
+- Use case: GitHub raw URLs that carry a `?token=…` for private repos —
+  one token on the manifest URL flows through to every script entry
+  without having to repeat it per row.
+- Propagation rules (in `resolveManifestEntryUrl`):
+  - If the entry brings its own `?…`, the entry's query wins.
+  - If the resolved entry is cross-origin from the manifest, the
+    manifest's query is **not** copied (the token is scoped to its
+    origin).
+  - If the entry is same-origin and has no query of its own, it
+    inherits the manifest's `?…`.
+
 ## Permissions
 
 - `<all_urls>` in `host_permissions` covers any `http(s)` origin, so
@@ -135,7 +150,7 @@ source row is tracked in `TODO.md`.
 | Local directory        | path relative to the root              | `pathToFileUrl(join(root, rel))`                    |
 | Local single-file      | basename                               | `pathToFileUrl(sourcePath)`                         |
 | HTTP single-file       | basename of URL pathname               | `sourcePath` (the URL itself)                       |
-| Manifest entry         | raw manifest entry (relative or abs)   | `new URL(rel, sourceCanonicalUrl(manifest)).href`   |
+| Manifest entry         | raw manifest entry (relative or abs)   | `resolveManifestEntryUrl(rel, sourceCanonicalUrl(manifest)).href` |
 
 `sourceCanonicalUrl()` turns a raw local path into its `file://` URL;
 URLs pass through. `scriptAbsolutePath()` returns the resolved URL

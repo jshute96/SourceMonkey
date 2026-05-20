@@ -15,6 +15,7 @@ import {
   parseManifest,
   pathToFileUrl,
   joinPath,
+  resolveManifestEntryUrl,
   scriptFileUrl,
   scriptAbsolutePath,
   isHttpUrl,
@@ -302,6 +303,71 @@ test('scriptFileUrl resolves entries against a local manifest path', () => {
       'https://elsewhere.example.com/baz.user.js',
     ),
     'https://elsewhere.example.com/baz.user.js',
+  );
+});
+
+test('scriptFileUrl propagates a manifest URL query string onto relative entries', () => {
+  // GitHub raw-URL tokens (and similar auth-bearing query strings) need
+  // to ride along to every same-origin script the manifest names. RFC
+  // 3986 resolution drops the base's query when the reference brings a
+  // path, so without explicit propagation each script would 404 on auth.
+  assert.equal(
+    scriptFileUrl(
+      'https://raw.githubusercontent.com/u/repo/branch/script_manifest.json?token=ABC',
+      'foo.user.js',
+    ),
+    'https://raw.githubusercontent.com/u/repo/branch/foo.user.js?token=ABC',
+  );
+  // Sub-path entries get the same treatment.
+  assert.equal(
+    scriptFileUrl(
+      'https://x.example.com/dir/manifest.json?token=ABC',
+      'sub/bar.user.js',
+    ),
+    'https://x.example.com/dir/sub/bar.user.js?token=ABC',
+  );
+  // Absolute same-origin entries also inherit (one token applies to
+  // every file the manifest names on its own origin).
+  assert.equal(
+    scriptFileUrl(
+      'https://x.example.com/dir/manifest.json?token=ABC',
+      'https://x.example.com/elsewhere/baz.user.js',
+    ),
+    'https://x.example.com/elsewhere/baz.user.js?token=ABC',
+  );
+  // Cross-origin entries are left alone — the manifest's token is
+  // scoped to its own origin and shouldn't leak to third parties.
+  assert.equal(
+    scriptFileUrl(
+      'https://x.example.com/dir/manifest.json?token=ABC',
+      'https://other.example.com/qux.user.js',
+    ),
+    'https://other.example.com/qux.user.js',
+  );
+  // An entry that brings its own query string keeps it; no merge.
+  assert.equal(
+    scriptFileUrl(
+      'https://x.example.com/dir/manifest.json?token=ABC',
+      'foo.user.js?v=2',
+    ),
+    'https://x.example.com/dir/foo.user.js?v=2',
+  );
+});
+
+test('resolveManifestEntryUrl propagates query only for same-origin no-query entries', () => {
+  // Direct unit test of the helper so the propagation rule is pinned
+  // down without going through scriptFileUrl's source-kind dispatch.
+  const base = 'https://x.example.com/dir/manifest.json?t=1';
+  assert.equal(resolveManifestEntryUrl('foo.user.js', base).href,
+    'https://x.example.com/dir/foo.user.js?t=1');
+  assert.equal(resolveManifestEntryUrl('foo.user.js?v=2', base).href,
+    'https://x.example.com/dir/foo.user.js?v=2');
+  assert.equal(resolveManifestEntryUrl('https://other/x.user.js', base).href,
+    'https://other/x.user.js');
+  // No-query manifest → nothing to propagate.
+  assert.equal(
+    resolveManifestEntryUrl('foo.user.js', 'https://x/dir/manifest.json').href,
+    'https://x/dir/foo.user.js',
   );
 });
 

@@ -503,6 +503,32 @@ async function fetchManifestText(canonicalUrl: string): Promise<string> {
 // user can always add such sources directly if they want them.
 const ALLOWED_ENTRY_SCHEMES = new Set(['http:', 'https:', 'file:']);
 
+// Resolve a manifest entry against the manifest's canonical URL.
+//
+// On top of plain RFC 3986 resolution, if the entry doesn't bring its
+// own query string and lands in the same origin as the manifest, the
+// manifest's query string is propagated onto the resolved URL. This
+// lets a single auth-bearing manifest URL (e.g. GitHub's
+// `…/script_manifest.json?token=…`) reach its companion scripts
+// without each manifest entry having to repeat the token. Cross-origin
+// or self-querying entries are left alone — the propagation rule only
+// fires when the entry is clearly "another file alongside the
+// manifest". Throws on a malformed entry; the caller layers
+// scheme-gating on top.
+export function resolveManifestEntryUrl(entry: string, canonicalUrl: string): URL {
+  const base = new URL(canonicalUrl);
+  let resolved: URL;
+  try {
+    resolved = new URL(entry, canonicalUrl);
+  } catch {
+    throw new Error(`manifest entry is not a valid URL: ${entry}`);
+  }
+  if (!resolved.search && base.search && resolved.origin === base.origin) {
+    resolved.search = base.search;
+  }
+  return resolved;
+}
+
 async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
   const body = await fetchManifestText(canonicalUrl);
   const rawEntries = parseManifest(body);
@@ -514,12 +540,7 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
     // Resolve once: validates the URL, gates the scheme, and gives us
     // a friendly display name. The actual fetch URL is rebuilt at
     // refresh time via scriptFileUrl from sourceCanonicalUrl + entry.
-    let resolved: URL;
-    try {
-      resolved = new URL(entry, canonicalUrl);
-    } catch {
-      throw new Error(`manifest entry is not a valid URL: ${entry}`);
-    }
+    const resolved = resolveManifestEntryUrl(entry, canonicalUrl);
     if (!ALLOWED_ENTRY_SCHEMES.has(resolved.protocol)) {
       throw new Error(
         `manifest entry scheme ${resolved.protocol} is not allowed (use http, https, or file)`,
@@ -547,7 +568,7 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
 // when they contain special characters.
 export function scriptFileUrl(sourcePath: string, relativePath: string): string {
   if (isManifestSource(sourcePath)) {
-    return new URL(relativePath, sourceCanonicalUrl(sourcePath)).href;
+    return resolveManifestEntryUrl(relativePath, sourceCanonicalUrl(sourcePath)).href;
   }
   if (isSingleFileSource(sourcePath)) {
     return sourceCanonicalUrl(sourcePath);
