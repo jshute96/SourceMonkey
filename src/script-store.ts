@@ -68,6 +68,17 @@ export interface StoredScript {
   // error row (no body to size); `missing` rows keep their last known
   // size so the UI reflects the cached body.
   size: number | null;
+  // Universal "last-change token": a content-derived hash of the
+  // fetched source text on the last successful load. Lets the refresh
+  // pipeline decide "did anything actually change?" uniformly across
+  // source kinds and schemes — the per-scheme cheap-skip paths
+  // (size+fsMtime, conditional GET) avoid the fetch entirely when the
+  // source/server cooperates; this hash catches the cases where a
+  // fetch did happen but the content turned out identical (a manifest
+  // entry whose server returns no ETag / Last-Modified, or a file://
+  // entry inside a manifest where the scan has no per-file stat).
+  // Absent only on never-loaded rows.
+  contentHash?: string;
   // Modification time as reported by Chrome's directory listing on the
   // last successful scan. Opaque integer used only for equality —
   // combined with `size`, it lets refresh skip refetching a file whose
@@ -122,6 +133,22 @@ export type FetchResult =
   | { ok: false; errorMessage: string }
   | { unchanged: true };
 
+// Compute the universal change-detection token for a fetched script
+// source. Uses the Web Crypto SubtleCrypto SHA-256 — available
+// uniformly in service workers, page contexts, and Node ≥19, so the
+// same helper works in production and in unit tests with no
+// per-environment polyfill. Async by necessity (SubtleCrypto has no
+// sync form on the web platform); buildScriptFromText and
+// rebuildSource are async in turn.
+export async function hashSource(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const arr = new Uint8Array(digest);
+  let out = '';
+  for (const b of arr) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
 // Pull `@match` / `@exclude` / `@include` lists out of a parsed header.
 // These feed the future page-matching/injection logic.
 export function distillMatching(header: ParsedHeader | null): ScriptMatching {
@@ -155,6 +182,15 @@ interface BuildArgs {
   fileUrl: string;
   source: string;
   now: number;
+  // Prior row, if any. Used purely for the content-hash compare: if
+  // the freshly fetched bytes hash to the same value as the prior
+  // row's `contentHash`, we preserve the prior `loadedAt` so callers
+  // (notably the options page's row-highlight code) can tell that
+  // nothing actually changed. This is the universal post-fetch
+  // change-detection path — it catches cases the cheap pre-fetch
+  // skips (size+mtime, HTTP 304) couldn't handle, e.g. manifest
+  // entries or servers that don't return validators.
+  prior?: StoredScript;
   httpEtag?: string;
   httpLastModified?: string;
 }
@@ -163,14 +199,16 @@ interface BuildArgs {
 // records the new content (so the viewer reflects what's on disk),
 // then determines status by running it through split + parse +
 // validate. Any failure along that chain lands in `errorMessage` while
-// the content fields stay populated.
-export function buildScriptFromText(args: BuildArgs): StoredScript {
+// the content fields stay populated. Async because hashing the source
+// for the universal change-detection token uses SubtleCrypto.
+export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript> {
   const split = splitHeaderBody(args.source);
   const header = parseHeader(args.source);
   const matching = distillMatching(header);
   // UTF-16 string length ≠ file byte length for non-ASCII content;
   // TextEncoder gives us the wire-accurate UTF-8 byte count.
   const size = new TextEncoder().encode(args.source).length;
+  const contentHash = await hashSource(args.source);
 
   let status: ScriptStatus = 'ok';
   let errorMessage: string | undefined;
@@ -185,6 +223,14 @@ export function buildScriptFromText(args: BuildArgs): StoredScript {
     }
   }
 
+  // Same bytes as last time → preserve the prior load timestamp so
+  // the options page's "what changed" highlight stays accurate even
+  // when the cheap skip paths didn't fire. Status still reflects the
+  // current parse outcome (parser fixes between refreshes are rare
+  // but shouldn't be silently masked).
+  const unchanged = args.prior?.contentHash === contentHash;
+  const loadedAt = unchanged && args.prior ? args.prior.loadedAt : args.now;
+
   const entry: StoredScript = {
     id: args.id,
     sourceId: args.sourceId,
@@ -192,11 +238,12 @@ export function buildScriptFromText(args: BuildArgs): StoredScript {
     fileUrl: args.fileUrl,
     status,
     size,
+    contentHash,
     headerText: split.headerText,
     bodyText: split.bodyText,
     header,
     matching,
-    loadedAt: args.now,
+    loadedAt,
     // New rows default enabled; existing rows preserve their prior
     // value via the merge in rebuildSource / refreshScript.
     enabled: true,
@@ -298,12 +345,18 @@ interface RebuildArgs {
 //   - Other sources (local directory): the prior row is tagged
 //     `missing` and auto-disabled. The file might come back; the row
 //     stays so the viewer keeps working.
-export function rebuildSource(args: RebuildArgs): StoredScript[] {
+export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
   const existingByPath = new Map<string, StoredScript>();
   for (const e of args.existing) existingByPath.set(e.relativePath, e);
 
-  const out: StoredScript[] = [];
+  // Each scanned entry resolves to one StoredScript. Most paths are
+  // synchronous (unchanged, error, defensive fallbacks); the `ok`
+  // path goes through buildScriptFromText which is async because the
+  // content-hash uses SubtleCrypto. We wrap every branch in a Promise
+  // and Promise.all at the end so the hash work overlaps and the
+  // output order matches scan order.
+  const entryPromises: Promise<StoredScript>[] = [];
   const handledPaths = new Set<string>();
   for (const found of args.scan) {
     handledPaths.add(found.relativePath);
@@ -312,22 +365,28 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
     const fileUrl = scriptFileUrl(args.sourcePath, found.relativePath);
     const fr = args.fetchResults.get(found.relativePath);
     if (fr && 'ok' in fr && fr.ok) {
-      const built = buildScriptFromText({
-        id,
-        sourceId: args.sourceId,
-        relativePath: found.relativePath,
-        fileUrl,
-        source: fr.source,
-        now: args.now,
-        httpEtag: fr.httpEtag,
-        httpLastModified: fr.httpLastModified,
-      });
-      // Preserve the user's per-script enabled choice across refreshes.
-      if (prior) built.enabled = prior.enabled;
-      // Record the listing's mtime so the next refresh can decide to
-      // skip a refetch.
-      if (found.mtime !== undefined) built.fsMtime = found.mtime;
-      out.push(built);
+      entryPromises.push((async (): Promise<StoredScript> => {
+        const built = await buildScriptFromText({
+          id,
+          sourceId: args.sourceId,
+          relativePath: found.relativePath,
+          fileUrl,
+          source: fr.source,
+          now: args.now,
+          // Pass prior so buildScriptFromText can preserve loadedAt when
+          // the freshly fetched bytes hash to the same value — the
+          // post-fetch leg of the unified change-detection path.
+          prior,
+          httpEtag: fr.httpEtag,
+          httpLastModified: fr.httpLastModified,
+        });
+        // Preserve the user's per-script enabled choice across refreshes.
+        if (prior) built.enabled = prior.enabled;
+        // Record the listing's mtime so the next refresh can decide to
+        // skip a refetch.
+        if (found.mtime !== undefined) built.fsMtime = found.mtime;
+        return built;
+      })());
     } else if (fr && 'unchanged' in fr) {
       // Optimization path: the listing's size+mtime matched the prior
       // entry, so we never fetched. Reuse the prior entry verbatim.
@@ -341,44 +400,46 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
         const next = { ...prior, fileUrl };
         if (found.mtime !== undefined) next.fsMtime = found.mtime;
         if (found.size !== undefined) next.size = found.size;
-        out.push(next);
+        entryPromises.push(Promise.resolve(next));
       } else {
-        out.push(buildInitialErrorEntry({
+        entryPromises.push(Promise.resolve(buildInitialErrorEntry({
           id,
           sourceId: args.sourceId,
           relativePath: found.relativePath,
           fileUrl,
           errorMessage: 'unchanged marker with no prior entry',
           now: args.now,
-        }));
+        })));
       }
     } else if (fr) {
       // Failed fetch. If we had prior content, keep it.
       const errorMessage = 'errorMessage' in fr ? fr.errorMessage : 'unknown error';
       if (prior) {
-        out.push(applyFetchError(prior, errorMessage));
+        entryPromises.push(Promise.resolve(applyFetchError(prior, errorMessage)));
       } else {
-        out.push(buildInitialErrorEntry({
+        entryPromises.push(Promise.resolve(buildInitialErrorEntry({
           id,
           sourceId: args.sourceId,
           relativePath: found.relativePath,
           fileUrl,
           errorMessage,
           now: args.now,
-        }));
+        })));
       }
     } else {
       // No fetch attempted at all. Treat like a fetch error with a
       // generic message; this branch is mostly defensive — the
       // orchestrator should always supply a result.
-      out.push(prior
+      entryPromises.push(Promise.resolve(prior
         ? applyFetchError(prior, 'not loaded')
         : buildInitialErrorEntry({
             id, sourceId: args.sourceId, relativePath: found.relativePath,
             fileUrl, errorMessage: 'not loaded', now: args.now,
-          }));
+          })));
     }
   }
+
+  const out = await Promise.all(entryPromises);
 
   // Anything in `existing` that the scan didn't see → either marked
   // missing (directory sources: file may come back) or dropped
@@ -575,7 +636,7 @@ export async function refreshSource(
     existingScripts,
   );
 
-  const scripts = rebuildSource({
+  const scripts = await rebuildSource({
     sourceId: source.id,
     sourcePath: source.path,
     existing: existingScripts,
@@ -664,7 +725,7 @@ export async function refreshScript(scriptId: string): Promise<StoredScript | nu
   }
 
   const fetchResults = await fetchOrSkipInParallel(sourceRow.path, scan, [prior]);
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: prior.sourceId,
     sourcePath: sourceRow.path,
     existing: [prior],

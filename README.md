@@ -77,7 +77,10 @@ manifest) re-fetch with conditional GETs — VibeMonkey stores each
 script's `ETag` / `Last-Modified` and sends them on the next refresh,
 so an unchanged file answers `304` and no body is re-downloaded.
 Local-directory sources skip refetches when the file's size +
-modification time match the stored copy.
+modification time match the stored copy. For combinations where
+neither pre-fetch shortcut applies (manifest entries, HTTP servers
+that don't return validators), the fetched body's hash is compared
+against the prior so identical content still counts as "no change."
 
 ### Per-source UI
 

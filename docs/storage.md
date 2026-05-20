@@ -49,6 +49,12 @@ Three key spaces in `chrome.storage.local`:
   has never successfully loaded — i.e. its first fetch failed and
   there's no cached body to size. `'missing'` rows keep their last
   known size so the UI can still show how big the cached body is.
+- `contentHash?` — universal "last-change token": a deterministic
+  hash of the fetched source bytes on the last successful load. Used
+  by `buildScriptFromText` to decide whether a freshly fetched body
+  is actually different from the prior — see
+  [change detection](#change-detection-the-last-change-token) below.
+  Absent only on rows that have never successfully loaded.
 - `fsMtime?` — modification time as reported by Chrome's directory
   listing on the last successful scan. Opaque integer used only for
   equality. Combined with `size` it lets refresh skip refetching files
@@ -90,6 +96,53 @@ On error or missing we **preserve the prior content** (headerText,
 bodyText, parsed header, matching). The viewer keeps working and the
 injector can still run the script (assuming it's still enabled).
 
+## Change detection: the last-change token
+
+Every loaded script row carries a `contentHash` — a deterministic hash
+of the fetched source bytes on the last successful load. It's the
+universal "last-change token" the rest of the system uses to decide
+"did anything actually change?", regardless of source kind or scheme.
+
+### Three layers, same end-state
+
+For every source/scheme combination the refresh pipeline still asks
+the same question — "is there a new version?" — in the cheapest way
+each one supports, and then has a universal fallback:
+
+1. **Cheap pre-fetch check** (avoids the body entirely):
+   - file:// in a directory source — compare the listing's
+     `size` + `mtime` against the prior row.
+   - http(s):// — conditional GET (`If-None-Match` /
+     `If-Modified-Since`). A `304` short-circuits with no body.
+2. **Fetch** — done when the pre-fetch check didn't fire, can't fire
+   (e.g. file:// entry reached through a manifest, where the scan
+   carries no per-file stat), or the server doesn't supply validators.
+3. **Post-fetch content compare** — `buildScriptFromText` rehashes the
+   freshly fetched bytes and compares with the prior `contentHash`.
+   Match → `loadedAt` is preserved (the row is logically unchanged,
+   so the options page's "row updated" highlight doesn't fire).
+   Mismatch → `loadedAt` is bumped to now.
+
+This makes the **outcome** uniform across every combination of
+{directory, single-file, manifest} × {raw path, file://, http(s)}:
+unchanged content never registers as a change, even when the
+appropriate-for-scheme cheap check couldn't prove it.
+
+### Implementation notes
+
+- The hash is Web Crypto SHA-256 (`crypto.subtle.digest`), hex-encoded.
+  Using the standard SubtleCrypto API rather than a hand-rolled hash
+  means the same helper works uniformly in service workers, page
+  contexts, and Node ≥19. SubtleCrypto is async on the web platform,
+  so `buildScriptFromText` and `rebuildSource` are async.
+- Status still reflects the **current** parse outcome even when the
+  hash matches, so a parser update between refreshes can promote an
+  unchanged file from `error` → `ok` (or vice versa) without bumping
+  `loadedAt`.
+- HTTP validators (`httpEtag`, `httpLastModified`) on a successful
+  fetch are still recorded — they let the next refresh take the cheap
+  pre-fetch path even though this one didn't.
+
 ## Load / refresh pipeline
 
 Every load path goes through the same pipeline:
@@ -118,7 +171,12 @@ Every load path goes through the same pipeline:
    - `parseHeader`
    - `validateHeader` (`@name` + match/include present)
    - `distillMatching` (extract `@match`/`@exclude`/`@include`)
-   - `buildScriptFromText` (assemble the `StoredScript`)
+   - `buildScriptFromText` (assemble the `StoredScript`). If the
+     freshly fetched bytes hash to the prior row's `contentHash`,
+     `loadedAt` is preserved — the post-fetch fallback in the
+     [change-detection model](#change-detection-the-last-change-token)
+     so unchanged content never registers as an update even when the
+     cheap pre-fetch skips couldn't fire.
 4. Reconcile against the prior state in `rebuildSource`:
    - Reuse IDs by `relativePath`.
    - Mint a new UUID for any new file.
@@ -297,8 +355,11 @@ gets a persistent background color:
 
 The color stays until the next refresh re-renders the section, so the
 user can leave the page and come back without losing the
-what-changed signal. Rows whose state was unchanged (including those
-covered by the size+mtime skip) are not highlighted.
+what-changed signal. Rows whose state was unchanged are not
+highlighted — this covers all three "no change" paths uniformly:
+the cheap pre-fetch skips (size+mtime, HTTP 304) and the post-fetch
+content-hash compare (manifest entries, servers without validators).
+See [change detection](#change-detection-the-last-change-token).
 
 ### In-place updates (no full re-render)
 

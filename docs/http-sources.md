@@ -89,6 +89,13 @@ strategy:
   skip: if Chrome's `addRow(...)` listing reports the same `size +
   mtime` as the stored entry, no fetch happens at all.
 
+When none of the cheap pre-fetch skips fire (manifest entries; HTTP
+servers that don't return validators), `buildScriptFromText` falls
+back to a content-hash compare against the prior row's `contentHash`
+and preserves `loadedAt` if the bytes are identical. So the
+"unchanged → no flash" outcome is uniform across every source/scheme
+combination; see [storage.md](storage.md#change-detection-the-last-change-token).
+
 We pass `cache: 'no-store'` on the underlying HTTP `fetch()` so the
 browser's HTTP cache can't serve a stale 200 without revalidation —
 our own stored validators are the source of truth.

@@ -13,6 +13,7 @@ import {
   applyMissing,
   buildInitialErrorEntry,
   fetchOrSkipInParallel,
+  hashSource,
   rebuildSource,
 } from '../../dist/script-store.js';
 import { parseHeader } from '../../dist/userscript-header.js';
@@ -42,7 +43,7 @@ const NO_MATCH = `// ==UserScript==
 
 // ---------- distillMatching ----------
 
-test('distillMatching returns empty lists for a null header', () => {
+test('distillMatching returns empty lists for a null header', async () => {
   assert.deepEqual(distillMatching(null), {
     matches: [],
     excludes: [],
@@ -50,7 +51,7 @@ test('distillMatching returns empty lists for a null header', () => {
   });
 });
 
-test('distillMatching pulls every @match / @exclude / @include', () => {
+test('distillMatching pulls every @match / @exclude / @include', async () => {
   const header = parseHeader(`// ==UserScript==
 // @match    https://a.com/*
 // @match    https://b.com/*
@@ -67,11 +68,11 @@ test('distillMatching pulls every @match / @exclude / @include', () => {
 
 // ---------- validateHeader ----------
 
-test('validateHeader is OK for @name + @match', () => {
+test('validateHeader is OK for @name + @match', async () => {
   assert.equal(validateHeader(parseHeader(VALID_SCRIPT)), null);
 });
 
-test('validateHeader is OK for @name + @include', () => {
+test('validateHeader is OK for @name + @include', async () => {
   const header = parseHeader(`// ==UserScript==
 // @name      Foo
 // @include   https://example.com/*
@@ -80,18 +81,18 @@ test('validateHeader is OK for @name + @include', () => {
   assert.equal(validateHeader(header), null);
 });
 
-test('validateHeader complains about a missing @name', () => {
+test('validateHeader complains about a missing @name', async () => {
   assert.equal(validateHeader(parseHeader(MISSING_NAME)), 'missing @name');
 });
 
-test('validateHeader complains about no matching patterns', () => {
+test('validateHeader complains about no matching patterns', async () => {
   assert.equal(
     validateHeader(parseHeader(NO_MATCH)),
     'missing @match or @include',
   );
 });
 
-test('validateHeader complains about a null header', () => {
+test('validateHeader complains about a null header', async () => {
   assert.equal(validateHeader(null), 'no metadata block');
 });
 
@@ -105,8 +106,8 @@ const COMMON = {
   now: 1700000000000,
 };
 
-test('buildScriptFromText produces an OK entry for a valid script', () => {
-  const entry = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+test('buildScriptFromText produces an OK entry for a valid script', async () => {
+  const entry = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   assert.equal(entry.status, 'ok');
   assert.equal(entry.errorMessage, undefined);
   assert.equal(entry.id, COMMON.id);
@@ -126,8 +127,8 @@ test('buildScriptFromText produces an OK entry for a valid script', () => {
   });
 });
 
-test('buildScriptFromText reports a missing metadata block', () => {
-  const entry = buildScriptFromText({ ...COMMON, source: NO_BLOCK });
+test('buildScriptFromText reports a missing metadata block', async () => {
+  const entry = await buildScriptFromText({ ...COMMON, source: NO_BLOCK });
   assert.equal(entry.status, 'error');
   assert.equal(entry.errorMessage, 'no metadata block');
   assert.equal(entry.headerText, '');
@@ -135,15 +136,15 @@ test('buildScriptFromText reports a missing metadata block', () => {
   assert.equal(entry.header, null);
 });
 
-test('buildScriptFromText reports an unterminated metadata block', () => {
+test('buildScriptFromText reports an unterminated metadata block', async () => {
   const broken = '// ==UserScript==\n// @name Foo\nconsole.log("oops");\n';
-  const entry = buildScriptFromText({ ...COMMON, source: broken });
+  const entry = await buildScriptFromText({ ...COMMON, source: broken });
   assert.equal(entry.status, 'error');
   assert.equal(entry.errorMessage, 'unterminated metadata block');
 });
 
-test('buildScriptFromText reports a missing required field', () => {
-  const entry = buildScriptFromText({ ...COMMON, source: MISSING_NAME });
+test('buildScriptFromText reports a missing required field', async () => {
+  const entry = await buildScriptFromText({ ...COMMON, source: MISSING_NAME });
   assert.equal(entry.status, 'error');
   assert.equal(entry.errorMessage, 'missing @name');
   // Even on validation failure we still record what was parsed so the
@@ -154,8 +155,8 @@ test('buildScriptFromText reports a missing required field', () => {
 
 // ---------- applyFetchError / applyMissing / buildInitialErrorEntry ----------
 
-test('applyFetchError preserves content and flips status', () => {
-  const ok = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+test('applyFetchError preserves content and flips status', async () => {
+  const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   const errored = applyFetchError(ok, 'permission denied');
   assert.equal(errored.status, 'error');
   assert.equal(errored.errorMessage, 'permission denied');
@@ -165,11 +166,11 @@ test('applyFetchError preserves content and flips status', () => {
   assert.equal(errored.loadedAt, ok.loadedAt);
 });
 
-test('applyMissing preserves size + content, clears errorMessage', () => {
+test('applyMissing preserves size + content, clears errorMessage', async () => {
   // The file is gone but we still hold its last-read bytes — keep the
   // cached size so the Size column reflects the preserved content,
   // distinct from genuine "unknown size" rows.
-  const ok = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   const errored = applyFetchError(ok, 'read failed');
   const missing = applyMissing(errored);
   assert.equal(missing.status, 'missing');
@@ -179,16 +180,16 @@ test('applyMissing preserves size + content, clears errorMessage', () => {
   assert.equal(missing.bodyText, ok.bodyText);
 });
 
-test('applyMissing disables the script so a vanished file stops running', () => {
+test('applyMissing disables the script so a vanished file stops running', async () => {
   // The directory-level Refresh promotes vanished files to missing;
   // we want them silently stopped, not still injected from cached
   // content. The user has to manually re-enable if the file returns.
-  const ok = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   assert.equal(ok.enabled, true);
   assert.equal(applyMissing(ok).enabled, false);
 });
 
-test('buildInitialErrorEntry leaves content empty', () => {
+test('buildInitialErrorEntry leaves content empty', async () => {
   const entry = buildInitialErrorEntry({
     id: 'sc-2',
     sourceId: 'src-1',
@@ -213,8 +214,8 @@ function fakeIdSequence() {
   return () => `id-${++n}`;
 }
 
-test('rebuildSource assigns new IDs to brand-new scripts', () => {
-  const result = rebuildSource({
+test('rebuildSource assigns new IDs to brand-new scripts', async () => {
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing: [],
@@ -232,9 +233,9 @@ test('rebuildSource assigns new IDs to brand-new scripts', () => {
   for (const s of result) assert.equal(s.status, 'ok');
 });
 
-test('rebuildSource reuses IDs for known relativePaths', () => {
+test('rebuildSource reuses IDs for known relativePaths', async () => {
   const existing = [
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'pre-existing-id',
       sourceId: 'src-1',
       relativePath: 'a.user.js',
@@ -243,7 +244,7 @@ test('rebuildSource reuses IDs for known relativePaths', () => {
       now: 50,
     }),
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing,
@@ -259,9 +260,9 @@ test('rebuildSource reuses IDs for known relativePaths', () => {
   assert.equal(result[1].id, 'id-1');
 });
 
-test('rebuildSource flags vanished scripts as missing and keeps their content', () => {
+test('rebuildSource flags vanished scripts as missing and keeps their content', async () => {
   const existing = [
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'a-id',
       sourceId: 'src-1',
       relativePath: 'a.user.js',
@@ -269,7 +270,7 @@ test('rebuildSource flags vanished scripts as missing and keeps their content', 
       source: VALID_SCRIPT,
       now: 50,
     }),
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'b-id',
       sourceId: 'src-1',
       relativePath: 'b.user.js',
@@ -278,7 +279,7 @@ test('rebuildSource flags vanished scripts as missing and keeps their content', 
       now: 50,
     }),
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing,
@@ -301,13 +302,13 @@ test('rebuildSource flags vanished scripts as missing and keeps their content', 
   assert.equal(result[1].bodyText, existing[1].bodyText);
 });
 
-test('rebuildSource drops vanished entries entirely for a manifest source', () => {
+test('rebuildSource drops vanished entries entirely for a manifest source', async () => {
   // A manifest is the user's source of truth: if they remove an entry,
   // they're explicitly removing the script. No reason to keep a
   // tombstone row around as 'missing' the way we do for a local
   // directory (where the file might come back).
   const existing = [
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'a-id',
       sourceId: 'src-1',
       relativePath: 'a.user.js',
@@ -315,7 +316,7 @@ test('rebuildSource drops vanished entries entirely for a manifest source', () =
       source: VALID_SCRIPT,
       now: 50,
     }),
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'b-id',
       sourceId: 'src-1',
       relativePath: 'b.user.js',
@@ -324,7 +325,7 @@ test('rebuildSource drops vanished entries entirely for a manifest source', () =
       now: 50,
     }),
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: 'https://example.com/scripts/manifest.json',
     existing,
@@ -342,11 +343,11 @@ test('rebuildSource drops vanished entries entirely for a manifest source', () =
   assert.equal(result[0].status, 'ok');
 });
 
-test('rebuildSource drops vanished entries for a local manifest source too', () => {
+test('rebuildSource drops vanished entries for a local manifest source too', async () => {
   // Same rule applies to file:// / raw-path manifests — the source
   // kind, not the scheme, decides the vanished-entry policy.
   const existing = [
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'b-id',
       sourceId: 'src-1',
       relativePath: 'gone.user.js',
@@ -355,7 +356,7 @@ test('rebuildSource drops vanished entries for a local manifest source too', () 
       now: 50,
     }),
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/home/me/scripts/manifest.json',
     existing,
@@ -367,9 +368,9 @@ test('rebuildSource drops vanished entries for a local manifest source too', () 
   assert.equal(result.length, 0);
 });
 
-test('rebuildSource preserves prior content when a fetch fails on a known script', () => {
+test('rebuildSource preserves prior content when a fetch fails on a known script', async () => {
   const existing = [
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'a-id',
       sourceId: 'src-1',
       relativePath: 'a.user.js',
@@ -378,7 +379,7 @@ test('rebuildSource preserves prior content when a fetch fails on a known script
       now: 50,
     }),
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing,
@@ -395,10 +396,10 @@ test('rebuildSource preserves prior content when a fetch fails on a known script
   assert.equal(result[0].loadedAt, existing[0].loadedAt); // unchanged
 });
 
-test('rebuildSource preserves the prior `enabled` flag across a successful refresh', () => {
+test('rebuildSource preserves the prior `enabled` flag across a successful refresh', async () => {
   const existing = [
     {
-      ...buildScriptFromText({
+      ...await buildScriptFromText({
         id: 'a-id',
         sourceId: 'src-1',
         relativePath: 'a.user.js',
@@ -409,7 +410,7 @@ test('rebuildSource preserves the prior `enabled` flag across a successful refre
       enabled: false, // user disabled this script some time ago
     },
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing,
@@ -423,13 +424,81 @@ test('rebuildSource preserves the prior `enabled` flag across a successful refre
   assert.equal(result[0].enabled, false);
 });
 
-test('buildScriptFromText defaults `enabled` to true on a brand-new entry', () => {
-  const entry = buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+test('buildScriptFromText defaults `enabled` to true on a brand-new entry', async () => {
+  const entry = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   assert.equal(entry.enabled, true);
 });
 
-test('rebuildSource: unchanged marker preserves the prior entry and records fsMtime', () => {
-  const prior = buildScriptFromText({
+// ---------- contentHash (universal change-detection token) ----------
+
+test('hashSource returns the same token for identical text and different tokens for different text', async () => {
+  // Documents the only two properties the rest of the system relies
+  // on: deterministic for the same input, and "almost always"
+  // different for different inputs.
+  assert.equal(await hashSource(VALID_SCRIPT), await hashSource(VALID_SCRIPT));
+  assert.notEqual(await hashSource(VALID_SCRIPT), await hashSource(VALID_SCRIPT + ' '));
+  assert.notEqual(await hashSource(''), await hashSource(' '));
+});
+
+test('buildScriptFromText sets contentHash on every loaded entry', async () => {
+  const a = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  const b = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  assert.equal(a.contentHash, b.contentHash);
+  assert.equal(a.contentHash, await hashSource(VALID_SCRIPT));
+});
+
+test('buildScriptFromText preserves prior loadedAt when the fetched bytes are identical', async () => {
+  // The universal post-fetch leg of change detection: even when a
+  // refresh did fetch the body (because the per-scheme cheap skips —
+  // size+mtime, HTTP 304 — couldn't fire), if the bytes are the same
+  // as last time we don't bump loadedAt, so the options page's row
+  // highlight stays accurate.
+  const prior = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT, now: 50 });
+  const next = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT, now: 999, prior });
+  assert.equal(next.loadedAt, 50);
+  assert.equal(next.contentHash, prior.contentHash);
+});
+
+test('buildScriptFromText bumps loadedAt when the fetched bytes differ from prior', async () => {
+  const prior = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT, now: 50 });
+  const modified = VALID_SCRIPT.replace("console.log('hi');", "console.log('hello');");
+  const next = await buildScriptFromText({ ...COMMON, source: modified, now: 999, prior });
+  assert.equal(next.loadedAt, 999);
+  assert.notEqual(next.contentHash, prior.contentHash);
+});
+
+test('rebuildSource: identical bytes after a forced refetch preserve loadedAt (manifest / no-validator case)', async () => {
+  // The bug this guards against: manifest sources (and HTTP servers
+  // without ETag / Last-Modified) always re-fetch every refresh.
+  // Without the content-hash compare every row would flip its
+  // loadedAt and flash in the options page. With it, only rows whose
+  // bytes actually changed are flagged.
+  const prior = await buildScriptFromText({
+    id: 'a-id',
+    sourceId: 'src-1',
+    relativePath: 'a.user.js',
+    fileUrl: 'https://example.com/scripts/a.user.js',
+    source: VALID_SCRIPT,
+    now: 50,
+  });
+  const result = await rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: 'https://example.com/scripts/manifest.json',
+    existing: [prior],
+    scan: [{ relativePath: 'a.user.js' }],
+    fetchResults: new Map([
+      // Server didn't 304 — we got a fresh 200 with the same bytes.
+      ['a.user.js', { ok: true, source: VALID_SCRIPT }],
+    ]),
+    now: 999,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].loadedAt, prior.loadedAt);
+  assert.equal(result[0].contentHash, prior.contentHash);
+});
+
+test('rebuildSource: unchanged marker preserves the prior entry and records fsMtime', async () => {
+  const prior = await buildScriptFromText({
     id: 'a-id',
     sourceId: 'src-1',
     relativePath: 'a.user.js',
@@ -437,7 +506,7 @@ test('rebuildSource: unchanged marker preserves the prior entry and records fsMt
     source: VALID_SCRIPT,
     now: 50,
   });
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing: [prior],
@@ -457,8 +526,8 @@ test('rebuildSource: unchanged marker preserves the prior entry and records fsMt
   assert.equal(result[0].fsMtime, 1700);
 });
 
-test('rebuildSource: successful fetch stores fsMtime from the scan', () => {
-  const result = rebuildSource({
+test('rebuildSource: successful fetch stores fsMtime from the scan', async () => {
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing: [],
@@ -472,15 +541,15 @@ test('rebuildSource: successful fetch stores fsMtime from the scan', () => {
   assert.equal(result[0].fsMtime, 4200);
 });
 
-test('rebuildSource: missing path also disables the entry', () => {
+test('rebuildSource: missing path also disables the entry', async () => {
   // Mirrors applyMissing's behavior end-to-end via rebuildSource.
   const existing = [
-    buildScriptFromText({
+    await buildScriptFromText({
       id: 'a-id', sourceId: 'src-1', relativePath: 'a.user.js',
       fileUrl: 'file:///dir/a.user.js', source: VALID_SCRIPT, now: 50,
     }),
   ];
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1', sourcePath: '/dir',
     existing,
     scan: [],
@@ -492,11 +561,11 @@ test('rebuildSource: missing path also disables the entry', () => {
   assert.equal(result[0].enabled, false);
 });
 
-test('rebuildSource builds the right fileUrl for a single-file source', () => {
+test('rebuildSource builds the right fileUrl for a single-file source', async () => {
   // Single-file sources store the *file* path in sourcePath; the scan
   // entry's relativePath is the basename. scriptFileUrl must not
   // double the filename — it should return the source path's URL.
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/home/me/foo bar.user.js',
     existing: [],
@@ -512,12 +581,12 @@ test('rebuildSource builds the right fileUrl for a single-file source', () => {
   assert.equal(result[0].relativePath, 'foo bar.user.js');
 });
 
-test('rebuildSource persists httpEtag / httpLastModified from a successful HTTP fetch', () => {
+test('rebuildSource persists httpEtag / httpLastModified from a successful HTTP fetch', async () => {
   // The next refresh will read these back off the prior row and send
   // them as If-None-Match / If-Modified-Since so the server can answer
   // 304. Without this round-trip, every refresh of an HTTP source
   // would redownload the body.
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: 'https://example.com/scripts/manifest.json',
     existing: [],
@@ -537,12 +606,12 @@ test('rebuildSource persists httpEtag / httpLastModified from a successful HTTP 
   assert.equal(result[0].httpLastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
 });
 
-test('rebuildSource: HTTP unchanged preserves the prior entry and its validators', () => {
+test('rebuildSource: HTTP unchanged preserves the prior entry and its validators', async () => {
   // The HTTP path lands here when the server returned 304 to our
   // conditional GET. fsMtime stays unused (HTTP doesn't use it); the
   // etag/lastModified should not get cleared.
   const prior = {
-    ...buildScriptFromText({
+    ...await buildScriptFromText({
       id: 'a-id',
       sourceId: 'src-1',
       relativePath: 'a.user.js',
@@ -553,7 +622,7 @@ test('rebuildSource: HTTP unchanged preserves the prior entry and its validators
     httpEtag: 'W/"abc"',
     httpLastModified: 'Wed, 21 Oct 2025 07:28:00 GMT',
   };
-  const result = rebuildSource({
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: 'https://example.com/scripts/manifest.json',
     existing: [prior],
@@ -569,8 +638,8 @@ test('rebuildSource: HTTP unchanged preserves the prior entry and its validators
   assert.equal(result[0].loadedAt, prior.loadedAt);
 });
 
-test('rebuildSource creates an initial error entry when a new file fails to fetch', () => {
-  const result = rebuildSource({
+test('rebuildSource creates an initial error entry when a new file fails to fetch', async () => {
+  const result = await rebuildSource({
     sourceId: 'src-1',
     sourcePath: '/dir',
     existing: [],
@@ -627,7 +696,7 @@ test('fetchOrSkipInParallel: mixed-scheme manifest dispatches per resolved entry
   };
   try {
     const priorHttp = {
-      ...buildScriptFromText({
+      ...await buildScriptFromText({
         id: 'h-id', sourceId: 'src-1', relativePath: 'foo.user.js',
         fileUrl: 'https://x/foo.user.js', source: VALID_SCRIPT, now: 1,
       }),
@@ -668,13 +737,13 @@ test('fetchOrSkipInParallel: mixed-scheme manifest dispatches per resolved entry
   }
 });
 
-test('applyMissing keeps HTTP validators dormant for later recovery', () => {
+test('applyMissing keeps HTTP validators dormant for later recovery', async () => {
   // Documented behavior: a vanished script row preserves httpEtag /
   // httpLastModified even though they're unused while status is
   // 'missing'. If the entry later reappears, buildScriptFromText
   // overwrites the validators from the fresh response.
   const prior = {
-    ...buildScriptFromText({
+    ...await buildScriptFromText({
       id: 'h-id', sourceId: 'src-1', relativePath: 'a.user.js',
       fileUrl: 'https://x/a.user.js', source: VALID_SCRIPT, now: 1,
     }),
