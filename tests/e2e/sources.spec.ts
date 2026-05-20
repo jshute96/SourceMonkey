@@ -121,6 +121,23 @@ test.describe('sources', () => {
     expect(sources).toHaveLength(0);
   });
 
+  test('zero-byte file lands as size=0 status=error (no metadata block)', async ({ vm }) => {
+    // A truly empty .user.js used to fail the fetch (empty-body reject)
+    // and end up as size=null displayed as MISSING — which conflated an
+    // empty file with a vanished one. The fix lets the empty fetch
+    // succeed and parse as a "no metadata block" error, with size=0.
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    fs.writeFileSync(path.join(scriptsDir.path, 'empty.user.js'), '');
+
+    const source = await vm.addSource(scriptsDir.path);
+    const ws = await vm.getSourceWithScripts(source!.id);
+    expect(ws!.scripts).toHaveLength(1);
+    expect(ws!.scripts[0].relativePath).toBe('empty.user.js');
+    expect(ws!.scripts[0].status).toBe('error');
+    expect(ws!.scripts[0].size).toBe(0);
+  });
+
   test('deleting a file on disk flips its row to missing', async ({ vm }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',

@@ -56,7 +56,11 @@ export interface StoredScript {
   fileUrl: string;
   status: ScriptStatus;
   errorMessage?: string;
-  size: number | null;   // UTF-8 byte length; null when status === 'missing'
+  // UTF-8 byte length of the cached content. `0` is a valid value for
+  // an empty file. `null` only on a never-loaded-successfully initial-
+  // error row (no body to size); `missing` rows keep their last known
+  // size so the UI reflects the cached body.
+  size: number | null;
   // Modification time as reported by Chrome's directory listing on the
   // last successful scan. Opaque integer used only for equality —
   // combined with `size`, it lets refresh skip refetching a file whose
@@ -234,9 +238,11 @@ export function buildInitialErrorEntry(args: {
   };
 }
 
-// Flip an existing entry to `missing`. Preserves content for the
-// viewer and the (future) injector; nulls out size so the table
-// renders "MISSING". Also turns the per-script enabled flag off so a
+// Flip an existing entry to `missing`. Preserves content (including
+// the size of the cached body) for the viewer and the (future)
+// injector — the file is gone but we still hold what we last read, so
+// the size column reflects that and is distinct from genuine
+// "unknown size" rows. Also turns the per-script enabled flag off so a
 // script whose file vanished stops being injected — the row stays in
 // storage (for the viewer) but won't run. If the file later returns,
 // rebuildSource preserves the now-false `enabled` so the user has to
@@ -250,7 +256,6 @@ export function applyMissing(existing: StoredScript): StoredScript {
   const next: StoredScript = {
     ...existing,
     status: 'missing',
-    size: null,
     enabled: false,
   };
   delete next.errorMessage;
@@ -462,6 +467,26 @@ export async function removeSource(id: string): Promise<void> {
   const removeKeys = [sourceKey(id), ...(source?.scriptIds ?? []).map(scriptKey)];
   await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: nextIndex });
   await chrome.storage.local.remove(removeKeys);
+}
+
+// Drop a single script row from storage and remove its ID from the
+// parent source's scriptIds list. Used by the options-page trash-can
+// next to a `missing` row so the user can clear out records for files
+// that are gone for good — refreshSource won't recreate the row because
+// it only adds entries the scan currently reports.
+export async function removeScript(id: string): Promise<void> {
+  const script = await getRaw<StoredScript>(scriptKey(id));
+  if (!script) return;
+  const source = await getRaw<StoredSource>(sourceKey(script.sourceId));
+  const toSet: Record<string, unknown> = {};
+  if (source) {
+    const nextIds = source.scriptIds.filter((sid) => sid !== id);
+    if (nextIds.length !== source.scriptIds.length) {
+      toSet[sourceKey(source.id)] = { ...source, scriptIds: nextIds };
+    }
+  }
+  if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
+  await chrome.storage.local.remove(scriptKey(id));
 }
 
 // Rescan a source + refetch all of its scripts. Adds new files,

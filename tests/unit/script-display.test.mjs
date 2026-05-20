@@ -32,19 +32,31 @@ test('formatBytes: megabytes >= 1 MB, one decimal', () => {
 
 // ---------- formatScriptSize ----------
 
-test('formatScriptSize: missing status → MISSING regardless of size value', () => {
-  assert.equal(formatScriptSize({ status: 'missing', size: 100 }), 'MISSING');
-  assert.equal(formatScriptSize({ status: 'missing', size: null }), 'MISSING');
+test('formatScriptSize: missing status shows the cached content size', () => {
+  // The file is gone but we still hold its last-read bytes; reflect
+  // that in the size column. The Status cell (separately) shows MISSING.
+  assert.equal(formatScriptSize({ status: 'missing', size: 100 }), '100 B');
 });
 
-test('formatScriptSize: null size → MISSING even for non-missing status', () => {
-  // Initial error entries have null size — show MISSING rather than the
-  // confusing "null B" / "0 B".
-  assert.equal(formatScriptSize({ status: 'error', size: null }), 'MISSING');
+test('formatScriptSize: null size → "—" (unknown)', () => {
+  // Only buildInitialErrorEntry produces size=null — the first fetch
+  // failed with no prior content to fall back on. Render an em dash
+  // rather than "0 B" (wrong) or "MISSING" (conflates with the missing
+  // status).
+  assert.equal(formatScriptSize({ status: 'error', size: null }), '—');
+  assert.equal(formatScriptSize({ status: 'missing', size: null }), '—');
 });
 
 test('formatScriptSize: ok status renders the byte count', () => {
   assert.equal(formatScriptSize({ status: 'ok', size: 1234 }), '1.2 KB');
+});
+
+test('formatScriptSize: zero-byte file renders "0 B", not MISSING', () => {
+  // An empty file is a real (if degenerate) file — it parses to a
+  // header-less error, but the size cell should show "0 B" so the
+  // user can see it's not missing.
+  assert.equal(formatScriptSize({ status: 'error', size: 0 }), '0 B');
+  assert.equal(formatScriptSize({ status: 'ok', size: 0 }), '0 B');
 });
 
 test('formatScriptSize: error with known size still renders the bytes', () => {

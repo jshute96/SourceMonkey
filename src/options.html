@@ -44,6 +44,21 @@
       .log-id-suffix:not(:empty)::before { content: ' '; }
       .status-ok { color: #166534; }
       .status-error, .status-missing { color: #b00; }
+      /* Small trash-can button shown beside the Status label on missing
+         rows, so users can clear out records for files that are gone
+         for good (refresh won't re-add them). */
+      .remove-script {
+        margin-left: 0.4em;
+        padding: 0 0.3em;
+        font: inherit;
+        line-height: 1;
+        border: 1px solid #ddd;
+        background: transparent;
+        cursor: pointer;
+        color: #888;
+      }
+      .remove-script:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
+      .remove-script:disabled { cursor: not-allowed; opacity: 0.5; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
       .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 1em; }
