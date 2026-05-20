@@ -580,14 +580,18 @@ function makeSource(over = {}) {
   };
 }
 
-test('collectActiveSpecs: skips non-ok scripts', () => {
+test('collectActiveSpecs: error scripts never run; missing scripts run only when explicitly enabled', () => {
   const sources = new Map([['source-1', makeSource()]]);
   const specs = collectActiveSpecs([
+    // Error rows are never injected (header may be unparsed / failed validation).
     makeScript({ id: 's1', status: 'error', errorMessage: 'x' }),
-    makeScript({ id: 's2', status: 'missing' }),
-    makeScript({ id: 's3' }),
+    // Missing with enabled=false is the default state right after a file vanishes.
+    makeScript({ id: 's2', status: 'missing', enabled: false }),
+    // Missing with enabled=true means the user re-enabled it; run from cached body.
+    makeScript({ id: 's3', status: 'missing', enabled: true }),
+    makeScript({ id: 's4' }),
   ], sources);
-  assert.deepEqual(specs.map((s) => s.id), ['s3']);
+  assert.deepEqual(specs.map((s) => s.id).sort(), ['s3', 's4']);
 });
 
 test('collectActiveSpecs: skips disabled scripts', () => {

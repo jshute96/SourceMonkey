@@ -1,6 +1,8 @@
-// In-memory index of every `status: 'ok'` userscript's matching info so
-// the background service worker can find matching scripts for a URL
-// without touching chrome.storage.local on every navigation.
+// In-memory index of every injectable userscript's matching info so the
+// background service worker can find matching scripts for a URL without
+// touching chrome.storage.local on every navigation. "Injectable" means
+// `status: 'ok'` or `status: 'missing'` (the latter participates only if
+// the user explicitly re-enables it — see toEntry).
 //
 // Built once on first access (ensureLoaded()), then kept fresh by a
 // chrome.storage.local.onChanged listener. Storage I/O cost scales with
@@ -9,9 +11,9 @@
 //
 // Enabled state: a script is considered for matching only if BOTH its
 // own `enabled` flag and its parent source's `enabled` flag are true.
-// We cache every ok script (regardless of enabled) and separately track
-// the set of disabled sources, so toggling a source flips every script
-// under it in O(1) without rewalking storage.
+// We cache every injectable script (regardless of enabled) and
+// separately track the set of disabled sources, so toggling a source
+// flips every script under it in O(1) without rewalking storage.
 
 import { getValue } from './userscript-header.js';
 import {
@@ -67,9 +69,16 @@ async function loadAll(): Promise<void> {
 }
 
 function toEntry(script: StoredScript): CacheEntry | null {
-  // Only ok scripts participate in matching. error/missing entries keep
-  // their last-known content for the viewer but shouldn't be injected.
-  if (script.status !== 'ok') return null;
+  // `ok` scripts always participate. `missing` scripts participate too
+  // when the user has explicitly re-enabled them — their cached header /
+  // matching / body were captured the last time the file loaded
+  // cleanly, so the user is opting in to "run the last good copy". The
+  // per-script `enabled` defaults to false on the missing transition,
+  // so unattended missing rows still stay out of the cache via the
+  // enabled check in findMatchesForUrl.
+  // `error` rows never participate — their header may be unparsed or
+  // the file failed validation.
+  if (script.status !== 'ok' && script.status !== 'missing') return null;
   const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
   return {
     id: script.id,

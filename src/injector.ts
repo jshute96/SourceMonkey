@@ -262,15 +262,17 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
 }
 
 // Pure: pick the scripts that should be registered right now. Both the
-// script's own enabled flag and its parent source's flag must be true,
-// and the script must be `status: 'ok'`.
+// script's own enabled flag and its parent source's flag must be true.
+// `ok` scripts are eligible; `missing` scripts are eligible too when the
+// user has explicitly re-enabled them (the cached body + header from
+// the last good load is what gets injected). `error` scripts never run.
 export function collectActiveSpecs(
   scripts: StoredScript[],
   sources: Map<string, StoredSource>,
 ): RegistrationSpec[] {
   const out: RegistrationSpec[] = [];
   for (const s of scripts) {
-    if (s.status !== 'ok') continue;
+    if (s.status !== 'ok' && s.status !== 'missing') continue;
     if (!isScriptEnabled(s)) continue;
     const src = sources.get(s.sourceId);
     if (!src || !isSourceEnabled(src)) continue;

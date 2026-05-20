@@ -85,17 +85,26 @@ Three key spaces in `chrome.storage.local`:
   `'missing @name'`, `'missing @match or @include'`, or a
   fetch-failure message.
 - `'missing'` — file was in the scan listing previously but no
-  longer is. `enabled` flips to `false` so the script stops being
-  injected, but the row stays in storage (with content + last known
-  `size` preserved) so the viewer keeps working. If the file returns
-  on a later refresh the prior `enabled: false` is preserved so the
-  user has to explicitly re-enable. The options page surfaces a
-  trash-can button on missing rows (`removeScript`) for users who
-  want to clear records for files they don't expect back.
+  longer is. Behavior:
+  - On the **ok → missing** transition (and only then), `enabled`
+    flips to `false` so the script stops being injected by default.
+  - The row stays in storage with content + last known `size`
+    preserved so the viewer keeps working.
+  - If the file returns on a later refresh, the prior `enabled` is
+    preserved so the user's choice survives.
+  - The options page surfaces a trash-can button on missing rows
+    (`removeScript`) for clearing records the user doesn't expect back.
+  - **Re-enabling** a missing row makes it run again from the cached
+    body — match-index and injector both treat enabled `missing` rows
+    as injectable, mirroring `ok`. Subsequent refreshes while the file
+    is still gone leave `enabled` alone, so the user's opt-in survives.
 
 On error or missing we **preserve the prior content** (headerText,
-bodyText, parsed header, matching). The viewer keeps working and the
-injector can still run the script (assuming it's still enabled).
+bodyText, parsed header, matching). The viewer keeps working. The
+injector runs the script if and only if `enabled` is true and `status`
+is `ok` or `missing` — `error` rows never inject (the current parse
+result is bad, so the cached body might mean something different from
+what the metadata claims).
 
 ## Change detection: the last-change token
 

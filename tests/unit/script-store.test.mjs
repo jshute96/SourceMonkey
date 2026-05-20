@@ -189,6 +189,37 @@ test('applyMissing disables the script so a vanished file stops running', async 
   assert.equal(applyMissing(ok).enabled, false);
 });
 
+test('applyMissing preserves enabled when the row has already left the ok state', async () => {
+  // Regression guard: rebuildSource calls applyMissing on every refresh
+  // for files the scan still doesn't see, not just on the first
+  // ok→missing transition. If the user re-enabled a missing row to run
+  // from its cached body, the next refresh must not silently clobber
+  // that choice. The enabled flag only flips on the ok→missing edge.
+  //
+  // Two non-ok prior states need preservation:
+  //   - missing → missing (a plain directory refresh while the file
+  //     is still gone)
+  //   - error → missing (an opportunistic per-script refetch flipped
+  //     the row to error first — applyFetchError preserves enabled —
+  //     and then the directory-level refresh promotes it to missing)
+  const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+
+  // missing → missing preserves enabled
+  const justMissing = applyMissing(ok);
+  assert.equal(justMissing.enabled, false);
+  const reEnabledMissing = { ...justMissing, enabled: true };
+  const afterRefresh = applyMissing(reEnabledMissing);
+  assert.equal(afterRefresh.status, 'missing');
+  assert.equal(afterRefresh.enabled, true);
+
+  // error → missing preserves enabled
+  const reEnabledErrored = { ...ok, enabled: true, status: /** @type {'error'} */ ('error'), errorMessage: 'gone' };
+  const fromError = applyMissing(reEnabledErrored);
+  assert.equal(fromError.status, 'missing');
+  assert.equal(fromError.enabled, true);
+  assert.equal(fromError.errorMessage, undefined);
+});
+
 test('buildInitialErrorEntry leaves content empty', async () => {
   const entry = buildInitialErrorEntry({
     id: 'sc-2',

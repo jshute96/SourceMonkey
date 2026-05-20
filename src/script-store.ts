@@ -293,25 +293,27 @@ export function buildInitialErrorEntry(args: {
 }
 
 // Flip an existing entry to `missing`. Preserves content (including
-// the size of the cached body) for the viewer and the (future)
-// injector — the file is gone but we still hold what we last read, so
-// the size column reflects that and is distinct from genuine
-// "unknown size" rows. Also turns the per-script enabled flag off so a
-// script whose file vanished stops being injected — the row stays in
-// storage (for the viewer) but won't run. If the file later returns,
-// rebuildSource preserves the now-false `enabled` so the user has to
-// explicitly opt back in.
+// the size of the cached body) for the viewer and the injector — the
+// file is gone but we still hold what we last read, so the size column
+// reflects that and is distinct from genuine "unknown size" rows.
+//
+// `enabled` only flips to false on the FIRST ok→missing transition —
+// i.e. only when `existing.status === 'ok'`. Once a row has left `ok`
+// (it's already `missing`, or it's `error` because an opportunistic
+// per-script refetch hit a vanished file before the directory-level
+// refresh ran), applyMissing leaves `enabled` alone. Otherwise we'd
+// silently clobber a user who has re-enabled a missing row to run from
+// the cached body: any subsequent refresh while the file is still gone
+// would re-disable it. If the file later returns, rebuildSource
+// preserves whatever `enabled` value the user left in place.
 //
 // HTTP validators (httpEtag / httpLastModified) ride along untouched.
 // The conditional-GET path is gated on `prior.status === 'ok'`, so
 // stale validators are dormant; if the entry returns and fetches
 // cleanly, buildScriptFromText overwrites them from the fresh response.
 export function applyMissing(existing: StoredScript): StoredScript {
-  const next: StoredScript = {
-    ...existing,
-    status: 'missing',
-    enabled: false,
-  };
+  const next: StoredScript = { ...existing, status: 'missing' };
+  if (existing.status === 'ok') next.enabled = false;
   delete next.errorMessage;
   return next;
 }

@@ -64,7 +64,8 @@ the source back on restores the prior state.
 ## In-memory match index
 
 `src/match-index.ts` keeps an in-memory `Map<scriptId, MatchedScript>`
-of every `status: 'ok'` script so the background SW never hits
+of every injectable script (`status: 'ok'`, or `'missing'` when the
+user has re-enabled it) so the background SW never hits
 `chrome.storage.local` on the navigation hot path.
 
 Lifecycle:
@@ -74,10 +75,13 @@ Lifecycle:
   disabled.
 - **Updates**: `installStorageListener()` registers a
   `chrome.storage.onChanged` listener that mutates the cache in place
-  on every `set`/`remove` of a `script:*` or `source:*` key. Only `ok`
-  scripts are kept; `error`/`missing` entries get evicted. Source
-  changes flip an in-memory `disabledSources` set, which lets a
-  source toggle re-evaluate every script under it in O(1).
+  on every `set`/`remove` of a `script:*` or `source:*` key. `ok` and
+  `missing` scripts are kept (the latter so a user-re-enabled missing
+  row runs from its cached body); `error` entries get evicted. The
+  per-script `enabled` flag — checked in `findMatchesForUrl`, not at
+  cache build — is what actually gates a missing row. Source changes
+  flip an in-memory `disabledSources` set, which lets a source toggle
+  re-evaluate every script under it in O(1).
 - **Subscribers**: `onCacheChanged(fn)` lets the background SW re-badge
   every open tab when the script set itself changes (e.g. after a
   directory Refresh on the options page or a per-source / per-script
