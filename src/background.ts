@@ -379,7 +379,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
 function installNavigationListeners(): void {
   const wn = chrome.webNavigation;
   if (!wn) {
-    console.warn('[VibeMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
+    console.info('[VibeMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       if (changeInfo.url) {
         enqueueTabWork(tabId, () => updateTabMatches(tabId, changeInfo.url, null, 'navigation'));
@@ -672,7 +672,7 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
         `[VibeMonkey] reload fast-path: checking ${matches.length} script(s) for tab=${tabId} doc=${documentId.slice(0, 8)}`,
       );
     } catch (err) {
-      console.warn('[VibeMonkey] reload fast-path setup failed:', err);
+      console.info('[VibeMonkey] reload fast-path setup failed:', err);
     }
   })();
 }
@@ -772,7 +772,7 @@ function installScriptMessageListener(): void {
   const ev = chrome.runtime.onUserScriptMessage as
     | chrome.runtime.ExtensionMessageEvent | undefined;
   if (!ev || typeof ev.addListener !== 'function') {
-    console.warn('[VibeMonkey] chrome.runtime.onUserScriptMessage not available; skipping listener install');
+    console.info('[VibeMonkey] chrome.runtime.onUserScriptMessage not available; skipping listener install');
     return;
   }
   ev.addListener((msg, sender, sendResponse) => {
@@ -790,7 +790,7 @@ function installScriptMessageListener(): void {
       handleCheckPending(sender, payload).then(
         (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
         (err) => {
-          console.warn('[VibeMonkey] check-pending handler threw:', err);
+          console.info('[VibeMonkey] check-pending handler threw:', err);
           try { sendResponse({ action: 'run' }); } catch { /* receiver gone */ }
         },
       );
@@ -866,12 +866,14 @@ async function recordScriptReport(
       `[VibeMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
   } else {
-    // console.warn (not console.error) so a userscript runtime failure
-    // — which is a bug in user-supplied code we're relaying — doesn't
-    // bubble up to chrome://extensions/?errors as if VibeMonkey itself
-    // had thrown. The badge already surfaces the failure to the user;
-    // the Errors panel should be reserved for actual extension bugs.
-    console.warn(`[VibeMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+    // console.info (not console.warn / .error) so a userscript runtime
+    // failure — which is a bug in user-supplied code we're relaying —
+    // doesn't bubble up to chrome://extensions/?errors as if VibeMonkey
+    // itself had thrown. Chrome surfaces both .warn and .error from the
+    // SW into the Errors panel; only .info / .log stay out of it. The
+    // badge already surfaces the failure to the user; the Errors panel
+    // should be reserved for actual extension bugs.
+    console.info(`[VibeMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
   }
 
   // vm:abandoned is logging-only — there's no "actual" report to merge

@@ -45,5 +45,9 @@ export function dlog(...args: unknown[]): void {
 }
 
 export function dwarn(...args: unknown[]): void {
-  if (enabled) console.warn(...args);
+  // console.info (not console.warn / .error) — see background.ts vm:error
+  // handler for the rationale: Chrome surfaces SW warn+error into the
+  // chrome://extensions/?errors panel, which should be reserved for
+  // actual extension bugs, not VibeMonkey's own diagnostic chatter.
+  if (enabled) console.info(...args);
 }

@@ -406,7 +406,7 @@ export async function syncRegistrations(): Promise<void> {
     lastError = null;
     const failed = specs.length - registered;
     if (failed > 0) {
-      console.warn(
+      console.info(
         `[VibeMonkey] registered ${registered}/${specs.length} userscript(s); ${failed} rejected by chrome.userScripts (see per-script errors)`,
       );
     } else {
@@ -416,7 +416,7 @@ export async function syncRegistrations(): Promise<void> {
     lastError = describeError(err);
     // Common case: "Allow User Scripts" toggle is off. Log once per
     // sync so we don't bury the SW console.
-    console.warn('[VibeMonkey] userScripts sync failed:', lastError);
+    console.info('[VibeMonkey] userScripts sync failed:', lastError);
   }
 }
 
@@ -440,7 +440,7 @@ async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> 
     } catch (err) {
       const msg = describeError(err);
       perScriptErrors.set(spec.id, msg);
-      console.warn(`[VibeMonkey] script ${spec.id} rejected: ${msg}`);
+      console.info(`[VibeMonkey] script ${spec.id} rejected: ${msg}`);
     }
   }
   return ok;
