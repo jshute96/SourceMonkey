@@ -144,4 +144,43 @@ test.describe('sources', () => {
     expect(byPath['a.user.js'].status).toBe('missing');
     expect(byPath['b.user.js'].status).toBe('ok');
   });
+
+  test('unreadable top-level directory preserves scripts and their enabled state', async ({ vm }) => {
+    // Models a remote mount whose credentials timed out: the directory
+    // listing fails, but the user's scripts shouldn't get auto-disabled
+    // just because we can't enumerate the source right now.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await vm.addSource(scriptsDir.path);
+    const before = await vm.getSourceWithScripts(source!.id);
+    expect(before!.scripts).toHaveLength(2);
+    // Disable one of the two so we can later verify enabled state is
+    // preserved exactly.
+    const aScript = before!.scripts.find((s) => s.relativePath === 'a.user.js')!;
+    await vm.setScriptEnabled(aScript.id, false);
+
+    // Blow the directory away so the listing fetch fails on the next
+    // refresh (afterEach's cleanup tolerates the missing path).
+    scriptsDir.cleanup();
+    await vm.updateSource(source!.id, 'manual');
+
+    const after = await vm.getSourceWithScripts(source!.id);
+    expect(after!.scripts).toHaveLength(2);
+    const afterByPath = Object.fromEntries(
+      after!.scripts.map((s) => [s.relativePath, s]),
+    );
+    expect(afterByPath['a.user.js'].status).toBe('ok');
+    expect(afterByPath['a.user.js'].enabled).toBe(false);
+    expect(afterByPath['b.user.js'].status).toBe('ok');
+    expect(afterByPath['b.user.js'].enabled).toBe(true);
+    expect(after!.source.scanError).toBeDefined();
+  });
 });

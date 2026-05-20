@@ -16,9 +16,16 @@
 // A script is `ok` iff fetch succeeded AND splitHeaderBody returned no
 // error AND validateHeader returned null. Otherwise `status: 'error'`
 // with an `errorMessage`. On refresh, files that were known before but
-// no longer appear in the scan listing become `status: 'missing'`; in
-// every error/missing case we preserve the previously loaded content
-// so the viewer (and, eventually, the injector) keep working.
+// no longer appear in the scan listing are reconciled per source kind:
+// directory sources mark them `status: 'missing'` (file may come
+// back); manifest sources delete the row (user explicitly removed the
+// entry). In every error/missing case we preserve the previously
+// loaded content so the viewer (and the injector) keep working.
+//
+// If the scan step itself fails (unreadable listing, unreadable
+// manifest, …), refreshSource records the error in `scanError` on the
+// source row and leaves every existing script untouched — see that
+// function's docstring for the rationale.
 
 import {
   fetchFileUrlText,
@@ -278,6 +285,14 @@ interface RebuildArgs {
 // `StoredScript`s in canonical order (scan order, then any entries
 // that fell off the listing tagged `missing`). Stable IDs come from
 // looking up by relativePath in `existing`. No I/O — easy to test.
+//
+// Vanished-entry handling depends on the source kind:
+//   - Manifest sources: an entry that's no longer listed is treated
+//     as an explicit user removal — the row is dropped entirely (the
+//     `refreshSource` caller then deletes the storage row).
+//   - Other sources (local directory): the prior row is tagged
+//     `missing` and auto-disabled. The file might come back; the row
+//     stays so the viewer keeps working.
 export function rebuildSource(args: RebuildArgs): StoredScript[] {
   const newId = args.newId ?? (() => crypto.randomUUID());
   const existingByPath = new Map<string, StoredScript>();
@@ -360,9 +375,14 @@ export function rebuildSource(args: RebuildArgs): StoredScript[] {
     }
   }
 
-  // Anything in `existing` that the scan didn't see → missing.
+  // Anything in `existing` that the scan didn't see → either marked
+  // missing (directory sources: file may come back) or dropped
+  // (manifest sources: the user explicitly removed the entry).
+  const dropVanished = isManifestSource(args.sourcePath);
   for (const e of args.existing) {
-    if (!handledPaths.has(e.relativePath)) out.push(applyMissing(e));
+    if (handledPaths.has(e.relativePath)) continue;
+    if (dropVanished) continue;
+    out.push(applyMissing(e));
   }
   return out;
 }
@@ -464,11 +484,20 @@ export async function removeSource(id: string): Promise<void> {
   await chrome.storage.local.remove(removeKeys);
 }
 
-// Rescan a source + refetch all of its scripts. Adds new files,
-// keeps known files (status updated based on fetch result), and flags
-// vanished files as `missing`. Persists the updated source row plus
-// every script row in one set call, and removes script rows that
-// dropped out (which currently doesn't happen — `missing` rows stay).
+// Rescan a source + refetch all of its scripts. Adds new files, keeps
+// known files (status updated based on fetch result), and reconciles
+// vanished files per source kind: directory sources mark them
+// `missing` (the file may come back), manifest sources delete them
+// (the user explicitly removed the entry). Persists the updated source
+// row plus every script row in one set call.
+//
+// Scan failure (unreadable directory listing, unreadable manifest, bad
+// URL) records a `scanError` on the source and **leaves every script
+// untouched** — content, status, and enabled state all preserved. We
+// can't tell whether a source that won't list is actually empty or
+// just temporarily unreachable (remote mount with timed-out creds,
+// flaky network, …), so we err on the side of keeping the user's
+// scripts running until we see definitive evidence they're gone.
 //
 // Optimisation: skip the fetch and reuse the prior entry verbatim when
 // the source can prove a file is unchanged — file:// uses Chrome's
@@ -490,15 +519,37 @@ export async function refreshSource(
     scanError = describeError(err);
   }
 
-  let fetchResults = new Map<string, FetchResult>();
-  // Fetch every scanned file in parallel except those whose size+mtime
-  // are already current. If the scan itself failed, scan is empty and
-  // we skip straight to marking everything missing.
-  if (!scanError) {
-    fetchResults = await fetchOrSkipInParallel(source.path, scan, existingScripts);
+  const now = Date.now();
+
+  // Scan failure (unreadable manifest, unreadable top-level directory,
+  // bad URL shape) is treated as "we don't actually know what's there
+  // right now" — keep every existing script row, its content, and its
+  // enabled state untouched. The source row records the scanError so
+  // the options page can surface it. Without this guard, the
+  // rebuildSource path below would mark every script `missing` (or, for
+  // manifest sources, drop them entirely) — both of which silently
+  // disable the scripts. That's the wrong call when the source might
+  // just be a remote mount with timed-out credentials, a flaky network,
+  // etc.; the user wants the scripts to stay enabled until the source
+  // is actually proven gone.
+  if (scanError) {
+    const nextSource: StoredSource = {
+      ...source,
+      lastRefreshedAt: now,
+      scanError,
+    };
+    await chrome.storage.local.set({ [sourceKey(id)]: nextSource });
+    return { source: nextSource, scripts: existingScripts };
   }
 
-  const now = Date.now();
+  // Fetch every scanned file in parallel except those whose size+mtime
+  // are already current.
+  const fetchResults = await fetchOrSkipInParallel(
+    source.path,
+    scan,
+    existingScripts,
+  );
+
   const scripts = rebuildSource({
     sourceId: source.id,
     sourcePath: source.path,
@@ -513,11 +564,14 @@ export async function refreshSource(
     lastRefreshedAt: now,
     scriptIds: scripts.map((s) => s.id),
   };
-  if (scanError) nextSource.scanError = scanError;
-  else delete nextSource.scanError;
+  // Clear any scanError left by a previous failed refresh — control
+  // only reaches here when the scan succeeded (the early-return above
+  // handles the failure case).
+  delete nextSource.scanError;
 
-  // Drop rows whose IDs are no longer referenced (currently never, but
-  // defensive: protects us if we ever add per-script Remove).
+  // Drop rows whose IDs are no longer referenced. Hit by manifest
+  // sources whose user removed an entry; also defensive against any
+  // future per-script Remove.
   const priorIds = new Set(existingScripts.map((s) => s.id));
   const nextIds = new Set(scripts.map((s) => s.id));
   const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);

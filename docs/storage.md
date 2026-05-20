@@ -117,10 +117,29 @@ Every load path goes through the same pipeline:
 4. Reconcile against the prior state in `rebuildSource`:
    - Reuse IDs by `relativePath`.
    - Mint a new UUID for any new file.
-   - Tag any prior file not in the scan as `'missing'` (content
-     preserved).
+   - Vanished-entry handling depends on the source kind:
+     - **Directory sources** — tag the prior file `'missing'`
+       (content preserved). A vanished file may come back; the
+       row stays so the viewer keeps working.
+     - **Manifest sources** — drop the row entirely. The manifest
+       is the user's source of truth; removing an entry is an
+       explicit removal, not a "maybe gone" signal.
 5. Persist the source row + every script row in a single
    `chrome.storage.local.set` call.
+
+### Scan failure: leave scripts untouched
+
+- **Triggers**: unreadable directory listing, unreadable manifest,
+  malformed manifest JSON, bad URL shape.
+- **Outcome**: source row records the error in `scanError`; every
+  existing script is left untouched — content, status, and `enabled`
+  state all preserved.
+- **Why**: we can't tell whether a source that won't list is actually
+  empty or just temporarily unreachable (remote mount with stale
+  creds, flaky network, …). The user's scripts keep running until we
+  see definitive evidence they're gone.
+- **Recovery**: a later successful refresh runs the normal
+  reconciliation and clears `scanError`.
 
 ### Entry points
 

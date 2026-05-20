@@ -297,6 +297,72 @@ test('rebuildSource flags vanished scripts as missing and keeps their content', 
   assert.equal(result[1].bodyText, existing[1].bodyText);
 });
 
+test('rebuildSource drops vanished entries entirely for a manifest source', () => {
+  // A manifest is the user's source of truth: if they remove an entry,
+  // they're explicitly removing the script. No reason to keep a
+  // tombstone row around as 'missing' the way we do for a local
+  // directory (where the file might come back).
+  const existing = [
+    buildScriptFromText({
+      id: 'a-id',
+      sourceId: 'src-1',
+      relativePath: 'a.user.js',
+      fileUrl: 'https://example.com/scripts/a.user.js',
+      source: VALID_SCRIPT,
+      now: 50,
+    }),
+    buildScriptFromText({
+      id: 'b-id',
+      sourceId: 'src-1',
+      relativePath: 'b.user.js',
+      fileUrl: 'https://example.com/scripts/b.user.js',
+      source: VALID_SCRIPT,
+      now: 50,
+    }),
+  ];
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: 'https://example.com/scripts/manifest.json',
+    existing,
+    scan: [{ relativePath: 'a.user.js' }],
+    fetchResults: new Map([
+      ['a.user.js', { ok: true, source: VALID_SCRIPT }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  // Only the still-listed entry survives; b.user.js is gone (no
+  // trailing 'missing' row).
+  assert.equal(result.length, 1);
+  assert.equal(result[0].relativePath, 'a.user.js');
+  assert.equal(result[0].status, 'ok');
+});
+
+test('rebuildSource drops vanished entries for a local manifest source too', () => {
+  // Same rule applies to file:// / raw-path manifests — the source
+  // kind, not the scheme, decides the vanished-entry policy.
+  const existing = [
+    buildScriptFromText({
+      id: 'b-id',
+      sourceId: 'src-1',
+      relativePath: 'gone.user.js',
+      fileUrl: 'file:///dir/gone.user.js',
+      source: VALID_SCRIPT,
+      now: 50,
+    }),
+  ];
+  const result = rebuildSource({
+    sourceId: 'src-1',
+    sourcePath: '/home/me/scripts/manifest.json',
+    existing,
+    scan: [],
+    fetchResults: new Map(),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result.length, 0);
+});
+
 test('rebuildSource preserves prior content when a fetch fails on a known script', () => {
   const existing = [
     buildScriptFromText({

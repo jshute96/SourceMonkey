@@ -101,17 +101,33 @@ source row is tracked in `TODO.md`.
 ## Vanished entries (manifest only)
 
 - **Detection**: if a manifest used to list a script and no longer
-  does, the script row is marked `missing` and auto-disabled —
-  mirroring the file:// directory behaviour.
-- **Storage**: the row stays in storage so the viewer keeps working.
-  Re-adding the entry to the manifest restores it on the next refresh.
+  does, the script row is **deleted**. The manifest is the user's
+  source of truth — removing an entry is an explicit removal, not a
+  "maybe gone" signal (unlike a local directory, where a file may
+  reappear).
+- **Re-adding an entry mints a fresh row.** Identity isn't preserved
+  across a delete + re-add — the new row gets a new UUID and starts
+  `enabled: true`. This is an intentional asymmetry with directory
+  sources, where a `missing` file that returns keeps its prior
+  `enabled: false` (the user has to opt back in).
 - **Identity is by raw entry text**: `relativePath` for manifest
   sources is the literal string from the JSON, so reformatting
-  `foo.user.js` to `./foo.user.js` reads as a new script *plus* a
-  vanished one (different strings, even though they resolve to the
-  same URL).
+  `foo.user.js` to `./foo.user.js` is treated as deleting the old
+  entry and adding a new one — the old row's `enabled` state is lost.
 - **Single-file sources can't vanish**: the URL either fetches or
   errors; there's no listing for it to disappear from.
+
+## Unreadable manifest
+
+- If the manifest body itself can't be fetched (network error, 404,
+  …) or doesn't parse as JSON / one of the supported shapes, the
+  source records a `scanError` and **leaves every script untouched** —
+  content, status, and `enabled` state all preserved.
+- This matches the [storage.md](storage.md) policy for unreadable
+  directory listings: we don't auto-disable scripts because the source
+  is temporarily unreachable (timed-out creds, flaky network).
+- The options page surfaces the `scanError` as a banner on the source
+  section so the failure is visible.
 
 ## Query-string propagation
 

@@ -550,10 +550,10 @@ test('fetchHttpText: non-ok status throws with the HTTP code in the message', as
   );
 });
 
-test('fetchHttpText: a thrown fetch surfaces as a network-error message', async () => {
+test('fetchHttpText: a thrown fetch surfaces with the underlying message', async () => {
   const fakeFetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(
     withFetch(fakeFetch, () => fetchHttpText('https://x/foo.user.js')),
-    /network error fetching .*: Failed to fetch/,
+    /error fetching .*: Failed to fetch/,
   );
 });
