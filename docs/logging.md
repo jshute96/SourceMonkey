@@ -71,14 +71,20 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 | `no change: <logId>` (opportunistic mode) | yes | log |
 | `no change: <logId>` (manual mode) | no | log |
 | `loaded new content: <logId> (<size>)` | no | log |
-| `update check failed: <logId>: <err>` | no | warn |
-| `update check: <logId>: row vanished` | no | warn |
-| `update check: <logId>: error — <msg>` | no | warn |
+| `update check failed: <logId>: <err>` | no | info |
+| `update check: <logId>: row vanished` | no | info |
+| `update check: <logId>: error — <msg>` | no | info |
 | `source refresh (mode): <path>` | no | log |
 | `source refresh: <path>: <summary>` | no | log |
-| `source refresh failed: <path>: <err>` | no | warn |
+| `source refresh failed: <path>: <err>` | no | info |
 | `refreshing all sources (mode)` | no | log |
 | `start <logId> tab=<n> <url>` | no | log |
 | `swapped <logId> tab=<n> <url> (loadedAt …)` | no | log |
 | `abandoned <logId> tab=<n> <url> (reason=…)` | no | log |
-| `error <logId> tab=<n> <url>: <msg>` | no | warn |
+| `error <logId> tab=<n> <url>: <msg>` | no | info |
+
+SW logs deliberately avoid `console.warn` / `console.error`: Chrome
+forwards both into chrome://extensions/?errors, which should be
+reserved for actual extension bugs (not userscript failures,
+fetch errors, or expected fallbacks). Diagnostic chatter uses
+`console.info` so it stays in the SW DevTools console only.

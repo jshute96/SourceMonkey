@@ -174,7 +174,7 @@ async function runScriptCheck(
   try {
     next = await refreshScript(scriptId);
   } catch (err) {
-    console.warn(`[VibeMonkey] update check failed: ${label}: ${describe(err)}`);
+    console.info(`[VibeMonkey] update check failed: ${label}: ${describe(err)}`);
     throw err;
   }
   logScriptOutcome(label, prior, next, mode);
@@ -193,7 +193,7 @@ async function runSourceCheck(
   try {
     result = await refreshSource(sourceId);
   } catch (err) {
-    console.warn(`[VibeMonkey] source refresh failed: ${label}: ${describe(err)}`);
+    console.info(`[VibeMonkey] source refresh failed: ${label}: ${describe(err)}`);
     throw err;
   }
   if (result) summarizeSourceOutcome(label, priorBy, result.scripts);
@@ -235,11 +235,11 @@ function logScriptOutcome(
   mode: UpdateMode,
 ): void {
   if (!next) {
-    console.warn(`[VibeMonkey] update check: ${label}: row vanished`);
+    console.info(`[VibeMonkey] update check: ${label}: row vanished`);
     return;
   }
   if (next.status === 'error') {
-    console.warn(`[VibeMonkey] update check: ${label}: error — ${next.errorMessage ?? 'unknown'}`);
+    console.info(`[VibeMonkey] update check: ${label}: error — ${next.errorMessage ?? 'unknown'}`);
     return;
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
