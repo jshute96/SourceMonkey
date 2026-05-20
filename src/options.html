@@ -42,6 +42,21 @@
          clean. */
       .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
       .log-id-suffix:not(:empty)::before { content: ' '; }
+      /* Fixed-width slot for the site favicon to the left of the
+         filename link. Always present (even empty) so the filename
+         column has a stable left edge regardless of whether the icon
+         has loaded yet — or whether the script targets a site at all
+         (file:// scripts never get one). */
+      .site-icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        margin-right: 0.4em;
+        vertical-align: text-bottom;
+        flex: 0 0 auto;
+      }
+      .site-icon img { width: 16px; height: 16px; display: block; }
+      .script-table td.name-cell { white-space: nowrap; }
       .status-ok { color: #166534; }
       .status-error, .status-missing { color: #b00; }
       /* Small trash-can button shown beside the Status label on missing

@@ -90,6 +90,8 @@ details live in the topic-specific docs linked below.
   unsupported pattern forms.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
+- [site-icons.md](site-icons.md) — origin extraction from `@match`,
+  favicon fetch + cache, icon slot in the options/viewer UI.
 
 ## Build pipeline
 

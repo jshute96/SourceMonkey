@@ -102,6 +102,11 @@ against the prior so identical content still counts as "no change."
   count, and a small trash-can button next to the status lets you
   clear the record for files you don't expect to come back. Refresh
   alone won't re-add a missing row.
+- Each script row shows the favicon of the site its `@match`
+  patterns target, to the left of the filename. Icons are discovered
+  by fetching the matched page's HTML and parsing
+  `<link rel="icon">`, with `/favicon.ico` and Google's S2 favicon
+  service as fallbacks; the result is cached for a week.
 - After a refresh, any row that actually changed is highlighted:
   light green when it updated successfully, light red when it errored
   or vanished. The color stays on the row until the next refresh. A

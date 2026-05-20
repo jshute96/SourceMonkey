@@ -27,6 +27,7 @@ import {
   getValues,
 } from './userscript-header.js';
 import { scriptAbsolutePath } from './directories.js';
+import { ensureSiteIcon, representativeMatch } from './site-icon.js';
 
 declare const Prism: { highlightElement(el: Element): void };
 
@@ -191,7 +192,7 @@ async function onCopyFilename(): Promise<void> {
 
 function render(script: StoredScript): void {
   controlsRowEl.hidden = false;
-  filenameEl.textContent = script.relativePath;
+  renderFilenameHeading(script);
   document.title = `${script.relativePath} — VibeMonkey`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
@@ -214,6 +215,39 @@ function render(script: StoredScript): void {
     : script.bodyText;
   contentEl.textContent = body;
   Prism.highlightElement(contentEl);
+}
+
+// Replace the H1 with a favicon slot followed by the relative path.
+// The slot stays empty (but width-reserving) for scripts whose
+// matches don't yield a usable origin, so the path text always
+// starts at the same x-position.
+function renderFilenameHeading(script: StoredScript): void {
+  filenameEl.replaceChildren();
+  const iconSlot = document.createElement('span');
+  iconSlot.className = 'site-icon';
+  filenameEl.appendChild(iconSlot);
+  filenameEl.appendChild(document.createTextNode(script.relativePath));
+  void populateSiteIcon(iconSlot, script);
+}
+
+async function populateSiteIcon(slot: HTMLElement, script: StoredScript): Promise<void> {
+  const target = representativeMatch(script.matching);
+  if (!target) return;
+  let dataUrl: string | null;
+  try {
+    dataUrl = await ensureSiteIcon(target.origin, target.probeUrl);
+  } catch {
+    return;
+  }
+  if (!dataUrl) return;
+  // A re-render between fetch start and resolution swaps the slot for
+  // a fresh one; isConnected guards against painting into the orphan.
+  if (!slot.isConnected) return;
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.alt = '';
+  img.title = target.origin;
+  slot.replaceChildren(img);
 }
 
 function renderDetails(script: StoredScript): void {

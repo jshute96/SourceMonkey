@@ -21,6 +21,7 @@ Three key spaces in `chrome.storage.local`:
 | `"sources"`          | `string[]`          | Index of source IDs in display order. |
 | `"source:<sid>"`     | `StoredSource`      | Per-directory metadata. |
 | `"script:<scid>"`    | `StoredScript`      | Per-file content, parsed header, status. |
+| `"siteIcon:<orig>"`  | `SiteIconEntry`     | Cached favicon for an `https://host` origin (see [site-icons.md](site-icons.md)). |
 
 ### `StoredSource`
 
