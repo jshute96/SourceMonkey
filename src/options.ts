@@ -44,7 +44,7 @@ import {
 } from './script-display.js';
 import { DEBUG_LOGGING_KEY } from './debug-log.js';
 import { computeLogIds } from './script-log-id.js';
-import { ensureSiteIcon, representativeMatch } from './site-icon.js';
+import { renderSiteIconInto } from './site-icon.js';
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -269,17 +269,19 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   const nameCell = document.createElement('td');
   nameCell.classList.add('name-cell');
   // Slot for the favicon: a fixed-width container so the filename
-  // text always starts at the same x-position regardless of whether
-  // the icon has loaded yet. populateSiteIcon fills it in async.
+  // text always starts at the same x-position. renderSiteIconInto
+  // synchronously paints a globe placeholder (clickable when the
+  // script's @match yields a usable origin) and swaps it for the real
+  // favicon once the fetch resolves.
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
-  void populateSiteIcon(iconSlot, script);
+  renderSiteIconInto(iconSlot, script);
   const a = document.createElement('a');
   a.textContent = script.relativePath;
   a.href = viewerUrl(script.id).toString();
   a.target = '_blank';
-  a.rel = 'noopener';
+  a.rel = 'noopener noreferrer';
   nameCell.appendChild(a);
   // Dupe-suffix span, populated from currentLogIds. Empty for unique
   // basenames so the column stays clean; non-empty (e.g. " #2") only
@@ -739,33 +741,6 @@ function makeToggle(
   cb.addEventListener('change', () => onChange(cb.checked, label));
   label.appendChild(cb);
   return label;
-}
-
-// Fill the script row's icon slot with the favicon for the script's
-// representative match origin. Scripts that target file:// / ftp /
-// `*`-host (or have no @match at all) get no icon and the slot stays
-// empty — its reserved width keeps the filename column aligned. Cache
-// hits paint immediately; misses kick off a network fetch and patch
-// the slot when the data URL lands.
-async function populateSiteIcon(slot: HTMLElement, script: StoredScript): Promise<void> {
-  const target = representativeMatch(script.matching);
-  if (!target) return;
-  let dataUrl: string | null;
-  try {
-    dataUrl = await ensureSiteIcon(target.origin, target.probeUrl);
-  } catch {
-    return;
-  }
-  if (!dataUrl) return;
-  // The slot may have been replaced by a re-render between when we
-  // started the fetch and when it returned (Refresh, source toggle,
-  // etc.). isConnected guards against painting into a stale node.
-  if (!slot.isConnected) return;
-  const img = document.createElement('img');
-  img.src = dataUrl;
-  img.alt = '';
-  img.title = target.origin;
-  slot.replaceChildren(img);
 }
 
 function viewerUrl(scriptId: string): URL {

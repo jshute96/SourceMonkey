@@ -23,18 +23,21 @@
 regexes over the whole URL, not URL templates, so the origin you'd
 extract from `*://*/foo.html` would be misleading.
 
-## Picking a probe URL
+## Probe and link URLs
 
-`representativeMatch` returns both the origin (cache key) and a
-probe URL one step deeper than the root. The probe path is the
-literal prefix of the `@match` path, cut at the first `*`:
+`representativeMatch` returns a set of URLs derived from the first
+usable `@match`:
 
-| `@match`                              | Probe URL                              |
-|---------------------------------------|----------------------------------------|
-| `https://example.com/*`               | `https://example.com/`                 |
-| `https://example.com/app/*`           | `https://example.com/app/`             |
-| `https://example.com/posts/*/edit`    | `https://example.com/posts/`           |
-| `*://*.example.com/foo/bar*`          | `https://example.com/foo/bar`          |
+- `origin` — cache key (`scheme://host`, no path).
+- `probeUrl` — the page to fetch when discovering `<link rel="icon">`. Cut at the literal prefix of the `@match` path (just before the first `*`).
+- `linkUrl` — where to navigate when the user clicks the favicon. Cut at the last complete path segment without a wildcard, so the click always lands on a valid directory.
+
+| `@match`                              | Probe URL                       | Link URL                         |
+|---------------------------------------|---------------------------------|----------------------------------|
+| `https://example.com/*`               | `https://example.com/`          | `https://example.com/`           |
+| `https://example.com/app/*`           | `https://example.com/app/`      | `https://example.com/app/`       |
+| `https://example.com/posts/*/edit`    | `https://example.com/posts/`    | `https://example.com/posts/`     |
+| `*://*.example.com/foo/bar*`          | `https://example.com/foo/bar`   | `https://example.com/foo/`       |
 
 ## Fetch + cache
 
@@ -110,11 +113,15 @@ would just trigger a fresh fetch if the user re-adds the source.
 ## Display
 
 - A 16×16 `<span class="site-icon">` slot sits before the filename
-  link in each row. It's always present (even empty) so the filename
-  text starts at the same x-position regardless of whether the icon
-  has loaded — or whether the script has a representative origin at
-  all.
-- The slot's `<img>` is set to the data URL once `ensureSiteIcon`
-  resolves. If a re-render replaced the slot before the fetch
-  finished, the paint is suppressed via `isConnected`.
-- The viewer page mirrors the same slot inside its `<h1>`.
+  link in each row. The viewer page mirrors the same slot inside its
+  `<h1>`.
+- `renderSiteIconInto` paints the slot synchronously:
+  - When the script has a representative origin, the slot contains an `<a class="site-icon-inner" target="_blank">` pointing at `linkUrl`.
+  - Otherwise it contains an inert `<span class="site-icon-inner">` — file:// scripts, `<all_urls>`, host-of-`*`, etc.
+- The inner element always starts with a muted globe SVG
+  (`.site-icon-globe`) so users see *something* immediately and
+  rows missing an origin still show a consistent placeholder.
+- Once `ensureSiteIcon` resolves, the globe is swapped for an `<img>`
+  with the data URL. If a re-render replaced the inner element
+  before the fetch finished, the paint is suppressed via
+  `isConnected`.

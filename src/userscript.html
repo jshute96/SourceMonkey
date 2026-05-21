@@ -21,8 +21,11 @@
         word-break: break-all;
       }
       /* Fixed-width slot for the site favicon, immediately before the
-         filename text in the h1. Always present (even empty) so the
-         text always starts at the same x-position. */
+         filename text in the h1. Always present so the text always
+         starts at the same x-position. Holds a clickable <a> when the
+         script's @match yields an origin, or an inert <span>
+         otherwise. Inner content is a globe placeholder until the real
+         favicon loads. */
       h1 .site-icon {
         display: inline-block;
         width: 16px;
@@ -30,7 +33,16 @@
         margin-right: 0.4em;
         vertical-align: text-bottom;
       }
+      .site-icon-inner {
+        display: block;
+        width: 16px;
+        height: 16px;
+        color: #888;
+      }
+      a.site-icon-inner { text-decoration: none; }
+      a.site-icon-inner:hover { color: #444; }
       h1 .site-icon img { width: 16px; height: 16px; display: block; }
+      .site-icon-globe { width: 16px; height: 16px; display: block; }
       /* Controls row: per-script enable toggle + Refresh button. The
          filename, size, and status moved into the details panel below
          where the dl gives them aligned label/value columns. */

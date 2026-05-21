@@ -80,13 +80,16 @@ export function representativeOrigin(matching: {
 }
 
 // Like representativeOrigin, but also yields a probe URL one step
-// deeper than the origin root — see file header.
-//   https://example.com/*              → probe `/`
-//   https://example.com/app/home/*     → probe `/app/home/`
-//   https://example.com/posts/*/edit   → probe `/posts/`
+// deeper than the origin root — see file header — and a linkUrl
+// suitable for opening in a new tab from the favicon (segment-based,
+// not partial-segment, so it's always a valid path to navigate to).
+//   https://example.com/*              → probe `/`,        link `/`
+//   https://example.com/app/home/*     → probe `/app/home/`, link `/app/home/`
+//   https://example.com/posts/*/edit   → probe `/posts/`,  link `/posts/`
+//   https://example.com/foo/bar*       → probe `/foo/bar`, link `/foo/`
 export function representativeMatch(matching: {
   matches: string[];
-}): { origin: string; probeUrl: string } | null {
+}): { origin: string; probeUrl: string; linkUrl: string } | null {
   for (const m of matching.matches) {
     const got = matchTargetInfo(m);
     if (got) return got;
@@ -94,7 +97,7 @@ export function representativeMatch(matching: {
   return null;
 }
 
-function matchTargetInfo(pattern: string): { origin: string; probeUrl: string } | null {
+function matchTargetInfo(pattern: string): { origin: string; probeUrl: string; linkUrl: string } | null {
   const p = parseMatchPattern(pattern);
   if (!p) return null;
   const origin = `${p.scheme}://${p.host}`;
@@ -102,7 +105,29 @@ function matchTargetInfo(pattern: string): { origin: string; probeUrl: string } 
   const literalPath = star < 0 ? p.path : p.path.slice(0, star);
   // Empty prefix means the path started with `*`. Use `/` for a
   // well-formed URL.
-  return { origin, probeUrl: origin + (literalPath || '/') };
+  const probeUrl = origin + (literalPath || '/');
+  const linkUrl = origin + linkPathFromMatchPath(p.path);
+  return { origin, probeUrl, linkUrl };
+}
+
+// Build the path for the favicon click-through. Walk segments
+// left-to-right and stop at the first segment containing a `*`; trim
+// off that partial segment so the URL ends on a clean directory
+// boundary the server is likely to actually serve. Pure-literal paths
+// (no `*` anywhere) pass through unchanged.
+export function linkPathFromMatchPath(path: string): string {
+  const segments = path.split('/');
+  const kept: string[] = [];
+  for (let i = 1; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg.includes('*')) {
+      // Trailing slash when we kept at least one segment; bare `/`
+      // when the first segment was already a wildcard.
+      return '/' + (kept.length ? kept.join('/') + '/' : '');
+    }
+    kept.push(seg);
+  }
+  return '/' + kept.join('/');
 }
 
 // ---------- Storage I/O ----------
@@ -421,4 +446,77 @@ export async function ensureSiteIcon(
   });
   inflight.set(origin, p);
   return p;
+}
+
+// ---------- DOM rendering ----------
+
+// Minimum subset of StoredScript needed to render an icon slot: the
+// matching object. Declared locally so this module stays free of a
+// dependency on script-store.
+interface ScriptWithMatching {
+  matching: { matches: string[] };
+}
+
+// Build the favicon slot for a script row / viewer header. Always
+// renders something synchronously: when the script's @match yields a
+// usable origin, the slot becomes a clickable `<a>` opening linkUrl
+// in a new tab; otherwise it holds an inert `<span>` (file:// scripts,
+// `<all_urls>`, etc.). Either wrapper starts with a globe placeholder,
+// swapped for the real favicon once it loads. The async swap checks
+// `isConnected` before painting so a re-render between fetch start
+// and resolution doesn't drop the icon into a stale subtree.
+export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching): void {
+  const target = representativeMatch(script.matching);
+  const inner = slot.ownerDocument.createElement(target ? 'a' : 'span');
+  inner.className = 'site-icon-inner';
+  inner.appendChild(buildGlobeSvg(slot.ownerDocument));
+  if (target) {
+    const a = inner as HTMLAnchorElement;
+    a.href = target.linkUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.title = target.linkUrl;
+  }
+  slot.replaceChildren(inner);
+  if (!target) return;
+
+  void (async () => {
+    let dataUrl: string | null;
+    try {
+      dataUrl = await ensureSiteIcon(target.origin, target.probeUrl);
+    } catch {
+      return;
+    }
+    if (!dataUrl) return;
+    if (!inner.isConnected) return;
+    const img = slot.ownerDocument.createElement('img');
+    img.src = dataUrl;
+    img.alt = '';
+    inner.replaceChildren(img);
+  })();
+}
+
+function buildGlobeSvg(doc: Document): SVGSVGElement {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'site-icon-globe');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const circle = doc.createElementNS(NS, 'circle');
+  circle.setAttribute('cx', '12');
+  circle.setAttribute('cy', '12');
+  circle.setAttribute('r', '10');
+  svg.appendChild(circle);
+  const equator = doc.createElementNS(NS, 'path');
+  equator.setAttribute('d', 'M2 12h20');
+  svg.appendChild(equator);
+  const meridian = doc.createElementNS(NS, 'path');
+  meridian.setAttribute('d', 'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z');
+  svg.appendChild(meridian);
+  return svg;
 }

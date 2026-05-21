@@ -11,6 +11,7 @@ import {
   originFromMatchPattern,
   representativeOrigin,
   representativeMatch,
+  linkPathFromMatchPath,
   isCacheFresh,
   parseIconLinks,
   pickBestIconCandidate,
@@ -107,30 +108,49 @@ test('representativeOrigin: null when no matches yield an origin', () => {
   assert.equal(representativeOrigin({ matches: [] }), null);
 });
 
-// ---------- representativeMatch (probe URL) ----------
+// ---------- representativeMatch (probe + link URLs) ----------
 
 test('representativeMatch: probe URL keeps the literal path prefix', () => {
   assert.deepEqual(
     representativeMatch({ matches: ['https://connect.garmin.com/app/*'] }),
-    { origin: 'https://connect.garmin.com', probeUrl: 'https://connect.garmin.com/app/' },
+    {
+      origin: 'https://connect.garmin.com',
+      probeUrl: 'https://connect.garmin.com/app/',
+      linkUrl: 'https://connect.garmin.com/app/',
+    },
   );
   assert.deepEqual(
     representativeMatch({ matches: ['https://example.com/posts/*/edit'] }),
-    { origin: 'https://example.com', probeUrl: 'https://example.com/posts/' },
+    {
+      origin: 'https://example.com',
+      probeUrl: 'https://example.com/posts/',
+      linkUrl: 'https://example.com/posts/',
+    },
   );
 });
 
 test('representativeMatch: all-glob path collapses to /', () => {
   assert.deepEqual(
     representativeMatch({ matches: ['https://example.com/*'] }),
-    { origin: 'https://example.com', probeUrl: 'https://example.com/' },
+    {
+      origin: 'https://example.com',
+      probeUrl: 'https://example.com/',
+      linkUrl: 'https://example.com/',
+    },
   );
 });
 
 test('representativeMatch: subdomain-wildcard pattern keeps the path', () => {
+  // probeUrl uses the literal-prefix cut (mid-segment), while linkUrl
+  // backs off to the last complete segment so the click-through lands
+  // on a valid directory.
   assert.deepEqual(
     representativeMatch({ matches: ['*://*.example.com/foo/bar*'] }),
-    { origin: 'https://example.com', probeUrl: 'https://example.com/foo/bar' },
+    {
+      origin: 'https://example.com',
+      probeUrl: 'https://example.com/foo/bar',
+      linkUrl: 'https://example.com/foo/',
+    },
   );
 });
 
@@ -138,6 +158,31 @@ test('representativeMatch: null for patterns without a usable origin', () => {
   assert.equal(representativeMatch({ matches: ['<all_urls>'] }), null);
   assert.equal(representativeMatch({ matches: ['file:///x/*'] }), null);
   assert.equal(representativeMatch({ matches: [] }), null);
+});
+
+// ---------- linkPathFromMatchPath ----------
+
+test('linkPathFromMatchPath: full-glob path is just /', () => {
+  assert.equal(linkPathFromMatchPath('/*'), '/');
+});
+
+test('linkPathFromMatchPath: keeps complete segments up to the first wildcard', () => {
+  assert.equal(linkPathFromMatchPath('/app/*'), '/app/');
+  assert.equal(linkPathFromMatchPath('/posts/*/edit'), '/posts/');
+  assert.equal(linkPathFromMatchPath('/a/b/c/*'), '/a/b/c/');
+});
+
+test('linkPathFromMatchPath: trims partial wildcard segments', () => {
+  // `bar*` is partial: link target backs off to the parent directory.
+  assert.equal(linkPathFromMatchPath('/foo/bar*'), '/foo/');
+  assert.equal(linkPathFromMatchPath('/foo/bar*/baz'), '/foo/');
+});
+
+test('linkPathFromMatchPath: pure-literal paths pass through unchanged', () => {
+  assert.equal(linkPathFromMatchPath('/'), '/');
+  assert.equal(linkPathFromMatchPath('/foo'), '/foo');
+  assert.equal(linkPathFromMatchPath('/foo/bar'), '/foo/bar');
+  assert.equal(linkPathFromMatchPath('/foo/bar/'), '/foo/bar/');
 });
 
 // ---------- isCacheFresh ----------
