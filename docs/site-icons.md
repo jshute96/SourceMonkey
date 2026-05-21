@@ -14,15 +14,25 @@
   - `@icon` (cross-manager)
   - `@iconURL`, `@defaulticon` (TM aliases)
   - `@icon64URL`, `@icon64` (TM 64×64)
-- Only absolute `http(s)` and `data:` URLs are accepted. Relative
-  hrefs are rejected — TM resolves them against `@downloadURL`, but
-  SourceMonkey sources don't reliably carry one, so the result would be
-  ambiguous.
-- `data:` URLs render inline (no fetch) and are length-capped to the
-  same ~170 KB ceiling we apply to inline `<link rel="icon">` hrefs.
-- `http(s)` URLs go through the same bounded-fetch + storage cache
-  the origin-discovery path uses, keyed by the URL itself so multiple
-  scripts pointing at the same icon share one fetch.
+- Accepted reference forms (handled by [`src/file-loader.ts`](../src/file-loader.ts)):
+  - Absolute `http(s)://` URL.
+  - `data:` URL (rendered inline, no fetch).
+  - Relative path — resolved against the script's parent directory.
+    Works for both file:// and HTTP scripts: an HTTP script's
+    `@icon foo.png` reaches `<script-dir>/foo.png` on the same origin.
+- Absolute `file://` URLs are *not* accepted — the extension holds
+  `file:///*` host permission, so allowing arbitrary file:// refs
+  would let a malicious HTTP-sourced script read host files.
+- Path-traversal is rejected: the resolved URL must still live at or
+  under the script's parent dir. Caught textually via a post-resolution
+  prefix check on the URL string, so `..`, `%2e%2e`, `..\`, and
+  host-absolute `/` paths are all rejected uniformly.
+- `data:` URLs are length-capped to the same ~170 KB ceiling we apply
+  to inline `<link rel="icon">` hrefs.
+- Fetched URLs (http(s) or file://) go through the same bounded-fetch
+  + storage cache the origin-discovery path uses, keyed by the
+  resolved URL itself so multiple scripts pointing at the same icon
+  share one fetch.
 - The click-through link is *always* the `@match`-derived `linkUrl`.
   `@icon` is purely a visual override — it doesn't change which site
   the favicon links to.

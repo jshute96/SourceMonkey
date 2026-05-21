@@ -32,6 +32,31 @@
   private repos or unlisted gists. The current design only handles
   publicly-fetchable URLs.
 
+## File loader — follow-ups for `@require`
+
+- Manifest query-string propagation. `resolveManifestEntryUrl`
+  forwards an auth-bearing manifest query string (e.g. `?token=…`)
+  onto same-origin entries, but `resolveScriptResource` doesn't —
+  `new URL('icon.png', '…/foo.user.js?token=…')` strips the query.
+  Fine for `@icon` (a token-gated icon is rare), but `@require` of
+  a token-gated companion will 401 once it lands. Port the
+  same-origin propagation rule into `resolveScriptResource` when
+  `@require` ships.
+- 0-byte handling. `fetchFileBytesXhr` rejects empty bodies (right
+  for icons — a 0-byte image is useless). `@require` of a 0-byte JS
+  file should still succeed (it just does nothing); distinguish
+  "missing file" (`onerror`) from "empty file" (`onload` with
+  zero bytes) before reusing the helper.
+- Surface failed / blocked file loads. Today every failure mode in
+  `resolveScriptResource` + `fetchResourceBytes` is silent — a
+  rejected `@icon ../secret.png` (or a fetch that 404s, times out,
+  or trips the content-type filter) leaves the user with no signal
+  that their declared icon didn't work. Options range from a
+  one-line `console.warn` at render time (cheap, reaches anyone
+  debugging) up to a stored `iconError` field on `StoredScript` so
+  the viewer page can surface it in the details panel. Same problem
+  will apply to `@require` and is worth solving once for both.
+
 ## Local directory sources — follow-ups
 
 - Watch for upstream changes to Chrome's `file://` directory-listing

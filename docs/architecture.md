@@ -43,6 +43,11 @@ details live in the topic-specific docs linked below.
   `http(s)://` fetcher and JSON manifest parser. See
   [file-access.md](file-access.md) and
   [http-sources.md](http-sources.md).
+- **File loader** (`src/file-loader.ts`) — resolves header references
+  (`@icon` today, `@require` planned) into absolute URLs against the
+  script's parent dir (rejecting `..` and host-absolute paths), and
+  exposes a scheme-aware bounded byte fetcher used by the icon
+  pipeline.
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
   See [script-viewer.md](script-viewer.md). For which `@tag` fields

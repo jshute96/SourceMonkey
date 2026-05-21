@@ -5,8 +5,32 @@
 // inert <span>. The third test exercises the @icon header override
 // using a `data:` URL so the swap-in is network-independent.
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { UserscriptServer } from '../fixtures/userscript-server';
+
+// 1x1 transparent PNG bytes — used by the relative-`@icon` tests below
+// as a real binary file alongside the userscript (file:// and HTTP).
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+const PNG_BYTES = Buffer.from(PNG_BASE64, 'base64');
+
+// Build a userscript text with `@icon <ref>` set to whatever value the
+// test wants to exercise. Mirrors `userscriptText` in the fixture but
+// keeps the icon header configurable inline.
+function userscriptWithIcon(name: string, iconRef: string): string {
+  return [
+    '// ==UserScript==',
+    `// @name        ${name}`,
+    '// @match       https://example.com/*',
+    `// @icon        ${iconRef}`,
+    '// ==/UserScript==',
+    '',
+  ].join('\n');
+}
 
 test.describe('site-icon slot', () => {
   let scriptsDir: ScriptsDir;
@@ -90,5 +114,119 @@ test.describe('site-icon slot', () => {
     await expect(slot.locator('span.site-icon-inner')).toHaveCount(1);
     await expect(slot.locator('svg.site-icon-globe')).toBeVisible();
     await page.close();
+  });
+
+  test('@icon relative path resolves against the script\'s parent dir', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Drop a real PNG alongside the userscript and reference it with a
+    // bare filename in `@icon`. This is the file-loader's relative-path
+    // path end-to-end: the file:// XHR byte-fetcher reads the bytes and
+    // site-icon.ts wraps them into a data: URL for <img src>.
+    scriptsDir.write({
+      relativePath: 'icon.user.js',
+      meta: {
+        name: 'Relative',
+        match: ['https://example.com/*'],
+        extra: ['// @icon       icon.png'],
+      },
+      body: '',
+    });
+    fs.writeFileSync(path.join(scriptsDir.path, 'icon.png'), PNG_BYTES);
+    const source = await sm.addSource(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+    const slot = row.locator('.site-icon');
+    // The MIME prefix Chrome's file:// XHR layer reports is unreliable
+    // across platforms (sometimes `image/png`, sometimes empty falling
+    // back to `image/x-icon`); match by the base64 body, which is what
+    // proves the file:// fetch actually ran and produced the bytes.
+    await expect(slot.locator('a.site-icon-inner img'))
+      .toHaveAttribute('src', new RegExp(`^data:image/[^;]+;base64,${PNG_BASE64.replace(/[=+/]/g, c => '\\' + c)}$`));
+    await page.close();
+  });
+
+  test('@icon relative path resolves against an HTTP script\'s parent dir', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // HTTP twin of the previous test: a userscript loaded over HTTP
+    // pointing at a sibling icon via a bare filename should reach the
+    // same-origin `<dir>/icon.png` and inline the bytes. Exercises the
+    // file-loader's relative-path resolution against an http(s)
+    // scriptFileUrl plus the fetch()-based byte fetcher.
+    const server = await UserscriptServer.start();
+    try {
+      server.setRoute('/scripts/foo.user.js', userscriptWithIcon('HttpRel', 'icon.png'));
+      server.setRoute('/scripts/icon.png', PNG_BYTES, { contentType: 'image/png' });
+      const source = await sm.addSource(`${server.baseUrl}/scripts/foo.user.js`);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+      const slot = row.locator('.site-icon');
+      await expect(slot.locator('a.site-icon-inner img'))
+        .toHaveAttribute('src', `data:image/png;base64,${PNG_BASE64}`);
+      // The icon fetch actually went over the wire.
+      expect(server.countResponses('/scripts/icon.png', 200)).toBeGreaterThanOrEqual(1);
+      await page.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('@icon rejects path-traversal and absolute file:// refs end-to-end', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Three malicious `@icon` shapes that must all be rejected before
+    // any fetch: literal `..`, percent-encoded `..`, and absolute
+    // file:// pointing outside the script's tree. We drop a sibling
+    // PNG into the parent directory so a successful traversal would
+    // produce a visible img swap; the assertion is that none of them
+    // do — the slot stays on its globe placeholder.
+    const parent = fs.mkdtempSync(path.join(scriptsDir.path, '..', 'sm-parent-'));
+    try {
+      fs.writeFileSync(path.join(parent, 'secret.png'), PNG_BYTES);
+      const child = path.join(parent, 'child');
+      fs.mkdirSync(child);
+      // The userscript lives in <parent>/child/. A `..` traversal from
+      // here would reach <parent>/secret.png; a relative-then-resolved
+      // absolute path would do the same.
+      const traversals = [
+        '../secret.png',
+        '%2e%2e/secret.png',
+        `file://${path.join(parent, 'secret.png')}`,
+      ];
+      for (let i = 0; i < traversals.length; i++) {
+        fs.writeFileSync(
+          path.join(child, `s${i}.user.js`),
+          userscriptWithIcon(`Trav${i}`, traversals[i]),
+        );
+      }
+      const source = await sm.addSource(child);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      // Every row's icon slot must show only the globe placeholder —
+      // never an <img>. If any traversal had been honored we'd see the
+      // PNG's data URL swapped in.
+      const rows = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`);
+      const slots = rows.locator('.site-icon');
+      const count = await slots.count();
+      expect(count).toBe(traversals.length);
+      for (let i = 0; i < count; i++) {
+        const slot = slots.nth(i);
+        await expect(slot.locator('svg.site-icon-globe')).toBeVisible();
+        // No img element should ever appear in the slot for these
+        // rejected refs. (Origin discovery is the other code path that
+        // could paint an img, but example.com isn't reachable in CI so
+        // that fetch fails into a null cache entry and never paints.)
+        await expect(slot.locator('img')).toHaveCount(0);
+      }
+      await page.close();
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
   });
 });

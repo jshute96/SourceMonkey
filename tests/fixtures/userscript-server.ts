@@ -15,7 +15,9 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 interface Route {
-  body: string;
+  // String or Buffer — Buffer for binary payloads like PNG icons that
+  // would otherwise be mangled by UTF-8 encoding of `res.end(string)`.
+  body: string | Buffer;
   contentType: string;
   etag?: string;
   lastModified?: string;
@@ -80,7 +82,7 @@ export class UserscriptServer {
   // hash the body to decide whether anything changed).
   setRoute(
     path: string,
-    body: string,
+    body: string | Buffer,
     opts: { etag?: string; lastModified?: string; contentType?: string } = {},
   ): void {
     const route: Route = {

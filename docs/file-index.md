@@ -52,6 +52,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the options/viewer UI |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
+| `src/file-loader.ts` | Resolves header refs (`@icon`, future `@require`) against the script's parent dir with traversal rejection; scheme-aware byte fetcher |
 | `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, decision-callback close, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
@@ -77,7 +78,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
 | `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
-| `tests/e2e/site-icons.spec.ts` | Favicon slot DOM contract: clickable anchor + linkUrl, inert span when no origin, globe placeholder, and `@icon` header override via inline `data:` URL |
+| `tests/e2e/site-icons.spec.ts` | Favicon slot DOM contract: clickable anchor + linkUrl, inert span when no origin, globe placeholder, `@icon` header override via inline `data:` URL, and `@icon`-relative-path resolution against the script's parent dir |
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
@@ -89,6 +90,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `basenameOf` + `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
 | `tests/unit/site-icon.test.mjs` | Unit tests for site-icon origin/probe-URL extraction, `<link rel="icon">` parsing + scoring, and cache TTLs |
+| `tests/unit/file-loader.test.mjs` | Unit tests for `resolveScriptResource` — accepted schemes, relative-path resolution, and traversal rejection |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at mapping, spec build, active-spec collection) |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 

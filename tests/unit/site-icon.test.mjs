@@ -13,7 +13,7 @@ import {
   representativeOrigin,
   representativeMatch,
   linkPathFromMatchPath,
-  iconUrlFromHeader,
+  iconRefFromHeader,
   isCacheFresh,
   parseIconLinks,
   pickBestIconCandidate,
@@ -187,43 +187,48 @@ test('linkPathFromMatchPath: pure-literal paths pass through unchanged', () => {
   assert.equal(linkPathFromMatchPath('/foo/bar/'), '/foo/bar/');
 });
 
-// ---------- iconUrlFromHeader ----------
+// ---------- iconRefFromHeader ----------
+//
+// The header parser only extracts the raw reference string now; the
+// URL validation + relative-path resolution moved to file-loader and
+// runs at render time. These tests cover the trimmed/non-empty
+// contract; scheme + `..` rejection is tested in file-loader.test.mjs.
 
 function header(...tags) {
   // Build a minimal ParsedHeader from a list of [tag, value] pairs.
   return { tags: tags.map(([tag, value]) => ({ tag, value })) };
 }
 
-test('iconUrlFromHeader: returns @icon when present', () => {
+test('iconRefFromHeader: returns @icon when present', () => {
   assert.equal(
-    iconUrlFromHeader(header(['icon', 'https://example.com/i.png'])),
+    iconRefFromHeader(header(['icon', 'https://example.com/i.png'])),
     'https://example.com/i.png',
   );
 });
 
-test('iconUrlFromHeader: accepts TM aliases', () => {
+test('iconRefFromHeader: accepts TM aliases', () => {
   assert.equal(
-    iconUrlFromHeader(header(['iconurl', 'https://example.com/i.png'])),
+    iconRefFromHeader(header(['iconurl', 'https://example.com/i.png'])),
     'https://example.com/i.png',
   );
   assert.equal(
-    iconUrlFromHeader(header(['defaulticon', 'https://example.com/d.png'])),
+    iconRefFromHeader(header(['defaulticon', 'https://example.com/d.png'])),
     'https://example.com/d.png',
   );
   assert.equal(
-    iconUrlFromHeader(header(['icon64url', 'https://example.com/64.png'])),
+    iconRefFromHeader(header(['icon64url', 'https://example.com/64.png'])),
     'https://example.com/64.png',
   );
   assert.equal(
-    iconUrlFromHeader(header(['icon64', 'https://example.com/64b.png'])),
+    iconRefFromHeader(header(['icon64', 'https://example.com/64b.png'])),
     'https://example.com/64b.png',
   );
 });
 
-test('iconUrlFromHeader: @icon wins over 64-variants', () => {
+test('iconRefFromHeader: @icon wins over 64-variants', () => {
   // Smaller-resolution variant is preferred when both are declared.
   assert.equal(
-    iconUrlFromHeader(header(
+    iconRefFromHeader(header(
       ['icon64', 'https://example.com/64.png'],
       ['icon', 'https://example.com/i.png'],
     )),
@@ -231,34 +236,35 @@ test('iconUrlFromHeader: @icon wins over 64-variants', () => {
   );
 });
 
-test('iconUrlFromHeader: accepts data: URLs verbatim', () => {
+test('iconRefFromHeader: returns data: URLs verbatim', () => {
   const dataUrl = 'data:image/png;base64,iVBORw0KGgo=';
-  assert.equal(iconUrlFromHeader(header(['icon', dataUrl])), dataUrl);
+  assert.equal(iconRefFromHeader(header(['icon', dataUrl])), dataUrl);
 });
 
-test('iconUrlFromHeader: rejects relative and non-http(s) URLs', () => {
-  assert.equal(iconUrlFromHeader(header(['icon', '/icon.png'])), null);
-  assert.equal(iconUrlFromHeader(header(['icon', 'icon.png'])), null);
-  assert.equal(iconUrlFromHeader(header(['icon', 'ftp://example.com/i.png'])), null);
-  assert.equal(iconUrlFromHeader(header(['icon', 'javascript:alert(1)'])), null);
+test('iconRefFromHeader: returns relative refs verbatim', () => {
+  // Resolution is the file-loader's job; the header reader hands the
+  // raw string through unchanged so consumers can decide.
+  assert.equal(iconRefFromHeader(header(['icon', 'icon.png'])), 'icon.png');
+  assert.equal(iconRefFromHeader(header(['icon', 'sub/icon.png'])), 'sub/icon.png');
 });
 
-test('iconUrlFromHeader: rejects empty / malformed values', () => {
-  assert.equal(iconUrlFromHeader(header(['icon', ''])), null);
-  assert.equal(iconUrlFromHeader(header(['icon', '   '])), null);
-  assert.equal(iconUrlFromHeader(header(['icon', 'not a url'])), null);
+test('iconRefFromHeader: trims whitespace; rejects empty values', () => {
+  assert.equal(iconRefFromHeader(header(['icon', '  https://example.com/i.png  '])),
+    'https://example.com/i.png');
+  assert.equal(iconRefFromHeader(header(['icon', ''])), null);
+  assert.equal(iconRefFromHeader(header(['icon', '   '])), null);
 });
 
-test('iconUrlFromHeader: null/empty header returns null', () => {
-  assert.equal(iconUrlFromHeader(null), null);
-  assert.equal(iconUrlFromHeader({ tags: [] }), null);
+test('iconRefFromHeader: null/empty header returns null', () => {
+  assert.equal(iconRefFromHeader(null), null);
+  assert.equal(iconRefFromHeader({ tags: [] }), null);
 });
 
-test('iconUrlFromHeader: ignores localized @icon variants', () => {
+test('iconRefFromHeader: ignores localized @icon variants', () => {
   // A locale-suffixed entry should not count — the canonical
   // unlocalized form is the only one consulted.
   const h = { tags: [{ tag: 'icon', locale: 'de', value: 'https://example.com/de.png' }] };
-  assert.equal(iconUrlFromHeader(h), null);
+  assert.equal(iconRefFromHeader(h), null);
 });
 
 // ---------- isCacheFresh ----------

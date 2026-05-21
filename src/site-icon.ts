@@ -1,3 +1,5 @@
+import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
+
 // Site-icon (favicon) extraction + cache. Used by the options page
 // and userscript viewer to show a 16x16 icon next to each script.
 //
@@ -31,7 +33,6 @@ const SUCCESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NULL_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ICON_BYTES = 128 * 1024;
 const MAX_HTML_BYTES = 1024 * 1024;
-const FETCH_TIMEOUT_MS = 5000;
 // Cap on inline-`data:`-URL icons declared in `<link href="data:...">`.
 // Base64 inflates by ~4/3 and the `data:image/...;base64,` prefix adds
 // a few dozen chars; round up and add slack rather than guess.
@@ -146,33 +147,22 @@ export function linkPathFromMatchPath(path: string): string {
 // display size.
 const ICON_HEADER_TAGS = ['icon', 'iconurl', 'defaulticon', 'icon64url', 'icon64'];
 
-// Read the script's preferred icon URL from its parsed metadata, or
-// null if no usable variant is set. Only absolute http(s) or `data:`
-// URLs are accepted — relative hrefs are ambiguous (would need a
-// downloadURL to resolve against, and most sources don't set one).
-export function iconUrlFromHeader(
+// Read the highest-priority icon reference declared in the parsed
+// metadata, or null when none is set. The reference comes back raw
+// (just trimmed + non-empty); resolving it into an absolute URL —
+// including the relative-path-against-script-parent rules and `..`
+// rejection — is the file-loader's job and happens at render time
+// when the script's `fileUrl` is in scope.
+export function iconRefFromHeader(
   header: { tags: { tag: string; locale?: string; value: string }[] } | null,
 ): string | null {
   if (!header) return null;
   for (const tag of ICON_HEADER_TAGS) {
     for (const e of header.tags) {
       if (e.tag !== tag || e.locale !== undefined) continue;
-      const url = sanitizeIconHeaderValue(e.value);
-      if (url) return url;
+      const trimmed = e.value.trim();
+      if (trimmed) return trimmed;
     }
-  }
-  return null;
-}
-
-function sanitizeIconHeaderValue(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('data:')) return trimmed;
-  try {
-    const u = new URL(trimmed);
-    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString();
-  } catch {
-    // Falls through to null.
   }
   return null;
 }
@@ -377,72 +367,20 @@ export function maxDeclaredSize(sizes: string | null): number | null {
   return max;
 }
 
-// ---------- Bounded fetch ----------
-
-// Shared scaffolding for the HTML and icon-image fetches: aborting
-// timeout, redirect-following, no-referrer (to avoid leaking the
-// chrome-extension:// origin to third parties), content-type filter,
-// and a size cap. The size cap is checked against Content-Length when
-// the server provides it, and again against the buffered body — so an
-// honest server with an oversized payload is rejected before the read,
-// and a server that omits Content-Length still can't overrun by more
-// than one buffered body. Streaming-read enforcement would be tighter
-// but is not worth the complexity at our threat model (we only probe
-// origins the user opted into via their userscripts).
-type FetchKind = 'html' | 'image';
-
-interface FetchedBytes {
-  body: ArrayBuffer;
-  contentType: string;
-  finalUrl: string;
-}
-
-async function fetchBounded(
-  url: string,
-  kind: FetchKind,
-  maxBytes: number,
-): Promise<FetchedBytes | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      cache: 'no-store',
-      redirect: 'follow',
-      referrerPolicy: 'no-referrer',
-      signal: controller.signal,
-    });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!response.ok) return null;
-
-  const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
-  if (contentType) {
-    const acceptable = kind === 'html'
-      ? contentType.includes('html')
-      : contentType.startsWith('image/');
-    if (!acceptable) return null;
-  }
-
-  const cl = response.headers.get('content-length');
-  if (cl && Number(cl) > maxBytes) return null;
-
-  let body: ArrayBuffer;
-  try {
-    body = await response.arrayBuffer();
-  } catch {
-    return null;
-  }
-  if (body.byteLength === 0 || body.byteLength > maxBytes) return null;
-
-  return { body, contentType, finalUrl: response.url || url };
-}
+// ---------- Icon + HTML retrieval ----------
+//
+// Both legs delegate to file-loader's `fetchResourceBytes`. The icon
+// path supports http(s) and file:// uniformly (the latter via the
+// page-context XHR fallback). HTML probing is http-only with a more
+// permissive content-type gate. Size caps are enforced inside
+// fetchResourceBytes against both Content-Length (when the server
+// supplies it) and the buffered body.
 
 async function fetchHtml(url: string): Promise<{ text: string; finalUrl: string } | null> {
-  const res = await fetchBounded(url, 'html', MAX_HTML_BYTES);
+  const res = await fetchResourceBytes(url, {
+    maxBytes: MAX_HTML_BYTES,
+    acceptContentType: (ct) => ct.includes('html'),
+  });
   if (!res) return null;
   // Decode as UTF-8. Real-world HTML in non-UTF-8 charsets is rare
   // enough today that we accept the occasional mojibake — and even
@@ -451,8 +389,15 @@ async function fetchHtml(url: string): Promise<{ text: string; finalUrl: string 
   return { text, finalUrl: res.finalUrl };
 }
 
+// Scheme-aware icon fetch. Used by both the origin-discovery path
+// (always http(s)) and the `@icon`-header path (any of http(s)/file://).
+// Goes through file-loader's bounded byte fetcher so the page-context
+// chrome-extension → file:// opaque-response trap is sidestepped.
 async function fetchIconAt(url: string): Promise<string | null> {
-  const res = await fetchBounded(url, 'image', MAX_ICON_BYTES);
+  const res = await fetchResourceBytes(url, {
+    maxBytes: MAX_ICON_BYTES,
+    acceptContentType: (ct) => ct.startsWith('image/'),
+  });
   if (!res) return null;
   // Strip any `; charset=…` parameter; default to image/x-icon when
   // the server omitted Content-Type so the data URL still renders.
@@ -506,9 +451,9 @@ export async function ensureSiteIcon(
 
 // Resolve a script-declared icon URL (`@icon` / `@iconURL` / etc.).
 // Inline `data:` URLs are returned directly when within the size cap;
-// http(s) URLs go through the same bounded fetch + storage cache the
-// origin-discovery path uses, keyed by the URL itself so multiple
-// scripts sharing a URL share one fetch.
+// http(s) and file:// URLs go through the same bounded fetch + storage
+// cache the origin-discovery path uses, keyed by the URL itself so
+// multiple scripts sharing a URL share one fetch.
 export async function ensureIconForUrl(url: string): Promise<string | null> {
   if (url.startsWith('data:')) {
     return url.length <= MAX_INLINE_DATA_URL_LEN ? url : null;
@@ -538,10 +483,14 @@ export async function ensureIconForUrl(url: string): Promise<string | null> {
 
 // Minimum subset of StoredScript needed to render an icon slot. The
 // header is consulted for `@icon` / `@iconURL` / etc. — when set, that
-// URL takes priority over origin-based favicon discovery. Declared
-// locally so this module stays free of a dependency on script-store.
+// URL takes priority over origin-based favicon discovery. `fileUrl` is
+// the script's canonical fetchable URL, used as the base for resolving
+// relative `@icon` paths against the script's parent directory.
+// Declared locally so this module stays free of a dependency on
+// script-store.
 interface ScriptWithMatching {
   matching: { matches: string[] };
+  fileUrl: string;
   header?: { tags: { tag: string; locale?: string; value: string }[] } | null;
 }
 
@@ -558,7 +507,14 @@ interface ScriptWithMatching {
 // only a visual override.
 export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching): void {
   const target = representativeMatch(script.matching);
-  const headerIconUrl = iconUrlFromHeader(script.header ?? null);
+  // The header value is raw (URL, data:, or relative path). Resolve it
+  // against the script's own URL so `@icon foo.png` reaches the
+  // sibling file alongside the script — and a `..`-bearing or
+  // host-absolute ref drops back to origin discovery.
+  const iconRef = iconRefFromHeader(script.header ?? null);
+  const resolvedIcon = iconRef
+    ? resolveScriptResource(iconRef, script.fileUrl)
+    : null;
   const inner = slot.ownerDocument.createElement(target ? 'a' : 'span');
   inner.className = 'site-icon-inner';
   inner.appendChild(buildGlobeSvg(slot.ownerDocument));
@@ -570,15 +526,15 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
     a.title = target.linkUrl;
   }
   slot.replaceChildren(inner);
-  if (!target && !headerIconUrl) return;
+  if (!target && !resolvedIcon) return;
 
   void (async () => {
     let dataUrl: string | null;
     try {
       // Header-declared icon wins. Origin-based discovery only runs
       // when the script doesn't pin its own icon.
-      dataUrl = headerIconUrl
-        ? await ensureIconForUrl(headerIconUrl)
+      dataUrl = resolvedIcon
+        ? await ensureIconForUrl(resolvedIcon.url)
         : await ensureSiteIcon(target!.origin, target!.probeUrl);
     } catch {
       return;
