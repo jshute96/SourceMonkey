@@ -2,7 +2,7 @@
   "name": "sourcemonkey",
   "version": "0.0.1",
   "private": true,
-  "description": "Userscript manager Chrome extension optimized for vibe-coding",
+  "description": "Userscript manager Chrome extension that treats userscripts like source code, built and managed with real coding tools",
   "type": "module",
   "engines": {
     "node": ">=22"

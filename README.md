@@ -1,6 +1,6 @@
 # SourceMonkey
 
-A userscript manager Chrome extension optimized for vibe-coding.
+A userscript manager Chrome extension that treats userscripts like source code, built and managed with real coding tools.
 
 > **Status:** Early skeleton. The options page can register local
 > directories, persistently load every `*.user.js` it finds, and
