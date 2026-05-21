@@ -13,6 +13,7 @@ import {
   buildRegistrationSpec,
   buildWrappedBody,
   collectActiveSpecs,
+  composeRequiredBody,
   mapRunAt,
   resolveWorld,
 } from '../../dist/injector.js';
@@ -205,6 +206,64 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   // Wrapper carries the full matching object so it can filter at runtime.
   assert.match(spec.js[0].code, /__smMatchScript/);
+});
+
+// ---------- composeRequiredBody ----------
+
+test('composeRequiredBody: passes through bodyText when no @require', () => {
+  assert.equal(composeRequiredBody(makeScript()), 'console.log("hi");');
+});
+
+test('composeRequiredBody: prepends every require body in declaration order', () => {
+  const script = makeScript({
+    requires: [
+      { url: 'https://cdn.example.com/a.js', source: 'var A=1;', ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
+      { url: 'https://cdn.example.com/b.js', source: 'var B=2;', ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
+    ],
+  });
+  const out = composeRequiredBody(script);
+  // a comes before b, b before the body.
+  const aPos = out.indexOf('var A=1;');
+  const bPos = out.indexOf('var B=2;');
+  const bodyPos = out.indexOf('console.log("hi");');
+  assert.ok(aPos >= 0 && bPos > aPos && bodyPos > bPos);
+});
+
+test('composeRequiredBody: emits a `// @require <url>` line-comment marker per require', () => {
+  const out = composeRequiredBody(makeScript({
+    requires: [{ url: 'https://cdn.example.com/x.js', source: '0;', ref: '', size: 0, contentHash: '', loadedAt: 0 }],
+  }));
+  assert.match(out, /\/\/ @require https:\/\/cdn\.example\.com\/x\.js/);
+});
+
+test('composeRequiredBody: URL with `*/` in the path does not break the wrapper', () => {
+  // A line-comment marker terminates at newline, so a `*/` sequence
+  // inside a URL stays inert. (A block comment would have closed
+  // prematurely.)
+  const out = composeRequiredBody(makeScript({
+    requires: [{
+      url: 'https://cdn.example.com/foo*/bar.js',
+      source: 'var R = 1;',
+      ref: '', size: 0, contentHash: '', loadedAt: 0,
+    }],
+    bodyText: 'window.X = R;',
+  }));
+  // The require body and main body are both present and ordered.
+  const rPos = out.indexOf('var R = 1;');
+  const xPos = out.indexOf('window.X = R;');
+  assert.ok(rPos > 0 && xPos > rPos);
+});
+
+test('composeRequiredBody: separator prevents ASI hazards between segments', () => {
+  // An IIFE returning a value with no trailing semicolon could merge
+  // into the next segment's leading parenthesis. The `;\n` separator
+  // between segments breaks that.
+  const out = composeRequiredBody(makeScript({
+    bodyText: '(function(){})()',
+    requires: [{ url: 'https://x/r.js', source: '(function(){return 1})()', ref: '', size: 0, contentHash: '', loadedAt: 0 }],
+  }));
+  // After the require source there should be a standalone `;` token.
+  assert.match(out, /\(function\(\)\{return 1\}\)\(\)\n;/);
 });
 
 test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes to wrapper', () => {

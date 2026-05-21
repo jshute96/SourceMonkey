@@ -52,7 +52,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the options/viewer UI |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
-| `src/file-loader.ts` | Resolves header refs (`@icon`, future `@require`) against the script's parent dir with traversal rejection; scheme-aware byte fetcher |
+| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
+| `src/requires.ts` | `@require` orchestration: extract refs, resolve via file-loader, fetch + dedup + cache, attach to StoredScript |
 | `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, decision-callback close, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
@@ -91,6 +92,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
 | `tests/unit/site-icon.test.mjs` | Unit tests for site-icon origin/probe-URL extraction, `<link rel="icon">` parsing + scoring, and cache TTLs |
 | `tests/unit/file-loader.test.mjs` | Unit tests for `resolveScriptResource` — accepted schemes, relative-path resolution, and traversal rejection |
+| `tests/unit/requires.test.mjs` | Unit tests for `distillRequires` extraction + `attachRequires` orchestration (cache hits, preserve mode, suffix gate, traversal rejection, dedup) |
+| `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at mapping, spec build, active-spec collection) |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 
@@ -109,5 +112,6 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones SourceMonkey honors, which are parsed-only, and which are ignored |
 | `docs/logging.md` | SW console-message catalog: log IDs (basename + `#N` dupes), the debug-logging gate, and which lines it gates |
 | `docs/site-icons.md` | Origin extraction from `@match`, favicon fetch+cache, and the icon slot shown beside each script filename |
+| `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |

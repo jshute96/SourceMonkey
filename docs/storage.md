@@ -74,6 +74,11 @@ Three key spaces in `chrome.storage.local`:
 - `enabled` — user-controlled per-script toggle. Preserved across
   refreshes; a script's effective enabled state is
   `source.enabled && script.enabled`.
+- `requires?` — prefetched `@require` bodies, inline as an array of
+  `StoredRequire` rows (`{ref, url, source, size, contentHash,
+  loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
+  deduped by canonical URL. Absent when the script declares no
+  `@require`. See [requires.md](requires.md).
 
 ## Status model
 

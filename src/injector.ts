@@ -138,6 +138,37 @@ function isRegexLiteral(s: string): boolean {
   return s.length >= 2 && s.startsWith('/') && s.endsWith('/');
 }
 
+// Concatenate every prefetched `@require` body, in declaration order,
+// before the script's own body. A `;\n` separator between each segment
+// ensures that an ASI-sensitive expression at the end of one require
+// (e.g. an IIFE that returns a value with no trailing semicolon) can't
+// merge into the next segment. The leading `// @require <url>` per
+// require makes the registered code easier to scan in devtools.
+//
+// Why a line comment (`// …`) rather than a block comment: a URL
+// can legitimately contain `*/` in its path (`*` is a valid path
+// char), which would prematurely close a block comment and break the
+// wrapper. Line comments terminate at newline, and URLs can't carry
+// newlines.
+//
+// No per-require `//# sourceURL=` directive — JS only honors the LAST
+// such comment in a source file, and the wrapper appends one for the
+// userscript itself (used by the async-error attribution path). Stack
+// traces inside required code will still point at the userscript's
+// sourceURL; that matches TM/VM behavior.
+export function composeRequiredBody(script: StoredScript): string {
+  const requires = script.requires ?? [];
+  if (requires.length === 0) return script.bodyText;
+  const parts: string[] = [];
+  for (const r of requires) {
+    parts.push(`// @require ${r.url}`);
+    parts.push(r.source);
+    parts.push(';');
+  }
+  parts.push(script.bodyText);
+  return parts.join('\n');
+}
+
 // Build the per-script sourceURL the wrapper uses to attribute async
 // errors back to this script. Two requirements:
 //   - The string must be unique per script (we filter error events by
@@ -242,13 +273,14 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
   const runAt = mapRunAt(script.header ? getValue(script.header, 'run-at') : undefined);
   const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude;
+  const body = composeRequiredBody(script);
 
   const spec: RegistrationSpec = {
     id: script.id,
     js: [{ code: buildWrappedBody({
       id: script.id,
       name,
-      body: script.bodyText,
+      body,
       loadedAt: script.loadedAt,
       matching: needsWrapperFilter ? script.matching : undefined,
     }) }],

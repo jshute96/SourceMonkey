@@ -32,6 +32,7 @@ import {
   installScriptLogIdListener,
 } from './script-log-id.js';
 import {
+  composeRequiredBody,
   isUserScriptsAvailable,
   syncRegistrations,
   SM_ABANDONED_MSG,
@@ -754,7 +755,14 @@ async function handleCheckPending(
   );
   return {
     action: 'run-new',
-    body: refreshed.bodyText,
+    // Send the same composed body the injector would have registered:
+    // any `@require` bodies prepended before the main script body.
+    // Sending only `bodyText` here means the eval'd swap can't see
+    // globals the requires set up, and any reference to them throws
+    // ReferenceError — the script then "works" only on the next
+    // reload because by then the registered code includes the new
+    // body via syncRegistrations.
+    body: composeRequiredBody(refreshed),
     loadedAt: refreshed.loadedAt,
   };
 }

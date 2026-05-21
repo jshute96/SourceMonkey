@@ -98,7 +98,7 @@ below can repeat; order doesn't matter.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@require` | ⚪ | ✓ | ✓ | ✓ | Should fetch the URL and prepend (or add as a separate `js:` entry). Not implemented — see [TODO.md](../TODO.md). TM additionally accepts SRI hash syntax (`#sha256=…`) and `tampermonkey://vendor/*` shortcuts. |
+| `@require` | ✅ | ✓ | ✓ | ✓ | Prefetched at load/refresh time and prepended (in declaration order, deduped by URL) before the main body inside a single activation wrapper. Accepts absolute `http(s)://` URLs and **relative paths** resolved against the script's parent directory — an extension over what TM/VM/GM do, sharing rules with `@icon` (no `..` / leading `/` / absolute `file://`). Resolved URL must end in `.js` (pre-query). Per-require body cap: 1 MB. `tampermonkey://vendor/*` is not supported. SRI hash fragments (`#sha256=…`) are parsed but not validated — see [TODO.md](../TODO.md). |
 | `@resource` | ⚪ | ✓ | ✓ | ✓ | Companion to `GM_getResourceText` / `GM_getResourceURL`. Moot until those exist. |
 
 ---

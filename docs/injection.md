@@ -92,7 +92,10 @@ source's `enabled` flag are both true, we build a
 - `includeGlobs` — `@include` glob patterns.
 - `excludeGlobs` — `@exclude` glob patterns.
 - `js: [{ code: <wrapped body> }]` — the script body wrapped in our
-  activation/error shim (see below).
+  activation/error shim (see below). When the script has `@require`
+  declarations, each required file's prefetched source is prepended
+  before the body — same world, same wrapper, single
+  `//# sourceURL=…` — see [requires.md](requires.md).
 - `runAt` — derived from `@run-at` on the parsed header
   (`document-start` / `document-body` → `document_start`,
   `document-end` → `document_end`, default / anything else →

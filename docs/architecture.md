@@ -44,10 +44,16 @@ details live in the topic-specific docs linked below.
   [file-access.md](file-access.md) and
   [http-sources.md](http-sources.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
-  (`@icon` today, `@require` planned) into absolute URLs against the
-  script's parent dir (rejecting `..` and host-absolute paths), and
-  exposes a scheme-aware bounded byte fetcher used by the icon
-  pipeline.
+  (`@icon`, `@require`) into absolute URLs against the script's parent
+  dir (rejecting `..` and host-absolute paths), and exposes
+  scheme-aware bounded byte + text fetchers used by the icon and
+  require pipelines.
+- **Requires** (`src/requires.ts`) — `@require` resolution + fetch
+  orchestrator. Extracts refs from the metadata block, runs them
+  through file-loader, dedupes within and across scripts in a single
+  refresh pass, and attaches the fetched bodies to each StoredScript
+  so the injector can prepend them at registration time. See
+  [requires.md](requires.md).
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
   See [script-viewer.md](script-viewer.md). For which `@tag` fields

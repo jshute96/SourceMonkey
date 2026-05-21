@@ -157,6 +157,15 @@ export function updateAllSources(
 // we have the prior loadedAt to compare against the post-refresh row.
 // One extra storage read per check — cheap.
 
+// `@require` policy by trigger mode. Manual clicks rebuild requires
+// from scratch so users can pick up remote require updates without
+// touching the main script. Opportunistic background checks preserve
+// the cached requires verbatim and only fetch newly-declared refs —
+// keeping page-load cost bounded.
+function requireRecheckMode(mode: UpdateMode): 'all' | 'preserve' {
+  return mode === 'manual' ? 'all' : 'preserve';
+}
+
 async function runScriptCheck(
   scriptId: string,
   mode: UpdateMode,
@@ -172,7 +181,7 @@ async function runScriptCheck(
   checkLog(`[SourceMonkey] update check (${mode}): ${label}`);
   let next: StoredScript | null;
   try {
-    next = await refreshScript(scriptId);
+    next = await refreshScript(scriptId, { recheckRequires: requireRecheckMode(mode) });
   } catch (err) {
     console.info(`[SourceMonkey] update check failed: ${label}: ${describe(err)}`);
     throw err;
@@ -191,7 +200,7 @@ async function runSourceCheck(
   console.log(`[SourceMonkey] source refresh (${mode}): ${label}`);
   let result: { source: StoredSource; scripts: StoredScript[] } | null;
   try {
-    result = await refreshSource(sourceId);
+    result = await refreshSource(sourceId, { recheckRequires: requireRecheckMode(mode) });
   } catch (err) {
     console.info(`[SourceMonkey] source refresh failed: ${label}: ${describe(err)}`);
     throw err;
@@ -208,7 +217,7 @@ async function runAllSourcesCheck(
   // back the post-refresh state and the summary would always say 0
   // updated / 0 added.
   const priorBySourceId = await snapshotAllSourceScripts();
-  const result = await refreshAllSources();
+  const result = await refreshAllSources({ recheckRequires: requireRecheckMode(mode) });
   for (const [, { source, scripts }] of result) {
     const priorBy = priorBySourceId.get(source.id) ?? new Map();
     summarizeSourceOutcome(source.path, priorBy, scripts);

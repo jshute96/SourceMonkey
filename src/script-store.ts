@@ -47,6 +47,12 @@ import {
   splitHeaderBody,
   type ParsedHeader,
 } from './userscript-header.js';
+import {
+  attachRequires,
+  distillRequires,
+  type RequireFetchCache,
+  type StoredRequire,
+} from './requires.js';
 
 export type ScriptStatus = 'ok' | 'error' | 'missing';
 
@@ -98,6 +104,11 @@ export interface StoredScript {
   matching: ScriptMatching;
   loadedAt: number;      // epoch ms — bumped each time fresh content lands
   enabled: boolean;      // per-script toggle; defaults true on first load
+  // Prefetched `@require` bodies, in declaration order, deduped by
+  // canonical URL. Optional because pre-`@require`-era stored rows
+  // won't carry it; downstream code must treat `undefined` as empty.
+  // See [docs/requires.md] / src/requires.ts for the lifecycle.
+  requires?: StoredRequire[];
 }
 
 export interface StoredSource {
@@ -318,6 +329,79 @@ export function applyMissing(existing: StoredScript): StoredScript {
   return next;
 }
 
+// Resolve + fetch a script's `@require` bodies, attaching the list
+// onto the StoredScript. On any failure preserves the prior's
+// last-known-good state and flips status to 'error' with a message
+// naming the offending URL — mirrors `applyFetchError`'s
+// content-preservation policy for body-fetch failures, so a flaky
+// require doesn't clobber the user's working version. Without
+// declared deps a userscript usually breaks worse than not injecting,
+// so erroring out is safer than running headless.
+//
+// `recheck === 'preserve'` reuses every cached prior verbatim and only
+// fetches refs the script newly declares. `recheck === 'all'` refetches
+// every declared require (used by explicit Refresh). The fetchCache is
+// shared across all scripts in a single refresh pass so two scripts
+// requiring the same URL share one fetch.
+async function applyRequires(
+  built: StoredScript,
+  prior: StoredScript | undefined,
+  recheck: 'all' | 'preserve',
+  fetchCache: RequireFetchCache,
+  now: number,
+): Promise<StoredScript> {
+  const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
+  // `recheck: 'preserve'` short-circuits when the @require list is
+  // identical to the prior's: no resolve work, no fetch, just keep
+  // what we had. This is the hot path on opportunistic refresh.
+  if (recheck === 'preserve' && prior?.requires) {
+    const newRefs = distillRequires(built.header);
+    const sameSet = newRefs.length === prior.requires.length &&
+      newRefs.every((ref, i) => {
+        // Compare against the prior's stored ref, not its resolved URL —
+        // we want to detect "the user edited the @require line" even if
+        // the resolved URL coincidentally matches.
+        return prior.requires?.[i]?.ref === ref;
+      });
+    if (sameSet) {
+      built.requires = prior.requires;
+      return built;
+    }
+  }
+  const result = await attachRequires({
+    scriptFileUrl: built.fileUrl,
+    header: built.header,
+    prior: priorRequires,
+    recheck,
+    fetchCache,
+    now,
+  });
+  if (result.errorMessage) {
+    // Preserve the last-known-good script state when we have one.
+    // This rolls the *entire* refresh back to the prior — the new
+    // body isn't applied either, because injecting a fresh body
+    // against partial/stale requires would be unsafe. The user sees
+    // the error message and their script keeps running its prior
+    // version until they fix the require.
+    if (prior && prior.status === 'ok') {
+      return { ...prior, status: 'error', errorMessage: result.errorMessage };
+    }
+    built.status = 'error';
+    built.errorMessage = result.errorMessage;
+    built.requires = [];
+    return built;
+  }
+  if (result.requires.length > 0) {
+    built.requires = result.requires;
+  } else {
+    // Script declared no @require — leave the field undefined so the
+    // storage row stays minimal. Drop any leftover from a prior build
+    // that DID declare some.
+    delete built.requires;
+  }
+  return built;
+}
+
 interface ScanEntry {
   relativePath: string;
   size?: number;
@@ -332,6 +416,24 @@ interface RebuildArgs {
   fetchResults: Map<string, FetchResult>;  // keyed by relativePath
   now: number;
   newId?: () => string;
+  // `@require` policy:
+  //   - 'all'     : refetch every declared require regardless of whether
+  //                 the script body changed. Used by explicit Refresh
+  //                 so users can pick up remote require updates even
+  //                 when the main script body is unchanged.
+  //   - 'preserve': reuse cached requires verbatim; only fetch refs the
+  //                 script newly declares. Used by opportunistic
+  //                 (background) refresh to keep page-load cost
+  //                 bounded — the user can always click Refresh to
+  //                 pick up require updates.
+  // Defaults to 'all' so the conservative behavior is the fallback.
+  recheckRequires?: 'all' | 'preserve';
+  // Cross-script require-fetch cache. Two scripts requiring the same
+  // canonical URL share one fetch. Caller passes a fresh map per
+  // top-level refresh entry point (refreshSource / refreshScript /
+  // refreshAllSources); rebuildSource itself never mutates the entry
+  // semantics, just hands the cache to attachRequires.
+  requireFetchCache?: RequireFetchCache;
 }
 
 // Pure orchestrator: given the prior state for a source plus a fresh
@@ -349,6 +451,8 @@ interface RebuildArgs {
 //     stays so the viewer keeps working.
 export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
+  const recheckRequires = args.recheckRequires ?? 'all';
+  const requireFetchCache: RequireFetchCache = args.requireFetchCache ?? new Map();
   const existingByPath = new Map<string, StoredScript>();
   for (const e of args.existing) existingByPath.set(e.relativePath, e);
 
@@ -387,7 +491,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         // Record the listing's mtime so the next refresh can decide to
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
-        return built;
+        return applyRequires(built, prior, recheckRequires, requireFetchCache, args.now);
       })());
     } else if (fr && 'unchanged' in fr) {
       // Optimization path: the listing's size+mtime matched the prior
@@ -402,7 +506,11 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         const next = { ...prior, fileUrl };
         if (found.mtime !== undefined) next.fsMtime = found.mtime;
         if (found.size !== undefined) next.size = found.size;
-        entryPromises.push(Promise.resolve(next));
+        // Even when the body is unchanged, explicit Refresh still
+        // rechecks @require bodies (the user may want to pick up remote
+        // require updates without touching the main script). The
+        // opportunistic path passes 'preserve' which short-circuits.
+        entryPromises.push(applyRequires(next, prior, recheckRequires, requireFetchCache, args.now));
       } else {
         entryPromises.push(Promise.resolve(buildInitialErrorEntry({
           id,
@@ -592,8 +700,24 @@ export async function removeScript(id: string): Promise<void> {
 // directory-listing size+mtime; http(s):// uses a conditional GET
 // (304 from the server). This keeps "Refresh All" cheap when most
 // scripts are unchanged.
+export interface RefreshOptions {
+  // `@require` recheck policy. Defaults to 'all' (explicit-Refresh
+  // semantics) so callers that don't care get the conservative
+  // behavior. The script-updater passes 'preserve' on the
+  // opportunistic path so background checks don't redownload every
+  // require body on every navigation.
+  recheckRequires?: 'all' | 'preserve';
+  // Shared cross-script require-fetch cache. When refreshAllSources
+  // calls multiple refreshSource concurrently, threading one cache
+  // through them lets two scripts (across two sources) requiring the
+  // same URL share one fetch. Single refreshSource calls let it
+  // default to an empty fresh map.
+  requireFetchCache?: RequireFetchCache;
+}
+
 export async function refreshSource(
   id: string,
+  opts: RefreshOptions = {},
 ): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
   const prior = await getSourceWithScripts(id);
   if (!prior) return null;
@@ -645,6 +769,8 @@ export async function refreshSource(
     scan,
     fetchResults,
     now,
+    recheckRequires: opts.recheckRequires,
+    requireFetchCache: opts.requireFetchCache,
   });
 
   const nextSource: StoredSource = {
@@ -683,7 +809,10 @@ export async function refreshSource(
 // can't promote a script to `missing` — that's the directory-level
 // Refresh's job. (If the file is gone, the fetch will fail and the
 // result is `status: 'error'`.)
-export async function refreshScript(scriptId: string): Promise<StoredScript | null> {
+export async function refreshScript(
+  scriptId: string,
+  opts: RefreshOptions = {},
+): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
   if (!prior) return null;
   const sourceRow = await getRaw<StoredSource>(sourceKey(prior.sourceId));
@@ -734,6 +863,8 @@ export async function refreshScript(scriptId: string): Promise<StoredScript | nu
     scan,
     fetchResults,
     now: Date.now(),
+    recheckRequires: opts.recheckRequires,
+    requireFetchCache: opts.requireFetchCache,
   });
   const next = result[0];
   if (!next) return null;
@@ -811,13 +942,17 @@ export async function fetchOrSkipInParallel(
 // read. A failed source-level refresh (e.g. one source's scan
 // throws) doesn't take the rest down — its slot in the result map is
 // just absent, and the source's `scanError` field carries the reason.
-export async function refreshAllSources(): Promise<
-  Map<string, { source: StoredSource; scripts: StoredScript[] }>
-> {
+export async function refreshAllSources(
+  opts: RefreshOptions = {},
+): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
   const sources = await getSources();
+  // One shared require-fetch cache across every source in this pass so
+  // two scripts (across two sources) requiring the same canonical URL
+  // share one fetch. Caller can override by passing their own.
+  const requireFetchCache = opts.requireFetchCache ?? new Map();
   const entries = await Promise.all(
     sources.map(async (s) => {
-      const r = await refreshSource(s.id);
+      const r = await refreshSource(s.id, { ...opts, requireFetchCache });
       return [s.id, r] as const;
     }),
   );

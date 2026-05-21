@@ -277,3 +277,37 @@ async function fetchFileBytesFetch(
   return { body, contentType, finalUrl: response.url || url };
 }
 
+// ---------- Text + suffix helpers ----------
+
+// Convenience for text-shaped consumers (e.g. `@require`). Wraps
+// fetchResourceBytes and decodes UTF-8. Returns null on any failure
+// the bytes-fetcher reports, plus null on a decode failure (rare —
+// `fatal: false` rules out throws).
+export async function fetchResourceText(
+  url: string,
+  opts: FetchBytesOptions,
+): Promise<string | null> {
+  const res = await fetchResourceBytes(url, opts);
+  if (!res) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: false }).decode(res.body);
+  } catch {
+    return null;
+  }
+}
+
+// Strict `.js`-suffix check used by the `@require` gate: the pathname
+// (sans query/fragment) must end in `.js`. So `jquery.js?v=3` and
+// `lib.user.js` both pass; `lib.js.txt`, `foo.json`, and `foo.js/` do
+// not. Comparison is case-insensitive — `lib.JS` is common on
+// Windows-origin and some CDNs, and TM/VM don't gate on suffix at all,
+// so being permissive about case keeps us interoperable. Returns
+// false for malformed URLs.
+export function isJsResourceUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith('.js');
+  } catch {
+    return false;
+  }
+}
+

@@ -3,6 +3,9 @@
 // reload should take effect on THIS navigation rather than requiring a
 // second reload. Documented in docs/injection.md#reload-fast-path.
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { waitForTabState, type TabStateSnapshot } from '../fixtures/sw-api';
@@ -179,6 +182,58 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/other.html`);
     // Title contains '-baked' because the baked body ran; not '-NEW'.
     await expect(page).toHaveTitle(/-baked$/);
+    await page.close();
+  });
+
+  test('reload swap of a @require-using script keeps the require bodies in scope', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // Regression: the fast-path's `run-new` payload used to ship only
+    // `bodyText`, so the wrapper's eval ran the new body without the
+    // prepended `@require` source — any reference to a require-set-up
+    // global threw ReferenceError on the swap and only "worked" on the
+    // next reload (because by then chrome.userScripts had re-registered
+    // the script with the requires baked into the body again).
+    //
+    // The require defines a function the main body invokes. If the
+    // swap payload includes the require prelude, document.title gets
+    // set to the function's return value; if it doesn't, the body
+    // throws and the page keeps its prior title.
+    fs.writeFileSync(
+      path.join(scriptsDir.path, 'lib.js'),
+      'function __SM_REQ_FN(){ return "swapped-v2"; }',
+    );
+    scriptsDir.write({
+      relativePath: 'reqswap.user.js',
+      meta: {
+        name: 'ReqSwap',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        // USER_SCRIPT world so the wrapper can talk to the SW
+        // directly. Same reason the earlier reload-fast-path tests
+        // use injectInto:'content'.
+        injectInto: 'content',
+        extra: ['// @require     lib.js'],
+      },
+      body: `document.title = 'v1-' + __SM_REQ_FN();`,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1-swapped-v2');
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+
+    // Edit the main body. The require is untouched.
+    scriptsDir.rewriteBody('reqswap.user.js', `document.title = 'v2-' + __SM_REQ_FN();`);
+
+    await page.reload();
+    // If run-new includes the require prelude, the swap eval sees
+    // __SM_REQ_FN and the title updates. If it doesn't, the wrapper
+    // throws ReferenceError and the title stays 'v1-swapped-v2'.
+    await expect(page).toHaveTitle('v2-swapped-v2');
     await page.close();
   });
 });
