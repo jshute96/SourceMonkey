@@ -20,6 +20,13 @@ export interface SiteIconEntry {
 const KEY_PREFIX = 'siteIcon:';
 const siteIconKey = (origin: string): string => `${KEY_PREFIX}${origin}`;
 
+// Separate cache prefix for icons declared via `@icon`/`@iconURL`/etc.
+// Same `SiteIconEntry` shape and TTLs as the origin-discovered path; the
+// prefix split keeps URL strings (which can be long) from colliding
+// with origin strings and lets either path be invalidated independently.
+const URL_ICON_KEY_PREFIX = 'iconUrl:';
+const urlIconKey = (url: string): string => `${URL_ICON_KEY_PREFIX}${url}`;
+
 const SUCCESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NULL_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ICON_BYTES = 128 * 1024;
@@ -130,6 +137,46 @@ export function linkPathFromMatchPath(path: string): string {
   return '/' + kept.join('/');
 }
 
+// ---------- Header-icon extraction ----------
+
+// Tag priority for a script-declared icon. `@icon` is the only form
+// documented by all three managers (TM/VM/GM); the rest are TM-only
+// aliases. The smaller variants come first so a script that declares
+// both a regular and a 64×64 icon picks the one closer to our 16×16
+// display size.
+const ICON_HEADER_TAGS = ['icon', 'iconurl', 'defaulticon', 'icon64url', 'icon64'];
+
+// Read the script's preferred icon URL from its parsed metadata, or
+// null if no usable variant is set. Only absolute http(s) or `data:`
+// URLs are accepted — relative hrefs are ambiguous (would need a
+// downloadURL to resolve against, and most sources don't set one).
+export function iconUrlFromHeader(
+  header: { tags: { tag: string; locale?: string; value: string }[] } | null,
+): string | null {
+  if (!header) return null;
+  for (const tag of ICON_HEADER_TAGS) {
+    for (const e of header.tags) {
+      if (e.tag !== tag || e.locale !== undefined) continue;
+      const url = sanitizeIconHeaderValue(e.value);
+      if (url) return url;
+    }
+  }
+  return null;
+}
+
+function sanitizeIconHeaderValue(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('data:')) return trimmed;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString();
+  } catch {
+    // Falls through to null.
+  }
+  return null;
+}
+
 // ---------- Storage I/O ----------
 
 export async function loadSiteIcons(
@@ -149,6 +196,15 @@ export async function loadSiteIcons(
 
 async function storeSiteIcon(origin: string, entry: SiteIconEntry): Promise<void> {
   await chrome.storage.local.set({ [siteIconKey(origin)]: entry });
+}
+
+async function loadUrlIcon(url: string): Promise<SiteIconEntry | undefined> {
+  const got = await chrome.storage.local.get(urlIconKey(url));
+  return got[urlIconKey(url)] as SiteIconEntry | undefined;
+}
+
+async function storeUrlIcon(url: string, entry: SiteIconEntry): Promise<void> {
+  await chrome.storage.local.set({ [urlIconKey(url)]: entry });
 }
 
 export function isCacheFresh(entry: SiteIconEntry, now: number = Date.now()): boolean {
@@ -418,19 +474,19 @@ function arrayBufferToDataUrl(buffer: ArrayBuffer, mime: string): string {
 
 // ---------- Higher-level helpers ----------
 
-// In-flight de-dup: simultaneous calls for the same origin share one
+// In-flight de-dup: simultaneous calls for the same cache key share one
 // Promise. Cache rows that go stale and trigger a refetch land here
-// too — the second caller waits on the first.
+// too — the second caller waits on the first. The map is keyed by the
+// full storage key (e.g. `siteIcon:<origin>` vs `iconUrl:<url>`) so the
+// two icon-source paths don't collide.
 const inflight = new Map<string, Promise<string | null>>();
 
 export async function ensureSiteIcon(
   origin: string,
   probeUrl?: string,
 ): Promise<string | null> {
-  // Synchronous inflight check first: simultaneous calls for the same
-  // origin should not race storage reads only to converge on the same
-  // pending fetch a moment later.
-  const pending = inflight.get(origin);
+  const key = siteIconKey(origin);
+  const pending = inflight.get(key);
   if (pending) return pending;
 
   const cached = (await loadSiteIcons([origin])).get(origin);
@@ -438,23 +494,55 @@ export async function ensureSiteIcon(
 
   // Re-check after the storage await: another caller may have started
   // a fetch while we were reading.
-  const racing = inflight.get(origin);
+  const racing = inflight.get(key);
   if (racing) return racing;
 
   const p = fetchAndCacheSiteIcon(origin, probeUrl).finally(() => {
-    inflight.delete(origin);
+    inflight.delete(key);
   });
-  inflight.set(origin, p);
+  inflight.set(key, p);
+  return p;
+}
+
+// Resolve a script-declared icon URL (`@icon` / `@iconURL` / etc.).
+// Inline `data:` URLs are returned directly when within the size cap;
+// http(s) URLs go through the same bounded fetch + storage cache the
+// origin-discovery path uses, keyed by the URL itself so multiple
+// scripts sharing a URL share one fetch.
+export async function ensureIconForUrl(url: string): Promise<string | null> {
+  if (url.startsWith('data:')) {
+    return url.length <= MAX_INLINE_DATA_URL_LEN ? url : null;
+  }
+  const key = urlIconKey(url);
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const cached = await loadUrlIcon(url);
+  if (cached && isCacheFresh(cached)) return cached.dataUrl;
+
+  const racing = inflight.get(key);
+  if (racing) return racing;
+
+  const p = (async () => {
+    const dataUrl = await fetchIconAt(url);
+    await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
+    return dataUrl;
+  })().finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, p);
   return p;
 }
 
 // ---------- DOM rendering ----------
 
-// Minimum subset of StoredScript needed to render an icon slot: the
-// matching object. Declared locally so this module stays free of a
-// dependency on script-store.
+// Minimum subset of StoredScript needed to render an icon slot. The
+// header is consulted for `@icon` / `@iconURL` / etc. — when set, that
+// URL takes priority over origin-based favicon discovery. Declared
+// locally so this module stays free of a dependency on script-store.
 interface ScriptWithMatching {
   matching: { matches: string[] };
+  header?: { tags: { tag: string; locale?: string; value: string }[] } | null;
 }
 
 // Build the favicon slot for a script row / viewer header. Always
@@ -462,11 +550,15 @@ interface ScriptWithMatching {
 // usable origin, the slot becomes a clickable `<a>` opening linkUrl
 // in a new tab; otherwise it holds an inert `<span>` (file:// scripts,
 // `<all_urls>`, etc.). Either wrapper starts with a globe placeholder,
-// swapped for the real favicon once it loads. The async swap checks
-// `isConnected` before painting so a re-render between fetch start
-// and resolution doesn't drop the icon into a stale subtree.
+// swapped for the real favicon once it loads.
+//
+// Icon source priority: a script-declared `@icon` (or its aliases)
+// wins outright over the origin-discovered favicon. The click-through
+// link is always the site's linkUrl regardless — the @icon header is
+// only a visual override.
 export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching): void {
   const target = representativeMatch(script.matching);
+  const headerIconUrl = iconUrlFromHeader(script.header ?? null);
   const inner = slot.ownerDocument.createElement(target ? 'a' : 'span');
   inner.className = 'site-icon-inner';
   inner.appendChild(buildGlobeSvg(slot.ownerDocument));
@@ -478,17 +570,23 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
     a.title = target.linkUrl;
   }
   slot.replaceChildren(inner);
-  if (!target) return;
+  if (!target && !headerIconUrl) return;
 
   void (async () => {
     let dataUrl: string | null;
     try {
-      dataUrl = await ensureSiteIcon(target.origin, target.probeUrl);
+      // Header-declared icon wins. Origin-based discovery only runs
+      // when the script doesn't pin its own icon.
+      dataUrl = headerIconUrl
+        ? await ensureIconForUrl(headerIconUrl)
+        : await ensureSiteIcon(target!.origin, target!.probeUrl);
     } catch {
       return;
     }
     if (!dataUrl) return;
-    if (!inner.isConnected) return;
+    // No isConnected guard: a re-render replaces the whole slot, so
+    // any paint into an orphaned `inner` decorates a subtree the user
+    // never sees.
     const img = slot.ownerDocument.createElement('img');
     img.src = dataUrl;
     img.alt = '';

@@ -102,7 +102,9 @@ test.describe('missing-row trash-can', () => {
     // The surviving row is the ok one (filename "a.user.js"); it
     // shouldn't carry a trash button.
     await expect(section.locator('tbody tr')).toHaveCount(1);
-    await expect(section.locator('tbody tr a')).toHaveText('a.user.js');
+    // Filename link, not the favicon anchor (also an `<a>` in the row).
+    await expect(section.locator('tbody tr td.name-cell a:not(.site-icon-inner)'))
+      .toHaveText('a.user.js');
 
     // And the storage reflects only the ok row.
     const after = await vm.getSourceWithScripts(source!.id);

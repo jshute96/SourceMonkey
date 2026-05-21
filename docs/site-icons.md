@@ -2,9 +2,30 @@
 
 - Each row in the options page (and the H1 of the script viewer)
   shows a small favicon next to the script filename.
-- The icon comes from the matched site itself, not from the
-  userscript's own metadata.
+- Source priority:
+  - A script-declared `@icon` (or its TM aliases — see below) wins
+    outright when set.
+  - Otherwise the icon is discovered from the matched site itself.
 - Implemented in [`src/site-icon.ts`](../src/site-icon.ts).
+
+## Header override (`@icon`)
+
+- Tag priority, smaller-resolution variants first:
+  - `@icon` (cross-manager)
+  - `@iconURL`, `@defaulticon` (TM aliases)
+  - `@icon64URL`, `@icon64` (TM 64×64)
+- Only absolute `http(s)` and `data:` URLs are accepted. Relative
+  hrefs are rejected — TM resolves them against `@downloadURL`, but
+  VibeMonkey sources don't reliably carry one, so the result would be
+  ambiguous.
+- `data:` URLs render inline (no fetch) and are length-capped to the
+  same ~170 KB ceiling we apply to inline `<link rel="icon">` hrefs.
+- `http(s)` URLs go through the same bounded-fetch + storage cache
+  the origin-discovery path uses, keyed by the URL itself so multiple
+  scripts pointing at the same icon share one fetch.
+- The click-through link is *always* the `@match`-derived `linkUrl`.
+  `@icon` is purely a visual override — it doesn't change which site
+  the favicon links to.
 
 ## How an origin is picked
 
@@ -97,18 +118,19 @@ usable `@match`:
 
 ## Storage shape
 
-`siteIcon:<origin>` →
-```ts
-{ dataUrl: string | null; fetchedAt: number }
-```
+Parallel cache rows for the two icon-source paths, sharing the same
+`{ dataUrl, fetchedAt }` shape and TTLs:
 
-The key is the full `https://host` string. There is no per-script
-copy of the icon: every script targeting the same site looks up the
-same row.
+- `siteIcon:<origin>` — origin-discovered favicons. Key is the full
+  `scheme://host` string; every script targeting that site looks up
+  the same row.
+- `iconUrl:<url>` — `@icon`-declared icons. Key is the literal header
+  URL; scripts pinning the same icon share one fetch.
+- `data:` URLs render inline and are never stored.
 
-Rows are not garbage-collected when the last script referencing an
-origin is removed — favicon entries are tiny and removing the row
-would just trigger a fresh fetch if the user re-adds the source.
+Rows are not garbage-collected when the last script referencing them
+is removed — favicon entries are tiny and removing the row would
+just trigger a fresh fetch if the user re-adds the source.
 
 ## Display
 
@@ -121,7 +143,9 @@ would just trigger a fresh fetch if the user re-adds the source.
 - The inner element always starts with a muted globe SVG
   (`.site-icon-globe`) so users see *something* immediately and
   rows missing an origin still show a consistent placeholder.
-- Once `ensureSiteIcon` resolves, the globe is swapped for an `<img>`
-  with the data URL. If a re-render replaced the inner element
-  before the fetch finished, the paint is suppressed via
-  `isConnected`.
+- The async swap picks its source by header priority: if the script
+  declares an `@icon`, `ensureIconForUrl` runs; otherwise
+  `ensureSiteIcon` runs the origin-discovery pipeline. The resolved
+  data URL is wrapped in an `<img>` that replaces the globe inside
+  the inner element. No `isConnected` guard — orphan paints from
+  re-renders are cheap and unobservable.

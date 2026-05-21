@@ -1,8 +1,9 @@
 // Tests for src/site-icon.ts (compiled to dist/site-icon.js).
 //
-// Covers the pure helpers: origin/probe-URL extraction, icon-link
-// parsing + scoring, and cache-freshness rules. The network fetch
-// pipeline is not unit-tested here — it depends on real HTTP.
+// Covers the pure helpers: origin/probe-URL extraction, link-path
+// segment trimming, `@icon`-header URL extraction, icon-link parsing
+// + scoring, and cache-freshness rules. The network fetch pipeline
+// is not unit-tested here — it depends on real HTTP.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +13,7 @@ import {
   representativeOrigin,
   representativeMatch,
   linkPathFromMatchPath,
+  iconUrlFromHeader,
   isCacheFresh,
   parseIconLinks,
   pickBestIconCandidate,
@@ -183,6 +185,80 @@ test('linkPathFromMatchPath: pure-literal paths pass through unchanged', () => {
   assert.equal(linkPathFromMatchPath('/foo'), '/foo');
   assert.equal(linkPathFromMatchPath('/foo/bar'), '/foo/bar');
   assert.equal(linkPathFromMatchPath('/foo/bar/'), '/foo/bar/');
+});
+
+// ---------- iconUrlFromHeader ----------
+
+function header(...tags) {
+  // Build a minimal ParsedHeader from a list of [tag, value] pairs.
+  return { tags: tags.map(([tag, value]) => ({ tag, value })) };
+}
+
+test('iconUrlFromHeader: returns @icon when present', () => {
+  assert.equal(
+    iconUrlFromHeader(header(['icon', 'https://example.com/i.png'])),
+    'https://example.com/i.png',
+  );
+});
+
+test('iconUrlFromHeader: accepts TM aliases', () => {
+  assert.equal(
+    iconUrlFromHeader(header(['iconurl', 'https://example.com/i.png'])),
+    'https://example.com/i.png',
+  );
+  assert.equal(
+    iconUrlFromHeader(header(['defaulticon', 'https://example.com/d.png'])),
+    'https://example.com/d.png',
+  );
+  assert.equal(
+    iconUrlFromHeader(header(['icon64url', 'https://example.com/64.png'])),
+    'https://example.com/64.png',
+  );
+  assert.equal(
+    iconUrlFromHeader(header(['icon64', 'https://example.com/64b.png'])),
+    'https://example.com/64b.png',
+  );
+});
+
+test('iconUrlFromHeader: @icon wins over 64-variants', () => {
+  // Smaller-resolution variant is preferred when both are declared.
+  assert.equal(
+    iconUrlFromHeader(header(
+      ['icon64', 'https://example.com/64.png'],
+      ['icon', 'https://example.com/i.png'],
+    )),
+    'https://example.com/i.png',
+  );
+});
+
+test('iconUrlFromHeader: accepts data: URLs verbatim', () => {
+  const dataUrl = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.equal(iconUrlFromHeader(header(['icon', dataUrl])), dataUrl);
+});
+
+test('iconUrlFromHeader: rejects relative and non-http(s) URLs', () => {
+  assert.equal(iconUrlFromHeader(header(['icon', '/icon.png'])), null);
+  assert.equal(iconUrlFromHeader(header(['icon', 'icon.png'])), null);
+  assert.equal(iconUrlFromHeader(header(['icon', 'ftp://example.com/i.png'])), null);
+  assert.equal(iconUrlFromHeader(header(['icon', 'javascript:alert(1)'])), null);
+});
+
+test('iconUrlFromHeader: rejects empty / malformed values', () => {
+  assert.equal(iconUrlFromHeader(header(['icon', ''])), null);
+  assert.equal(iconUrlFromHeader(header(['icon', '   '])), null);
+  assert.equal(iconUrlFromHeader(header(['icon', 'not a url'])), null);
+});
+
+test('iconUrlFromHeader: null/empty header returns null', () => {
+  assert.equal(iconUrlFromHeader(null), null);
+  assert.equal(iconUrlFromHeader({ tags: [] }), null);
+});
+
+test('iconUrlFromHeader: ignores localized @icon variants', () => {
+  // A locale-suffixed entry should not count — the canonical
+  // unlocalized form is the only one consulted.
+  const h = { tags: [{ tag: 'icon', locale: 'de', value: 'https://example.com/de.png' }] };
+  assert.equal(iconUrlFromHeader(h), null);
 });
 
 // ---------- isCacheFresh ----------

@@ -51,7 +51,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.vmDebugLogging` |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the options/viewer UI |
-| `src/site-icon.ts` | Site-favicon discovery (probe HTML, `/favicon.ico`, Google S2) + the slot renderer (clickable wrapper, globe placeholder, async swap) |
+| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
 | `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, vm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, decision-callback close, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
@@ -77,7 +77,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
 | `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
-| `tests/e2e/site-icons.spec.ts` | Favicon slot DOM contract: clickable anchor + linkUrl when @match yields an origin; inert span otherwise; globe placeholder either way |
+| `tests/e2e/site-icons.spec.ts` | Favicon slot DOM contract: clickable anchor + linkUrl, inert span when no origin, globe placeholder, and `@icon` header override via inline `data:` URL |
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |

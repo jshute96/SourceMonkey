@@ -46,9 +46,9 @@ If you want to cross-check by hand, fetch those three pages.
 | `@homepage` / `@website` / `@source` | ⚪ | ✓ |   |   | TM treats these as aliases for `@homepageURL`. VM and GM4 don't document the aliases — only `@homepageURL` (VM) or nothing (GM4). |
 | `@homepageURL` | ⚪ | ✓ | ✓ |   | The canonical form. Links the "home" icon in TM/VM's script list. |
 | `@supportURL` | ⚪ | ✓ | ✓ |   | Links the "?" icon in TM/VM's script list. |
-| `@icon` | ⚪ | ✓ | ✓ | ✓ | We don't surface per-script icons in the UI yet. |
-| `@iconURL` / `@defaulticon` | ⚪ | ✓ |   |   | TM-only aliases of `@icon`. |
-| `@icon64` / `@icon64URL` | ⚪ | ✓ |   |   | 64×64 variant; TM-only per docs. |
+| `@icon` | ✅ | ✓ | ✓ | ✓ | Used as the favicon shown beside the script in the options/viewer UI. Overrides the origin-discovered favicon when set. Only absolute http(s) and `data:` URLs are accepted — relative hrefs are rejected (no consistent base to resolve them against). |
+| `@iconURL` / `@defaulticon` | ✅ | ✓ |   |   | TM-only aliases of `@icon`; consulted in that priority order. |
+| `@icon64` / `@icon64URL` | ✅ | ✓ |   |   | 64×64 variant; TM-only per docs. Lower priority than the regular `@icon` variants since our display target is 16×16. |
 | `@tag` (categorization) | ⚪ | ✓ (5.0+) | ✓ |   | Labels for organising scripts in the dashboard. Distinct from "the metadata tag concept" generally. |
 | `@antifeature` | ⚪ | ✓ |   |   | Monetisation/tracking disclosure. TM documents it; VM and GM4 don't. Widely used by GreasyFork tooling regardless. |
 | `@license` | ⚪ |   |   |   | Not documented by any of TM/VM/GM4. Used in practice by source-sharing sites (OpenUserJS, GreasyFork) as plain metadata. |
