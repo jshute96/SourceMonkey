@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>VibeMonkey — Options</title>
+    <title>SourceMonkey — Options</title>
     <style>
       body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
       h1 { margin-top: 0; }
@@ -94,11 +94,11 @@
       .banner a.chrome-link:hover { text-decoration: underline; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
       /* Inline busy spinner for individual controls (toggles, add form). */
-      @keyframes vm-spin { to { transform: rotate(360deg); } }
-      .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: vm-spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
+      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
       /* Bulk-toggle button shows its spinner in place of the +/- glyph. */
       .bulk-toggle.busy { position: relative; color: transparent; }
-      .bulk-toggle.busy::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -5px 0 0 -5px; width: 10px; height: 10px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: vm-spin 0.7s linear infinite; box-sizing: border-box; }
+      .bulk-toggle.busy::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -5px 0 0 -5px; width: 10px; height: 10px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
       /* While a directory is being removed, dim the whole section and block further clicks. */
       .directory.removing { opacity: 0.5; pointer-events: none; }
       /* Highlight rows that changed during a refresh. The color
@@ -118,7 +118,7 @@
     </style>
   </head>
   <body>
-    <h1>VibeMonkey</h1>
+    <h1>SourceMonkey</h1>
 
     <div id="banner-slot"></div>
 

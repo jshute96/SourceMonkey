@@ -115,7 +115,7 @@ test('computeBadge: empty state → count 0, GREEN, just header in title', () =>
   const view = computeBadge({ documentId: DOC, url: 'https://x', matches: [], actual: {} });
   assert.equal(view.count, 0);
   assert.equal(view.color, BADGE_GREEN);
-  assert.equal(view.title, 'VibeMonkey');
+  assert.equal(view.title, 'SourceMonkey');
 });
 
 test('computeBadge: rows sorted by name; tooltip is "NAME | STATUS" per row', () => {
@@ -129,7 +129,7 @@ test('computeBadge: rows sorted by name; tooltip is "NAME | STATUS" per row', ()
     },
   });
   assert.deepEqual(view.title.split('\n'), [
-    'VibeMonkey',
+    'SourceMonkey',
     'Alpha | MISSING',
     'Bravo | ERROR',
     'Charlie | OK',
@@ -320,7 +320,7 @@ test('applyScriptReport: error replaces a prior started entry', () => {
 });
 
 test('applyScriptReport: started does NOT downgrade a prior error', () => {
-  // Errors are sticky so a delayed/retry vm:start can't silently hide
+  // Errors are sticky so a delayed/retry sm:start can't silently hide
   // a real failure from the badge.
   const state = {
     documentId: DOC, url: 'https://x', matches: [],
@@ -407,7 +407,7 @@ test('setCurrentDoc: evicts the oldest non-current doc when the cap is exceeded'
 });
 
 test('writeDocState: updates a doc without changing currentDocId', () => {
-  // A vm:start that arrives from a doc that isn't currently displayed
+  // A sm:start that arrives from a doc that isn't currently displayed
   // (e.g. during teardown of the doc we just navigated away from)
   // should record into its doc's slot but NOT steal the badge.
   let rec = setCurrentDoc(null, 'd1', makeState('d1', 'https://a'));

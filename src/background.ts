@@ -1,15 +1,15 @@
-// VibeMonkey MV3 service worker.
+// SourceMonkey MV3 service worker.
 //
 // Today the SW does two real jobs:
 //   - Opens the options page on toolbar click (no popup configured).
 //   - Watches every tab navigation, finds matching userscripts via the
-//     in-memory match index, listens to vm:start / vm:error reports
+//     in-memory match index, listens to sm:start / sm:error reports
 //     from injected wrappers, and surfaces the combined state as a
 //     per-tab badge + tooltip. Per-tab state is persisted to
 //     chrome.storage.session so it survives SW restarts but is dropped
 //     when Chrome shuts down.
 //
-// The `self.VibeMonkey` surface exists so e2e tests can drive the
+// The `self.SourceMonkey` surface exists so e2e tests can drive the
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
 // can't be triggered from a Playwright toolbar click.
 
@@ -34,11 +34,11 @@ import {
 import {
   isUserScriptsAvailable,
   syncRegistrations,
-  VM_ABANDONED_MSG,
-  VM_CHECK_PENDING_MSG,
-  VM_ERROR_MSG,
-  VM_START_MSG,
-  VM_SWAPPED_MSG,
+  SM_ABANDONED_MSG,
+  SM_CHECK_PENDING_MSG,
+  SM_ERROR_MSG,
+  SM_START_MSG,
+  SM_SWAPPED_MSG,
 } from './injector.js';
 import {
   applyScriptReport,
@@ -71,10 +71,10 @@ import {
   type StoredSource,
 } from './script-store.js';
 
-interface VibeMonkeyApi {
+interface SourceMonkeyApi {
   version: string;
   // Round-trip echo used by the smoke test to confirm the SW is alive
-  // and `self.VibeMonkey` is reachable from `serviceWorker.evaluate`.
+  // and `self.SourceMonkey` is reachable from `serviceWorker.evaluate`.
   ping: (value?: string) => string;
   // Test/debug hook: force a tab badge refresh against an arbitrary URL.
   matchesFor: (url: string) => Promise<MatchedScript[]>;
@@ -129,7 +129,7 @@ interface VibeMonkeyApi {
   }>;
 }
 
-const api: VibeMonkeyApi = {
+const api: SourceMonkeyApi = {
   version: chrome.runtime.getManifest().version,
   ping: (value = 'pong') => value,
   matchesFor: async (url) => {
@@ -215,7 +215,7 @@ const api: VibeMonkeyApi = {
   },
 };
 
-(self as unknown as { VibeMonkey: VibeMonkeyApi }).VibeMonkey = api;
+(self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
 
 // Clicking the toolbar icon opens the options page. We have no popup
 // configured, so onClicked fires on every action click; openOptionsPage
@@ -235,8 +235,8 @@ const INJECTABLE_SCHEME = /^(https?|file|ftp):/i;
 const tabKey = (tabId: number) => `tab:${tabId}`;
 
 // Per-tab serialization. All state mutations for a given tab (navigation
-// updates, vm:* reports, removals) go through enqueueTabWork so they
-// run strictly in order. Without this, two vm:start messages that
+// updates, sm:* reports, removals) go through enqueueTabWork so they
+// run strictly in order. Without this, two sm:start messages that
 // arrive in the same event-loop turn each do their own get/modify/set
 // against chrome.storage.session and the second write loses the first
 // update — the symptom is one script showing OK and another MISSING
@@ -334,7 +334,7 @@ async function updateTabMatches(
     // misleadingly suggests we're doing per-tab I/O when we're not.
     const tag = restored ? ' restored' : '';
     dlog(
-      `[VibeMonkey] ${incoming.length} matching script(s) for ${url} (doc=${docId || '?'}${tag}):`,
+      `[SourceMonkey] ${incoming.length} matching script(s) for ${url} (doc=${docId || '?'}${tag}):`,
       incoming.map((m) => getScriptLogLabel(m.id)),
     );
     // Opportunistic auto-update: while the user is interacting with a
@@ -353,7 +353,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
   try {
     if (!state || (state.matches.length === 0 && Object.keys(state.actual).length === 0)) {
       await chrome.action.setBadgeText({ tabId, text: '' });
-      await chrome.action.setTitle({ tabId, title: 'VibeMonkey' });
+      await chrome.action.setTitle({ tabId, title: 'SourceMonkey' });
       return;
     }
     const view = computeBadge(state);
@@ -379,7 +379,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
 function installNavigationListeners(): void {
   const wn = chrome.webNavigation;
   if (!wn) {
-    console.info('[VibeMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
+    console.info('[SourceMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       if (changeInfo.url) {
         enqueueTabWork(tabId, () => updateTabMatches(tabId, changeInfo.url, null, 'navigation'));
@@ -396,7 +396,7 @@ function installNavigationListeners(): void {
     // transitionType to "reload". We use that to opportunistically check
     // for updated userscripts in time for THIS navigation's injection,
     // rather than waiting for the next reload. Setup is fire-and-forget
-    // so the listener stays cheap; the wrapper's vm:check-pending
+    // so the listener stays cheap; the wrapper's sm:check-pending
     // round-trip is what actually waits on the result.
     if (d.transitionType === 'reload' && d.documentId) {
       setupReloadFastPath(d.tabId, d.documentId, d.url);
@@ -455,7 +455,7 @@ async function refreshAllOpenTabs(): Promise<void> {
     return;
   }
   // Queue per tab so a script-set change interleaves correctly with
-  // any in-flight vm:* report processing for the same tab.
+  // any in-flight sm:* report processing for the same tab.
   for (const tab of tabs) {
     if (tab.id !== undefined) {
       const tabId = tab.id;
@@ -494,7 +494,7 @@ function installStaleScriptListener(): void {
 }
 
 // Per-tab enqueue keeps stale marking ordered with concurrent
-// navigation / vm:* updates for the same tab.
+// navigation / sm:* updates for the same tab.
 async function propagateStaleScripts(scriptIds: string[]): Promise<void> {
   const all = await chrome.storage.session.get(null);
   let affectedTabs = 0;
@@ -505,7 +505,7 @@ async function propagateStaleScripts(scriptIds: string[]): Promise<void> {
     if (!Number.isFinite(tabId)) continue;
     const record = value as TabRecord | undefined;
     if (!record || !('byDoc' in record)) continue;
-    // Check the current doc only — a vm:start from an older doc is rare
+    // Check the current doc only — a sm:start from an older doc is rare
     // and that doc is already invisible to the user. Keeps the loop
     // cheap and avoids painting offscreen badges.
     const current = record.byDoc[record.currentDocId];
@@ -521,7 +521,7 @@ async function propagateStaleScripts(scriptIds: string[]): Promise<void> {
     enqueueTabWork(tabId, () => applyStaleToTab(tabId, relevant));
   }
   console.log(
-    `[VibeMonkey] stale-script change for ${scriptIds.length} script(s); ` +
+    `[SourceMonkey] stale-script change for ${scriptIds.length} script(s); ` +
     `${affectedTabs} tab(s) flagged for reload`,
   );
 }
@@ -553,7 +553,7 @@ async function applyStaleToTab(tabId: number, scriptIds: string[]): Promise<void
 //      and stash the in-flight promises in `fastPathByDoc[tabId:docId]`.
 //      Setup is async (it awaits ensureLoaded + findMatchesForUrl) but
 //      doesn't block the listener.
-//   2. The wrapper, after Chrome injects it, sends vm:check-pending
+//   2. The wrapper, after Chrome injects it, sends sm:check-pending
 //      and awaits the SW's reply. handleCheckPending looks up the
 //      fast-path entry, races the matching updateScript promise
 //      against RELOAD_FAST_PATH_WINDOW_MS, and replies:
@@ -595,7 +595,7 @@ interface FastPathEntry {
   startedAt: number;
   scripts: Map<string, FastPathScriptEntry>;
   // Per-script "has the wrapper already consumed this entry?" guard.
-  // A wrapper that calls vm:check-pending twice (eg. after an internal
+  // A wrapper that calls sm:check-pending twice (eg. after an internal
   // retry) gets {action:'run'} the second time so we don't double-swap.
   consumed: Set<string>;
   cleanupTimer: ReturnType<typeof setTimeout>;
@@ -669,10 +669,10 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
         cleanupTimer,
       });
       console.log(
-        `[VibeMonkey] reload fast-path: checking ${matches.length} script(s) for tab=${tabId} doc=${documentId.slice(0, 8)}`,
+        `[SourceMonkey] reload fast-path: checking ${matches.length} script(s) for tab=${tabId} doc=${documentId.slice(0, 8)}`,
       );
     } catch (err) {
-      console.info('[VibeMonkey] reload fast-path setup failed:', err);
+      console.info('[SourceMonkey] reload fast-path setup failed:', err);
     }
   })();
 }
@@ -722,7 +722,7 @@ async function handleCheckPending(
     const remaining = RELOAD_FAST_PATH_WINDOW_MS - elapsed;
     if (remaining <= 0) {
       console.log(
-        `[VibeMonkey] reload fast-path: ${payload.name ?? payload.id} window already elapsed (${elapsed}ms); running prior version`,
+        `[SourceMonkey] reload fast-path: ${payload.name ?? payload.id} window already elapsed (${elapsed}ms); running prior version`,
       );
       return { action: 'run' };
     }
@@ -740,7 +740,7 @@ async function handleCheckPending(
       // fires, so the NEXT reload will pick it up. We just give up
       // waiting on it for THIS navigation.
       console.log(
-        `[VibeMonkey] reload fast-path: ${payload.name ?? payload.id} update not detected within ${RELOAD_FAST_PATH_WINDOW_MS}ms; running prior version`,
+        `[SourceMonkey] reload fast-path: ${payload.name ?? payload.id} update not detected within ${RELOAD_FAST_PATH_WINDOW_MS}ms; running prior version`,
       );
       return { action: 'run' };
     }
@@ -750,7 +750,7 @@ async function handleCheckPending(
   if (refreshed.status !== 'ok') return { action: 'run' };
   if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
   console.log(
-    `[VibeMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
+    `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
   );
   return {
     action: 'run-new',
@@ -759,7 +759,7 @@ async function handleCheckPending(
   };
 }
 
-// ---------- vm:start / vm:error from injected wrappers ----------
+// ---------- sm:start / sm:error from injected wrappers ----------
 //
 // Messages from the USER_SCRIPT world arrive on the dedicated
 // `onUserScriptMessage` event — NOT on `chrome.runtime.onMessage`.
@@ -772,7 +772,7 @@ function installScriptMessageListener(): void {
   const ev = chrome.runtime.onUserScriptMessage as
     | chrome.runtime.ExtensionMessageEvent | undefined;
   if (!ev || typeof ev.addListener !== 'function') {
-    console.info('[VibeMonkey] chrome.runtime.onUserScriptMessage not available; skipping listener install');
+    console.info('[SourceMonkey] chrome.runtime.onUserScriptMessage not available; skipping listener install');
     return;
   }
   ev.addListener((msg, sender, sendResponse) => {
@@ -780,7 +780,7 @@ function installScriptMessageListener(): void {
     const tabId = sender.tab?.id;
     if (tabId == null) return;
     const type = (msg as { type?: unknown }).type;
-    if (type === VM_CHECK_PENDING_MSG) {
+    if (type === SM_CHECK_PENDING_MSG) {
       // Async reply path. Return true keeps the message channel open
       // until sendResponse fires. Swallow any send failures — they
       // typically mean the tab navigated away or the wrapper's
@@ -790,17 +790,17 @@ function installScriptMessageListener(): void {
       handleCheckPending(sender, payload).then(
         (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
         (err) => {
-          console.info('[VibeMonkey] check-pending handler threw:', err);
+          console.info('[SourceMonkey] check-pending handler threw:', err);
           try { sendResponse({ action: 'run' }); } catch { /* receiver gone */ }
         },
       );
       return true;
     }
     if (
-      type !== VM_START_MSG &&
-      type !== VM_ERROR_MSG &&
-      type !== VM_SWAPPED_MSG &&
-      type !== VM_ABANDONED_MSG
+      type !== SM_START_MSG &&
+      type !== SM_ERROR_MSG &&
+      type !== SM_SWAPPED_MSG &&
+      type !== SM_ABANDONED_MSG
     ) return;
     // Keep the inline cast in sync with `recordScriptReport`'s param
     // type so a rename of the wrapper field is caught at compile time
@@ -822,10 +822,10 @@ async function recordScriptReport(
   tabId: number,
   sender: chrome.runtime.MessageSender,
   type:
-    | typeof VM_START_MSG
-    | typeof VM_ERROR_MSG
-    | typeof VM_SWAPPED_MSG
-    | typeof VM_ABANDONED_MSG,
+    | typeof SM_START_MSG
+    | typeof SM_ERROR_MSG
+    | typeof SM_SWAPPED_MSG
+    | typeof SM_ABANDONED_MSG,
   payload: {
     id: string;
     name?: string;
@@ -850,38 +850,38 @@ async function recordScriptReport(
 
   const tabPart = ` tab=${tabId}`;
   const label = getScriptLogLabel(id);
-  if (type === VM_START_MSG) {
-    console.log(`[VibeMonkey] start ${label}${tabPart} ${senderUrl}`);
-  } else if (type === VM_SWAPPED_MSG) {
-    // The reload swap path. Log alongside vm:start so the SW console
+  if (type === SM_START_MSG) {
+    console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
+  } else if (type === SM_SWAPPED_MSG) {
+    // The reload swap path. Log alongside sm:start so the SW console
     // tells the full story when reading a transcript.
     console.log(
-      `[VibeMonkey] swapped ${label}${tabPart} ${senderUrl} ` +
+      `[SourceMonkey] swapped ${label}${tabPart} ${senderUrl} ` +
       `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
     );
-  } else if (type === VM_ABANDONED_MSG) {
+  } else if (type === SM_ABANDONED_MSG) {
     // SW told the wrapper to skip. Surface at info-level — this is rare
     // and worth knowing about, but it isn't an error.
     console.log(
-      `[VibeMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
+      `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
   } else {
     // console.info (not console.warn / .error) so a userscript runtime
     // failure — which is a bug in user-supplied code we're relaying —
-    // doesn't bubble up to chrome://extensions/?errors as if VibeMonkey
+    // doesn't bubble up to chrome://extensions/?errors as if SourceMonkey
     // itself had thrown. Chrome surfaces both .warn and .error from the
     // SW into the Errors panel; only .info / .log stay out of it. The
     // badge already surfaces the failure to the user; the Errors panel
     // should be reserved for actual extension bugs.
-    console.info(`[VibeMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+    console.info(`[SourceMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
   }
 
-  // vm:abandoned is logging-only — there's no "actual" report to merge
+  // sm:abandoned is logging-only — there's no "actual" report to merge
   // and no badge change. Returning here keeps the rest of the function
   // focused on the run / error / swapped reports.
-  if (type === VM_ABANDONED_MSG) return;
+  if (type === SM_ABANDONED_MSG) return;
 
-  // Closes the race where storage updates land BEFORE vm:start arrives.
+  // Closes the race where storage updates land BEFORE sm:start arrives.
   // See docs/matching.md#closing-the-report-after-change-race.
   // Guard against falsy loadedAt (0 / NaN) — every production write
   // bumps loadedAt to Date.now(), so a non-positive value means an old
@@ -890,15 +890,15 @@ async function recordScriptReport(
   const wrapperLoadedAt = typeof payload.loadedAt === 'number' && payload.loadedAt > 0
     ? payload.loadedAt : null;
   let isStale = false;
-  // vm:swapped means the wrapper just ran the freshest content, so a
+  // sm:swapped means the wrapper just ran the freshest content, so a
   // stored.loadedAt that matches the payload.loadedAt is expected and
   // does NOT make this report stale. Skip the check for that branch.
-  if (wrapperLoadedAt != null && type !== VM_SWAPPED_MSG) {
+  if (wrapperLoadedAt != null && type !== SM_SWAPPED_MSG) {
     const stored = await getScript(id);
     if (stored && stored.loadedAt > wrapperLoadedAt) {
       isStale = true;
       console.log(
-        `[VibeMonkey] vm:${type === VM_START_MSG ? 'start' : 'error'} is from outdated content for ${name} ` +
+        `[SourceMonkey] sm:${type === SM_START_MSG ? 'start' : 'error'} is from outdated content for ${name} ` +
         `(wrapper=${wrapperLoadedAt} stored=${stored.loadedAt}); flagging tab=${tabId} as needing reload`,
       );
     }
@@ -907,7 +907,7 @@ async function recordScriptReport(
   const record = await getTabRecord(tabId);
   let state = getDocState(record, senderDocId);
   if (!state) {
-    // Bootstrap: vm:start arrived before webNavigation.onCommitted
+    // Bootstrap: sm:start arrived before webNavigation.onCommitted
     // landed (SW cold start, or simple ordering race), or the
     // wrapper's document was evicted from the per-tab LRU. Synthesise
     // a state from the sender; if onCommitted later fires for this
@@ -922,19 +922,19 @@ async function recordScriptReport(
       actual: {},
     };
   }
-  const report: ActualStatus = type === VM_ERROR_MSG
+  const report: ActualStatus = type === SM_ERROR_MSG
     ? { state: 'error', name, message: String(payload.message ?? '') }
     : { state: 'started', name };
   let next = applyScriptReport(state, id, report);
-  if (type === VM_SWAPPED_MSG) {
+  if (type === SM_SWAPPED_MSG) {
     // The swap landed the latest body, so any prior stale marker for
-    // this id (e.g. from an earlier vm:start on this same documentId)
+    // this id (e.g. from an earlier sm:start on this same documentId)
     // no longer reflects reality.
     next = clearScriptStale(next, id);
   } else if (isStale) {
     next = markScriptStale(next, id);
   }
-  // writeDocState (not setCurrentDoc) — a late vm:* from a doc we've
+  // writeDocState (not setCurrentDoc) — a late sm:* from a doc we've
   // already navigated away from updates its stored state but doesn't
   // steal the badge from the doc currently on screen.
   const nextRecord = writeDocState(record, senderDocId, next);
@@ -945,7 +945,7 @@ async function recordScriptReport(
 }
 
 // Log-ID listener and its initial load come first so subsequent
-// startup paths (vm:start arriving from a pre-existing wrapper, the
+// startup paths (sm:start arriving from a pre-existing wrapper, the
 // first navigation-driven log line) can hit the populated map. The
 // fallback in getScriptLogLabel makes this best-effort, not required
 // for correctness.

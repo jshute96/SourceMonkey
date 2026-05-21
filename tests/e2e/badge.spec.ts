@@ -1,7 +1,7 @@
 // End-to-end badge state: matching → green, error → red, post-update
 // stale → purple, source disabled → empty. Exercises the real
 // chrome.action surface, the chrome.webNavigation listener, and the
-// vm:start / vm:error pipeline from injected wrappers back to the SW.
+// sm:start / sm:error pipeline from injected wrappers back to the SW.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -40,70 +40,70 @@ test.describe('badge', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   test('green + count=1 for one matching script', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     scriptsDir.write({
       relativePath: 'hello.user.js',
       meta: { name: 'Hello', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'hello';`,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(vm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'badge green=1');
+    const snap = await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'badge green=1');
     expect(snap.badgeText).toBe('1');
     expect(snap.title).toContain('Hello | OK');
     await page.close();
   });
 
   test('red for a script that throws on activation', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     scriptsDir.write({
       relativePath: 'boom.user.js',
       meta: { name: 'Boom', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `throw new Error('intentional test failure');`,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(vm, tabId, (s) => hasColor(s, RED), 'badge red');
+    const snap = await waitForTabState(sm, tabId, (s) => hasColor(s, RED), 'badge red');
     expect(snap.title).toContain('Boom | ERROR');
     await page.close();
   });
 
   test('purple/RELOAD after script body changes on disk', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     scriptsDir.write({
       relativePath: 'live.user.js',
       meta: { name: 'Live', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'v1';`,
     });
-    const added = await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    const added = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(vm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
 
     // Simulate an external edit: rewrite the file body, then trigger a
     // manual refresh through the updater. The SW's storage.onChanged
     // listener should fire markScriptStale for this tab.
     scriptsDir.rewriteBody('live.user.js', `document.title = 'v2';`);
-    await vm.updateSource(added!.id, 'manual');
+    await sm.updateSource(added!.id, 'manual');
 
-    const snap = await waitForTabState(vm, tabId, (s) => hasColor(s, PURPLE), 'purple after update');
+    const snap = await waitForTabState(sm, tabId, (s) => hasColor(s, PURPLE), 'purple after update');
     expect(snap.title).toContain('Live | Reload to update');
 
     // Reload the page → new wrapper runs the fresh body → back to green.
@@ -111,42 +111,42 @@ test.describe('badge', () => {
     // the v2 body before navigation; otherwise the debounced sync that
     // updateSource scheduled may not have run yet, and the reload would
     // re-inject v1.
-    await vm.syncNow();
+    await sm.syncNow();
     await page.reload();
     await expect(page).toHaveTitle('v2');
-    await waitForTabState(vm, tabId, (s) => hasColor(s, GREEN), 'green after reload');
+    await waitForTabState(sm, tabId, (s) => hasColor(s, GREEN), 'green after reload');
     await page.close();
   });
 
   test('empty badge when source is disabled', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: ``,
     });
-    const added = await vm.addSource(scriptsDir.path);
-    await vm.setSourceEnabled(added!.id, false);
-    await vm.syncNow();
+    const added = await sm.addSource(scriptsDir.path);
+    await sm.setSourceEnabled(added!.id, false);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
     // Badge stays empty since no scripts match.
-    const snap = await waitForTabState(vm, tabId, (s) => s.badgeText === '', 'empty badge');
+    const snap = await waitForTabState(sm, tabId, (s) => s.badgeText === '', 'empty badge');
     expect(snap.badgeText).toBe('');
     await page.close();
   });
 
   test('orange/MISSING when matcher expects a script the wrapper never reported', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // A MAIN-world script with no @grant runs in MAIN world; it cannot
     // call chrome.runtime.sendMessage so the bridge forwards via
     // postMessage. To produce a genuine MISSING (expected ∪ ¬actual)
     // without going through the bridge, register a USER_SCRIPT-world
-    // script that bails before sending vm:start. The wrapper's vm:start
+    // script that bails before sending sm:start. The wrapper's sm:start
     // is sent synchronously at activation, so we instead arrange for
     // the script to be EXPECTED but never injected: register a real
     // script, then unregister it from chrome.userScripts directly while
@@ -156,14 +156,14 @@ test.describe('badge', () => {
       meta: { name: 'Ghost', match: [`${fixtureServer.baseUrl}/*`], grant: ['unsafeWindow'], runAt: 'document-end' },
       body: ``,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
     // Drop the script from chrome.userScripts so it's expected but
     // never actually runs.
     const sw = await getServiceWorker();
     await sw.evaluate(async () => {
       const all = await chrome.userScripts.getScripts();
-      const ids = all.filter((s) => s.id !== 'vibemonkey-bridge').map((s) => s.id);
+      const ids = all.filter((s) => s.id !== 'sourcemonkey-bridge').map((s) => s.id);
       if (ids.length > 0) await chrome.userScripts.unregister({ ids });
     });
 
@@ -171,7 +171,7 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(vm, tabId, (s) => hasColor(s, ORANGE), 'orange MISSING');
+    const snap = await waitForTabState(sm, tabId, (s) => hasColor(s, ORANGE), 'orange MISSING');
     expect(snap.title).toContain('Ghost | MISSING');
     await page.close();
   });

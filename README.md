@@ -1,4 +1,4 @@
-# VibeMonkey
+# SourceMonkey
 
 A userscript manager Chrome extension optimized for vibe-coding.
 
@@ -12,8 +12,8 @@ A userscript manager Chrome extension optimized for vibe-coding.
 
 ## Usage
 
-Open the options page by clicking the VibeMonkey toolbar icon, or via
-`chrome://extensions` → VibeMonkey → "Details" → "Extension options".
+Open the options page by clicking the SourceMonkey toolbar icon, or via
+`chrome://extensions` → SourceMonkey → "Details" → "Extension options".
 
 ### Registering sources
 
@@ -73,7 +73,7 @@ the bare-array shape.
 ### Refresh behaviour
 
 HTTP entries (whether a top-level single-file source or reached via a
-manifest) re-fetch with conditional GETs — VibeMonkey stores each
+manifest) re-fetch with conditional GETs — SourceMonkey stores each
 script's `ETag` / `Last-Modified` and sends them on the next refresh,
 so an unchanged file answers `304` and no body is re-downloaded.
 Local-directory sources skip refetches when the file's size +
@@ -126,7 +126,7 @@ against the prior so identical content still counts as "no change."
   URL-backed ones). The **Location** row shows the absolute
   filesystem path for local sources and the resolved URL for
   URL-backed ones.
-- As you browse, the VibeMonkey toolbar icon shows a per-tab badge
+- As you browse, the SourceMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The
   badge color signals health:
@@ -141,13 +141,13 @@ against the prior so identical content still counts as "no change."
   `Reload to update`). The state updates on navigation and re-counts
   immediately when you flip an enable toggle on the options page.
 - **Auto-update.** While you browse a page that uses your scripts,
-  VibeMonkey checks (in the background, rate-limited, never blocking
+  SourceMonkey checks (in the background, rate-limited, never blocking
   navigation) whether their source files on disk have changed. Any
   change is loaded into storage and the affected tabs flip purple
   with a "Reload to update" tooltip — same signal you'd see after a
   manual Refresh.
 - **Reload picks up edits on the same click.** When you explicitly
-  reload a tab whose scripts you just edited, VibeMonkey races a
+  reload a tab whose scripts you just edited, SourceMonkey races a
   filesystem re-check against the page load (≤500ms). If the new
   version is ready in time, the updated body runs on that reload
   instead of the old one. If the new script isn't ready in time,
@@ -168,7 +168,7 @@ against the prior so identical content still counts as "no change."
   filename link on the options page so you can map a log entry back
   to its row.
 
-**One-time setup:** on `chrome://extensions`, for VibeMonkey enable:
+**One-time setup:** on `chrome://extensions`, for SourceMonkey enable:
 
 - **"Allow access to file URLs"** — without it the extension can't
   read your local directories.
@@ -194,10 +194,10 @@ following Violentmonkey's `@inject-into` and Tampermonkey's
 
 The wrapper around every body:
 
-- Logs `[VibeMonkey] script "<name>" running on <url>` to the page
+- Logs `[SourceMonkey] script "<name>" running on <url>` to the page
   console on activation.
 - Catches synchronous throws from the body and logs them as
-  `[VibeMonkey] script "<name>" threw: <message>`, also forwarding
+  `[SourceMonkey] script "<name>" threw: <message>`, also forwarding
   to the service worker.
 - Installs filtered `window` `error` / `unhandledrejection` listeners
   so async failures from handlers the script installs (timers, event
@@ -209,7 +209,7 @@ back to `window.postMessage` and a tiny USER_SCRIPT-world bridge
 forwards those events to the service worker. The badge stays accurate
 for `@grant none` / page-world scripts.
 
-For the full per-tag inventory — which header fields VibeMonkey
+For the full per-tag inventory — which header fields SourceMonkey
 honors, which are parsed but not acted on, and which are ignored —
 see [docs/supported-headers.md](docs/supported-headers.md).
 

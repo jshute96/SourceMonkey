@@ -1,6 +1,6 @@
 # URL matching and the per-tab badge
 
-How VibeMonkey decides which scripts apply to a URL, and how that
+How SourceMonkey decides which scripts apply to a URL, and how that
 result becomes the toolbar badge + tooltip you see on a tab.
 
 Related modules:
@@ -122,7 +122,7 @@ For each tab we:
   storage survives SW restarts (MV3 workers idle out aggressively)
   but is dropped when Chrome shuts down.
 - Render the badge from the union of `matches` (expected) and `actual`
-  (vm:start / vm:error reports — see below).
+  (sm:start / sm:error reports — see below).
 
 ### Badge view (expected ∪ actual)
 
@@ -138,13 +138,13 @@ For each tab we:
     expected set and the actual set diverge (MISSING or UNEXPECTED).
   - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
     no errors.
-- **Tooltip** — `"VibeMonkey"` followed by one line per script,
+- **Tooltip** — `"SourceMonkey"` followed by one line per script,
   formatted `"<name> | <STATUS>"`, sorted by name. `<STATUS>` is one
   of:
-  - `OK` — expected and the wrapper sent `vm:start` with no error.
-  - `ERROR` — wrapper sent `vm:error` (regardless of expected).
-  - `MISSING` — expected by the matcher but no `vm:start` yet.
-  - `UNEXPECTED` — wrapper sent `vm:start` but the matcher didn't
+  - `OK` — expected and the wrapper sent `sm:start` with no error.
+  - `ERROR` — wrapper sent `sm:error` (regardless of expected).
+  - `MISSING` — expected by the matcher but no `sm:start` yet.
+  - `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
     predict it (e.g. Chrome's matching disagrees with ours, or a race
     against a script-store change).
   - `Reload to update` — the script is running here but its source
@@ -153,7 +153,7 @@ For each tab we:
 
 ### Actual reports from injected wrappers
 
-Every wrapper sends `vm:start` on activation and `vm:error` on a
+Every wrapper sends `sm:start` on activation and `sm:error` on a
 synchronous throw. The SW listens on
 `chrome.runtime.onUserScriptMessage` (NOT the regular
 `runtime.onMessage`) and merges each report into the tab's `actual`
@@ -164,7 +164,7 @@ for the wrapper-side payloads.
 
 `chrome.userScripts` injects exactly once per document. Fragment
 changes, SPA pushState, and bfcache restores all keep the same
-document — no re-injection, no new `vm:start`. Resetting `actual` on
+document — no re-injection, no new `sm:start`. Resetting `actual` on
 every URL change would falsely flag those scripts as MISSING. So we
 key state by `documentId`:
 
@@ -173,17 +173,17 @@ key state by `documentId`:
   remember**): keep `actual` untouched. Union the new URL's matches
   into the stored `matches` list — a script that matched any URL
   during this document's life is "expected to have injected by now,"
-  and surfaces as MISSING if `vm:start` never came.
+  and surfaces as MISSING if `sm:start` never came.
 - **Unknown `documentId`** (full document load to a doc we've never
   tracked, or one that aged out of the LRU): reset `actual` to `{}`
   and start a fresh expected set from this URL's matches.
-- **Bootstrap race** — if a `vm:*` arrives before
+- **Bootstrap race** — if a `sm:*` arrives before
   `webNavigation.onCommitted` has set the tab state (cold SW start or
   pure ordering race), the SW synthesises state from `sender.url` and
   `sender.documentId`. A follow-up `onCommitted` for the same
   documentId will hit the same record and preserve `actual`.
 - **Errors are sticky** for the same script ID on the same document —
-  a later `vm:start` doesn't silently flip ERROR back to OK.
+  a later `sm:start` doesn't silently flip ERROR back to OK.
 
 ### Per-tab document LRU (bfcache restore)
 
@@ -202,7 +202,7 @@ capped at `MAX_DOCS_PER_TAB` (currently 5):
 - `setCurrentDoc()` promotes the doc to most-recent and marks it as
   what the badge displays.
 - `writeDocState()` updates a doc's stored state WITHOUT changing the
-  current one — used by the message handler so a late `vm:*` from a
+  current one — used by the message handler so a late `sm:*` from a
   doc we already navigated away from updates its slot (so it survives
   another bfcache visit later) but doesn't steal the badge from the
   on-screen doc.
@@ -212,9 +212,9 @@ capped at `MAX_DOCS_PER_TAB` (currently 5):
 
 ### Per-tab serialization
 
-All mutations for a given tab — navigation events, vm:* reports,
+All mutations for a given tab — navigation events, sm:* reports,
 removals, refresh-driven recomputes — go through a per-tab promise
-queue (`enqueueTabWork`). Without it, two `vm:start` messages that
+queue (`enqueueTabWork`). Without it, two `sm:start` messages that
 arrive in the same event-loop turn each do their own get/modify/set
 against `chrome.storage.session` and the second write loses the first
 update.
@@ -245,17 +245,17 @@ How it works:
   reload naturally clears the stale flag. The wrapper for the new
   document runs the freshly-stored content.
 - A reload that triggers the [fast-path](injection.md#reload-fast-path)
-  may land the new body on THIS navigation via `vm:swapped`;
+  may land the new body on THIS navigation via `sm:swapped`;
   `clearScriptStale` removes the id from `staleScriptIds` so the badge
   doesn't keep nagging.
 
 ### Closing the report-after-change race
 
 - **Symptom**: the storage write can land before the wrapper's
-  `vm:start` does, leaving `actual` empty when the listener walks the
+  `sm:start` does, leaving `actual` empty when the listener walks the
   tab — so nothing gets flagged.
 - **Mitigation**: every wrapper carries the `StoredScript.loadedAt`
-  it was registered with in `vm:start` / `vm:error` payloads.
+  it was registered with in `sm:start` / `sm:error` payloads.
 - **Comparison**: `recordScriptReport` compares the wrapper's
   `loadedAt` against the current stored row's `loadedAt`. If the
   stored one is newer, the wrapper ran OUTDATED code and the script

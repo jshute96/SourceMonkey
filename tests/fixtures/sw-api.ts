@@ -1,4 +1,4 @@
-// Typed wrappers around the `self.VibeMonkey` SW test surface so each
+// Typed wrappers around the `self.SourceMonkey` SW test surface so each
 // test file doesn't repeat the same `serviceWorker.evaluate(...)`
 // boilerplate. Every call re-resolves the SW handle via
 // getServiceWorker — MV3 workers idle out aggressively and a cached
@@ -8,7 +8,7 @@ import type { Worker } from '@playwright/test';
 
 type Mode = 'manual' | 'opportunistic';
 
-interface VmApi {
+interface SmApi {
   addSource(path: string): Promise<{ id: string; path: string } | null>;
   removeSource(id: string): Promise<void>;
   getSources(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
@@ -64,21 +64,21 @@ export interface TabRecordLike {
 // Build a `swApi` object from a getServiceWorker fixture function. Each
 // method re-resolves the worker before evaluating so a torn-down handle
 // from a prior call doesn't fail the test with a confusing error.
-export function makeSwApi(getServiceWorker: () => Promise<Worker>): VmApi {
-  const call = async <T>(method: keyof VmApi, args: unknown[]): Promise<T> => {
+export function makeSwApi(getServiceWorker: () => Promise<Worker>): SmApi {
+  const call = async <T>(method: keyof SmApi, args: unknown[]): Promise<T> => {
     const sw = await getServiceWorker();
     return sw.evaluate(
       async ({ method, args }) => {
-        const api = (self as unknown as { VibeMonkey: Record<string, (...a: unknown[]) => unknown> }).VibeMonkey;
+        const api = (self as unknown as { SourceMonkey: Record<string, (...a: unknown[]) => unknown> }).SourceMonkey;
         const fn = api[method];
-        if (typeof fn !== 'function') throw new Error(`VibeMonkey.${method} is not a function`);
+        if (typeof fn !== 'function') throw new Error(`SourceMonkey.${method} is not a function`);
         return await fn(...args);
       },
       { method: method as string, args },
     ) as Promise<T>;
   };
-  return new Proxy({} as VmApi, {
-    get: (_t, prop) => (...args: unknown[]) => call(prop as keyof VmApi, args),
+  return new Proxy({} as SmApi, {
+    get: (_t, prop) => (...args: unknown[]) => call(prop as keyof SmApi, args),
   });
 }
 
@@ -109,7 +109,7 @@ export async function waitFor<T>(
 
 // Convenience: wait until a tab's badge state matches `predicate`.
 export async function waitForTabState(
-  api: VmApi,
+  api: SmApi,
   tabId: number,
   predicate: (snapshot: TabStateSnapshot) => boolean,
   label = 'tab state',

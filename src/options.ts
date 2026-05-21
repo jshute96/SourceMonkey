@@ -349,7 +349,7 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
     // Surface the failure rather than swallowing it — if storage rejects
     // (quota, disk error), the row stays, the button comes back, and the
     // user gets at least a console line to investigate with.
-    console.error('[VibeMonkey] removeScript failed', err);
+    console.error('[SourceMonkey] removeScript failed', err);
     btn.disabled = false;
   }
 }
@@ -807,7 +807,7 @@ function renderUserScriptsBanner(error?: string): HTMLElement {
 
   const explain = document.createElement('p');
   explain.textContent =
-    'VibeMonkey can find matching scripts (the toolbar badge counts ' +
+    'SourceMonkey can find matching scripts (the toolbar badge counts ' +
     'them), but Chrome won\'t actually inject anything until you turn ' +
     'on "Allow User Scripts" for this extension. Open its details ' +
     'page, enable the toggle, then reload this page:';
@@ -838,7 +838,7 @@ function renderFileAccessBanner(): HTMLElement {
 
   const explain = document.createElement('p');
   explain.textContent =
-    'VibeMonkey can\'t read local files until you enable ' +
+    'SourceMonkey can\'t read local files until you enable ' +
     '"Allow access to file URLs". Open the extension\'s details page, ' +
     'turn it on, then reload this page:';
   div.appendChild(explain);

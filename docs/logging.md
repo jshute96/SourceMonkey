@@ -1,6 +1,6 @@
 # SW logging
 
-How VibeMonkey identifies scripts in console output, and how to
+How SourceMonkey identifies scripts in console output, and how to
 quiet the noisy lines.
 
 ## Log IDs
@@ -17,7 +17,7 @@ or UI surface refers to it.
 
 ### Where you see them
 
-- SW console — every `[VibeMonkey] …` line that mentions a script
+- SW console — every `[SourceMonkey] …` line that mentions a script
   uses its log ID. See [the message list below](#message-catalog).
 - Options page — a faint `#N` is rendered after the filename link
   whenever a script is part of a dupe group. No suffix for unique
@@ -37,7 +37,7 @@ or UI surface refers to it.
   (`installScriptLogIdListener`).
 - Sync getter: `getScriptLogLabel(id)` returns the log ID, or the
   first 8 chars of the UUID as a fallback (only seen during the
-  brief window before the initial load resolves, or for late vm:*
+  brief window before the initial load resolves, or for late sm:*
   reports from scripts already removed).
 
 ### Dupe reshuffle behavior
@@ -56,7 +56,7 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 - Off by default.
 - Toggle: "Enable debug logging" checkbox at the bottom of the
   options page.
-- Storage key: `chrome.storage.local.vmDebugLogging` — set/clear
+- Storage key: `chrome.storage.local.smDebugLogging` — set/clear
   from DevTools to flip without the UI.
 - Live update: the SW listens via `storage.onChanged` so the change
   takes effect without reloading the extension.

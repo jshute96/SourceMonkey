@@ -29,38 +29,38 @@ test.describe('change detection', () => {
   test.beforeEach(async () => { server = await UserscriptServer.start(); });
   test.afterEach(async () => { await server.stop(); });
 
-  test('HTTP single-file: no validators — identical refetch preserves loadedAt, mutated bumps it', async ({ vm }) => {
+  test('HTTP single-file: no validators — identical refetch preserves loadedAt, mutated bumps it', async ({ sm }) => {
     // Server returns no ETag / Last-Modified, so the conditional GET
     // can't 304 — every refresh re-fetches the full body. The
     // post-fetch contentHash compare is what keeps loadedAt stable
     // when the bytes haven't changed.
     server.setRoute('/foo.user.js', userscriptText('Foo'));
-    const source = await vm.addSource(`${server.baseUrl}/foo.user.js`);
-    const before = await vm.getSourceWithScripts(source!.id);
+    const source = await sm.addSource(`${server.baseUrl}/foo.user.js`);
+    const before = await sm.getSourceWithScripts(source!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
     expect(before!.scripts[0].status).toBe('ok');
 
     // Same body — different physical fetch, identical bytes → loadedAt unchanged.
     await new Promise((r) => setTimeout(r, 10));
-    await vm.updateSource(source!.id, 'manual');
-    let after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    let after = await sm.getSourceWithScripts(source!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
 
     // Now change the body. New bytes → loadedAt bumps.
     server.setRoute('/foo.user.js', userscriptText('Foo', ' /* v2 */'));
-    await vm.updateSource(source!.id, 'manual');
-    after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    after = await sm.getSourceWithScripts(source!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).toContain('v2');
   });
 
-  test('HTTP single-file: with ETag — conditional GET 304 preserves loadedAt, body change forces 200 + bump', async ({ vm }) => {
+  test('HTTP single-file: with ETag — conditional GET 304 preserves loadedAt, body change forces 200 + bump', async ({ sm }) => {
     // Server returns an ETag the SW captures on the first fetch and
     // replays as If-None-Match next time. The cheap-skip HTTP 304 path
     // fires (no body crosses the wire); content-hash never needed.
     server.setRoute('/bar.user.js', userscriptText('Bar'), { etag: 'W/"v1"' });
-    const source = await vm.addSource(`${server.baseUrl}/bar.user.js`);
-    const before = await vm.getSourceWithScripts(source!.id);
+    const source = await sm.addSource(`${server.baseUrl}/bar.user.js`);
+    const before = await sm.getSourceWithScripts(source!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
 
     // Conditional GET → 304 → unchanged. loadedAt preserved. We assert
@@ -69,8 +69,8 @@ test.describe('change detection', () => {
     // loadedAt and the test would silently double-cover the wrong
     // path.
     await new Promise((r) => setTimeout(r, 10));
-    await vm.updateSource(source!.id, 'manual');
-    let after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    let after = await sm.getSourceWithScripts(source!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
     expect(server.countResponses('/bar.user.js', 304)).toBe(1);
     const conditional = server.requestLog.find(
@@ -81,8 +81,8 @@ test.describe('change detection', () => {
     // Rotate the ETag AND change the body. Conditional GET → 200,
     // new body, fresh validators captured, loadedAt bumped.
     server.setRoute('/bar.user.js', userscriptText('Bar', ' /* v2 */'), { etag: 'W/"v2"' });
-    await vm.updateSource(source!.id, 'manual');
-    after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    after = await sm.getSourceWithScripts(source!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).toContain('v2');
     // The third refresh request must have come back 200 (server still
@@ -92,7 +92,7 @@ test.describe('change detection', () => {
     expect(server.countResponses('/bar.user.js', 200)).toBeGreaterThanOrEqual(2);
   });
 
-  test('HTTP manifest, no validators: per-entry unchanged content preserves loadedAt, only the changed entry bumps', async ({ vm }) => {
+  test('HTTP manifest, no validators: per-entry unchanged content preserves loadedAt, only the changed entry bumps', async ({ sm }) => {
     // Manifests don't carry per-file stat at scan time, and an HTTP
     // server with no validators can't 304 — so every entry is
     // physically re-fetched every refresh. The content-hash compare
@@ -103,8 +103,8 @@ test.describe('change detection', () => {
     server.setRoute('/b.user.js', userscriptText('B'));
     server.setManifest('/manifest.json', ['a.user.js', 'b.user.js']);
 
-    const source = await vm.addSource(`${server.baseUrl}/manifest.json`);
-    const before = await vm.getSourceWithScripts(source!.id);
+    const source = await sm.addSource(`${server.baseUrl}/manifest.json`);
+    const before = await sm.getSourceWithScripts(source!.id);
     expect(before!.scripts).toHaveLength(2);
     const priorByPath = Object.fromEntries(
       before!.scripts.map((s) => [s.relativePath, s]),
@@ -115,8 +115,8 @@ test.describe('change detection', () => {
     // Refresh with everything identical. Both entries hit the
     // content-hash path → both loadedAt values preserved.
     await new Promise((r) => setTimeout(r, 10));
-    await vm.updateSource(source!.id, 'manual');
-    let after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    let after = await sm.getSourceWithScripts(source!.id);
     let afterByPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(afterByPath['a.user.js'].loadedAt).toBe(priorByPath['a.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].loadedAt).toBe(priorByPath['b.user.js'].loadedAt);
@@ -125,15 +125,15 @@ test.describe('change detection', () => {
     // value while `b` advances — proves the new-file / updated-file
     // distinction the options page relies on for its highlights.
     server.setRoute('/b.user.js', userscriptText('B', ' /* v2 */'));
-    await vm.updateSource(source!.id, 'manual');
-    after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    after = await sm.getSourceWithScripts(source!.id);
     afterByPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(afterByPath['a.user.js'].loadedAt).toBe(priorByPath['a.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].loadedAt).toBeGreaterThan(priorByPath['b.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].bodyText).toContain('v2');
   });
 
-  test('file:// manifest: identical content preserves loadedAt, mutated bumps it', async ({ vm }) => {
+  test('file:// manifest: identical content preserves loadedAt, mutated bumps it', async ({ sm }) => {
     // A manifest sitting on the local filesystem and pointing at local
     // file:// scripts. Per-entry file:// fetches are always physical
     // (manifest scans carry no listing stat), so this is the
@@ -151,8 +151,8 @@ test.describe('change detection', () => {
       const manifestPath = path.join(scriptsDir.path, 'manifest.json');
       fs.writeFileSync(manifestPath, JSON.stringify(['a.user.js']));
 
-      const source = await vm.addSource(manifestPath);
-      const before = await vm.getSourceWithScripts(source!.id);
+      const source = await sm.addSource(manifestPath);
+      const before = await sm.getSourceWithScripts(source!.id);
       expect(before!.scripts).toHaveLength(1);
       expect(before!.scripts[0].status).toBe('ok');
       const priorLoadedAt = before!.scripts[0].loadedAt;
@@ -161,14 +161,14 @@ test.describe('change detection', () => {
       // fetches always physically re-read; content-hash keeps
       // loadedAt stable.
       await new Promise((r) => setTimeout(r, 10));
-      await vm.updateSource(source!.id, 'manual');
-      let after = await vm.getSourceWithScripts(source!.id);
+      await sm.updateSource(source!.id, 'manual');
+      let after = await sm.getSourceWithScripts(source!.id);
       expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
 
       // Mutate the body → fresh hash → loadedAt bumps.
       scriptsDir.rewriteBody('a.user.js', 'console.log("v2");');
-      await vm.updateSource(source!.id, 'manual');
-      after = await vm.getSourceWithScripts(source!.id);
+      await sm.updateSource(source!.id, 'manual');
+      after = await sm.getSourceWithScripts(source!.id);
       expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
       expect(after!.scripts[0].bodyText).toContain('v2');
     } finally {
@@ -176,14 +176,14 @@ test.describe('change detection', () => {
     }
   });
 
-  test('every loaded script carries a contentHash (the universal last-change token)', async ({ vm }) => {
+  test('every loaded script carries a contentHash (the universal last-change token)', async ({ sm }) => {
     // Smoke test: an HTTP single-file source's row must come back with
     // contentHash populated regardless of whether the server supplied
     // validators. Without this field the post-fetch compare wouldn't
     // work on subsequent refreshes.
     server.setRoute('/c.user.js', userscriptText('C'));
-    const source = await vm.addSource(`${server.baseUrl}/c.user.js`);
-    const result = await vm.getSourceWithScripts(source!.id);
+    const source = await sm.addSource(`${server.baseUrl}/c.user.js`);
+    const result = await sm.getSourceWithScripts(source!.id);
     expect(result!.scripts[0].status).toBe('ok');
     expect(typeof (result!.scripts[0] as { contentHash?: string }).contentHash).toBe('string');
   });

@@ -14,14 +14,14 @@ test.describe('site-icon slot', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   test('renders an anchor + globe for scripts with a usable @match origin', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/posts/*/edit'] },
       body: '',
     });
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/options.html`);
@@ -37,7 +37,7 @@ test.describe('site-icon slot', () => {
   });
 
   test('@icon header takes priority over origin-discovered favicon', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     // 1x1 transparent PNG inlined as a data: URL — `ensureIconForUrl`
     // returns it synchronously without any network round-trip, so the
@@ -53,7 +53,7 @@ test.describe('site-icon slot', () => {
       },
       body: '',
     });
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/options.html`);
@@ -72,14 +72,14 @@ test.describe('site-icon slot', () => {
   });
 
   test('renders an inert span + globe for scripts without a usable origin', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'b.user.js',
       meta: { name: 'B', match: ['<all_urls>'] },
       body: '',
     });
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/options.html`);

@@ -11,7 +11,7 @@ test.describe('missing-row trash-can', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   test('removing one missing row keeps the other missing rows', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     // Three valid scripts to start, all on disk.
     for (const name of ['a.user.js', 'b.user.js', 'c.user.js']) {
@@ -21,17 +21,17 @@ test.describe('missing-row trash-can', () => {
         body: '',
       });
     }
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
     expect(source).not.toBeNull();
 
     // Delete all three so they become 'missing' after a refresh.
     scriptsDir.remove('a.user.js');
     scriptsDir.remove('b.user.js');
     scriptsDir.remove('c.user.js');
-    await vm.updateSource(source!.id, 'manual');
-    await vm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
 
-    const ws = await vm.getSourceWithScripts(source!.id);
+    const ws = await sm.getSourceWithScripts(source!.id);
     const allMissing = ws!.scripts.every((s) => s.status === 'missing');
     expect(allMissing).toBe(true);
     expect(ws!.scripts).toHaveLength(3);
@@ -61,7 +61,7 @@ test.describe('missing-row trash-can', () => {
   });
 
   test('mixed ok + missing: clicking both missing trashes leaves the ok row intact', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     // a, b, c on disk; we'll keep `a` and delete `b` and `c` so the
     // table has one ok row plus two missing rows.
@@ -72,13 +72,13 @@ test.describe('missing-row trash-can', () => {
         body: '',
       });
     }
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
     scriptsDir.remove('b.user.js');
     scriptsDir.remove('c.user.js');
-    await vm.updateSource(source!.id, 'manual');
-    await vm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
 
-    const ws = await vm.getSourceWithScripts(source!.id);
+    const ws = await sm.getSourceWithScripts(source!.id);
     expect(ws!.scripts.filter((s) => s.status === 'missing')).toHaveLength(2);
     expect(ws!.scripts.filter((s) => s.status === 'ok')).toHaveLength(1);
 
@@ -107,7 +107,7 @@ test.describe('missing-row trash-can', () => {
       .toHaveText('a.user.js');
 
     // And the storage reflects only the ok row.
-    const after = await vm.getSourceWithScripts(source!.id);
+    const after = await sm.getSourceWithScripts(source!.id);
     expect(after!.scripts).toHaveLength(1);
     expect(after!.scripts[0].relativePath).toBe('a.user.js');
     expect(after!.scripts[0].status).toBe('ok');

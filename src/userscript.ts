@@ -193,7 +193,7 @@ async function onCopyFilename(): Promise<void> {
 function render(script: StoredScript): void {
   controlsRowEl.hidden = false;
   renderFilenameHeading(script);
-  document.title = `${script.relativePath} — VibeMonkey`;
+  document.title = `${script.relativePath} — SourceMonkey`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
   enableCheckboxEl.disabled = !sourceEnabled;

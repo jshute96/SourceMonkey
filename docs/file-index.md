@@ -28,14 +28,14 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
-| `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a VibeMonkey HTTP-manifest JSON array to stdout |
+| `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout |
 
 ## Extension Source (`src/`)
 
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | MV3 extension manifest |
-| `src/background.ts` | Service worker entrypoint; per-tab badge wiring, vm:* listener (incl. reload-fast-path check-pending handler), injector + match-index bootstrap |
+| `src/background.ts` | Service worker entrypoint; per-tab badge wiring, sm:* listener (incl. reload-fast-path check-pending handler), injector + match-index bootstrap |
 | `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
 | `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners, Refresh All + ?refresh trigger + change-row highlights |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, highlighted code box |
@@ -49,31 +49,31 @@ One-line descriptions of every source file, grouped by directory.
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local` |
 | `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts` and wraps each body with an activation/error shim |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color) and per-tab document LRU (bfcache restore) |
-| `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.vmDebugLogging` |
+| `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the options/viewer UI |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
-| `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, vm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
-| `src/wrapper-tail.js` | Wrapper postlude (catch, vm:error send, decision-callback close, IIFE close) — minified to one line by the build |
+| `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
+| `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, decision-callback close, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
-| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` vm:* events from MAIN-world wrappers to the SW |
+| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `vm` SW-api proxy |
+| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes and conditional-GET handling |
-| `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.VibeMonkey` SW test surface plus a generic `waitFor` polling helper |
+| `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus a generic `waitFor` polling helper |
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
-| `tests/e2e/reload-fast-path.spec.ts` | Reload triggers vm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
+| `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
 | `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
@@ -104,7 +104,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |
-| `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones VibeMonkey honors, which are parsed-only, and which are ignored |
+| `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones SourceMonkey honors, which are parsed-only, and which are ignored |
 | `docs/logging.md` | SW console-message catalog: log IDs (basename + `#N` dupes), the debug-logging gate, and which lines it gates |
 | `docs/site-icons.md` | Origin extraction from `@match`, favicon fetch+cache, and the icon slot shown beside each script filename |
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |

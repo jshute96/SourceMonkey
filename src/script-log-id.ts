@@ -115,7 +115,7 @@ export function installScriptLogIdListener(): void {
 // Short human-readable label for SW log messages. Falls back to the
 // first 8 chars of the UUID when the script isn't tracked — happens
 // only for a brief window before ensureLogIdsLoaded() resolves, or
-// for late vm:* reports from scripts that have since been removed.
+// for late sm:* reports from scripts that have since been removed.
 export function getScriptLogLabel(id: string): string {
   return logIds.get(id) ?? id.slice(0, 8);
 }

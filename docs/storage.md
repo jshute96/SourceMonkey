@@ -1,7 +1,7 @@
 # Storage and the load/refresh pipeline
 
 The script store (`src/script-store.ts`) is the persistence layer for
-every userscript VibeMonkey knows about. It backs onto
+every userscript SourceMonkey knows about. It backs onto
 `chrome.storage.local` with **one row per record** — no monolithic
 blob.
 

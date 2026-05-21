@@ -1,6 +1,6 @@
 # HTTP and manifest sources
 
-VibeMonkey accepts userscripts from `http(s)://` URLs in addition to
+SourceMonkey accepts userscripts from `http(s)://` URLs in addition to
 local `file://` paths, and supports a JSON **manifest** format that
 works for both local and remote sources. Implemented in
 `src/directories.ts` (URL detection, fetchers, scanners) and consumed
@@ -62,7 +62,7 @@ HTTP. A typical workflow:
 1. Write `manifest.json` next to your `*.user.js` files (or generate
    it with `scripts/make_manifest.sh`).
 2. Add the local path (e.g. `/home/me/scripts/manifest.json`) as a
-   source in VibeMonkey to verify the entries load and inject.
+   source in SourceMonkey to verify the entries load and inject.
 3. Serve the directory over HTTP; replace the source with the
    `https://…/manifest.json` URL. The script contents and stable IDs
    come from `relativePath` (the raw entry text), so identity carries

@@ -1,4 +1,4 @@
-// Build script for the VibeMonkey Chrome extension.
+// Build script for the SourceMonkey Chrome extension.
 //
 // What this does, end to end:
 //   1. Wipes the dist/ directory so each build starts from a clean slate.

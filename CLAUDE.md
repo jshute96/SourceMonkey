@@ -66,24 +66,24 @@ user before elaborating further. Default to action over planning.
   chrome.* APIs or end-to-end injection.
 - **E2E harness** (see `docs/testing.md` for the full picture):
   - `tests/fixtures/extension.ts` exposes `extensionContext`,
-    `fixtureServer`, `extensionId`, `getServiceWorker`, and `vm`. The
-    `vm` fixture is a typed proxy over the SW's `self.VibeMonkey` test
+    `fixtureServer`, `extensionId`, `getServiceWorker`, and `sm`. The
+    `sm` fixture is a typed proxy over the SW's `self.SourceMonkey` test
     surface (see `src/background.ts`).
   - `tests/fixtures/scripts-dir.ts` builds a tmp directory of real
-    `*.user.js` files on disk so `vm.addSource(dir.path)` runs the
+    `*.user.js` files on disk so `sm.addSource(dir.path)` runs the
     production file:// scan + fetch pipeline.
   - The fixture pre-writes `extensions.settings.<id>.user_scripts_enabled
     = true` into Chrome's Preferences so `chrome.userScripts` is callable
     in headless mode (Chrome ≥138 normally requires a manual toggle).
-- **Always call `vm.syncNow()`** after any state-changing operation
+- **Always call `sm.syncNow()`** after any state-changing operation
   (addSource, updateSource, setSourceEnabled, setScriptEnabled) and
   BEFORE the navigation that should see the new state. The production
   storage→sync path has a 50ms debounce that a fast-following navigation
   will out-race; `syncNow` flushes it.
-- **Reset between tests**: the `vm` fixture calls `vm.resetAllState()`
+- **Reset between tests**: the `sm` fixture calls `sm.resetAllState()`
   before each test (wipes storage + unregisters every userscript). Tests
   should clean up their tmp dirs in `afterEach`.
-- **No SW-console output by default**. Set `VM_FORWARD_SW_CONSOLE=1` to
+- **No SW-console output by default**. Set `SM_FORWARD_SW_CONSOLE=1` to
   stream the SW's `console.log` calls to test stderr while debugging.
 - **Prefer fresh test files for new feature areas**, with one file per
   concern (see `tests/e2e/` for the current split).

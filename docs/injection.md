@@ -1,6 +1,6 @@
 # Injection (chrome.userScripts)
 
-How VibeMonkey actually runs the matching userscripts on a page.
+How SourceMonkey actually runs the matching userscripts on a page.
 
 Related modules:
 
@@ -130,13 +130,13 @@ scripts in page context for the same reason.
 #### MAIN-world telemetry — the bridge
 
 `chrome.runtime.sendMessage` is not exposed to MAIN-world scripts, so
-the wrapper's `vm:start` / `vm:error` reports can't reach the SW
+the wrapper's `sm:start` / `sm:error` reports can't reach the SW
 directly from MAIN. To still get them through:
 
-- `__vmSend` in `wrapper-head.js` feature-detects
+- `__smSend` in `wrapper-head.js` feature-detects
   `chrome.runtime.sendMessage`. In USER_SCRIPT world it calls it
-  directly; in MAIN world it falls back to `window.postMessage({ __vm:
-  "vibemonkey-bridge", payload })`.
+  directly; in MAIN world it falls back to `window.postMessage({ __sm:
+  "sourcemonkey-bridge", payload })`.
 - `src/wrapper-bridge.js` is a tiny USER_SCRIPT-world script registered
   alongside user scripts. It listens for those postMessages, validates
   the marker + `event.source === window`, and forwards the payload to
@@ -154,10 +154,10 @@ Trust model:
 - It does **not** stop the host page from forging messages. Once any
   MAIN-world wrapper runs, the page can observe our postMessage
   payloads on its own window and learn the stored script `id` and any
-  `vm:error` `message` text, then send fakes with whatever marker /
+  `sm:error` `message` text, then send fakes with whatever marker /
   ids it just saw.
-- A forged `vm:start` flips a script's badge entry from MISSING to OK
-  on that document; a forged `vm:error` writes an attacker-controlled
+- A forged `sm:start` flips a script's badge entry from MISSING to OK
+  on that document; a forged `sm:error` writes an attacker-controlled
   string into the SW console and per-tab session record. Neither
   grants script execution or SW privilege.
 - If a real boundary is needed later, inject a per-document nonce into
@@ -196,13 +196,13 @@ declarations are hand-written in `src/generated-wrappers.d.ts` (tsc
 type-checks against the `.d.ts`; the runtime `.js` is built directly
 into `dist/`). The fragments:
 
-- `src/wrapper-head.js` — IIFE open, `__vmName` / `__vmId` /
-  `__vmSend` declarations, `__vmAwaitDecision` (the [reload
+- `src/wrapper-head.js` — IIFE open, `__smName` / `__smId` /
+  `__smSend` declarations, `__smAwaitDecision` (the [reload
   fast-path](#reload-fast-path) round-trip), the matcher slot (filled
   per script), and the decision callback that branches into
   run / run-new / skip. The default-run branch installs the async
-  error listeners, sends `vm:start`, and opens `try {`.
-- `src/wrapper-tail.js` — closing `catch (__vmErr) {…}` for the body,
+  error listeners, sends `sm:start`, and opens `try {`.
+- `src/wrapper-tail.js` — closing `catch (__smErr) {…}` for the body,
   the closing `})` of the decision callback, and the IIFE close
   `})();`.
 - `src/wrapper-matcher.js` — the URL recheck (only inserted for
@@ -222,16 +222,16 @@ by the HEAD's character count; line numbers are not.
 
 Placeholders the injector substitutes at registration time:
 
-- `"__VM_NAME__"` → JSON-encoded `@name` (or relativePath fallback).
-- `"__VM_ID__"` → JSON-encoded stored script UUID.
-- `"__VM_SOURCE_URL__"` → JSON-encoded `vibemonkey://<id>/<name>.user.js`
+- `"__SM_NAME__"` → JSON-encoded `@name` (or relativePath fallback).
+- `"__SM_ID__"` → JSON-encoded stored script UUID.
+- `"__SM_SOURCE_URL__"` → JSON-encoded `sourcemonkey://<id>/<name>.user.js`
   string. The injector also appends a `# sourceURL=<same>` directive
   to the wrapped body so devtools labels the script with that URL AND
   the wrapper's async-error listeners can attribute errors by stack
   inspection.
-- `"__VM_MATCHER_BLOCK__";` → empty, or the minified matcher source
-  (which itself contains a `"__VM_MATCHING__"` placeholder).
-- `"__VM_MATCHING__"` (inside the matcher) → JSON-encoded
+- `"__SM_MATCHER_BLOCK__";` → empty, or the minified matcher source
+  (which itself contains a `"__SM_MATCHING__"` placeholder).
+- `"__SM_MATCHING__"` (inside the matcher) → JSON-encoded
   `{matches, includes, excludes}`.
 
 Substitutions go through `String.replace(pattern, () => …)` callbacks
@@ -241,16 +241,16 @@ replacement-string syntax.
 
 Every registered body is wrapped in a tiny shim that:
 
-- Logs `"[VibeMonkey] script <name> running on <url>"` to the page
+- Logs `"[SourceMonkey] script <name> running on <url>"` to the page
   console.
-- Sends a `{ type: 'vm:start', id, url }` message to the SW.
-- Wraps the body in `try { … } catch (__vmErr) { … }`:
-  - Logs `"[VibeMonkey] script <name> threw: …"` to the page console.
-  - Sends a `{ type: 'vm:error', id, url, message }` message to the SW.
+- Sends a `{ type: 'sm:start', id, url }` message to the SW.
+- Wraps the body in `try { … } catch (__smErr) { … }`:
+  - Logs `"[SourceMonkey] script <name> threw: …"` to the page console.
+  - Sends a `{ type: 'sm:error', id, url, message }` message to the SW.
 - Installs window `"error"` and `"unhandledrejection"` listeners,
   filtered by the per-script sourceURL (see [Async-error attribution](#async-error-attribution)
   below).
-- All telemetry goes through `__vmSend`. In USER_SCRIPT world it uses
+- All telemetry goes through `__smSend`. In USER_SCRIPT world it uses
   `chrome.runtime.sendMessage` (catching the sync throw and silencing
   the returned Promise so an unreachable SW doesn't surface as
   `Uncaught (in promise)` on every page). In MAIN world (where
@@ -268,16 +268,16 @@ the script returns control to the event loop, anything thrown later
 To catch those without falsely attributing the page's own errors to
 this script, the wrapper:
 
-- Appends `# sourceURL=vibemonkey://<id>/<safe-name>.user.js` to the
+- Appends `# sourceURL=sourcemonkey://<id>/<safe-name>.user.js` to the
   wrapped body. The JS engine tags stack frames originating in this
   registered script with that URL, and devtools labels the script
   with it.
-- Stores the same URL in `__vmSourceUrl` inside the wrapper IIFE.
+- Stores the same URL in `__smSourceUrl` inside the wrapper IIFE.
 - Installs `window.addEventListener("error", …)` and
   `…("unhandledrejection", …)`, both with the capture flag set.
 - Each listener checks the event's `filename` (for `error`) and
   `error.stack` / `reason.stack` for the marker via `indexOf`. Only
-  hits are reported via `__vmSend({ type: 'vm:error', … })`; the
+  hits are reported via `__smSend({ type: 'sm:error', … })`; the
   default page-side error logging is left in place (no
   `preventDefault`).
 - A `WeakSet` de-dupes the error object so the same throw isn't
@@ -292,8 +292,8 @@ Trade-offs:
 - MAIN-world scripts share `window` with the page; the sourceURL
   filter is what keeps attribution honest.
 - Multiple userscripts in the same world each install their own
-  listeners; only the listener whose `__vmSourceUrl` shows up in the
-  stack reports, so a single error produces a single `vm:error`.
+  listeners; only the listener whose `__smSourceUrl` shows up in the
+  stack reports, so a single error produces a single `sm:error`.
 - Stack-trace-free rejections (e.g. `Promise.reject("string")`) can't
   be attributed and are silently dropped — better than guessing.
 
@@ -302,14 +302,14 @@ Trade-offs:
 `background.ts` owns a single `chrome.runtime.onUserScriptMessage`
 listener that handles these wrapper-originated message types:
 
-- `vm:check-pending` — round-trip; the SW replies with `run`,
+- `sm:check-pending` — round-trip; the SW replies with `run`,
   `run-new`, or `skip`. See [Reload fast-path](#reload-fast-path).
-- `vm:start` — the wrapper's baked-in body started running.
-- `vm:swapped` — the wrapper ran a SW-supplied body instead. Treated
+- `sm:start` — the wrapper's baked-in body started running.
+- `sm:swapped` — the wrapper ran a SW-supplied body instead. Treated
   as `started` for badge purposes and clears any prior stale flag for
   this script id.
-- `vm:error` — synchronous or attributed-async throw.
-- `vm:abandoned` — the wrapper exited without running anything
+- `sm:error` — synchronous or attributed-async throw.
+- `sm:abandoned` — the wrapper exited without running anything
   (SW replied `skip`). Logged only; no badge change.
 
 For the report types (start / swapped / error) the SW:
@@ -323,7 +323,7 @@ For the report types (start / swapped / error) the SW:
   [matching.md](matching.md#per-tab-badge--tooltip) for the
   classification rules.
 
-Wrapper payloads include `id`, `name`, `url`, plus (for `vm:error`) a
+Wrapper payloads include `id`, `name`, `url`, plus (for `sm:error`) a
 `message`. `name` lets the SW label UNEXPECTED scripts that aren't in
 the expected match set.
 
@@ -336,7 +336,7 @@ the expected match set.
 
 When the user explicitly reloads a tab (Ctrl-R, toolbar reload,
 `location.reload()`), Chrome sets `transitionType
-=== 'reload'` on the `webNavigation.onCommitted` event. VibeMonkey uses
+=== 'reload'` on the `webNavigation.onCommitted` event. SourceMonkey uses
 that signal to opportunistically pick up edited userscripts on THIS
 reload rather than the next one.
 
@@ -344,7 +344,7 @@ reload rather than the next one.
 
 Without the fast-path, the flow for "edit script, reload tab" is:
 
-1. Reload commits → `vm:start` for the OLD body fires.
+1. Reload commits → `sm:start` for the OLD body fires.
 2. Opportunistic refresh detects the file changed; storage updates;
    chrome.userScripts re-registers.
 3. The badge flips to RELOAD/purple.
@@ -367,12 +367,12 @@ case.
   a 15s TTL cleanup timer.
 
 Setup is fire-and-forget. The listener does not block on it. If a
-wrapper's `vm:check-pending` arrives before setup populates the entry,
+wrapper's `sm:check-pending` arrives before setup populates the entry,
 it just gets the default `run` reply — the optimization is best-effort.
 
-### vm:check-pending handler
+### sm:check-pending handler
 
-When a wrapper sends `vm:check-pending` with its own `id`, `loadedAt`
+When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 (the value baked in at registration), and `url`, the SW:
 
 1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
@@ -404,17 +404,17 @@ fetch belongs here.
 ### Wrapper protocol
 
 The wrapper-head opens an outer IIFE, runs the matcher (which `return`s
-out early on a non-match), then calls `__vmAwaitDecision`. The
+out early on a non-match), then calls `__smAwaitDecision`. The
 decision callback receives `{action}` and branches:
 
-- `run` — installs async error listeners, sends `vm:start`, opens
+- `run` — installs async error listeners, sends `sm:start`, opens
   the `try {` that wraps the baked-in body. Tail closes it.
 - `run-new` — installs the async error listeners with the NEW
-  `loadedAt`, sends `vm:swapped`, and `eval`s the SW-supplied body
+  `loadedAt`, sends `sm:swapped`, and `eval`s the SW-supplied body
   string with `//# sourceURL=` appended so async error attribution
   continues to work for the new code. Errors during the new body are
-  reported as `vm:error` with the new `loadedAt`.
-- `skip` — sends `vm:abandoned` and exits without running anything.
+  reported as `sm:error` with the new `loadedAt`.
+- `skip` — sends `sm:abandoned` and exits without running anything.
 
 Wrapper-side safety timeout (6s) protects against the SW vanishing
 mid-handshake; on hit it defaults to `run` so the baked-in body still
@@ -423,8 +423,8 @@ executes.
 ### Caveats
 
 - **MAIN-world scripts** can't call `chrome.runtime.sendMessage`
-  directly, so they round-trip `vm:check-pending` via
-  `wrapper-bridge.js` using a `vibemonkey-bridge-reply` postMessage
+  directly, so they round-trip `sm:check-pending` via
+  `wrapper-bridge.js` using a `sourcemonkey-bridge-reply` postMessage
   keyed on a per-request nonce. The page can observe and forge these
   postMessages — the threat model is unchanged from the existing
   bridge (the page already runs arbitrary code in MAIN world). Where
@@ -433,7 +433,7 @@ executes.
   through to running the baked-in body, matching pre-fast-path
   behavior for that site.
 - **Latency on every navigation, not just reloads.** Every wrapper
-  round-trips `vm:check-pending` regardless of `transitionType` — the
+  round-trips `sm:check-pending` regardless of `transitionType` — the
   SW just replies `run` faster when there's no fast-path entry. For
   USER_SCRIPT-world scripts that's ~1–5ms on the document-start
   critical path; for MAIN-world (which routes through `wrapper-bridge.js`

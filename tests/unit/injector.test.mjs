@@ -59,9 +59,9 @@ test('buildWrappedBody: includes the id and name as JS string literals', () => {
 test('buildWrappedBody: wraps the body in a try/catch with sendMessage', () => {
   const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'doThing();', loadedAt: 0 });
   assert.match(wrapped, /try {/);
-  assert.match(wrapped, /catch \(__vmErr\)/);
-  assert.match(wrapped, /type: "vm:error"/);
-  assert.match(wrapped, /type: "vm:start"/);
+  assert.match(wrapped, /catch \(__smErr\)/);
+  assert.match(wrapped, /type: "sm:error"/);
+  assert.match(wrapped, /type: "sm:start"/);
 });
 
 test('buildWrappedBody: swallows sendMessage promise rejections to avoid feedback loops', () => {
@@ -71,16 +71,16 @@ test('buildWrappedBody: swallows sendMessage promise rejections to avoid feedbac
   assert.match(wrapped, /\.catch\(function ?\(\) ?\{\}\)/);
 });
 
-test('buildWrappedBody: embeds loadedAt as a bare numeric literal in the vm:start payload', () => {
+test('buildWrappedBody: embeds loadedAt as a bare numeric literal in the sm:start payload', () => {
   // The SW uses this value to detect a wrapper running outdated content
   // (storage's current loadedAt > wrapper's loadedAt). JSON.stringify
   // on a number yields a bare numeric literal — confirm the quotes
-  // around the "__VM_LOADED_AT__" placeholder were stripped.
+  // around the "__SM_LOADED_AT__" placeholder were stripped.
   const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '', loadedAt: 1737051234567 });
-  assert.match(wrapped, /__vmLoadedAt = 1737051234567/);
-  // And the vm:start payload references it (not the placeholder).
-  assert.match(wrapped, /type: "vm:start"[^}]*loadedAt: __vmLoadedAt/);
-  assert.doesNotMatch(wrapped, /__VM_LOADED_AT__/);
+  assert.match(wrapped, /__smLoadedAt = 1737051234567/);
+  // And the sm:start payload references it (not the placeholder).
+  assert.match(wrapped, /type: "sm:start"[^}]*loadedAt: __smLoadedAt/);
+  assert.doesNotMatch(wrapped, /__SM_LOADED_AT__/);
 });
 
 test('buildWrappedBody: head is on a single physical line so body lines stay aligned', () => {
@@ -107,7 +107,7 @@ test('buildWrappedBody: never inserts literal "$&" from matcher replace (no repl
     id: 'x', name: 'X', body: '',
     matching: { matches: ['https://a/*'], excludes: [], includes: ['/r/'] },
   });
-  assert.doesNotMatch(wrapped, /__VM_MATCHER_BLOCK__/);
+  assert.doesNotMatch(wrapped, /__SM_MATCHER_BLOCK__/);
 });
 
 test('buildWrappedBody: appends a # sourceURL= directive with id and sanitized name', () => {
@@ -122,7 +122,7 @@ test('buildWrappedBody: appends a # sourceURL= directive with id and sanitized n
   // so the resulting line is a well-formed sourceURL directive. The
   // marker terminates the wrapped script — match end-of-string to
   // confirm it's at the bottom where the engine expects it.
-  const expected = 'vibemonkey://abc-123/Foo___Bar__v2_.user.js';
+  const expected = 'sourcemonkey://abc-123/Foo___Bar__v2_.user.js';
   assert.ok(
     wrapped.includes('\n//# sourceURL=' + expected + '\n'),
     `expected sourceURL directive for ${expected} in wrapped output`,
@@ -138,14 +138,14 @@ test('buildWrappedBody: installs window error + unhandledrejection listeners', (
   const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
   assert.match(wrapped, /addEventListener\("error"/);
   assert.match(wrapped, /addEventListener\("unhandledrejection"/);
-  // The async-error reporter must dispatch via the existing vm:error
+  // The async-error reporter must dispatch via the existing sm:error
   // channel so the SW's badge logic handles it just like a sync throw.
   // The page console gets only an info-level attribution note — the
   // native browser logging already shows the error + stack.
   assert.match(wrapped, /caught async/);
 });
 
-test('buildWrappedBody: __vmSend feature-detects chrome.runtime then falls back to postMessage', () => {
+test('buildWrappedBody: __smSend feature-detects chrome.runtime then falls back to postMessage', () => {
   // MAIN-world scripts can't reach chrome.runtime; they need to relay
   // through window.postMessage to a USER_SCRIPT-world bridge (see
   // buildBridgeSpec). Both transport branches must be present in the
@@ -153,18 +153,18 @@ test('buildWrappedBody: __vmSend feature-detects chrome.runtime then falls back 
   const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
   assert.match(wrapped, /chrome\.runtime\.sendMessage/);
   assert.match(wrapped, /window\.postMessage/);
-  assert.match(wrapped, /"vibemonkey-bridge"/);
+  assert.match(wrapped, /"sourcemonkey-bridge"/);
 });
 
 test('buildWrappedBody: async-error listeners filter by the per-script sourceURL', () => {
   // Without filtering, a MAIN-world script's listener would attribute
   // every page error (and every other userscript's error) to itself.
   // Filtering by the unique sourceURL string is what keeps attribution
-  // honest. Verify the wrapped output references __vmSourceUrl from
+  // honest. Verify the wrapped output references __smSourceUrl from
   // both the filename check and the stack check paths.
   const wrapped = buildWrappedBody({ id: 'abc', name: 'X', body: '' });
-  assert.match(wrapped, /indexOf\(__vmSourceUrl\)/);
-  const sourceUrl = 'vibemonkey://abc/X.user.js';
+  assert.match(wrapped, /indexOf\(__smSourceUrl\)/);
+  const sourceUrl = 'sourcemonkey://abc/X.user.js';
   assert.ok(wrapped.includes(JSON.stringify(sourceUrl)));
 });
 
@@ -204,7 +204,7 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
   }));
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   // Wrapper carries the full matching object so it can filter at runtime.
-  assert.match(spec.js[0].code, /__vmMatchScript/);
+  assert.match(spec.js[0].code, /__smMatchScript/);
 });
 
 test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes to wrapper', () => {
@@ -216,7 +216,7 @@ test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes t
     },
   }));
   assert.deepEqual(spec.excludeGlobs, ['*/admin/*']);
-  assert.match(spec.js[0].code, /__vmMatchScript/);
+  assert.match(spec.js[0].code, /__smMatchScript/);
 });
 
 test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers to the wrapper', () => {
@@ -225,12 +225,12 @@ test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.equal(spec.includeGlobs, undefined);
-  assert.match(spec.js[0].code, /__vmMatchScript/);
+  assert.match(spec.js[0].code, /__smMatchScript/);
 });
 
 test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher', () => {
   const spec = buildRegistrationSpec(makeScript());
-  assert.doesNotMatch(spec.js[0].code, /__vmMatchScript/);
+  assert.doesNotMatch(spec.js[0].code, /__smMatchScript/);
 });
 
 test('buildRegistrationSpec: pulls runAt from @run-at on the parsed header', () => {
@@ -374,12 +374,12 @@ test('buildRegistrationSpec: wraps the body — registered code contains the wra
   const spec = buildRegistrationSpec(makeScript({ bodyText: 'doStuff();' }));
   assert.equal(spec.js.length, 1);
   assert.match(spec.js[0].code, /doStuff\(\);/);
-  assert.match(spec.js[0].code, /vm:start/);
+  assert.match(spec.js[0].code, /sm:start/);
 });
 
 // ---------- inline matcher (snippet inside the wrapper) ----------
 
-// The wrapper's __vmMatchScript must agree with urlMatchesScript()
+// The wrapper's __smMatchScript must agree with urlMatchesScript()
 // from url-match.ts for the cases that involve regex patterns —
 // otherwise badge counts and actual injection drift apart.
 //
@@ -390,13 +390,13 @@ test('buildRegistrationSpec: wraps the body — registered code contains the wra
 // the matcher fn for assertions.
 
 function loadMatchScript() {
-  // The matcher source ends with `var __vmMatching = ...; if
-  // (!__vmMatchScript(location.href, __vmMatching)) return;` — that's
+  // The matcher source ends with `var __smMatching = ...; if
+  // (!__smMatchScript(location.href, __smMatching)) return;` — that's
   // the runtime bail-out, not part of the algorithm. Lop it off and
-  // eval just the helpers so we can call __vmMatchScript directly.
-  const helpers = WRAPPER_MATCHER.split('var __vmMatching')[0];
+  // eval just the helpers so we can call __smMatchScript directly.
+  const helpers = WRAPPER_MATCHER.split('var __smMatching')[0];
   // eslint-disable-next-line no-new-func
-  return new Function(helpers + ' return __vmMatchScript;')();
+  return new Function(helpers + ' return __smMatchScript;')();
 }
 
 test('inline matcher: @match passes', () => {
@@ -454,10 +454,10 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-worl
   // document_start so the bridge listener is installed before any
   // MAIN-world wrapper's postMessage event can dispatch.
   assert.equal(bridge.runAt, 'document_start');
-  // The bridge's code must reference the marker that __vmSend uses; if
+  // The bridge's code must reference the marker that __smSend uses; if
   // either side renames the marker without updating the other, all
   // MAIN-world telemetry silently disappears.
-  assert.match(bridge.js[0].code, /vibemonkey-bridge/);
+  assert.match(bridge.js[0].code, /sourcemonkey-bridge/);
 });
 
 // ---------- wrapper-bridge: filter behavior ----------
@@ -488,27 +488,27 @@ function setupBridgeHarness() {
   const dispatch = (event) => listener(event);
   const goodEvent = (overrides = {}) => ({
     source: fakeWindow,
-    data: { __vm: 'vibemonkey-bridge', payload: { type: 'vm:start', id: 'x', url: 'https://e/' } },
+    data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:start', id: 'x', url: 'https://e/' } },
     ...overrides,
   });
   return { sent, dispatch, goodEvent, fakeWindow };
 }
 
-test('wrapper-bridge: forwards well-formed vm:start events', () => {
+test('wrapper-bridge: forwards well-formed sm:start events', () => {
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent());
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].type, 'vm:start');
+  assert.equal(sent[0].type, 'sm:start');
   assert.equal(sent[0].id, 'x');
 });
 
-test('wrapper-bridge: forwards well-formed vm:error events', () => {
+test('wrapper-bridge: forwards well-formed sm:error events', () => {
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent({
-    data: { __vm: 'vibemonkey-bridge', payload: { type: 'vm:error', id: 'x', message: 'boom' } },
+    data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:error', id: 'x', message: 'boom' } },
   }));
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].type, 'vm:error');
+  assert.equal(sent[0].type, 'sm:error');
   assert.equal(sent[0].message, 'boom');
 });
 
@@ -522,34 +522,34 @@ test('wrapper-bridge: ignores messages from a different source window', () => {
   assert.equal(sent.length, 0);
 });
 
-test('wrapper-bridge: ignores messages without the VibeMonkey marker', () => {
+test('wrapper-bridge: ignores messages without the SourceMonkey marker', () => {
   // Any other page-issued postMessage on this window will reach our
   // listener; the marker is what distinguishes ours from theirs.
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({ data: { payload: { type: 'vm:start', id: 'x' } } }));
-  dispatch(goodEvent({ data: { __vm: 'something-else', payload: { type: 'vm:start', id: 'x' } } }));
+  dispatch(goodEvent({ data: { payload: { type: 'sm:start', id: 'x' } } }));
+  dispatch(goodEvent({ data: { __sm: 'something-else', payload: { type: 'sm:start', id: 'x' } } }));
   assert.equal(sent.length, 0);
 });
 
 test('wrapper-bridge: ignores messages whose payload is missing or non-object', () => {
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({ data: { __vm: 'vibemonkey-bridge' } }));
-  dispatch(goodEvent({ data: { __vm: 'vibemonkey-bridge', payload: null } }));
-  dispatch(goodEvent({ data: { __vm: 'vibemonkey-bridge', payload: 'string-payload' } }));
+  dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge' } }));
+  dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge', payload: null } }));
+  dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge', payload: 'string-payload' } }));
   assert.equal(sent.length, 0);
 });
 
-test('wrapper-bridge: only forwards vm:start / vm:error payload types', () => {
+test('wrapper-bridge: only forwards sm:start / sm:error payload types', () => {
   // Even with the right marker, an unrecognised type must not be
   // relayed — otherwise the bridge would let arbitrary page-supplied
   // messages reach chrome.runtime.sendMessage and be dispatched to
   // every onMessage listener in the SW.
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent({
-    data: { __vm: 'vibemonkey-bridge', payload: { type: 'vm:exec', code: 'evil' } },
+    data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:exec', code: 'evil' } },
   }));
   dispatch(goodEvent({
-    data: { __vm: 'vibemonkey-bridge', payload: { type: '', id: 'x' } },
+    data: { __sm: 'sourcemonkey-bridge', payload: { type: '', id: 'x' } },
   }));
   assert.equal(sent.length, 0);
 });

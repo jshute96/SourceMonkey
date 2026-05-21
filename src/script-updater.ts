@@ -169,12 +169,12 @@ async function runScriptCheck(
   // Opportunistic checks fire on every navigation and are gated by the
   // debug flag.
   const checkLog = mode === 'manual' ? console.log : dlog;
-  checkLog(`[VibeMonkey] update check (${mode}): ${label}`);
+  checkLog(`[SourceMonkey] update check (${mode}): ${label}`);
   let next: StoredScript | null;
   try {
     next = await refreshScript(scriptId);
   } catch (err) {
-    console.info(`[VibeMonkey] update check failed: ${label}: ${describe(err)}`);
+    console.info(`[SourceMonkey] update check failed: ${label}: ${describe(err)}`);
     throw err;
   }
   logScriptOutcome(label, prior, next, mode);
@@ -188,12 +188,12 @@ async function runSourceCheck(
   const prior = await getSourceWithScripts(sourceId);
   const priorBy = new Map((prior?.scripts ?? []).map((s) => [s.id, s]));
   const label = prior?.source.path ?? sourceId;
-  console.log(`[VibeMonkey] source refresh (${mode}): ${label}`);
+  console.log(`[SourceMonkey] source refresh (${mode}): ${label}`);
   let result: { source: StoredSource; scripts: StoredScript[] } | null;
   try {
     result = await refreshSource(sourceId);
   } catch (err) {
-    console.info(`[VibeMonkey] source refresh failed: ${label}: ${describe(err)}`);
+    console.info(`[SourceMonkey] source refresh failed: ${label}: ${describe(err)}`);
     throw err;
   }
   if (result) summarizeSourceOutcome(label, priorBy, result.scripts);
@@ -203,7 +203,7 @@ async function runSourceCheck(
 async function runAllSourcesCheck(
   mode: UpdateMode,
 ): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
-  console.log(`[VibeMonkey] refreshing all sources (${mode})`);
+  console.log(`[SourceMonkey] refreshing all sources (${mode})`);
   // Snapshot priors BEFORE the refresh; reading after would just give
   // back the post-refresh state and the summary would always say 0
   // updated / 0 added.
@@ -235,24 +235,24 @@ function logScriptOutcome(
   mode: UpdateMode,
 ): void {
   if (!next) {
-    console.info(`[VibeMonkey] update check: ${label}: row vanished`);
+    console.info(`[SourceMonkey] update check: ${label}: row vanished`);
     return;
   }
   if (next.status === 'error') {
-    console.info(`[VibeMonkey] update check: ${label}: error — ${next.errorMessage ?? 'unknown'}`);
+    console.info(`[SourceMonkey] update check: ${label}: error — ${next.errorMessage ?? 'unknown'}`);
     return;
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
     // loadedAt bumps iff the load pipeline actually built from fresh
     // content. Same loadedAt means the size+mtime skip caught it.
     const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
-    console.log(`[VibeMonkey] loaded new content: ${label}${size}`);
+    console.log(`[SourceMonkey] loaded new content: ${label}${size}`);
   } else {
     // "no change" pairs with the entry log: visible on manual, gated
     // on opportunistic. Otherwise a Refresh click could log "update
     // check" with nothing following.
     const outcomeLog = mode === 'manual' ? console.log : dlog;
-    outcomeLog(`[VibeMonkey] no change: ${label}`);
+    outcomeLog(`[SourceMonkey] no change: ${label}`);
   }
 }
 
@@ -277,7 +277,7 @@ function summarizeSourceOutcome(
   if (changed) parts.push(`${changed} updated`);
   if (unchanged) parts.push(`${unchanged} unchanged`);
   if (errored) parts.push(`${errored} error`);
-  console.log(`[VibeMonkey] source refresh: ${label}: ${parts.join(', ')}`);
+  console.log(`[SourceMonkey] source refresh: ${label}: ${parts.join(', ')}`);
 }
 
 function describe(err: unknown): string {

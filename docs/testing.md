@@ -1,6 +1,6 @@
 # Testing
 
-VibeMonkey ships two test suites: fast unit tests for pure logic and a
+SourceMonkey ships two test suites: fast unit tests for pure logic and a
 real-browser end-to-end suite for everything that touches the
 `chrome.*` API surface or the file system.
 
@@ -21,7 +21,7 @@ real-browser end-to-end suite for everything that touches the
 - One unit file: `node --test tests/unit/<name>.test.mjs`
 - One e2e file: `npx playwright test tests/e2e/<name>.spec.ts`
 - SW console forwarding (debugging only): set
-  `VM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
+  `SM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
   stderr. Off by default because it's noisy.
 
 ## Unit tests
@@ -49,7 +49,7 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `getServiceWorker` — re-resolves a live SW handle each call (MV3
     workers idle out).
   - `extensionId` — the deterministic ID of the unpacked extension.
-  - `vm` — typed proxy over `self.VibeMonkey`; see *SW test surface*
+  - `sm` — typed proxy over `self.SourceMonkey`; see *SW test surface*
     below. Wipes storage and unregisters userscripts at test start.
 - `extension-id.ts` — computes Chrome's deterministic
   unpacked-extension ID (SHA-256 of the path, first 16 bytes, mapped
@@ -79,7 +79,7 @@ Two Chrome capabilities the e2e harness needs:
 
 ### SW test surface
 
-`src/background.ts` exposes `self.VibeMonkey` so Playwright can invoke
+`src/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
 SW functions via `serviceWorker.evaluate(...)`. Methods relevant to
 tests:
 
@@ -107,7 +107,7 @@ via a `storage.onChanged → onCacheChanged → scheduleSync` chain with a
 50 ms debounce. A test that does `addSource` → `page.goto(...)` will
 out-race the registration and the navigation will see the OLD set.
 
-The contract is: **always call `await vm.syncNow()` after any
+The contract is: **always call `await sm.syncNow()` after any
 state-changing operation and before the navigation that depends on
 it.** `syncNow()` cancels the pending debounce so no late-firing sync
 can paint over the test's expected state.
@@ -116,12 +116,12 @@ can paint over the test's expected state.
 
 - Spin up a fresh `ScriptsDir` in `beforeEach`; `cleanup()` it in
   `afterEach`.
-- Use `vm.addSource(scriptsDir.path)` to register the directory via
+- Use `sm.addSource(scriptsDir.path)` to register the directory via
   the real pipeline.
 - Chrome match patterns may include `:port` (we follow Chrome's
   matcher, not its docs). A port-less pattern matches any port — use
   that form when the test's port assignment is random.
-- Wait for badge / state changes with `waitForTabState(vm, tabId,
+- Wait for badge / state changes with `waitForTabState(sm, tabId,
   predicate)` — `getTabState` is async and chrome.webNavigation
   events arrive on their own clock.
 - Use `activeTabId(getServiceWorker)` to discover the numeric tab ID

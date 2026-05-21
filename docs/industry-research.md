@@ -1,7 +1,7 @@
 # Industry Research
 
 Survey of existing tools in the userscript / browser-automation space,
-with an eye toward where VibeMonkey fits and what "AI-assisted
+with an eye toward where SourceMonkey fits and what "AI-assisted
 userscript authoring" looks like in the wild.
 
 This doc is a living list. Add entries as we find them; trim or
@@ -22,7 +22,7 @@ userscripts — and don't try to help you *write* the scripts.
   sync, `@resource` / `@require` caching, value storage UI.
 - Built-in editor with syntax highlighting; no AI assistance.
 - Reference behavior for most `@grant` / `@inject-into` semantics
-  other managers (including VibeMonkey) try to match.
+  other managers (including SourceMonkey) try to match.
 
 ### Violentmonkey
 
@@ -32,7 +32,7 @@ userscripts — and don't try to help you *write* the scripts.
 - Similar feature set to Tampermonkey: full `GM_*` API, value
   storage, `@require` / `@resource`, editor with linting.
 - Originated the `@inject-into` header (`page` / `content` / `auto`)
-  that Tampermonkey and VibeMonkey both honor.
+  that Tampermonkey and SourceMonkey both honor.
 
 ### Greasemonkey
 
@@ -50,7 +50,7 @@ userscripts — and don't try to help you *write* the scripts.
 - Open source (GPL-3.0) Safari extension by quoid. The standard
   option on macOS / iOS Safari, where Tampermonkey is paid.
 - Stores scripts as files in a user-chosen folder — closest spiritual
-  cousin to VibeMonkey's "load from a local directory" model.
+  cousin to SourceMonkey's "load from a local directory" model.
 - No AI features.
 
 ### ScriptCat
@@ -73,14 +73,14 @@ userscripts — and don't try to help you *write* the scripts.
 
 Tools that try to help the user *write* page modifications (or other
 browser-side code) rather than just run hand-written scripts. This is
-the space VibeMonkey is trying to live in.
+the space SourceMonkey is trying to live in.
 
 Organized roughly by how close the output sits to a userscript.
 
-### AI userscript generators (closest analog to VibeMonkey)
+### AI userscript generators (closest analog to SourceMonkey)
 
 These produce userscript-shaped output and run it persistently on
-matching pages — same broad shape as VibeMonkey, differing mostly in
+matching pages — same broad shape as SourceMonkey, differing mostly in
 *where the AI runs* and *where the script lives*.
 
 #### Tweeks
@@ -95,7 +95,7 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
   transformations." Page screenshot + DOM sent to a cloud LLM on each
   generation; founders say local models "aren't there yet." Specific
   model not disclosed.
-- **vs VibeMonkey:** Output shape is the same (sandboxed userscript).
+- **vs SourceMonkey:** Output shape is the same (sandboxed userscript).
   Tweeks is cloud-hosted end-user product; scripts live in extension
   storage / community library, not on the user's disk under their own
   editor.
@@ -111,7 +111,7 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
 - **Persistence:** Userscripts kept in `chrome.storage.local`
   (name + regex URL + JS + metadata), auto-run on match.
 - **Stack:** TypeScript / React / Bun / Tailwind / MV3.
-- **vs VibeMonkey:** Same userscript-output shape; AI loop is
+- **vs SourceMonkey:** Same userscript-output shape; AI loop is
   integrated into the extension instead of farmed out to an external
   editor. No local-disk story.
 
@@ -125,8 +125,8 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
   and writes change proposals in `plan.md`" with DOM edits disabled
   until user approval; Execute mode unlocks file/DOM/script writes.
   Context: live DOM, console output, screenshots, URL patterns.
-- **vs VibeMonkey:** Same output channel (`chrome.userScripts`).
-  Notable for the explicit plan-then-execute gating; VibeMonkey
+- **vs SourceMonkey:** Same output channel (`chrome.userScripts`).
+  Notable for the explicit plan-then-execute gating; SourceMonkey
   currently has no equivalent safety/preview step.
 
 #### Shaper
@@ -138,20 +138,20 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
   userscripts.
 - **AI loop:** Free tier offers ChatGPT-5 Mini/Nano and Qwen3 Coder
   (10/day, 310/month); BYO key for unlimited.
-- **vs VibeMonkey:** Notable as a single tool spanning patch /
-  extension / userscript. VibeMonkey is userscript-only.
+- **vs SourceMonkey:** Notable as a single tool spanning patch /
+  extension / userscript. SourceMonkey is userscript-only.
 
 #### dorser/vibemonkey
 
-- <https://github.com/dorser/vibemonkey> (name collision with this
-  project — predates ours)
+- <https://github.com/dorser/vibemonkey> (predates this project, which
+  was originally also called VibeMonkey)
 - **What it is:** "Chrome extension that acts as your AI companion
   for generating userscripts on the fly." Output is a `.user.js`
   file the user copies/downloads into their existing userscript
   manager.
 - **AI loop:** Gemini (user-selectable model). Describes visual
   changes via side panel.
-- **vs VibeMonkey:** Generation-only; doesn't run scripts itself.
+- **vs SourceMonkey:** Generation-only; doesn't run scripts itself.
   Pairs naturally with a manager like ours.
 
 #### Page Magic (`khaledh/pagemagic`)
@@ -162,7 +162,7 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
 - **Edit shape:** Additive CSS patches; enable / disable / delete
   individual mods. Doesn't appear to produce JS or a userscript per
   se.
-- **vs VibeMonkey:** Narrower scope (CSS-only) and per-page rather
+- **vs SourceMonkey:** Narrower scope (CSS-only) and per-page rather
   than per-pattern script registration.
 
 #### Modify (AI-Powered Website Modifier)
@@ -176,7 +176,7 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
 - **Persistence:** Edits scoped via "Current website only, Entire
   domain, All websites, Custom URL patterns, Website groups" and
   auto-reapply on revisit; toggle on/off.
-- **vs VibeMonkey:** Similar shape to Improv — saved JS reapplies on
+- **vs SourceMonkey:** Similar shape to Improv — saved JS reapplies on
   matching URLs. OpenRouter routing is a nice middle ground between
   hard-coded provider (Improv = OpenAI, Page Magic = Anthropic) and
   multi-model sidebar (Shaper).
@@ -191,8 +191,8 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
 - **Output:** "Fully compatible with Tampermonkey URL matching rules,
   automatically executes related scripts." Docs are primarily in
   Chinese.
-- **vs VibeMonkey:** Same shape — generate + auto-run on URL match.
-  Includes the Monaco editor inside the extension; VibeMonkey punts
+- **vs SourceMonkey:** Same shape — generate + auto-run on URL match.
+  Includes the Monaco editor inside the extension; SourceMonkey punts
   editing to the user's external editor.
 
 #### Robomonkey
@@ -206,7 +206,7 @@ matching pages — same broad shape as VibeMonkey, differing mostly in
   closer to Shaper's "export as extension" mode than to a userscript
   manager. Model and exact distribution (hosted vs side-loaded vs
   Web Store) not disclosed on the landing page.
-- **vs VibeMonkey:** Different artifact (extension, not userscript);
+- **vs SourceMonkey:** Different artifact (extension, not userscript);
   heavier per-mod overhead but more capable surface.
 
 ### AI agentic browsers and tab-app generators
@@ -220,7 +220,7 @@ patching existing sites.
 - "Modern, open source, agentic browser built with Electron." `/agent
   <prompt>` generates a self-contained HTML mini-app that loads as a
   tab. OpenAI-backed (key in `.env`). Early-stage (17 stars).
-- **vs VibeMonkey:** Different surface — generates whole apps, not
+- **vs SourceMonkey:** Different surface — generates whole apps, not
   patches over real sites.
 
 #### Disco (Google Labs)
@@ -228,7 +228,7 @@ patching existing sites.
 - <https://labs.google/disco> — experimental; waitlisted.
 - **GenTabs:** "turn the tabs you have open into custom, interactive
   apps." AI-Enabled Pointer for select-and-ask interactions.
-- **vs VibeMonkey:** Not userscript-shaped; closer to a Reader/Arc
+- **vs SourceMonkey:** Not userscript-shaped; closer to a Reader/Arc
   Max-style overlay layer.
 
 ### Dev-targeted visual-to-code editors
@@ -244,8 +244,8 @@ sites — included here because they're often pitched in the same
   React props, point-and-prompt. Multiple agents run in parallel and
   write *back into source*. Audience is product builders editing
   their own codebase.
-- **vs VibeMonkey:** Inverted audience — you own the source, so the
-  agent edits the repo. VibeMonkey targets third-party sites where
+- **vs SourceMonkey:** Inverted audience — you own the source, so the
+  agent edits the repo. SourceMonkey targets third-party sites where
   source isn't yours, so a userscript is the only place edits can
   land.
 
@@ -258,7 +258,7 @@ sites — included here because they're often pitched in the same
   mapping go to Claude Code / Codex CLI / Gemini-via-Pi. Edits land
   in source files; git is the undo mechanism (auto-commits with a
   `[layrr]` prefix).
-- **vs VibeMonkey:** Same "edits flow back to the user's own repo"
+- **vs SourceMonkey:** Same "edits flow back to the user's own repo"
   pattern as Cursor's editor — not a userscript story.
 
 ### Manual / non-AI visual editors (baseline)
@@ -273,7 +273,7 @@ without involving an LLM.
 - Per-site CSS/JS overrides shippable as shareable "Boosts." Browser
   Company has shipped AI-generated Boost experiments separately;
   baseline Boosts are hand-authored.
-- **vs VibeMonkey:** Closest browser-native analog to a userscript
+- **vs SourceMonkey:** Closest browser-native analog to a userscript
   manager, but tied to the Arc browser specifically.
 
 #### Edit (`goedit.me`)
@@ -282,7 +282,7 @@ without involving an LLM.
 - Click the icon, page becomes editable in place ("Shift⌘U"); drag-
   drop image replacement. **Changes are local-only and revert on
   refresh** — explicitly *not* persistent and explicitly not AI.
-- **vs VibeMonkey:** Useful as a baseline for the manual-edit UX
+- **vs SourceMonkey:** Useful as a baseline for the manual-edit UX
   Tweeks/Shaper try to replace with prompts.
 
 #### AI Website Editor (Krish Chauhan)
@@ -303,9 +303,9 @@ post](https://www.threads.com/@hasanahmad/post/DOABIWFESby) showing a
 GPT-5-Thinking-authored Tampermonkey script that surfaces Steam
 review scores anywhere a game is mentioned.
 
-- **vs VibeMonkey:** This is the workflow VibeMonkey is *built for*.
+- **vs SourceMonkey:** This is the workflow SourceMonkey is *built for*.
   The local-directory model means the user's existing AI editor
-  (Claude Code, Cursor, …) writes `*.user.js` files and VibeMonkey
+  (Claude Code, Cursor, …) writes `*.user.js` files and SourceMonkey
   picks them up — no copy-paste round trip, no rebuild, no separate
   sidebar to integrate with the LLM.
 
@@ -318,9 +318,9 @@ review scores anywhere a game is mentioned.
 - **[OpenUserJS](https://openuserjs.org/)** — smaller alternative,
   same idea.
 
-## Where VibeMonkey sits
+## Where SourceMonkey sits
 
-VibeMonkey is one piece of a multi-tool authoring loop, not a
+SourceMonkey is one piece of a multi-tool authoring loop, not a
 self-contained "describe → done" product. The full loop:
 
 1. **Author with Claude Code in a userscripts directory** (e.g.
@@ -335,7 +335,7 @@ self-contained "describe → done" product. The full loop:
 3. **Regression-test with Playwright** over CDP against a
    long-running Chromium with a persistent profile (so test sessions
    stay logged in).
-4. **Run with VibeMonkey** — the extension watches the directory and
+4. **Run with SourceMonkey** — the extension watches the directory and
    loads everything matching `*.user.js`, so the next browser reload
    picks up the latest edit. No cut-and-paste into a manager UI.
 
@@ -347,7 +347,7 @@ ScriptCat: `chrome.userScripts`, parsed `@grant` / `@match` /
 **Why not just stay on Tampermonkey?** The author flow already worked
 with Tampermonkey via an "install pointer to local file" trick — but
 every header change (`@match`, `@grant`, `@version`) still required a
-reinstall through Tampermonkey's UI. VibeMonkey exists to smooth out
+reinstall through Tampermonkey's UI. SourceMonkey exists to smooth out
 that last cut-and-paste / reinstall step so the iteration loop
 becomes: *edit file → reload tab*.
 
@@ -362,7 +362,7 @@ becomes: *edit file → reload tab*.
   the generation surface, and the manager is the thing we ship.
 - Vs **Tweeks / Improv / Browser Code / Shaper / Modify /
   ScriptGenie** — those bundle an AI sidebar *into* the manager.
-  They're easier for a non-developer to pick up. VibeMonkey trades
+  They're easier for a non-developer to pick up. SourceMonkey trades
   that ease for letting the user bring an arbitrarily good AI
   editor: full repo context, regression tests, version control,
   skill files, multi-step refactors across many scripts — none of

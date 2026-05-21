@@ -23,7 +23,7 @@ test.describe('injection', () => {
   test('script injects DOM mutation on matching page', async ({
     extensionContext,
     fixtureServer,
-    vm,
+    sm,
   }) => {
     scriptsDir.write({
       relativePath: 'mark.user.js',
@@ -34,23 +34,23 @@ test.describe('injection', () => {
       },
       body: `
         const el = document.getElementById('target');
-        if (el) el.textContent = 'injected by VibeMonkey';
+        if (el) el.textContent = 'injected by SourceMonkey';
       `,
     });
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
     expect(source).not.toBeNull();
-    await vm.syncNow();
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('#target')).toHaveText('injected by VibeMonkey');
+    await expect(page.locator('#target')).toHaveText('injected by SourceMonkey');
     await page.close();
   });
 
   test('script is skipped on non-matching URL', async ({
     extensionContext,
     fixtureServer,
-    vm,
+    sm,
   }) => {
     scriptsDir.write({
       relativePath: 'mark.user.js',
@@ -63,8 +63,8 @@ test.describe('injection', () => {
         document.getElementById('target').textContent = 'injected';
       `,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/other.html`);
@@ -77,7 +77,7 @@ test.describe('injection', () => {
   test('multiple matching scripts all inject', async ({
     extensionContext,
     fixtureServer,
-    vm,
+    sm,
   }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
@@ -103,8 +103,8 @@ test.describe('injection', () => {
         el.dataset.b = 'yes';
       `,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -127,7 +127,7 @@ test.describe('injection', () => {
   test('re-enabled missing script runs from cached body and survives a refresh', async ({
     extensionContext,
     fixtureServer,
-    vm,
+    sm,
   }) => {
     scriptsDir.write({
       relativePath: 'mark.user.js',
@@ -141,30 +141,30 @@ test.describe('injection', () => {
         if (el) el.textContent = 'injected from cache';
       `,
     });
-    const source = await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    const source = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     // Delete the file and refresh so the row flips to missing + disabled.
     scriptsDir.remove('mark.user.js');
-    await vm.updateSource(source!.id, 'manual');
-    await vm.syncNow();
-    const after = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
+    const after = await sm.getSourceWithScripts(source!.id);
     expect(after!.scripts).toHaveLength(1);
     expect(after!.scripts[0].status).toBe('missing');
     expect(after!.scripts[0].enabled).toBe(false);
 
     // While disabled, the match-index should NOT list it.
-    const offMatch = await vm.debugMatchIndex(`${fixtureServer.baseUrl}/target.html`);
+    const offMatch = await sm.debugMatchIndex(`${fixtureServer.baseUrl}/target.html`);
     expect(offMatch.matches.map((m) => m.id)).not.toContain(after!.scripts[0].id);
 
     // User explicitly re-enables. No fresh fetch — the cached body is
     // what should run.
-    await vm.setScriptEnabled(after!.scripts[0].id, true);
-    await vm.syncNow();
+    await sm.setScriptEnabled(after!.scripts[0].id, true);
+    await sm.syncNow();
 
     // Match-index now lists the re-enabled missing script — this is what
     // drives the per-tab badge / match counter.
-    const onMatch = await vm.debugMatchIndex(`${fixtureServer.baseUrl}/target.html`);
+    const onMatch = await sm.debugMatchIndex(`${fixtureServer.baseUrl}/target.html`);
     expect(onMatch.matches.map((m) => m.id)).toContain(after!.scripts[0].id);
 
     const page = await extensionContext.newPage();
@@ -175,9 +175,9 @@ test.describe('injection', () => {
     // A second refresh while the file is STILL missing must preserve
     // the user's enabled=true. Without the guard in applyMissing, this
     // would silently clobber it back to false.
-    await vm.updateSource(source!.id, 'manual');
-    await vm.syncNow();
-    const afterSecond = await vm.getSourceWithScripts(source!.id);
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
+    const afterSecond = await sm.getSourceWithScripts(source!.id);
     expect(afterSecond!.scripts[0].status).toBe('missing');
     expect(afterSecond!.scripts[0].enabled).toBe(true);
 

@@ -12,14 +12,14 @@ test.describe('options page', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   test('renders directories that already exist in storage', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
     expect(source).not.toBeNull();
 
     const page = await extensionContext.newPage();
@@ -32,7 +32,7 @@ test.describe('options page', () => {
   });
 
   test('add-directory form registers a new source', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'hi.user.js',
@@ -53,21 +53,21 @@ test.describe('options page', () => {
     await expect(page.locator('section.directory tbody tr')).toHaveCount(1);
 
     // And the SW now sees the source.
-    const sources = await vm.getSources();
+    const sources = await sm.getSources();
     expect(sources).toHaveLength(1);
     expect(sources[0].path).toBe(scriptsDir.path);
     await page.close();
   });
 
   test('Remove button drops the section and the storage rows', async ({
-    extensionContext, extensionId, vm,
+    extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await vm.addSource(scriptsDir.path);
+    const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/options.html`);
@@ -78,20 +78,20 @@ test.describe('options page', () => {
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
-    expect(await vm.getSources()).toHaveLength(0);
+    expect(await sm.getSources()).toHaveLength(0);
     await page.close();
   });
 
   test('per-script toggle disables matching for that script', async ({
-    extensionContext, extensionId, fixtureServer, vm,
+    extensionContext, extensionId, fixtureServer, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'mark.user.js',
       meta: { name: 'Mark', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'marked';`,
     });
-    const source = await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    const source = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     // Toggle the script OFF via the options page.
     const optionsPage = await extensionContext.newPage();
@@ -104,10 +104,10 @@ test.describe('options page', () => {
     // Wait for the storage write to settle, then force a sync so the
     // navigation that follows doesn't race the debounced re-register.
     await expect(async () => {
-      const ws = await vm.getSourceWithScripts(source!.id);
+      const ws = await sm.getSourceWithScripts(source!.id);
       expect(ws!.scripts[0].enabled).toBe(false);
     }).toPass();
-    await vm.syncNow();
+    await sm.syncNow();
 
     // Navigate to the fixture page; the script should NOT inject.
     const page = await extensionContext.newPage();

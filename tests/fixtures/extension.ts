@@ -3,7 +3,7 @@
 //
 // MV3 extensions can't be triggered by clicking the toolbar from Playwright,
 // so tests invoke functions through `serviceWorker.evaluate(...)`, which
-// calls into `self.VibeMonkey` (set up in src/background.ts).
+// calls into `self.SourceMonkey` (set up in src/background.ts).
 
 import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
 import http from 'node:http';
@@ -50,9 +50,9 @@ type TestFixtures = {
   // operations risks the handle going stale.
   getServiceWorker: GetServiceWorker;
   extensionId: string;
-  // Typed proxy over the `self.VibeMonkey` SW surface. Wipes storage
+  // Typed proxy over the `self.SourceMonkey` SW surface. Wipes storage
   // between tests so each test starts from a known-clean slate.
-  vm: ReturnType<typeof makeSwApi>;
+  sm: ReturnType<typeof makeSwApi>;
 };
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
@@ -103,10 +103,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       //     Key name discovered by grepping the Chrome binary for
       //     `user_scripts`; matches what Chrome writes when a user
       //     flips the UI toggle.
-      const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibemonkey-test-'));
+      const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sourcemonkey-test-'));
       writeExtensionPreferences(userDataDir, EXTENSION_ID);
 
-      const forwardSwConsole = process.env.VM_FORWARD_SW_CONSOLE === '1';
+      const forwardSwConsole = process.env.SM_FORWARD_SW_CONSOLE === '1';
       const ctx = await chromium.launchPersistentContext(userDataDir, {
         // Extensions require Chrome's new headless mode (--headless=new,
         // available since Chrome 112). We set headless: false so Playwright
@@ -121,7 +121,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       });
       // Optional SW console forwarding so tests can use console.log
       // in the SW for diagnostics. Off by default (noisy); flip
-      // VM_FORWARD_SW_CONSOLE=1 to enable. Each newly-spawned SW gets
+      // SM_FORWARD_SW_CONSOLE=1 to enable. Each newly-spawned SW gets
       // its own listener — MV3 workers respawn aggressively.
       if (forwardSwConsole) {
         const wireUp = (sw: Worker): void => {
@@ -171,7 +171,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use(id);
   },
 
-  vm: async ({ getServiceWorker }, use) => {
+  sm: async ({ getServiceWorker }, use) => {
     const api = makeSwApi(getServiceWorker);
     // Clean slate per test: clears chrome.storage.local + session AND
     // unregisters every chrome.userScripts entry. Without this each

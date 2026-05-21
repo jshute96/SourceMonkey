@@ -4,7 +4,7 @@
 //   - `matches` (expected) — what the in-memory match index says should
 //     be running on this URL. Computed on navigation by background.ts.
 //   - `actual` — what injected wrappers have actually reported via
-//     vm:start / vm:error. Driven by chrome.runtime.onUserScriptMessage.
+//     sm:start / sm:error. Driven by chrome.runtime.onUserScriptMessage.
 //
 // The toolbar badge surfaces the union of those two sets, colored by
 // what's gone wrong (if anything), and the tooltip itemises each
@@ -151,7 +151,7 @@ export function computeBadge(state: TabMatchState): BadgeView {
   else if (anyReload) color = BADGE_PURPLE;
   else if (anyMismatch) color = BADGE_ORANGE;
 
-  const title = ['VibeMonkey', ...rows.map((r) => `${r.name} | ${formatStatus(r.status)}`)].join('\n');
+  const title = ['SourceMonkey', ...rows.map((r) => `${r.name} | ${formatStatus(r.status)}`)].join('\n');
 
   return { count: allIds.size, color, title, rows };
 }
@@ -226,7 +226,7 @@ export function setCurrentDoc(
 }
 
 // Pure: write `state` for `documentId` WITHOUT promoting it to current.
-// Used by the vm:* message handler: a wrapper firing from a doc that
+// Used by the sm:* message handler: a wrapper firing from a doc that
 // isn't currently displayed (e.g. teardown of the doc we just
 // navigated away from) should still update that doc's recorded state,
 // but the badge stays on whatever the navigation handler set.
@@ -247,7 +247,7 @@ export function writeDocState(
 // Pure: union two expected-match lists by script id. Used when a SPA
 // navigation within the same document brings in matches for a new URL —
 // we accumulate rather than replace, so a script that matched only the
-// initial URL still surfaces as MISSING if its `vm:start` never came.
+// initial URL still surfaces as MISSING if its `sm:start` never came.
 // Sorted by name for stable downstream display.
 export function mergeMatches(
   existing: MatchedScript[],
@@ -270,7 +270,7 @@ export function markScriptStale(state: TabMatchState, scriptId: string): TabMatc
   return { ...state, staleScriptIds: [...existing, scriptId] };
 }
 
-// Pure: clear the stale flag for `scriptId`. Used after a vm:swapped
+// Pure: clear the stale flag for `scriptId`. Used after a sm:swapped
 // report — the wrapper just ran the latest content, so any prior
 // staleness marker for this id no longer reflects reality.
 export function clearScriptStale(state: TabMatchState, scriptId: string): TabMatchState {
@@ -288,7 +288,7 @@ export function clearScriptStale(state: TabMatchState, scriptId: string): TabMat
 // Returns a new state object (callers re-write storage with it).
 //
 // Guard: an existing `error` entry is sticky for the same id — a later
-// vm:start (e.g. on retry / re-evaluation) shouldn't silently flip it
+// sm:start (e.g. on retry / re-evaluation) shouldn't silently flip it
 // back to OK and hide the failure.
 export function applyScriptReport(
   state: TabMatchState,

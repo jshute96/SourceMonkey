@@ -7,18 +7,18 @@
 // scale).
 //
 // Each script's body is wrapped in a tiny prelude/postlude:
-//   - logs "[VibeMonkey] script "<name>" running on <url>" to the page
+//   - logs "[SourceMonkey] script "<name>" running on <url>" to the page
 //     console on activation,
 //   - catches synchronous throws from the body and logs them as
-//     "[VibeMonkey] script "<name>" threw: <message>",
-//   - posts vm:start / vm:error messages to the SW so the SW can log
+//     "[SourceMonkey] script "<name>" threw: <message>",
+//   - posts sm:start / sm:error messages to the SW so the SW can log
 //     activity centrally.
 //
 // In addition to that synchronous catch, the wrapper installs
 // window `error` + `unhandledrejection` listeners filtered by a
-// per-script `//# sourceURL=vibemonkey://…` marker appended to the
+// per-script `//# sourceURL=sourcemonkey://…` marker appended to the
 // body. Errors whose stack (or filename) references our marker are
-// attributed to this script and reported as vm:error; everything else
+// attributed to this script and reported as sm:error; everything else
 // on the page is ignored. See docs/injection.md.
 //
 // Requirements: manifest must include the "userScripts" permission AND
@@ -62,21 +62,21 @@ const SOURCE_PREFIX = 'source:';
 
 // Match the runtime-message types we use between injected scripts and
 // the SW. Keep these in sync with the strings the wrapper sends.
-export const VM_START_MSG = 'vm:start';
-export const VM_ERROR_MSG = 'vm:error';
+export const SM_START_MSG = 'sm:start';
+export const SM_ERROR_MSG = 'sm:error';
 // Reload fast-path: the wrapper asks the SW whether to run its baked-in
 // body, abandon, or swap in a fresher user-code body the SW will hand
-// back. See docs/injection.md#reload-fast-path. vm:swapped / vm:abandoned
+// back. See docs/injection.md#reload-fast-path. sm:swapped / sm:abandoned
 // are the wrapper's follow-up reports for the swap / skip branches.
-export const VM_CHECK_PENDING_MSG = 'vm:check-pending';
-export const VM_SWAPPED_MSG = 'vm:swapped';
-export const VM_ABANDONED_MSG = 'vm:abandoned';
+export const SM_CHECK_PENDING_MSG = 'sm:check-pending';
+export const SM_SWAPPED_MSG = 'sm:swapped';
+export const SM_ABANDONED_MSG = 'sm:abandoned';
 
 // Reserved registration id for the MAIN-world bridge (see
 // buildBridgeSpec). Chrome's userScripts API rejects ids that start
-// with `_`, so we use a `vibemonkey-` prefix; stored script ids are
+// with `_`, so we use a `sourcemonkey-` prefix; stored script ids are
 // UUIDs and won't collide.
-export const BRIDGE_SCRIPT_ID = 'vibemonkey-bridge';
+export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
 
 export type RunAt = chrome.userScripts.RunAt;
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
@@ -115,7 +115,7 @@ export function mapRunAt(value: string | undefined): RunAt {
 // scripts in page context for the same reason.
 //
 // Limitation: MAIN-world scripts cannot call `chrome.runtime.sendMessage`,
-// so the wrapper's `vm:start` / `vm:error` reports never reach the SW.
+// so the wrapper's `sm:start` / `sm:error` reports never reach the SW.
 // The wrapper already swallows that throw; the badge's "actual"
 // classification simply stays empty for MAIN-world scripts. See
 // docs/injection.md.
@@ -150,7 +150,7 @@ function isRegexLiteral(s: string): boolean {
 //     well-formed sourceURL.
 function buildSourceUrl(id: string, name: string): string {
   const safe = String(name).replace(/[^a-zA-Z0-9._-]/g, '_') || 'script';
-  return `vibemonkey://${id}/${safe}.user.js`;
+  return `sourcemonkey://${id}/${safe}.user.js`;
 }
 
 // Wrap a userscript body with our activation/error logging shim plus
@@ -181,19 +181,19 @@ export function buildWrappedBody(args: {
   // back-references (the matcher contains literal `$&` inside a
   // regex-escape helper, which would otherwise corrupt the output).
   const matcherBlock = args.matching
-    ? WRAPPER_MATCHER.replace('"__VM_MATCHING__"', () => JSON.stringify(args.matching!))
+    ? WRAPPER_MATCHER.replace('"__SM_MATCHING__"', () => JSON.stringify(args.matching!))
     : '';
   const sourceUrl = buildSourceUrl(args.id, args.name);
   const head = WRAPPER_HEAD
-    .replace('"__VM_NAME__"', () => JSON.stringify(args.name))
-    .replace('"__VM_ID__"', () => JSON.stringify(args.id))
-    // The wrapper template has "__VM_LOADED_AT__" (quoted) where the
+    .replace('"__SM_NAME__"', () => JSON.stringify(args.name))
+    .replace('"__SM_ID__"', () => JSON.stringify(args.id))
+    // The wrapper template has "__SM_LOADED_AT__" (quoted) where the
     // loadedAt should appear. JSON.stringify on a number yields a bare
     // numeric literal, so the surrounding quotes get replaced and the
-    // wrapper ends up with `var __vmLoadedAt = 1737051234567;`.
-    .replace('"__VM_LOADED_AT__"', () => JSON.stringify(args.loadedAt))
-    .replace('"__VM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
-    .replace('"__VM_MATCHER_BLOCK__";', () => matcherBlock);
+    // wrapper ends up with `var __smLoadedAt = 1737051234567;`.
+    .replace('"__SM_LOADED_AT__"', () => JSON.stringify(args.loadedAt))
+    .replace('"__SM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
+    .replace('"__SM_MATCHER_BLOCK__";', () => matcherBlock);
   // No newline between head and body so body line N stays at physical
   // line N. Tail goes on its own line after the body for readability
   // when inspecting the registered code. The `//# sourceURL=` directive
@@ -287,11 +287,11 @@ export function collectActiveSpecs(
 //
 // Why we need this: MAIN-world wrappers can't call
 // chrome.runtime.sendMessage (chrome.runtime is undefined there), so
-// __vmSend in wrapper-head.js falls back to window.postMessage with a
-// "vibemonkey-bridge" marker. The bridge runs in USER_SCRIPT world on
+// __smSend in wrapper-head.js falls back to window.postMessage with a
+// "sourcemonkey-bridge" marker. The bridge runs in USER_SCRIPT world on
 // the same page, listens for those postMessages, and forwards them to
 // the SW. Without it, MAIN-world scripts execute fine but never report
-// vm:start / vm:error, so the badge shows them as MISSING.
+// sm:start / sm:error, so the badge shows them as MISSING.
 //
 // Scoping. The bridge registers at `<all_urls>` and runAt
 // document_start. Narrowing to the exact union of MAIN-world scripts'
@@ -409,16 +409,16 @@ export async function syncRegistrations(): Promise<void> {
     const failed = specs.length - registered;
     if (failed > 0) {
       console.info(
-        `[VibeMonkey] registered ${registered}/${specs.length} userscript(s); ${failed} rejected by chrome.userScripts (see per-script errors)`,
+        `[SourceMonkey] registered ${registered}/${specs.length} userscript(s); ${failed} rejected by chrome.userScripts (see per-script errors)`,
       );
     } else {
-      console.log(`[VibeMonkey] registered ${registered} userscript(s) with chrome.userScripts`);
+      console.log(`[SourceMonkey] registered ${registered} userscript(s) with chrome.userScripts`);
     }
   } catch (err) {
     lastError = describeError(err);
     // Common case: "Allow User Scripts" toggle is off. Log once per
     // sync so we don't bury the SW console.
-    console.info('[VibeMonkey] userScripts sync failed:', lastError);
+    console.info('[SourceMonkey] userScripts sync failed:', lastError);
   }
 }
 
@@ -442,7 +442,7 @@ async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> 
     } catch (err) {
       const msg = describeError(err);
       perScriptErrors.set(spec.id, msg);
-      console.info(`[VibeMonkey] script ${spec.id} rejected: ${msg}`);
+      console.info(`[SourceMonkey] script ${spec.id} rejected: ${msg}`);
     }
   }
   return ok;

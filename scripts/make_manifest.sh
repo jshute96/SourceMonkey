@@ -1,10 +1,10 @@
 #!/bin/sh
-# Generate a VibeMonkey HTTP-manifest JSON from the *.user.js files
+# Generate a SourceMonkey HTTP-manifest JSON from the *.user.js files
 # under the current working directory and write it to stdout.
 #
 # Intended workflow:
 #   $ cd /path/to/userscripts && sh scripts/make_manifest.sh > manifest.json
-# then serve the directory over HTTP and point VibeMonkey at
+# then serve the directory over HTTP and point SourceMonkey at
 # https://.../manifest.json. Relative entries resolve against the
 # manifest URL's parent (so "foo.user.js" becomes
 # "<manifest-dir>/foo.user.js"); see docs/http-sources.md.

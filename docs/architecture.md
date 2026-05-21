@@ -1,6 +1,6 @@
 # Architecture
 
-VibeMonkey is a Manifest V3 Chrome extension that manages and injects
+SourceMonkey is a Manifest V3 Chrome extension that manages and injects
 userscripts. This doc is the **high-level map only** — component
 details live in the topic-specific docs linked below.
 
@@ -69,7 +69,7 @@ details live in the topic-specific docs linked below.
   [logging.md](logging.md).
 - **Debug logging** (`src/debug-log.ts`) — gates the noisier
   navigation/refresh log lines behind a storage-backed flag
-  (`vmDebugLogging`), toggled via a checkbox on the options page.
+  (`smDebugLogging`), toggled via a checkbox on the options page.
 
 ## Cross-cutting docs
 

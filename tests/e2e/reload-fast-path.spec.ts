@@ -34,7 +34,7 @@ test.describe('reload fast-path', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   test('reload picks up edited body on the same reload click', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // The script writes to document.title at document-end. The body's
     // value is the assertion target — we never touch document.title
@@ -45,19 +45,19 @@ test.describe('reload fast-path', () => {
       // needs chrome.runtime.sendMessage to be callable from the
       // wrapper, which is only true in USER_SCRIPT — MAIN-world scripts
       // (the default for `@grant none`) short-circuit past
-      // vm:check-pending and never benefit from the fast-path. See
+      // sm:check-pending and never benefit from the fast-path. See
       // docs/injection.md#caveats.
       meta: { name: 'Live', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', injectInto: 'content' },
       body: `document.title = 'v1';`,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(vm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
 
     // Edit the file on disk. Crucially: do NOT call updateSource. The
     // whole point is that the reload itself discovers the update.
@@ -69,11 +69,11 @@ test.describe('reload fast-path', () => {
     // If the fast-path worked, the wrapper eval'd v2 directly. The page
     // title settles within the navigation's load.
     await expect(page).toHaveTitle('v2');
-    // Badge stays green: vm:swapped is treated as 'started' and the
+    // Badge stays green: sm:swapped is treated as 'started' and the
     // wrapper just ran the LATEST stored content, so clearScriptStale
     // keeps the row non-stale.
     await waitForTabState(
-      vm, tabId,
+      sm, tabId,
       (s) => s.badgeText === '1' && hasColor(s, GREEN),
       'green after reload swap',
     );
@@ -81,7 +81,7 @@ test.describe('reload fast-path', () => {
   });
 
   test('reload with no on-disk change runs the baked-in body (no spurious swap)', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // Sanity guard for the common reload case: when the file hasn't
     // changed, the fast-path's refresh detects no update and replies
@@ -92,19 +92,19 @@ test.describe('reload fast-path', () => {
       meta: { name: 'Stable', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'same';`,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('same');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(vm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
 
     await page.reload();
     await expect(page).toHaveTitle('same');
     await waitForTabState(
-      vm, tabId,
+      sm, tabId,
       (s) => s.badgeText === '1' && hasColor(s, GREEN),
       'green after no-op reload',
     );
@@ -112,11 +112,11 @@ test.describe('reload fast-path', () => {
   });
 
   test('MAIN-world script swaps via the postMessage bridge', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // No @grant and no injectInto → resolveWorld returns MAIN. Most
     // real-world userscripts hit this branch. The MAIN wrapper can't
-    // call chrome.runtime.sendMessage directly, so vm:check-pending
+    // call chrome.runtime.sendMessage directly, so sm:check-pending
     // round-trips through wrapper-bridge.js using a per-request nonce.
     // Without that bridge protocol the wrapper short-circuits past
     // check-pending entirely and the fast-path never engages, which
@@ -126,14 +126,14 @@ test.describe('reload fast-path', () => {
       meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'v1';`,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(vm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
 
     scriptsDir.rewriteBody('main.user.js', `document.title = 'v2';`);
     await page.reload();
@@ -141,7 +141,7 @@ test.describe('reload fast-path', () => {
     // eval'd the new body in this navigation.
     await expect(page).toHaveTitle('v2');
     await waitForTabState(
-      vm, tabId,
+      sm, tabId,
       (s) => s.badgeText === '1' && hasColor(s, GREEN),
       'green after MAIN-world swap',
     );
@@ -149,7 +149,7 @@ test.describe('reload fast-path', () => {
   });
 
   test('non-reload navigation does not trigger the swap path', async ({
-    extensionContext, fixtureServer, vm, getServiceWorker,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // Navigating to a fresh URL (not a reload) should NOT swap, even
     // if the file on disk has changed since registration. The user
@@ -162,14 +162,14 @@ test.describe('reload fast-path', () => {
       meta: { name: 'Nav', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = (document.title || '') + '-baked';`,
     });
-    await vm.addSource(scriptsDir.path);
-    await vm.syncNow();
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle(/-baked$/);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(vm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'first-visit green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'first-visit green');
 
     // Edit on disk, then navigate (not reload) to a different page on
     // the same origin. The new page's first injection should still run

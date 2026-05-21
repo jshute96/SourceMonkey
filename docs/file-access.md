@@ -1,6 +1,6 @@
 # File access
 
-How VibeMonkey reads userscripts off the local filesystem. Owned by
+How SourceMonkey reads userscripts off the local filesystem. Owned by
 `src/directories.ts`; consumed by the
 [script store](storage.md) and the [viewer](script-viewer.md). For
 the `http(s)://` story (single-file URLs + JSON manifests + ETag /
@@ -26,7 +26,7 @@ we read content via `file://` URLs.
 
 For any reading to work the user must:
 
-- Enable **"Allow access to file URLs"** for VibeMonkey on
+- Enable **"Allow access to file URLs"** for SourceMonkey on
   `chrome://extensions` (one-time, persistent).
 - (Already handled in the manifest) `"file:///*"` is in
   `host_permissions`.

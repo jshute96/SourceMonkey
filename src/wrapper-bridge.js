@@ -1,19 +1,19 @@
-/* VibeMonkey USER_SCRIPT-world bridge.
+/* SourceMonkey USER_SCRIPT-world bridge.
 
    MAIN-world userscript wrappers can't call chrome.runtime.sendMessage
-   (chrome.runtime is undefined in MAIN). To still get vm:* telemetry
-   AND to let the reload-fast-path's vm:check-pending round-trip work
+   (chrome.runtime is undefined in MAIN). To still get sm:* telemetry
+   AND to let the reload-fast-path's sm:check-pending round-trip work
    from MAIN, the MAIN wrapper falls back to window.postMessage; this
    bridge runs in USER_SCRIPT world on the same page, listens for
    those messages, and forwards them to the SW.
 
    Two flavors of forwarded message:
-     - Fire-and-forget reports (vm:start / vm:error / vm:swapped /
-       vm:abandoned). The bridge calls chrome.runtime.sendMessage and
+     - Fire-and-forget reports (sm:start / sm:error / sm:swapped /
+       sm:abandoned). The bridge calls chrome.runtime.sendMessage and
        silently swallows the returned promise.
-     - Request/reply for vm:check-pending. The MAIN wrapper attaches
+     - Request/reply for sm:check-pending. The MAIN wrapper attaches
        a requestId; the bridge forwards to the SW, awaits the reply,
-       and posts it back as a "vibemonkey-bridge-reply" message keyed
+       and posts it back as a "sourcemonkey-bridge-reply" message keyed
        on the same requestId. The MAIN wrapper's listener matches on
        requestId and resolves its awaiter.
 
@@ -22,18 +22,18 @@
    physical line.
 
    Trust model. postMessage is observable by the page, so the page
-   can both read our vm:* events and forge them. We require
-   event.source === window (no cross-frame relay), data.__vm ===
+   can both read our sm:* events and forge them. We require
+   event.source === window (no cross-frame relay), data.__sm ===
    MARKER, and a small allowlist of payload types. That's enough to
    keep cross-origin frames out; it does NOT stop the host page from
    sending fakes. Active attacks the page can mount once the bridge
    is in place:
-     - forge `vm:start` to flip a script's badge from MISSING to OK,
-     - forge `vm:error` with an attacker-chosen `message`, which the
+     - forge `sm:start` to flip a script's badge from MISSING to OK,
+     - forge `sm:error` with an attacker-chosen `message`, which the
        SW logs via console.error,
      - drive a small amount of chrome.storage.session write
        amplification per fake report,
-     - forge a `vibemonkey-bridge-reply` with a known requestId to
+     - forge a `sourcemonkey-bridge-reply` with a known requestId to
        hand a MAIN wrapper an attacker-supplied body to eval. The
        page already runs arbitrary code in MAIN world, so this is no
        privilege gain — the cost is attribution (errors blamed on our
@@ -45,19 +45,19 @@
    require it on incoming messages. */
 (function () {
   "use strict";
-  var MARKER = "vibemonkey-bridge";
-  var REPLY_MARKER = "vibemonkey-bridge-reply";
-  var ALLOWED = ["vm:start", "vm:error", "vm:swapped", "vm:abandoned", "vm:check-pending"];
+  var MARKER = "sourcemonkey-bridge";
+  var REPLY_MARKER = "sourcemonkey-bridge-reply";
+  var ALLOWED = ["sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending"];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
   window.addEventListener("message", function (ev) {
     try {
       if (!ev || ev.source !== window) return;
       var data = ev.data;
-      if (!data || data.__vm !== MARKER) return;
+      if (!data || data.__sm !== MARKER) return;
       var payload = data.payload;
       if (!payload || typeof payload !== "object") return;
       if (ALLOWED.indexOf(payload.type) === -1) return;
-      if (payload.type === "vm:check-pending") {
+      if (payload.type === "sm:check-pending") {
         /* Request/reply path. The MAIN wrapper expects a postMessage
            back with the matching requestId. We always reply, even on
            SW failure, so the wrapper's awaiter resolves quickly
@@ -66,7 +66,7 @@
         if (typeof requestId !== "string") return;
         var post = function (reply) {
           try {
-            window.postMessage({ __vm: REPLY_MARKER, requestId: requestId, reply: reply || { action: "run" } }, "*");
+            window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { action: "run" } }, "*");
           } catch (_e1) {}
         };
         try {

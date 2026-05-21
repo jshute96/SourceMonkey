@@ -12,14 +12,14 @@
   fetch can easily exceed that — we want to detect "an update is
   coming" fast, then patiently wait for the body to arrive before
   giving up and running the prior version. See
-  `docs/injection.md#vm-check-pending-handler` for the current
+  `docs/injection.md#smcheck-pending-handler` for the current
   single-phase semantics.
 - Make an icon that works
 
 ## HTTP sources — follow-ups
 
 - GitHub-aware adapter so users can point at a repo (or subpath +
-  ref) and have VibeMonkey enumerate `*.user.js` via the Git Trees /
+  ref) and have SourceMonkey enumerate `*.user.js` via the Git Trees /
   Contents API rather than maintaining a manifest by hand.
 - Conditional GET on the manifest itself. Today every refresh
   re-fetches and re-parses the manifest body even when nothing
@@ -27,7 +27,7 @@
   row would let us skip the manifest-level fetch on 304.
 - End-to-end test coverage for the HTTP pipeline (the in-test
   fixture server can already serve arbitrary files; needs a
-  `*.user.js` route plus a manifest route, then `vm.addSource(url)`).
+  `*.user.js` route plus a manifest route, then `sm.addSource(url)`).
 - Authenticated sources (basic-auth header, GitHub PAT, etc.) for
   private repos or unlisted gists. The current design only handles
   publicly-fetchable URLs.

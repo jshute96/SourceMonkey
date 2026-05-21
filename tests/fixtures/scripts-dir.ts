@@ -74,7 +74,7 @@ export class ScriptsDir {
   // Create a tmp dir under os.tmpdir() and return a ScriptsDir handle.
   // Caller is responsible for calling cleanup() — tests usually do this
   // via test.afterEach.
-  static create(prefix = 'vibemonkey-scripts-'): ScriptsDir {
+  static create(prefix = 'sourcemonkey-scripts-'): ScriptsDir {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
     return new ScriptsDir(dir);
   }

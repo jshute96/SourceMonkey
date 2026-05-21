@@ -1,16 +1,16 @@
-// Smoke test for the VibeMonkey stub extension. Asserts the unpacked
+// Smoke test for the SourceMonkey stub extension. Asserts the unpacked
 // extension actually loads, the MV3 service worker is reachable from
 // Playwright, and the options page renders. These are the floor —
 // every later feature test inherits these guarantees from the fixture.
 
 import { test, expect } from '../fixtures/extension';
 
-test('service worker exposes the VibeMonkey api', async ({ getServiceWorker }) => {
+test('service worker exposes the SourceMonkey api', async ({ getServiceWorker }) => {
   const sw = await getServiceWorker();
   const result = await sw.evaluate(() => {
     const api = (self as unknown as {
-      VibeMonkey: { version: string; ping: (v?: string) => string };
-    }).VibeMonkey;
+      SourceMonkey: { version: string; ping: (v?: string) => string };
+    }).SourceMonkey;
     return { version: api.version, echoed: api.ping('hi') };
   });
   expect(result.version).toBe('0.0.1');
@@ -23,7 +23,7 @@ test('options page loads and renders the version', async ({
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
-  await expect(page.locator('h1')).toHaveText('VibeMonkey');
+  await expect(page.locator('h1')).toHaveText('SourceMonkey');
   await expect(page.locator('#version')).toHaveText(/^Version /);
   await page.close();
 });

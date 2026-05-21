@@ -16,7 +16,7 @@
   - `@icon64URL`, `@icon64` (TM 64×64)
 - Only absolute `http(s)` and `data:` URLs are accepted. Relative
   hrefs are rejected — TM resolves them against `@downloadURL`, but
-  VibeMonkey sources don't reliably carry one, so the result would be
+  SourceMonkey sources don't reliably carry one, so the result would be
   ambiguous.
 - `data:` URLs render inline (no fetch) and are length-capped to the
   same ~170 KB ceiling we apply to inline `<link rel="icon">` hrefs.
