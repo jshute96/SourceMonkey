@@ -18,6 +18,11 @@ import {
 } from './script-store.js';
 import { basenameOf, computeLogIds } from './script-log-id.js';
 import type { StoredRequire } from './requires.js';
+import {
+  clearScriptLog,
+  getScriptLog,
+  type LogEntry,
+} from './script-log.js';
 import { updateScript } from './script-updater.js';
 import {
   formatScriptSize,
@@ -44,6 +49,8 @@ const messageEl = document.getElementById('message')!;
 const summaryEl = document.getElementById('header-summary')!;
 const tabsEl = document.getElementById('tabs')!;
 const contentEl = document.getElementById('content')!;
+const codePaneEl = document.getElementById('code-pane') as HTMLElement;
+const logPaneEl = document.getElementById('log-pane') as HTMLElement;
 
 refreshBtn.addEventListener('click', () => void onRefresh());
 enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
@@ -84,13 +91,29 @@ void load();
 // script that shares this basename, our `#N` would otherwise go
 // stale. Listen for any script:* mutation and re-derive.
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'local') return;
-  let touched = false;
-  for (const key of Object.keys(changes)) {
-    if (key.startsWith('script:')) { touched = true; break; }
+  if (areaName === 'local') {
+    let touched = false;
+    for (const key of Object.keys(changes)) {
+      if (key.startsWith('script:')) { touched = true; break; }
+    }
+    if (touched) void rehydrateAfterStorageChange();
+    return;
   }
-  if (!touched) return;
-  void rehydrateAfterStorageChange();
+  if (areaName === 'session' && scriptId) {
+    // Repaint the log pane only when THIS script's log changed and the
+    // user is currently looking at it — the pane is hidden behind a
+    // code tab the rest of the time, so we'd just be doing work the
+    // user can't see.
+    const logKey = `log:${scriptId}`;
+    if (!(logKey in changes)) return;
+    if (logPaneEl.hidden) return;
+    const newValue = changes[logKey].newValue;
+    const entries = Array.isArray(newValue) ? (newValue as LogEntry[]) : [];
+    // Bump the paint epoch so an in-flight renderLogPane() read from
+    // before this event can't overwrite us with its (now stale) array.
+    logPaintEpoch++;
+    paintLog(entries);
+  }
 });
 
 async function rehydrateAfterStorageChange(): Promise<void> {
@@ -211,13 +234,12 @@ function render(script: StoredScript): void {
   renderTabsAndBody(script);
 }
 
-// Source files shown in the viewer: the main script first, then one
-// entry per @require in declaration order. Tabs render the basename;
-// `body` is the text painted into the code box.
-interface Tab {
-  label: string;
-  body: string;
-}
+// Tab strip entries. Code tabs paint into the code-pane (main script
+// first, then one per @require in declaration order); the trailing
+// Log tab swaps the code pane for the log table.
+type Tab =
+  | { kind: 'code'; label: string; body: string }
+  | { kind: 'log'; label: string };
 
 // Index of the currently selected tab. Preserved across re-renders
 // when the new tab list still has an entry at that index; otherwise
@@ -226,14 +248,18 @@ let currentTabIndex = 0;
 
 function buildTabs(script: StoredScript): Tab[] {
   const tabs: Tab[] = [{
+    kind: 'code',
     label: basenameOf(script.relativePath),
     body: script.headerText
       ? script.headerText + '\n' + script.bodyText
       : script.bodyText,
   }];
   for (const r of script.requires ?? []) {
-    tabs.push({ label: requireBasename(r), body: r.source });
+    tabs.push({ kind: 'code', label: requireBasename(r), body: r.source });
   }
+  // Log tab always last so the file order stays stable as @requires
+  // come and go.
+  tabs.push({ kind: 'log', label: 'Log' });
   return tabs;
 }
 
@@ -286,11 +312,129 @@ function renderTabsAndBody(script: StoredScript): void {
     tabsEl.appendChild(btn);
   });
 
-  // textContent escapes; Prism then walks the node and replaces text
-  // with highlighted spans. Doing it this way (rather than innerHTML)
-  // keeps untrusted file content from being interpreted as markup.
-  contentEl.textContent = tabs[currentTabIndex].body;
-  Prism.highlightElement(contentEl);
+  const active = tabs[currentTabIndex];
+  if (active.kind === 'log') {
+    codePaneEl.hidden = true;
+    logPaneEl.hidden = false;
+    void renderLogPane();
+  } else {
+    logPaneEl.hidden = true;
+    codePaneEl.hidden = false;
+    // textContent escapes; Prism then walks the node and replaces text
+    // with highlighted spans. Doing it this way (rather than innerHTML)
+    // keeps untrusted file content from being interpreted as markup.
+    contentEl.textContent = active.body;
+    Prism.highlightElement(contentEl);
+  }
+}
+
+// Bumped on every paint request (tab-switch initial paint AND storage-
+// change repaint). renderLogPane awaits a storage.get; a sm:* event
+// landing during that await would call paintLog with the new array, and
+// the older read would then resolve and overwrite with the stale array.
+// Each paint path captures its epoch and bails if a fresher paint
+// already ran.
+let logPaintEpoch = 0;
+
+async function renderLogPane(): Promise<void> {
+  if (!scriptId) return;
+  const epoch = ++logPaintEpoch;
+  const entries = await getScriptLog(scriptId);
+  if (epoch !== logPaintEpoch) return;
+  paintLog(entries);
+}
+
+function paintLog(entries: LogEntry[]): void {
+  logPaneEl.replaceChildren();
+
+  // Toolbar with Clear button. Sticky so the action stays visible as
+  // the user scrolls through a long log.
+  const toolbar = document.createElement('div');
+  toolbar.className = 'log-toolbar';
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.textContent = 'Clear log';
+  clearBtn.addEventListener('click', () => void onClearLog());
+  toolbar.appendChild(clearBtn);
+  logPaneEl.appendChild(toolbar);
+
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'log-empty';
+    empty.textContent = 'No log entries yet. Refresh the script or trigger an event to populate this view.';
+    logPaneEl.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const trHead = document.createElement('tr');
+  for (const h of ['Time', 'Level', 'Source', 'Message']) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    trHead.appendChild(th);
+  }
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  // Newest first so recent events are visible without scrolling.
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    const tr = document.createElement('tr');
+
+    const tdTs = document.createElement('td');
+    tdTs.className = 'log-ts';
+    tdTs.textContent = formatLogTimestamp(e.timestamp);
+    tr.appendChild(tdTs);
+
+    const tdLevel = document.createElement('td');
+    tdLevel.className = 'log-level';
+    const badge = document.createElement('span');
+    badge.className = `log-level-badge log-level-${e.level}`;
+    badge.textContent = e.level;
+    tdLevel.appendChild(badge);
+    tr.appendChild(tdLevel);
+
+    const tdSource = document.createElement('td');
+    tdSource.className = 'log-source';
+    tdSource.textContent = e.tabId !== undefined
+      ? `tab ${e.tabId} · ${e.source}`
+      : e.source;
+    tr.appendChild(tdSource);
+
+    const tdMsg = document.createElement('td');
+    tdMsg.className = 'log-msg';
+    tdMsg.textContent = e.message;
+    tr.appendChild(tdMsg);
+
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  logPaneEl.appendChild(table);
+}
+
+async function onClearLog(): Promise<void> {
+  if (!scriptId) return;
+  await clearScriptLog(scriptId);
+  // Paint the empty state immediately for snappy click feedback; the
+  // storage.onChanged listener will fire shortly with the same empty
+  // state, so the second paint is a visual no-op. Bump the epoch so
+  // any in-flight renderLogPane() read can't undo this.
+  logPaintEpoch++;
+  paintLog([]);
+}
+
+function formatLogTimestamp(ms: number): string {
+  const d = new Date(ms);
+  const yyyy = String(d.getFullYear());
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  const mmm = String(d.getMilliseconds()).padStart(3, '0');
+  return `${yyyy}-${mo}-${dd} ${hh}:${mm}:${ss}.${mmm}`;
 }
 
 // Replace the H1 with a favicon slot followed by the relative path.
@@ -409,4 +553,7 @@ function showMissing(message: string): void {
   tabsEl.replaceChildren();
   tabsEl.hidden = true;
   contentEl.textContent = '';
+  logPaneEl.hidden = true;
+  logPaneEl.replaceChildren();
+  codePaneEl.hidden = false;
 }

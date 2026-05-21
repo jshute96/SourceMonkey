@@ -77,20 +77,29 @@ reports.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
      - `Status` — `OK` / `ERROR` / `MISSING`, color-coded; the
        row's `title` carries `errorMessage` when present.
-5. **Tab strip** (`#tabs`) — one tab per source file:
+5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab:
    - Main script first, labeled with the basename of `relativePath`.
    - Then one tab per `@require` in declaration order, labeled with
      the basename of the require's resolved URL.
+   - Trailing **Log** tab, always last so file-tab order is stable as
+     `@requires` come and go.
    - Always rendered, even when there are no `@requires` — the lone
-     main-script tab keeps the viewer's shape consistent and signals
-     that the page is tabbed.
-6. **Code box** (`<pre><code>`) — body of the currently selected tab,
-   highlighted by Prism.
-   - Main-script tab shows `headerText + '\n' + bodyText`.
-   - Each require tab shows the prefetched `source`.
-   - Clicking a tab swaps the content and re-runs highlighting.
+     main-script tab plus the Log tab keep the viewer's shape
+     consistent.
+6. **Code pane / Log pane** — the active tab decides which is shown:
+   - Code tabs paint a `<pre><code>` highlighted by Prism. Main-script
+     tab shows `headerText + '\n' + bodyText`; require tabs show the
+     prefetched `source`.
+   - Log tab swaps in a `<table>` view of the script's event log.
+     Columns: Time / Level / Source / Message. See
+     [script-log.md](script-log.md) for the data model and what gets
+     logged. Sticky toolbar with a "Clear log" button.
+   - Clicking a tab swaps panes (and re-runs Prism on code tabs).
    - Selected index is preserved across re-renders when the new tab
      list still has an entry at that position.
+   - The Log pane subscribes to `chrome.storage.session` changes for
+     this script's `log:<id>` key, so events flowing in while the user
+     is looking at the tab repaint live.
 
 ### Refresh
 

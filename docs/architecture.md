@@ -81,6 +81,10 @@ details live in the topic-specific docs linked below.
 - **Debug logging** (`src/debug-log.ts`) — gates the noisier
   navigation/refresh log lines behind a storage-backed flag
   (`smDebugLogging`), toggled via a checkbox on the options page.
+- **Per-script event log** (`src/script-log.ts`) — structured per-
+  script log of refresh outcomes and wrapper reports, stored in
+  `chrome.storage.session` and surfaced through the viewer's Log
+  tab. See [script-log.md](script-log.md).
 
 ## Cross-cutting docs
 
@@ -101,6 +105,8 @@ details live in the topic-specific docs linked below.
   unsupported pattern forms.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
+- [script-log.md](script-log.md) — per-script structured event log
+  shown in the viewer's Log tab.
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,
   favicon fetch + cache, icon slot in the options/viewer UI.
 

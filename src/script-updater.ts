@@ -39,6 +39,7 @@ import {
 } from './script-store.js';
 import { dlog } from './debug-log.js';
 import { getScriptLogLabel } from './script-log-id.js';
+import { logScriptEvent } from './script-log.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -179,14 +180,26 @@ async function runScriptCheck(
   // debug flag.
   const checkLog = mode === 'manual' ? console.log : dlog;
   checkLog(`[SourceMonkey] update check (${mode}): ${label}`);
+  logScriptEvent(scriptId, {
+    level: 'info',
+    source: `refresh-${mode}`,
+    message: `update check started`,
+  });
   let next: StoredScript | null;
   try {
     next = await refreshScript(scriptId, { recheckRequires: requireRecheckMode(mode) });
   } catch (err) {
-    console.info(`[SourceMonkey] update check failed: ${label}: ${describe(err)}`);
+    const msg = describe(err);
+    console.info(`[SourceMonkey] update check failed: ${label}: ${msg}`);
+    logScriptEvent(scriptId, {
+      level: 'error',
+      source: `refresh-${mode}`,
+      message: `update check threw: ${msg}`,
+    });
     throw err;
   }
   logScriptOutcome(label, prior, next, mode);
+  emitScriptOutcomeLog(scriptId, prior, next, mode);
   return next;
 }
 
@@ -205,7 +218,7 @@ async function runSourceCheck(
     console.info(`[SourceMonkey] source refresh failed: ${label}: ${describe(err)}`);
     throw err;
   }
-  if (result) summarizeSourceOutcome(label, priorBy, result.scripts);
+  if (result) summarizeSourceOutcome(label, priorBy, result.scripts, mode);
   return result;
 }
 
@@ -220,7 +233,7 @@ async function runAllSourcesCheck(
   const result = await refreshAllSources({ recheckRequires: requireRecheckMode(mode) });
   for (const [, { source, scripts }] of result) {
     const priorBy = priorBySourceId.get(source.id) ?? new Map();
-    summarizeSourceOutcome(source.path, priorBy, scripts);
+    summarizeSourceOutcome(source.path, priorBy, scripts, mode);
   }
   return result;
 }
@@ -265,10 +278,55 @@ function logScriptOutcome(
   }
 }
 
+// Append a structured per-script log entry mirroring the SW-console
+// outcome line. Skipped for unchanged-state opportunistic checks so the
+// log doesn't fill with thousands of "no change" rows from background
+// polling — those still get debug-gated console output via dlog.
+function emitScriptOutcomeLog(
+  scriptId: string,
+  prior: StoredScript | undefined,
+  next: StoredScript | null,
+  mode: UpdateMode,
+): void {
+  if (!next) {
+    logScriptEvent(scriptId, {
+      level: 'warning',
+      source: `refresh-${mode}`,
+      message: 'row vanished during refresh',
+    });
+    return;
+  }
+  if (next.status === 'error') {
+    logScriptEvent(scriptId, {
+      level: 'error',
+      source: `refresh-${mode}`,
+      message: next.errorMessage ?? 'unknown error',
+    });
+    return;
+  }
+  if (!prior || prior.loadedAt !== next.loadedAt) {
+    const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
+    logScriptEvent(scriptId, {
+      level: 'info',
+      source: `refresh-${mode}`,
+      message: `loaded new content${size}`,
+    });
+    return;
+  }
+  if (mode === 'manual') {
+    logScriptEvent(scriptId, {
+      level: 'info',
+      source: `refresh-${mode}`,
+      message: 'no change',
+    });
+  }
+}
+
 function summarizeSourceOutcome(
   label: string,
   priorBy: Map<string, StoredScript>,
   nextScripts: StoredScript[],
+  mode: UpdateMode = 'manual',
 ): void {
   let changed = 0;
   let added = 0;
@@ -276,6 +334,7 @@ function summarizeSourceOutcome(
   let errored = 0;
   for (const n of nextScripts) {
     const prior = priorBy.get(n.id);
+    emitScriptOutcomeLog(n.id, prior, n, mode);
     if (n.status === 'error') { errored++; continue; }
     if (!prior) { added++; continue; }
     if (prior.loadedAt !== n.loadedAt) changed++;

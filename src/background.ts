@@ -71,6 +71,14 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import {
+  appendScriptLog,
+  clearScriptLog,
+  getScriptLog,
+  logScriptEvent,
+  type AppendLogInput,
+  type LogEntry,
+} from './script-log.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -128,6 +136,11 @@ interface SourceMonkeyApi {
     matches: { id: string; name: string }[];
     cache: ReturnType<typeof debugDumpCache>;
   }>;
+  // Per-script event log. Tests use these to assert that refresh
+  // failures and wrapper errors are surfaced through the log pane.
+  getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
+  appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
+  clearScriptLog: (scriptId: string) => Promise<void>;
 }
 
 const api: SourceMonkeyApi = {
@@ -155,6 +168,9 @@ const api: SourceMonkeyApi = {
     ]);
     return { badgeText, badgeColor, title, record };
   },
+  getScriptLog,
+  appendScriptLog,
+  clearScriptLog,
   debugMatchIndex: async (url: string) => {
     await ensureLoaded();
     return {
@@ -818,12 +834,35 @@ function installScriptMessageListener(): void {
       name?: string;
       url?: string;
       message?: string;
+      stack?: string;
       loadedAt?: number;
       fromLoadedAt?: number;
       reason?: string;
     };
     enqueueTabWork(tabId, () => recordScriptReport(tabId, sender, type, payload));
   });
+}
+
+// Combine the wrapper's message + stack into the multiline string that
+// goes into the per-script log. V8/SpiderMonkey both prepend the
+// message to the stack ("Error: foo\n    at …"), so the stack is the
+// most-complete view. We dedup the case where the stack DOESN'T begin
+// with the message (Safari historically; user-thrown non-Error values
+// that synthesized a stack) by prepending the message when missing.
+// First-line-only check is deliberately tighter than `stack.includes`:
+// a very short message ("in", "ok") would otherwise substring-match
+// somewhere deep in the stack and we'd drop the prepend, losing the
+// throw payload from the log.
+function composeWrapperErrorMessage(
+  message: string | undefined,
+  stack: string | undefined,
+): string {
+  const msg = message ?? '';
+  const st = stack ?? '';
+  if (!st) return msg || 'unknown runtime error';
+  const firstLine = st.split('\n', 1)[0];
+  if (msg && !firstLine.includes(msg)) return `${msg}\n${st}`;
+  return st;
 }
 
 async function recordScriptReport(
@@ -839,6 +878,7 @@ async function recordScriptReport(
     name?: string;
     url?: string;
     message?: string;
+    stack?: string;
     loadedAt?: number;
     fromLoadedAt?: number;
     reason?: string;
@@ -860,6 +900,12 @@ async function recordScriptReport(
   const label = getScriptLogLabel(id);
   if (type === SM_START_MSG) {
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
+    logScriptEvent(id, {
+      level: 'info',
+      source: 'wrapper',
+      tabId,
+      message: `started at ${senderUrl}`,
+    });
   } else if (type === SM_SWAPPED_MSG) {
     // The reload swap path. Log alongside sm:start so the SW console
     // tells the full story when reading a transcript.
@@ -867,12 +913,24 @@ async function recordScriptReport(
       `[SourceMonkey] swapped ${label}${tabPart} ${senderUrl} ` +
       `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
     );
+    logScriptEvent(id, {
+      level: 'info',
+      source: 'wrapper',
+      tabId,
+      message: `reload-swap from loadedAt ${payload.fromLoadedAt ?? '?'} to ${payload.loadedAt ?? '?'}`,
+    });
   } else if (type === SM_ABANDONED_MSG) {
     // SW told the wrapper to skip. Surface at info-level — this is rare
     // and worth knowing about, but it isn't an error.
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
+    logScriptEvent(id, {
+      level: 'warning',
+      source: 'wrapper',
+      tabId,
+      message: `abandoned (reason=${payload.reason ?? '?'})`,
+    });
   } else {
     // console.info (not console.warn / .error) so a userscript runtime
     // failure — which is a bug in user-supplied code we're relaying —
@@ -882,6 +940,17 @@ async function recordScriptReport(
     // badge already surfaces the failure to the user; the Errors panel
     // should be reserved for actual extension bugs.
     console.info(`[SourceMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+    // The stack (when present) typically starts with a line that already
+    // contains the message (e.g. "Error: foo\n    at HTMLBtn..."), so
+    // we prefer it as-is. Fall back to message-only when the engine
+    // didn't give us a stack — older browsers / errors thrown from
+    // primitive values won't carry one.
+    logScriptEvent(id, {
+      level: 'error',
+      source: 'wrapper',
+      tabId,
+      message: composeWrapperErrorMessage(payload.message, payload.stack),
+    });
   }
 
   // sm:abandoned is logging-only — there's no "actual" report to merge

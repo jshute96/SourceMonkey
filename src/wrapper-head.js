@@ -176,12 +176,14 @@
     var msg;
     try { msg = (err && err.message) ? String(err.message) : String(err); }
     catch (_e2) { msg = "(unstringifiable error)"; }
+    var stack = "";
+    try { if (err && typeof err.stack === "string") stack = err.stack; } catch (_e4) {}
     /* Native browser logging already prints the error + stack (the
        sourceURL we appended makes the source identifiable). Avoid
        duplicating that — just note the attribution at info level so
        it's clear which SourceMonkey script is being blamed. */
     try { console.info("[SourceMonkey] caught async " + kind + " in", __smName); } catch (_e3) {}
-    __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: runtimeLoadedAt, url: location.href, message: msg });
+    __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: runtimeLoadedAt, url: location.href, message: msg, stack: stack });
   };
   var __smInstallAsyncListeners = function (runtimeLoadedAt) {
     try {
@@ -267,8 +269,9 @@
         __smSend({ type: "sm:swapped", id: __smId, name: __smName, fromLoadedAt: __smLoadedAt, loadedAt: __smNewLoadedAt, url: location.href });
         if (__smEvalErr) {
           var __smNewMsg = (__smEvalErr && __smEvalErr.message) ? __smEvalErr.message : String(__smEvalErr);
+          var __smNewStack = (__smEvalErr && typeof __smEvalErr.stack === "string") ? __smEvalErr.stack : "";
           try { console.error("[SourceMonkey] swapped script", __smName, "threw:", __smEvalErr); } catch (_e2) {}
-          __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smNewLoadedAt, url: location.href, message: __smNewMsg });
+          __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smNewLoadedAt, url: location.href, message: __smNewMsg, stack: __smNewStack });
         }
         return;
       }

@@ -188,6 +188,75 @@
         font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       pre.code-box:focus { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* Log pane mirrors the code box's outer dimensions so swapping
+         between a code tab and the Log tab doesn't reflow the page.
+         Same border/margin trick as .code-box so the active Log tab's
+         bottom border merges with the pane's top border. */
+      .log-pane {
+        flex: 1 1 auto;
+        margin: -1px 0 0;
+        overflow: auto;
+        border: 1px solid #ccc;
+        border-radius: 0 4px 4px 4px;
+        background: #fafafa;
+      }
+      .log-pane[hidden] { display: none; }
+      .log-pane:focus { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      .log-pane table {
+        width: 100%;
+        border-collapse: collapse;
+        font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .log-pane th, .log-pane td {
+        padding: 0.35em 0.6em;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid #eee;
+      }
+      .log-pane th {
+        background: #f0f0f0;
+        font-weight: 600;
+        color: #555;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      .log-pane td.log-ts { white-space: nowrap; color: #555; }
+      .log-pane td.log-source { white-space: nowrap; color: #555; }
+      .log-pane td.log-msg { white-space: pre-wrap; word-break: break-word; }
+      .log-pane td.log-level { white-space: nowrap; }
+      .log-pane .log-level-badge {
+        display: inline-block;
+        padding: 0 0.45em;
+        border-radius: 3px;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .log-pane .log-level-info    { background: #e7eef7; color: #345; }
+      .log-pane .log-level-warning { background: #fdf1c5; color: #6b4f00; }
+      .log-pane .log-level-error   { background: #fbe2e2; color: #8a1d1d; }
+      .log-empty {
+        padding: 1em;
+        color: #777;
+        font: 13px system-ui, sans-serif;
+      }
+      .log-toolbar {
+        display: flex;
+        justify-content: flex-end;
+        padding: 0.4em 0.6em;
+        border-bottom: 1px solid #eee;
+        position: sticky;
+        top: 0;
+        background: #fafafa;
+        z-index: 2;
+      }
+      .log-toolbar button {
+        font: inherit;
+        padding: 0.2em 0.7em;
+        cursor: pointer;
+      }
     </style>
   </head>
   <body>
@@ -202,7 +271,8 @@
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
     <div id="tabs" class="tabs" role="tablist" hidden></div>
-    <pre class="code-box" tabindex="0"><code id="content" class="language-javascript"></code></pre>
+    <pre id="code-pane" class="code-box" tabindex="0"><code id="content" class="language-javascript"></code></pre>
+    <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>
     <script src="vendor/prism/prism.js"></script>
     <script src="userscript.js" type="module"></script>
   </body>
