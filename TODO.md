@@ -43,10 +43,12 @@
   with each `StoredScript.requires[i]` holding only `{ ref, url,
   contentHash, validators, loadedAt }`. Add a sweeper that drops a
   `require:<hash>` row when its refcount across scripts hits zero.
-- **UI surface for prefetched requires.** The options page row and
-  viewer detail panel don't expose require state. At minimum: a
-  count badge / chip per row ("3 requires"); ideally the viewer
-  shows each require's URL, size, and loadedAt as a sub-list.
+- **UI surface for prefetched requires.** The viewer now shows one
+  tab per require with its full source, but the options page row and
+  the viewer's details panel still don't expose require state. Add a
+  count badge / chip per options-page row ("3 requires") and a sub-
+  list in the viewer details panel showing each require's URL, size,
+  and loadedAt.
 - **HTTP conditional GETs on require fetches.** `fetchResourceText`
   doesn't thread `If-None-Match` / `If-Modified-Since` through the
   byte fetcher, so every explicit Refresh re-downloads every require

@@ -136,15 +136,53 @@
       .copy-btn .check-icon { display: none; color: #166534; }
       .copy-btn.copied .copy-icon { display: none; }
       .copy-btn.copied .check-icon { display: block; }
+      /* Tab strip above the code box: one tab per source file (main
+         script + each @require). Always rendered. The strip sits
+         entirely above the code box (no overlap, no negative margin
+         tricks) so the layout is robust against the body's flex
+         column constraints. */
+      .tabs {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 3px;
+        margin: 0;
+        padding: 0;
+        overflow-x: auto;
+      }
+      .tab {
+        font: inherit;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.2;
+        padding: 0.45em 0.9em;
+        border: 1px solid #ccc;
+        border-radius: 4px 4px 0 0;
+        background: #e4e4e4;
+        color: #555;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .tab:hover { background: #efefef; }
+      .tab.active {
+        background: #fafafa;
+        color: #222;
+        font-weight: 600;
+        border-bottom-color: #fafafa;
+      }
+      .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
       /* The code box fills the rest of the viewport and scrolls. The
          padding/border give it a textbox-like look; tabindex makes it
-         keyboard-focusable so it scrolls with arrow keys. */
+         keyboard-focusable so it scrolls with arrow keys. The
+         top-left rounding is dropped so the active tab meets the box
+         cleanly along that edge. margin-top:-1px lets the active tab's
+         transparent bottom border merge with the code box's top
+         border so the active tab visually "opens into" the box. */
       pre.code-box {
         flex: 1 1 auto;
-        margin: 0;
+        margin: -1px 0 0;
         overflow: auto;
         border: 1px solid #ccc;
-        border-radius: 4px;
+        border-radius: 0 4px 4px 4px;
         padding: 0.8em;
         background: #fafafa;
         font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -163,6 +201,7 @@
     </div>
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
+    <div id="tabs" class="tabs" role="tablist" hidden></div>
     <pre class="code-box" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <script src="vendor/prism/prism.js"></script>
     <script src="userscript.js" type="module"></script>

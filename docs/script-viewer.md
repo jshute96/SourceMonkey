@@ -77,8 +77,20 @@ reports.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
      - `Status` — `OK` / `ERROR` / `MISSING`, color-coded; the
        row's `title` carries `errorMessage` when present.
-5. **Code box** (`<pre><code>`) — `headerText + '\n' + bodyText`
+5. **Tab strip** (`#tabs`) — one tab per source file:
+   - Main script first, labeled with the basename of `relativePath`.
+   - Then one tab per `@require` in declaration order, labeled with
+     the basename of the require's resolved URL.
+   - Always rendered, even when there are no `@requires` — the lone
+     main-script tab keeps the viewer's shape consistent and signals
+     that the page is tabbed.
+6. **Code box** (`<pre><code>`) — body of the currently selected tab,
    highlighted by Prism.
+   - Main-script tab shows `headerText + '\n' + bodyText`.
+   - Each require tab shows the prefetched `source`.
+   - Clicking a tab swaps the content and re-runs highlighting.
+   - Selected index is preserved across re-renders when the new tab
+     list still has an entry at that position.
 
 ### Refresh
 

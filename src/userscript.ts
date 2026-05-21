@@ -16,7 +16,8 @@ import {
   setScriptEnabled,
   type StoredScript,
 } from './script-store.js';
-import { computeLogIds } from './script-log-id.js';
+import { basenameOf, computeLogIds } from './script-log-id.js';
+import type { StoredRequire } from './requires.js';
 import { updateScript } from './script-updater.js';
 import {
   formatScriptSize,
@@ -41,6 +42,7 @@ const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInput
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 const messageEl = document.getElementById('message')!;
 const summaryEl = document.getElementById('header-summary')!;
+const tabsEl = document.getElementById('tabs')!;
 const contentEl = document.getElementById('content')!;
 
 refreshBtn.addEventListener('click', () => void onRefresh());
@@ -206,14 +208,88 @@ function render(script: StoredScript): void {
   messageEl.className = script.errorMessage ? 'message error' : 'message';
 
   renderDetails(script);
+  renderTabsAndBody(script);
+}
+
+// Source files shown in the viewer: the main script first, then one
+// entry per @require in declaration order. Tabs render the basename;
+// `body` is the text painted into the code box.
+interface Tab {
+  label: string;
+  body: string;
+}
+
+// Index of the currently selected tab. Preserved across re-renders
+// when the new tab list still has an entry at that index; otherwise
+// falls back to 0 (the main script).
+let currentTabIndex = 0;
+
+function buildTabs(script: StoredScript): Tab[] {
+  const tabs: Tab[] = [{
+    label: basenameOf(script.relativePath),
+    body: script.headerText
+      ? script.headerText + '\n' + script.bodyText
+      : script.bodyText,
+  }];
+  for (const r of script.requires ?? []) {
+    tabs.push({ label: requireBasename(r), body: r.source });
+  }
+  return tabs;
+}
+
+// Pull a display basename off a require's resolved URL. Falls back to
+// the verbatim ref if URL parsing fails — won't happen for entries we
+// stored (the resolver wouldn't have accepted the URL otherwise), but
+// the fallback keeps a future shape change from breaking the tab UI.
+// decodeURIComponent throws URIError on malformed `%` sequences, so it
+// gets its own try/catch with a raw-name fallback rather than wrapping
+// it inside the URL-parse try (where a decode failure would leak the
+// entire basename for the ref-fallback path).
+function requireBasename(r: StoredRequire): string {
+  let name: string;
+  try {
+    const path = new URL(r.url).pathname;
+    const slash = path.lastIndexOf('/');
+    name = slash < 0 ? path : path.slice(slash + 1);
+  } catch {
+    return r.ref;
+  }
+  if (!name) return r.ref;
+  try {
+    return decodeURIComponent(name);
+  } catch {
+    return name;
+  }
+}
+
+function renderTabsAndBody(script: StoredScript): void {
+  const tabs = buildTabs(script);
+  if (currentTabIndex >= tabs.length) currentTabIndex = 0;
+
+  tabsEl.replaceChildren();
+  // Always render the strip — even a single main-script tab gives the
+  // page a consistent shape and tells the user the viewer is tabbed.
+  tabsEl.hidden = false;
+
+  tabs.forEach((tab, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tab' + (idx === currentTabIndex ? ' active' : '');
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', idx === currentTabIndex ? 'true' : 'false');
+    btn.textContent = tab.label;
+    btn.addEventListener('click', () => {
+      if (currentTabIndex === idx) return;
+      currentTabIndex = idx;
+      renderTabsAndBody(script);
+    });
+    tabsEl.appendChild(btn);
+  });
 
   // textContent escapes; Prism then walks the node and replaces text
   // with highlighted spans. Doing it this way (rather than innerHTML)
   // keeps untrusted file content from being interpreted as markup.
-  const body = script.headerText
-    ? script.headerText + '\n' + script.bodyText
-    : script.bodyText;
-  contentEl.textContent = body;
+  contentEl.textContent = tabs[currentTabIndex].body;
   Prism.highlightElement(contentEl);
 }
 
@@ -330,5 +406,7 @@ function showMissing(message: string): void {
   messageEl.textContent = message;
   messageEl.className = 'message error';
   summaryEl.replaceChildren();
+  tabsEl.replaceChildren();
+  tabsEl.hidden = true;
   contentEl.textContent = '';
 }

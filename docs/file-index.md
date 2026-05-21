@@ -38,8 +38,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/background.ts` | Service worker entrypoint; per-tab badge wiring, sm:* listener (incl. reload-fast-path check-pending handler), injector + match-index bootstrap |
 | `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
 | `src/options.ts` | Options page controller — initial render, banners, in-place updates with per-control busy spinners, Refresh All + ?refresh trigger + change-row highlights |
-| `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, highlighted code box |
-| `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl (header fields + filename/copy/size/status) and highlighted body |
+| `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, tab strip, highlighted code box |
+| `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl + tabbed code view (main script + one tab per `@require`) |
 | `src/directories.ts` | Source I/O: file:// + http(s) fetch (conditional GETs), listing parser, recursive scanner, JSON manifest parser, URL helpers |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline (incl. size+mtime skip and refreshAllSources) |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
