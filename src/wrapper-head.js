@@ -207,6 +207,12 @@
      out of the outer IIFE on a miss. Runs BEFORE __smAwaitDecision so
      non-matching pages don't bother the SW with a check-in. */
   "__SM_MATCHER_BLOCK__";
+  /* GM_* bindings (granted APIs only). The injector substitutes this
+     with `const GM_setValue = ...; const GM_getValue = ...;` etc. — see
+     src/gm-bindings.ts. Empty when the script is @grant none. The
+     bindings sit in the outer IIFE's scope so both the baked-in body
+     and the run-new swap-eval branch can see them via closure. */
+  "__SM_GM_BINDINGS__";
   __smAwaitDecision(function (__smDecision) {
     if (__smDecision && __smDecision.action === "skip") {
       /* SW concluded we shouldn't run on this navigation (file removed,

@@ -52,10 +52,13 @@ import {
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_BRIDGE,
+  WRAPPER_GM_RUNTIME,
   WRAPPER_HEAD,
   WRAPPER_MATCHER,
   WRAPPER_TAIL,
 } from './generated-wrappers.js';
+import { resolveGrants } from './gm-api-catalog.js';
+import { emitGmBindings, type GmInfoInput } from './gm-bindings.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -77,6 +80,11 @@ export const SM_ABANDONED_MSG = 'sm:abandoned';
 // with `_`, so we use a `sourcemonkey-` prefix; stored script ids are
 // UUIDs and won't collide.
 export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
+
+// Reserved registration id for the USER_SCRIPT-world GM_* shared
+// runtime. Registered at document_start so its `window.__SM_GM__`
+// global is in place before any userscript wrapper runs.
+export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 
 export type RunAt = chrome.userScripts.RunAt;
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
@@ -206,6 +214,9 @@ export function buildWrappedBody(args: {
   body: string;
   loadedAt: number;
   matching?: { matches: string[]; includes: string[]; excludes: string[] };
+  // GM bindings source produced by gm-bindings.ts. Empty string when
+  // the script declared no @grant lines (or `@grant none`).
+  gmBindings?: string;
 }): string {
   // Pass replacements as functions so `$&` / `$1` etc. inside our
   // generated wrappers aren't interpreted as String.prototype.replace
@@ -224,7 +235,8 @@ export function buildWrappedBody(args: {
     // wrapper ends up with `var __smLoadedAt = 1737051234567;`.
     .replace('"__SM_LOADED_AT__"', () => JSON.stringify(args.loadedAt))
     .replace('"__SM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
-    .replace('"__SM_MATCHER_BLOCK__";', () => matcherBlock);
+    .replace('"__SM_MATCHER_BLOCK__";', () => matcherBlock)
+    .replace('"__SM_GM_BINDINGS__";', () => args.gmBindings ?? '');
   // No newline between head and body so body line N stays at physical
   // line N. Tail goes on its own line after the body for readability
   // when inspecting the registered code. The `//# sourceURL=` directive
@@ -232,6 +244,55 @@ export function buildWrappedBody(args: {
   // wrapper's window error listener greps for to decide whether a given
   // error originated in this script's code.
   return head + args.body + '\n' + WRAPPER_TAIL + '\n//# sourceURL=' + sourceUrl + '\n';
+}
+
+// Build the GM-binding source string for one script. Pure: takes the
+// script's stored row + the SourceMonkey handler version and returns
+// the JS source to splice into the wrapper. Empty string when the
+// script declares no @grant or @grant none.
+//
+// Co-located here (not in gm-bindings.ts) because the lookup from
+// StoredScript -> the GmInfoInput shape involves header parsing that
+// the rest of injector.ts already does — keeping it here avoids
+// passing the header into gm-bindings or re-parsing.
+//
+// Side effects. When the script declares `@grant` lines that aren't in
+// the catalog (TM-only APIs we don't support, typos like
+// `GM_setvalue`), we log a one-liner with the unknown names so a
+// future user can see why their script throws ReferenceError. The
+// binding emission still goes ahead for the recognized grants.
+export function buildGmBindingsForScript(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+): { js: string; granted: readonly string[] } {
+  if (!script.header) return { js: '', granted: [] };
+  const grants = getValues(script.header, 'grant');
+  const resolved = resolveGrants(grants);
+  if (resolved.unknown.length > 0) {
+    const name = getValue(script.header, 'name') ?? script.relativePath;
+    console.info(
+      `[SourceMonkey] ${name}: unknown @grant entries dropped: ${resolved.unknown.join(', ')}`,
+    );
+  }
+  if (resolved.hasNone || resolved.granted.size === 0) {
+    return { js: '', granted: [] };
+  }
+  const name = getValue(script.header, 'name') ?? script.relativePath;
+  const info: GmInfoInput = {
+    scriptId: script.id,
+    name,
+    version: getValue(script.header, 'version') ?? '',
+    namespace: getValue(script.header, 'namespace') ?? '',
+    description: getValue(script.header, 'description') ?? '',
+    matches: script.matching.matches.slice(),
+    includes: script.matching.includes.slice(),
+    excludes: script.matching.excludes.slice(),
+    grants: [...resolved.granted],
+    runAt: getValue(script.header, 'run-at') ?? '',
+    scriptMetaStr: script.headerText,
+    scriptHandlerVersion,
+  };
+  return emitGmBindings([...resolved.granted], info);
 }
 
 // Pure: build the spec we'll hand to chrome.userScripts.register for
@@ -246,7 +307,13 @@ export function buildWrappedBody(args: {
 //   - /regex/ @excludes likewise go to the wrapper. We can't tell
 //     Chrome to skip them, so they always get an injection that the
 //     wrapper aborts.
-export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | null {
+// `scriptHandlerVersion` default is for unit tests that don't exercise
+// the GM bindings (the value lands in `GM_info.version`). Production
+// callers pass `chrome.runtime.getManifest().version`.
+export function buildRegistrationSpec(
+  script: StoredScript,
+  scriptHandlerVersion: string = '0.0.0',
+): RegistrationSpec | null {
   const matches = script.matching.matches.slice();
   const includeGlobs: string[] = [];
   const excludeGlobs: string[] = [];
@@ -275,6 +342,16 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude;
   const body = composeRequiredBody(script);
 
+  const world = resolveWorld(script.header);
+  // GM_* bindings only make sense in USER_SCRIPT world today —
+  // wrapper-gm-runtime.js is registered there. A script that mixes
+  // `@grant something` with `@inject-into page` lands in MAIN; we
+  // skip the bindings so the script gets a natural ReferenceError if
+  // it touches a GM_* name. This is a documented limitation (see
+  // docs/GM_API_strategy.md).
+  const gmBindings = world === 'USER_SCRIPT'
+    ? buildGmBindingsForScript(script, scriptHandlerVersion).js
+    : '';
   const spec: RegistrationSpec = {
     id: script.id,
     js: [{ code: buildWrappedBody({
@@ -283,9 +360,10 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
       body,
       loadedAt: script.loadedAt,
       matching: needsWrapperFilter ? script.matching : undefined,
+      gmBindings,
     }) }],
     runAt,
-    world: resolveWorld(script.header),
+    world,
   };
   if (matches.length > 0) spec.matches = matches;
   if (includeGlobs.length > 0) spec.includeGlobs = includeGlobs;
@@ -301,6 +379,7 @@ export function buildRegistrationSpec(script: StoredScript): RegistrationSpec | 
 export function collectActiveSpecs(
   scripts: StoredScript[],
   sources: Map<string, StoredSource>,
+  scriptHandlerVersion: string = '0.0.0',
 ): RegistrationSpec[] {
   const out: RegistrationSpec[] = [];
   for (const s of scripts) {
@@ -308,7 +387,7 @@ export function collectActiveSpecs(
     if (!isScriptEnabled(s)) continue;
     const src = sources.get(s.sourceId);
     if (!src || !isSourceEnabled(src)) continue;
-    const spec = buildRegistrationSpec(s);
+    const spec = buildRegistrationSpec(s, scriptHandlerVersion);
     if (spec) out.push(spec);
   }
   return out;
@@ -346,6 +425,43 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
     id: BRIDGE_SCRIPT_ID,
     matches: ['<all_urls>'],
     js: [{ code: WRAPPER_BRIDGE }],
+    runAt: 'document_start',
+    world: 'USER_SCRIPT',
+  };
+}
+
+// Pure: build the registration spec for the USER_SCRIPT-world GM_*
+// shared runtime, or return null when no USER_SCRIPT-world script is
+// active.
+//
+// Why we need this: every per-script wrapper compiles in `const GM_X
+// = function () { ... }` bindings that delegate to
+// `window.__SM_GM__` (sync) or use `__SM_GM__.sendAsync` (async).
+// `__SM_GM__` is defined by src/wrapper-gm-runtime.js, registered
+// here. Without it, the FIRST GM_* call would throw "__SM_GM__ is
+// undefined" instead of the per-API "not implemented" or the real
+// handler.
+//
+// Scoping. Registered at `<all_urls>`, runAt document_start. The
+// runtime is small and idempotent — a `if (window.__SM_GM__) return;`
+// guard handles the case where Chrome happens to re-run it on a
+// document that already initialized.
+//
+// Ordering vs. wrappers. For wrappers at document_end / document_idle
+// the runtime is installed by then. For wrappers ALSO at
+// document_start, in practice Chromium runs registered scripts in
+// registration order, but that's implementation-defined and not part
+// of the documented userScripts contract. The real safety net is
+// that the wrapper dereferences `window.__SM_GM__` lazily — inside
+// the `__smAwaitDecision` microtask, AFTER the runtime has had a
+// chance to install. See docs/gm-apis.md.
+export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
+  const hasUserScriptWorld = activeSpecs.some((s) => s.world === 'USER_SCRIPT');
+  if (!hasUserScriptWorld) return null;
+  return {
+    id: GM_RUNTIME_SCRIPT_ID,
+    matches: ['<all_urls>'],
+    js: [{ code: WRAPPER_GM_RUNTIME }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
   };
@@ -426,12 +542,18 @@ export async function syncRegistrations(): Promise<void> {
   try {
     await ensureWorldConfigured();
     const { scripts, sources } = await readAll();
-    const userSpecs = collectActiveSpecs(scripts, sources);
+    const handlerVersion = chrome.runtime.getManifest().version;
+    const userSpecs = collectActiveSpecs(scripts, sources, handlerVersion);
     const bridge = buildBridgeSpec(userSpecs);
-    // Bridge first so Chrome's registration order also reflects "this
-    // runs before MAIN wrappers" (in addition to postMessage's
-    // task-deferred dispatch covering us either way).
-    const specs = bridge ? [bridge, ...userSpecs] : userSpecs;
+    const gmRuntime = buildGmRuntimeSpec(userSpecs);
+    // GM runtime first so it installs window.__SM_GM__ ahead of any
+    // USER_SCRIPT-world wrapper that compiles in GM_* bindings.
+    // Bridge next so MAIN wrappers' postMessages have a listener.
+    // Then the user scripts.
+    const specs: RegistrationSpec[] = [];
+    if (gmRuntime) specs.push(gmRuntime);
+    if (bridge) specs.push(bridge);
+    specs.push(...userSpecs);
     const existing = await chrome.userScripts.getScripts();
     if (existing.length > 0) {
       await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });

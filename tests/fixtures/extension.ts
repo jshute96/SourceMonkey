@@ -206,6 +206,16 @@ function writeExtensionPreferences(userDataDir: string, extensionId: string): vo
           // "Allow User Scripts" toggle on chrome://extensions.
           // Setting it pre-launch grants the permission to the
           // already-known extension ID without UI clicks.
+          //
+          // CAREFUL: `extensionId` here must be the same ID Chrome
+          // actually uses for the unpacked extension. If manifest.json
+          // has a `"key"` field (it does — see src/manifest.json),
+          // Chrome derives the ID from the key bytes, not the
+          // filesystem path. The helper in tests/fixtures/
+          // extension-id.ts reads the manifest to pick the right
+          // derivation. Writing to the wrong ID silently no-ops:
+          // chrome.userScripts ends up undefined and the SW boots
+          // fine but every userscript registration is dropped.
           user_scripts_enabled: true,
         },
       },
