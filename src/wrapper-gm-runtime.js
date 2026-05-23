@@ -81,7 +81,7 @@
      Per-script: one cache object, one debounce timer, one pending
      writes queue. The runtime is shared across scripts in the same
      document, so we key by scriptId. */
-  var stores = {};  /* scriptId -> { cache, pending, debounceTimer, hardTimer, ready } */
+  var stores = {};  /* scriptId -> { cache, pending, debounceTimer, hardTimer, ready, listeners, nextListenerId } */
   var DEBOUNCE_MS = 150;
   var HARD_DEADLINE_MS = 1000;
   /* Deletion sentinel — paired with the SW-side gm-values.ts
@@ -97,9 +97,36 @@
       debounceTimer: null,
       hardTimer: null,
       ready: false,
+      listeners: null,        /* lazily { listenerId: {key, callback} } */
+      nextListenerId: 1,
     };
     stores[scriptId] = s;
     return s;
+  }
+
+  /* Fire value-change listeners for one (scriptId, key) transition.
+     Matches TM/VM signature: callback(key, oldValue, newValue, remote).
+     `remote=true` means the change came from another tab via the SW
+     broadcast; `false` means a local GM_setValue / GM_deleteValue.
+
+     Listener throws are swallowed (we log them) so one buggy listener
+     can't stop sibling listeners from firing. We iterate a copy of
+     the listener-id list so a listener that calls
+     removeValueChangeListener during dispatch doesn't disturb the
+     iteration. */
+  function fireListeners(scriptId, key, oldValue, newValue, remote) {
+    var s = stores[scriptId];
+    if (!s || !s.listeners) return;
+    var ids = _ObjectKeys(s.listeners);
+    for (var i = 0; i < ids.length; i++) {
+      var L = s.listeners[ids[i]];
+      if (!L || L.key !== key) continue;
+      try {
+        L.callback(key, oldValue, newValue, remote);
+      } catch (e) {
+        try { console.error("[SourceMonkey] value-change listener threw:", e); } catch (_lE) {}
+      }
+    }
   }
 
   function scheduleFlush(scriptId) {
@@ -196,8 +223,14 @@
     if (!writes || !writes.length) return;
     for (var i = 0; i < writes.length; i++) {
       var w = writes[i];
-      if (w.deleted) delete s.cache[w.key];
-      else s.cache[w.key] = w.value;
+      var oldValue = _hasOwn.call(s.cache, w.key) ? s.cache[w.key] : undefined;
+      if (w.deleted) {
+        delete s.cache[w.key];
+        fireListeners(scriptId, w.key, oldValue, undefined, true);
+      } else {
+        s.cache[w.key] = w.value;
+        fireListeners(scriptId, w.key, oldValue, w.value, true);
+      }
     }
   }
   /* Sender filter. A naive listener would happily process a forged
@@ -251,23 +284,55 @@
       if (_hasOwn.call(s.cache, key)) return s.cache[key];
       return defaultValue;
     },
-    /* Sync API: returns undefined, queues the write. */
+    /* Sync API: returns undefined, queues the write. Fires
+       value-change listeners synchronously with remote=false. */
     set: function (scriptId, key, value) {
       var s = ensureStore(scriptId);
+      var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       s.cache[key] = value;
       s.pending.push({ key: key, value: value });
       scheduleFlush(scriptId);
+      fireListeners(scriptId, key, oldValue, value, false);
     },
     del: function (scriptId, key) {
       var s = ensureStore(scriptId);
+      var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       delete s.cache[key];
       s.pending.push({ key: key, value: DELETED_SENTINEL });
       scheduleFlush(scriptId);
+      fireListeners(scriptId, key, oldValue, undefined, false);
     },
     list: function (scriptId) {
       var s = stores[scriptId];
       if (!s || !s.ready) return [];
       return _ObjectKeys(s.cache);
+    },
+    /* GM_addValueChangeListener(key, callback) — register a per-key
+       listener. Returns a listener-id the caller can pass to
+       removeValueChangeListener. The id is stable across the
+       lifetime of the document.
+
+       Listeners fire on:
+         - Local GM_setValue / GM_deleteValue (remote=false), AFTER
+           the cache has been updated and the write queued.
+         - Remote sm:gm-value-update broadcasts (remote=true).
+       Pre-flight loads (storage.init) do NOT fire listeners — the
+       cache hasn't observably changed from the page's perspective. */
+    addValueChangeListener: function (scriptId, key, callback) {
+      if (typeof callback !== "function") {
+        throw new _Error("[SourceMonkey] GM_addValueChangeListener: callback must be a function");
+      }
+      var s = ensureStore(scriptId);
+      if (!s.listeners) s.listeners = _ObjectCreate(null);
+      var id = String(s.nextListenerId++);
+      s.listeners[id] = { key: String(key), callback: callback };
+      return id;
+    },
+    removeValueChangeListener: function (scriptId, listenerId) {
+      var s = stores[scriptId];
+      if (!s || !s.listeners) return;
+      var key = String(listenerId);
+      if (_hasOwn.call(s.listeners, key)) delete s.listeners[key];
     },
   };
 

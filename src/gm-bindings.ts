@@ -145,6 +145,17 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_listValues = function () { return window.__SM_GM__.storage.list(${jsLit(scriptId)}); };`;
     }
   }
+  // Storage-listener subsystem: addValueChangeListener / removeValueChangeListener
+  // are page-side, no SW round-trip. Listeners fire from local
+  // sets + deletes AND from remote broadcasts.
+  if (spec.subsystem === 'storage-listener') {
+    switch (spec.name) {
+      case 'GM_addValueChangeListener':
+        return `const GM_addValueChangeListener = function (key, callback) { return window.__SM_GM__.storage.addValueChangeListener(${jsLit(scriptId)}, key, callback); };`;
+      case 'GM_removeValueChangeListener':
+        return `const GM_removeValueChangeListener = function (listenerId) { return window.__SM_GM__.storage.removeValueChangeListener(${jsLit(scriptId)}, listenerId); };`;
+    }
+  }
   // DOM subsystem: in-page DOM mutations, no per-script state needed
   // beyond what the bodies pass through. CSP-exempt in USER_SCRIPT
   // world.

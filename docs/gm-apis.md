@@ -176,6 +176,27 @@ Cross-script isolation: each script's `(scriptId, key)` namespace
 is independent — `GM_listValues` from script A never returns script
 B's keys.
 
+## Value-change listeners (`GM_addValueChangeListener` / `GM_removeValueChangeListener`)
+
+Per-script, per-key listener registry living in the page-side
+runtime. Listeners fire synchronously on:
+
+- Local `GM_setValue` / `GM_deleteValue` — `remote=false`.
+- Remote cross-tab broadcasts — `remote=true`.
+
+Pre-flight cache load (`storage.init`) does NOT fire listeners —
+the cache hasn't observably changed from the page's perspective.
+
+API shape matches TM/VM:
+- `GM_addValueChangeListener(key, callback)` returns a stable
+  listener-id string. `callback(key, oldValue, newValue, remote)`.
+- `GM_removeValueChangeListener(listenerId)` unregisters.
+
+Listener throws are caught and logged; one bad listener doesn't
+stop sibling listeners from firing. Iteration uses a copy of the
+id list so a listener that calls `removeValueChangeListener` during
+its own dispatch doesn't corrupt iteration.
+
 ### Known limitations
 
 - **Last-150ms-before-tab-close writes can be lost.** The page-side
@@ -272,6 +293,7 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 4** — `GM_addStyle` / `GM_addElement` (in-page DOM injection)
 - ✅ **Phase 5** — `GM_setClipboard` (via `navigator.clipboard.writeText`)
 - ✅ **Phase 6** — cross-tab `GM_setValue` broadcast (openers table + tabs.sendMessage)
+- ✅ **Phase 7** — `GM_addValueChangeListener` / `GM_removeValueChangeListener`
 - ⏳ **Phase 7** — value-change listeners
 - ⏳ **Phase 8** — `GM_xmlhttpRequest` text
 - ⏳ **Phase 9** — `GM_xmlhttpRequest` binary (serialize-to-bytes wire, no offscreen doc)

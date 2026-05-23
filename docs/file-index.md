@@ -109,6 +109,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, head/parent placement, GM4 alias, permission gating |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — write in tab A is visible in tab B; originator doesn't echo |
+| `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 
 ## Docs (`docs/`)
