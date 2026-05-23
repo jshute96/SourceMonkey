@@ -145,6 +145,17 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_listValues = function () { return window.__SM_GM__.storage.list(${jsLit(scriptId)}); };`;
     }
   }
+  // DOM subsystem: in-page DOM mutations, no per-script state needed
+  // beyond what the bodies pass through. CSP-exempt in USER_SCRIPT
+  // world.
+  if (spec.subsystem === 'dom') {
+    switch (spec.name) {
+      case 'GM_addStyle':
+        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(css); };`;
+      case 'GM_addElement':
+        return `const GM_addElement = function (a, b, c) { return window.__SM_GM__.dom.addElement(a, b, c); };`;
+    }
+  }
   if (spec.kind === 'sync') {
     // Phase 2 placeholder for the subsystems we haven't filled in
     // yet (storage-listener, dom, resource, menu, log). Closure

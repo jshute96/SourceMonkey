@@ -202,12 +202,32 @@ B's keys.
   registration set in the sender's tab if a real compat report
   comes in.
 
+## DOM injection (`GM_addStyle` / `GM_addElement`)
+
+Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
+script state. USER_SCRIPT-world DOM mutations are CSP-exempt (the
+same dispensation content scripts get), so userscripts can inject
+into pages that ship strict `Content-Security-Policy: script-src
+'self'` without `unsafe-inline`.
+
+- `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
+  appends to `document.head || document.documentElement`. Returns
+  the element.
+- `GM_addElement(tagName, attrs?)` — appends to head/documentElement.
+  Returns the element.
+- `GM_addElement(parent, tagName, attrs?)` — appends to the given
+  parent node. Two-arg vs three-arg signatures are distinguished by
+  whether `arg1` has a `.nodeType`.
+- `attrs` is a plain object of attribute names → string values. The
+  pseudo-attribute `textContent` sets inner text directly (TM
+  convention).
+
 ## Phase status
 
 - ✅ **Phase 1** — catalog
 - ✅ **Phase 2** — compile-in surface (stubs throw "not implemented yet")
 - ✅ **Phase 3** — storage v1 (page-side cache, batched writes, persistence)
-- ⏳ **Phase 4** — `GM_addStyle` / `GM_addElement`
+- ✅ **Phase 4** — `GM_addStyle` / `GM_addElement` (in-page DOM injection)
 - ⏳ **Phase 5** — `GM_setClipboard`
 - ⏳ **Phase 6** — cross-tab value broadcast
 - ⏳ **Phase 7** — value-change listeners

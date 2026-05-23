@@ -78,10 +78,26 @@ test('emitGmBindings: storage init NOT emitted when no storage grant', () => {
   assert.doesNotMatch(out.js, /storage\.init/);
 });
 
-test('emitGmBindings: non-storage sync stub bodies still route through notImplemented', () => {
-  // GM_addStyle hasn't been implemented yet — should still throw.
-  const out = emitGmBindings(['GM_addStyle'], makeInfo({ grants: ['GM_addStyle'] }));
-  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_addStyle"\)/);
+test('emitGmBindings: DOM bodies route to __SM_GM__.dom helpers', () => {
+  // Phase 4 — DOM APIs are wired up.
+  const out = emitGmBindings(['GM_addStyle', 'GM_addElement'], makeInfo({
+    grants: ['GM_addStyle', 'GM_addElement'],
+  }));
+  assert.match(out.js, /const GM_addStyle = function/);
+  assert.match(out.js, /__SM_GM__\.dom\.addStyle/);
+  assert.match(out.js, /const GM_addElement = function/);
+  assert.match(out.js, /__SM_GM__\.dom\.addElement/);
+  // Should NOT route through notImplemented.
+  assert.doesNotMatch(out.js, /notImplemented\("GM_addStyle"\)/);
+  assert.doesNotMatch(out.js, /notImplemented\("GM_addElement"\)/);
+});
+
+test('emitGmBindings: non-DOM/non-storage sync stub bodies still route through notImplemented', () => {
+  // GM_registerMenuCommand hasn't been implemented yet — should still throw.
+  const out = emitGmBindings(['GM_registerMenuCommand'], makeInfo({
+    grants: ['GM_registerMenuCommand'],
+  }));
+  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_registerMenuCommand"\)/);
 });
 
 test('emitGmBindings: async APIs route through sendAsync, not notImplemented', () => {
