@@ -52,17 +52,16 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
         got.GMsetValue = typeof GM.setValue;
         got.GMinfo = typeof GM.info;
       }
-      // Try calling a granted sync API — Phase 2 should throw
-      // "not implemented".
+      // Granted sync API should be callable without throwing
+      // (Phase 3+ — storage is wired up). Calling GM_setValue
+      // returns undefined and queues a batched write.
       if (typeof GM_setValue === 'function') {
-        try { GM_setValue('k', 'v'); got.GM_setValueCall = 'no-throw'; }
+        try { GM_setValue('k', 'v'); got.GM_setValueCall = 'ok'; }
         catch (e) { got.GM_setValueCall = String(e.message || e); }
       }
-      // Same with GM.setValue (returns a Promise that rejects).
+      // GM.setValue (promise form) should resolve, not reject.
       if (typeof GM === 'object' && GM && typeof GM.setValue === 'function') {
-        // Synchronously capture rejection — Phase 2 wraps the sync
-        // throw in Promise.reject.
-        GM.setValue('k', 'v').then(
+        GM.setValue('k2', 'v2').then(
           () => { document.body.dataset.gmPromiseResolve = 'yes'; },
           (e) => { document.body.dataset.gmPromiseReject = String(e.message || e); }
         );
@@ -108,11 +107,11 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
     // GM. namespace exposes the granted API + .info.
     expect(probe.GMsetValue).toBe('function');
     expect(probe.GMinfo).toBe('object');
-    // Calling the not-implemented sync API throws the expected message.
-    expect(probe.GM_setValueCall).toMatch(/GM_setValue is not implemented yet/);
+    // Calling the granted sync API runs cleanly (Phase 3 storage wired).
+    expect(probe.GM_setValueCall).toBe('ok');
 
-    // GM.setValue is the promised form — give it a tick to settle.
-    await expect(page.locator('body')).toHaveAttribute('data-gm-promise-reject', /not implemented yet/);
+    // GM.setValue (promise form) resolves now that storage is real.
+    await expect(page.locator('body')).toHaveAttribute('data-gm-promise-resolve', 'yes');
     await page.close();
   });
 

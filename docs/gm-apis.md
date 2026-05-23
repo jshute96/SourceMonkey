@@ -129,11 +129,84 @@ GM4 spec.
 `GM.info` aliases the literal `GM_info` object. There is no
 `GM.unsafeWindow` (the legacy form lacks a `gmDotName`).
 
+## Storage (`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`)
+
+End-to-end shape:
+
+- **Backing store.** SW-side, `chrome.storage.local` with
+  `gmval:<scriptId>:<key>` rows per value. Per-key rows so a write
+  doesn't churn sibling rows and so we don't bump the per-row size
+  ceiling on a large value.
+- **Page-side cache.** Baked into the wrapper at register time
+  (`emitGmBindings` reads `chrome.storage.local`, JSON-encodes the
+  snapshot, and emits a `window.__SM_GM__.storage.init(scriptId,
+  {...})` call). Sync reads (`GM_getValue`) hit the cache; default
+  values are returned when the key isn't present.
+- **Batched writes.** `GM_setValue` / `GM_deleteValue` update the
+  cache synchronously and queue a write. The runtime debounces 150 ms
+  after each write with a 1 s hard cap, then ships a single
+  `sm:gm-batch-write` envelope to the SW. `pagehide` and
+  `visibilitychange → hidden` force-flush so bfcache eviction doesn't
+  drop in-flight writes.
+- **Last-write-wins** semantics inside one batch — same as a
+  sequence of `set` / `delete` calls run one after the other.
+- **Deletion sentinel.** Page-side `DELETED_SENTINEL` is a private
+  reference; on the wire it travels as `{key, deleted: true}` so the
+  JSON round-trip preserves intent. The SW translates back to its own
+  symbol when calling `applyBatchValues`.
+- **GM4 promise forms.** `GM.setValue` / `GM.getValue` / etc are
+  emitted by the binding emitter as Promise wrappers around the
+  legacy `GM_x` calls — same behavior, async return.
+
+Persistence model (Phase 3): writes are eventually-consistent
+across documents. A write on page A is visible to page B only AFTER
+the next re-registration of B's wrapper (since the page-side cache
+is baked at register time). Cross-tab live broadcast comes in Phase
+6.
+
+Cross-script isolation: each script's `(scriptId, key)` namespace
+is independent — `GM_listValues` from script A never returns script
+B's keys.
+
+### Known limitations
+
+- **Last-150ms-before-tab-close writes can be lost.** The page-side
+  cache flushes on `pagehide` and `visibilitychange → hidden`, but
+  the resulting `chrome.runtime.sendMessage` is fire-and-forget. If
+  the SW is idle/suspended and the tab is closing into bfcache, the
+  message can be dropped before the SW listener fires. Writes that
+  haven't yet hit the SW are lost. Real-world impact: a write made
+  within ~150ms of tab close on the last open tab. Future phases
+  can promote this to "write per call" or a synchronous-flush
+  option.
+- **Storage quota errors are silent.** `chrome.storage.local` has
+  per-row and per-extension byte ceilings. If `applyBatchValues`
+  fails because of quota, the page-side cache stays inconsistent
+  (it has the value the SW doesn't). The SW logs a
+  `console.warn`; the userscript sees no error. Future phases can
+  surface this on the per-script log.
+- **`applyBatchValues` is not transactional.** A batch with both
+  sets and removes runs them as two parallel `chrome.storage`
+  operations; a failure of one leaves the other applied. Acceptable
+  given how reliable `chrome.storage.local` is in practice.
+- **Cross-script storage spoofing is within the trust boundary.**
+  The `scriptId` in the `sm:gm-batch-write` envelope is supplied
+  by the wrapper's compiled-in literal. A misbehaving userscript
+  in the same USER_SCRIPT realm CAN send a `chrome.runtime.sendMessage`
+  with another script's scriptId and overwrite its values. Same
+  trust model as the async-envelope `scriptId` for
+  `GM_xmlhttpRequest`. All same-extension userscripts are within
+  the user's trust boundary; this is "userscript A messes with
+  userscript B's data", not a privilege escalation against the
+  user. A future phase can verify the scriptId against the active
+  registration set in the sender's tab if a real compat report
+  comes in.
+
 ## Phase status
 
 - ✅ **Phase 1** — catalog
 - ✅ **Phase 2** — compile-in surface (stubs throw "not implemented yet")
-- ⏳ **Phase 3** — storage v1
+- ✅ **Phase 3** — storage v1 (page-side cache, batched writes, persistence)
 - ⏳ **Phase 4** — `GM_addStyle` / `GM_addElement`
 - ⏳ **Phase 5** — `GM_setClipboard`
 - ⏳ **Phase 6** — cross-tab value broadcast

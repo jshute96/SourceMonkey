@@ -19,6 +19,7 @@ function makeInfo(over = {}) {
     runAt: 'document_idle',
     scriptMetaStr: '// ==UserScript==\n// @name Hello\n// ==/UserScript==',
     scriptHandlerVersion: '0.0.1',
+    initialValues: {},
     ...over,
   };
 }
@@ -44,9 +45,43 @@ test('emitGmBindings: emits a const for each granted GM_x', () => {
   assert.match(out.js, /const GM_getValue = function/);
 });
 
-test('emitGmBindings: sync stub bodies route through __SM_GM__.notImplemented', () => {
-  const out = emitGmBindings(['GM_setValue'], makeInfo());
-  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_setValue"\)/);
+test('emitGmBindings: storage bodies route to __SM_GM__.storage helpers', () => {
+  // Phase 3+ — storage is wired up, no longer notImplemented.
+  const out = emitGmBindings(
+    ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues'],
+    makeInfo({ grants: ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues'] }),
+  );
+  assert.match(out.js, /__SM_GM__\.storage\.get\("script-1"/);
+  assert.match(out.js, /__SM_GM__\.storage\.set\("script-1"/);
+  assert.match(out.js, /__SM_GM__\.storage\.del\("script-1"/);
+  assert.match(out.js, /__SM_GM__\.storage\.list\("script-1"/);
+  // Storage APIs should NOT throw not-implemented anymore.
+  assert.doesNotMatch(out.js, /notImplemented\("GM_setValue"\)/);
+});
+
+test('emitGmBindings: storage init call is emitted with the initial value snapshot', () => {
+  const out = emitGmBindings(['GM_setValue'], makeInfo({
+    initialValues: { foo: 'bar', count: 42 },
+  }));
+  assert.match(out.js, /__SM_GM__\.storage\.init\("script-1", \{"foo":"bar","count":42\}\)/);
+});
+
+test('emitGmBindings: storage init emitted as empty object when no values yet', () => {
+  const out = emitGmBindings(['GM_setValue'], makeInfo({ initialValues: {} }));
+  assert.match(out.js, /__SM_GM__\.storage\.init\("script-1", \{\}\)/);
+});
+
+test('emitGmBindings: storage init NOT emitted when no storage grant', () => {
+  const out = emitGmBindings(['GM_xmlhttpRequest'], makeInfo({
+    grants: ['GM_xmlhttpRequest'],
+  }));
+  assert.doesNotMatch(out.js, /storage\.init/);
+});
+
+test('emitGmBindings: non-storage sync stub bodies still route through notImplemented', () => {
+  // GM_addStyle hasn't been implemented yet — should still throw.
+  const out = emitGmBindings(['GM_addStyle'], makeInfo({ grants: ['GM_addStyle'] }));
+  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_addStyle"\)/);
 });
 
 test('emitGmBindings: async APIs route through sendAsync, not notImplemented', () => {

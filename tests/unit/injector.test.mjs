@@ -7,6 +7,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+// chrome.storage stub — buildGmBindingsForScript reads chrome.storage.local
+// at register time for storage-granting scripts to bake in the initial
+// cache. Unit tests run in plain Node so we install a minimal stub.
+globalThis.chrome = globalThis.chrome ?? {
+  storage: {
+    local: {
+      get: async () => ({}),
+    },
+  },
+};
+
 import {
   BRIDGE_SCRIPT_ID,
   buildBridgeSpec,
@@ -190,13 +201,13 @@ function makeScript(over = {}) {
   };
 }
 
-test('buildRegistrationSpec: passes @match values through as matches', () => {
-  const spec = buildRegistrationSpec(makeScript());
+test('buildRegistrationSpec: passes @match values through as matches', async () => {
+  const spec = await buildRegistrationSpec(makeScript());
   assert.deepEqual(spec.matches, ['https://example.com/*']);
 });
 
-test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: [],
       excludes: [],
@@ -266,8 +277,8 @@ test('composeRequiredBody: separator prevents ASI hazards between segments', () 
   assert.match(out, /\(function\(\)\{return 1\}\)\(\)\n;/);
 });
 
-test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes to wrapper', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes to wrapper', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com/*'],
       excludes: ['*/admin/*', '/danger/'],
@@ -278,8 +289,8 @@ test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes t
   assert.match(spec.js[0].code, /__smMatchScript/);
 });
 
-test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers to the wrapper', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers to the wrapper', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\..*$/'] },
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
@@ -287,13 +298,13 @@ test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers
   assert.match(spec.js[0].code, /__smMatchScript/);
 });
 
-test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher', () => {
-  const spec = buildRegistrationSpec(makeScript());
+test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher', async () => {
+  const spec = await buildRegistrationSpec(makeScript());
   assert.doesNotMatch(spec.js[0].code, /__smMatchScript/);
 });
 
-test('buildRegistrationSpec: pulls runAt from @run-at on the parsed header', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: pulls runAt from @run-at on the parsed header', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     header: {
       tags: [
         { tag: 'name', value: 'X' },
@@ -304,34 +315,34 @@ test('buildRegistrationSpec: pulls runAt from @run-at on the parsed header', () 
   assert.equal(spec.runAt, 'document_start');
 });
 
-test('buildRegistrationSpec: defaults runAt to document_idle when @run-at is absent', () => {
-  const spec = buildRegistrationSpec(makeScript());
+test('buildRegistrationSpec: defaults runAt to document_idle when @run-at is absent', async () => {
+  const spec = await buildRegistrationSpec(makeScript());
   assert.equal(spec.runAt, 'document_idle');
 });
 
-test('buildRegistrationSpec: header without @grant defaults to MAIN world (TM-compatible @grant none)', () => {
+test('buildRegistrationSpec: header without @grant defaults to MAIN world (TM-compatible @grant none)', async () => {
   // Default makeScript() has no @grant — treat like @grant none so the
   // body can see the page's window globals (jQuery, OpenLayers, etc.).
-  const spec = buildRegistrationSpec(makeScript());
+  const spec = await buildRegistrationSpec(makeScript());
   assert.equal(spec.world, 'MAIN');
 });
 
-test('buildRegistrationSpec: @grant none → MAIN world', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: @grant none → MAIN world', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'none' }] },
   }));
   assert.equal(spec.world, 'MAIN');
 });
 
-test('buildRegistrationSpec: any real @grant → USER_SCRIPT world', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: any real @grant → USER_SCRIPT world', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
   }));
   assert.equal(spec.world, 'USER_SCRIPT');
 });
 
-test('buildRegistrationSpec: @inject-into page wins over @grant', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: @inject-into page wins over @grant', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     header: {
       tags: [
         { tag: 'name', value: 'X' },
@@ -343,8 +354,8 @@ test('buildRegistrationSpec: @inject-into page wins over @grant', () => {
   assert.equal(spec.world, 'MAIN');
 });
 
-test('buildRegistrationSpec: @inject-into content wins over @grant none', () => {
-  const spec = buildRegistrationSpec(makeScript({
+test('buildRegistrationSpec: @inject-into content wins over @grant none', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
     header: {
       tags: [
         { tag: 'name', value: 'X' },
@@ -429,8 +440,8 @@ test('resolveWorld: @inject-into value is case-insensitive', () => {
   );
 });
 
-test('buildRegistrationSpec: wraps the body — registered code contains the wrapper', () => {
-  const spec = buildRegistrationSpec(makeScript({ bodyText: 'doStuff();' }));
+test('buildRegistrationSpec: wraps the body — registered code contains the wrapper', async () => {
+  const spec = await buildRegistrationSpec(makeScript({ bodyText: 'doStuff();' }));
   assert.equal(spec.js.length, 1);
   assert.match(spec.js[0].code, /doStuff\(\);/);
   assert.match(spec.js[0].code, /sm:start/);
@@ -639,9 +650,9 @@ function makeSource(over = {}) {
   };
 }
 
-test('collectActiveSpecs: error scripts never run; missing scripts run only when explicitly enabled', () => {
+test('collectActiveSpecs: error scripts never run; missing scripts run only when explicitly enabled', async () => {
   const sources = new Map([['source-1', makeSource()]]);
-  const specs = collectActiveSpecs([
+  const specs = await collectActiveSpecs([
     // Error rows are never injected (header may be unparsed / failed validation).
     makeScript({ id: 's1', status: 'error', errorMessage: 'x' }),
     // Missing with enabled=false is the default state right after a file vanishes.
@@ -653,35 +664,35 @@ test('collectActiveSpecs: error scripts never run; missing scripts run only when
   assert.deepEqual(specs.map((s) => s.id).sort(), ['s3', 's4']);
 });
 
-test('collectActiveSpecs: skips disabled scripts', () => {
+test('collectActiveSpecs: skips disabled scripts', async () => {
   const sources = new Map([['source-1', makeSource()]]);
-  const specs = collectActiveSpecs([
+  const specs = await collectActiveSpecs([
     makeScript({ id: 's1', enabled: false }),
     makeScript({ id: 's2' }),
   ], sources);
   assert.deepEqual(specs.map((s) => s.id), ['s2']);
 });
 
-test('collectActiveSpecs: skips every script under a disabled source', () => {
+test('collectActiveSpecs: skips every script under a disabled source', async () => {
   const sources = new Map([['source-1', makeSource({ enabled: false })]]);
-  const specs = collectActiveSpecs([
+  const specs = await collectActiveSpecs([
     makeScript({ id: 's1' }),
     makeScript({ id: 's2' }),
   ], sources);
   assert.deepEqual(specs.map((s) => s.id), []);
 });
 
-test('collectActiveSpecs: skips scripts whose source is missing entirely', () => {
+test('collectActiveSpecs: skips scripts whose source is missing entirely', async () => {
   const sources = new Map(); // no entries
-  const specs = collectActiveSpecs([makeScript()], sources);
+  const specs = await collectActiveSpecs([makeScript()], sources);
   assert.deepEqual(specs, []);
 });
 
-test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', () => {
+test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', async () => {
   const script = makeScript();
   delete script.enabled;
   const source = makeSource();
   delete source.enabled;
-  const specs = collectActiveSpecs([script], new Map([['source-1', source]]));
+  const specs = await collectActiveSpecs([script], new Map([['source-1', source]]));
   assert.equal(specs.length, 1);
 });

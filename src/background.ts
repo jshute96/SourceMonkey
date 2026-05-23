@@ -79,6 +79,11 @@ import {
   type AppendLogInput,
   type LogEntry,
 } from './script-log.js';
+import {
+  applyBatchValues,
+  DELETED_SENTINEL,
+  type ValueWrite,
+} from './gm-values.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -783,6 +788,32 @@ async function handleCheckPending(
   };
 }
 
+// ---------- GM_* storage batched writes ----------
+
+interface BatchWriteEntry {
+  key: string;
+  value?: unknown;
+  deleted?: boolean;
+}
+
+interface BatchWritePayload {
+  scriptId: string;
+  writes: BatchWriteEntry[];
+}
+
+async function handleBatchWrite(payload: BatchWritePayload): Promise<{ ok: true }> {
+  // Translate the wire format ({key, value | deleted: true}) into the
+  // SW-internal `ValueWrite` shape that uses a sentinel-by-reference
+  // for deletes. We hand-roll the translation here so the gm-values
+  // module stays wire-format-agnostic.
+  const internal: ValueWrite[] = payload.writes.map((w) => ({
+    key: w.key,
+    value: w.deleted ? DELETED_SENTINEL : w.value,
+  }));
+  await applyBatchValues(payload.scriptId, internal);
+  return { ok: true };
+}
+
 // ---------- sm:start / sm:error from injected wrappers ----------
 //
 // Messages from the USER_SCRIPT world arrive on the dedicated
@@ -816,6 +847,21 @@ function installScriptMessageListener(): void {
         (err) => {
           console.info('[SourceMonkey] check-pending handler threw:', err);
           try { sendResponse({ action: 'run' }); } catch { /* receiver gone */ }
+        },
+      );
+      return true;
+    }
+    if (type === 'sm:gm-batch-write') {
+      // Batched storage flush from the page-side cache. Same
+      // return-true keep-channel-open pattern as check-pending —
+      // the wrapper doesn't actually await the reply today
+      // (fire-and-forget), but returning a real {ok} keeps the
+      // channel honest for future error surfacing.
+      handleBatchWrite(msg as BatchWritePayload).then(
+        (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
+        (err) => {
+          console.info('[SourceMonkey] gm-batch-write handler threw:', err);
+          try { sendResponse({ ok: false, error: String(err?.message ?? err) }); } catch { /* receiver gone */ }
         },
       );
       return true;

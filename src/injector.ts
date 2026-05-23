@@ -59,6 +59,7 @@ import {
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import { emitGmBindings, type GmInfoInput } from './gm-bindings.js';
+import { loadAllValues } from './gm-values.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -246,25 +247,23 @@ export function buildWrappedBody(args: {
   return head + args.body + '\n' + WRAPPER_TAIL + '\n//# sourceURL=' + sourceUrl + '\n';
 }
 
-// Build the GM-binding source string for one script. Pure: takes the
-// script's stored row + the SourceMonkey handler version and returns
-// the JS source to splice into the wrapper. Empty string when the
-// script declares no @grant or @grant none.
+// Build the GM-binding source string for one script. Async because
+// storage-granting scripts need to read their persisted values from
+// chrome.storage.local at register time so the page-side cache is
+// populated synchronously before the user body runs.
 //
-// Co-located here (not in gm-bindings.ts) because the lookup from
-// StoredScript -> the GmInfoInput shape involves header parsing that
-// the rest of injector.ts already does — keeping it here avoids
-// passing the header into gm-bindings or re-parsing.
+// Returns `{ js: '', granted: [] }` when the script declares no @grant
+// or @grant none.
 //
 // Side effects. When the script declares `@grant` lines that aren't in
 // the catalog (TM-only APIs we don't support, typos like
 // `GM_setvalue`), we log a one-liner with the unknown names so a
 // future user can see why their script throws ReferenceError. The
 // binding emission still goes ahead for the recognized grants.
-export function buildGmBindingsForScript(
+export async function buildGmBindingsForScript(
   script: StoredScript,
   scriptHandlerVersion: string,
-): { js: string; granted: readonly string[] } {
+): Promise<{ js: string; granted: readonly string[] }> {
   if (!script.header) return { js: '', granted: [] };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
@@ -278,6 +277,19 @@ export function buildGmBindingsForScript(
     return { js: '', granted: [] };
   }
   const name = getValue(script.header, 'name') ?? script.relativePath;
+  // Only bother reading storage if a storage API is actually granted.
+  // Saves an O(everything) chrome.storage.local.get(null) scan for
+  // scripts that only @grant non-storage APIs.
+  const storageNames = new Set([
+    'GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues',
+  ]);
+  let initialValues: Record<string, unknown> = {};
+  for (const n of resolved.granted) {
+    if (storageNames.has(n)) {
+      initialValues = await loadAllValues(script.id);
+      break;
+    }
+  }
   const info: GmInfoInput = {
     scriptId: script.id,
     name,
@@ -291,6 +303,7 @@ export function buildGmBindingsForScript(
     runAt: getValue(script.header, 'run-at') ?? '',
     scriptMetaStr: script.headerText,
     scriptHandlerVersion,
+    initialValues,
   };
   return emitGmBindings([...resolved.granted], info);
 }
@@ -310,10 +323,14 @@ export function buildGmBindingsForScript(
 // `scriptHandlerVersion` default is for unit tests that don't exercise
 // the GM bindings (the value lands in `GM_info.version`). Production
 // callers pass `chrome.runtime.getManifest().version`.
-export function buildRegistrationSpec(
+//
+// Async because storage-granting scripts read their persisted values
+// from chrome.storage.local at register time (see
+// buildGmBindingsForScript).
+export async function buildRegistrationSpec(
   script: StoredScript,
   scriptHandlerVersion: string = '0.0.0',
-): RegistrationSpec | null {
+): Promise<RegistrationSpec | null> {
   const matches = script.matching.matches.slice();
   const includeGlobs: string[] = [];
   const excludeGlobs: string[] = [];
@@ -350,7 +367,7 @@ export function buildRegistrationSpec(
   // it touches a GM_* name. This is a documented limitation (see
   // docs/GM_API_strategy.md).
   const gmBindings = world === 'USER_SCRIPT'
-    ? buildGmBindingsForScript(script, scriptHandlerVersion).js
+    ? (await buildGmBindingsForScript(script, scriptHandlerVersion)).js
     : '';
   const spec: RegistrationSpec = {
     id: script.id,
@@ -376,20 +393,25 @@ export function buildRegistrationSpec(
 // `ok` scripts are eligible; `missing` scripts are eligible too when the
 // user has explicitly re-enabled them (the cached body + header from
 // the last good load is what gets injected). `error` scripts never run.
-export function collectActiveSpecs(
+// Async because each spec build is async (storage pre-load). We
+// parallelize the per-script builds with Promise.all rather than
+// awaiting sequentially — the per-spec storage reads are independent.
+export async function collectActiveSpecs(
   scripts: StoredScript[],
   sources: Map<string, StoredSource>,
   scriptHandlerVersion: string = '0.0.0',
-): RegistrationSpec[] {
-  const out: RegistrationSpec[] = [];
+): Promise<RegistrationSpec[]> {
+  const promises: Array<Promise<RegistrationSpec | null>> = [];
   for (const s of scripts) {
     if (s.status !== 'ok' && s.status !== 'missing') continue;
     if (!isScriptEnabled(s)) continue;
     const src = sources.get(s.sourceId);
     if (!src || !isSourceEnabled(src)) continue;
-    const spec = buildRegistrationSpec(s, scriptHandlerVersion);
-    if (spec) out.push(spec);
+    promises.push(buildRegistrationSpec(s, scriptHandlerVersion));
   }
+  const results = await Promise.all(promises);
+  const out: RegistrationSpec[] = [];
+  for (const r of results) if (r) out.push(r);
   return out;
 }
 
@@ -543,7 +565,7 @@ export async function syncRegistrations(): Promise<void> {
     await ensureWorldConfigured();
     const { scripts, sources } = await readAll();
     const handlerVersion = chrome.runtime.getManifest().version;
-    const userSpecs = collectActiveSpecs(scripts, sources, handlerVersion);
+    const userSpecs = await collectActiveSpecs(scripts, sources, handlerVersion);
     const bridge = buildBridgeSpec(userSpecs);
     const gmRuntime = buildGmRuntimeSpec(userSpecs);
     // GM runtime first so it installs window.__SM_GM__ ahead of any

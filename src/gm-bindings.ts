@@ -50,6 +50,12 @@ export interface GmInfoInput {
   // Filled in from chrome.runtime.getManifest().version at the SW;
   // for Phase 2 we pass a placeholder.
   scriptHandlerVersion: string;
+  // Pre-loaded storage values for this script. Baked into the wrapper
+  // as a literal so the page-side cache is populated synchronously,
+  // before any user code can call `GM_getValue`. Loaded at register
+  // time from chrome.storage.local. Empty object when the script
+  // hasn't written any values yet (or doesn't @grant storage APIs).
+  initialValues: Record<string, unknown>;
 }
 
 // The compile-in result. `js` is the literal source to splice into the
@@ -124,10 +130,25 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     // GM_info is emitted separately by emitGmInfo. Skip here.
     return '';
   }
+  // Storage subsystem: route to the page-side cache + batched-write
+  // helpers on `__SM_GM__.storage`. The scriptId literal is closed
+  // over so the runtime can key per-script state.
+  if (spec.subsystem === 'storage') {
+    switch (spec.name) {
+      case 'GM_getValue':
+        return `const GM_getValue = function (key, defaultValue) { return window.__SM_GM__.storage.get(${jsLit(scriptId)}, key, defaultValue); };`;
+      case 'GM_setValue':
+        return `const GM_setValue = function (key, value) { return window.__SM_GM__.storage.set(${jsLit(scriptId)}, key, value); };`;
+      case 'GM_deleteValue':
+        return `const GM_deleteValue = function (key) { return window.__SM_GM__.storage.del(${jsLit(scriptId)}, key); };`;
+      case 'GM_listValues':
+        return `const GM_listValues = function () { return window.__SM_GM__.storage.list(${jsLit(scriptId)}); };`;
+    }
+  }
   if (spec.kind === 'sync') {
-    // Phase 2: every sync body throws not-implemented. Closure
-    // captures `spec.name` as a literal string so error messages
-    // accurately name the API that was called.
+    // Phase 2 placeholder for the subsystems we haven't filled in
+    // yet (storage-listener, dom, resource, menu, log). Closure
+    // captures the literal API name so error messages identify it.
     return `const ${spec.name} = function () { return window.__SM_GM__.notImplemented(${jsLit(spec.name)}); };`;
   }
   // ASYNC body. Build the message envelope at call time so the args
@@ -213,6 +234,18 @@ export function emitGmBindings(
   // way for a script to introspect its own metadata even without
   // declaring other grants.
   const parts: string[] = [emitGmInfo(info)];
+  // Storage init. When the script has any storage grants, prime the
+  // page-side cache with the values we read at register time. The
+  // call is emitted whenever a storage grant is present, even when
+  // `initialValues` is empty — the runtime marks the cache as
+  // "ready" so a later read of an unknown key returns the
+  // defaultValue rather than waiting for a phantom load.
+  const hasStorageGrant = specs.some((s) => s.subsystem === 'storage');
+  if (hasStorageGrant) {
+    parts.push(
+      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, ${jsLit(info.initialValues)});`,
+    );
+  }
   for (const spec of specs) {
     if (spec.name === 'GM_info') continue;
     const line = emitOneBinding(spec, info.scriptId);
