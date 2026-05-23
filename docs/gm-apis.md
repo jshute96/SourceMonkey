@@ -202,6 +202,27 @@ B's keys.
   registration set in the sender's tab if a real compat report
   comes in.
 
+## Clipboard (`GM_setClipboard`)
+
+Page-side via `navigator.clipboard.writeText` (USER_SCRIPT world's
+own `navigator`, no SW round-trip). Returns the underlying Promise
+so callers can `await`; TM/VM's API returns undefined and is fire-
+and-forget — handing back the Promise is the only behavioral
+deviation.
+
+Known limitations:
+
+- `type` argument is not honored — only `text/plain` is written.
+  `text/html` via `navigator.clipboard.write({ data: new
+  ClipboardItem(...) })` is a future-phase upgrade.
+- `navigator.clipboard.writeText` may reject with `NotAllowedError`
+  on documents that lack focus / transient activation. Most user-
+  initiated GM_setClipboard calls (button click, keyboard shortcut)
+  have transient activation; idle-timer scripts may need to wait
+  for an interaction. TM/VM use an offscreen-doc + `execCommand
+  ('copy')` workaround that doesn't require focus — we may revisit
+  if real reports come in.
+
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
@@ -228,7 +249,7 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 2** — compile-in surface (stubs throw "not implemented yet")
 - ✅ **Phase 3** — storage v1 (page-side cache, batched writes, persistence)
 - ✅ **Phase 4** — `GM_addStyle` / `GM_addElement` (in-page DOM injection)
-- ⏳ **Phase 5** — `GM_setClipboard`
+- ✅ **Phase 5** — `GM_setClipboard` (via `navigator.clipboard.writeText`)
 - ⏳ **Phase 6** — cross-tab value broadcast
 - ⏳ **Phase 7** — value-change listeners
 - ⏳ **Phase 8** — `GM_xmlhttpRequest` text

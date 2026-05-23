@@ -43,6 +43,16 @@
     _Node_appendChild = Node.prototype.appendChild;
     _Element_setAttribute = Element.prototype.setAttribute;
   } catch (_domE) {}
+  /* Capture navigator.clipboard.writeText now so the clipboard
+     helper can't be subverted by a sibling userscript reassigning
+     navigator.clipboard. May be null on older browsers / contexts
+     without the API; the helper falls back to a rejected Promise. */
+  var _clipboardWriteText = null;
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      _clipboardWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+    }
+  } catch (_clE) {}
   /* Capture chrome.runtime.sendMessage now so an ASYNC API body still
      reaches a sane reference even if a sibling userscript reassigns
      window.chrome or chrome.runtime later. We only do this when
@@ -329,6 +339,28 @@
     },
     storage: storage,
     dom: dom,
+    clipboard: {
+      /* GM_setClipboard(text, type?). Returns the Promise from
+         navigator.clipboard.writeText so callers can `await` it. TM's
+         signature is fire-and-forget undefined; we hand back the
+         Promise so a caller that wants to wait for completion can.
+         Same is true of the GM4 GM.setClipboard alias.
+
+         The `type` arg is not honored today — navigator.clipboard's
+         writeText is text/plain only. A future phase can route
+         text/html through navigator.clipboard.write({ data: new
+         ClipboardItem(...) }). */
+      write: function (text /*, type */) {
+        if (!_clipboardWriteText) {
+          return _Promise.reject(new _Error("[SourceMonkey] navigator.clipboard.writeText unavailable"));
+        }
+        try {
+          return _clipboardWriteText(String(text == null ? "" : text));
+        } catch (e) {
+          return _Promise.reject(e);
+        }
+      },
+    },
   };
 
   /* Object.defineProperty with writable:false + configurable:false so a

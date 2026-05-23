@@ -153,7 +153,17 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
       case 'GM_addStyle':
         return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(css); };`;
       case 'GM_addElement':
-        return `const GM_addElement = function (a, b, c) { return window.__SM_GM__.dom.addElement(a, b, c); };`;
+        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(parentOrTag, tagOrAttrs, attrs); };`;
+    }
+  }
+  // Clipboard subsystem: navigator.clipboard.writeText via the
+  // page-side runtime. Returns the underlying Promise so callers can
+  // await; TM's signature is fire-and-forget undefined and our
+  // handing back the Promise is the only behavioral deviation.
+  if (spec.subsystem === 'clipboard') {
+    switch (spec.name) {
+      case 'GM_setClipboard':
+        return `const GM_setClipboard = function (text, type) { return window.__SM_GM__.clipboard.write(text, type); };`;
     }
   }
   if (spec.kind === 'sync') {

@@ -111,7 +111,14 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // request itself is async. We classify by SW round-trip — `async` —
   // because the wrapper has to message the SW to start the request.
   { name: 'GM_xmlhttpRequest', gmDotName: 'xmlHttpRequest', kind: 'async', subsystem: 'xhr', requires: ['connect'] },
-  { name: 'GM_setClipboard', gmDotName: 'setClipboard', kind: 'async', subsystem: 'clipboard' },
+  // GM_setClipboard is handled in-page via navigator.clipboard.writeText
+  // — no SW round-trip — so it's classified `sync` even though the
+  // underlying browser call is async (returns Promise<void>). Page-
+  // handled vs SW-handled is what `kind` actually means in this
+  // catalog. TM/VM use an offscreen document via execCommand('copy');
+  // we may revisit later if real users hit "navigator.clipboard
+  // requires focus" failures.
+  { name: 'GM_setClipboard', gmDotName: 'setClipboard', kind: 'sync', subsystem: 'clipboard' },
   { name: 'GM_notification', gmDotName: 'notification', kind: 'async', subsystem: 'notification' },
   { name: 'GM_openInTab', gmDotName: 'openInTab', kind: 'async', subsystem: 'tab' },
 ]);
