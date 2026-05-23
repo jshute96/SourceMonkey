@@ -4,9 +4,15 @@ SourceMonkey is a Manifest V3 Chrome extension that manages and injects
 userscripts. This doc is the **high-level map only** — component
 details live in the topic-specific docs linked below.
 
-> **Status:** Skeleton. The matching + injection pipeline is wired up
-> end-to-end (badge counts matches; `chrome.userScripts` runs them).
-> `@grant` / `@require` / `@resource` support is not implemented yet.
+> **Status:** Matching + injection wired end-to-end; the `@require`
+> pipeline prefetches and prepends required bodies; the `GM_*` /
+> `GM.*` API surface covers storage (with cross-tab broadcast +
+> value-change listeners), DOM injection (`GM_addStyle` /
+> `GM_addElement`), clipboard, and `GM_xmlhttpRequest` (text + binary)
+> with `@connect` URL gating. Deferred: XHR header surgery,
+> `@resource` storage, `GM_notification` / `GM_openInTab` /
+> `GM_registerMenuCommand` / `GM_cookie` (bindings stubbed). See
+> [gm-apis.md](gm-apis.md) and [TODO.md](../TODO.md).
 
 ## Components
 
@@ -85,6 +91,35 @@ details live in the topic-specific docs linked below.
   script log of refresh outcomes and wrapper reports, stored in
   `chrome.storage.session` and surfaced through the viewer's Log
   tab. See [script-log.md](script-log.md).
+- **GM_* catalog** (`src/gm-api-catalog.ts`) — data-only inventory
+  of every supported `GM_*` / `GM.*` API: name, alias, sync/async
+  kind, subsystem, optional `requires` (e.g. `@connect`).
+  `resolveGrants` canonicalizes a script's `@grant` lines into the
+  set we'll emit bindings for. See [gm-apis.md](gm-apis.md).
+- **GM_* binding emitter** (`src/gm-bindings.ts`) — pure compiler.
+  Given a script's resolved grants + parsed header, returns the JS
+  source spliced into the wrapper at register time. Emits real
+  bodies for storage, DOM, clipboard, and XHR; `notImplemented`
+  stubs for the surface that hasn't landed.
+- **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
+  USER_SCRIPT-world helper registered once per page (alongside the
+  MAIN-world bridge). Installs `window.__SM_GM__` with per-subsystem
+  helpers: storage cache + batched writes, DOM injection, clipboard,
+  XHR start/abort with terminal-event dispatch, value-change
+  listener registry. Captures a small shim cache of native
+  references at init time so sibling userscripts that monkey-patch
+  builtins can't subvert GM calls.
+- **GM_* SW storage** (`src/gm-values.ts`) — persistent
+  `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, with
+  batched apply (last-write-wins) and a per-script wipe helper.
+- **GM_* SW XHR runner** (`src/gm-xhr.ts`) — `fetch` driver with
+  `AbortController` + timeout, text / JSON / binary response shapes
+  (binary serialized to base64 for the page-side wire). See the
+  XHR section of [gm-apis.md](gm-apis.md).
+- **@connect URL gating** (`src/gm-connect.ts`) — parses `@connect`
+  lines into rules (`*`, `self`, exact, subdomain), resolves `self`
+  against the script's `@match`/`@include` hosts, and gates
+  `GM_xmlhttpRequest` URLs before fetch.
 
 ## Cross-cutting docs
 
@@ -109,6 +144,12 @@ details live in the topic-specific docs linked below.
   shown in the viewer's Log tab.
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,
   favicon fetch + cache, icon slot in the options/viewer UI.
+- [gm-apis.md](gm-apis.md) — `GM_*` / `GM.*` implementation: the
+  catalog, page-side runtime, SW-side storage / XHR, `@connect`
+  gating, and the per-API surface SourceMonkey ships.
+- [supported-GM-APIs.md](supported-GM-APIs.md) — user-facing
+  inventory of which `GM_*` names work, which are stubbed, and how
+  they map to TM / VM / GM4 behavior.
 
 ## Build pipeline
 

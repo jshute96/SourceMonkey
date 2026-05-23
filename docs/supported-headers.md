@@ -88,8 +88,8 @@ below can repeat; order doesn't matter.
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@grant none` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → MAIN. Multiple `@grant none` lines are accepted. |
-| `@grant <anything else>` | ⚪ | ✓ | ✓ | ✓ | Drives `resolveWorld` → USER_SCRIPT, but **no `GM_*` shim is actually installed**, so the script will throw `GM_setValue is not defined` (or similar) on first call. Implementing the bridge is in [TODO.md](../TODO.md). Common values: `GM_setValue`, `GM_getValue`, `GM_deleteValue`, `GM_listValues`, `GM_xmlhttpRequest`, `GM_addStyle`, `GM_setClipboard`, `GM_notification`, `GM_openInTab`, `GM_registerMenuCommand`, `GM.info` / `GM_info`, `unsafeWindow`, `window.close`, `window.focus`, `window.onurlchange`, and the `GM.*` promise-style equivalents. GM4 only ships the `GM.*` promise forms. |
-| `@connect` | ⚪ | ✓ |   |   | Whitelist for `GM_xmlhttpRequest`. TM documents it; VM's metadata page doesn't (VM may still accept it). GM4 has no equivalent. Moot for SourceMonkey until `GM_xmlhttpRequest` exists. |
+| `@grant <api>` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → USER_SCRIPT and emits a compile-in binding for the named API. Both legacy `GM_x` and GM4 `GM.x` forms are accepted on the same line; both map to the same canonical name and both bindings are exposed in scope. Unknown / typoed names log a `console.info` and are silently dropped (the script gets a natural `ReferenceError` at call time). For the inventory of which API names are implemented vs stubbed see [supported-GM-APIs.md](supported-GM-APIs.md). |
+| `@connect` | ✅ | ✓ | ✓ |   | Allowlist for `GM_xmlhttpRequest` URLs. **Strict-by-default**: a script with no `@connect` lines is blocked from every cross-origin request — matches VM. Forms: `*` (wildcard), `self` (script's own `@match`/`@include` hosts), `example.com` (exact host), `*.example.com` (host + any subdomain). Scheme-prefixed URLs (`https://example.com`) normalize to host. See [gm-apis.md](gm-apis.md#connect-url-gating-phase-10). |
 | `@webRequest` | ⚪ | ✓ |   |   | TM-only, experimental, MV2 only. |
 
 ---
@@ -99,7 +99,7 @@ below can repeat; order doesn't matter.
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@require` | ✅ | ✓ | ✓ | ✓ | Prefetched at load/refresh time and prepended (in declaration order, deduped by URL) before the main body inside a single activation wrapper. Accepts absolute `http(s)://` URLs and **relative paths** resolved against the script's parent directory — an extension over what TM/VM/GM do, sharing rules with `@icon` (no `..` / leading `/` / absolute `file://`). Resolved URL must end in `.js` (pre-query). Per-require body cap: 1 MB. `tampermonkey://vendor/*` is not supported. SRI hash fragments (`#sha256=…`) are parsed but not validated — see [TODO.md](../TODO.md). |
-| `@resource` | ⚪ | ✓ | ✓ | ✓ | Companion to `GM_getResourceText` / `GM_getResourceURL`. Moot until those exist. |
+| `@resource` | ⚪ | ✓ | ✓ | ✓ | Companion to `GM_getResourceText` / `GM_getResourceURL`. Parsed but not yet honored — the `GM_getResource*` bindings exist as not-implemented stubs, and the fetch + storage pipeline that would back them hasn't landed. See [TODO.md](../TODO.md). |
 
 ---
 
@@ -132,9 +132,10 @@ UI — the canonical (un-suffixed) value is always used.
 ## SRI hash fragments on `@require` / `@resource`
 
 The URL may carry a `#sha256=…` (or `md5`, `sha1`, `sha384`, `sha512`)
-fragment. Since `@require` / `@resource` are not yet honored, the
-fragment is also ignored. TM documents the full syntax; VM and GM4
-don't document SRI in their metadata pages.
+fragment. `@require` is honored but the SRI fragment is not yet
+validated (parsed and informational only). `@resource` is parsed but
+not yet honored. TM documents the full syntax; VM and GM4 don't
+document SRI in their metadata pages.
 
 ---
 

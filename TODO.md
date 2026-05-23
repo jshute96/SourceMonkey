@@ -3,10 +3,9 @@
 ## Skeleton
 
 - Injection follow-ups — see the **Limitations / future work**
-  section of [docs/injection.md](docs/injection.md): `@grant` /
-  `GM_*`, `@resource`, `@noframes` / `allFrames`. (`@require`
-  itself is implemented; see the dedicated follow-ups section
-  below.)
+  section of [docs/injection.md](docs/injection.md): `@resource`,
+  `@noframes` / `allFrames`. (`@grant` / `GM_*` and `@require`
+  themselves are implemented; per-area follow-ups below.)
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -17,6 +16,117 @@
   `docs/injection.md#smcheck-pending-handler` for the current
   single-phase semantics.
 - Make an icon that works
+
+## `GM_*` — deferred surface
+
+The Phase 1–10 work shipped the priority APIs; everything below is
+either a follow-up gap, a tractable second-tier API, or a research
+question. See [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md)
+for the current state of the per-API matrix and
+[docs/gm-apis.md](docs/gm-apis.md) for implementation details.
+
+### XHR header surgery (originally planned with Phase 10)
+
+The Phase 10 promise was "@connect gating AND header surgery." Only
+the gating piece shipped. Surgery is needed so userscripts can set
+forbidden headers (Origin, Cookie when overriding the SW default,
+Host, Referer, User-Agent). Today `fetch()` silently strips them.
+
+- Add `webRequest` permission to `src/manifest.json`.
+- Install `webRequest.onBeforeSendHeaders` listener (or
+  `declarativeNetRequest` session rules — TM's MV3 path).
+- Tag SW-issued `GM_xmlhttpRequest`s with a `VM-Verify`-style header
+  (VM's approach in `requests-core.js`) so the listener can
+  distinguish them from page traffic.
+- Strip our `Origin` header by default; apply caller-supplied
+  overrides for forbidden headers; capture redirected URLs in
+  `finalUrl` accurately.
+
+### GM_* APIs still stubbed (bindings emit, body throws)
+
+- `GM_notification` / `GM.notification` — wraps `chrome.notifications`.
+  SW-side handler, page-side onclick callback dispatch.
+- `GM_openInTab` / `GM.openInTab` — `chrome.tabs.create({ url, active })`
+  with the `loadInBackground` option.
+- `GM_registerMenuCommand` / `GM_unregisterMenuCommand` — needs a
+  per-page command surface in the action popup (or via
+  `chrome.contextMenus`). Discovery: where the menu lives in our
+  UI is a design decision, not just implementation.
+- `GM_getResourceText` / `GM_getResourceURL` — depends on `@resource`
+  storage landing (see require/resource follow-ups below).
+- `GM_log` — trivial wrapper over `console.log` with a per-script
+  prefix. Just hasn't been wired.
+
+### GM_* APIs not yet in the catalog
+
+Adding any of these is a catalog entry + a body — nothing structural.
+
+- `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
+  with per-script `@match` validation. VM's `checkCookieOpts` is
+  the reference shape.
+- `window.onurlchange` — SPA navigation hook. **Priority**: SPA
+  scripts work badly without it. Could be page-side via
+  `MutationObserver` on `location.href` + `pushState` / `popstate`
+  listeners.
+- `GM_download` — TM/VM download-to-disk helper. Needs an offscreen
+  document for `URL.createObjectURL`.
+- `window.close` / `window.focus` — TM-only surface.
+
+### GM_* implementation follow-ups
+
+- **Live `@grant` revocation.** Today `@grant` is baked into the
+  wrapper at register time, so changes only take effect on reload.
+  Worth doing per-call permission checks (with caching + invalidation
+  broadcasts) if users start expecting options-page edits to take
+  effect immediately.
+- **Offscreen-doc fallback for clipboard.** `navigator.clipboard.
+  writeText` may reject without focus / transient activation. TM/VM
+  use an offscreen `execCommand('copy')` to avoid the requirement.
+  Add `offscreen` + `clipboardWrite` manifest permissions, build
+  `src/offscreen.html` + `src/offscreen.ts`, route the fallback
+  through it.
+- **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
+  USER_SCRIPT world's own `window`, not the page's. A real bridge
+  would need a MAIN-world helper + postMessage protocol, or a
+  per-call DOM-event ferry à la VM's `MouseEvent.relatedTarget`
+  trick.
+- **XHR `onprogress` events.** Needs a streaming wire format from
+  the SW (chunked sends or a per-request port).
+- **Page-side TTL for XHR active requests.** Currently 5 min. Fine
+  for now; revisit if real workloads hit it.
+- **Abort-after-response narrow race.** A SW round-trip on abort
+  would close it. Today the local abort is synchronous (TM/VM
+  match) and the race window is small.
+- **Cross-script storage spoofing inside the trust boundary.** The
+  wrapper-supplied `scriptId` in the storage / XHR envelopes can
+  be impersonated by sibling userscripts. Documented limitation.
+  A future phase could verify the scriptId against the active
+  registration set in the sender's tab if compat reports come in.
+- **Cross-tab broadcast start-race window.** A write that lands
+  between a tab's wrapper registration and its `sm:start` arrival
+  isn't broadcast to that tab. The compile-in cache covers the
+  state at register time; live broadcasts kick in once `sm:start`
+  fires. Closing the window would require registering openers at
+  registration time, not on `sm:start`.
+- **Iframe-of-same-tab broadcast skip.** The openers table dedupes
+  by tabId, so a write in the main frame of tab T doesn't broadcast
+  to other frames of T. Each frame stays consistent at register
+  time and diverges on writes until next reload. Acceptable for
+  v1.
+- **Storage quota error surfacing.** A `chrome.storage.local.set`
+  rejection (quota exceeded) only `console.warn`s; the userscript
+  sees no error. Surface on the per-script log.
+- **Storage value type-tag encoding.** Today we round-trip values
+  through `chrome.storage.local`'s JSON-ish serialization. VM/TM
+  encode with type tags (`o`/`n`/`b`/`s`/`u`) so `Date` and other
+  non-JSON-clean values survive. Add when a real userscript needs
+  it.
+- **Shim cache audit.** The page-side runtime captures `Promise`,
+  `Error`, `Object.keys`, `Object.create`, `Object.prototype.
+  hasOwnProperty`, `document.createElement`, `Node.appendChild`,
+  `Element.setAttribute`, `chrome.runtime.sendMessage`,
+  `navigator.clipboard.writeText`. New subsystems should extend
+  the capture set if they reach for new builtins.
 
 ## HTTP sources — follow-ups
 

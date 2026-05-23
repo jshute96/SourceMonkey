@@ -2,13 +2,19 @@
 
 A userscript manager Chrome extension that treats userscripts like source code, built and managed with real coding tools.
 
-> **Status:** Early skeleton. The options page can register local
-> directories, persistently load every `*.user.js` it finds, and
-> open each in an in-extension viewer with syntax highlighting and a
-> parsed-header summary. The toolbar badge shows how many of your
-> scripts would match the current tab, and matching scripts are now
-> actually injected via `chrome.userScripts` (no `@grant` /
-> `@require` / `@resource` support yet — `@grant none` scripts only).
+> **Status:** Works end-to-end for the common cases. The options
+> page can register local directories or HTTP manifests, every
+> `*.user.js` it finds is persistently loaded, matching scripts are
+> injected via `chrome.userScripts`, and the most-used `GM_*` /
+> `GM.*` APIs are wired up: storage (with cross-tab broadcast and
+> value-change listeners), DOM injection (`GM_addStyle` /
+> `GM_addElement`), clipboard, and `GM_xmlhttpRequest` (text +
+> binary) with `@connect` URL gating. `@require` prefetches and
+> prepends required bodies. Deferred: XHR header surgery,
+> `@resource` storage, `GM_notification` / `GM_openInTab` /
+> `GM_registerMenuCommand` / `GM_cookie`. See
+> [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) for the
+> per-API surface.
 
 ## Usage
 
@@ -208,6 +214,32 @@ MAIN-world scripts can't reach the SW directly, so the wrapper falls
 back to `window.postMessage` and a tiny USER_SCRIPT-world bridge
 forwards those events to the service worker. The badge stays accurate
 for `@grant none` / page-world scripts.
+
+### `GM_*` / `GM.*` APIs
+
+SourceMonkey emits per-script bindings at registration time for
+every API declared in `@grant` (both legacy `GM_x` and GM4 `GM.x`
+forms canonicalize to the same name). Ungranted APIs are
+`undefined` in the script's scope.
+
+- **Storage** — `GM_setValue`, `GM_getValue`, `GM_deleteValue`,
+  `GM_listValues`, plus `GM_addValueChangeListener` /
+  `GM_removeValueChangeListener`. Page-side cache + batched async
+  writes; values broadcast live to other tabs running the same
+  script.
+- **DOM injection** — `GM_addStyle`, `GM_addElement`. CSP-exempt
+  in USER_SCRIPT world.
+- **Clipboard** — `GM_setClipboard` via `navigator.clipboard.writeText`.
+- **XHR** — `GM_xmlhttpRequest` with `text` / `json` / `blob` /
+  `arraybuffer` / `document` response types, abort, timeout, and
+  `@connect` URL gating (strict-by-default: no `@connect` declared
+  → blocked).
+- **Metadata** — `GM_info` (script metadata + grants list +
+  `scriptHandler: "SourceMonkey"`).
+
+For the full per-API inventory — which names work, which are
+stubbed not-implemented, and how they map to TM / VM / GM4 — see
+[docs/supported-GM-APIs.md](docs/supported-GM-APIs.md).
 
 For the full per-tag inventory — which header fields SourceMonkey
 honors, which are parsed but not acted on, and which are ignored —

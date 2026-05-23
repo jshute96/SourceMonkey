@@ -58,7 +58,10 @@ It runs against real headless Chromium with `chrome.userScripts`,
 - `scripts-dir.ts` — tmp-dir helper. `ScriptsDir.create()` makes one,
   `.write({ relativePath, meta, body })` writes a real `*.user.js`,
   `.rewriteBody(path, body)` simulates an external edit, `.cleanup()`
-  removes the dir.
+  removes the dir. `UserscriptMeta` supports `grant`, `connect`,
+  `match`, `include`, `exclude`, `injectInto`, `runAt`, plus a raw
+  `extra: string[]` escape hatch for header lines the typed fields
+  don't cover.
 - `sw-api.ts` — `makeSwApi(getServiceWorker)` returns a typed proxy
   over the SW's test surface; `waitFor(read, predicate)` polls a
   SW-side query until a condition is met (or throws with the last
@@ -76,6 +79,18 @@ Two Chrome capabilities the e2e harness needs:
   `extensions.settings.<extensionId>.user_scripts_enabled = true`
   into `<userDataDir>/Default/Preferences` before launch so the API
   is callable without UI clicks.
+
+**Pitfall: extension ID must match Chrome's actual ID.** Our
+`src/manifest.json` ships a `"key"` field, which makes Chrome
+derive the extension ID from the key bytes rather than the
+filesystem path. `tests/fixtures/extension-id.ts` reads the manifest
+and computes the ID from the key when present, falling back to the
+path-based derivation when it isn't. Writing the per-extension
+toggle to the wrong ID silently no-ops — `chrome.userScripts` ends
+up undefined, the SW boots fine, and every userscript registration
+is dropped. If you change `src/manifest.json`'s key (or rename the
+fixture entry point), re-verify both the key-based and path-based
+derivations still resolve correctly.
 
 ### SW test surface
 
@@ -128,9 +143,46 @@ can paint over the test's expected state.
   for the page you just opened (Playwright doesn't expose it
   directly).
 
+### GM_* test coverage
+
+Each phase of the `GM_*` implementation has both a unit-test layer
+(catalog parsing, binding emission, storage helpers, `@connect`
+matching) and an e2e spec (real userscript, real Chromium, real
+fetch via the SW). Highlights:
+
+- `tests/e2e/gm-grants.spec.ts` — `@grant` gating: granted APIs are
+  callable, ungranted ones are `undefined`, `@grant none` emits no
+  bindings.
+- `tests/e2e/gm-storage.spec.ts` — `GM_setValue`/`getValue`/
+  `deleteValue`/`listValues` round-trip, persistence across reloads,
+  per-script namespace isolation, `GM.` promise forms.
+- `tests/e2e/gm-broadcast.spec.ts` — cross-tab `GM_setValue`
+  broadcast: a write in tab A is observable in tab B.
+- `tests/e2e/gm-value-listeners.spec.ts` — value-change listeners
+  fire with `remote=false` locally and `remote=true` on broadcasts.
+- `tests/e2e/gm-dom.spec.ts` — `GM_addStyle` / `GM_addElement`.
+- `tests/e2e/gm-clipboard.spec.ts` — `GM_setClipboard` round-trip
+  through `navigator.clipboard` (requires
+  `extensionContext.grantPermissions(['clipboard-read', 'clipboard-write'])`
+  in the test that exercises it).
+- `tests/e2e/gm-xhr.spec.ts` + `tests/e2e/gm-xhr-binary.spec.ts` —
+  `GM_xmlhttpRequest` text + JSON, POST body, network failure,
+  abort, timeout, binary types.
+- `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating, including
+  the strict-by-default "no @connect → blocked" case.
+
+The XHR tests use `UserscriptServer` (see
+`tests/fixtures/userscript-server.ts`) to serve test endpoints
+because they need mutable per-test routes that the shared
+`fixtureServer` (static HTML only) doesn't provide.
+
 ### What's not yet covered
 
 - The bridge code path for MAIN-world scripts.
-- `@require` / `@resource` loading.
+- `@resource` loading (depends on the deferred `GM_getResource*`
+  surface; the `@require` pipeline is covered).
 - The viewer page's render path (covered by unit tests for the
   helpers but not by an e2e click-through).
+- XHR header surgery — deferred along with the implementation.
+- `GM_notification` / `GM_openInTab` / `GM_registerMenuCommand` /
+  `GM_cookie` — bindings exist but stubbed as not-implemented.

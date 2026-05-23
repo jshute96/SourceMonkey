@@ -4,8 +4,13 @@ How to add `GM_*` / `GM.*` support to SourceMonkey. Compares
 embedding Violentmonkey's implementation vs. writing our own, and
 recommends a path.
 
-> **Status:** Phase 1 (catalog) landed; later phases pending. Tracked
-> in `TODO.md` under the injection follow-ups.
+> **Status:** Phases 1–10 landed (catalog, compile-in surface,
+> storage v1 + cross-tab broadcast + value-change listeners,
+> `GM_addStyle` / `GM_addElement`, `GM_setClipboard`,
+> `GM_xmlhttpRequest` text + binary, `@connect` URL gating). XHR
+> header surgery is deferred. See [gm-apis.md](gm-apis.md) for the
+> implementation status and known limitations; deferred follow-ups
+> are tracked in [TODO.md](../TODO.md).
 
 ## Goals
 
