@@ -59,6 +59,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, decision-callback close, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
+| `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -97,6 +98,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/requires.test.mjs` | Unit tests for `distillRequires` extraction + `attachRequires` orchestration (cache hits, preserve mode, suffix gate, traversal rejection, dedup) |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at mapping, spec build, active-spec collection) |
+| `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 
 ## Docs (`docs/`)

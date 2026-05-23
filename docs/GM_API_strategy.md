@@ -4,8 +4,8 @@ How to add `GM_*` / `GM.*` support to SourceMonkey. Compares
 embedding Violentmonkey's implementation vs. writing our own, and
 recommends a path.
 
-> **Status:** Decision doc, no code yet. Tracked in `TODO.md` under
-> the injection follow-ups.
+> **Status:** Phase 1 (catalog) landed; later phases pending. Tracked
+> in `TODO.md` under the injection follow-ups.
 
 ## Goals
 
