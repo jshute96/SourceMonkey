@@ -437,6 +437,47 @@
   var activeRequests = _ObjectCreate(null);
   var _xhrNextId = 1;
 
+  /* Decode the SW's base64 binary payload into raw bytes (Uint8Array).
+     Used for blob/arraybuffer/document responseTypes. */
+  function decodeBase64(b64) {
+    var binary = atob(b64);
+    var len = binary.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  /* Materialize the binary payload into the user-visible shape for the
+     requested responseType. Mutates `response` in place — adds a
+     real `response` field of the right type. */
+  function rebuildBinary(response, requestedType) {
+    if (typeof response.responseBase64 !== "string") return;
+    var bytes = decodeBase64(response.responseBase64);
+    var mime = response.responseMimeType || "";
+    if (requestedType === "arraybuffer") {
+      response.response = bytes.buffer;
+    } else if (requestedType === "blob") {
+      response.response = new Blob([bytes], { type: mime });
+    } else if (requestedType === "document") {
+      /* Parse as text, then DOMParser. Fallback MIME for parsing
+         when the server didn't send one. */
+      var text = "";
+      try {
+        text = new TextDecoder("utf-8").decode(bytes);
+      } catch (_de) {
+        text = String.fromCharCode.apply(null, bytes);
+      }
+      var parseType = mime.indexOf("xml") !== -1 ? "application/xml" : "text/html";
+      try {
+        response.response = new DOMParser().parseFromString(text, parseType);
+      } catch (_pe) {
+        response.response = null;
+      }
+      /* Surface the underlying text so userscripts can read it. */
+      response.responseText = text;
+    }
+  }
+
   function dispatchXhrEvent(id, event) {
     var entry = activeRequests[id];
     if (!entry) return;
@@ -447,6 +488,9 @@
     delete activeRequests[id];
     if (entry.ttlTimer) {
       try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+    }
+    if (event.kind === "load" && entry.responseType) {
+      rebuildBinary(event.response, entry.responseType);
     }
     var cb;
     if (event.kind === "load") cb = entry.onload;
@@ -500,6 +544,7 @@
         onerror: details.onerror,
         ontimeout: details.ontimeout,
         onabort: details.onabort,
+        responseType: typeof details.responseType === "string" ? details.responseType : "",
         ttlTimer: null,
       };
       activeRequests[id] = entry;

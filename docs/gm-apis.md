@@ -221,9 +221,26 @@ Response shape on `onload`:
 | `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
 | `finalUrl`       | Same as `responseURL`.                             |
 
-Known limitations (Phase 8, pre-9 + pre-10):
+Binary responseTypes (Phase 9): `blob`, `arraybuffer`, `document`.
+The SW reads `await res.arrayBuffer()` and ships the bytes back as
+base64 + `responseMimeType`. The page-side runtime decodes:
 
-- No binary response types yet.
+- `arraybuffer` → `Uint8Array.buffer` (plain `ArrayBuffer`).
+- `blob` → `new Blob([bytes], { type: responseMimeType })`.
+- `document` → bytes decoded as UTF-8 then `new DOMParser()
+  .parseFromString(text, parseMime)`, where `parseMime` is
+  `application/xml` if the MIME type contains "xml", otherwise
+  `text/html`. `responseText` is also populated so userscripts can
+  read the raw text.
+
+No offscreen document is involved — the SW serializes response bytes
+and the page rebuilds them. TM uses an offscreen doc to get a real
+`Blob` constructor; we don't need one because USER_SCRIPT world has
+`new Blob(...)` directly. The base64 round-trip costs ~33% wire
+overhead vs raw bytes but is robust across the SW/page boundary.
+
+Known limitations (pre-10):
+
 - No `onprogress` events — only the final `load`/`error`/`timeout`/
   `abort` event lands on the page.
 - No header surgery: `Origin` is `chrome-extension://<id>` (the SW's
@@ -362,6 +379,7 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 6** — cross-tab `GM_setValue` broadcast (openers table + tabs.sendMessage)
 - ✅ **Phase 7** — `GM_addValueChangeListener` / `GM_removeValueChangeListener`
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
+- ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ⏳ **Phase 7** — value-change listeners
 - ⏳ **Phase 8** — `GM_xmlhttpRequest` text
 - ⏳ **Phase 9** — `GM_xmlhttpRequest` binary (serialize-to-bytes wire, no offscreen doc)
