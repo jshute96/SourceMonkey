@@ -84,6 +84,11 @@ import {
   DELETED_SENTINEL,
   type ValueWrite,
 } from './gm-values.js';
+import {
+  abortXhr,
+  runXhr,
+  type GmXhrRequestPayload,
+} from './gm-xhr.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -793,6 +798,38 @@ async function handleCheckPending(
   };
 }
 
+// ---------- GM_xmlhttpRequest dispatch ----------
+
+interface XhrStartPayload {
+  id: string;
+  scriptId: string;
+  request: GmXhrRequestPayload;
+}
+
+async function handleXhrStart(
+  sender: chrome.runtime.MessageSender,
+  payload: XhrStartPayload,
+): Promise<void> {
+  const tabId = sender.tab?.id;
+  if (tabId == null) {
+    console.info('[SourceMonkey] gm-xhr-start without tab id; ignoring');
+    return;
+  }
+  // Run the fetch and ship the result back to the sender's tab. Other
+  // tabs do not get a copy — XHR is per-call, not broadcast.
+  const event = await runXhr(payload.id, payload.request);
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'sm:gm-xhr-event',
+      id: payload.id,
+      event,
+    });
+  } catch {
+    // Sender tab closed or otherwise unreachable. Drop quietly —
+    // there's nobody to deliver to.
+  }
+}
+
 // ---------- GM_* storage batched writes + cross-tab broadcast ----------
 
 interface BatchWriteEntry {
@@ -910,6 +947,24 @@ function installScriptMessageListener(): void {
           try { sendResponse({ action: 'run' }); } catch { /* receiver gone */ }
         },
       );
+      return true;
+    }
+    if (type === 'sm:gm-xhr-start') {
+      // GM_xmlhttpRequest dispatch. Ack the start synchronously so
+      // the message channel doesn't stay pinned open for the entire
+      // request (a long XHR would otherwise hold the port for
+      // minutes). The actual load/error/abort event arrives later
+      // via chrome.tabs.sendMessage. Fire-and-forget the SW work.
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      void handleXhrStart(sender, msg as XhrStartPayload).catch((err) => {
+        console.info('[SourceMonkey] gm-xhr-start handler threw:', err);
+      });
+      return false;
+    }
+    if (type === 'sm:gm-xhr-abort') {
+      const payload = msg as { id?: string };
+      if (typeof payload.id === 'string') abortXhr(payload.id);
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
       return true;
     }
     if (type === 'sm:gm-batch-write') {

@@ -177,6 +177,18 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_setClipboard = function (text, type) { return window.__SM_GM__.clipboard.write(text, type); };`;
     }
   }
+  // XHR subsystem: GM_xmlhttpRequest returns a `{abort}` control
+  // object synchronously. The runtime stores the callbacks locally
+  // and forwards a serializable request to the SW; the SW ships
+  // load/error/timeout/abort events back asynchronously via
+  // chrome.tabs.sendMessage. The dispatch routes through
+  // chrome.runtime.onMessage in the runtime. See docs/gm-apis.md.
+  if (spec.subsystem === 'xhr') {
+    switch (spec.name) {
+      case 'GM_xmlhttpRequest':
+        return `const GM_xmlhttpRequest = function (details) { return window.__SM_GM__.xhr.start(${jsLit(scriptId)}, details); };`;
+    }
+  }
   if (spec.kind === 'sync') {
     // Phase 2 placeholder for the subsystems we haven't filled in
     // yet (storage-listener, dom, resource, menu, log). Closure

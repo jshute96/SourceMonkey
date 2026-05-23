@@ -425,6 +425,123 @@
     },
   };
 
+  /* ---------- GM_xmlhttpRequest ----------
+
+     Per-script state: an `activeRequests` map keyed by request id,
+     holding the user's onload/onerror/etc. callbacks. The runtime
+     installs a chrome.runtime.onMessage listener that routes
+     `sm:gm-xhr-event` messages back to the originating request.
+
+     Same sender filter as the value-update listener so a sibling
+     userscript can't forge a load event. */
+  var activeRequests = _ObjectCreate(null);
+  var _xhrNextId = 1;
+
+  function dispatchXhrEvent(id, event) {
+    var entry = activeRequests[id];
+    if (!entry) return;
+    /* Free the slot first so callbacks that re-issue another XHR
+       don't leak the previous entry. Every kind in GmXhrEvent is
+       terminal — load, error, timeout, abort all settle the
+       request and free the slot here. */
+    delete activeRequests[id];
+    if (entry.ttlTimer) {
+      try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+    }
+    var cb;
+    if (event.kind === "load") cb = entry.onload;
+    else if (event.kind === "error") cb = entry.onerror;
+    else if (event.kind === "timeout") cb = entry.ontimeout;
+    else if (event.kind === "abort") cb = entry.onabort;
+    if (typeof cb !== "function") return;
+    try {
+      if (event.kind === "load") cb(event.response);
+      else if (event.kind === "error") cb({ error: event.message });
+      else if (event.kind === "timeout") cb({});
+      else if (event.kind === "abort") cb({});
+    } catch (e) {
+      try { console.error("[SourceMonkey] XHR callback threw:", e); } catch (_e) {}
+    }
+  }
+
+  /* Hard cap on how long we hold a per-request entry without hearing
+     back from the SW. Without this, an SW crash (or any non-response)
+     leaks the entry forever and the userscript never sees a terminal
+     event. We synthesize an `error` after the cap so the script's
+     onerror has a shot at handling it. Per-request, refreshed when
+     the entry is created. */
+  var XHR_PAGE_SIDE_TTL_MS = 5 * 60 * 1000; /* 5 minutes */
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+      chrome.runtime.onMessage.addListener(function (msg, sender) {
+        if (!sender || sender.id !== _extensionId || sender.tab) return;
+        if (!msg || typeof msg !== "object" || msg.type !== "sm:gm-xhr-event") return;
+        if (typeof msg.id !== "string" || !msg.event) return;
+        dispatchXhrEvent(msg.id, msg.event);
+      });
+    }
+  } catch (_xhrE) {}
+
+  var xhr = {
+    /* GM_xmlhttpRequest(details) — kicks off the request, returns
+       `{abort}` immediately. The user's onload/onerror/ontimeout/
+       onabort callbacks come from `details` and are stored locally
+       (callbacks aren't serializable across postMessage). */
+    start: function (scriptId, details) {
+      if (!details || typeof details !== "object") {
+        throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
+      }
+      if (typeof details.url !== "string" || !details.url) {
+        throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
+      }
+      var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      var entry = {
+        onload: details.onload,
+        onerror: details.onerror,
+        ontimeout: details.ontimeout,
+        onabort: details.onabort,
+        ttlTimer: null,
+      };
+      activeRequests[id] = entry;
+      entry.ttlTimer = setTimeout(function () {
+        /* TTL elapsed without a terminal event. Synthesize an error
+           so the userscript at least sees a settled state instead of
+           silently dangling. */
+        dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] XHR timed out waiting for SW response (TTL " + XHR_PAGE_SIDE_TTL_MS + "ms)" });
+      }, XHR_PAGE_SIDE_TTL_MS);
+      /* Build the serializable request payload — strip callbacks
+         and other non-cloneable fields. */
+      var request = {
+        method: typeof details.method === "string" ? details.method : "GET",
+        url: details.url,
+        headers: (details.headers && typeof details.headers === "object") ? details.headers : undefined,
+        data: details.data,
+        timeout: typeof details.timeout === "number" ? details.timeout : undefined,
+        responseType: typeof details.responseType === "string" ? details.responseType : undefined,
+      };
+      api.sendAsync({
+        type: "sm:gm-xhr-start",
+        id: id,
+        scriptId: scriptId,
+        request: request,
+      }).catch(function (err) {
+        /* The send itself failed (chrome.runtime not available).
+           Synthesize an error event for the caller. */
+        dispatchXhrEvent(id, { kind: "error", message: String(err && err.message || err) });
+      });
+      return {
+        abort: function () {
+          if (!activeRequests[id]) return;
+          api.sendAsync({ type: "sm:gm-xhr-abort", id: id }).catch(function () {});
+          /* Local abort event — match TM/VM, which fire `onabort`
+             immediately on the caller's side rather than waiting
+             for an SW round-trip. */
+          dispatchXhrEvent(id, { kind: "abort" });
+        },
+      };
+    },
+  };
+
   var api = {
     /* Phase-2 placeholder for the sync subsystems not yet wired
        (storage-listener, resource, menu, log). */
@@ -448,6 +565,7 @@
     },
     storage: storage,
     dom: dom,
+    xhr: xhr,
     clipboard: {
       /* GM_setClipboard(text, type?). Returns the Promise from
          navigator.clipboard.writeText so callers can `await` it. TM's

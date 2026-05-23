@@ -176,6 +176,73 @@ Cross-script isolation: each script's `(scriptId, key)` namespace
 is independent — `GM_listValues` from script A never returns script
 B's keys.
 
+## `GM_xmlhttpRequest`
+
+Cross-origin HTTP from the SW, fanned back to the originating tab.
+Phase 8 ships the **text path**: `responseType: 'text'` (default)
+and `'json'`. Binary types land in Phase 9; header surgery + `@connect`
+gating in Phase 10.
+
+Architecture:
+
+- Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
+  synchronously. The runtime stores the callbacks
+  (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
+  request id (callbacks aren't serializable across postMessage), and
+  ships a `sm:gm-xhr-start` envelope to the SW with the serializable
+  request fields.
+- SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
+  `AbortController`. On settle it ships a single `sm:gm-xhr-event`
+  back to the originating tab via `chrome.tabs.sendMessage`. The
+  page-side listener dispatches by request id and invokes the
+  stored callback.
+- `abort()` fires `onabort` synchronously on the page side AND
+  sends a `sm:gm-xhr-abort` to the SW (which `AbortController`s
+  the fetch).
+- Timeout: SW-side `setTimeout` that calls
+  `controller.abort()`. A shadow flag distinguishes timeout from
+  user-initiated abort so the right callback fires.
+
+HTTP error statuses (404, 500, …) fire **`onload`** with the error
+status — matches XHR semantics; non-network errors are still
+"loads". Only network-level failures (DNS, ECONNREFUSED, etc.) and
+the `AbortController`-driven aborts fire `onerror` / `ontimeout` /
+`onabort`.
+
+Response shape on `onload`:
+
+| Field            | Notes                                              |
+|------------------|----------------------------------------------------|
+| `status`         | HTTP status number.                                |
+| `statusText`     | HTTP status text.                                  |
+| `responseURL`    | Final URL after redirects (`res.url`).             |
+| `responseText`   | Body as text. Always populated in Phase 8.         |
+| `response`       | `responseText` for `text`; parsed object for `json`. |
+| `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
+| `finalUrl`       | Same as `responseURL`.                             |
+
+Known limitations (Phase 8, pre-9 + pre-10):
+
+- No binary response types yet.
+- No `onprogress` events — only the final `load`/`error`/`timeout`/
+  `abort` event lands on the page.
+- No header surgery: `Origin` is `chrome-extension://<id>` (the SW's
+  origin), Cookies are SW-managed, forbidden headers (Host, Origin,
+  etc.) can't be overridden. Phase 10 will add `webRequest.
+  onBeforeSendHeaders` to fix this.
+- No `@connect` validation: any granted script can hit any URL.
+  Phase 10 will gate URLs against the script's `@connect` lines.
+- **Abort-after-response-arrived narrow race.** If the page calls
+  `handle.abort()` AFTER the SW has fired its load event but BEFORE
+  the page processes it, the userscript sees `onabort` instead of
+  `onload`. A real fix needs a SW round-trip on abort; for v1 the
+  page-side abort is synchronous (TM/VM-matching) and the race
+  window is small.
+- **Per-request TTL of 5 minutes on the page side.** If the SW
+  crashes and never sends a terminal event, the page eventually
+  synthesizes an `error` event so `activeRequests` doesn't leak
+  forever.
+
 ## Value-change listeners (`GM_addValueChangeListener` / `GM_removeValueChangeListener`)
 
 Per-script, per-key listener registry living in the page-side
@@ -294,6 +361,7 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 5** — `GM_setClipboard` (via `navigator.clipboard.writeText`)
 - ✅ **Phase 6** — cross-tab `GM_setValue` broadcast (openers table + tabs.sendMessage)
 - ✅ **Phase 7** — `GM_addValueChangeListener` / `GM_removeValueChangeListener`
+- ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ⏳ **Phase 7** — value-change listeners
 - ⏳ **Phase 8** — `GM_xmlhttpRequest` text
 - ⏳ **Phase 9** — `GM_xmlhttpRequest` binary (serialize-to-bytes wire, no offscreen doc)
