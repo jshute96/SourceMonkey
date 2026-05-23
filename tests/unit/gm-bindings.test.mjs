@@ -100,14 +100,15 @@ test('emitGmBindings: non-DOM/non-storage sync stub bodies still route through n
   assert.match(out.js, /__SM_GM__\.notImplemented\("GM_registerMenuCommand"\)/);
 });
 
-test('emitGmBindings: async APIs route through sendAsync, not notImplemented', () => {
+test('emitGmBindings: GM_xmlhttpRequest routes to __SM_GM__.xhr.start', () => {
+  // Phase 8+ — XHR is wired through the runtime's xhr subsystem
+  // (page-side dispatch + per-request id), not the generic
+  // sendAsync envelope (that's for one-shot async APIs).
   const out = emitGmBindings(['GM_xmlhttpRequest'], makeInfo({
     grants: ['GM_xmlhttpRequest'],
   }));
   assert.match(out.js, /const GM_xmlhttpRequest = function/);
-  assert.match(out.js, /__SM_GM__\.sendAsync/);
-  assert.match(out.js, /type: "sm:gm-call"/);
-  // The async body should NOT route through notImplemented.
+  assert.match(out.js, /__SM_GM__\.xhr\.start\("script-1"/);
   assert.doesNotMatch(out.js, /notImplemented\("GM_xmlhttpRequest"\)/);
 });
 

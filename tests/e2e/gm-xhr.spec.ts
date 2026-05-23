@@ -46,7 +46,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'GetText',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -86,7 +87,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'GetJson',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -126,7 +128,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'Post',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -163,7 +166,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'NotFound',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -202,7 +206,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'NetFail',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -242,7 +247,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'Abort',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         const handle = GM_xmlhttpRequest({
@@ -283,7 +289,8 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         name: 'Timeout',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({

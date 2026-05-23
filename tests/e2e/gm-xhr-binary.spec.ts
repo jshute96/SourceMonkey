@@ -36,7 +36,8 @@ test.describe('GM_xmlhttpRequest binary path (Phase 9)', () => {
         name: 'BinABuf',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -86,7 +87,8 @@ test.describe('GM_xmlhttpRequest binary path (Phase 9)', () => {
         name: 'BinBlob',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({
@@ -131,7 +133,8 @@ test.describe('GM_xmlhttpRequest binary path (Phase 9)', () => {
         name: 'BinDoc',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
       },
       body: `
         GM_xmlhttpRequest({

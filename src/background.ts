@@ -89,6 +89,11 @@ import {
   runXhr,
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
+import {
+  extractSelfHosts,
+  isUrlConnectAllowed,
+  parseConnectRules,
+} from './gm-connect.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -815,6 +820,23 @@ async function handleXhrStart(
     console.info('[SourceMonkey] gm-xhr-start without tab id; ignoring');
     return;
   }
+  // @connect URL gating. Pull the script's stored header so we know
+  // which hosts it's allowed to talk to. A script that hasn't
+  // declared @connect is blocked from every cross-origin host —
+  // matches VM policy. The error event we ship back is the
+  // same shape as a network failure, so the userscript's onerror
+  // catches it.
+  const denyReason = await checkConnectPolicy(payload.scriptId, payload.request.url);
+  if (denyReason) {
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: 'sm:gm-xhr-event',
+        id: payload.id,
+        event: { kind: 'error', message: `[SourceMonkey] blocked by @connect policy: ${denyReason}` },
+      });
+    } catch { /* tab gone */ }
+    return;
+  }
   // Run the fetch and ship the result back to the sender's tab. Other
   // tabs do not get a copy — XHR is per-call, not broadcast.
   const event = await runXhr(payload.id, payload.request);
@@ -827,6 +849,23 @@ async function handleXhrStart(
   } catch {
     // Sender tab closed or otherwise unreachable. Drop quietly —
     // there's nobody to deliver to.
+  }
+}
+
+// Returns null when allowed, or a human-readable reason when denied.
+async function checkConnectPolicy(scriptId: string, url: string): Promise<string | null> {
+  try {
+    const script = await getScript(scriptId);
+    if (!script || !script.header) {
+      return 'script not found or has no parsed header';
+    }
+    const rules = parseConnectRules(script.header);
+    const selfHosts = extractSelfHosts(script.header);
+    const decision = isUrlConnectAllowed(url, rules, selfHosts);
+    if (decision.allowed) return null;
+    return decision.reason;
+  } catch (err) {
+    return `policy check failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 

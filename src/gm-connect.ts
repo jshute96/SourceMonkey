@@ -1,0 +1,151 @@
+// `@connect` URL gating for `GM_xmlhttpRequest`.
+//
+// VM's @connect grammar:
+//   - `*` — wildcard, allow any host.
+//   - `self` — allow same-origin requests (matched against the
+//     script's @match / @include hosts).
+//   - `example.com` — exact host match.
+//   - `*.example.com` — match `example.com` itself OR any subdomain.
+//
+// SW-side validation: when a script issues `GM_xmlhttpRequest`, the
+// SW pulls the script's stored header, parses out the `@connect`
+// lines, and rejects the request if the URL's host doesn't satisfy
+// any of them.
+//
+// Default policy: a script with NO `@connect` lines is BLOCKED from
+// all cross-origin requests. This matches VM. TM is more
+// lenient — flagging scripts without @connect as a separate concern
+// — but the stricter posture is the right default for a userscript
+// manager that takes the trust model seriously.
+
+import { getValues, type ParsedHeader } from './userscript-header.js';
+
+// Each entry is one parsed @connect line.
+export interface ConnectRule {
+  kind: 'wildcard' | 'self' | 'exact' | 'subdomain';
+  // For `exact` and `subdomain`, the host (lowercased). Missing
+  // otherwise.
+  host?: string;
+}
+
+// Lower-case, normalize, classify a single raw @connect value.
+// Returns null for empty / malformed entries.
+export function parseConnectEntry(raw: string): ConnectRule | null {
+  const t = raw.trim().toLowerCase();
+  if (t === '') return null;
+  if (t === '*') return { kind: 'wildcard' };
+  if (t === 'self') return { kind: 'self' };
+  if (t.startsWith('*.')) {
+    const host = t.slice(2);
+    if (!host) return null;
+    return { kind: 'subdomain', host };
+  }
+  // Strip a leading scheme if the user pasted a URL by mistake — TM
+  // accepts both `example.com` and `https://example.com` in @connect
+  // lines; we normalize to the host.
+  try {
+    if (/^[a-z]+:\/\//.test(t)) {
+      const u = new URL(t);
+      return { kind: 'exact', host: u.hostname };
+    }
+  } catch {
+    // Fall through — treat the raw value as a host.
+  }
+  return { kind: 'exact', host: t };
+}
+
+// Parse every `@connect` line from a header, dropping empties.
+export function parseConnectRules(header: ParsedHeader): ConnectRule[] {
+  const out: ConnectRule[] = [];
+  for (const raw of getValues(header, 'connect')) {
+    const rule = parseConnectEntry(raw);
+    if (rule) out.push(rule);
+  }
+  return out;
+}
+
+// Match `host` (lowercased; no port) against one rule. The `self`
+// rule is matched against the union of `selfHosts` — the set of
+// hostnames the script declared via @match / @include.
+export function hostMatchesRule(
+  host: string,
+  rule: ConnectRule,
+  selfHosts: ReadonlySet<string>,
+): boolean {
+  const h = host.toLowerCase();
+  switch (rule.kind) {
+    case 'wildcard':
+      return true;
+    case 'self':
+      // Match the exact host OR a subdomain of any selfHost
+      // (TM/VM both treat `self` as "the script's own origins or
+      // their subdomains"). We're conservative: exact match only.
+      // Subdomain handling can ride in on Phase 10.1 if real
+      // compat reports come in.
+      return selfHosts.has(h);
+    case 'exact':
+      return rule.host === h;
+    case 'subdomain':
+      if (!rule.host) return false;
+      return h === rule.host || h.endsWith('.' + rule.host);
+    default:
+      return false;
+  }
+}
+
+// Extract the set of "self" hosts from a script header's match/
+// include lines. Used to resolve the `self` @connect token.
+// Patterns we don't understand (regex includes, malformed globs)
+// are skipped — they don't contribute to "self".
+export function extractSelfHosts(header: ParsedHeader): Set<string> {
+  const out = new Set<string>();
+  const all = [...getValues(header, 'match'), ...getValues(header, 'include')];
+  for (const pat of all) {
+    const host = extractHostFromPattern(pat);
+    if (host) out.add(host.toLowerCase());
+  }
+  return out;
+}
+
+// Pull a hostname out of a `@match` / `@include` glob if it has one.
+// `<all_urls>`, regex literals, and host-less patterns return null.
+function extractHostFromPattern(pat: string): string | null {
+  if (pat === '<all_urls>') return null;
+  if (pat.startsWith('/') && pat.endsWith('/')) return null; // regex literal
+  // Match an URL-like glob: <scheme>://<host>/...
+  const m = /^[\w*]+:\/\/([^/]+)\//.exec(pat);
+  if (!m) return null;
+  const host = m[1];
+  // A pure `*` host doesn't tell us anything useful for "self".
+  if (host === '*') return null;
+  // `*.example.com` → use `example.com` as the self host.
+  if (host.startsWith('*.')) return host.slice(2);
+  return host;
+}
+
+// Check whether `url` is allowed under the script's @connect rules.
+// Returns `{allowed: true}` or `{allowed: false, reason: string}`.
+// Reason is plain English so the SW can log it / surface to the
+// userscript via onerror.
+export function isUrlConnectAllowed(
+  url: string,
+  rules: readonly ConnectRule[],
+  selfHosts: ReadonlySet<string>,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (rules.length === 0) {
+    return { allowed: false, reason: '@connect not declared' };
+  }
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return { allowed: false, reason: 'invalid URL' };
+  }
+  for (const rule of rules) {
+    if (hostMatchesRule(host, rule, selfHosts)) return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason: `host ${host} not in @connect allowlist`,
+  };
+}

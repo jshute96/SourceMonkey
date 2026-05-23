@@ -34,6 +34,7 @@ export interface UserscriptMeta {
   exclude?: string[];         // @exclude patterns
   runAt?: 'document-start' | 'document-end' | 'document-idle';
   grant?: string[];           // e.g. ['none'] — controls MAIN vs USER_SCRIPT world
+  connect?: string[];         // @connect entries for GM_xmlhttpRequest gating
   injectInto?: 'page' | 'content' | 'auto';
   extra?: string[];           // raw lines appended to the metadata block verbatim
 }
@@ -52,6 +53,7 @@ export function renderMetadata(meta: UserscriptMeta): string {
   for (const e of meta.exclude ?? []) push('exclude', e);
   if (meta.runAt) push('run-at', meta.runAt);
   for (const g of meta.grant ?? []) push('grant', g);
+  for (const c of meta.connect ?? []) push('connect', c);
   if (meta.injectInto) push('inject-into', meta.injectInto);
   for (const extra of meta.extra ?? []) lines.push(extra);
   lines.push('// ==/UserScript==', '');

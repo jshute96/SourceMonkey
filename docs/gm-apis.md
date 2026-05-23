@@ -239,16 +239,48 @@ and the page rebuilds them. TM uses an offscreen doc to get a real
 `new Blob(...)` directly. The base64 round-trip costs ~33% wire
 overhead vs raw bytes but is robust across the SW/page boundary.
 
-Known limitations (pre-10):
+## `@connect` URL gating (Phase 10)
 
-- No `onprogress` events — only the final `load`/`error`/`timeout`/
-  `abort` event lands on the page.
-- No header surgery: `Origin` is `chrome-extension://<id>` (the SW's
-  origin), Cookies are SW-managed, forbidden headers (Host, Origin,
-  etc.) can't be overridden. Phase 10 will add `webRequest.
-  onBeforeSendHeaders` to fix this.
-- No `@connect` validation: any granted script can hit any URL.
-  Phase 10 will gate URLs against the script's `@connect` lines.
+VM-style strict-by-default: a script with no `@connect` lines
+in its header is **blocked** from every `GM_xmlhttpRequest`. Scripts
+must declare the hosts they intend to reach.
+
+Grammar (lower-case before matching):
+
+- `*` — wildcard, allow any host.
+- `self` — allow the script's own `@match`/`@include` hosts (and
+  `*.host` subdomains in those globs contribute `host`).
+- `example.com` — exact host match.
+- `*.example.com` — `example.com` itself **and** any subdomain.
+- A scheme-prefixed URL like `https://example.com` is accepted and
+  normalized to its host.
+
+The check runs in `handleXhrStart` before `fetch`: the SW looks up
+the script's stored header, calls `parseConnectRules` +
+`extractSelfHosts`, and `isUrlConnectAllowed`. A denied request
+ships an `error` event back to the page with the policy reason as
+the message, so the userscript's `onerror` catches it.
+
+The same trust caveat as the other async-envelope handlers applies:
+the message-supplied `scriptId` is wrapper-supplied, so a sibling
+userscript that knows another script's id can spoof an XHR under
+that script's `@connect` allowlist. Same-extension userscripts are
+within the user's trust boundary. Documented limitation; revisit
+if real reports come in.
+
+Known limitations (post-Phase 10):
+
+- **No header surgery yet.** `Origin` is the SW's origin
+  (`chrome-extension://<id>`), Cookies are SW-managed, forbidden
+  headers (Host, Origin, Cookie when overriding the SW's default,
+  etc.) silently get stripped by `fetch()`. A future phase will
+  add `webRequest.onBeforeSendHeaders` (or DNR session rules) to
+  let scripts override these — VM's `requests-core.js` is the
+  reference shape. Tagging via a custom request header that the
+  listener strips will be the wiring.
+- **No `onprogress` events** — only the final `load`/`error`/
+  `timeout`/`abort` event lands on the page. Adding progress
+  would need a streaming wire format.
 - **Abort-after-response-arrived narrow race.** If the page calls
   `handle.abort()` AFTER the SW has fired its load event but BEFORE
   the page processes it, the userscript sees `onabort` instead of
@@ -380,7 +412,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 7** — `GM_addValueChangeListener` / `GM_removeValueChangeListener`
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
-- ⏳ **Phase 7** — value-change listeners
-- ⏳ **Phase 8** — `GM_xmlhttpRequest` text
-- ⏳ **Phase 9** — `GM_xmlhttpRequest` binary (serialize-to-bytes wire, no offscreen doc)
-- ⏳ **Phase 10** — XHR header surgery + `@connect` gating
+- ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
