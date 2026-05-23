@@ -158,11 +158,19 @@ End-to-end shape:
   emitted by the binding emitter as Promise wrappers around the
   legacy `GM_x` calls — same behavior, async return.
 
-Persistence model (Phase 3): writes are eventually-consistent
-across documents. A write on page A is visible to page B only AFTER
-the next re-registration of B's wrapper (since the page-side cache
-is baked at register time). Cross-tab live broadcast comes in Phase
-6.
+Persistence model: writes are eventually-consistent across
+documents. A write on page A is visible to page B in two ways:
+
+- **Live broadcast (Phase 6).** When the page-side batched write
+  reaches the SW, the SW iterates the in-memory openers table
+  (`scriptId → Set<tabId>`) and ships a `sm:gm-value-update` to
+  every OTHER tab running this script. The page-side runtime
+  listens on `chrome.runtime.onMessage`, dispatches by scriptId,
+  and applies the delta to its cache. The originating tab is
+  excluded — it already applied the write locally.
+- **Cold start.** A new wrapper registration re-reads
+  `chrome.storage.local` and bakes the current values in (covers
+  the "SW restarted and lost the openers table" case).
 
 Cross-script isolation: each script's `(scriptId, key)` namespace
 is independent — `GM_listValues` from script A never returns script
@@ -189,6 +197,19 @@ B's keys.
   sets and removes runs them as two parallel `chrome.storage`
   operations; a failure of one leaves the other applied. Acceptable
   given how reliable `chrome.storage.local` is in practice.
+- **Start-race window: a write that fires between a tab's wrapper
+  registration and its sm:start arrival isn't broadcast to that
+  tab.** The openers table is populated on sm:start, so a write
+  during that small window goes only to tabs whose sm:start has
+  already been received. The target tab's compile-in cache still
+  reflects whatever was in storage at register time. The window
+  closes once sm:start lands; subsequent writes broadcast normally.
+- **Iframe-of-same-tab broadcast skip.** The openers table dedupes
+  by tabId, so a write in the main frame of tab T doesn't broadcast
+  to other frames of T (the `tabId === excludeTabId` guard fires
+  for every frame in T). Each frame has its own compile-in cache;
+  they're consistent at register time and diverge on writes until
+  the next reload. Acceptable for now.
 - **Cross-script storage spoofing is within the trust boundary.**
   The `scriptId` in the `sm:gm-batch-write` envelope is supplied
   by the wrapper's compiled-in literal. A misbehaving userscript
@@ -250,7 +271,7 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 3** — storage v1 (page-side cache, batched writes, persistence)
 - ✅ **Phase 4** — `GM_addStyle` / `GM_addElement` (in-page DOM injection)
 - ✅ **Phase 5** — `GM_setClipboard` (via `navigator.clipboard.writeText`)
-- ⏳ **Phase 6** — cross-tab value broadcast
+- ✅ **Phase 6** — cross-tab `GM_setValue` broadcast (openers table + tabs.sendMessage)
 - ⏳ **Phase 7** — value-change listeners
 - ⏳ **Phase 8** — `GM_xmlhttpRequest` text
 - ⏳ **Phase 9** — `GM_xmlhttpRequest` binary (serialize-to-bytes wire, no offscreen doc)

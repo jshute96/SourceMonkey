@@ -433,6 +433,11 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  // GM_* cross-tab broadcast: drop this tab from every scriptId's
+  // openers set so future writes don't try to deliver to a closed
+  // tab (broadcast() catches the "Receiving end does not exist"
+  // rejection but the lookup work is wasted).
+  clearTabFromGmOpeners(tabId);
   // Drop any reload-fast-path entries for this tab so a slow refresh
   // doesn't hold a stale closure indefinitely. Keys are `${tabId}:`
   // prefixed, so a string prefix match is enough.
@@ -788,7 +793,7 @@ async function handleCheckPending(
   };
 }
 
-// ---------- GM_* storage batched writes ----------
+// ---------- GM_* storage batched writes + cross-tab broadcast ----------
 
 interface BatchWriteEntry {
   key: string;
@@ -801,7 +806,35 @@ interface BatchWritePayload {
   writes: BatchWriteEntry[];
 }
 
-async function handleBatchWrite(payload: BatchWritePayload): Promise<{ ok: true }> {
+// In-memory openers table: scriptId -> set of tabIds that currently
+// have a wrapper for this script running. Updated on sm:start
+// (recordScriptReport, below) and on tab close. We don't track per-
+// frame because chrome.tabs.sendMessage broadcasts to every frame in
+// a tab — frame-level filtering can land later if it's worth it.
+//
+// State is in-memory only. On SW restart the table starts empty;
+// the table re-fills as sm:start reports arrive from existing
+// documents (Chrome resumes userscripts on resumes). A short window
+// after a write-burst-then-SW-restart may miss broadcasts to other
+// tabs — acceptable; reads still see the value at next register.
+const gmOpeners = new Map<string, Set<number>>();
+
+function registerOpener(scriptId: string, tabId: number): void {
+  let s = gmOpeners.get(scriptId);
+  if (!s) { s = new Set(); gmOpeners.set(scriptId, s); }
+  s.add(tabId);
+}
+
+function clearTabFromGmOpeners(tabId: number): void {
+  for (const [scriptId, set] of gmOpeners) {
+    if (set.delete(tabId) && set.size === 0) gmOpeners.delete(scriptId);
+  }
+}
+
+async function handleBatchWrite(
+  payload: BatchWritePayload,
+  sender: chrome.runtime.MessageSender,
+): Promise<{ ok: true }> {
   // Translate the wire format ({key, value | deleted: true}) into the
   // SW-internal `ValueWrite` shape that uses a sentinel-by-reference
   // for deletes. We hand-roll the translation here so the gm-values
@@ -811,7 +844,35 @@ async function handleBatchWrite(payload: BatchWritePayload): Promise<{ ok: true 
     value: w.deleted ? DELETED_SENTINEL : w.value,
   }));
   await applyBatchValues(payload.scriptId, internal);
+  // Broadcast the delta to every OTHER tab running this script.
+  // The originating tab already has the writes applied in its
+  // page-side cache (it issued the writes); broadcasting back would
+  // be redundant and could feed back through value-change listeners.
+  const senderTabId = sender.tab?.id;
+  broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId);
   return { ok: true };
+}
+
+function broadcastValueUpdate(
+  scriptId: string,
+  writes: readonly BatchWriteEntry[],
+  excludeTabId: number | undefined,
+): void {
+  const targets = gmOpeners.get(scriptId);
+  if (!targets || targets.size === 0) return;
+  // Fire-and-forget per tab. chrome.tabs.sendMessage delivers to
+  // every frame on the tab and each frame's runtime listener
+  // dispatches by scriptId locally. "Receiving end does not exist"
+  // rejections are normal (tab closed mid-send, frame torn down)
+  // and silently dropped.
+  for (const tabId of targets) {
+    if (tabId === excludeTabId) continue;
+    void chrome.tabs.sendMessage(tabId, {
+      type: 'sm:gm-value-update',
+      scriptId,
+      writes,
+    }).catch(() => undefined);
+  }
 }
 
 // ---------- sm:start / sm:error from injected wrappers ----------
@@ -857,7 +918,7 @@ function installScriptMessageListener(): void {
       // the wrapper doesn't actually await the reply today
       // (fire-and-forget), but returning a real {ok} keeps the
       // channel honest for future error surfacing.
-      handleBatchWrite(msg as BatchWritePayload).then(
+      handleBatchWrite(msg as BatchWritePayload, sender).then(
         (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
         (err) => {
           console.info('[SourceMonkey] gm-batch-write handler threw:', err);
@@ -944,6 +1005,13 @@ async function recordScriptReport(
 
   const tabPart = ` tab=${tabId}`;
   const label = getScriptLogLabel(id);
+  // GM_* cross-tab broadcast openers table: register the
+  // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
+  // swap path is a wrapper that just took control of a document
+  // and needs the same pairing so future writes can fan out to it.
+  if (type === SM_START_MSG || type === SM_SWAPPED_MSG) {
+    registerOpener(id, tabId);
+  }
   if (type === SM_START_MSG) {
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
     logScriptEvent(id, {

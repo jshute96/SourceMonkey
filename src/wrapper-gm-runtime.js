@@ -179,6 +179,50 @@
     }, { capture: true });
   } catch (_evErr) {}
 
+  /* Cross-tab broadcast handler. The SW sends a sm:gm-value-update
+     message to every tab running the script after a write batch
+     applies (excluding the originator). We apply the diff locally
+     so subsequent GM_getValue reads in this tab see the change
+     without a re-register.
+
+     The listener is shared across all scripts in the document
+     (USER_SCRIPT world has one realm per document), so we dispatch
+     by the message's scriptId rather than per-script.
+
+     Phase 7 will fire value-change listeners from here too. */
+  function applyRemoteUpdate(scriptId, writes) {
+    var s = stores[scriptId];
+    if (!s || !s.ready) return;
+    if (!writes || !writes.length) return;
+    for (var i = 0; i < writes.length; i++) {
+      var w = writes[i];
+      if (w.deleted) delete s.cache[w.key];
+      else s.cache[w.key] = w.value;
+    }
+  }
+  /* Sender filter. A naive listener would happily process a forged
+     `sm:gm-value-update` from another userscript inside the same
+     extension — chrome.runtime.sendMessage from one USER_SCRIPT
+     world fires onMessage in every other context (incl. other tabs).
+     We require:
+       - sender.id === chrome.runtime.id  (our extension only)
+       - sender.tab is undefined          (came from the SW, not a tab)
+     The combination ensures only the SW's broadcast reaches us. */
+  var _extensionId = null;
+  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+      chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
+        if (!sender || sender.id !== _extensionId || sender.tab) return;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type !== "sm:gm-value-update") return;
+        if (typeof msg.scriptId !== "string") return;
+        if (!msg.writes || typeof msg.writes.length !== "number") return;
+        applyRemoteUpdate(msg.scriptId, msg.writes);
+      });
+    }
+  } catch (_lE) {}
+
   var storage = {
     /* Called by the compile-in bindings, top-of-file, with the
        scriptId and the literal initial-value snapshot. Populates the
