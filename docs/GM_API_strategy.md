@@ -433,35 +433,119 @@ wins — the value-tag encoder, the lazy-response-getter pattern, the
 header-surgery strategy in `requests-core.js`. Those don't carry
 their bridge/topology baggage.
 
+## Design decisions inside Option B
+
+Before the phasing, four concrete decisions that shape it.
+
+### Compile-in vs runtime-registered surface
+
+Two ways to give a script its GM_* bindings:
+
+- **(a) Compile-in.** The injector emits all granted GM_*
+  declarations as JS source ahead of the user body, gated by
+  `@grant`. Each body is a thin wrapper; the heavy lifting lives in
+  a USER_SCRIPT-world shared runtime registered alongside.
+- **(b) Single shared runtime in scope.** A separate
+  USER_SCRIPT-world script (`gm-runtime.js`) registered ahead of
+  every userscript exposes the API; per-script wrapper-head just
+  installs the granted bindings as locals at userscript-start time.
+
+(a) avoids any "did the shared runtime register first?" ordering
+question — the function definitions are literally in the body that
+runs. (b) avoids duplicating the wrapper code for each registered
+script. For our scale (tens of scripts, not thousands) the
+duplication is small, and (a) is the cleaner story. **Recommend (a).**
+
+### Explicit sync / async API catalog up front
+
+Classify every API as `SYNC` (resolves in-page, no SW round-trip) or
+`ASYNC` (sends a `chrome.runtime.sendMessage` to the SW and awaits a
+reply) in a single catalog file. All later phases reference it.
+
+- Sync APIs: storage reads, `GM_addStyle`, `GM_addElement`, `GM_log`,
+  `GM_getResource*`, `GM_registerMenuCommand`, value-change listeners.
+- Async APIs: `GM_xmlhttpRequest`, `GM_setClipboard`,
+  `GM_notification`, `GM_openInTab`, `GM_cookie`, `GM_download`.
+
+Classifying up front prevents the slow accidental drift where
+"everything goes through the SW" — the failure mode that makes TM
+feel sluggish on storage reads.
+
+### Defer the offscreen document for binary XHR
+
+Two ways to handle `responseType: 'blob' | 'arraybuffer' | 'document'`:
+
+- **Byte-serialization in the SW.** SW `fetch`es the URL, reads the
+  body as bytes, ships them to the page as base64 (or a typed-array
+  payload); the page rebuilds the requested type. No offscreen doc.
+- **Offscreen document.** Spin up an offscreen page so the SW can
+  delegate to a real `Blob` constructor + `URL.createObjectURL`
+  (TM's approach).
+
+Byte-serialization is simpler and gets us a working binary path
+without standing up an offscreen page. The base64 round-trip costs
+~33% wire overhead on large payloads; the offscreen doc avoids that
+but adds a whole new realm + lifecycle to manage. **Start with
+byte-serialization**; upgrade to an offscreen doc if real users hit
+the size ceiling.
+
+### Bake `@grant` in at register time, not per-call
+
+Our wrapper compiles GM_* bindings into the registered script source,
+so `@grant` is naturally a register-time decision: changing it
+requires a reload. The alternative — per-call permission checks
+backed by a cache and invalidation broadcasts — gives instantaneous
+options-page edits but adds an IPC on every call. **Default to
+bake-in for v1**; revisit if real users want live revocation.
+
 ## A loose phasing for Option B
 
-Not a commitment, just shape:
+Not a commitment, just shape. Driven by the design decisions above.
 
-1. Wrapper-side `@grant`-keyed GM_* surface in
-   `wrapper-head.js` (build of GM object per script, gated by
-   parsed grants). Stubs return-no-op for everything.
-2. `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`
-   end-to-end (no cross-tab broadcast yet). Uses
+1. **Catalog + plumbing.** A single `gm-api-catalog.ts` lists every
+   API name, its `SYNC` / `ASYNC` classification, its `@grant`
+   keys, and any extra validation (e.g. `@connect` for
+   `GM_xmlhttpRequest`). All later phases reference this catalog.
+2. **Compile-in surface.** Extend the wrapper-head emitter so that
+   for each granted name on a script, an inline
+   `const GM_X = function(...) {...}` is concatenated ahead of the
+   body. SYNC names delegate to a shared `__SM_GM__` global (set up
+   by a USER_SCRIPT-world helper registered alongside); ASYNC names
+   `chrome.runtime.sendMessage` to the SW. Start with all bodies
+   stubbed to throw "not implemented yet".
+3. **Storage v1.** `GM_setValue` / `GM_getValue` / `GM_deleteValue` /
+   `GM_listValues` end-to-end (no cross-tab broadcast yet). VM-style
+   page-side cache + batched writes. Backed by
    `chrome.storage.local` with a `gmval:<scriptId>:<key>` namespace.
-3. `GM_addStyle` / `GM_addElement` (no cross-realm trick needed; we
-   can call `document.createElement` from USER_SCRIPT world and the
-   element is added to the page's DOM directly).
-4. `GM_setClipboard` via offscreen doc + `execCommand('copy')`.
-5. Cross-tab value broadcast via wrapper ping + SW openers table,
-   diff-broadcasting only changed keys (VM's pattern).
-6. `GM_addValueChangeListener` / `GM_removeValueChangeListener`
-   on top of (5).
-7. `GM_xmlhttpRequest` text-only happy path (no
-   `responseType: blob|arraybuffer|document`).
-8. `GM_xmlhttpRequest` binary path via offscreen doc; chunked
-   transport; `responseType: blob|arraybuffer|document`.
-9. `GM_xmlhttpRequest` header surgery
-   (`webRequest.onBeforeSendHeaders`, drop our Origin, merge
-   Cookie, capture redirected URL).
-10. `GM_notification`, `GM_openInTab`, `GM_registerMenuCommand`.
-11. `GM_getResourceText` / `GM_getResourceURL` — depends on
+4. **`GM_addStyle` / `GM_addElement`.** Direct `document.createElement`
+   from USER_SCRIPT world. (USER_SCRIPT-world DOM mutations are
+   exempt from page CSP, same as content scripts.)
+5. **`GM_setClipboard`.** Offscreen doc + `execCommand('copy')`.
+6. **Cross-tab value broadcast.** Wrapper ping at `sm:start` to
+   register `(tabId, frameId, scriptId)` with an SW openers table;
+   `GM_setValue` writes diff-broadcast only changed keys to other
+   frames running the same script.
+7. **`GM_addValueChangeListener` / `GM_removeValueChangeListener`**
+   on top of (6).
+8. **`GM_xmlhttpRequest` text path.** SW-side `fetch` with text
+   responseType; result returned via `sendMessage`. No header surgery
+   yet (default `fetch` headers).
+9. **`GM_xmlhttpRequest` binary path.** Add `blob` / `arraybuffer` /
+   `document` responseTypes via serialize-to-bytes in the SW +
+   rebuild in-page. **No offscreen document yet** — see the
+   binary-XHR decision above.
+10. **`GM_xmlhttpRequest` header surgery + `@connect` gating.** Add
+    the `webRequest.onBeforeSendHeaders` / `onHeadersReceived` hook
+    (cribbing VM's `requests-core.js` strategy) so forbidden headers,
+    custom Cookie, Origin drop, and redirected-URL capture work.
+    Validate the URL against `@connect` at the SW boundary before
+    dispatching.
+11. **`GM_notification`, `GM_openInTab`, `GM_registerMenuCommand`.**
+12. **`GM_getResourceText` / `GM_getResourceURL`** — depends on
     `@resource` parsing, which is its own follow-up.
-12. `GM_cookie` with per-script `@match` validation.
+13. **`GM_cookie` with per-script `@match` validation.**
+14. **(Deferred, on demand)** Add an offscreen document for binary
+    XHR if real users hit the byte-serialization size ceiling.
 
 At each step we want a few unit tests for pure helpers plus an e2e
 spec that drives the API from a userscript on the fixture server.
