@@ -189,6 +189,35 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_xmlhttpRequest = function (details) { return window.__SM_GM__.xhr.start(${jsLit(scriptId)}, details); };`;
     }
   }
+  // Log subsystem: GM_log is a thin wrapper over console.log with a
+  // per-script prefix. The script name is baked in at compile-in time
+  // so calls don't need an SW round-trip or per-call lookup.
+  if (spec.subsystem === 'log') {
+    switch (spec.name) {
+      case 'GM_log':
+        return `const GM_log = function () { return window.__SM_GM__.log.write(${jsLit(scriptId)}, arguments); };`;
+    }
+  }
+  // Tab subsystem: GM_openInTab. Returns a `{close, closed, onclose}`
+  // control object synchronously. The SW handles chrome.tabs.create
+  // and reports close events back to the originating tab.
+  if (spec.subsystem === 'tab') {
+    switch (spec.name) {
+      case 'GM_openInTab':
+        return `const GM_openInTab = function (url, options) { return window.__SM_GM__.tab.open(${jsLit(scriptId)}, url, options); };`;
+    }
+  }
+  // Notification subsystem: GM_notification. Returns the SW round-trip
+  // Promise (TM/VM hand back undefined; we hand back the Promise so
+  // callers that want to wait for the notification to be created can).
+  // Callbacks (onclick / ondone) stay on the page side and are dispatched
+  // by chrome.runtime.onMessage from the SW.
+  if (spec.subsystem === 'notification') {
+    switch (spec.name) {
+      case 'GM_notification':
+        return `const GM_notification = function () { return window.__SM_GM__.notification.show(${jsLit(scriptId)}, arguments); };`;
+    }
+  }
   if (spec.kind === 'sync') {
     // Phase 2 placeholder for the subsystems we haven't filled in
     // yet (storage-listener, dom, resource, menu, log). Closure

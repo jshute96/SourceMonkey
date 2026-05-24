@@ -61,7 +61,7 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_log` / `GM.log` | 🟡 | ✓ |   | ✓ | Stubbed — throws "not implemented yet". Use plain `console.log` for now. |
+| `GM_log` / `GM.log` | ✅ | ✓ |   | ✓ | Thin `console.log` wrapper prefixed with `[SourceMonkey:<scriptId>]`. Arguments are passed through unchanged so Chrome's `%c` / `%o` formatters and DevTools object inspection still work. Returns `undefined`. |
 
 ---
 
@@ -191,18 +191,85 @@ policy: …"` message.
 
 ---
 
+## Notifications
+
+| API | Status | TM | VM | GM | Notes |
+|-----|:------:|:--:|:--:|:--:|-------|
+| `GM_notification` / `GM.notification` | ✅ | ✓ | ✓ |   | System notification via `chrome.notifications.create`. See below for call shapes, details fields, callback semantics, and the icon fallback. |
+
+### Notification call shape
+
+- `GM_notification(details, ondone?)` — modern TM shape.
+- `GM_notification(text, title?, image?, onclick?)` — legacy
+  positional.
+- Returns a Promise resolving to the chrome-assigned notification id.
+
+### Details fields
+
+- `text` (required), `title`, `image`, `timeout` (auto-clear ms),
+  `silent`, `tag`.
+- `details.onclick` fires on user click (non-terminal — may fire
+  before `ondone`).
+- `details.ondone` (or the second positional arg) fires when the
+  notification is closed.
+- Default icon falls back to SourceMonkey's extension icon when
+  `image` is omitted (`chrome.notifications.create` requires one).
+
+### Notification caveats
+
+- Browser availability — `chrome.notifications` requires the
+  `notifications` permission (declared in the manifest) and the
+  OS-level notification permission. Headless Chromium silently
+  drops the toast but still resolves the Promise; production
+  browsers show the toast when permitted.
+- Callback dispatch is **best-effort cross-tab**. If the originating
+  tab closes before the user clicks or dismisses, the SW drops the
+  per-originator mapping and the `onclick` / `ondone` callbacks
+  never fire (the tab they targeted is gone).
+- SW restart loses in-flight notification mappings: a notification
+  created before the SW idled out won't deliver its click / done
+  event to the userscript on restart. The notification itself stays
+  on screen (chrome.notifications survives the SW lifecycle).
+
+---
+
+## Tabs
+
+| API | Status | TM | VM | GM | Notes |
+|-----|:------:|:--:|:--:|:--:|-------|
+| `GM_openInTab` / `GM.openInTab` | ✅ | ✓ | ✓ |   | `chrome.tabs.create` wrapper. Returns a control object synchronously: `{ close(), closed, onclose }`. See below for call shapes and options. |
+
+### Open-in-tab call shape
+
+- `GM_openInTab(url, options?)` — options:
+  `{ active, loadInBackground, insert }`. `active` and
+  `loadInBackground` are inverses.
+- `GM_openInTab(url, loadInBackground)` — TM-legacy boolean shortcut.
+- `insert: true` biases Chrome to place the new tab next to the
+  originator (via `openerTabId`).
+- `onclose` fires when the tab is closed (by user, by `ctl.close()`,
+  or by another extension).
+
+### Tab caveats
+
+- `insert` is **best-effort positional** — Chrome's `openerTabId`
+  hints placement but doesn't guarantee an exact index.
+- If the originating tab closes while opened tabs are still alive,
+  the opened tabs stay open (matches TM/VM) but the SW drops the
+  mapping, so the `onclose` callback can't be routed anywhere.
+
+---
+
 ## Async APIs still stubbed
 
 These have bindings emitted at compile-in time (so `typeof
-GM_notification === 'function'`), but every call throws "not
+GM_registerMenuCommand === 'function'`), but every call throws "not
 implemented yet" via the runtime's `notImplemented` helper. They're
 in the catalog so adding them later is a per-subsystem fill-in, not
 a surface change.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_notification` / `GM.notification` | 🟡 | ✓ | ✓ |   | System notification toast. Needs SW-side `chrome.notifications` wrapping. |
-| `GM_openInTab` / `GM.openInTab` | 🟡 | ✓ | ✓ |   | Open a URL in a new tab. Needs SW-side `chrome.tabs.create`. |
 | `GM_registerMenuCommand` / `GM.registerMenuCommand` | 🟡 | ✓ | ✓ |   | Add an entry to the per-page command menu. Needs `chrome.contextMenus` plumbing + a UI. |
 | `GM_unregisterMenuCommand` / `GM.unregisterMenuCommand` | 🟡 | ✓ | ✓ |   | Companion. |
 | `GM_getResourceText` / `GM.getResourceText` | 🟡 | ✓ | ✓ | ✓ | Needs `@resource` header support — see [supported-headers.md](supported-headers.md). |

@@ -94,6 +94,20 @@ import {
   isUrlConnectAllowed,
   parseConnectRules,
 } from './gm-connect.js';
+import {
+  closeGmTab,
+  dropOriginator as dropOriginatorTabs,
+  openGmTab,
+  takeRequestForClosedTab,
+  type GmTabOpenPayload,
+} from './gm-tab.js';
+import {
+  dropOriginator as dropOriginatorNotifications,
+  showGmNotification,
+  takeForClicked as takeNotificationForClicked,
+  takeForClosed as takeNotificationForClosed,
+  type GmNotificationShowPayload,
+} from './gm-notification.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -448,6 +462,24 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // tab (broadcast() catches the "Receiving end does not exist"
   // rejection but the lookup work is wasted).
   clearTabFromGmOpeners(tabId);
+  // GM_openInTab / GM_notification: drop any per-originator state
+  // pointing at this tab. The tabs we opened on its behalf stay
+  // open (matches TM/VM); we just lose the ability to route close
+  // notifications back to a tab that no longer exists.
+  dropOriginatorTabs(tabId);
+  dropOriginatorNotifications(tabId);
+  // GM_openInTab close-event routing: if this tabId was a tab we
+  // opened on behalf of a userscript, dispatch sm:gm-tab-closed to
+  // the originating tab so its onclose fires. Folded into this
+  // listener (rather than a second onRemoved.addListener) so we
+  // don't depend on cross-listener dispatch order.
+  const taken = takeRequestForClosedTab(tabId);
+  if (taken) {
+    void chrome.tabs.sendMessage(taken.originatorTabId, {
+      type: 'sm:gm-tab-closed',
+      requestId: taken.requestId,
+    }).catch(() => undefined);
+  }
   // Drop any reload-fast-path entries for this tab so a slow refresh
   // doesn't hold a stale closure indefinitely. Keys are `${tabId}:`
   // prefixed, so a string prefix match is enough.
@@ -869,6 +901,64 @@ async function checkConnectPolicy(scriptId: string, url: string): Promise<string
   }
 }
 
+// ---------- GM_openInTab dispatch ----------
+
+async function handleTabOpen(
+  sender: chrome.runtime.MessageSender,
+  payload: GmTabOpenPayload,
+): Promise<{ ok: boolean; tabId?: number; error?: string }> {
+  const originatorTabId = sender.tab?.id;
+  if (originatorTabId == null) {
+    return { ok: false, error: 'no originator tab id' };
+  }
+  return openGmTab(payload, originatorTabId);
+}
+
+// GM_openInTab close-event routing happens inside the main
+// chrome.tabs.onRemoved listener above so we don't depend on cross-
+// listener dispatch order.
+
+// ---------- GM_notification dispatch ----------
+
+async function handleNotificationShow(
+  sender: chrome.runtime.MessageSender,
+  payload: GmNotificationShowPayload,
+): Promise<{ ok: boolean; notificationId?: string; error?: string }> {
+  const originatorTabId = sender.tab?.id;
+  if (originatorTabId == null) {
+    return { ok: false, error: 'no originator tab id' };
+  }
+  if (!chrome.notifications) {
+    return { ok: false, error: 'chrome.notifications unavailable' };
+  }
+  return showGmNotification(payload, originatorTabId);
+}
+
+function installNotificationListeners(): void {
+  if (!chrome.notifications) {
+    console.info('[SourceMonkey] chrome.notifications not available; GM_notification will throw if called');
+    return;
+  }
+  chrome.notifications.onClicked.addListener((chromeId) => {
+    const taken = takeNotificationForClicked(chromeId);
+    if (!taken) return;
+    void chrome.tabs.sendMessage(taken.originatorTabId, {
+      type: 'sm:gm-notification-event',
+      requestId: taken.requestId,
+      event: 'clicked',
+    }).catch(() => undefined);
+  });
+  chrome.notifications.onClosed.addListener((chromeId) => {
+    const taken = takeNotificationForClosed(chromeId);
+    if (!taken) return;
+    void chrome.tabs.sendMessage(taken.originatorTabId, {
+      type: 'sm:gm-notification-event',
+      requestId: taken.requestId,
+      event: 'closed',
+    }).catch(() => undefined);
+  });
+}
+
 // ---------- GM_* storage batched writes + cross-tab broadcast ----------
 
 interface BatchWriteEntry {
@@ -1004,6 +1094,38 @@ function installScriptMessageListener(): void {
       const payload = msg as { id?: string };
       if (typeof payload.id === 'string') abortXhr(payload.id);
       try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return true;
+    }
+    if (type === 'sm:gm-tab-open') {
+      // Async dispatch — page side awaits the reply (need the assigned
+      // chrome tab id back to populate the control object).
+      handleTabOpen(sender, msg as GmTabOpenPayload).then(
+        (reply) => { try { sendResponse(reply); } catch { /* gone */ } },
+        (err) => {
+          console.info('[SourceMonkey] gm-tab-open handler threw:', err);
+          try { sendResponse({ ok: false, error: String(err?.message ?? err) }); }
+          catch { /* gone */ }
+        },
+      );
+      return true;
+    }
+    if (type === 'sm:gm-tab-close') {
+      const payload = msg as { requestId?: string };
+      if (typeof payload.requestId === 'string') {
+        void closeGmTab(payload.requestId);
+      }
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return false;
+    }
+    if (type === 'sm:gm-notification-show') {
+      handleNotificationShow(sender, msg as GmNotificationShowPayload).then(
+        (reply) => { try { sendResponse(reply); } catch { /* gone */ } },
+        (err) => {
+          console.info('[SourceMonkey] gm-notification-show handler threw:', err);
+          try { sendResponse({ ok: false, error: String(err?.message ?? err) }); }
+          catch { /* gone */ }
+        },
+      );
       return true;
     }
     if (type === 'sm:gm-batch-write') {
@@ -1241,6 +1363,7 @@ installStaleScriptListener();
 installNavigationListeners();
 installScriptMessageListener();
 installDebugLoggingListener();
+installNotificationListeners();
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.

@@ -7,10 +7,13 @@ recommends a path.
 > **Status:** Phases 1–10 landed (catalog, compile-in surface,
 > storage v1 + cross-tab broadcast + value-change listeners,
 > `GM_addStyle` / `GM_addElement`, `GM_setClipboard`,
-> `GM_xmlhttpRequest` text + binary, `@connect` URL gating). XHR
-> header surgery is deferred. See [gm-apis.md](gm-apis.md) for the
-> implementation status and known limitations; deferred follow-ups
-> are tracked in [TODO.md](../TODO.md).
+> `GM_xmlhttpRequest` text + binary, `@connect` URL gating). Post-
+> phase add-ons `GM_log`, `GM_openInTab`, and `GM_notification` are
+> also live. XHR header surgery, `GM_registerMenuCommand`, and
+> `@resource`-backed `GM_getResource*` are still deferred. See
+> [gm-apis.md](gm-apis.md) for the implementation status and known
+> limitations; deferred follow-ups are tracked in
+> [TODO.md](../TODO.md).
 
 ## Goals
 

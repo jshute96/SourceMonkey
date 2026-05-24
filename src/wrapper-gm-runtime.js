@@ -587,9 +587,236 @@
     },
   };
 
+  /* ---------- GM_log ----------
+
+     Page-side console wrapper. Prefixes the script id so multi-script
+     pages stay greppable. We capture scriptId because the script's
+     @name isn't available without an SW round-trip. We hand back
+     `undefined` (matches TM/VM signature) regardless of the underlying
+     console.log return. */
+  var _consoleLog = null;
+  try {
+    if (typeof console !== "undefined" && typeof console.log === "function") {
+      _consoleLog = console.log.bind(console);
+    }
+  } catch (_clogE) {}
+  var log = {
+    write: function (scriptId, args) {
+      if (!_consoleLog) return;
+      /* Build a prefix that's easy to grep. We DON'T stringify the
+         args here — pass them through so console formatters (Chrome's
+         %c, %o, etc.) and DevTools object inspectors stay intact. */
+      var prefix = "[SourceMonkey:" + scriptId + "]";
+      var arr = [prefix];
+      for (var i = 0; i < args.length; i++) arr.push(args[i]);
+      try { _consoleLog.apply(null, arr); } catch (_e) {}
+    },
+  };
+
+  /* ---------- GM_openInTab ----------
+
+     Open a URL in a new tab via the SW (chrome.tabs.create). Returns
+     a control object with:
+       - close()    — request the tab be closed
+       - closed     — boolean, true once the SW reports the tab closed
+       - onclose    — callback fired when the SW reports the tab closed
+
+     The SW assigns the chrome.tabs ID asynchronously, but the script
+     wants a control handle synchronously. We use a per-call request
+     id (tab-<n>-<rand>); the SW echoes it back on creation and on
+     close, and we route by it locally. */
+  var openTabs = _ObjectCreate(null);  /* requestId -> control entry */
+  var _tabNextId = 1;
+  var tab = {
+    open: function (scriptId, url, options) {
+      if (typeof url !== "string" || !url) {
+        throw new _Error("[SourceMonkey] GM_openInTab: url required");
+      }
+      /* TM accepts a boolean `loadInBackground` shortcut OR an
+         options object {active, insert, setParent, loadInBackground}.
+         A `true` boolean means "background" (i.e. active:false). */
+      var active = true;
+      var insert = false;
+      if (typeof options === "boolean") {
+        active = !options;
+      } else if (options && typeof options === "object") {
+        if (typeof options.active === "boolean") active = options.active;
+        else if (typeof options.loadInBackground === "boolean") active = !options.loadInBackground;
+        if (typeof options.insert === "boolean") insert = options.insert;
+      }
+      var requestId = "tab-" + (_tabNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      var entry = {
+        closed: false,
+        onclose: null,
+        tabId: null,
+      };
+      openTabs[requestId] = entry;
+      var control = {
+        get closed() { return entry.closed; },
+        set onclose(cb) { entry.onclose = (typeof cb === "function") ? cb : null; },
+        get onclose() { return entry.onclose; },
+        close: function () {
+          if (entry.closed) return;
+          api.sendAsync({
+            type: "sm:gm-tab-close",
+            requestId: requestId,
+          }).catch(function () {});
+        },
+      };
+      api.sendAsync({
+        type: "sm:gm-tab-open",
+        scriptId: scriptId,
+        requestId: requestId,
+        url: url,
+        active: active,
+        insert: insert,
+      }).then(function (reply) {
+        if (reply && reply.ok && typeof reply.tabId === "number") {
+          entry.tabId = reply.tabId;
+        } else if (reply && reply.error) {
+          /* SW couldn't create the tab — surface the error so a
+             userscript debugging an unexpected fast-close has a
+             signal, then synthesize the close so onclose fires. */
+          try { console.warn("[SourceMonkey] GM_openInTab failed:", reply.error); } catch (_e) {}
+          dispatchTabClose(requestId);
+        }
+      }, function (err) {
+        try { console.warn("[SourceMonkey] GM_openInTab send failed:", err && err.message || err); } catch (_e) {}
+        dispatchTabClose(requestId);
+      });
+      return control;
+    },
+  };
+  function dispatchTabClose(requestId) {
+    var entry = openTabs[requestId];
+    if (!entry || entry.closed) return;
+    entry.closed = true;
+    delete openTabs[requestId];
+    var cb = entry.onclose;
+    if (typeof cb === "function") {
+      try { cb(); } catch (e) {
+        try { console.error("[SourceMonkey] GM_openInTab onclose threw:", e); } catch (_e) {}
+      }
+    }
+  }
+
+  /* ---------- GM_notification ----------
+
+     Per-call: page-side request id (notif-<n>-<rand>) keyed to the
+     user's onclick / ondone callbacks. SW dispatches chrome.notifications
+     events back via chrome.runtime.sendMessage.
+
+     Two signatures (matches TM):
+       GM_notification(details, ondone?)
+         details = { text, title, image, onclick, ondone, timeout, silent, tag }
+       GM_notification(text, title?, image?, onclick?)  -- legacy positional
+
+     We normalize to a single details payload + per-call callbacks. */
+  var openNotifications = _ObjectCreate(null);  /* requestId -> {onclick, ondone} */
+  var _notifNextId = 1;
+  var notification = {
+    show: function (scriptId, args) {
+      var details = null;
+      var onclick = null;
+      var ondone = null;
+      if (args[0] && typeof args[0] === "object") {
+        /* details shape — always taken when first arg is an object,
+           regardless of how many positional follow it. A second arg,
+           if it's a function, is treated as `ondone` (TM's
+           shorthand). Anything else after the details object is
+           ignored to avoid a 2-arg `(details, "extra")` call
+           falling through to the legacy positional branch and
+           stringifying the details object as the notification
+           text. */
+        var d = args[0];
+        details = {
+          text: d.text != null ? String(d.text) : "",
+          title: d.title != null ? String(d.title) : "",
+          image: d.image != null ? String(d.image) : "",
+          timeout: typeof d.timeout === "number" ? d.timeout : 0,
+          silent: !!d.silent,
+          tag: d.tag != null ? String(d.tag) : "",
+        };
+        if (typeof d.onclick === "function") onclick = d.onclick;
+        if (typeof d.ondone === "function") ondone = d.ondone;
+        if (typeof args[1] === "function") ondone = args[1];
+      } else {
+        /* legacy positional (text, title?, image?, onclick?) */
+        details = {
+          text: args[0] != null ? String(args[0]) : "",
+          title: args[1] != null ? String(args[1]) : "",
+          image: args[2] != null ? String(args[2]) : "",
+          timeout: 0,
+          silent: false,
+          tag: "",
+        };
+        if (typeof args[3] === "function") onclick = args[3];
+      }
+      if (!details.text) {
+        return _Promise.reject(new _Error("[SourceMonkey] GM_notification: `text` is required"));
+      }
+      var requestId = "notif-" + (_notifNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      openNotifications[requestId] = { onclick: onclick, ondone: ondone };
+      return api.sendAsync({
+        type: "sm:gm-notification-show",
+        scriptId: scriptId,
+        requestId: requestId,
+        details: details,
+      }).then(function (reply) {
+        if (!reply || !reply.ok) {
+          delete openNotifications[requestId];
+          throw new _Error("[SourceMonkey] GM_notification: " + ((reply && reply.error) || "show failed"));
+        }
+        return reply.notificationId;
+      }, function (err) {
+        delete openNotifications[requestId];
+        throw err;
+      });
+    },
+  };
+  function dispatchNotificationEvent(requestId, event) {
+    var entry = openNotifications[requestId];
+    if (!entry) return;
+    /* `clicked` events are NOT terminal — the user may click then the
+       notification auto-closes; we want ondone to fire too. Only
+       `closed` (chrome's "ondone" surrogate) frees the slot. */
+    if (event === "clicked") {
+      var cb = entry.onclick;
+      if (typeof cb === "function") {
+        try { cb(); } catch (e) {
+          try { console.error("[SourceMonkey] GM_notification onclick threw:", e); } catch (_e) {}
+        }
+      }
+    } else if (event === "closed") {
+      delete openNotifications[requestId];
+      var cb2 = entry.ondone;
+      if (typeof cb2 === "function") {
+        try { cb2(); } catch (e) {
+          try { console.error("[SourceMonkey] GM_notification ondone threw:", e); } catch (_e) {}
+        }
+      }
+    }
+  }
+
+  /* Wire the SW-originated tab-close and notification-event messages
+     into the same dispatcher we already use for value-update / xhr.
+     Sender filter logic identical to the earlier listeners. */
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+      chrome.runtime.onMessage.addListener(function (msg, sender) {
+        if (!sender || sender.id !== _extensionId || sender.tab) return;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "sm:gm-tab-closed" && typeof msg.requestId === "string") {
+          dispatchTabClose(msg.requestId);
+        } else if (msg.type === "sm:gm-notification-event" && typeof msg.requestId === "string" && typeof msg.event === "string") {
+          dispatchNotificationEvent(msg.requestId, msg.event);
+        }
+      });
+    }
+  } catch (_evE3) {}
+
   var api = {
-    /* Phase-2 placeholder for the sync subsystems not yet wired
-       (storage-listener, resource, menu, log). */
+    /* Placeholder for sync subsystems still not wired (resource, menu). */
     notImplemented: function (name) {
       throw new _Error("[SourceMonkey] " + name + " is not implemented yet");
     },
@@ -611,6 +838,9 @@
     storage: storage,
     dom: dom,
     xhr: xhr,
+    log: log,
+    tab: tab,
+    notification: notification,
     clipboard: {
       /* GM_setClipboard(text, type?). Returns the Promise from
          navigator.clipboard.writeText so callers can `await` it. TM's

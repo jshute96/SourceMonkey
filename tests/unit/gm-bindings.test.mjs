@@ -100,6 +100,35 @@ test('emitGmBindings: non-DOM/non-storage sync stub bodies still route through n
   assert.match(out.js, /__SM_GM__\.notImplemented\("GM_registerMenuCommand"\)/);
 });
 
+test('emitGmBindings: GM_log routes to __SM_GM__.log.write with the scriptId', () => {
+  const out = emitGmBindings(['GM_log'], makeInfo({ grants: ['GM_log'] }));
+  assert.match(out.js, /const GM_log = function/);
+  assert.match(out.js, /__SM_GM__\.log\.write\("script-1"/);
+  assert.doesNotMatch(out.js, /notImplemented\("GM_log"\)/);
+});
+
+test('emitGmBindings: GM_openInTab routes to __SM_GM__.tab.open with the scriptId', () => {
+  const out = emitGmBindings(['GM_openInTab'], makeInfo({ grants: ['GM_openInTab'] }));
+  assert.match(out.js, /const GM_openInTab = function/);
+  assert.match(out.js, /__SM_GM__\.tab\.open\("script-1"/);
+  // Not routed through the generic sendAsync envelope.
+  assert.doesNotMatch(out.js, /"sm:gm-call"[^}]*GM_openInTab/);
+});
+
+test('emitGmBindings: GM_notification routes to __SM_GM__.notification.show with the scriptId', () => {
+  const out = emitGmBindings(['GM_notification'], makeInfo({ grants: ['GM_notification'] }));
+  assert.match(out.js, /const GM_notification = function/);
+  assert.match(out.js, /__SM_GM__\.notification\.show\("script-1"/);
+});
+
+test('emitGmBindings: GM.log is a pass-through alias (no Promise wrap)', () => {
+  // GM_log is kind:sync without gmDotPromised, so the GM4 alias should
+  // be a pass-through, not Promise-wrapped.
+  const out = emitGmBindings(['GM_log'], makeInfo({ grants: ['GM_log'] }));
+  assert.match(out.js, /log: function [^}]*GM_log\.apply/);
+  assert.doesNotMatch(out.js, /log: function [^}]*Promise\.resolve\(GM_log/);
+});
+
 test('emitGmBindings: GM_xmlhttpRequest routes to __SM_GM__.xhr.start', () => {
   // Phase 8+ — XHR is wired through the runtime's xhr subsystem
   // (page-side dispatch + per-request id), not the generic

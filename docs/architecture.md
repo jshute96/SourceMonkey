@@ -120,6 +120,16 @@ details live in the topic-specific docs linked below.
   lines into rules (`*`, `self`, exact, subdomain), resolves `self`
   against the script's `@match`/`@include` hosts, and gates
   `GM_xmlhttpRequest` URLs before fetch.
+- **GM_openInTab dispatcher** (`src/gm-tab.ts`) — opens new tabs via
+  `chrome.tabs.create` on behalf of userscripts; tracks the per-request
+  (page-generated id ↔ assigned chrome tab id ↔ originator tab) mapping
+  so `chrome.tabs.onRemoved` can route close events back to the
+  originating tab's `onclose` callback.
+- **GM_notification dispatcher** (`src/gm-notification.ts`) — wraps
+  `chrome.notifications.create` and maps the chrome-assigned
+  notification id back to the originating tab + request id so
+  `onClicked` / `onClosed` events route to the userscript's
+  `onclick` / `ondone` callbacks.
 
 ## Cross-cutting docs
 

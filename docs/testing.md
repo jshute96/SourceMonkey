@@ -170,6 +170,15 @@ fetch via the SW). Highlights:
   abort, timeout, binary types.
 - `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating, including
   the strict-by-default "no @connect → blocked" case.
+- `tests/e2e/gm-log.spec.ts` — `GM_log` prefixes log lines with the
+  per-script id and forwards the rest verbatim; ungranted access is
+  gated.
+- `tests/e2e/gm-open-in-tab.spec.ts` — `GM_openInTab` opens at the
+  right URL, both options-object and positional call shapes work,
+  `onclose` fires when the opened tab is closed.
+- `tests/e2e/gm-notification.spec.ts` — `GM_notification` resolves
+  with a notification id; details and positional call shapes; the
+  GM4 alias returns a Promise; empty `text` rejects.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints
@@ -184,5 +193,10 @@ because they need mutable per-test routes that the shared
 - The viewer page's render path (covered by unit tests for the
   helpers but not by an e2e click-through).
 - XHR header surgery — deferred along with the implementation.
-- `GM_notification` / `GM_openInTab` / `GM_registerMenuCommand` /
-  `GM_cookie` — bindings exist but stubbed as not-implemented.
+- `GM_notification` click / done callback dispatch in production
+  Chrome — headless tests cover the SW round-trip and Promise
+  resolution but Chrome's notification UI is suppressed in
+  headless, so we can't drive a click; the unit test covers the
+  page-side dispatcher logic instead.
+- `GM_registerMenuCommand` / `GM_cookie` — bindings exist but
+  stubbed as not-implemented.

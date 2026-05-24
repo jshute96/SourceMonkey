@@ -6,12 +6,8 @@ A userscript manager Chrome extension that treats userscripts like source code, 
 > page can register local directories or HTTP manifests, every
 > `*.user.js` it finds is persistently loaded, matching scripts are
 > injected via `chrome.userScripts`, and the most-used `GM_*` /
-> `GM.*` APIs are wired up: storage (with cross-tab broadcast and
-> value-change listeners), DOM injection (`GM_addStyle` /
-> `GM_addElement`), clipboard, and `GM_xmlhttpRequest` (text +
-> binary) with `@connect` URL gating. `@require` prefetches and
-> prepends required bodies. Deferred: XHR header surgery,
-> `@resource` storage, `GM_notification` / `GM_openInTab` /
+> `GM.*` APIs are wired up. `@require` prefetches and prepends required
+> bodies. Deferred: XHR header surgery, `@resource` storage,
 > `GM_registerMenuCommand` / `GM_cookie`. See
 > [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) for the
 > per-API surface.
@@ -234,6 +230,13 @@ forms canonicalize to the same name). Ungranted APIs are
   `arraybuffer` / `document` response types, abort, timeout, and
   `@connect` URL gating (strict-by-default: no `@connect` declared
   → blocked).
+- **Logging** — `GM_log` forwards to `console.log` with a per-script
+  prefix so multi-script pages stay greppable.
+- **Tabs** — `GM_openInTab` opens a new tab via `chrome.tabs.create`
+  and returns a `{close, closed, onclose}` control object.
+- **Notifications** — `GM_notification` via `chrome.notifications`.
+  Supports details-object and legacy positional call shapes; click /
+  done callbacks dispatch cross-tab back to the originator.
 - **Metadata** — `GM_info` (script metadata + grants list +
   `scriptHandler: "SourceMonkey"`).
 

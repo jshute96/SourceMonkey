@@ -44,18 +44,12 @@ Host, Referer, User-Agent). Today `fetch()` silently strips them.
 
 ### GM_* APIs still stubbed (bindings emit, body throws)
 
-- `GM_notification` / `GM.notification` — wraps `chrome.notifications`.
-  SW-side handler, page-side onclick callback dispatch.
-- `GM_openInTab` / `GM.openInTab` — `chrome.tabs.create({ url, active })`
-  with the `loadInBackground` option.
 - `GM_registerMenuCommand` / `GM_unregisterMenuCommand` — needs a
   per-page command surface in the action popup (or via
   `chrome.contextMenus`). Discovery: where the menu lives in our
   UI is a design decision, not just implementation.
 - `GM_getResourceText` / `GM_getResourceURL` — depends on `@resource`
   storage landing (see require/resource follow-ups below).
-- `GM_log` — trivial wrapper over `console.log` with a per-script
-  prefix. Just hasn't been wired.
 
 ### GM_* APIs not yet in the catalog
 
@@ -125,8 +119,32 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `Error`, `Object.keys`, `Object.create`, `Object.prototype.
   hasOwnProperty`, `document.createElement`, `Node.appendChild`,
   `Element.setAttribute`, `chrome.runtime.sendMessage`,
-  `navigator.clipboard.writeText`. New subsystems should extend
-  the capture set if they reach for new builtins.
+  `navigator.clipboard.writeText`, `console.log`. New subsystems
+  should extend the capture set if they reach for new builtins.
+- **`GM_notification` SW-restart survival.** Click / done callback
+  mappings are in-memory; an SW restart between create and event
+  drops them. Open notifications keep showing but their events
+  don't reach the userscript. A future phase could persist the
+  mapping in `chrome.storage.session` to ride out idle-suspends.
+- **`GM_notification.tag` coalescing.** TM uses `tag` to replace an
+  existing notification with the same tag in place. We accept the
+  field but don't coalesce — each call creates a new notification.
+- **`GM_openInTab` exact-position insert.** `insert: true` biases
+  Chrome via `openerTabId`, but doesn't guarantee an index. An
+  exact `index = opener.index + 1` would need a
+  `chrome.tabs.get(opener)` round-trip first.
+- **`GM_openInTab` SW-restart survival.** The (requestId ↔ chromeTabId
+  ↔ originator) mapping is in-memory; on SW restart already-open
+  tabs stay open but `onclose` events from them won't route back
+  to the userscript.
+- **`GM_notification` click-path e2e coverage.** Headless Chromium
+  suppresses notification UI so we can't drive a click from a
+  Playwright test. Either drive
+  `chrome.notifications.onClicked` directly via the SW test surface
+  (similar to `sm.syncNow`) or land a manual-test checklist for
+  prod-Chrome verification.
+- **`GM_info` data files.** Compare what we return for GM_info vs
+  what TM/VM/etc return.
 
 ## HTTP sources — follow-ups
 

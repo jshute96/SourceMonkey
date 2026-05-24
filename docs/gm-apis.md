@@ -381,6 +381,111 @@ Known limitations:
   ('copy')` workaround that doesn't require focus — we may revisit
   if real reports come in.
 
+## `GM_log`
+
+Page-side wrapper around `console.log`. The binding emitter routes
+`GM_log(...)` to `window.__SM_GM__.log.write(scriptId, arguments)`.
+The runtime captures `console.log` at init time (so a sibling
+userscript reassigning `console.log` later can't subvert the wrapper)
+and prepends a `[SourceMonkey:<scriptId>]` prefix before forwarding
+the rest of the arguments verbatim. Chrome's `%c`/`%o` formatters
+and DevTools object expansion stay intact because we pass through
+the original argument list, not a stringified version.
+
+Returns `undefined` (matches TM/VM signature).
+
+## `GM_openInTab`
+
+### Call shape
+
+- `GM_openInTab(url, options?)` — options:
+  `{ active?, loadInBackground?, insert? }`. `active` and
+  `loadInBackground` are inverses.
+- `GM_openInTab(url, loadInBackground)` — legacy positional boolean.
+- Returns a control object `{ close, closed, onclose }`
+  synchronously.
+
+### SW handler
+
+- `src/gm-tab.ts` calls `chrome.tabs.create`.
+- `chrome.tabs.onRemoved` routes a `sm:gm-tab-close` back to the
+  originating tab so the control's `onclose` fires.
+
+### `insert` positioning
+
+- `insert: true` passes `openerTabId` to `chrome.tabs.create`,
+  biasing Chrome to place the new tab adjacent to the originator.
+- Best-effort positional only — exact-index would need an extra
+  `chrome.tabs.get(opener).index` round-trip we haven't paid yet.
+
+### Per-call state
+
+- Three maps in-memory: `requestId` (page-generated) ↔ `chromeTabId`
+  (assigned by `chrome.tabs.create`) ↔ `originatorTabId`.
+- On SW restart all three go empty; userscripts holding control
+  handles from the prior SW lifetime stop receiving `onclose`
+  events. Opened tabs stay open — we don't clean up after a restart.
+
+## `GM_notification`
+
+### Call shape
+
+- Two TM signatures accepted: `GM_notification(details, ondone?)`
+  and the legacy positional `GM_notification(text, title?, image?,
+  onclick?)`.
+- The page-side runtime normalizes both to one `details` payload.
+- Per-call `onclick` / `ondone` callbacks stay page-side (not
+  serializable) keyed by a generated `requestId`.
+
+### SW handler
+
+- `src/gm-notification.ts` calls `chrome.notifications.create('',
+  options)` (letting Chrome assign the id).
+- Stores `chromeNotificationId → (originator, requestId)`.
+- Replies with the chrome id; the page-side `GM_notification`
+  Promise resolves to it.
+
+### Icon fallback
+
+- `chrome.notifications` requires a non-empty `iconUrl` and
+  silently rejects without one.
+- When `details.image` is omitted, we fall back to the extension's
+  own icon.
+
+### Timeout
+
+- `details.timeout > 0` schedules a SW-side `setTimeout` that calls
+  `chrome.notifications.clear`.
+- Clearing fires the normal `onClosed` event flow, which routes
+  back to the userscript's `ondone`.
+
+### Event routing
+
+- `chrome.notifications.onClicked` → `sm:gm-notification-event`
+  (`event: 'clicked'`) to the originating tab.
+- `onClicked` is **not** terminal — the user may click then
+  dismiss; the page-side keeps the entry alive so `ondone` can
+  still fire.
+- `onClosed` IS terminal: SW frees the mapping, page-side frees
+  the callback slot.
+
+### Manifest
+
+- Requires the `notifications` permission. Without it
+  `chrome.notifications` is `undefined`; the SW handler short-
+  circuits with `ok:false, error: 'chrome.notifications
+  unavailable'` and the page-side Promise re-throws.
+
+### Known limitations
+
+- Click / done callbacks don't survive SW restart — in-memory
+  mapping is lost. Open notifications keep showing; events just
+  don't reach the userscript.
+- Originating-tab close drops the mapping. The notification stays
+  on screen but events have nowhere to route.
+- `tag` is parsed but unused today — `chrome.notifications` has
+  its own notification id semantics; we don't coalesce by tag.
+
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
@@ -413,3 +518,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
+- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`)
