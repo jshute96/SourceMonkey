@@ -348,8 +348,28 @@
   /* Lookup a parent fallback. `document.head` doesn't exist before
      document-start completes parsing; for very-early runAt we fall
      back to `document.documentElement` (always present by the time
-     a userScript can run). */
+     a userScript can run). Used by `GM_addStyle`, which always
+     wants <head>. */
   function defaultParent() { return document.head || document.documentElement; }
+
+  /* Tag-aware default parent for GM_addElement. Matches TM/VM: tags
+     that semantically live in <head> (SCRIPT, STYLE, LINK, META,
+     TITLE, BASE) go there; anything else lands in <body>. TITLE and
+     BASE are head-only per the HTML spec; including them matches
+     VM's list. Falls back through head / documentElement when body
+     doesn't exist yet (very-early runAt). Caller passes tagName
+     as-is; uppercased here so callers using lower/mixed case still
+     hit the right bucket. */
+  function defaultParentFor(tagName) {
+    var u = String(tagName).toUpperCase();
+    if (
+      u === "SCRIPT" || u === "STYLE" || u === "LINK" ||
+      u === "META"   || u === "TITLE" || u === "BASE"
+    ) {
+      return document.head || document.documentElement;
+    }
+    return document.body || document.head || document.documentElement;
+  }
 
   /* Apply one attribute. Boolean false means "omit the attribute"
      (matches TM): writing `setAttribute('disabled', 'false')` would
@@ -380,7 +400,8 @@
       return el;
     },
     /* GM_addElement: two signatures (matches TM/VM):
-         GM_addElement(tagName, attrs?) -> appends to head/documentElement
+         GM_addElement(tagName, attrs?) -> appends to head for
+           script/style/link/meta/title/base, otherwise to body
          GM_addElement(parent, tagName, attrs?) -> appends to parent
 
        attrs is a plain object of attribute names → string values.
@@ -404,7 +425,7 @@
       if (tagName == null || (typeof tagName === "string" && tagName.trim() === "")) {
         throw new _Error("[SourceMonkey] GM_addElement: tag name is required");
       }
-      if (!parent) parent = defaultParent();
+      if (!parent) parent = defaultParentFor(tagName);
       var el = _docCreateElement ? _docCreateElement(String(tagName)) : document.createElement(String(tagName));
       if (attrs && typeof attrs === "object") {
         var keys = _ObjectKeys(attrs);

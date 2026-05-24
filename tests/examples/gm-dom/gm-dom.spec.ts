@@ -6,11 +6,6 @@ import { test, expect } from '../../fixtures/extension';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// SourceMonkey routes any default-parent GM_addElement call to
-// document.head (or documentElement). The example highlights this
-// because TM/VM use a smarter "head for script/link/style/meta, body
-// otherwise" split; tests pin SM's actual behavior here so a future
-// change in defaults won't silently break the example's narrative.
 test.describe('examples / gm-dom', () => {
   test('GM_addStyle injects CSS the playground picks up', async ({
     extensionContext, fixtureServer, sm,
@@ -51,7 +46,7 @@ test.describe('examples / gm-dom', () => {
     await page.close();
   });
 
-  test('GM_addElement (default form) appends into <head> on SM', async ({
+  test('GM_addElement (default form) sends <p> to <body>', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     await sm.addSource(__dirname);
@@ -61,14 +56,64 @@ test.describe('examples / gm-dom', () => {
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
     await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
 
-    await page.locator('#btn-default').click();
-    await expect(page.locator('#log')).toContainText(/appended to <HEAD>/);
-    const inHead = await page.evaluate(() =>
-      Array.from(document.head.querySelectorAll('p')).some(
-        (p) => p.textContent && p.textContent.includes('default parent'),
-      ),
+    // Count body-level <p>s before/after so we don't accidentally
+    // match a <p> the example page itself ships with.
+    const beforeBodyPs = await page.evaluate(() =>
+      Array.from(document.body.querySelectorAll('p'))
+        .filter((p) => p.textContent && p.textContent.includes('default parent'))
+        .length,
     );
-    expect(inHead).toBe(true);
+    expect(beforeBodyPs).toBe(0);
+
+    await page.locator('#btn-default').click();
+    await expect(page.locator('#log')).toContainText(/appended to <BODY>/);
+
+    const afterBodyPs = await page.evaluate(() =>
+      Array.from(document.body.querySelectorAll('p'))
+        .filter((p) => p.textContent && p.textContent.includes('default parent'))
+        .length,
+    );
+    expect(afterBodyPs).toBe(1);
+    // And nothing went to head.
+    const inHead = await page.evaluate(() =>
+      Array.from(document.head.querySelectorAll('p'))
+        .some((p) => p.textContent && p.textContent.includes('default parent')),
+    );
+    expect(inHead).toBe(false);
+
+    await page.close();
+  });
+
+  test('GM_addElement (default form) sends <title> to <head>; repeated calls stack', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    await sm.addSource(__dirname);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
+    await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
+
+    const originalTitle = await page.title();
+    expect(originalTitle).toBe('Userscript examples for DOM injection');
+
+    // Each click appends a new <title> to head. document.title
+    // stays as the page's original title because the spec reads
+    // from the FIRST <title> in tree order, not the last.
+    await page.locator('#btn-title').click();
+    await expect(page.locator('#log')).toContainText(/appended to <HEAD>/);
+    await page.locator('#btn-title').click();
+    await page.locator('#btn-title').click();
+
+    const titlesInHead = await page.evaluate(
+      () => document.head.querySelectorAll('title').length,
+    );
+    expect(titlesInHead).toBe(4); // 1 original + 3 appended
+    const titlesInBody = await page.evaluate(
+      () => document.body.querySelectorAll('title').length,
+    );
+    expect(titlesInBody).toBe(0);
+    expect(await page.title()).toBe(originalTitle);
 
     await page.close();
   });
@@ -83,30 +128,36 @@ test.describe('examples / gm-dom', () => {
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
     await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
 
-    // Inject style + a default-parent <p> + a parent-form <span>.
     await page.locator('#btn-style').click();
-    await page.locator('#btn-default').click();
     await page.locator('#btn-parent').click();
+    await page.locator('#btn-default').click();
+    await page.locator('#btn-title').click();
     await expect.poll(() =>
       page.locator('#playground').evaluate((el) => getComputedStyle(el).borderColor),
     ).toMatch(/rgb\(220,\s*20,\s*60\)/);
     await expect(page.locator('#playground span')).toHaveCount(1);
+    expect(
+      await page.evaluate(() => document.head.querySelectorAll('title').length),
+    ).toBe(2); // original + 1 appended
 
     await page.locator('#btn-reset').click();
 
-    // Style gone: border falls back to the document default.
+    // Style gone.
     await expect.poll(() =>
       page.locator('#playground').evaluate((el) => getComputedStyle(el).borderColor),
     ).not.toMatch(/rgb\(220,\s*20,\s*60\)/);
-    // Default-parent <p> gone from head.
-    const stillInHead = await page.evaluate(() =>
-      Array.from(document.head.querySelectorAll('p')).some(
-        (p) => p.textContent && p.textContent.includes('default parent'),
-      ),
+    // Default-parent <p> gone (was in body).
+    const stillInBody = await page.evaluate(() =>
+      Array.from(document.body.querySelectorAll('p'))
+        .some((p) => p.textContent && p.textContent.includes('default parent')),
     );
-    expect(stillInHead).toBe(false);
+    expect(stillInBody).toBe(false);
     // Parent-form <span> gone.
     await expect(page.locator('#playground span')).toHaveCount(0);
+    // Appended <title> gone (head is back to just the original).
+    expect(
+      await page.evaluate(() => document.head.querySelectorAll('title').length),
+    ).toBe(1);
 
     await page.close();
   });

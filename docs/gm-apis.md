@@ -497,8 +497,11 @@ into pages that ship strict `Content-Security-Policy: script-src
 - `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
   appends to `document.head || document.documentElement`. Returns
   the element.
-- `GM_addElement(tagName, attrs?)` — appends to head/documentElement.
-  Returns the element.
+- `GM_addElement(tagName, attrs?)` — tag-aware default parent:
+  `<head>` for `script`/`style`/`link`/`meta`/`title`/`base`,
+  `<body>` for everything else (matches TM/VM). Falls back through
+  head / documentElement when body doesn't exist yet (very-early
+  `runAt`). Returns the element.
 - `GM_addElement(parent, tagName, attrs?)` — appends to the given
   parent node. Two-arg vs three-arg signatures are distinguished by
   whether `arg1` has a `.nodeType`.

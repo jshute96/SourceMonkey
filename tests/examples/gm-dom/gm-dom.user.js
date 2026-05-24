@@ -20,10 +20,11 @@
 
   const originalHTML = playground.innerHTML;
   // Every element this userscript has injected, in insertion order.
-  // Reset walks this list and removes them — important because
-  // GM_addStyle / default-parent GM_addElement land in <head>, not
-  // inside the playground, so wiping playground.innerHTML alone
-  // wouldn't undo them.
+  // Reset walks this list and removes them — important because some
+  // calls land outside the playground (GM_addStyle in <head>, the
+  // <title> default-parent call in <head>, the <p> default-parent
+  // call in <body>), so wiping playground.innerHTML alone wouldn't
+  // undo them.
   const injected = [];
 
   function track(el) { if (el) injected.push(el); return el; }
@@ -46,17 +47,6 @@
     append(`GM_addStyle(...) -> <${(el && el.tagName) || '?'}> in ${parentLabel(el)}`);
   });
 
-  document.getElementById('btn-default').addEventListener('click', () => {
-    // No parent argument — SourceMonkey routes this to <head>; TM/VM
-    // would route a <p> to <body>. The log records what actually
-    // happened so the user can see the difference.
-    const el = track(GM_addElement('p', {
-      textContent: 'paragraph appended via the default parent',
-      style: 'color: darkblue; margin: 0.5em 0;',
-    }));
-    append(`GM_addElement('p', ...) -> appended to ${parentLabel(el)} (invisible in SM — it went to head)`);
-  });
-
   document.getElementById('btn-parent').addEventListener('click', () => {
     const el = track(GM_addElement(playground, 'span', {
       textContent: ' [span via parent form] ',
@@ -65,15 +55,29 @@
     append(`GM_addElement(playground, 'span', ...) -> appended to ${parentLabel(el)}`);
   });
 
-  document.getElementById('btn-link').addEventListener('click', () => {
-    // <link rel="preload"> appends to head but has no visible
-    // rendering by design. The log line is the only confirmation.
-    const el = track(GM_addElement('link', {
-      rel: 'preload',
-      as: 'image',
-      href: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
+  document.getElementById('btn-default').addEventListener('click', () => {
+    // No parent argument — runtime picks <body> for non-head tags
+    // (script/style/link/meta/title/base would go to head; <p> doesn't).
+    const el = track(GM_addElement('p', {
+      textContent: 'paragraph appended via the default parent',
+      style: 'color: darkblue; margin: 0.5em 0;',
     }));
-    append(`GM_addElement('link', ...) -> appended to ${parentLabel(el)} (link tags have no visual rendering)`);
+    append(`GM_addElement('p', ...) -> appended to ${parentLabel(el)}`);
+  });
+
+  document.getElementById('btn-title').addEventListener('click', () => {
+    // <title> is a head tag, so the default parent sends it to
+    // <head>. GM_addElement just appends — each click leaves a new
+    // <title> sitting at the end of <head>. The browser tab text
+    // stays as the original title because document.title is
+    // computed from the FIRST <title> in tree order, not the last;
+    // inspect <head> in DevTools to see the appended copies stack
+    // up.
+    const stamp = new Date().toLocaleTimeString();
+    const el = track(GM_addElement('title', {
+      textContent: `[appended by userscript @ ${stamp}]`,
+    }));
+    append(`GM_addElement('title', ...) -> appended to ${parentLabel(el)}`);
   });
 
   document.getElementById('btn-reset').addEventListener('click', () => {

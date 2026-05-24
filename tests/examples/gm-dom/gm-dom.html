@@ -20,7 +20,12 @@
       <li><code>GM_addElement(tagName, attrs?)</code> &mdash;
         create an element of <em>tagName</em>, copy <em>attrs</em>
         onto it (including a <code>textContent</code> key as inner
-        text), and append it to the default parent.</li>
+        text), and append it to the default parent.
+        <code>&lt;head&gt;</code> for
+        <code>script</code> / <code>style</code> / <code>link</code> /
+        <code>meta</code> / <code>title</code> / <code>base</code>,
+        <code>&lt;body&gt;</code> for everything else (matches
+        TM/VM).</li>
       <li><code>GM_addElement(parent, tagName, attrs?)</code>
         &mdash; same, but appended to the given
         <em>parent</em> element instead of the default.</li>
@@ -28,32 +33,35 @@
 
     <h2>Details</h2>
     <ul>
-      <li><strong>Default parent differs between managers.</strong>
-        SourceMonkey always uses <code>document.head</code> (or
-        <code>document.documentElement</code> if head doesn&rsquo;t
-        exist yet). Tampermonkey / Violentmonkey pick smarter
-        defaults: <code>head</code> for
-        <code>script/link/style/meta</code>, <code>body</code> for
-        everything else. So in SM, the default-parent button puts
-        a <code>&lt;p&gt;</code> in head where you can&rsquo;t see
-        it &mdash; check the log for what happened. Use the
-        <em>parent form</em> button to write visibly into the
-        playground.</li>
       <li>USER_SCRIPT-world injection is exempt from page CSP, so
         these calls succeed even on pages that block inline
         scripts/styles.</li>
+      <li>The parent-form button appends a <code>&lt;span&gt;</code>
+        directly into the <em>playground</em> div below.</li>
+      <li>The default → body button appends a
+        <code>&lt;p&gt;</code>: <code>p</code> isn&rsquo;t a head
+        tag, so the runtime sends it to <code>&lt;body&gt;</code>.</li>
+      <li>The default → head button appends a
+        <code>&lt;title&gt;</code>: that <em>is</em> a head tag, so
+        it goes to <code>&lt;head&gt;</code>. Each click appends
+        another copy &mdash; inspect <code>&lt;head&gt;</code> in
+        DevTools to see them stack up. The browser tab text
+        doesn&rsquo;t change because <code>document.title</code>
+        comes from the <em>first</em> <code>&lt;title&gt;</code> in
+        tree order, not the last.</li>
+      <li>The log records each call&rsquo;s actual parent so you can
+        verify where it landed without inspecting the DOM by hand.</li>
       <li><em>Reset</em> removes every element this userscript has
-        injected so far (whether it went into head, body, or the
-        playground), and restores the playground&rsquo;s original
-        contents.</li>
+        injected so far (no matter which parent it went to) and
+        restores the playground&rsquo;s original contents.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>
     <div class="buttons">
       <button id="btn-style"    type="button">GM_addStyle (red border on playground)</button>
-      <button id="btn-default"  type="button">GM_addElement (default parent → head in SM)</button>
-      <button id="btn-parent"   type="button">GM_addElement (parent form → into playground)</button>
-      <button id="btn-link"     type="button">GM_addElement (link tag, naturally invisible)</button>
+      <button id="btn-parent"   type="button">GM_addElement (parent form → playground, &lt;span&gt;)</button>
+      <button id="btn-default"  type="button">GM_addElement (default → body, &lt;p&gt;)</button>
+      <button id="btn-title"    type="button">GM_addElement (default → head, &lt;title&gt;)</button>
       <button id="btn-reset"    type="button">Reset</button>
     </div>
 

@@ -51,7 +51,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     await page.close();
   });
 
-  test('GM_addElement(tag, attrs) appends to head/documentElement', async ({
+  test('GM_addElement(tag, attrs) routes head-tags to <head>', async ({
     extensionContext,
     fixtureServer,
     sm,
@@ -77,11 +77,82 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-element-tag', 'META');
     await expect(page.locator('body')).toHaveAttribute('data-sm-element-content', 'phase4');
-    // Confirm it was added to <head>.
     const inHead = await page.evaluate(
       () => !!document.head.querySelector('meta[name="sm-test"]'),
     );
     expect(inHead).toBe(true);
+    await page.close();
+  });
+
+  test('GM_addElement default parent: tag matching is case-insensitive and covers title/base', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Covers two contract details at once:
+    //   - tagName matching is case-insensitive ("TITLE" / "Base" hit
+    //     the head bucket the same as "title" / "base")
+    //   - title and base are part of the head list (the original
+    //     four-tag list was script/style/link/meta; widening to six
+    //     matches what VM's helper does).
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'CaseInsensitiveHeadTags',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_addElement'],
+      },
+      body: `
+        const t = GM_addElement('TITLE', { textContent: 'sm-new-title' });
+        const b = GM_addElement('Base',  { href: 'https://example.com/' });
+        document.body.dataset.smTitleParent = String(t && t.parentElement && t.parentElement.tagName);
+        document.body.dataset.smBaseParent  = String(b && b.parentElement && b.parentElement.tagName);
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-title-parent', 'HEAD');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-base-parent', 'HEAD');
+    await page.close();
+  });
+
+  test('GM_addElement(tag, attrs) routes body-tags to <body> (matches TM/VM)', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Regression guard for the tag-aware default parent. Pre-fix,
+    // any default-parent call landed in <head>, including visible
+    // tags like <p> — which made them invisible.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'AddElementToBody',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_addElement'],
+      },
+      body: `
+        const el = GM_addElement('p', { id: 'sm-injected-p', textContent: 'visible' });
+        document.body.dataset.smParentTag =
+          String(el && el.parentElement && el.parentElement.tagName);
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-parent-tag', 'BODY');
+    await expect(page.locator('#sm-injected-p')).toHaveText('visible');
+    const inHead = await page.evaluate(
+      () => !!document.head.querySelector('#sm-injected-p'),
+    );
+    expect(inHead).toBe(false);
     await page.close();
   });
 
