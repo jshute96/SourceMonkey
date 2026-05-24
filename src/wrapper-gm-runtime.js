@@ -14,7 +14,7 @@
    sequences in strings, the build minifies to one physical line. See
    scripts/build.mjs's minifyForInjection for the exact rules.
 
-   Shim cache. See docs/GM_API_strategy.md "Recommendation: a tiny
+   Shim cache. See docs/GM-API-strategy.md "Recommendation: a tiny
    'shim cache', not a full vault". We capture a small set of native
    references at runtime-init time so a sibling userscript that
    monkey-patches builtins later can't break our GM_* impls. The

@@ -182,7 +182,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // and forwards a serializable request to the SW; the SW ships
   // load/error/timeout/abort events back asynchronously via
   // chrome.tabs.sendMessage. The dispatch routes through
-  // chrome.runtime.onMessage in the runtime. See docs/gm-apis.md.
+  // chrome.runtime.onMessage in the runtime. See docs/GM-APIs.md.
   if (spec.subsystem === 'xhr') {
     switch (spec.name) {
       case 'GM_xmlhttpRequest':

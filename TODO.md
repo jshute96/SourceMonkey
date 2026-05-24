@@ -23,7 +23,7 @@ The Phase 1–10 work shipped the priority APIs; everything below is
 either a follow-up gap, a tractable second-tier API, or a research
 question. See [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md)
 for the current state of the per-API matrix and
-[docs/gm-apis.md](docs/gm-apis.md) for implementation details.
+[docs/GM-APIs.md](docs/GM-APIs.md) for implementation details.
 
 ### XHR header surgery (originally planned with Phase 10)
 

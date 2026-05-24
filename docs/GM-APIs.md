@@ -2,7 +2,7 @@
 
 Implementation status and design notes for the `GM_*` / `GM.*` API
 surface. Strategy and tradeoffs live in
-[`GM_API_strategy.md`](GM_API_strategy.md); this doc records what
+[`GM-API-strategy.md`](GM-API-strategy.md); this doc records what
 SourceMonkey actually does today.
 
 ## Components

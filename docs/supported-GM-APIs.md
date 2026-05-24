@@ -6,9 +6,9 @@ Violentmonkey, and Greasemonkey 4.
 
 For the engineering picture — the page-side runtime, SW handlers,
 binding emitter, `@connect` matcher — see
-[gm-apis.md](gm-apis.md). For the design rationale and the
+[GM-APIs.md](GM-APIs.md). For the design rationale and the
 strategy/phasing that produced this surface, see
-[GM_API_strategy.md](GM_API_strategy.md). For `@grant` /
+[GM-API-strategy.md](GM-API-strategy.md). For `@grant` /
 `@connect` / `@resource` header semantics see
 [supported-headers.md](supported-headers.md).
 

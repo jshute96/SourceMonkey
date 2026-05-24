@@ -20,7 +20,7 @@ test('catalog has both GM_xmlhttpRequest and GM.xmlHttpRequest aliases', () => {
   assert.equal(findApi('GM.xmlHttpRequest'), spec);
 });
 
-test('catalog covers the priority surface from GM_API_strategy.md', () => {
+test('catalog covers the priority surface from GM-API-strategy.md', () => {
   // The strategy doc's priority list — these must all be present.
   const priority = [
     'GM_xmlhttpRequest',

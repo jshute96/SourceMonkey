@@ -365,7 +365,7 @@ export async function buildRegistrationSpec(
   // `@grant something` with `@inject-into page` lands in MAIN; we
   // skip the bindings so the script gets a natural ReferenceError if
   // it touches a GM_* name. This is a documented limitation (see
-  // docs/GM_API_strategy.md).
+  // docs/GM-API-strategy.md).
   const gmBindings = world === 'USER_SCRIPT'
     ? (await buildGmBindingsForScript(script, scriptHandlerVersion)).js
     : '';
@@ -476,7 +476,7 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
 // of the documented userScripts contract. The real safety net is
 // that the wrapper dereferences `window.__SM_GM__` lazily — inside
 // the `__smAwaitDecision` microtask, AFTER the runtime has had a
-// chance to install. See docs/gm-apis.md.
+// chance to install. See docs/GM-APIs.md.
 export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
   const hasUserScriptWorld = activeSpecs.some((s) => s.world === 'USER_SCRIPT');
   if (!hasUserScriptWorld) return null;

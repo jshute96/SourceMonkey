@@ -167,8 +167,8 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/site-icons.md` | Origin extraction from `@match`, favicon fetch+cache, and the icon slot shown beside each script filename |
 | `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
-| `docs/GM_API_strategy.md` | Decision doc comparing VM-embed vs own-impl for `GM_*` APIs; recommends own-impl with VM as reference |
-| `docs/gm-apis.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |
+| `docs/GM-API-strategy.md` | Decision doc comparing VM-embed vs own-impl for `GM_*` APIs; recommends own-impl with VM as reference |
+| `docs/GM-APIs.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |
 | `docs/supported-GM-APIs.md` | User-facing per-API inventory: which `GM_*` names work, which are stubbed, and how they map to TM / VM / GM4 |
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
 | `docs/cross-manager-testing.md` | How the examples-suite-against-Tampermonkey framework works: persistent profile, CDP attach, dashboard-driven script install, fragile bits |

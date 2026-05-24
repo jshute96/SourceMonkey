@@ -12,7 +12,7 @@ details live in the topic-specific docs linked below.
 > with `@connect` URL gating. Deferred: XHR header surgery,
 > `@resource` storage, `GM_notification` / `GM_openInTab` /
 > `GM_registerMenuCommand` / `GM_cookie` (bindings stubbed). See
-> [gm-apis.md](gm-apis.md) and [TODO.md](../TODO.md).
+> [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 
 ## Components
 
@@ -95,7 +95,7 @@ details live in the topic-specific docs linked below.
   of every supported `GM_*` / `GM.*` API: name, alias, sync/async
   kind, subsystem, optional `requires` (e.g. `@connect`).
   `resolveGrants` canonicalizes a script's `@grant` lines into the
-  set we'll emit bindings for. See [gm-apis.md](gm-apis.md).
+  set we'll emit bindings for. See [GM-APIs.md](GM-APIs.md).
 - **GM_* binding emitter** (`src/gm-bindings.ts`) — pure compiler.
   Given a script's resolved grants + parsed header, returns the JS
   source spliced into the wrapper at register time. Emits real
@@ -115,7 +115,7 @@ details live in the topic-specific docs linked below.
 - **GM_* SW XHR runner** (`src/gm-xhr.ts`) — `fetch` driver with
   `AbortController` + timeout, text / JSON / binary response shapes
   (binary serialized to base64 for the page-side wire). See the
-  XHR section of [gm-apis.md](gm-apis.md).
+  XHR section of [GM-APIs.md](GM-APIs.md).
 - **@connect URL gating** (`src/gm-connect.ts`) — parses `@connect`
   lines into rules (`*`, `self`, exact, subdomain), resolves `self`
   against the script's `@match`/`@include` hosts, and gates
@@ -154,7 +154,7 @@ details live in the topic-specific docs linked below.
   shown in the viewer's Log tab.
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,
   favicon fetch + cache, icon slot in the options/viewer UI.
-- [gm-apis.md](gm-apis.md) — `GM_*` / `GM.*` implementation: the
+- [GM-APIs.md](GM-APIs.md) — `GM_*` / `GM.*` implementation: the
   catalog, page-side runtime, SW-side storage / XHR, `@connect`
   gating, and the per-API surface SourceMonkey ships.
 - [supported-GM-APIs.md](supported-GM-APIs.md) — user-facing

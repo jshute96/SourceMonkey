@@ -11,7 +11,7 @@ recommends a path.
 > phase add-ons `GM_log`, `GM_openInTab`, and `GM_notification` are
 > also live. XHR header surgery, `GM_registerMenuCommand`, and
 > `@resource`-backed `GM_getResource*` are still deferred. See
-> [gm-apis.md](gm-apis.md) for the implementation status and known
+> [GM-APIs.md](GM-APIs.md) for the implementation status and known
 > limitations; deferred follow-ups are tracked in
 > [TODO.md](../TODO.md).
 
