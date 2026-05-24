@@ -8,9 +8,9 @@ details live in the topic-specific docs linked below.
 > pipeline prefetches and prepends required bodies; the `GM_*` /
 > `GM.*` API surface covers storage (with cross-tab broadcast +
 > value-change listeners), DOM injection (`GM_addStyle` /
-> `GM_addElement`), clipboard, and `GM_xmlhttpRequest` (text + binary)
-> with `@connect` URL gating. Deferred: XHR header surgery,
-> `@resource` storage, `GM_notification` / `GM_openInTab` /
+> `GM_addElement`), clipboard, `GM_xmlhttpRequest` (text + binary)
+> with `@connect` URL gating, `GM_notification`, `GM_openInTab`, and
+> `GM_log`. Deferred: XHR header surgery, `@resource` storage,
 > `GM_registerMenuCommand` / `GM_cookie` (bindings stubbed). See
 > [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 

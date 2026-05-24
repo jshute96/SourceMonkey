@@ -77,11 +77,10 @@ export function hostMatchesRule(
     case 'wildcard':
       return true;
     case 'self':
-      // Match the exact host OR a subdomain of any selfHost
-      // (TM/VM both treat `self` as "the script's own origins or
-      // their subdomains"). We're conservative: exact match only.
-      // Subdomain handling can ride in on Phase 10.1 if real
-      // compat reports come in.
+      // TM/VM both treat `self` as "the script's own origins or
+      // their subdomains". We're conservative: exact match only.
+      // See TODO.md "@connect self subdomain handling" — known
+      // cross-manager divergence pending a real compat report.
       return selfHosts.has(h);
     case 'exact':
       return rule.host === h;

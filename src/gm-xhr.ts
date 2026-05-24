@@ -1,9 +1,10 @@
 // SW-side `GM_xmlhttpRequest` handler. Drives `fetch` against the
 // page's request, sends events back to the originating tab via
-// `chrome.tabs.sendMessage`. Phase 8 is the **text** path only —
-// `responseType: 'text'` (default) or `'json'`. Binary types
-// (blob, arraybuffer, document) land in Phase 9. Header surgery
-// + `@connect` validation land in Phase 10.
+// `chrome.tabs.sendMessage`. Supports text and binary response types
+// (text/json/blob/arraybuffer/document) and `@connect` URL gating.
+// Header surgery (setting forbidden request headers like Origin /
+// Cookie / Referer) is not yet wired — see TODO.md "XHR header
+// surgery".
 //
 // Wire protocol:
 //
@@ -28,9 +29,10 @@ export interface GmXhrRequestPayload {
   url: string;
   // Headers object — { header-name: value }.
   headers?: Record<string, string>;
-  // Body text. Phase 9 may extend to ArrayBuffer / FormData. For
-  // Phase 8 we accept strings; non-string bodies stringify via
-  // String() at the SW boundary.
+  // Body text. Non-string request bodies (FormData / Blob /
+  // ArrayBuffer) are not yet supported — see TODO.md "XHR binary
+  // request bodies". Non-string values stringify via String() at the
+  // SW boundary.
   data?: string;
   // Timeout in ms. 0 / undefined = no timeout.
   timeout?: number;

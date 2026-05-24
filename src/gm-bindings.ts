@@ -19,12 +19,12 @@
 //     baked into the wrapper as a literal object.
 //   - The `GM` object (GM4 alias namespace) is built up alongside.
 //
-// Phase 2 contract. Every body except GM_info throws "not implemented
-// yet" via `__SM_GM__.notImplemented(...)` (sync) or a rejected promise
-// from `sendAsync` plus a thrown "not implemented" wrap (async). Later
-// phases swap the bodies for real handlers. The compile-in shape — the
-// set of bindings created and the call-site call shape — stays stable
-// so e2e tests written against Phase 2 keep passing.
+// Compile-in shape contract: the set of bindings emitted and the
+// call-site shape (`__SM_GM__.<method>(...)` sync, `sendAsync` async)
+// is stable across phases. Bodies for unimplemented APIs throw "not
+// implemented yet" via `__SM_GM__.notImplemented(...)`; phases swap
+// in real handlers without changing the call-site shape, so e2e
+// tests written against earlier phases keep passing.
 
 import type { GmApiSpec } from './gm-api-catalog.js';
 import { findApi, GM_APIS } from './gm-api-catalog.js';
@@ -47,8 +47,7 @@ export interface GmInfoInput {
   // scripts re-parse this to read metadata our parser doesn't expose,
   // so passing it through verbatim matches TM/VM behavior.
   scriptMetaStr: string;
-  // Filled in from chrome.runtime.getManifest().version at the SW;
-  // for Phase 2 we pass a placeholder.
+  // Filled in from chrome.runtime.getManifest().version at the SW.
   scriptHandlerVersion: string;
   // Pre-loaded storage values for this script. Baked into the wrapper
   // as a literal so the page-side cache is populated synchronously,
@@ -111,12 +110,11 @@ function emitGmInfo(info: GmInfoInput): string {
 // Build a single GM_x binding statement.
 //
 // SYNC bodies delegate to __SM_GM__.<subsystem>.<verb>(scriptId, ...args).
-// For Phase 2 every sync body delegates to __SM_GM__.notImplemented(name).
+// Unimplemented sync APIs delegate to __SM_GM__.notImplemented(name).
 //
 // ASYNC bodies build a message envelope and route it through
-// __SM_GM__.sendAsync; the routing exists in Phase 2 even though the
-// SW handler returns "not implemented" for now. This keeps the
-// call-site shape stable across phases.
+// __SM_GM__.sendAsync. The call-site shape is stable across phases —
+// landing a new API only changes the SW-side dispatch.
 function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // unsafeWindow is a passthrough binding, not a function. In
   // USER_SCRIPT world there's no direct page-window access; expose
@@ -219,9 +217,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     }
   }
   if (spec.kind === 'sync') {
-    // Phase 2 placeholder for the subsystems we haven't filled in
-    // yet (storage-listener, dom, resource, menu, log). Closure
-    // captures the literal API name so error messages identify it.
+    // Fall-through for sync APIs whose body hasn't been wired up yet
+    // (resource, menu). Closure captures the literal API name so
+    // error messages identify it.
     return `const ${spec.name} = function () { return window.__SM_GM__.notImplemented(${jsLit(spec.name)}); };`;
   }
   // ASYNC body. Build the message envelope at call time so the args

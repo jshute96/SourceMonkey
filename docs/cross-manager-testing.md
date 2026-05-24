@@ -61,7 +61,7 @@ The profile persists across runs, so steps 2–4 only happen once.
 
 ## How TM script-install works
 
-`tests/fixtures/tampermonkey.ts` drives the TM dashboard:
+`tests/fixtures/tampermonkey-driver.mjs` drives the TM dashboard:
 
 - **Listing**: opens the dashboard
   (`chrome-extension://<id>/options.html#nav=dashboard`) and reads
@@ -133,7 +133,7 @@ collide with each other (they all `@match` distinct paths under
 
 ## Tampermonkey extension ID
 
-`tests/fixtures/tampermonkey.ts` defaults to TM Stable's CWS ID
+`tests/fixtures/tampermonkey-driver.mjs` defaults to TM Stable's CWS ID
 (`dhdgffkkebhmkfjojejmpbldmpobfkfo`). Override via `TM_EXTENSION_ID`
 if you're testing against TM Beta. The CDP port defaults to 9223;
 override via `TM_CDP_PORT`.
@@ -151,7 +151,7 @@ previously-failing spec, or (c) discover a new divergence.
   inside TM's options page DOM, which shifts between minor versions.
   If `listInstalled` returns an empty array or `installFromFile`
   throws "Could not find an Install button", the selectors need an
-  update in `tests/fixtures/tampermonkey.ts`.
+  update in `tests/fixtures/tampermonkey-driver.mjs`.
 - **CDP attachment**: `connectOverCDP` against a running Chromium
   doesn't trigger automation-detection (e.g. for Google login) in the same way as
   `launchPersistentContext` would. Worth keeping in mind if we ever extend

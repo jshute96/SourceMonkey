@@ -216,7 +216,8 @@
      (USER_SCRIPT world has one realm per document), so we dispatch
      by the message's scriptId rather than per-script.
 
-     Phase 7 will fire value-change listeners from here too. */
+     Also fires value-change listeners for each write so cross-tab
+     observers see remote updates. */
   function applyRemoteUpdate(scriptId, writes) {
     var s = stores[scriptId];
     if (!s || !s.ready) return;

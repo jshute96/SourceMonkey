@@ -145,6 +145,97 @@ Adding any of these is a catalog entry + a body — nothing structural.
   prod-Chrome verification.
 - **`GM_info` data files.** Compare what we return for GM_info vs
   what TM/VM/etc return.
+- **`applyRemoteUpdate` listener delivery without storage grant.**
+  `wrapper-gm-runtime.js#applyRemoteUpdate` short-circuits on
+  `!s.ready`, which is only set by `storage.init`. A script that
+  grants ONLY `GM_addValueChangeListener` (no read/write APIs) never
+  receives broadcasts. Fix: emit `storage.init` whenever any storage
+  subsystem (read/write OR listener) is granted, or dispatch
+  listeners independent of `s.ready`.
+- **Cross-window incognito broadcast filtering.** `broadcastValueUpdate`
+  doesn't filter targets by `tab.incognito`, so a write from an
+  incognito tab can fan out to normal-window tabs running the same
+  scriptId (and vice versa). Same caveat applies to value-change
+  listener dispatch. Should match Chrome's extension incognito
+  isolation contract.
+- **`GM_xmlhttpRequest` binary request bodies.** FormData / Blob /
+  ArrayBuffer request bodies aren't supported — non-string `data`
+  stringifies to `[object …]` at the SW boundary. Wire format
+  needs a binary-tagged envelope (mirroring the binary RESPONSE
+  path) for non-text bodies.
+- **`composeWrapperErrorMessage` substring dedup.** The first-line
+  dedup in `background.ts` checks `firstLine.includes(msg)`, so a
+  message like `"ok"` substring-matches a stack first line of
+  `"OkayThenError: foo"` and drops the prepend. Switch to
+  word-boundary or `": " + msg` matching.
+- **`GM_addElement` attribute sinks doc note.** `applyAttr` passes
+  caller-supplied attribute name/value to `setAttribute` unchanged —
+  intentionally matches TM/VM (userscripts have full DOM authority).
+  Worth one line in `supported-GM-APIs.md` calling out
+  `src=javascript:`, event-handler attributes, and `<script src>`
+  as deliberately un-sanitized sinks.
+- **`unsafeWindow` USER_SCRIPT-world clarity.** Currently a quiet
+  passthrough to USER_SCRIPT-world `window`. Either throw with a
+  "use `@inject-into page`" hint on access, or document the
+  passthrough more loudly so the gotcha is obvious. Today
+  `unsafeWindow.<page-global>` returns undefined with no signal.
+- **Listener-id contract.** `addValueChangeListener` returns the id
+  as a `String(numericCounter)`. TM returns numeric IDs. Pin the
+  contract in `GM-APIs.md` — id should be opaque to callers, but
+  document what we return.
+
+## `@connect` follow-ups
+
+- **`self` subdomain handling.** TM/VM treat `self` as "the
+  script's own origins OR their subdomains"; SourceMonkey matches
+  exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
+  fall through to the subdomain check against `selfHosts` as a set
+  of bases. Documented limitation pending a real compat report.
+- **Port handling is asymmetric.** A user-supplied port in
+  `@connect example.com:8443` (no scheme) lands in the `exact`
+  branch as `host = "example.com:8443"`, but request matching
+  goes through `URL.hostname` which strips the port — so the rule
+  never matches. Either strip ports consistently when parsing rules
+  or preserve them end-to-end through matching.
+- **IDN / Unicode host normalization.** `parseConnectEntry` lowercases
+  but doesn't punycode-normalize bare-host entries. A rule
+  `@connect börse.example` byte-compares against `URL.hostname`
+  which returns the punycode form (`xn--brse-5qa.example`) on most
+  browsers. Normalize both sides via `new URL('https://' +
+  host).hostname` before storing.
+- **IPv6 host handling.** `URL.hostname` returns IPv6 addresses in
+  bracketed form (`[::1]`). `@connect ::1` (no brackets) won't
+  match. Decide whether to require brackets in rules, or
+  bracketize bare IPv6 in `parseConnectEntry`.
+- **Wildcard-with-port rule.** `parseConnectEntry` on
+  `*.example.com:8443` treats the port as part of the host string,
+  so the wildcard branch's `endsWith` check never finds the port.
+  Same root cause as the bare-host port issue above.
+- **`@connect *` install-time warning.** A wildcard `@connect`
+  effectively asks for cross-origin fetch reach against any host.
+  TM prompts, VM logs a warning. Surface a "this script wants to
+  talk to any host" signal in the options-page row at install /
+  refresh time.
+
+## Test coverage gaps
+
+Negative-path / edge-case tests that would catch real bugs noticed
+during cumulative review of the GM_* phases:
+
+- **Storage**: circular-object `GM_setValue` (silent cycle drop on
+  JSON serialize), `chrome.storage.local.set` quota rejection (cache
+  diverges from storage), listener-throws (sibling listeners should
+  still fire), 1000-key prefix-scan perf smoke.
+- **Value-change listeners**: two listeners on the same key both
+  fire; cross-tab broadcast start-race window; iframe-of-same-tab
+  broadcast skip.
+- **`@connect`**: IPv6 hosts (`[::1]`), wildcard-with-port
+  (`*.example.com:8443`), forbidden-request-header strip surfacing,
+  GET / HEAD with `data` body (silent drop vs. surfaced).
+- **`@grant`**: `GM.GM_setValue` typo lands in `unknown` and
+  ReferenceError at runtime + SW logs dropped name.
+- **`GM_notification`**: image-less notification falls back to
+  `icons/icon-128.png` correctly.
 
 ## HTTP sources — follow-ups
 
