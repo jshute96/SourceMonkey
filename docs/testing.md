@@ -45,7 +45,9 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionContext` (worker-scoped) — persistent Chromium with the
     extension loaded and Preferences pre-seeded.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
-    `tests/fixtures/pages/`.
+    `tests/fixtures/pages/` first, with `tests/examples/` mounted as
+    a fallback root so example pages are reachable at
+    `${baseUrl}/<api>/page.html`.
   - `getServiceWorker` — re-resolves a live SW handle each call (MV3
     workers idle out).
   - `extensionId` — the deterministic ID of the unpacked extension.
@@ -184,6 +186,24 @@ The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints
 because they need mutable per-test routes that the shared
 `fixtureServer` (static HTML only) doesn't provide.
+
+### Examples / compliance suite
+
+`tests/examples/<api>/` pairs a `page.html` with a `script.user.js`
+for each demoed API. The pages double as a manual exploration tool
+(serve them with `http-server` and click around) and as a
+cross-manager compliance reference (install the same `*.user.js`
+files into TM/VM, hit the same URLs, compare outcomes).
+
+- Each example dir holds its own `<api>.spec.ts` next to the page
+  + userscript. Playwright is configured (`testMatch:
+  examples/**/*.spec.ts` in `playwright.config.ts`) to discover them
+  alongside the main `tests/e2e/` suite. Specs cover the same
+  ground as the targeted GM_* specs above but through the public,
+  installable userscript surface.
+- Userscripts `@match *://*/<api>/page.html` so the same patterns
+  work whether served at `${fixtureServer.baseUrl}` (random port) or
+  by a developer's local `http-server`.
 
 ### What's not yet covered
 

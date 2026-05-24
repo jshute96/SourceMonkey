@@ -124,6 +124,13 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-open-in-tab.spec.ts` | E2E tests for `GM_openInTab` (URL, call shapes, onclose, gating) |
 | `tests/e2e/gm-notification.spec.ts` | E2E tests for `GM_notification` (call shapes, Promise return, empty-text rejection, gating) |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
+| `tests/examples/README.md` | Overview of the interactive GM-API example pages; how to serve and use as a cross-manager compliance reference |
+| `tests/examples/index.html` | Index page linking the per-API example subdirs |
+| `tests/examples/examples.css` | Shared styling for all example pages |
+| `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
+| `tests/examples/gm-info/` | `GM_info` dump example |
+| `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
+| `tests/examples/gm-storage/` | `GM_setValue`/`getValue`/`deleteValue`/`listValues` examples (form-driven) |
 
 ## Docs (`docs/`)
 

@@ -1,0 +1,107 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 760px;
+  margin: 1em auto;
+  padding: 0 1em;
+  line-height: 1.5;
+  color: #222;
+}
+
+header {
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.5em;
+  margin-bottom: 1em;
+}
+
+h1 { margin: 0 0 0.25em; }
+h2 { margin-top: 1.5em; }
+
+.hint {
+  color: #555;
+  font-size: 0.95em;
+}
+
+.status {
+  background: #f0f4ff;
+  border: 1px solid #c4d4f7;
+  padding: 0.5em 0.75em;
+  border-radius: 4px;
+}
+
+.status.ran {
+  background: #f0fff4;
+  border-color: #b9e6c1;
+}
+
+pre {
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  padding: 0.75em;
+  border-radius: 4px;
+  overflow: auto;
+  max-height: 60vh;
+  font-size: 0.9em;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin: 0.5em 0;
+}
+
+button {
+  padding: 0.4em 0.8em;
+  cursor: pointer;
+  font: inherit;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+  font-size: 0.95em;
+}
+
+form input {
+  padding: 0.3em;
+  font: inherit;
+}
+
+ul#log {
+  list-style: none;
+  padding: 0.5em;
+  margin: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+ul#log li {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0.1em 0;
+  white-space: pre-wrap;
+}
+
+footer {
+  margin-top: 2em;
+  font-size: 0.9em;
+  color: #666;
+}
+
+a { color: #2a5cdc; }
+code {
+  background: #eee;
+  padding: 0 0.25em;
+  border-radius: 2px;
+  font-size: 0.9em;
+}

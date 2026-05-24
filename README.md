@@ -290,6 +290,9 @@ npm run test:headed # e2e with a visible browser
 - `scripts/build.mjs` — bundler-free build script.
 - `tests/unit/` — Node `--test` unit tests.
 - `tests/e2e/` — Playwright tests that load the unpacked extension.
+- `tests/examples/` — interactive GM API example pages with paired
+  userscripts; double as a cross-manager compliance reference. See
+  [tests/examples/README.md](tests/examples/README.md).
 - `docs/` — design docs and `file-index.md`.
 
 ## License

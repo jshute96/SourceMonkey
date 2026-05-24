@@ -19,7 +19,21 @@ export type GetServiceWorker = () => Promise<Worker>;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
+// Mounted as a fallback root so `tests/examples/<api>/<api>.html` is
+// reachable at `/<api>/<api>.html` from the fixture server. Keeps the
+// example userscripts' `@match *://*/<api>/<api>.html` patterns working
+// against both the test harness and a standalone http-server.
+const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
 export const EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
+
+const CONTENT_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+};
 
 // `extensionContext` is *worker-scoped* so a single Chromium window
 // (with the extension loaded) is reused across every test in the same
@@ -60,19 +74,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     async ({}, use) => {
       const server = http.createServer((req, res) => {
         try {
-          // Serve a fixture page from FIXTURE_PAGES_DIR. Reject path
-          // traversal so a malformed URL can't escape the fixture root.
+          // Serve from FIXTURE_PAGES_DIR first, then fall through to
+          // EXAMPLES_DIR. Path traversal is rejected per-root so a
+          // malformed URL can't escape either dir.
           const url = new URL(req.url ?? '/', 'http://127.0.0.1');
           const name = url.pathname.replace(/^\//, '') || 'index.html';
-          const filePath = path.join(FIXTURE_PAGES_DIR, name);
-          const rel = path.relative(FIXTURE_PAGES_DIR, filePath);
-          if (rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(filePath)) {
-            res.statusCode = 404;
-            res.end();
-            return;
-          }
-          res.setHeader('Content-Type', 'text/html; charset=utf-8');
-          res.end(fs.readFileSync(filePath));
+          if (serveFile(res, FIXTURE_PAGES_DIR, name)) return;
+          if (serveFile(res, EXAMPLES_DIR, name)) return;
+          res.statusCode = 404;
+          res.end();
         } catch (err) {
           res.statusCode = 500;
           res.end(String(err));
@@ -186,6 +196,19 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 });
 
 export const expect = test.expect;
+
+function serveFile(res: http.ServerResponse, root: string, name: string): boolean {
+  const filePath = path.join(root, name);
+  const rel = path.relative(root, filePath);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  if (!fs.existsSync(filePath)) return false;
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile()) return false;
+  const ext = path.extname(filePath).toLowerCase();
+  res.setHeader('Content-Type', CONTENT_TYPES[ext] ?? 'application/octet-stream');
+  res.end(fs.readFileSync(filePath));
+  return true;
+}
 
 // Pre-seed the Chrome profile so the unpacked extension at our known ID
 // is granted the per-extension toggles that headless test runs can't
