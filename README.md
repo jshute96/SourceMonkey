@@ -284,6 +284,13 @@ npm run test:e2e    # Playwright with the extension loaded
 npm run test:headed # e2e with a visible browser
 ```
 
+To narrow a run to one file:
+
+```sh
+node --test tests/unit/header-parser.test.mjs    # For one unit test
+npm run test:e2e -- tests/e2e/injection.spec.ts  # For one e2e test
+```
+
 The examples suite (`tests/examples/`) can also run against
 Tampermonkey for cross-manager compliance checks:
 
