@@ -7,7 +7,7 @@ import { test, expect } from '../../fixtures/manager';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / headers-run-at', () => {
-  test('all three @run-at variants run in start/end/idle order', async ({
+  test('all three @run-at variants run; idle observes readyState=complete', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     await setup.installScriptsFrom(__dirname);
@@ -21,21 +21,18 @@ test.describe('examples / headers-run-at', () => {
     await expect(page.locator('#log li[data-script="end"]')).toHaveCount(1);
     await expect(page.locator('#log li[data-script="idle"]')).toHaveCount(1);
 
-    // chrome.userScripts honors run-at as an "earliest" bound, so
-    // start is always injected before end, and end before idle.
-    // Each script appends synchronously when it can run, so #log
-    // order reflects injection order: start, end, idle.
-    const order = await page.locator('#log li').evaluateAll((els) =>
-      els.map((el) => (el as HTMLElement).dataset.script),
-    );
-    expect(order).toEqual(['start', 'end', 'idle']);
-
-    // document-idle runs after load fired, so readyState should be
-    // "complete". The other two are timing-dependent on real Chrome:
-    // for trivial local pages, chrome.userScripts at document_start /
-    // document_end frequently injects *after* parsing has reached
-    // "interactive", so we don't pin their readyState here. (See the
-    // page's Details section for the manual-exploration commentary.)
+    // The one cross-manager invariant we can rely on is the
+    // document-idle lifecycle contract: idle scripts run *after* the
+    // page's `load` event, so they observe readyState=complete.
+    //
+    // Cross-script ordering on tiny local pages is implementation-
+    // defined and varies between managers (and even between runs of
+    // the same manager): chrome.userScripts queues by @run-at then
+    // registration order (so SM lands start → end → idle), while TM
+    // has been observed running document-end at `load` — which can
+    // land *after* idle when a slow subresource pushes load past
+    // idle's static timeout. The SM-specific ordering is covered in
+    // tests/e2e/injection.spec.ts.
     await expect(page.locator('#log li[data-script="idle"]'))
       .toContainText('readyState=complete');
 

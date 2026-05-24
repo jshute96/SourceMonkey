@@ -22,10 +22,13 @@ test.describe('examples / gm-log', () => {
     await page.locator('#btn-simple').click();
     await expect(page.locator('#log')).toContainText('hello from a userscript');
 
-    // The console line should carry SourceMonkey's per-script prefix
-    // and the message we passed.
+    // The message should appear in the page's DevTools console.
+    // Managers wrap GM_log with their own per-script prefix
+    // (e.g. SM's `[SourceMonkey:<id>]`, TM's own), so we only assert
+    // that the message text itself was logged. The SM-specific prefix
+    // is covered in tests/e2e/gm-log.spec.ts.
     await expect.poll(() =>
-      logged.find((l) => l.includes('[SourceMonkey:') && l.includes('hello from a userscript')) ?? null
+      logged.find((l) => l.includes('hello from a userscript')) ?? null
     ).not.toBeNull();
 
     await page.close();

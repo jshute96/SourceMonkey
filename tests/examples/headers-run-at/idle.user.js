@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: @run-at document-idle
 // @namespace   sourcemonkey.example
-// @version     1.0.0
+// @version     1.1.0
 // @description Demonstrates @run-at document-idle (default; after load).
 // @match       *://*/headers-run-at/headers-run-at.html
 // @match       file:///*/headers-run-at/headers-run-at.html
@@ -15,10 +15,13 @@
   const log = document.getElementById('log');
   if (!log) return;
 
+  // performance.now() is milliseconds since navigation start —
+  // including it makes the gap between document-start, document-end,
+  // and document-idle visible in the displayed log.
   const li = document.createElement('li');
   li.dataset.script = 'idle';
   li.textContent =
-    `[document-idle] readyState=${document.readyState} body=<${document.body && document.body.tagName}>`;
+    `[document-idle] t=${performance.now().toFixed(1)}ms readyState=${document.readyState} body=<${document.body && document.body.tagName}>`;
   log.appendChild(li);
 
   const status = document.getElementById('runStatus');

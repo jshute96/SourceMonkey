@@ -22,18 +22,22 @@ test.describe('examples / gm-notification', () => {
     await page.close();
   });
 
-  test('empty-text call rejects', async ({
+  test('empty-text call produces an observable outcome', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-notification/gm-notification.html`);
+    await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
 
     await page.locator('#btn-empty').click();
-    // Either a Promise rejection or a synchronous throw is acceptable —
-    // we just want to see that empty text didn't quietly succeed.
-    await expect(page.locator('#log')).toContainText(/(rejected|threw)/);
+    // Whether empty text is rejected (SM), accepted, or silently
+    // ignored is manager-specific. We just want to see that the call
+    // produced *some* observable outcome — resolved, rejected, or a
+    // synchronous throw. SM's strict-rejection invariant is covered in
+    // tests/e2e/gm-notification.spec.ts.
+    await expect(page.locator('#log')).toContainText(/(resolved|rejected|threw)/);
 
     await page.close();
   });

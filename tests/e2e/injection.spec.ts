@@ -187,4 +187,78 @@ test.describe('injection', () => {
     await expect(page2.locator('#target')).toHaveText('injected from cache');
     await page2.close();
   });
+
+  // chrome.userScripts queues scripts by @run-at then registration
+  // order, so document-start → document-end → document-idle is a
+  // hard invariant under SM. (The cross-manager spec in
+  // tests/examples/headers-run-at intentionally loosens this: TM has
+  // been observed running document-end at `load`, which can land
+  // *after* idle when a slow subresource is on the page.)
+  test('document-start, document-end, document-idle inject in @run-at order', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Only document-start defers to DCL (the body element may not
+    // exist yet when start injects). document-end and document-idle
+    // append synchronously on inject, so `#log` order reflects real
+    // injection order rather than the order DCL listeners happened
+    // to fire. tag is one of start/end/idle — safe to interpolate
+    // raw into a JS string body.
+    for (const runAt of ['document-start', 'document-end', 'document-idle'] as const) {
+      const tag = runAt.split('-')[1]!;
+      const body =
+        tag === 'start'
+          ? `
+            function record() {
+              const log = document.getElementById('log');
+              if (!log) return;
+              const li = document.createElement('li');
+              li.dataset.script = '${tag}';
+              li.textContent = '${tag} readyState=' + document.readyState;
+              log.appendChild(li);
+            }
+            if (document.readyState === 'loading') {
+              document.addEventListener('DOMContentLoaded', record);
+            } else {
+              record();
+            }
+          `
+          : `
+            const log = document.getElementById('log');
+            if (log) {
+              const li = document.createElement('li');
+              li.dataset.script = '${tag}';
+              li.textContent = '${tag} readyState=' + document.readyState;
+              log.appendChild(li);
+            }
+          `;
+      scriptsDir.write({
+        relativePath: `${tag}.user.js`,
+        meta: {
+          name: `RunAt-${tag}`,
+          match: [`${fixtureServer.baseUrl}/*`],
+          runAt,
+        },
+        body,
+      });
+    }
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/run-at.html`);
+    await expect(page.locator('#log li')).toHaveCount(3);
+
+    const order = await page.locator('#log li').evaluateAll((els) =>
+      els.map((el) => (el as HTMLElement).dataset.script),
+    );
+    expect(order).toEqual(['start', 'end', 'idle']);
+
+    // document-idle waits for load, so it observes complete.
+    await expect(page.locator('#log li[data-script="idle"]'))
+      .toContainText('readyState=complete');
+
+    await page.close();
+  });
 });

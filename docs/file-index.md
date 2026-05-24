@@ -28,6 +28,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
+| `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout |
 | `scripts/open-test-browser-with-SourceMonkey.sh` | Launch Chromium with the unpacked SM extension + CDP port 9222 for cross-manager Playwright runs |
 | `scripts/open-test-browser-with-TamperMonkey.sh` | Launch Chromium with a persistent profile (TM installed manually) + CDP port 9223 for the TM Playwright project |
@@ -81,6 +82,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy |
 | `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (launchPersistentContext) or TM (CDP attach) per project metadata |
 | `tests/fixtures/sourcemonkey-launch.ts` | Shared Chromium-launch / SW-handle / HTTP-fixture-server helpers used by both `extension.ts` and `manager.ts` |
+| `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay-route handler + static content-types, shared by the Playwright fixture server and `scripts/serve-examples.mjs` |
 | `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: parses local `*.user.js` headers, lists installed scripts off the dashboard, installs/updates via the import-from-file flow |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
@@ -89,6 +91,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
+| `tests/fixtures/pages/run-at.html` | Fixture page with an empty `#log` list used by the @run-at ordering test |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |

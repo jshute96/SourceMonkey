@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: @run-at document-start
 // @namespace   sourcemonkey.example
-// @version     1.0.0
+// @version     1.1.0
 // @description Demonstrates @run-at document-start (runs before DOM parses).
 // @match       *://*/headers-run-at/headers-run-at.html
 // @match       file:///*/headers-run-at/headers-run-at.html
@@ -13,9 +13,13 @@
   'use strict';
 
   // At document-start the body element typically doesn't exist yet,
-  // so we capture readyState immediately and defer the DOM append
-  // until DOMContentLoaded.
+  // so we capture readyState + a timestamp immediately and defer the
+  // DOM append until DOMContentLoaded. The timestamp (milliseconds
+  // since navigation start) is what makes the gap between
+  // document-start, document-end, and document-idle visible in the
+  // displayed log.
   const observed = document.readyState;
+  const observedAt = performance.now();
   const bodyAtStart = String(document.body);
 
   function record() {
@@ -24,7 +28,7 @@
     const li = document.createElement('li');
     li.dataset.script = 'start';
     li.textContent =
-      `[document-start] readyState=${observed} body=${bodyAtStart}`;
+      `[document-start] t=${observedAt.toFixed(1)}ms readyState=${observed} body=${bodyAtStart}`;
     log.appendChild(li);
     const status = document.getElementById('runStatus');
     if (status) {

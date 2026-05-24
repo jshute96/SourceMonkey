@@ -58,18 +58,26 @@ the file:// URL without any server in the loop.
 
 ### Option B: serve over HTTP
 
-If you want to test against `http://` instead,
-run a static server in `tests/examples/`:
+To test against `http://`, run the bundled serve script from the
+repo root:
 
 ```sh
-# Serve tests/examples/ as the document root on http://localhost:8080.
-cd tests/examples && npx http-server -p 8080 -c-1
+# Serve tests/examples/ on http://127.0.0.1:8080 (default port).
+node scripts/serve-examples.mjs
+
+# Custom port:
+node scripts/serve-examples.mjs --port 9000
 ```
 
-Then visit `http://localhost:8080/index.html` for the index, or jump
-straight to e.g. `http://localhost:8080/gm-info/gm-info.html`. The
+Then visit `http://127.0.0.1:8080/index.html` for the index, or jump
+straight to e.g. `http://127.0.0.1:8080/gm-info/gm-info.html`. The
 `@match *://*/<api>/<api>.html` pattern matches under any host and
 port.
+
+The serve script is a static-file server plus one special route:
+`/__slow/<file>?ms=N` answers after N ms. `headers-run-at/` uses it
+to demonstrate how `@run-at` variants relate to the page's lifecycle
+events.
 
 ### Installing the userscripts
 

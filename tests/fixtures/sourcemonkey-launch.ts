@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { CONTENT_TYPES, handleSlowRoute } from './slow-route.mjs';
 
 export interface LaunchedSmContext {
   ctx: BrowserContext;
@@ -114,15 +115,6 @@ function writeExtensionPreferences(userDataDir: string, extensionId: string): vo
 
 // ----- HTTP fixture server -----
 
-const CONTENT_TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-};
-
 export interface FixtureServer {
   baseUrl: string;
   close(): Promise<void>;
@@ -138,6 +130,9 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
   const server = http.createServer((req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      // `/__slow/` is shared with the standalone serve CLI — see
+      // tests/fixtures/slow-route.mjs.
+      if (handleSlowRoute(url, res)) return;
       const name = url.pathname.replace(/^\//, '') || 'index.html';
       if (serveFile(res, pagesDir, name)) return;
       if (serveFile(res, examplesDir, name)) return;
