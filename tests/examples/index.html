@@ -59,6 +59,23 @@
         <a href="gm-notification/gm-notification.html">GM_notification</a>
         &mdash; click-driven examples of every call shape.
       </li>
+      <li>
+        <a href="headers-run-at/headers-run-at.html">@run-at</a>
+        &mdash; one userscript per value (<code>document-start</code> /
+        <code>-end</code> / <code>-idle</code>) running on the same page.
+      </li>
+      <li>
+        <a href="headers-inject-into/headers-inject-into.html">@inject-into</a>
+        &mdash; MAIN world (<code>page</code>) vs isolated USER_SCRIPT world
+        (<code>content</code>), showing what each one can and can&rsquo;t see
+        of the page&rsquo;s globals.
+      </li>
+      <li>
+        <a href="xmlhttp-denied/xmlhttp-denied.html">@connect denial (negative cases)</a>
+        &mdash; scripts with no <code>@connect</code>, a mismatched host, and an
+        explicit allow all firing <code>GM_xmlhttpRequest</code> at the same
+        URL to show blocked-vs-allowed outcomes.
+      </li>
     </ul>
   </main>
 </body>

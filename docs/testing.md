@@ -204,6 +204,11 @@ files into TM/VM, hit the same URLs, compare outcomes).
 - Userscripts `@match *://*/<api>/page.html` so the same patterns
   work whether served at `${fixtureServer.baseUrl}` (random port) or
   by a developer's local `http-server`.
+- A directory may also hold **multiple** sibling userscripts for
+  header-variation pages (`headers-run-at/` runs one per value;
+  `xmlhttp-denied/` runs one per `@connect` configuration). All
+  variants share the same `<dir>.html` and the spec asserts on the
+  cross-variant outcomes side-by-side.
 
 ### What's not yet covered
 

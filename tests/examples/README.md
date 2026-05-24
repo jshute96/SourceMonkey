@@ -18,6 +18,22 @@ All three files share the directory's stem (e.g.
 `gm-info/gm-info.html` + `gm-info/gm-info.user.js` +
 `gm-info/gm-info.spec.ts`).
 
+### Multi-script directories
+
+Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
+and negative-case pages (`xmlhttp-denied/`) follow a small variant
+of the layout above:
+
+- Still **one** `<dir>.html` and **one** `<dir>.spec.ts`.
+- **Multiple** sibling `*.user.js` files, one per variant being
+  demonstrated. All variants `@match` the same page.
+- Each variant writes its own outcome into a shared
+  `<ul id="log">` on the page, typically tagged with a
+  `data-script="<variant>"` attribute the spec can target.
+- Variant files are named by what they vary (`start.user.js`,
+  `end.user.js`, `no-connect.user.js`, …), not by the directory
+  stem.
+
 The aim is double-purpose:
 
 - **Manual exploration** — open a page in a real browser with the
@@ -77,6 +93,9 @@ port.
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
+| `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
+| `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
+| `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 
 ## Page conventions
 
@@ -113,7 +132,9 @@ prose paragraphs. Mirrors the project-wide doc convention.
 2. Use both `@match *://*/<api>/<api>.html` and
    `@match file:///*/<api>/<api>.html` so the script matches under
    any local server port and any host, plus direct file:// opens.
-3. Follow the *Page conventions* layout above.
+3. Follow the *Page conventions* layout above. Header-demo dirs
+   may use `<h2>Header</h2>` in place of `<h2>APIs</h2>` since
+   they demonstrate a userscript header, not a `GM_*` API.
 4. Link `examples.css` (`../examples.css` from a per-api dir) for
    consistent styling.
 5. Add a row to the table above and a link in `index.html`.
@@ -121,6 +142,13 @@ prose paragraphs. Mirrors the project-wide doc convention.
    `../../fixtures/extension` and use `__dirname` directly as the
    argument to `sm.addSource` — see the existing specs for the
    template.
+
+For a **multi-script directory** (see above): replace step 1 with
+a single `<dir>.html` + single `<dir>.spec.ts` + one
+`<variant>.user.js` per variant. Every variant userscript should
+share the same `@match` patterns, write its outcome into a shared
+`<ul id="log">` with a `data-script="<variant>"` attribute, and
+the spec targets each row through that attribute.
 
 ## Testing
 
