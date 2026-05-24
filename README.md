@@ -301,7 +301,8 @@ node scripts/sync-tm-scripts.mjs
 # Run the examples suite against TM, headless. Headed browser must be closed.
 npm run test:e2e:tm
 
-# Or, headed: connects to a browser you've already opened, so you can watch.
+# Or, headed: connects via CDP to the TM browser — pretest hook
+# launches it if it isn't already running.
 npm run test:e2e:tm:headed
 ```
 

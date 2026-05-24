@@ -12,16 +12,27 @@ compliance reference and surface divergences between managers.
 ## Running the suite
 
 - `npm run test:e2e` — SM project only (default for `npm test` too).
-- `npm run test:e2e:tm` — TM project, **headless**. Launches its own
-  Chromium against the persistent TM profile. The headed browser
-  (`open-test-browser-with-TamperMonkey.sh`) must **not** be open at
-  the same time — Chromium can't share a profile between two
-  processes.
-- `npm run test:e2e:tm:headed` — TM project, **headed**. Sets
-  `TM_HEADED=1` and connects via CDP to the browser opened by
-  `scripts/open-test-browser-with-TamperMonkey.sh`. Use this when you
-  want to watch the run or debug interactively.
-- `npx playwright test --project=<name>` works directly too.
+- `npm run test:e2e:tm` — TM project, **headless**.
+  - Launches its own Chromium against the persistent TM profile.
+  - The headed browser (`open-test-browser-with-TamperMonkey.sh`) must
+    **not** be open at the same time — Chromium can't share a profile
+    between two processes.
+  - Preflight (`pretest:e2e:tm` → `scripts/e2e-tm-preflight.mjs
+    --need-closed`): if a CDP-attached browser is already up, calls
+    `page.bringToFront()` to surface the offending tab (best-effort —
+    on Linux/X11 this activates the tab but may not raise the window
+    above other apps), prints a "close it" message, and exits 1
+    before Playwright runs.
+- `npm run test:e2e:tm:headed` — TM project, **headed**.
+  - Sets `TM_HEADED=1` and connects via CDP to the browser opened by
+    `scripts/open-test-browser-with-TamperMonkey.sh`.
+  - Use this when you want to watch the run or debug interactively.
+  - Preflight (`pretest:e2e:tm:headed` → `scripts/e2e-tm-preflight.mjs
+    --need-open`): if CDP 9223 isn't answering, spawns the opener
+    script (detached) and waits up to 15s for the port to come up, so
+    the command "just works" from a cold start.
+- `npx playwright test --project=<name>` works directly too, but
+  skips the preflight — make sure the browser state is right yourself.
 
 Each Playwright project carries `metadata.manager` and the manager
 fixture (`tests/fixtures/manager.ts`) reads it. No env var needed for
