@@ -24,8 +24,8 @@
         <code>&lt;head&gt;</code> for
         <code>script</code> / <code>style</code> / <code>link</code> /
         <code>meta</code> / <code>title</code> / <code>base</code>,
-        <code>&lt;body&gt;</code> for everything else (matches
-        TM/VM).</li>
+        <code>&lt;body&gt;</code> for everything else (matches VM;
+        TM diverges &mdash; see Details below).</li>
       <li><code>GM_addElement(parent, tagName, attrs?)</code>
         &mdash; same, but appended to the given
         <em>parent</em> element instead of the default.</li>
@@ -41,6 +41,16 @@
       <li>The default → body button appends a
         <code>&lt;p&gt;</code>: <code>p</code> isn&rsquo;t a head
         tag, so the runtime sends it to <code>&lt;body&gt;</code>.</li>
+      <li><strong>Cross-manager difference (default parent):</strong>
+        SourceMonkey and Violentmonkey route the no-parent form by
+        tag &mdash; head-tags (<code>script</code>,
+        <code>style</code>, <code>link</code>, <code>meta</code>,
+        <code>title</code>, <code>base</code>) go to
+        <code>&lt;head&gt;</code>, everything else goes to
+        <code>&lt;body&gt;</code>. Tampermonkey appends to
+        <code>&lt;head&gt;</code> regardless of tag, so under TM the
+        <code>&lt;p&gt;</code> from the button above lands in
+        <code>&lt;head&gt;</code> instead.</li>
       <li>The default → head button appends a
         <code>&lt;title&gt;</code>: that <em>is</em> a head tag, so
         it goes to <code>&lt;head&gt;</code>. Each click appends

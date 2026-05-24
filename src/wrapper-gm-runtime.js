@@ -353,14 +353,21 @@
      wants <head>. */
   function defaultParent() { return document.head || document.documentElement; }
 
-  /* Tag-aware default parent for GM_addElement. Matches TM/VM: tags
+  /* Tag-aware default parent for GM_addElement. Matches VM: tags
      that semantically live in <head> (SCRIPT, STYLE, LINK, META,
      TITLE, BASE) go there; anything else lands in <body>. TITLE and
      BASE are head-only per the HTML spec; including them matches
      VM's list. Falls back through head / documentElement when body
      doesn't exist yet (very-early runAt). Caller passes tagName
      as-is; uppercased here so callers using lower/mixed case still
-     hit the right bucket. */
+     hit the right bucket.
+
+     TM diverges here: it appends to <head> regardless of tag, so a
+     no-parent GM_addElement('p', ...) lands in <head> under TM. We
+     follow VM's tag-aware rule because it's more useful for non-head
+     tags and matches what most callers expect; cross-manager tests
+     don't pin the parent for non-head tags. See
+     docs/cross-manager-test-results.md. */
   function defaultParentFor(tagName) {
     var u = String(tagName).toUpperCase();
     if (
@@ -400,7 +407,9 @@
       }
       return el;
     },
-    /* GM_addElement: two signatures (matches TM/VM):
+    /* GM_addElement: two signatures (both call shapes match TM/VM;
+       the no-parent default-parent rule matches VM — TM always
+       appends to <head>, see defaultParentFor above):
          GM_addElement(tagName, attrs?) -> appends to head for
            script/style/link/meta/title/base, otherwise to body
          GM_addElement(parent, tagName, attrs?) -> appends to parent

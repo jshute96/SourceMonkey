@@ -32,35 +32,54 @@ Specs that opt out under TM via
   page's inline-script globals the way it does under SM. Different
   world / context-isolation behaviour. Needs its own triage.
 
-## Resolved divergences
+## Behavior diffs (SM vs TM)
 
-Specs that previously diverged and have been loosened to compliance-
-level assertions. Manager-specific invariants have moved into
-SM-only specs under `tests/e2e/`:
+Cases where SM and TM genuinely behave differently on the same input
+— neither implementation is buggy, the API spec just doesn't pin the
+behavior down and the two managers picked different rules. The
+cross-manager assertion has been loosened to accept both; SM's
+specific rule stays enforced in an SM-only spec.
 
-- **`gm-log/`** — assertion no longer requires the SM-specific
-  `[SourceMonkey:` prefix; just checks the message text reached the
-  console. SM prefix coverage: `tests/e2e/gm-log.spec.ts`.
-- **`gm-dom/`** (default-parent `<p>`) — assertion no longer pins
-  the parent to `<body>`; just checks the element was inserted and
-  the count of matching `<p>`s went up by one. SM default-parent
-  rules (head-tag list, body for non-head tags): `tests/e2e/gm-dom.spec.ts`.
-- **`gm-notification/`** (empty-text) — assertion now accepts
-  resolved, rejected, or synchronously thrown; just verifies an
+- **`gm-dom/`** (default-parent `<p>`) — TM appends the no-parent
+  element to `<head>` regardless of tag; SM/VM route by tag (head
+  for `script`/`style`/`link`/`meta`/`title`/`base`, body for
+  everything else). The TM docs don't pin the default parent down,
+  so neither rule is wrong. Cross-manager assertion: element was
+  inserted and the count of matching `<p>`s went up by one. SM rule
+  enforced strictly in `tests/e2e/gm-dom.spec.ts`.
+- **`gm-notification/`** (empty-text) — TM accepts an empty `text`
+  field and resolves with a notification id (or surfaces it some
+  other way); SM rejects strictly. Cross-manager assertion: accepts
+  resolved, rejected, or synchronously thrown — just verifies an
   observable outcome. SM strict-rejection invariant:
   `tests/e2e/gm-notification.spec.ts`.
-- **`headers-run-at/`**:
-  - Strict `start → end → idle` ordering removed. Cross-manager
-    spec now asserts only that all three scripts ran and that
-    document-idle observes `readyState=complete`.
-  - SM-specific strict ordering covered by
-    `tests/e2e/injection.spec.ts` ("document-start, document-end,
-    document-idle inject in @run-at order").
-  - The example page pulls in a slow sync
-    `<script src="/__slow/blocker.js?ms=400">` so document-start
-    gets an actual loading-phase injection window. See
-    `tests/examples/README.md` for the serve-script setup that
-    provides the `/__slow/` route.
+- **`headers-run-at/`** (lifecycle ordering) — TM doesn't guarantee
+  the `start → end → idle` injection order under every page-load
+  shape (cross-manager test results varied). SM does guarantee it
+  (the wrapper gates on the right lifecycle event; see
+  `docs/injection.md`). Cross-manager assertion: all three scripts
+  ran and document-idle observes `readyState=complete`. SM strict
+  ordering: `tests/e2e/injection.spec.ts` ("document-start,
+  document-end, document-idle inject in @run-at order").
+
+## SM-only invariants (loosened for cross-manager)
+
+Cases where the cross-manager assertion was loosened not because of
+a manager behavior diff, but because the original assertion encoded
+an SM-specific extension or environmental requirement that TM was
+never expected to share.
+
+- **`gm-log/`** — assertion no longer requires the SM-specific
+  `[SourceMonkey:` prefix on `console.log` lines; just checks the
+  message text reached the console. SM prefix coverage:
+  `tests/e2e/gm-log.spec.ts`.
+- **`headers-run-at/`** (slow-script setup) — the example page
+  pulls in a slow sync `<script src="/__slow/blocker.js?ms=400">`
+  so document-start gets an actual loading-phase injection window.
+  See `tests/examples/README.md` for the serve-script setup that
+  provides the `/__slow/` route. Not a manager diff — both managers
+  need the slow route to exhibit a clean three-state split, the
+  setup is just specific to our examples server.
 
 When triaging a new TM divergence, the options are:
 1. Loosen the assertion so both managers pass (and move any
