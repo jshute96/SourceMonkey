@@ -5,16 +5,15 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from '../../fixtures/extension';
+import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-xmlhttp', () => {
   test('GET against the fixture server populates the output panel', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-xmlhttp/gm-xmlhttp.html`);
@@ -31,10 +30,9 @@ test.describe('examples / gm-xmlhttp', () => {
   });
 
   test('a 404 still fires onload (not onerror)', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-xmlhttp/gm-xmlhttp.html`);

@@ -29,6 +29,11 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout |
+| `scripts/open-test-browser-with-SourceMonkey.sh` | Launch Chromium with the unpacked SM extension + CDP port 9222 for cross-manager Playwright runs |
+| `scripts/open-test-browser-with-TamperMonkey.sh` | Launch Chromium with a persistent profile (TM installed manually) + CDP port 9223 for the TM Playwright project |
+| `scripts/sync-tm-scripts.mjs` | Standalone CLI that connects to the running TM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
+| `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
+| `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
 
 ## Extension Source (`src/`)
 
@@ -74,6 +79,9 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy |
+| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (launchPersistentContext) or TM (CDP attach) per project metadata |
+| `tests/fixtures/sourcemonkey-launch.ts` | Shared Chromium-launch / SW-handle / HTTP-fixture-server helpers used by both `extension.ts` and `manager.ts` |
+| `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: parses local `*.user.js` headers, lists installed scripts off the dashboard, installs/updates via the import-from-file flow |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes and conditional-GET handling |
@@ -163,3 +171,5 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/gm-apis.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |
 | `docs/supported-GM-APIs.md` | User-facing per-API inventory: which `GM_*` names work, which are stubbed, and how they map to TM / VM / GM4 |
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
+| `docs/cross-manager-testing.md` | How the examples-suite-against-Tampermonkey framework works: persistent profile, CDP attach, dashboard-driven script install, fragile bits |
+| `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey today, with triage notes for each divergence |

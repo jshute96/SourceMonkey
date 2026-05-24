@@ -2,16 +2,15 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from '../../fixtures/extension';
+import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-value-listeners', () => {
   test('a setValue fires both listeners; remove silences one', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-value-listeners/gm-value-listeners.html`);

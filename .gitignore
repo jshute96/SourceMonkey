@@ -27,3 +27,7 @@ dist/
 /playwright-report/
 /blob-report/
 /.playwright/
+
+# cross-manager test profiles (see docs/cross-manager-testing.md)
+/.chrome-sourcemonkey-profile/
+/.chrome-tampermonkey-profile/

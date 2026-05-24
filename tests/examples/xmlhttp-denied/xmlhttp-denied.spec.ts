@@ -10,16 +10,22 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from '../../fixtures/extension';
+import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / xmlhttp-denied', () => {
   test('@connect denial covers the no-connect and mismatched-host cases; @connect 127.0.0.1 lets the request through', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    // Tampermonkey's @connect UX differs from SourceMonkey: TM may
+    // prompt the user interactively before allowing the request, and
+    // its denial message is its own — the "blocked by @connect
+    // policy" substring this test asserts is a SM-only string. Skip
+    // under TM and treat the TM behaviour as out-of-scope here.
+    test.skip(setup.manager === 'tampermonkey', 'TM uses its own @connect UX (prompts, different message)');
+
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/xmlhttp-denied/xmlhttp-denied.html`);

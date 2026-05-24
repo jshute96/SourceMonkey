@@ -2,16 +2,15 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from '../../fixtures/extension';
+import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-dom', () => {
   test('GM_addStyle injects CSS the playground picks up', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
@@ -31,10 +30,9 @@ test.describe('examples / gm-dom', () => {
   });
 
   test('GM_addElement (parent form) appends inside the playground', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
@@ -47,10 +45,9 @@ test.describe('examples / gm-dom', () => {
   });
 
   test('GM_addElement (default form) sends <p> to <body>', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
@@ -85,10 +82,9 @@ test.describe('examples / gm-dom', () => {
   });
 
   test('GM_addElement (default form) sends <title> to <head>; repeated calls stack', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);
@@ -119,10 +115,9 @@ test.describe('examples / gm-dom', () => {
   });
 
   test('Reset removes the injected style + elements', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-dom/gm-dom.html`);

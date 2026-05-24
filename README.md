@@ -284,6 +284,31 @@ npm run test:e2e    # Playwright with the extension loaded
 npm run test:headed # e2e with a visible browser
 ```
 
+The examples suite (`tests/examples/`) can also run against
+Tampermonkey for cross-manager compliance checks:
+
+```sh
+# One-off: install/update every example userscript into the running TM
+node scripts/sync-tm-scripts.mjs
+
+# Run the examples suite against TM, headless. Headed browser must be closed.
+npm run test:e2e:tm
+
+# Or, headed: connects to a browser you've already opened, so you can watch.
+npm run test:e2e:tm:headed
+```
+
+The headed variant connects over CDP to the browser opened by
+`scripts/open-test-browser-with-TamperMonkey.sh`. The headless
+variant launches its own Chromium against the same persistent profile
+(so the same TM installation), but can't run while the headed browser
+is open against the profile.
+
+See [docs/cross-manager-testing.md](docs/cross-manager-testing.md) for
+the one-time TM profile setup and the diagnostic helpers, plus
+[docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
+for known TM-specific divergences.
+
 ### Code layout
 
 - `src/` — extension source (TypeScript + manifest + HTML).

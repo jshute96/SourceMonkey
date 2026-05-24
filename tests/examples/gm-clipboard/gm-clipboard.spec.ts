@@ -2,20 +2,19 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect } from '../../fixtures/extension';
+import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-clipboard', () => {
   test('clicking copy lands the text on the system clipboard', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, setup,
   }) => {
     // navigator.clipboard requires explicit grants in Playwright's
     // Chromium context — match the existing gm-clipboard spec.
     await extensionContext.grantPermissions(['clipboard-read', 'clipboard-write']);
 
-    await sm.addSource(__dirname);
-    await sm.syncNow();
+    await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/gm-clipboard/gm-clipboard.html`);

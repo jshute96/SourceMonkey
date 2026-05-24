@@ -195,6 +195,13 @@ for each demoed API. The pages double as a manual exploration tool
 cross-manager compliance reference (install the same `*.user.js`
 files into TM/VM, hit the same URLs, compare outcomes).
 
+- The examples suite uses `tests/fixtures/manager.ts` instead of
+  `extension.ts` so the same specs can run against either SM or TM.
+  Tests destructure `setup` instead of `sm` and call
+  `await setup.installScriptsFrom(__dirname)` to register the
+  directory's userscripts with whichever manager is active. See
+  `docs/cross-manager-testing.md` for the full picture.
+
 - Each example dir holds its own `<api>.spec.ts` next to the page
   + userscript. Playwright is configured (`testMatch:
   examples/**/*.spec.ts` in `playwright.config.ts`) to discover them

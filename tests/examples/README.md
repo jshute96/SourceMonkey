@@ -139,9 +139,10 @@ prose paragraphs. Mirrors the project-wide doc convention.
    consistent styling.
 5. Add a row to the table above and a link in `index.html`.
 6. In `<api>.spec.ts`, import the fixture from
-   `../../fixtures/extension` and use `__dirname` directly as the
-   argument to `sm.addSource` — see the existing specs for the
-   template.
+   `../../fixtures/manager` and call
+   `await setup.installScriptsFrom(__dirname)` — that registers the
+   dir's userscripts with whichever manager the run is targeting.
+   See the existing specs for the template.
 
 For a **multi-script directory** (see above): replace step 1 with
 a single `<dir>.html` + single `<dir>.spec.ts` + one
@@ -149,6 +150,21 @@ a single `<dir>.html` + single `<dir>.spec.ts` + one
 share the same `@match` patterns, write its outcome into a shared
 `<ul id="log">` with a `data-script="<variant>"` attribute, and
 the spec targets each row through that attribute.
+
+## Editing an existing example
+
+When you change the body or metadata of an existing `*.user.js`,
+**bump its `@version`**. Version-sensitive managers (Tampermonkey,
+Violentmonkey, …) install by `@namespace`+`@name` and only update
+when the installed version is older than the file. Without a bump,
+the cross-manager sync (`scripts/sync-tm-scripts.mjs`) classifies
+your edit as `SKIP` and TM keeps running the stale copy. SourceMonkey
+re-reads source files directly so it doesn't care, but the cross-
+manager workflow does.
+
+Pick the smallest bump that conveys the change (patch for tweaks,
+minor for new behaviour). The values are not user-facing — they only
+exist to gate updates.
 
 ## Testing
 

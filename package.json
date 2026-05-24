@@ -12,8 +12,10 @@
     "watch": "node scripts/build.mjs --watch",
     "test": "npm run test:unit && npm run test:e2e",
     "pretest:e2e": "node scripts/build.mjs",
-    "test:e2e": "playwright test",
-    "test:headed": "playwright test --headed",
+    "test:e2e": "playwright test --project=sourcemonkey",
+    "test:e2e:tm": "playwright test --project=tampermonkey",
+    "test:e2e:tm:headed": "TM_HEADED=1 playwright test --project=tampermonkey",
+    "test:headed": "playwright test --project=sourcemonkey --headed",
     "pretest:unit": "node scripts/build.mjs",
     "test:unit": "node --test 'tests/unit/*.test.mjs'",
     "clean": "rm -rf dist test-results playwright-report"
