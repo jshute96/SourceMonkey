@@ -25,32 +25,30 @@ import {
   buildWrappedBody,
   collectActiveSpecs,
   composeRequiredBody,
-  mapRunAt,
+  normalizeDeclaredRunAt,
   resolveWorld,
 } from '../../dist/injector.js';
 import { WRAPPER_BRIDGE, WRAPPER_MATCHER } from '../../dist/generated-wrappers.js';
 
-// ---------- mapRunAt ----------
+// ---------- normalizeDeclaredRunAt ----------
 
-test('mapRunAt: explicit values map to the userScripts enum', () => {
-  assert.equal(mapRunAt('document-start'), 'document_start');
-  assert.equal(mapRunAt('document-end'), 'document_end');
-  assert.equal(mapRunAt('document-idle'), 'document_idle');
+test('normalizeDeclaredRunAt: recognized values pass through (lowercased)', () => {
+  assert.equal(normalizeDeclaredRunAt('document-start'), 'document-start');
+  assert.equal(normalizeDeclaredRunAt('document-body'), 'document-body');
+  assert.equal(normalizeDeclaredRunAt('document-end'), 'document-end');
+  assert.equal(normalizeDeclaredRunAt('document-idle'), 'document-idle');
 });
 
-test('mapRunAt: document-body collapses to document_start (no exact equivalent)', () => {
-  assert.equal(mapRunAt('document-body'), 'document_start');
+test('normalizeDeclaredRunAt: missing / unknown values default to document-idle', () => {
+  assert.equal(normalizeDeclaredRunAt(undefined), 'document-idle');
+  assert.equal(normalizeDeclaredRunAt(''), 'document-idle');
+  assert.equal(normalizeDeclaredRunAt('context-menu'), 'document-idle');
+  assert.equal(normalizeDeclaredRunAt('whatever'), 'document-idle');
 });
 
-test('mapRunAt: missing / unknown values default to document_idle', () => {
-  assert.equal(mapRunAt(undefined), 'document_idle');
-  assert.equal(mapRunAt(''), 'document_idle');
-  assert.equal(mapRunAt('context-menu'), 'document_idle');
-  assert.equal(mapRunAt('whatever'), 'document_idle');
-});
-
-test('mapRunAt: case-insensitive', () => {
-  assert.equal(mapRunAt('DOCUMENT-START'), 'document_start');
+test('normalizeDeclaredRunAt: case-insensitive', () => {
+  assert.equal(normalizeDeclaredRunAt('DOCUMENT-START'), 'document-start');
+  assert.equal(normalizeDeclaredRunAt('Document-End'), 'document-end');
 });
 
 // ---------- buildWrappedBody ----------
@@ -166,6 +164,20 @@ test('buildWrappedBody: __smSend feature-detects chrome.runtime then falls back 
   assert.match(wrapped, /chrome\.runtime\.sendMessage/);
   assert.match(wrapped, /window\.postMessage/);
   assert.match(wrapped, /"sourcemonkey-bridge"/);
+});
+
+test('buildWrappedBody: embeds the declared @run-at and a wait-for-lifecycle helper', () => {
+  // The wrapper installs a __smWaitForRunAt helper that gates body
+  // execution on DOMContentLoaded / load. Without this gating we
+  // inherit Chrome's batching of document_end into the post-load burst.
+  const wrapped = buildWrappedBody({
+    id: 'x', name: 'X', body: '',
+    declaredRunAt: 'document-end',
+  });
+  assert.match(wrapped, /__smRunAt ?= ?"document-end"/);
+  assert.match(wrapped, /__smWaitForRunAt/);
+  assert.match(wrapped, /"DOMContentLoaded"/);
+  assert.match(wrapped, /addEventListener\("load"/);
 });
 
 test('buildWrappedBody: async-error listeners filter by the per-script sourceURL', () => {
@@ -303,21 +315,41 @@ test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher',
   assert.doesNotMatch(spec.js[0].code, /__smMatchScript/);
 });
 
-test('buildRegistrationSpec: pulls runAt from @run-at on the parsed header', async () => {
+test('buildRegistrationSpec: registers every script at document_start regardless of @run-at', async () => {
+  // The wrapper itself awaits the right lifecycle event (DOMContentLoaded
+  // for document-end, load for document-idle) before invoking the body.
+  // Chrome's userScripts scheduler batches document_end into the post-
+  // load injection burst — see docs/injection.md — so we always register
+  // early and gate in-page.
+  for (const declared of ['document-start', 'document-body', 'document-end', 'document-idle']) {
+    const spec = await buildRegistrationSpec(makeScript({
+      header: {
+        tags: [
+          { tag: 'name', value: 'X' },
+          { tag: 'run-at', value: declared },
+        ],
+      },
+    }));
+    assert.equal(spec.runAt, 'document_start', `runAt for @run-at ${declared}`);
+  }
+});
+
+test('buildRegistrationSpec: threads the declared @run-at into the wrapper as __smRunAt', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     header: {
       tags: [
         { tag: 'name', value: 'X' },
-        { tag: 'run-at', value: 'document-start' },
+        { tag: 'run-at', value: 'document-end' },
       ],
     },
   }));
-  assert.equal(spec.runAt, 'document_start');
+  assert.match(spec.js[0].code, /__smRunAt ?= ?"document-end"/);
 });
 
-test('buildRegistrationSpec: defaults runAt to document_idle when @run-at is absent', async () => {
+test('buildRegistrationSpec: defaults the wrapper @run-at to document-idle when header omits it', async () => {
   const spec = await buildRegistrationSpec(makeScript());
-  assert.equal(spec.runAt, 'document_idle');
+  assert.equal(spec.runAt, 'document_start');
+  assert.match(spec.js[0].code, /__smRunAt ?= ?"document-idle"/);
 });
 
 test('buildRegistrationSpec: header without @grant defaults to MAIN world (TM-compatible @grant none)', async () => {

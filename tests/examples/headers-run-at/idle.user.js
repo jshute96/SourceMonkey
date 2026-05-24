@@ -18,11 +18,14 @@
   // performance.now() is milliseconds since navigation start —
   // including it makes the gap between document-start, document-end,
   // and document-idle visible in the displayed log.
+  const t = performance.now();
   const li = document.createElement('li');
   li.dataset.script = 'idle';
   li.textContent =
-    `[document-idle] t=${performance.now().toFixed(1)}ms readyState=${document.readyState} body=<${document.body && document.body.tagName}>`;
-  log.appendChild(li);
+    `[document-idle] t=${t.toFixed(1)}ms readyState=${document.readyState} body=<${document.body && document.body.tagName}>`;
+  // Sorted-insert so the row lands in chronological position rather
+  // than at the tail — see the page's __SM_LOG_INSERT__ helper.
+  window.__SM_LOG_INSERT__(log, li, t);
 
   const status = document.getElementById('runStatus');
   if (status) {

@@ -96,13 +96,40 @@ source's `enabled` flag are both true, we build a
   declarations, each required file's prefetched source is prepended
   before the body — same world, same wrapper, single
   `//# sourceURL=…` — see [requires.md](requires.md).
-- `runAt` — derived from `@run-at` on the parsed header
-  (`document-start` / `document-body` → `document_start`,
-  `document-end` → `document_end`, default / anything else →
-  `document_idle`).
+- `runAt` — always `document_start`, regardless of the script's
+  declared `@run-at`. See [`@run-at` gating](#run-at-gating) below.
 - `world` — `'MAIN'` (the page's own world) or `'USER_SCRIPT'`
   (Chrome's isolated user-script world), resolved per script — see
   [Execution world](#execution-world) below.
+
+### `@run-at` gating
+
+We register every userscript at Chrome's `document_start` and the
+wrapper itself awaits the matching lifecycle event before invoking
+the user body. This is the TM/VM pattern.
+
+- `document-start` — wrapper runs the body immediately.
+- `document-body` — wrapper waits for `document.body` (via a
+  `MutationObserver` on `documentElement` if body isn't there yet).
+- `document-end` — wrapper waits for `DOMContentLoaded`.
+- `document-idle` (default / unknown values) — wrapper waits for
+  `window`'s `load` event.
+
+Why not just pass `runAt` through to `chrome.userScripts.register`:
+
+- Chrome's scheduler batches `document_end` and `document_idle` into
+  a single post-`load` injection burst. Userscripts that declare
+  `@run-at document-end` then observe `readyState=complete` instead
+  of `interactive`, which breaks scripts that mutate the DOM before
+  subresource load.
+- Registering at `document_start` and gating in-page side-steps the
+  batching: `DOMContentLoaded` listeners fire when the parser hits
+  DCL, not when Chrome's injection scheduler gets around to it.
+
+The gating is implemented in `__smWaitForRunAt` in
+`src/wrapper-head.js`. The declared `@run-at` is threaded through
+`buildWrappedBody` and baked into the wrapper as the
+`__smRunAt` literal.
 
 ### Execution world
 

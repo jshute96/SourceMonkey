@@ -29,7 +29,11 @@
     li.dataset.script = 'start';
     li.textContent =
       `[document-start] t=${observedAt.toFixed(1)}ms readyState=${observed} body=${bodyAtStart}`;
-    log.appendChild(li);
+    // Use the page's sorted-insert helper so the displayed log stays
+    // in chronological order. Without this, this row appends at DCL
+    // (when this DCL listener runs) and lands after document-end's
+    // row even though its t= timestamp is much earlier.
+    window.__SM_LOG_INSERT__(log, li, observedAt);
     const status = document.getElementById('runStatus');
     if (status) {
       status.classList.add('ran');

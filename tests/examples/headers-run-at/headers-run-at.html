@@ -17,13 +17,44 @@
     // parsed, so #log doesn't exist yet; queue those entries and
     // flush them at DOMContentLoaded.
     window.__SM_PAGE_TIMING__ = [];
+    // Pending queue. The first few page events (inline-script,
+    // slow-script-request, slow-script-response) fire while the parser
+    // is still inside <head> — <body> hasn't been built yet, so the
+    // <ul id="log"> element doesn't exist and we can't insert an <li>
+    // yet. We capture the timestamp + label now and push it here, then
+    // flush the whole queue into the DOM from the DCL handler below
+    // once #log exists.
     var pending = [];
+    // Shared sorted-insert helper. Rows reach the DOM in a different
+    // order than their timestamps suggest:
+    //   - Pending entries (captured during head parse) all get
+    //     appended together at DCL, even though their t values span
+    //     the whole pre-DCL window.
+    //   - The document-start userscript captures t at injection but
+    //     defers its append to DCL (body is null at injection).
+    //   - readystatechange fires just before DCL and appends directly,
+    //     so it lands before the queued rows even though its t is
+    //     later than theirs.
+    // Without re-sorting, the displayed log doesn't match the t=
+    // values. Each row tags itself with `data-t` (numeric ms) and we
+    // splice it in front of the first existing row with a larger
+    // data-t. Exposed on window so all three userscripts (all
+    // @grant none → MAIN world) can call it.
+    window.__SM_LOG_INSERT__ = function (log, li, t) {
+      li.dataset.t = String(t);
+      var kids = log.children;
+      for (var i = 0; i < kids.length; i++) {
+        var existingT = parseFloat(kids[i].dataset.t || '0');
+        if (existingT > t) { log.insertBefore(li, kids[i]); return; }
+      }
+      log.appendChild(li);
+    };
     function appendPageLi(log, label, t, rs) {
       var li = document.createElement('li');
       li.className = 'page-event';
       li.textContent =
         '[' + label + '] t=' + t.toFixed(1) + 'ms readyState=' + rs;
-      log.appendChild(li);
+      window.__SM_LOG_INSERT__(log, li, t);
     }
     function recordPageEvent(label) {
       var t = performance.now();
@@ -124,14 +155,17 @@
         <code>/__slow/</code> fetch 404s instantly and all three
         variants converge after <em>load</em> like the no-delay case;
         a runtime banner below points this out.</li>
-      <li>In practice the readyState observed by each variant
-        depends on the manager. Under Tampermonkey we typically see
-        the clean three-state split (start=loading,
-        end=interactive, idle=complete). Under Chrome&rsquo;s
-        <code>chrome.userScripts</code>, document-end and
-        document-idle often batch together in a single
-        post-<em>load</em> injection burst and both observe
-        <em>complete</em>.</li>
+      <li>You should see the clean three-state split under any
+        manager: start=loading, end=interactive, idle=complete.
+        SourceMonkey registers every userscript at Chrome&rsquo;s
+        <code>document_start</code> and the wrapper itself awaits
+        <code>DOMContentLoaded</code> (for <em>document-end</em>) or
+        <code>load</code> (for <em>document-idle</em>) before
+        invoking the body &mdash; same pattern Tampermonkey uses.
+        Without that gating Chrome&rsquo;s <code>chrome.userScripts</code>
+        scheduler batches <em>document_end</em> and
+        <em>document_idle</em> into a single post-<em>load</em>
+        burst and both observe <em>complete</em>.</li>
       <li>The page also logs lifecycle markers into
         <code>window.__SM_PAGE_TIMING__</code> if you prefer to
         inspect them from DevTools.</li>

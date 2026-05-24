@@ -73,7 +73,7 @@ below can repeat; order doesn't matter.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | Mapped to Chrome's `runAt`. `document-start` and `document-body` both become `document_start` (Chrome has no body-only stage). `document-end` → `document_end`. `document-idle` (default) → `document_idle`. **Not supported:** `context-menu` — falls through to `document_idle`. GM4 docs warn only `document-end` is reliable there. |
+| `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | Every userscript registers with Chrome at `document_start`; the wrapper itself awaits the matching lifecycle event before running the body (`document-end` → `DOMContentLoaded`, `document-idle` → `load`, `document-body` → `document.body` exists). This sidesteps Chrome's `chrome.userScripts` scheduler batching `document_end` and `document_idle` into a single post-`load` burst. See [docs/injection.md](injection.md#run-at-gating). **Not supported:** `context-menu` — falls through to `document-idle`. GM4 docs warn only `document-end` is reliable there. |
 | `@inject-into` | ✅ |   | ✓ |   | VM-specific. `page` → MAIN world. `content` → USER_SCRIPT (isolated) world. `auto` / unset falls through to `@grant` (see [injection.md → Execution world](injection.md#execution-world)). TM uses `@sandbox` for the same purpose. |
 | `@noframes` | ⚪ | ✓ | ✓ | ✓ | Should map to Chrome's `allFrames: false`. Currently every script runs in the top frame only because we don't set `allFrames` at all, so this happens to be the right behavior *by accident* — but a script that wants the opposite (also run in frames) can't get it. |
 | `@run-in` | ⚪ | ✓ (5.3+) |   |   | Normal vs incognito vs Firefox containers. TM-only. |

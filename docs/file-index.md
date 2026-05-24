@@ -61,8 +61,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
 | `src/requires.ts` | `@require` orchestration: extract refs, resolve via file-loader, fetch + dedup + cache, attach to StoredScript |
-| `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await + run/run-new/skip dispatch, matcher slot, try-open) — minified to one line |
-| `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, decision-callback close, IIFE close) — minified to one line by the build |
+| `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await, @run-at gate on DCL/load, matcher slot, try-open) — minified to one line |
+| `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, runAt + decision callback closes, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
@@ -91,7 +91,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
-| `tests/fixtures/pages/run-at.html` | Fixture page with an empty `#log` list used by the @run-at ordering test |
+| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at ordering test |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
@@ -115,7 +115,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/file-loader.test.mjs` | Unit tests for `resolveScriptResource` — accepted schemes, relative-path resolution, and traversal rejection |
 | `tests/unit/requires.test.mjs` | Unit tests for `distillRequires` extraction + `attachRequires` orchestration (cache hits, preserve mode, suffix gate, traversal rejection, dedup) |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
-| `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at mapping, spec build, active-spec collection) |
+| `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at normalization, spec build, active-spec collection) |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |

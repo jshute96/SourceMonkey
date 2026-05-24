@@ -87,22 +87,25 @@ export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
 // global is in place before any userscript wrapper runs.
 export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 
-export type RunAt = chrome.userScripts.RunAt;
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
 export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
 
-// Map @run-at to the User Scripts API's runAt enum. document-body has
-// no exact equivalent; treat it as document_start (it fires before
-// DOMContentLoaded in Tampermonkey too).
-export function mapRunAt(value: string | undefined): RunAt {
+// Normalize the script's declared `@run-at` header to one of the four
+// recognized values. The wrapper uses this to gate body execution on
+// the right lifecycle event — we no longer ask Chrome's userScripts
+// scheduler to honor `@run-at` because it batches document_end into
+// the post-load injection burst. See `__smWaitForRunAt` in
+// `wrapper-head.js`.
+export function normalizeDeclaredRunAt(value: string | undefined): string {
   switch ((value ?? '').toLowerCase()) {
     case 'document-start':
+      return 'document-start';
     case 'document-body':
-      return 'document_start';
+      return 'document-body';
     case 'document-end':
-      return 'document_end';
+      return 'document-end';
     default:
-      return 'document_idle';
+      return 'document-idle';
   }
 }
 
@@ -214,6 +217,16 @@ export function buildWrappedBody(args: {
   name: string;
   body: string;
   loadedAt: number;
+  // Declared `@run-at` value from the script header, lowercased. One of
+  // 'document-start', 'document-body', 'document-end', 'document-idle'.
+  // Defaults to 'document-idle' (the @run-at default) when omitted; the
+  // production caller `buildRegistrationSpec` always passes a value
+  // pre-normalized by `normalizeDeclaredRunAt`, but unit tests that
+  // exercise other parts of the wrapper can leave it off. The wrapper
+  // gates body execution on the matching lifecycle event so we don't
+  // inherit Chrome's batching of document_end into the post-load
+  // injection burst.
+  declaredRunAt?: string;
   matching?: { matches: string[]; includes: string[]; excludes: string[] };
   // GM bindings source produced by gm-bindings.ts. Empty string when
   // the script declared no @grant lines (or `@grant none`).
@@ -236,6 +249,7 @@ export function buildWrappedBody(args: {
     // wrapper ends up with `var __smLoadedAt = 1737051234567;`.
     .replace('"__SM_LOADED_AT__"', () => JSON.stringify(args.loadedAt))
     .replace('"__SM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
+    .replace('"__SM_RUN_AT__"', () => JSON.stringify(args.declaredRunAt ?? 'document-idle'))
     .replace('"__SM_MATCHER_BLOCK__";', () => matcherBlock)
     .replace('"__SM_GM_BINDINGS__";', () => args.gmBindings ?? '');
   // No newline between head and body so body line N stays at physical
@@ -354,7 +368,9 @@ export async function buildRegistrationSpec(
     else return null;
   }
 
-  const runAt = mapRunAt(script.header ? getValue(script.header, 'run-at') : undefined);
+  const declaredRunAt = normalizeDeclaredRunAt(
+    script.header ? getValue(script.header, 'run-at') : undefined,
+  );
   const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude;
   const body = composeRequiredBody(script);
@@ -369,6 +385,13 @@ export async function buildRegistrationSpec(
   const gmBindings = world === 'USER_SCRIPT'
     ? (await buildGmBindingsForScript(script, scriptHandlerVersion)).js
     : '';
+  // Register at document_start regardless of the declared @run-at. The
+  // wrapper itself awaits the matching lifecycle event (DOMContentLoaded
+  // for document-end, load for document-idle, etc.) before invoking the
+  // user body. This is the TM/VM pattern — Chrome's userScripts scheduler
+  // batches document_end and document_idle into a single post-load burst,
+  // which makes @run-at document-end observe readyState=complete instead
+  // of interactive. Gating in-page side-steps the batching entirely.
   const spec: RegistrationSpec = {
     id: script.id,
     js: [{ code: buildWrappedBody({
@@ -376,10 +399,11 @@ export async function buildRegistrationSpec(
       name,
       body,
       loadedAt: script.loadedAt,
+      declaredRunAt,
       matching: needsWrapperFilter ? script.matching : undefined,
       gmBindings,
     }) }],
-    runAt,
+    runAt: 'document_start',
     world,
   };
   if (matches.length > 0) spec.matches = matches;
@@ -432,14 +456,14 @@ export async function collectActiveSpecs(
 // complicates the spec (especially with regex includes) for a
 // negligible runtime cost.
 //
-// Ordering vs. wrappers. Two things protect us:
-//   - The bridge registers at document_start, so for any wrapper at
-//     document_end / document_idle the bridge listener is already
-//     installed by the time the wrapper runs.
-//   - For wrappers ALSO at document_start, postMessage queues the
-//     event in a later task — even if a MAIN wrapper happens to run
-//     before the bridge in the same task, the dispatch fires after
-//     both finish their synchronous init, so the bridge catches it.
+// Ordering vs. wrappers. Every userscript wrapper now registers at
+// document_start too (the wrapper itself awaits the declared @run-at
+// in-page), so the bridge and the wrapper both run during the same
+// document_start tick. postMessage queues the event in a later task —
+// even if a MAIN wrapper happens to run before the bridge in the same
+// task, the dispatch fires after both finish their synchronous init,
+// so the bridge catches it. Wrapper bodies that run later (DCL / load
+// via __smWaitForRunAt) always have the bridge in place by then.
 export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
   const hasMainWorld = activeSpecs.some((s) => s.world === 'MAIN');
   if (!hasMainWorld) return null;
@@ -469,14 +493,16 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
 // guard handles the case where Chrome happens to re-run it on a
 // document that already initialized.
 //
-// Ordering vs. wrappers. For wrappers at document_end / document_idle
-// the runtime is installed by then. For wrappers ALSO at
-// document_start, in practice Chromium runs registered scripts in
-// registration order, but that's implementation-defined and not part
-// of the documented userScripts contract. The real safety net is
-// that the wrapper dereferences `window.__SM_GM__` lazily — inside
-// the `__smAwaitDecision` microtask, AFTER the runtime has had a
-// chance to install. See docs/GM-APIs.md.
+// Ordering vs. wrappers. Every userscript wrapper now registers at
+// document_start too, so the runtime and the wrappers run in the same
+// document_start tick. In practice Chromium runs registered scripts in
+// registration order — and we list the runtime spec before user specs
+// in syncRegistrations — but that ordering is implementation-defined
+// and not part of the documented userScripts contract. The real safety
+// net is that the wrapper dereferences `window.__SM_GM__` lazily,
+// inside the `__smAwaitDecision` microtask (and again inside the
+// `__smWaitForRunAt` callback for DCL/load gating), AFTER the runtime
+// has had a chance to install. See docs/GM-APIs.md.
 export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
   const hasUserScriptWorld = activeSpecs.some((s) => s.world === 'USER_SCRIPT');
   if (!hasUserScriptWorld) return null;

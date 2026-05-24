@@ -3,6 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <title>run-at</title>
+    <!-- 250ms synchronous-script delay. Holds the parser at
+         readyState=loading long enough that document-start has a
+         genuine pre-DCL window, document-end fires at DCL while
+         readyState=interactive, and document-idle fires after load
+         when readyState=complete. Without the delay all three would
+         observe readyState=complete because parsing finishes before
+         the wrapper's deferred-runAt callbacks get a chance to
+         schedule. -->
+    <script src="/__slow/blocker.js?ms=250"></script>
   </head>
   <body>
     <ul id="log"></ul>

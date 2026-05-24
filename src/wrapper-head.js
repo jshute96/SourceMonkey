@@ -19,6 +19,14 @@
                               `# sourceURL=` directive. Used as the
                               attribution marker by the window error
                               listeners below.
+     "__SM_RUN_AT__"        — JSON-encoded declared @run-at value
+                              ("document-start" / "document-body" /
+                              "document-end" / "document-idle"). The
+                              wrapper always registers with Chrome at
+                              document_start and gates body execution
+                              on the corresponding lifecycle event so
+                              we don't inherit Chrome's batching of
+                              document_end into the post-load burst.
      "__SM_MATCHER_BLOCK__" — empty, OR the matcher fragment (which
                               itself contains a "__SM_MATCHING__"
                               placeholder for the matching object).
@@ -44,6 +52,7 @@
   var __smId = "__SM_ID__";
   var __smLoadedAt = "__SM_LOADED_AT__";
   var __smSourceUrl = "__SM_SOURCE_URL__";
+  var __smRunAt = "__SM_RUN_AT__";
   /* Telemetry transport. In USER_SCRIPT world chrome.runtime.sendMessage
      is exposed (configureWorld({ messaging: true }) was called by the
      injector), so we use it directly. In MAIN world chrome.runtime is
@@ -201,6 +210,45 @@
       }, true);
     } catch (_e) {}
   };
+  /* Defer body execution until the lifecycle moment matching the
+     script's declared @run-at. The injector always registers with
+     chrome.userScripts at document_start so this wrapper is in place
+     before the page parses; the gating here is what gives each
+     @run-at variant the timing TM/VM provide. Without this, Chrome's
+     scheduler batches document_end into the post-load injection burst
+     so @run-at document-end scripts observe readyState=complete
+     instead of interactive. See docs/injection.md. */
+  var __smWaitForRunAt = function (cb) {
+    if (__smRunAt === "document-start") { cb(); return; }
+    if (__smRunAt === "document-body") {
+      if (document.body) { cb(); return; }
+      /* Parser hasn't reached <body> yet. Observe documentElement for
+         child insertions until body appears. */
+      var obs;
+      try {
+        obs = new MutationObserver(function () {
+          if (document.body) {
+            try { obs.disconnect(); } catch (_eo) {}
+            cb();
+          }
+        });
+        obs.observe(document.documentElement, { childList: true });
+      } catch (_e) { cb(); }
+      return;
+    }
+    if (__smRunAt === "document-end") {
+      /* readyState === "loading" means parsing is still in progress.
+         Anything else (interactive / complete) means DCL has already
+         fired and adding a listener now would never trigger. */
+      if (document.readyState !== "loading") { cb(); return; }
+      document.addEventListener("DOMContentLoaded", function () { cb(); }, { once: true });
+      return;
+    }
+    /* document-idle (default). Fire on `load`, or immediately if load
+       has already fired. */
+    if (document.readyState === "complete") { cb(); return; }
+    window.addEventListener("load", function () { cb(); }, { once: true });
+  };
   /* The matcher block (when present) checks the current URL against the
      full Tampermonkey @match / @include / @exclude semantics — including
      /regex/ forms the User Scripts API can't express — and `return`s
@@ -218,10 +266,17 @@
       /* SW concluded we shouldn't run on this navigation (file removed,
          script disabled mid-refresh, etc.). Tell it explicitly so the
          badge can mark the row instead of waiting for an absent
-         sm:start. No body, no listeners, no try/catch. */
+         sm:start. No body, no listeners, no try/catch. The abandoned
+         report fires immediately — no @run-at gating, since we're not
+         running anything user-visible. */
       __smSend({ type: "sm:abandoned", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, reason: (__smDecision && __smDecision.reason) || "skip" });
       return;
     }
+    /* From here down, both the run-new eval path and the baked-in body
+       path run user code. Gate them on the declared @run-at lifecycle
+       moment so document-end / document-idle observe the same DOM
+       state TM/VM would give them. */
+    __smWaitForRunAt(function () {
     if (__smDecision && __smDecision.action === "run-new" && typeof __smDecision.body === "string") {
       /* SW handed us a fresher user-code body. Try to eval it.
 

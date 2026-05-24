@@ -188,12 +188,17 @@ test.describe('injection', () => {
     await page2.close();
   });
 
-  // chrome.userScripts queues scripts by @run-at then registration
-  // order, so document-start → document-end → document-idle is a
-  // hard invariant under SM. (The cross-manager spec in
-  // tests/examples/headers-run-at intentionally loosens this: TM has
-  // been observed running document-end at `load`, which can land
-  // *after* idle when a slow subresource is on the page.)
+  // SM registers every userscript at chrome's document_start and the
+  // wrapper itself awaits the matching lifecycle event (DCL for
+  // document-end, load for document-idle). With the slow-blocker
+  // script holding the parser in `loading` for 250ms, the three
+  // variants land in distinct readyState windows:
+  //   document-start → readyState=loading (no wait)
+  //   document-end   → readyState=interactive (after DCL)
+  //   document-idle  → readyState=complete (after load)
+  // Without that gating Chrome's userScripts scheduler would batch
+  // document_end into the post-load burst and document-end would
+  // observe `complete`, matching document-idle.
   test('document-start, document-end, document-idle inject in @run-at order', async ({
     extensionContext,
     fixtureServer,
@@ -254,6 +259,15 @@ test.describe('injection', () => {
       els.map((el) => (el as HTMLElement).dataset.script),
     );
     expect(order).toEqual(['start', 'end', 'idle']);
+
+    // document-end fires at DCL, when the slow blocker has resolved
+    // and parsing has finished but `load` hasn't fired yet —
+    // readyState=interactive. This is the assertion that proves the
+    // wrapper-side runAt gating is working: without it, Chrome batches
+    // document_end into the post-load burst and end would observe
+    // `complete` instead.
+    await expect(page.locator('#log li[data-script="end"]'))
+      .toContainText('readyState=interactive');
 
     // document-idle waits for load, so it observes complete.
     await expect(page.locator('#log li[data-script="idle"]'))
