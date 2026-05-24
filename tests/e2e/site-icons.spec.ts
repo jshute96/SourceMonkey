@@ -176,6 +176,79 @@ test.describe('site-icon slot', () => {
     }
   });
 
+  test('two-tier cache: scripts on different deep paths get distinct icons', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Regression for the original "all nytimes scripts show the
+    // spelling-bee icon" bug. Three scripts on the same synthetic
+    // origin — two on distinct deep paths and one on the root —
+    // should each end up with their own icon, not the first-discovered
+    // one shared via the origin cache.
+    //
+    // We can't point @match at the local test server because
+    // parseMatchPattern strips ports (Chrome match patterns don't
+    // support them), so the discovery flow would never reach the
+    // server. Instead we intercept HTML fetches to a synthetic host
+    // via `context.route` — Playwright forwards SW fetches through the
+    // same routing layer.
+    const HOST = 'https://sm-icons-test.invalid';
+    const iconHtml = (token: string): string =>
+      `<html><head><link rel="icon" href="data:image/png;base64,${token}"></head></html>`;
+    const ICON_A = 'AAAAA1';
+    const ICON_B = 'BBBBB2';
+    const ICON_ROOT = 'CCCCC3';
+
+    await extensionContext.route(`${HOST}/**`, async (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      const body = pathname.startsWith('/section-a/')
+        ? iconHtml(ICON_A)
+        : pathname.startsWith('/section-b/')
+        ? iconHtml(ICON_B)
+        : iconHtml(ICON_ROOT);
+      await route.fulfill({ contentType: 'text/html; charset=utf-8', body });
+    });
+
+    try {
+      scriptsDir.write({
+        relativePath: 'section-a.user.js',
+        meta: { name: 'SectionA', match: [`${HOST}/section-a/*`] },
+        body: '',
+      });
+      scriptsDir.write({
+        relativePath: 'section-b.user.js',
+        meta: { name: 'SectionB', match: [`${HOST}/section-b/*`] },
+        body: '',
+      });
+      scriptsDir.write({
+        relativePath: 'root.user.js',
+        meta: { name: 'Root', match: [`${HOST}/*`] },
+        body: '',
+      });
+      const source = await sm.addSource(scriptsDir.path);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      const rowFor = (name: string) =>
+        page.locator(
+          `section.directory[data-source-id="${source!.id}"] tbody tr:has-text("${name}")`,
+        );
+
+      // Each script gets its own probe URL → its own pathIcon entry.
+      // The root script's probeUrl equals the origin root, so it bypasses
+      // the path layer and lands on the origin-level fallback — which
+      // begins with a root-HTML probe and therefore sees ICON_ROOT.
+      await expect(rowFor('section-a.user.js').locator('.site-icon img'))
+        .toHaveAttribute('src', `data:image/png;base64,${ICON_A}`);
+      await expect(rowFor('section-b.user.js').locator('.site-icon img'))
+        .toHaveAttribute('src', `data:image/png;base64,${ICON_B}`);
+      await expect(rowFor('root.user.js').locator('.site-icon img'))
+        .toHaveAttribute('src', `data:image/png;base64,${ICON_ROOT}`);
+      await page.close();
+    } finally {
+      await extensionContext.unroute(`${HOST}/**`);
+    }
+  });
+
   test('@icon rejects path-traversal and absolute file:// refs end-to-end', async ({
     extensionContext, extensionId, sm,
   }) => {

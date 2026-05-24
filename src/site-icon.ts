@@ -3,16 +3,25 @@ import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
 // Site-icon (favicon) extraction + cache. Used by the options page
 // and userscript viewer to show a 16x16 icon next to each script.
 //
-// Pipeline (per origin):
-//   probe-URL HTML → origin-root HTML → /favicon.ico → Google S2.
-// Probe URL comes from the literal prefix of the first useful @match
-// — many sites only ship the proper <link rel="icon"> on authed
-// or deep pages, so fetching closer to the script's target lands on
-// a page more likely to declare the real icon.
+// Two-tier lookup, so deep-targeted scripts (e.g. one userscript per
+// section of a big site) each get their own icon instead of sharing
+// the first one discovered for the origin:
+//   1. probe URL → HTML discovery there (cached per probe URL).
+//   2. origin fallback → origin-root HTML → /favicon.ico → Google S2
+//      (cached per origin, shared across every script on that host).
+// Probe URL comes from the literal prefix of the first useful @match.
 //
-// Cache: `siteIcon:<origin>` in chrome.storage.local. Success entries
-// live 7d, null (every leg failed) entries live 24h so a transient
-// outage doesn't permanently blank the row.
+// Caches in chrome.storage.local:
+//   `pathIcon:<probeUrl>` — HTML-discovery result for that specific
+//      page. Null means "no icon on this page" — we fall back to
+//      the origin cache, not refetch the page.
+//   `siteIcon:<origin>`   — origin-level fallback result (root HTML
+//      + /favicon.ico + Google S2). Shared across all scripts on
+//      the origin.
+// Success entries live 7d, null entries 24h so a transient outage
+// doesn't permanently blank the row. The probe-URL cache layer is
+// skipped entirely when the probe URL is just the origin root —
+// the two would otherwise duplicate the same fetch.
 
 export interface SiteIconEntry {
   dataUrl: string | null;
@@ -21,6 +30,16 @@ export interface SiteIconEntry {
 
 const KEY_PREFIX = 'siteIcon:';
 const siteIconKey = (origin: string): string => `${KEY_PREFIX}${origin}`;
+
+// Path-scoped cache for icons discovered by probing a non-root URL.
+// Key is the full probe URL (origin + literal-prefix path) — each deep
+// section gets its own entry so e.g. nytimes.com/puzzles/spelling-bee/
+// can have a different icon from nytimes.com/athletic/. Hits here are
+// strictly the HTML-discovery result; origin-level fallbacks live in
+// `siteIcon:` so the /favicon.ico + S2 fetches happen at most once
+// per host.
+const PATH_ICON_KEY_PREFIX = 'pathIcon:';
+const pathIconKey = (probeUrl: string): string => `${PATH_ICON_KEY_PREFIX}${probeUrl}`;
 
 // Separate cache prefix for icons declared via `@icon`/`@iconURL`/etc.
 // Same `SiteIconEntry` shape and TTLs as the origin-discovered path; the
@@ -188,6 +207,15 @@ async function storeSiteIcon(origin: string, entry: SiteIconEntry): Promise<void
   await chrome.storage.local.set({ [siteIconKey(origin)]: entry });
 }
 
+async function loadPathIcon(probeUrl: string): Promise<SiteIconEntry | undefined> {
+  const got = await chrome.storage.local.get(pathIconKey(probeUrl));
+  return got[pathIconKey(probeUrl)] as SiteIconEntry | undefined;
+}
+
+async function storePathIcon(probeUrl: string, entry: SiteIconEntry): Promise<void> {
+  await chrome.storage.local.set({ [pathIconKey(probeUrl)]: entry });
+}
+
 async function loadUrlIcon(url: string): Promise<SiteIconEntry | undefined> {
   const got = await chrome.storage.local.get(urlIconKey(url));
   return got[urlIconKey(url)] as SiteIconEntry | undefined;
@@ -204,30 +232,29 @@ export function isCacheFresh(entry: SiteIconEntry, now: number = Date.now()): bo
 
 // ---------- Favicon fetch ----------
 
-// Resolve a favicon for `origin` and write the result (positive or
-// negative) into storage. Cache is keyed by origin — multiple scripts
-// on the same origin share one icon — so any probe URL for that
-// origin works without polluting the cache key.
-export async function fetchAndCacheSiteIcon(
-  origin: string,
-  probeUrl: string = origin + '/',
-): Promise<string | null> {
-  const dataUrl = await fetchFaviconAsDataUrl(origin, probeUrl);
+// Discover an icon by HTML-probing `probeUrl` only — no fallbacks.
+// Cached under `pathIcon:<probeUrl>` so each deep-targeted script gets
+// its own entry. A null result means "no usable icon on this page";
+// callers fall back to the origin-level cache rather than retrying.
+async function fetchAndCachePathIcon(probeUrl: string): Promise<string | null> {
+  const dataUrl = await tryDiscoverIconViaHtml(probeUrl);
+  await storePathIcon(probeUrl, { dataUrl, fetchedAt: Date.now() });
+  return dataUrl;
+}
+
+// Discover an icon for `origin` via the shared fallback chain
+// (origin-root HTML → /favicon.ico → Google S2). Cached under
+// `siteIcon:<origin>` and shared across every script on the host —
+// the path-scoped lookup hits this when its own probe came up empty.
+async function fetchAndCacheOriginIcon(origin: string): Promise<string | null> {
+  const dataUrl = await fetchOriginFallbackAsDataUrl(origin);
   await storeSiteIcon(origin, { dataUrl, fetchedAt: Date.now() });
   return dataUrl;
 }
 
-async function fetchFaviconAsDataUrl(
-  origin: string,
-  probeUrl: string,
-): Promise<string | null> {
-  const fromProbe = await tryDiscoverIconViaHtml(probeUrl);
-  if (fromProbe) return fromProbe;
-  const rootUrl = origin + '/';
-  if (probeUrl !== rootUrl) {
-    const fromRoot = await tryDiscoverIconViaHtml(rootUrl);
-    if (fromRoot) return fromRoot;
-  }
+async function fetchOriginFallbackAsDataUrl(origin: string): Promise<string | null> {
+  const fromRoot = await tryDiscoverIconViaHtml(origin + '/');
+  if (fromRoot) return fromRoot;
   const fromIco = await fetchIconAt(`${origin}/favicon.ico`);
   if (fromIco) return fromIco;
   // Google S2 is the only leg that touches a third party. The host
@@ -430,11 +457,24 @@ export async function ensureSiteIcon(
   origin: string,
   probeUrl?: string,
 ): Promise<string | null> {
-  const key = siteIconKey(origin);
+  const rootUrl = origin + '/';
+  // The path-scoped layer only earns its keep when the probe is deeper
+  // than the origin root — otherwise it would just duplicate the
+  // origin-root HTML fetch the fallback chain already does.
+  const usePath = probeUrl !== undefined && probeUrl !== rootUrl && probeUrl !== origin;
+  if (usePath) {
+    const pathHit = await ensurePathIcon(probeUrl!);
+    if (pathHit !== null) return pathHit;
+  }
+  return ensureOriginIcon(origin);
+}
+
+async function ensurePathIcon(probeUrl: string): Promise<string | null> {
+  const key = pathIconKey(probeUrl);
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const cached = (await loadSiteIcons([origin])).get(origin);
+  const cached = await loadPathIcon(probeUrl);
   if (cached && isCacheFresh(cached)) return cached.dataUrl;
 
   // Re-check after the storage await: another caller may have started
@@ -442,7 +482,25 @@ export async function ensureSiteIcon(
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = fetchAndCacheSiteIcon(origin, probeUrl).finally(() => {
+  const p = fetchAndCachePathIcon(probeUrl).finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, p);
+  return p;
+}
+
+async function ensureOriginIcon(origin: string): Promise<string | null> {
+  const key = siteIconKey(origin);
+  const pending = inflight.get(key);
+  if (pending) return pending;
+
+  const cached = (await loadSiteIcons([origin])).get(origin);
+  if (cached && isCacheFresh(cached)) return cached.dataUrl;
+
+  const racing = inflight.get(key);
+  if (racing) return racing;
+
+  const p = fetchAndCacheOriginIcon(origin).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);

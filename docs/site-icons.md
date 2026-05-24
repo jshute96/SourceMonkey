@@ -78,25 +78,43 @@ usable `@match`:
   script actually targets — many sites only ship the proper
   `<link rel="icon">` on authed/deep pages and serve a barebones SSO
   stub at `/`.
-- On a cache miss the fetcher tries the following strategies in order:
-  - **HTML discovery (probe URL)**: fetch `probeUrl`, scan the
-    `<head>` for `<link rel="icon">` (also `shortcut icon`,
-    `apple-touch-icon`). The fetch follows redirects, so even when
-    the server bounces us to an SSO host we still get that page's
-    icon tag. Relative hrefs resolve against the final post-redirect
-    URL. The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
-    `data:` URLs declared inline are used verbatim.
-  - **HTML discovery (origin root)**: if the probe URL wasn't already
-    the root and yielded nothing, retry with `<origin>/`. Catches
-    sites whose deep paths return a stripped page but whose marketing
-    root has a full `<head>`.
-  - **`/favicon.ico` fallback**: conventional path.
-  - **Google S2 fallback**: `https://www.google.com/s2/favicons?domain=<host>&sz=64`.
-    The only leg that touches a third party — the host name (already
-    public via the `@match`) is sent to www.google.com. Reached only
-    when every direct strategy has failed, so the set of sites that
-    touch this path is small. Google returns a generic globe for
-    hosts it can't resolve; we cache that as "better than nothing."
+
+### Two-tier lookup
+
+The lookup is split so deep-targeted scripts (one userscript per
+section of a big site) each get their own icon instead of all sharing
+the first one discovered for the host.
+
+- **Path-scoped layer** (`pathIcon:<probeUrl>`): when the probe URL is
+  deeper than `<origin>/`, try HTML discovery there first. Positive
+  hits are returned immediately; a null result (no usable icon on
+  that page) falls through to the origin layer instead of refetching.
+- **Origin fallback** (`siteIcon:<origin>`): shared across every
+  script on the host. Runs origin-root HTML → `/favicon.ico` →
+  Google S2 in order and caches whichever wins.
+- When the probe URL is already the origin root the path layer is
+  skipped — it would just duplicate the origin-root HTML fetch.
+
+### Discovery strategies
+
+- **HTML discovery (probe URL or origin root)**: fetch the page,
+  scan the `<head>` for `<link rel="icon">` (also `shortcut icon`,
+  `apple-touch-icon`). The fetch follows redirects, so even when the
+  server bounces us to an SSO host we still get that page's icon
+  tag. Relative hrefs resolve against the final post-redirect URL.
+  The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
+  `data:` URLs declared inline are used verbatim.
+- **`/favicon.ico` fallback**: conventional path. Origin-layer only.
+- **Google S2 fallback**:
+  `https://www.google.com/s2/favicons?domain=<host>&sz=64`. The only
+  leg that touches a third party — the host name (already public via
+  the `@match`) is sent to www.google.com. Reached only when every
+  direct strategy has failed. Google returns a generic globe for
+  hosts it can't resolve; we cache that as "better than nothing."
+  Origin-layer only.
+
+### Bounds and freshness
+
 - Every fetch is bounded:
   - 5s timeout, follows redirects.
   - Allowed by the extension's `<all_urls>` host permission.
@@ -104,15 +122,15 @@ usable `@match`:
   - `referrerPolicy: 'no-referrer'` to avoid leaking the
     `chrome-extension://<id>/...` URL to third-party hosts.
 - On any failure (network error, non-icon `Content-Type`, oversized
-  body) the origin caches a `null` entry so the same broken host
-  doesn't get hammered on every render.
+  body) the layer caches a `null` entry so the same broken page or
+  host doesn't get hammered on every render.
 - Successful entries are cached for 7 days; `null` entries for 24h.
   After that the next render triggers a refetch — so sites that swap
   their favicon, or hosts that briefly fell back to Google's globe
   placeholder, self-heal without the user clearing storage.
-- An in-flight `Map` de-dups concurrent fetches for the same origin
-  — multiple rows targeting the same site share one network round
-  trip.
+- An in-flight `Map` de-dups concurrent fetches per cache key —
+  multiple rows targeting the same probe URL or origin share one
+  network round trip.
 
 ### Scoring `<link rel="icon">` candidates
 
@@ -128,12 +146,17 @@ usable `@match`:
 
 ## Storage shape
 
-Parallel cache rows for the two icon-source paths, sharing the same
+Parallel cache rows for the icon-source paths, sharing the same
 `{ dataUrl, fetchedAt }` shape and TTLs:
 
-- `siteIcon:<origin>` — origin-discovered favicons. Key is the full
-  `scheme://host` string; every script targeting that site looks up
-  the same row.
+- `pathIcon:<probeUrl>` — HTML-discovery result for a specific
+  deep page. Key is the full probe URL; lets two scripts on the
+  same host but different sections keep distinct icons. A null entry
+  here means "no icon on this page" — the lookup falls through to
+  the origin row.
+- `siteIcon:<origin>` — origin-level fallback favicons (root HTML
+  + `/favicon.ico` + Google S2). Key is the full `scheme://host`
+  string; every script on that host shares the row.
 - `iconUrl:<url>` — `@icon`-declared icons. Key is the literal header
   URL; scripts pinning the same icon share one fetch.
 - `data:` URLs render inline and are never stored.

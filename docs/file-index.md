@@ -99,7 +99,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
 | `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
-| `tests/e2e/site-icons.spec.ts` | Favicon slot DOM contract: clickable anchor + linkUrl, inert span when no origin, globe placeholder, `@icon` header override via inline `data:` URL, and `@icon`-relative-path resolution against the script's parent dir |
+| `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` header override, relative-path resolution, two-tier (path vs origin) cache |
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
