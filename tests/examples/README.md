@@ -66,11 +66,17 @@ port.
 
 ## Examples
 
-| Directory          | API                                               | Shape         |
-| ------------------ | ------------------------------------------------- | ------------- |
-| `gm-info/`         | `GM_info`                                         | pure read     |
-| `gm-notification/` | `GM_notification`                                 | button-driven |
-| `gm-storage/`      | `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues` | form-driven   |
+| Directory                  | API(s)                                                            | Shape         |
+| -------------------------- | ----------------------------------------------------------------- | ------------- |
+| `gm-info/`                 | `GM_info`                                                         | pure read     |
+| `gm-log/`                  | `GM_log`                                                          | button-driven |
+| `gm-storage/`              | `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues` | form-driven   |
+| `gm-value-listeners/`      | `GM_addValueChangeListener` / `GM_removeValueChangeListener`       | form-driven   |
+| `gm-dom/`                  | `GM_addStyle` / `GM_addElement`                                   | button-driven |
+| `gm-clipboard/`            | `GM_setClipboard`                                                 | form-driven   |
+| `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
+| `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
+| `gm-notification/`         | `GM_notification`                                                 | button-driven |
 
 ## Page conventions
 
