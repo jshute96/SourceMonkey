@@ -210,6 +210,55 @@ test('splitHeaderBody handles CRLF line endings', () => {
   assert.equal(result.bodyText, 'body();\r\n');
 });
 
+// Round-trip the parser and splitter across every line-terminator
+// shape we might plausibly see on disk: LF (Unix/modern macOS),
+// CRLF (Windows / lots of cross-platform editors), and bare CR
+// (classic pre-OS-X Mac — vanishingly rare today but cheap to keep
+// working as long as it costs us one regex character). Each shape is
+// driven through a fixture with leading content, multiple tags, and
+// a body so a regression in one component (e.g. line splitting in
+// parseHeader, marker matching in splitHeaderBody) lights up.
+for (const [name, nl] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+  const src =
+    `'use strict';${nl}` +
+    `// ==UserScript==${nl}` +
+    `// @name        Newline ${name}${nl}` +
+    `// @match       https://example.com/*${nl}` +
+    `// @grant       none${nl}` +
+    `// ==/UserScript==${nl}` +
+    `body();${nl}`;
+
+  test(`parseHeader handles ${name} line endings`, () => {
+    const h = parseHeader(src);
+    assert.ok(h, `${name}: parseHeader returned null`);
+    assert.equal(getValue(h, 'name'), `Newline ${name}`);
+    assert.deepEqual(getValues(h, 'match'), ['https://example.com/*']);
+    assert.deepEqual(getValues(h, 'grant'), ['none']);
+  });
+
+  test(`splitHeaderBody handles ${name} line endings`, () => {
+    const result = splitHeaderBody(src);
+    assert.equal(result.error, undefined);
+    // leadingText carries its own terminator so reassembling
+    // (leadingText + headerText + nl + bodyText) yields the original.
+    assert.equal(result.leadingText, `'use strict';${nl}`);
+    assert.equal(
+      result.headerText,
+      `// ==UserScript==${nl}` +
+      `// @name        Newline ${name}${nl}` +
+      `// @match       https://example.com/*${nl}` +
+      `// @grant       none${nl}` +
+      `// ==/UserScript==`,
+    );
+    assert.equal(result.bodyText, `body();${nl}`);
+    assert.equal(
+      result.leadingText + result.headerText + nl + result.bodyText,
+      src,
+      `${name}: split + rejoin should reconstruct the source verbatim`,
+    );
+  });
+}
+
 test('splitHeaderBody returns empty bodyText when nothing follows the block', () => {
   const src = '// ==UserScript==\n// @name Alone\n// ==/UserScript==';
   const result = splitHeaderBody(src);

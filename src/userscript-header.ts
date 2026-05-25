@@ -89,7 +89,10 @@ export function parseHeader(source: string): ParsedHeader | null {
   const block = afterStart.slice(0, endMatch.index);
 
   const tags: HeaderTag[] = [];
-  for (const rawLine of block.split(/\r?\n/)) {
+  // Split on every line-terminator shape — `\r\n` (DOS), `\n` (Unix),
+  // and bare `\r` (classic Mac). `splitHeaderBody`'s boundary regex
+  // already handles all three via the `/m` flag, so we keep parity here.
+  for (const rawLine of block.split(/\r\n|\r|\n/)) {
     const m = TAG_LINE.exec(rawLine);
     if (!m) continue;
     const [, tag, locale, value] = m;
