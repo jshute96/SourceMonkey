@@ -114,6 +114,14 @@ import {
   takeForClosed as takeNotificationForClosed,
   type GmNotificationShowPayload,
 } from './gm-notification.js';
+import {
+  clearTab as clearMenuCommandsForTab,
+  findMenuCommand,
+  getMenuCommandsForTab,
+  registerMenuCommand,
+  unregisterMenuCommand,
+  type MenuCommandEntry,
+} from './gm-menu.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -176,6 +184,19 @@ interface SourceMonkeyApi {
   getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
   appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
   clearScriptLog: (scriptId: string) => Promise<void>;
+  // GM_registerMenuCommand test surface. Playwright can't click the
+  // real Chrome action context menu, so tests need a way to (a) read
+  // back what we would have rendered for a tab and (b) synthesize the
+  // chrome.contextMenus.onClicked dispatch.
+  getActionContextMenu: (tabId: number) => Promise<{
+    scriptId: string;
+    commands: MenuCommandEntry[];
+  }[]>;
+  fireActionContextMenuItem: (
+    tabId: number,
+    scriptId: string,
+    commandId: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const api: SourceMonkeyApi = {
@@ -206,6 +227,20 @@ const api: SourceMonkeyApi = {
   getScriptLog,
   appendScriptLog,
   clearScriptLog,
+  getActionContextMenu: async (tabId: number) => {
+    const cmdsByScript = getMenuCommandsForTab(tabId);
+    const out: { scriptId: string; commands: MenuCommandEntry[] }[] = [];
+    for (const [scriptId, commands] of cmdsByScript) {
+      out.push({ scriptId, commands: commands.slice() });
+    }
+    return out;
+  },
+  fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
+    // Goes through the same dispatchActionMenuCommand helper the real
+    // click handler uses — same validation, same message shape. Test
+    // assertions can rely on the result instead of polling page state.
+    return await dispatchActionMenuCommand(tabId, scriptId, commandId);
+  },
   debugMatchIndex: async (url: string) => {
     await ensureLoaded();
     return {
@@ -353,6 +388,14 @@ async function updateTabMatches(
   trigger: 'navigation' | 'refresh',
 ): Promise<void> {
   if (!url || !INJECTABLE_SCHEME.test(url)) {
+    // Drop menu commands BEFORE renderBadge: the rebuild that
+    // renderBadge schedules reads getMenuCommandsForTab() at flush
+    // time, so clearing first guarantees the same flush sees an empty
+    // mirror. The renderBadge rebuild with state=null produces zero
+    // script rows (and therefore zero indented command rows) anyway,
+    // but the order keeps the SW's `getMenuCommandsForTab(tabId)`
+    // test-surface read consistent with what the menu shows.
+    clearMenuCommandsForTab(tabId);
     await renderBadge(tabId, null);
     await clearTabState(tabId);
     return;
@@ -369,6 +412,19 @@ async function updateTabMatches(
   const restored = prev != null;
   const matches = restored ? mergeMatches(prev.matches, incoming) : incoming;
   const actual = restored ? prev.actual : {};
+  // Fresh document → the previous wrapper(s) and their menu-command
+  // callbacks are gone. Drop the SW-side mirror so the new document's
+  // wrapper starts from a clean menu. SPA pushState / bfcache restores
+  // (restored === true) keep the existing commands, matching the
+  // "callbacks survive" lifecycle on the page side.
+  if (!restored) {
+    clearMenuCommandsForTab(tabId);
+    // The new document's wrapper will resend sm:gm-menu-register from
+    // scratch; until then the active tab's menu should reflect the
+    // cleared mirror. renderBadge at the end of this function takes
+    // care of the rebuild when tabId is the active one — we don't
+    // need a separate refresh here.
+  }
   // A refresh-driven re-evaluation must NOT silently drop staleScriptIds —
   // those are kept across navigation events anyway, but extra-explicit
   // here because we're rebuilding the state object from scratch.
@@ -438,12 +494,25 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
 
 let activeTabId: number | null = null;
 const ACTION_MENU_PREFIX = 'sm-script:';
+const ACTION_MENU_CMD_PREFIX = 'sm-menucmd:';
+// Indent + glyph for nested menu-command rows. Chrome preserves the
+// leading whitespace in context-menu titles; four spaces + ↳ reads as
+// "indented under the row above" at typical zoom rather than as a
+// top-level entry.
+const ACTION_MENU_CMD_INDENT = '    ↳ ';
 
 function viewerUrlForScript(scriptId: string): string {
   const url = new URL(chrome.runtime.getURL('userscript.html'));
   url.searchParams.set('script', scriptId);
   return url.toString();
 }
+
+// Maps a menu item's id (which is what chrome.contextMenus.onClicked
+// hands us) back to the (scriptId, commandId) it was created for. We
+// can't stash that on the menu item itself — chrome.contextMenus has
+// no custom-data field — so we keep our own mapping and refresh it
+// every rebuild.
+const menuItemToCommand = new Map<string, { scriptId: string; commandId: string }>();
 
 // Rebuilds are serialized AND coalesced. Two concurrent rebuilds would
 // race: removeAll/create is async-via-callback, and once both callbacks
@@ -454,10 +523,14 @@ function viewerUrlForScript(scriptId: string): string {
 // most-recently-requested state is applied after the in-flight one
 // finishes.
 let menuRebuildRunning = false;
-let menuRebuildPending: { state: TabMatchState | null } | null = null;
+let menuRebuildPending: { state: TabMatchState | null; tabId: number | null } | null = null;
 
 function rebuildActionContextMenu(state: TabMatchState | null): void {
-  menuRebuildPending = { state };
+  // Snapshot the active tab at request time. The rebuild reads
+  // per-tab menu commands from gm-menu.ts, so it has to know which
+  // tab the state belongs to — using a fresh `activeTabId` at flush
+  // time could pull commands from a tab that's no longer current.
+  menuRebuildPending = { state, tabId: activeTabId };
   if (menuRebuildRunning) return;
   void runMenuRebuildLoop();
 }
@@ -468,23 +541,42 @@ async function runMenuRebuildLoop(): Promise<void> {
     while (menuRebuildPending) {
       const target = menuRebuildPending;
       menuRebuildPending = null;
-      await doRebuildActionContextMenu(target.state);
+      await doRebuildActionContextMenu(target.state, target.tabId);
     }
   } finally {
     menuRebuildRunning = false;
   }
 }
 
-async function doRebuildActionContextMenu(state: TabMatchState | null): Promise<void> {
+async function doRebuildActionContextMenu(
+  state: TabMatchState | null,
+  tabId: number | null,
+): Promise<void> {
   if (!chrome.contextMenus) return;
   const rows = state ? computeBadge(state).rows : [];
+  // Look up menu commands for the tab whose state we're rendering.
+  // Empty map when no script has registered anything yet.
+  const cmdsByScript = tabId != null ? getMenuCommandsForTab(tabId) : new Map();
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
+  menuItemToCommand.clear();
   for (const row of rows) {
     chrome.contextMenus.create({
       id: ACTION_MENU_PREFIX + row.id,
       title: formatRowLabel(row),
       contexts: ['action'],
     });
+    // Menu commands appear directly beneath their script, indented and
+    // prefixed with a "↳" glyph. Order matches registration order.
+    const commands = cmdsByScript.get(row.id) ?? [];
+    for (const cmd of commands) {
+      const menuItemId = `${ACTION_MENU_CMD_PREFIX}${row.id}:${cmd.commandId}`;
+      menuItemToCommand.set(menuItemId, { scriptId: row.id, commandId: cmd.commandId });
+      chrome.contextMenus.create({
+        id: menuItemId,
+        title: ACTION_MENU_CMD_INDENT + cmd.name,
+        contexts: ['action'],
+      });
+    }
   }
 }
 
@@ -501,9 +593,15 @@ function installActionContextMenu(): void {
   if (!chrome.contextMenus) return;
   chrome.contextMenus.onClicked.addListener((info) => {
     const id = typeof info.menuItemId === 'string' ? info.menuItemId : '';
-    if (!id.startsWith(ACTION_MENU_PREFIX)) return;
-    const scriptId = id.slice(ACTION_MENU_PREFIX.length);
-    void chrome.tabs.create({ url: viewerUrlForScript(scriptId) });
+    if (id.startsWith(ACTION_MENU_CMD_PREFIX)) {
+      handleActionMenuCommandClick(id);
+      return;
+    }
+    if (id.startsWith(ACTION_MENU_PREFIX)) {
+      const scriptId = id.slice(ACTION_MENU_PREFIX.length);
+      void chrome.tabs.create({ url: viewerUrlForScript(scriptId) });
+      return;
+    }
   });
   chrome.tabs.onActivated.addListener((info) => {
     activeTabId = info.tabId;
@@ -532,6 +630,45 @@ function installActionContextMenu(): void {
     }
     void refreshActiveTabMenu();
   })();
+}
+
+// User clicked a "↳ <name>" sub-entry. Resolve which (scriptId,
+// commandId) it belongs to and route through the shared
+// dispatchActionMenuCommand so the real-click path and the test
+// surface (`fireActionContextMenuItem`) validate and message
+// identically.
+function handleActionMenuCommandClick(menuItemId: string): void {
+  const mapping = menuItemToCommand.get(menuItemId);
+  if (!mapping) return;
+  const tabId = activeTabId;
+  if (tabId == null) return;
+  void dispatchActionMenuCommand(tabId, mapping.scriptId, mapping.commandId);
+}
+
+// Single source of truth for "fire this menu command on this tab".
+// Validates the entry is still registered (script may have called
+// unregister between the menu showing and the click firing) and sends
+// the wrapper-side sm:gm-menu-fire message. Both the real-click path
+// and the test surface call this — divergence between them would let
+// tests claim coverage they don't actually have.
+async function dispatchActionMenuCommand(
+  tabId: number,
+  scriptId: string,
+  commandId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!findMenuCommand(tabId, scriptId, commandId)) {
+    return { ok: false, error: 'menu command not registered' };
+  }
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'sm:gm-menu-fire',
+      scriptId,
+      commandId,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message ?? err) };
+  }
 }
 
 // chrome.webNavigation gives us the documentId we need to distinguish
@@ -580,6 +717,10 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  // GM_registerMenuCommand: the page-side callbacks are gone with the
+  // document, so the SW-side mapping is dead weight after close. Drop
+  // before the menu rebuild below so a stale list can't reappear.
+  clearMenuCommandsForTab(tabId);
   // Drop the active-tab reference if it was this one. chrome.tabs.onActivated
   // normally fires immediately for the new active tab and overwrites this,
   // but during window-close paths Chrome can remove a tab without a paired
@@ -1274,6 +1415,40 @@ function installScriptMessageListener(): void {
         },
       );
       return true;
+    }
+    if (type === 'sm:gm-menu-register') {
+      // Page side has stashed the callback locally; we just track the
+      // (commandId, name) so the action context menu can render it.
+      //
+      // Lifecycle window: a register queued just before chrome.tabs.onRemoved
+      // fires can land here AFTER clearMenuCommandsForTab(tabId) has
+      // already wiped state for this tab, re-leaking one entry that
+      // never sees a clearTab event. Same shape as gm-tab/gm-notification
+      // dropOriginator races — left as-is for symmetry. Worst case
+      // is a small in-memory leak until the SW restarts.
+      const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
+      if (
+        typeof payload.scriptId === 'string' &&
+        typeof payload.commandId === 'string' &&
+        typeof payload.name === 'string'
+      ) {
+        const changed = registerMenuCommand(tabId, payload.scriptId, payload.commandId, payload.name);
+        if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+      }
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return false;
+    }
+    if (type === 'sm:gm-menu-unregister') {
+      const payload = msg as { scriptId?: unknown; commandId?: unknown };
+      if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
+        const changed = unregisterMenuCommand(tabId, payload.scriptId, payload.commandId);
+        // Unknown ids (silent no-op contract) don't change visible
+        // state; skip the rebuild so a noisy unregister loop doesn't
+        // churn chrome.contextMenus.
+        if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+      }
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return false;
     }
     if (
       type !== SM_START_MSG &&

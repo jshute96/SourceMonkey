@@ -236,10 +236,24 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_notification = function () { return window.__SM_GM__.notification.show(${jsLit(scriptId)}, arguments); };`;
     }
   }
+  // Menu subsystem: register/unregister context-menu commands. The
+  // runtime stashes the callback locally (callbacks aren't
+  // serializable) and sends the SW a `{commandId, name}` envelope so
+  // the action context menu can render the entries. Returns the
+  // commandId the caller can later pass to GM_unregisterMenuCommand.
+  if (spec.subsystem === 'menu') {
+    switch (spec.name) {
+      case 'GM_registerMenuCommand':
+        return `const GM_registerMenuCommand = function (name, callback, accessKeyOrOpts) { return window.__SM_GM__.menu.register(${jsLit(scriptId)}, name, callback, accessKeyOrOpts); };`;
+      case 'GM_unregisterMenuCommand':
+        return `const GM_unregisterMenuCommand = function (commandId) { return window.__SM_GM__.menu.unregister(${jsLit(scriptId)}, commandId); };`;
+    }
+  }
   if (spec.kind === 'sync') {
     // Fall-through for sync APIs whose body hasn't been wired up yet
-    // (resource, menu). Closure captures the literal API name so
-    // error messages identify it.
+    // (GM_getResourceText, GM_getResourceURL — both waiting on
+    // @resource header storage). Closure captures the literal API
+    // name so error messages identify it.
     return `const ${spec.name} = function () { return window.__SM_GM__.notImplemented(${jsLit(spec.name)}); };`;
   }
   // ASYNC body. Build the message envelope at call time so the args

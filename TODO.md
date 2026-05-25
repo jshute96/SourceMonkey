@@ -44,10 +44,6 @@ Host, Referer, User-Agent). Today `fetch()` silently strips them.
 
 ### GM_* APIs still stubbed (bindings emit, body throws)
 
-- `GM_registerMenuCommand` / `GM_unregisterMenuCommand` — needs a
-  per-page command surface in the action popup (or via
-  `chrome.contextMenus`). Discovery: where the menu lives in our
-  UI is a design decision, not just implementation.
 - `GM_getResourceText` / `GM_getResourceURL` — depends on `@resource`
   storage landing (see require/resource follow-ups below).
 

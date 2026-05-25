@@ -230,5 +230,11 @@ files into TM/VM, hit the same URLs, compare outcomes).
   resolution but Chrome's notification UI is suppressed in
   headless, so we can't drive a click; the unit test covers the
   page-side dispatcher logic instead.
-- `GM_registerMenuCommand` / `GM_cookie` — bindings exist but
-  stubbed as not-implemented.
+- Real Chrome action context menu click-through for
+  `GM_registerMenuCommand` — Playwright can't drive the toolbar
+  right-click menu, so the SW exposes
+  `getActionContextMenu` + `fireActionContextMenuItem` and
+  `tests/e2e/gm-menu.spec.ts` covers the round-trip through them.
+  The real UI render is exercised manually.
+- `GM_cookie` and other catalog entries that remain stubbed as
+  not-implemented.

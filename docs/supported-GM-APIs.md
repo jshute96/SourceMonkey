@@ -260,18 +260,50 @@ policy: …"` message.
 
 ---
 
-## Async APIs still stubbed
+## Menu commands
+
+| API | Status | TM | VM | GM | Notes |
+|-----|:------:|:--:|:--:|:--:|-------|
+| `GM_registerMenuCommand` / `GM.registerMenuCommand` | ✅ | ✓ | ✓ |   | Adds an entry indented under the script's row in SourceMonkey's toolbar-icon right-click menu. See below. |
+| `GM_unregisterMenuCommand` / `GM.unregisterMenuCommand` | ✅ | ✓ | ✓ |   | Removes the entry. Unknown ids are silent. |
+
+### Menu-command call shape
+
+- `GM_registerMenuCommand(name, callback, accessKeyOrOpts?)`:
+  - `name` — visible label rendered as `↳ <name>` under the script's
+    row in the action context menu.
+  - `callback` — invoked in the userscript's sandbox when the user
+    picks the entry; required.
+  - `accessKeyOrOpts.id` — pass a stable id to update an existing
+    entry instead of duplicating it (matches TM/VM).
+- Returns the command id. Pass that id to
+  `GM_unregisterMenuCommand` to remove the entry.
+
+### Menu lifecycle
+
+- Entries are scoped to the (tab, document) the wrapper ran in. SPA
+  pushState / bfcache restore preserves them; a fresh document load
+  clears them and the new wrapper re-registers.
+- The SW restart drops the mirror; the page-side callbacks vanish
+  with the document anyway, so there's nothing for the SW to route
+  a fire event to. After SW restart, the script must re-register
+  (most do this at script entry).
+- Other userscript managers expose the same APIs but render
+  entries in their own surfaces (TM/VM toolbar popups). The
+  catalog matches; the UI doesn't.
+
+---
+
+## APIs still stubbed
 
 These have bindings emitted at compile-in time (so `typeof
-GM_registerMenuCommand === 'function'`), but every call throws "not
+GM_getResourceText === 'function'`), but every call throws "not
 implemented yet" via the runtime's `notImplemented` helper. They're
 in the catalog so adding them later is a per-subsystem fill-in, not
 a surface change.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_registerMenuCommand` / `GM.registerMenuCommand` | 🟡 | ✓ | ✓ |   | Add an entry to the per-page command menu. Needs `chrome.contextMenus` plumbing + a UI. |
-| `GM_unregisterMenuCommand` / `GM.unregisterMenuCommand` | 🟡 | ✓ | ✓ |   | Companion. |
 | `GM_getResourceText` / `GM.getResourceText` | 🟡 | ✓ | ✓ | ✓ | Needs `@resource` header support — see [supported-headers.md](supported-headers.md). |
 | `GM_getResourceURL` / `GM.getResourceUrl` | 🟡 | ✓ | ✓ | ✓ | Same dependency. The GM4 form spells it lowercase-`u` (`getResourceUrl`); we honor that deliberate casing mismatch with the legacy form. |
 

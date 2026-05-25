@@ -831,9 +831,81 @@
     }
   }
 
-  /* Wire the SW-originated tab-close and notification-event messages
-     into the same dispatcher we already use for value-update / xhr.
-     Sender filter logic identical to the earlier listeners. */
+  /* ---------- GM_registerMenuCommand / GM_unregisterMenuCommand ----------
+
+     `__SM_GM__` is a singleton per document — every userscript on the
+     page shares this runtime. So the callback table MUST be keyed by
+     (scriptId, commandId), not commandId alone: two scripts using the
+     same explicit `{id: 'foo'}` (the documented TM/VM update-in-place
+     idiom) would otherwise clobber each other's callbacks.
+
+     SW side mirrors per (tabId, scriptId, commandId) and includes the
+     scriptId in every sm:gm-menu-fire message; dispatchMenuFire below
+     uses it to select the right script's callback.
+
+     IDs: callers can pass an `options.id` to lock a stable id (TM/VM
+     treat this as an update). Otherwise we mint `mc-<n>-<rand>` so
+     two scripts can't accidentally collide. Returns the commandId. */
+  var menuCommandsByScript = _ObjectCreate(null);  /* scriptId -> { commandId -> callback } */
+  var _menuNextId = 1;
+  function ensureMenuScript(scriptId) {
+    var bucket = menuCommandsByScript[scriptId];
+    if (bucket) return bucket;
+    bucket = _ObjectCreate(null);
+    menuCommandsByScript[scriptId] = bucket;
+    return bucket;
+  }
+  var menu = {
+    register: function (scriptId, name, callback, accessKeyOrOpts) {
+      if (typeof callback !== "function") {
+        throw new _Error("[SourceMonkey] GM_registerMenuCommand: callback must be a function");
+      }
+      var commandId;
+      if (accessKeyOrOpts && typeof accessKeyOrOpts === "object" && accessKeyOrOpts.id != null) {
+        commandId = String(accessKeyOrOpts.id);
+      } else {
+        commandId = "mc-" + (_menuNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      }
+      ensureMenuScript(scriptId)[commandId] = callback;
+      var label = String(name == null ? "" : name);
+      api.sendAsync({
+        type: "sm:gm-menu-register",
+        scriptId: scriptId,
+        commandId: commandId,
+        name: label,
+      }).catch(function (err) {
+        try { console.info("[SourceMonkey] GM_registerMenuCommand send failed:", err && err.message || err); } catch (_e) {}
+      });
+      return commandId;
+    },
+    unregister: function (scriptId, commandId) {
+      var key = String(commandId);
+      var bucket = menuCommandsByScript[scriptId];
+      if (bucket && _hasOwn.call(bucket, key)) delete bucket[key];
+      api.sendAsync({
+        type: "sm:gm-menu-unregister",
+        scriptId: scriptId,
+        commandId: key,
+      }).catch(function (err) {
+        try { console.info("[SourceMonkey] GM_unregisterMenuCommand send failed:", err && err.message || err); } catch (_e) {}
+      });
+    },
+  };
+  function dispatchMenuFire(scriptId, commandId) {
+    var bucket = menuCommandsByScript[scriptId];
+    if (!bucket) return;
+    var cb = bucket[commandId];
+    if (typeof cb !== "function") return;
+    try {
+      cb();
+    } catch (e) {
+      try { console.error("[SourceMonkey] GM_registerMenuCommand callback threw:", e); } catch (_e) {}
+    }
+  }
+
+  /* Wire the SW-originated tab-close, notification-event, and menu-fire
+     messages into the same dispatcher we already use for value-update
+     and xhr. Sender filter logic identical to the earlier listeners. */
   try {
     if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
       chrome.runtime.onMessage.addListener(function (msg, sender) {
@@ -843,6 +915,8 @@
           dispatchTabClose(msg.requestId);
         } else if (msg.type === "sm:gm-notification-event" && typeof msg.requestId === "string" && typeof msg.event === "string") {
           dispatchNotificationEvent(msg.requestId, msg.event);
+        } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
+          dispatchMenuFire(msg.scriptId, msg.commandId);
         }
       });
     }
@@ -874,6 +948,7 @@
     log: log,
     tab: tab,
     notification: notification,
+    menu: menu,
     clipboard: {
       /* GM_setClipboard(text, type?). Returns the Promise from
          navigator.clipboard.writeText so callers can `await` it. TM's

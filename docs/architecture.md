@@ -9,10 +9,12 @@ details live in the topic-specific docs linked below.
 > `GM.*` API surface covers storage (with cross-tab broadcast +
 > value-change listeners), DOM injection (`GM_addStyle` /
 > `GM_addElement`), clipboard, `GM_xmlhttpRequest` (text + binary)
-> with `@connect` URL gating, `GM_notification`, `GM_openInTab`, and
-> `GM_log`. Deferred: XHR header surgery, `@resource` storage,
-> `GM_registerMenuCommand` / `GM_cookie` (bindings stubbed). See
-> [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
+> with `@connect` URL gating, `GM_notification`, `GM_openInTab`,
+> `GM_log`, and `GM_registerMenuCommand` /
+> `GM_unregisterMenuCommand` (rendered as indented entries under
+> each script in the toolbar action's right-click menu). Deferred:
+> XHR header surgery, `@resource` storage, `GM_cookie` (bindings
+> stubbed). See [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 
 ## Components
 

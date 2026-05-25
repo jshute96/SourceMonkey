@@ -99,12 +99,32 @@ test('emitGmBindings: DOM bodies route to __SM_GM__.dom helpers', () => {
   assert.doesNotMatch(out.js, /notImplemented\("GM_addElement"\)/);
 });
 
-test('emitGmBindings: non-DOM/non-storage sync stub bodies still route through notImplemented', () => {
-  // GM_registerMenuCommand hasn't been implemented yet — should still throw.
+test('emitGmBindings: still-stubbed sync APIs route through notImplemented', () => {
+  // GM_getResourceText is in the catalog but has no body wired up yet
+  // (waiting on @resource header support — see TODO.md). Its compile-in
+  // form still surfaces notImplemented at call time. GM_getResourceURL
+  // is in the same boat.
+  const out = emitGmBindings(['GM_getResourceText'], makeInfo({
+    grants: ['GM_getResourceText'],
+  }));
+  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_getResourceText"\)/);
+});
+
+test('emitGmBindings: GM_registerMenuCommand routes to __SM_GM__.menu.register with the scriptId', () => {
   const out = emitGmBindings(['GM_registerMenuCommand'], makeInfo({
     grants: ['GM_registerMenuCommand'],
   }));
-  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_registerMenuCommand"\)/);
+  assert.match(out.js, /const GM_registerMenuCommand = function/);
+  assert.match(out.js, /__SM_GM__\.menu\.register\("script-1"/);
+  assert.doesNotMatch(out.js, /notImplemented\("GM_registerMenuCommand"\)/);
+});
+
+test('emitGmBindings: GM_unregisterMenuCommand routes to __SM_GM__.menu.unregister with the scriptId', () => {
+  const out = emitGmBindings(['GM_unregisterMenuCommand'], makeInfo({
+    grants: ['GM_unregisterMenuCommand'],
+  }));
+  assert.match(out.js, /const GM_unregisterMenuCommand = function/);
+  assert.match(out.js, /__SM_GM__\.menu\.unregister\("script-1"/);
 });
 
 test('emitGmBindings: GM_log routes to __SM_GM__.log.write with the scriptId', () => {

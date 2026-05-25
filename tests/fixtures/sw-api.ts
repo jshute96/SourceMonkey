@@ -28,6 +28,16 @@ interface SmApi {
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledSources: string[] };
   }>;
+  // GM_registerMenuCommand test surface.
+  getActionContextMenu(tabId: number): Promise<{
+    scriptId: string;
+    commands: { commandId: string; name: string }[];
+  }[]>;
+  fireActionContextMenuItem(
+    tabId: number,
+    scriptId: string,
+    commandId: string,
+  ): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface StoredScriptLike {

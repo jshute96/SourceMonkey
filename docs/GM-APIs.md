@@ -519,6 +519,64 @@ Returns `undefined` (matches TM/VM signature).
 - `tag` is parsed but unused today — `chrome.notifications` has
   its own notification id semantics; we don't coalesce by tag.
 
+## `GM_registerMenuCommand` / `GM_unregisterMenuCommand`
+
+### Surface
+
+- Userscripts register entries that surface as indented rows in
+  SourceMonkey's toolbar-icon right-click menu, one row per
+  command, beneath the script's `name | status` line.
+- `register` returns an opaque id; pass it to `unregister` to
+  remove the entry. Passing `{id: 'stable'}` as the third arg
+  locks a stable id so a re-register updates the entry in place.
+
+### Components
+
+- **Page side (`src/wrapper-gm-runtime.js`, `menu` subsystem)** —
+  keeps a `commandId → {scriptId, callback}` map. `register` stashes
+  the callback locally and sends `sm:gm-menu-register` with
+  `{scriptId, commandId, name}`; `unregister` drops the local
+  entry and sends `sm:gm-menu-unregister`.
+- **SW side (`src/gm-menu.ts`)** — mirrors the (tabId → scriptId →
+  commands[]) registry that the action menu renders from. No
+  callbacks live here — only the name + id needed to render the
+  row and route a fire event back.
+- **Action menu rebuild (`src/background.ts`,
+  `doRebuildActionContextMenu`)** — folds the per-tab mirror into
+  the rebuild after the script rows: each script row gets its
+  registered commands appended as `↳ <name>` entries.
+- **Click routing** — `chrome.contextMenus.onClicked` for an
+  `sm-menucmd:<scriptId>:<commandId>` item sends `sm:gm-menu-fire`
+  to the active tab. The runtime listener invokes the matching
+  local callback.
+
+### Lifecycle
+
+- Registration is scoped to the (tab, document). The SW clears
+  the mirror on:
+  - Fresh-document navigation (the new wrapper's `sm:start` will
+    re-register from scratch).
+  - Navigating to a non-injectable URL (`chrome://`, `about:blank`,
+    ...).
+  - Tab close (`chrome.tabs.onRemoved`).
+- SPA pushState / bfcache restore preserves the document, so
+  registered commands stay live — matches the page-side
+  "callbacks survive in this document" invariant.
+- SW restart wipes the in-memory mirror. Page-side callbacks are
+  scoped to the same document so they're already gone; the symmetric
+  drop is correct.
+
+### Test surface
+
+- `self.SourceMonkey.getActionContextMenu(tabId)` returns the
+  rendered (scriptId, commands[]) groups, used by
+  `tests/e2e/gm-menu.spec.ts` to assert on registration state
+  without driving the real Chrome UI.
+- `self.SourceMonkey.fireActionContextMenuItem(tabId, scriptId,
+  commandId)` synthesizes a click on a specific entry by sending
+  the same `sm:gm-menu-fire` message the real click handler does.
+  Returns `{ok:false}` for stale or unknown ids.
+
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
@@ -554,4 +612,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
-- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`)
+- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu)

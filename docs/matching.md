@@ -158,7 +158,14 @@ For each tab we:
     we keep them synced to the active tab.
   - Rebuilt on `chrome.tabs.onActivated`,
     `chrome.windows.onFocusChanged`, and any `renderBadge` for the
-    active tab.
+    active tab. Also rebuilt when a userscript registers or
+    unregisters a menu command (see below).
+  - **Nested menu commands** — entries created via
+    `GM_registerMenuCommand` appear indented (`↳ <name>`) directly
+    under their script's row. Clicking one routes
+    `sm:gm-menu-fire` to the active tab so the wrapper invokes
+    the registered callback. See [GM-APIs.md](GM-APIs.md) for the
+    full lifecycle.
 
 ### Actual reports from injected wrappers
 
