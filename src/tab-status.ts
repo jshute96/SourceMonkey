@@ -151,9 +151,15 @@ export function computeBadge(state: TabMatchState): BadgeView {
   else if (anyReload) color = BADGE_PURPLE;
   else if (anyMismatch) color = BADGE_ORANGE;
 
-  const title = ['SourceMonkey', ...rows.map((r) => `${r.name} | ${formatStatus(r.status)}`)].join('\n');
+  const title = ['SourceMonkey', ...rows.map((r) => formatRowLabel(r))].join('\n');
 
   return { count: allIds.size, color, title, rows };
+}
+
+// Shared "{name} | {status}" formatter — same text the badge tooltip
+// uses, so the action context menu can mirror it byte-for-byte.
+export function formatRowLabel(row: BadgeRow): string {
+  return `${row.name} | ${formatStatus(row.status)}`;
 }
 
 function formatStatus(s: RowStatus): string {

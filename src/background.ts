@@ -1,6 +1,6 @@
 // SourceMonkey MV3 service worker.
 //
-// Today the SW does two real jobs:
+// Today the SW does these real jobs:
 //   - Opens the options page on toolbar click (no popup configured).
 //   - Watches every tab navigation, finds matching userscripts via the
 //     in-memory match index, listens to sm:start / sm:error reports
@@ -8,6 +8,10 @@
 //     per-tab badge + tooltip. Per-tab state is persisted to
 //     chrome.storage.session so it survives SW restarts but is dropped
 //     when Chrome shuts down.
+//   - Mirrors the badge's per-script status lines into the toolbar
+//     icon's right-click menu (chrome.contextMenus, action context),
+//     so users can jump to a script's viewer page without going
+//     through the options page first.
 //
 // The `self.SourceMonkey` surface exists so e2e tests can drive the
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
@@ -45,6 +49,8 @@ import {
   applyScriptReport,
   clearScriptStale,
   computeBadge,
+  formatRowLabel,
+  getCurrentState,
   getDocState,
   markScriptStale,
   mergeMatches,
@@ -400,15 +406,132 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
     if (!state || (state.matches.length === 0 && Object.keys(state.actual).length === 0)) {
       await chrome.action.setBadgeText({ tabId, text: '' });
       await chrome.action.setTitle({ tabId, title: 'SourceMonkey' });
-      return;
+    } else {
+      const view = computeBadge(state);
+      await chrome.action.setBadgeText({ tabId, text: String(view.count) });
+      await chrome.action.setBadgeBackgroundColor({ tabId, color: view.color });
+      await chrome.action.setTitle({ tabId, title: view.title });
     }
-    const view = computeBadge(state);
-    await chrome.action.setBadgeText({ tabId, text: String(view.count) });
-    await chrome.action.setBadgeBackgroundColor({ tabId, color: view.color });
-    await chrome.action.setTitle({ tabId, title: view.title });
   } catch {
     /* tab probably closed; nothing useful to do */
   }
+  // Action context-menu items are a global property of the action, not
+  // per-tab — so we only rebuild them when this tab is the one the user
+  // is currently looking at. Out-of-band updates (background tabs
+  // reporting sm:start, refresh fan-outs) skip the rebuild.
+  if (tabId === activeTabId) {
+    rebuildActionContextMenu(state);
+  }
+}
+
+// ---------- Action context-menu (per active tab) ----------
+//
+// Right-clicking the SourceMonkey toolbar icon should list the scripts
+// that apply to the current tab, mirroring the badge tooltip's
+// "{name} | {status}" lines. Clicking one opens that script's viewer
+// page in a new tab.
+//
+// chrome.contextMenus items with `contexts: ['action']` are global —
+// they apply to whatever tab is active when the user right-clicks. So
+// we keep them in sync with the active tab: rebuild on tab activation,
+// window focus change, and any renderBadge() for the active tab.
+
+let activeTabId: number | null = null;
+const ACTION_MENU_PREFIX = 'sm-script:';
+
+function viewerUrlForScript(scriptId: string): string {
+  const url = new URL(chrome.runtime.getURL('userscript.html'));
+  url.searchParams.set('script', scriptId);
+  return url.toString();
+}
+
+// Rebuilds are serialized AND coalesced. Two concurrent rebuilds would
+// race: removeAll/create is async-via-callback, and once both callbacks
+// are queued, the second `create` loop can collide with the first
+// rebuild's same-ID items (chrome.contextMenus.create reports
+// duplicate-id via runtime.lastError, silently). Bursts (Ctrl-Tab spam,
+// rapid sm:* fan-out) collapse to one trailing rebuild — only the
+// most-recently-requested state is applied after the in-flight one
+// finishes.
+let menuRebuildRunning = false;
+let menuRebuildPending: { state: TabMatchState | null } | null = null;
+
+function rebuildActionContextMenu(state: TabMatchState | null): void {
+  menuRebuildPending = { state };
+  if (menuRebuildRunning) return;
+  void runMenuRebuildLoop();
+}
+
+async function runMenuRebuildLoop(): Promise<void> {
+  menuRebuildRunning = true;
+  try {
+    while (menuRebuildPending) {
+      const target = menuRebuildPending;
+      menuRebuildPending = null;
+      await doRebuildActionContextMenu(target.state);
+    }
+  } finally {
+    menuRebuildRunning = false;
+  }
+}
+
+async function doRebuildActionContextMenu(state: TabMatchState | null): Promise<void> {
+  if (!chrome.contextMenus) return;
+  const rows = state ? computeBadge(state).rows : [];
+  await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
+  for (const row of rows) {
+    chrome.contextMenus.create({
+      id: ACTION_MENU_PREFIX + row.id,
+      title: formatRowLabel(row),
+      contexts: ['action'],
+    });
+  }
+}
+
+async function refreshActiveTabMenu(): Promise<void> {
+  if (activeTabId == null) {
+    rebuildActionContextMenu(null);
+    return;
+  }
+  const record = await getTabRecord(activeTabId);
+  rebuildActionContextMenu(getCurrentState(record));
+}
+
+function installActionContextMenu(): void {
+  if (!chrome.contextMenus) return;
+  chrome.contextMenus.onClicked.addListener((info) => {
+    const id = typeof info.menuItemId === 'string' ? info.menuItemId : '';
+    if (!id.startsWith(ACTION_MENU_PREFIX)) return;
+    const scriptId = id.slice(ACTION_MENU_PREFIX.length);
+    void chrome.tabs.create({ url: viewerUrlForScript(scriptId) });
+  });
+  chrome.tabs.onActivated.addListener((info) => {
+    activeTabId = info.tabId;
+    void refreshActiveTabMenu();
+  });
+  if (chrome.windows && chrome.windows.onFocusChanged) {
+    chrome.windows.onFocusChanged.addListener(async (windowId) => {
+      if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, windowId });
+        activeTabId = tab?.id ?? null;
+      } catch {
+        activeTabId = null;
+      }
+      void refreshActiveTabMenu();
+    });
+  }
+  // Seed the active-tab id on SW startup so the very first right-click
+  // (before any tab event fires) gets the right menu.
+  void (async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      activeTabId = tab?.id ?? null;
+    } catch {
+      activeTabId = null;
+    }
+    void refreshActiveTabMenu();
+  })();
 }
 
 // chrome.webNavigation gives us the documentId we need to distinguish
@@ -457,6 +580,15 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  // Drop the active-tab reference if it was this one. chrome.tabs.onActivated
+  // normally fires immediately for the new active tab and overwrites this,
+  // but during window-close paths Chrome can remove a tab without a paired
+  // activation event; null'ing here keeps the next right-click from
+  // resolving against a dead tabId.
+  if (tabId === activeTabId) {
+    activeTabId = null;
+    void refreshActiveTabMenu();
+  }
   // GM_* cross-tab broadcast: drop this tab from every scriptId's
   // openers set so future writes don't try to deliver to a closed
   // tab (broadcast() catches the "Receiving end does not exist"
@@ -1364,6 +1496,7 @@ installNavigationListeners();
 installScriptMessageListener();
 installDebugLoggingListener();
 installNotificationListeners();
+installActionContextMenu();
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.

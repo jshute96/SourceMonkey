@@ -12,6 +12,7 @@ import {
   applyScriptReport,
   clearScriptStale,
   computeBadge,
+  formatRowLabel,
   getCurrentState,
   getDocState,
   markScriptStale,
@@ -438,4 +439,30 @@ test('getDocState / getCurrentState: lookups behave', () => {
   assert.equal(getDocState(null, 'd1'), null);
   assert.equal(getCurrentState(rec).url, 'https://b');
   assert.equal(getCurrentState(null), null);
+});
+
+// ---------- formatRowLabel ----------
+
+test('formatRowLabel: OK / ERROR / MISSING / UNEXPECTED use the raw status enum', () => {
+  assert.equal(formatRowLabel({ id: 'a', name: 'Alpha', status: 'OK' }), 'Alpha | OK');
+  assert.equal(formatRowLabel({ id: 'b', name: 'Beta', status: 'ERROR' }), 'Beta | ERROR');
+  assert.equal(formatRowLabel({ id: 'c', name: 'Gamma', status: 'MISSING' }), 'Gamma | MISSING');
+  assert.equal(formatRowLabel({ id: 'd', name: 'Delta', status: 'UNEXPECTED' }), 'Delta | UNEXPECTED');
+});
+
+test('formatRowLabel: RELOAD is rendered as the verbose "Reload to update" label', () => {
+  // The action context menu shares this helper, so the verbose label
+  // must come from formatRowLabel itself — otherwise the menu would
+  // show "RELOAD" while the tooltip says "Reload to update".
+  assert.equal(formatRowLabel({ id: 'e', name: 'Echo', status: 'RELOAD' }), 'Echo | Reload to update');
+});
+
+test('formatRowLabel: matches the tooltip line format byte-for-byte', () => {
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+  });
+  const expectedLine = formatRowLabel(view.rows[0]);
+  assert.ok(view.title.split('\n').includes(expectedLine), view.title);
 });

@@ -150,6 +150,15 @@ For each tab we:
   - `Reload to update` — the script is running here but its source
     on disk has changed since. The verbose label is rendered in place
     of the raw enum so the tooltip tells the user what to do.
+- **Action context menu** — same `"<name> | <STATUS>"` lines as
+  additional entries under the right-click menu on the toolbar icon
+  (below Chrome's built-in items). Clicking one opens that script's
+  viewer page in a new tab.
+  - `chrome.contextMenus` action items are global to the action, so
+    we keep them synced to the active tab.
+  - Rebuilt on `chrome.tabs.onActivated`,
+    `chrome.windows.onFocusChanged`, and any `renderBadge` for the
+    active tab.
 
 ### Actual reports from injected wrappers
 
