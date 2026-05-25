@@ -489,14 +489,6 @@ executes.
 
 ## Limitations / future work
 
-- **No `@grant` / `GM_*` support.** Only `@grant none` scripts behave
-  correctly — anything referencing `GM_setValue` / `GM_xmlhttpRequest`
-  / etc. throws on first call. A real bridge means a per-API shim
-  injected via `configureWorld({ csp, messaging })` plus SW-side
-  message handlers. Tracked in `TODO.md`.
-- **`@require` / `@resource`.** Not loaded at all. We'd fetch them at
-  registration time and either prepend them to the body or use
-  separate entries in `js: []`. Tracked in `TODO.md`.
 - **No frame control.** We don't set `allFrames`, so scripts only run
   in the top frame. Adding `@noframes` parsing + a `allFrames` flip
   is straightforward.

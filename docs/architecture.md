@@ -13,8 +13,8 @@ details live in the topic-specific docs linked below.
 > `GM_log`, and `GM_registerMenuCommand` /
 > `GM_unregisterMenuCommand` (rendered as indented entries under
 > each script in the toolbar action's right-click menu). Deferred:
-> XHR header surgery, `@resource` storage, `GM_cookie` (bindings
-> stubbed). See [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
+> XHR header surgery, `GM_cookie` (bindings stubbed). See
+> [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 
 ## Components
 
@@ -52,16 +52,20 @@ details live in the topic-specific docs linked below.
   [file-access.md](file-access.md) and
   [http-sources.md](http-sources.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
-  (`@icon`, `@require`) into absolute URLs against the script's parent
-  dir (rejecting `..` and host-absolute paths), and exposes
-  scheme-aware bounded byte + text fetchers used by the icon and
-  require pipelines.
-- **Requires** (`src/requires.ts`) — `@require` resolution + fetch
-  orchestrator. Extracts refs from the metadata block, runs them
-  through file-loader, dedupes within and across scripts in a single
-  refresh pass, and attaches the fetched bodies to each StoredScript
-  so the injector can prepend them at registration time. See
-  [requires.md](requires.md).
+  (`@icon`, `@require`, `@resource`) into absolute URLs against the
+  script's parent dir (rejecting `..` and host-absolute paths), and
+  exposes scheme-aware bounded byte + text fetchers used by the icon,
+  require, and resource pipelines.
+- **External files** (`src/external-files.ts`) — `@require` +
+  `@resource` orchestrator on top of `file-loader`.
+  - Extracts refs from the metadata block, resolves them, fetches +
+    dedups within and across scripts (and across kinds) in one
+    refresh pass.
+  - Attaches typed entries to each StoredScript.
+  - `@require` bodies are prepended at registration; `@resource`
+    bytes are baked into the wrapper for `GM_getResource*`.
+  - See [requires.md](requires.md) and
+    [resources.md](resources.md).
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
   See [script-viewer.md](script-viewer.md). For which `@tag` fields
@@ -101,8 +105,9 @@ details live in the topic-specific docs linked below.
 - **GM_* binding emitter** (`src/gm-bindings.ts`) — pure compiler.
   Given a script's resolved grants + parsed header, returns the JS
   source spliced into the wrapper at register time. Emits real
-  bodies for storage, DOM, clipboard, and XHR; `notImplemented`
-  stubs for the surface that hasn't landed.
+  bodies for every catalog entry except `unsafeWindow` (a passthrough
+  binding); the `notImplemented` stub remains only as a fall-through
+  for future catalog additions whose bodies haven't landed yet.
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
   USER_SCRIPT-world helper registered once per page (alongside the
   MAIN-world bridge). Installs `window.__SM_GM__` with per-subsystem

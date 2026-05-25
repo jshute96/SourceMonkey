@@ -20,6 +20,7 @@ function makeInfo(over = {}) {
     scriptMetaStr: '// ==UserScript==\n// @name Hello\n// ==/UserScript==',
     scriptHandlerVersion: '0.0.1',
     initialValues: {},
+    resources: {},
     ...over,
   };
 }
@@ -99,15 +100,43 @@ test('emitGmBindings: DOM bodies route to __SM_GM__.dom helpers', () => {
   assert.doesNotMatch(out.js, /notImplemented\("GM_addElement"\)/);
 });
 
-test('emitGmBindings: still-stubbed sync APIs route through notImplemented', () => {
-  // GM_getResourceText is in the catalog but has no body wired up yet
-  // (waiting on @resource header support — see TODO.md). Its compile-in
-  // form still surfaces notImplemented at call time. GM_getResourceURL
-  // is in the same boat.
+test('emitGmBindings: GM_getResourceText routes to __SM_GM__.resource.getText', () => {
   const out = emitGmBindings(['GM_getResourceText'], makeInfo({
     grants: ['GM_getResourceText'],
   }));
-  assert.match(out.js, /__SM_GM__\.notImplemented\("GM_getResourceText"\)/);
+  assert.match(out.js, /const GM_getResourceText = function/);
+  assert.match(out.js, /__SM_GM__\.resource\.getText\("script-1"/);
+  assert.doesNotMatch(out.js, /notImplemented\("GM_getResourceText"\)/);
+});
+
+test('emitGmBindings: GM_getResourceURL routes to __SM_GM__.resource.getUrl', () => {
+  const out = emitGmBindings(['GM_getResourceURL'], makeInfo({
+    grants: ['GM_getResourceURL'],
+  }));
+  assert.match(out.js, /const GM_getResourceURL = function/);
+  assert.match(out.js, /__SM_GM__\.resource\.getUrl\("script-1"/);
+  assert.doesNotMatch(out.js, /notImplemented\("GM_getResourceURL"\)/);
+});
+
+test('emitGmBindings: resource.init prelude emitted when resources are declared', () => {
+  const out = emitGmBindings(['GM_getResourceText'], makeInfo({
+    grants: ['GM_getResourceText'],
+    resources: { myCss: { b64: 'YQ==', ct: 'text/css' } },
+  }));
+  assert.match(out.prelude, /__SM_GM__\.resource\.init\("script-1"/);
+  assert.match(out.prelude, /"myCss"/);
+  assert.match(out.prelude, /"b64":"YQ=="/);
+});
+
+test('emitGmBindings: resource.init prelude emitted even when resources are empty', () => {
+  // Empty-init is load-bearing: it resets the runtime's per-script box
+  // so a prior reload's resources don't leak when the new declaration
+  // set drops to zero. See gm-bindings.ts for the rationale.
+  const out = emitGmBindings(['GM_getResourceText'], makeInfo({
+    grants: ['GM_getResourceText'],
+    resources: {},
+  }));
+  assert.match(out.prelude, /__SM_GM__\.resource\.init\("script-1", \{\}\)/);
 });
 
 test('emitGmBindings: GM_registerMenuCommand routes to __SM_GM__.menu.register with the scriptId', () => {

@@ -98,8 +98,8 @@ below can repeat; order doesn't matter.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@require` | ✅ | ✓ | ✓ | ✓ | Prefetched at load/refresh time and prepended (in declaration order, deduped by URL) before the main body inside a single activation wrapper. Accepts absolute `http(s)://` URLs and **relative paths** resolved against the script's parent directory — an extension over what TM/VM/GM do, sharing rules with `@icon` (no `..` / leading `/` / absolute `file://`). Resolved URL must end in `.js` (pre-query). Per-require body cap: 1 MB. `tampermonkey://vendor/*` is not supported. SRI hash fragments (`#sha256=…`) are parsed but not validated — see [TODO.md](../TODO.md). |
-| `@resource` | ⚪ | ✓ | ✓ | ✓ | Companion to `GM_getResourceText` / `GM_getResourceURL`. Parsed but not yet honored — the `GM_getResource*` bindings exist as not-implemented stubs, and the fetch + storage pipeline that would back them hasn't landed. See [TODO.md](../TODO.md). |
+| `@require` | ✅ | ✓ | ✓ | ✓ | Prefetched at load/refresh time and prepended (in declaration order, deduped by URL) before the main body inside a single activation wrapper. Accepts absolute `http(s)://` URLs and **relative paths** resolved against the script's parent directory — an extension over what TM/VM/GM do, sharing rules with `@icon` (no `..` / leading `/` / absolute `file://`). Resolved URL must end in `.js` (pre-query). Strict UTF-8 decode catches binary smuggled past the suffix gate. Per-require body cap: 1 MB. `tampermonkey://vendor/*` is not supported. SRI hash fragments (`#sha256=…`) are parsed but not validated — see [TODO.md](../TODO.md). |
+| `@resource` | ✅ | ✓ | ✓ | ✓ | `<name> <ref>` pairs prefetched at load/refresh time and exposed via `GM_getResourceText` (UTF-8 decode) / `GM_getResourceURL` (blob: URL). Same resolution rules as `@require` but no `.js` gate — any media type works. Duplicate names: first declaration wins (TM/VM raise an error; we're lenient). 1 MB per-resource cap. See [resources.md](resources.md). |
 
 ---
 
@@ -131,11 +131,11 @@ UI — the canonical (un-suffixed) value is always used.
 
 ## SRI hash fragments on `@require` / `@resource`
 
-The URL may carry a `#sha256=…` (or `md5`, `sha1`, `sha384`, `sha512`)
-fragment. `@require` is honored but the SRI fragment is not yet
-validated (parsed and informational only). `@resource` is parsed but
-not yet honored. TM documents the full syntax; VM and GM4 don't
-document SRI in their metadata pages.
+The URL may carry a `#sha256=…` (or `md5`, `sha1`, `sha384`,
+`sha512`) fragment. Both `@require` and `@resource` are honored, but
+the SRI fragment is parsed-and-preserved only — not yet validated.
+TM documents the full syntax; VM and GM4 don't document SRI in their
+metadata pages.
 
 ---
 

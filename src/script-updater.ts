@@ -158,12 +158,12 @@ export function updateAllSources(
 // we have the prior loadedAt to compare against the post-refresh row.
 // One extra storage read per check — cheap.
 
-// `@require` policy by trigger mode. Manual clicks rebuild requires
-// from scratch so users can pick up remote require updates without
-// touching the main script. Opportunistic background checks preserve
-// the cached requires verbatim and only fetch newly-declared refs —
-// keeping page-load cost bounded.
-function requireRecheckMode(mode: UpdateMode): 'all' | 'preserve' {
+// `@require` + `@resource` policy by trigger mode. Manual clicks
+// rebuild deps from scratch so users can pick up remote updates
+// without touching the main script. Opportunistic background checks
+// preserve the cached entries verbatim and only fetch newly-declared
+// refs — keeping page-load cost bounded.
+function fileRecheckMode(mode: UpdateMode): 'all' | 'preserve' {
   return mode === 'manual' ? 'all' : 'preserve';
 }
 
@@ -187,7 +187,7 @@ async function runScriptCheck(
   });
   let next: StoredScript | null;
   try {
-    next = await refreshScript(scriptId, { recheckRequires: requireRecheckMode(mode) });
+    next = await refreshScript(scriptId, { recheckFiles: fileRecheckMode(mode) });
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] update check failed: ${label}: ${msg}`);
@@ -213,7 +213,7 @@ async function runSourceCheck(
   console.log(`[SourceMonkey] source refresh (${mode}): ${label}`);
   let result: { source: StoredSource; scripts: StoredScript[] } | null;
   try {
-    result = await refreshSource(sourceId, { recheckRequires: requireRecheckMode(mode) });
+    result = await refreshSource(sourceId, { recheckFiles: fileRecheckMode(mode) });
   } catch (err) {
     console.info(`[SourceMonkey] source refresh failed: ${label}: ${describe(err)}`);
     throw err;
@@ -230,7 +230,7 @@ async function runAllSourcesCheck(
   // back the post-refresh state and the summary would always say 0
   // updated / 0 added.
   const priorBySourceId = await snapshotAllSourceScripts();
-  const result = await refreshAllSources({ recheckRequires: requireRecheckMode(mode) });
+  const result = await refreshAllSources({ recheckFiles: fileRecheckMode(mode) });
   for (const [, { source, scripts }] of result) {
     const priorBy = priorBySourceId.get(source.id) ?? new Map();
     summarizeSourceOutcome(source.path, priorBy, scripts, mode);

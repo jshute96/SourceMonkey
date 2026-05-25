@@ -62,8 +62,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor; shared by site-icon and the viewer linkifier |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
-| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
-| `src/requires.ts` | `@require` orchestration: extract refs, resolve via file-loader, fetch + dedup + cache, attach to StoredScript |
+| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
+| `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries |
 | `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await, @run-at gate on DCL/load, matcher slot, try-open) — minified to one line |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, runAt + decision callback closes, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
@@ -120,7 +120,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/match-targets.test.mjs` | Unit tests for `@match` pattern parsing: origin / linkUrl extraction and the wildcard-trim path rule |
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache TTLs |
 | `tests/unit/file-loader.test.mjs` | Unit tests for `resolveScriptResource` — accepted schemes, relative-path resolution, and traversal rejection |
-| `tests/unit/requires.test.mjs` | Unit tests for `distillRequires` extraction + `attachRequires` orchestration (cache hits, preserve mode, suffix gate, traversal rejection, dedup) |
+| `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at normalization, spec build, active-spec collection) |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
@@ -157,6 +157,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/gm-open-in-tab/` | `GM_openInTab` call-shape examples (active, background, positional, onclose) |
 | `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
 | `tests/examples/gm-menu/` | `GM_registerMenuCommand` / `GM_unregisterMenuCommand` button-driven examples |
+| `tests/examples/gm-resource/` | `GM_getResourceText` / `GM_getResourceURL` examples reading prefetched CSS, JSON, and SVG `@resource` files |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
@@ -180,6 +181,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/script-log.md` | Per-script event log: schema, storage layout, what gets logged, viewer Log tab behavior |
 | `docs/site-icons.md` | Favicon fetch+cache + the icon slot rendered beside each script filename; URL extraction lives in `match-targets.ts` |
 | `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |
+| `docs/resources.md` | `@resource` pipeline + GM_getResourceText / GM_getResourceURL plumbing: prefetch, base64 storage, blob URL minting, shared infra with @require |
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
 | `docs/GM-API-strategy.md` | Decision doc comparing VM-embed vs own-impl for `GM_*` APIs; recommends own-impl with VM as reference |
 | `docs/GM-APIs.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |

@@ -25,6 +25,12 @@ Specs that opt out under TM via
   `"blocked by @connect policy"` message. TM has its own `@connect`
   UX (potentially prompting the user) and its own denial message.
   Out of scope for cross-manager comparison.
+- **`gm-resource/`** — the example uses relative `@resource` refs
+  (`./resource.css`, etc.) resolved against the host script's URL,
+  which is a SourceMonkey extension over TM/VM. TM accepts absolute
+  URLs only, so it can't install the example cleanly. Skipped under
+  TM until we ship an absolute-URL variant. SM coverage:
+  `tests/examples/gm-resource/gm-resource.spec.ts`.
 
 ## Failing specs (untriaged divergences)
 

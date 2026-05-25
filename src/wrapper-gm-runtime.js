@@ -53,6 +53,17 @@
       _clipboardWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
     }
   } catch (_clE) {}
+  /* Capture Blob + URL.createObjectURL for GM_getResourceURL. Same
+     reasoning as the other shim caches — a sibling userscript that
+     reassigns Blob or URL after we init can't subvert the blob URL
+     we hand back. */
+  var _Blob = (typeof Blob === "function") ? Blob : null;
+  var _URL_createObjectURL = null;
+  try {
+    if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+      _URL_createObjectURL = URL.createObjectURL.bind(URL);
+    }
+  } catch (_urlE) {}
   /* Capture chrome.runtime.sendMessage now so an ASYNC API body still
      reaches a sane reference even if a sibling userscript reassigns
      window.chrome or chrome.runtime later. We only do this when
@@ -455,6 +466,113 @@
         else parent.appendChild(el);
       }
       return el;
+    },
+  };
+
+  /* ---------- @resource lookups (GM_getResourceText / GM_getResourceURL) ----------
+
+     Per-script cache of declared `@resource` entries, baked into the
+     wrapper as `{name: {b64, ct}}` and primed via `resource.init` in
+     the prelude (see gm-bindings.ts). Both reads are lazy:
+       - getText decodes base64 → UTF-8 on first call, caches the
+         decoded string per name.
+       - getUrl decodes base64 → Blob → blob: URL on first call,
+         caches the URL per name. Subsequent calls return the same
+         URL (matches TM — userscripts that compare `===` between two
+         GM_getResourceURL calls get the same value).
+     The blob: URL is alive for the document's lifetime; we don't
+     URL.revokeObjectURL on bfcache since the wrapper runtime itself
+     stays around. */
+  var resourceBoxes = {};  /* scriptId -> { byName, textCache, urlCache } */
+  function ensureResourceBox(scriptId) {
+    var b = resourceBoxes[scriptId];
+    if (b) return b;
+    b = {
+      byName: _ObjectCreate(null),
+      textCache: _ObjectCreate(null),
+      urlCache: _ObjectCreate(null),
+    };
+    resourceBoxes[scriptId] = b;
+    return b;
+  }
+  /* Shared base64 → Uint8Array decoder. The XHR subsystem has its own
+     copy at the bottom of the file; we duplicate the small helper
+     here so the @resource path doesn't depend on a function declared
+     later (which would be hoisted in JS but is harder to read). */
+  function _resDecodeBase64(b64) {
+    var binary = atob(b64);
+    var len = binary.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+  var resource = {
+    /* Called from the wrapper's prelude with the scriptId and the
+       resource map { name: { b64, ct } }. Defensive copy so the
+       userscript can't mutate the literal we baked in. Calling init
+       twice for the same scriptId (a hot-reload bridge, a debugging
+       surface, …) is idempotent: the second call REPLACES the box,
+       matching storage.init's "newest wrapper registration wins"
+       semantics. Stale entries from a prior init don't leak, and the
+       lazy text/url caches are reset alongside. */
+    init: function (scriptId, items) {
+      var b = ensureResourceBox(scriptId);
+      b.byName = _ObjectCreate(null);
+      b.textCache = _ObjectCreate(null);
+      b.urlCache = _ObjectCreate(null);
+      if (!items || typeof items !== "object") return;
+      var keys = _ObjectKeys(items);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        var v = items[k];
+        if (v && typeof v === "object") {
+          b.byName[k] = { b64: String(v.b64 || ""), ct: String(v.ct || "") };
+        }
+      }
+    },
+    /* GM_getResourceText(name): return the resource body as a UTF-8
+       string. Returns undefined when the name isn't declared. Decode
+       is non-fatal — a binary resource asked for as text returns
+       mojibake, matching TM/VM rather than throwing. */
+    getText: function (scriptId, name) {
+      var b = resourceBoxes[scriptId];
+      if (!b) return undefined;
+      var key = String(name);
+      if (_hasOwn.call(b.textCache, key)) return b.textCache[key];
+      if (!_hasOwn.call(b.byName, key)) return undefined;
+      var bytes = _resDecodeBase64(b.byName[key].b64);
+      var text;
+      try {
+        text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      } catch (_de) {
+        text = "";
+      }
+      b.textCache[key] = text;
+      return text;
+    },
+    /* GM_getResourceURL(name): mint (and cache) a blob: URL for the
+       resource bytes, with the stored Content-Type as the blob MIME.
+       Empty CT falls back to application/octet-stream so the browser
+       has *something* to dispatch on (matches VM). Returns undefined
+       when the name isn't declared. */
+    getUrl: function (scriptId, name) {
+      var b = resourceBoxes[scriptId];
+      if (!b) return undefined;
+      var key = String(name);
+      if (_hasOwn.call(b.urlCache, key)) return b.urlCache[key];
+      if (!_hasOwn.call(b.byName, key)) return undefined;
+      if (!_Blob || !_URL_createObjectURL) return undefined;
+      var entry = b.byName[key];
+      var bytes = _resDecodeBase64(entry.b64);
+      var mime = entry.ct || "application/octet-stream";
+      var blob;
+      try { blob = new _Blob([bytes], { type: mime }); }
+      catch (_be) { return undefined; }
+      var url;
+      try { url = _URL_createObjectURL(blob); }
+      catch (_ue) { return undefined; }
+      b.urlCache[key] = url;
+      return url;
     },
   };
 
@@ -923,7 +1041,7 @@
   } catch (_evE3) {}
 
   var api = {
-    /* Placeholder for sync subsystems still not wired (resource, menu). */
+    /* Placeholder for sync APIs still not wired. */
     notImplemented: function (name) {
       throw new _Error("[SourceMonkey] " + name + " is not implemented yet");
     },
@@ -944,6 +1062,7 @@
     },
     storage: storage,
     dom: dom,
+    resource: resource,
     xhr: xhr,
     log: log,
     tab: tab,

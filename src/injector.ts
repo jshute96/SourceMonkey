@@ -310,6 +310,15 @@ export async function buildGmBindingsForScript(
       break;
     }
   }
+  // Bake declared @resource entries into the wrapper as a literal
+  // `{name: {b64, ct}}` map. Empty when the script declares no
+  // @resource or none of them resolved/fetched cleanly. The bindings
+  // emitter only emits the `resource.init` prelude when both a
+  // GM_getResource* grant is present AND at least one entry exists.
+  const resources: Record<string, { b64: string; ct: string }> = {};
+  for (const r of script.resources ?? []) {
+    resources[r.name] = { b64: r.bytesBase64, ct: r.contentType };
+  }
   const info: GmInfoInput = {
     scriptId: script.id,
     name,
@@ -324,6 +333,7 @@ export async function buildGmBindingsForScript(
     scriptMetaStr: script.headerText,
     scriptHandlerVersion,
     initialValues,
+    resources,
   };
   return emitGmBindings([...resolved.granted], info);
 }

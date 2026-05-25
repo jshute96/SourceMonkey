@@ -59,6 +59,13 @@ export interface GmInfoInput {
   // time from chrome.storage.local. Empty object when the script
   // hasn't written any values yet (or doesn't @grant storage APIs).
   initialValues: Record<string, unknown>;
+  // Prefetched `@resource` blobs the script declared, keyed by
+  // resource name. `b64` is the base64-encoded body; `ct` is the
+  // server-reported Content-Type (used as the blob: URL MIME). Baked
+  // into the wrapper as a literal so `GM_getResourceText` and
+  // `GM_getResourceURL` resolve synchronously without an SW round-
+  // trip. Empty object when the script declares no `@resource`.
+  resources: Record<string, { b64: string; ct: string }>;
 }
 
 // The compile-in result.
@@ -249,11 +256,22 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_unregisterMenuCommand = function (commandId) { return window.__SM_GM__.menu.unregister(${jsLit(scriptId)}, commandId); };`;
     }
   }
+  // Resource subsystem: GM_getResourceText decodes the stored bytes
+  // as UTF-8 on demand; GM_getResourceURL mints a blob: URL with the
+  // stored content-type. Both lookups close over scriptId so the
+  // runtime can find the script's prefetched resource map.
+  if (spec.subsystem === 'resource') {
+    switch (spec.name) {
+      case 'GM_getResourceText':
+        return `const GM_getResourceText = function (name) { return window.__SM_GM__.resource.getText(${jsLit(scriptId)}, name); };`;
+      case 'GM_getResourceURL':
+        return `const GM_getResourceURL = function (name) { return window.__SM_GM__.resource.getUrl(${jsLit(scriptId)}, name); };`;
+    }
+  }
   if (spec.kind === 'sync') {
-    // Fall-through for sync APIs whose body hasn't been wired up yet
-    // (GM_getResourceText, GM_getResourceURL — both waiting on
-    // @resource header storage). Closure captures the literal API
-    // name so error messages identify it.
+    // Fall-through for sync APIs whose body hasn't been wired up yet.
+    // Closure captures the literal API name so error messages
+    // identify it.
     return `const ${spec.name} = function () { return window.__SM_GM__.notImplemented(${jsLit(spec.name)}); };`;
   }
   // ASYNC body. Build the message envelope at call time so the args
@@ -350,18 +368,39 @@ export function emitGmBindings(
   );
   const gmObject = emitGmObject(allSpecsIncludingInfo);
   if (gmObject) parts.push(gmObject);
-  // Storage init goes in the prelude — it's the one eager call into
-  // __SM_GM__ at compile time. Emitted whenever a storage grant is
-  // present, even when `initialValues` is empty: the runtime marks
-  // the cache as ready so a later read of an unknown key returns
-  // defaultValue rather than waiting for a phantom load. Splicing
-  // it in the IIFE top would race with the runtime's own document_start
-  // registration in some Chrome builds — see __SM_GM_PRELUDE__ in
-  // wrapper-head.js for the deferred-execution contract.
+  // Eager calls into __SM_GM__ at compile time go in the prelude.
+  // Splicing them in the IIFE top would race with the runtime's own
+  // document_start registration in some Chrome builds — see
+  // __SM_GM_PRELUDE__ in wrapper-head.js for the deferred-execution
+  // contract.
+  //
+  // - storage.init: emitted whenever a storage grant is present,
+  //   even when `initialValues` is empty, so the cache is marked
+  //   ready and a later read of an unknown key returns defaultValue
+  //   rather than waiting for a phantom load.
+  // - resource.init: emitted whenever GM_getResource* is granted,
+  //   even when `resources` is empty. Why "even when empty": the
+  //   runtime's resource box persists across `chrome.userScripts`
+  //   re-registrations within one document. If a script removed a
+  //   `@resource` line, skipping init would leave the prior bytes
+  //   resident in `byName`; the now-stale `GM_getResourceText("foo")`
+  //   would still resolve. `resource.init` replaces the box, so
+  //   always emitting it is what makes "removed resource → returns
+  //   undefined" actually true on the next reload.
   const hasStorageGrant = specs.some((s) => s.subsystem === 'storage');
-  const prelude = hasStorageGrant
-    ? `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, ${jsLit(info.initialValues)});`
-    : '';
+  const hasResourceGrant = specs.some((s) => s.subsystem === 'resource');
+  const preludeLines: string[] = [];
+  if (hasStorageGrant) {
+    preludeLines.push(
+      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, ${jsLit(info.initialValues)});`,
+    );
+  }
+  if (hasResourceGrant) {
+    preludeLines.push(
+      `window.__SM_GM__.resource.init(${jsLit(info.scriptId)}, ${jsLit(info.resources)});`,
+    );
+  }
+  const prelude = preludeLines.join(' ');
   return {
     js: parts.join('\n') + '\n',
     prelude,

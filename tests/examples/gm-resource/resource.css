@@ -1,0 +1,6 @@
+/* Loaded via @resource styleSheet ./resource.css and pulled back through GM_getResourceText. */
+#playground.styled {
+  border: 2px solid teal;
+  padding: 0.5em;
+  background: #f0fbfb;
+}

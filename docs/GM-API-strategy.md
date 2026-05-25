@@ -8,9 +8,10 @@ recommends a path.
 > storage v1 + cross-tab broadcast + value-change listeners,
 > `GM_addStyle` / `GM_addElement`, `GM_setClipboard`,
 > `GM_xmlhttpRequest` text + binary, `@connect` URL gating). Post-
-> phase add-ons `GM_log`, `GM_openInTab`, and `GM_notification` are
-> also live. XHR header surgery, `GM_registerMenuCommand`, and
-> `@resource`-backed `GM_getResource*` are still deferred. See
+> phase add-ons `GM_log`, `GM_openInTab`, `GM_notification`,
+> `GM_registerMenuCommand`, and `@resource`-backed
+> `GM_getResourceText` / `GM_getResourceURL` are also live. XHR
+> header surgery is still deferred. See
 > [GM-APIs.md](GM-APIs.md) for the implementation status and known
 > limitations; deferred follow-ups are tracked in
 > [TODO.md](../TODO.md).

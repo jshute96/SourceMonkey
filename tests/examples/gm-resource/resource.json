@@ -1,0 +1,4 @@
+{
+  "greeting": "hello from a JSON resource",
+  "items": [1, 2, 3]
+}

@@ -48,11 +48,13 @@ import {
   type ParsedHeader,
 } from './userscript-header.js';
 import {
-  attachRequires,
+  attachFiles,
   distillRequires,
-  type RequireFetchCache,
+  distillResources,
+  type FileFetchCache,
   type StoredRequire,
-} from './requires.js';
+  type StoredResource,
+} from './external-files.js';
 
 export type ScriptStatus = 'ok' | 'error' | 'missing';
 
@@ -111,8 +113,15 @@ export interface StoredScript {
   // Prefetched `@require` bodies, in declaration order, deduped by
   // canonical URL. Optional because pre-`@require`-era stored rows
   // won't carry it; downstream code must treat `undefined` as empty.
-  // See [docs/requires.md] / src/requires.ts for the lifecycle.
+  // See [docs/requires.md] / src/external-files.ts for the lifecycle.
   requires?: StoredRequire[];
+  // Prefetched `@resource` blobs, in declaration order, deduped by
+  // resource name (first declaration wins). Optional because
+  // pre-`@resource`-era stored rows won't carry it. Resources share
+  // the same fetch + storage pipeline as requires (external-files.ts)
+  // but carry raw bytes (base64) rather than decoded text — so they
+  // can serve images, fonts, JSON, CSS, etc. via GM_getResource*.
+  resources?: StoredResource[];
 }
 
 export interface StoredSource {
@@ -337,49 +346,58 @@ export function applyMissing(existing: StoredScript): StoredScript {
   return next;
 }
 
-// Resolve + fetch a script's `@require` bodies, attaching the list
-// onto the StoredScript. On any failure preserves the prior's
-// last-known-good state and flips status to 'error' with a message
-// naming the offending URL — mirrors `applyFetchError`'s
+// Resolve + fetch a script's `@require` bodies AND `@resource` blobs,
+// attaching both lists onto the StoredScript. On any failure preserves
+// the prior's last-known-good state and flips status to 'error' with a
+// message naming the offending URL — mirrors `applyFetchError`'s
 // content-preservation policy for body-fetch failures, so a flaky
-// require doesn't clobber the user's working version. Without
+// dependency doesn't clobber the user's working version. Without
 // declared deps a userscript usually breaks worse than not injecting,
 // so erroring out is safer than running headless.
 //
 // `recheck === 'preserve'` reuses every cached prior verbatim and only
 // fetches refs the script newly declares. `recheck === 'all'` refetches
-// every declared require (used by explicit Refresh). The fetchCache is
+// every declared file (used by explicit Refresh). The fetchCache is
 // shared across all scripts in a single refresh pass so two scripts
-// requiring the same URL share one fetch.
-async function applyRequires(
+// referencing the same canonical URL share one fetch — and a require
+// + a resource pointing at the same URL also share a single fetch.
+async function applyFiles(
   built: StoredScript,
   prior: StoredScript | undefined,
   recheck: 'all' | 'preserve',
-  fetchCache: RequireFetchCache,
+  fetchCache: FileFetchCache,
   now: number,
 ): Promise<StoredScript> {
   const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
-  // `recheck: 'preserve'` short-circuits when the @require list is
-  // identical to the prior's: no resolve work, no fetch, just keep
-  // what we had. This is the hot path on opportunistic refresh.
-  if (recheck === 'preserve' && prior?.requires) {
-    const newRefs = distillRequires(built.header);
-    const sameSet = newRefs.length === prior.requires.length &&
-      newRefs.every((ref, i) => {
-        // Compare against the prior's stored ref, not its resolved URL —
-        // we want to detect "the user edited the @require line" even if
-        // the resolved URL coincidentally matches.
-        return prior.requires?.[i]?.ref === ref;
+  const priorResources = new Map((prior?.resources ?? []).map((r) => [r.url, r]));
+  // `recheck: 'preserve'` short-circuits when both lists are identical
+  // to the prior's: no resolve work, no fetch, just keep what we had.
+  // This is the hot path on opportunistic refresh.
+  if (recheck === 'preserve' && prior) {
+    const newReqRefs = distillRequires(built.header);
+    const sameReqs =
+      newReqRefs.length === (prior.requires?.length ?? 0) &&
+      newReqRefs.every((ref, i) => prior.requires?.[i]?.ref === ref);
+    const newResDecls = distillResources(built.header);
+    const sameRess =
+      newResDecls.length === (prior.resources?.length ?? 0) &&
+      newResDecls.every((d, i) => {
+        const p = prior.resources?.[i];
+        return p && p.name === d.name && p.ref === d.ref;
       });
-    if (sameSet) {
-      built.requires = prior.requires;
+    if (sameReqs && sameRess) {
+      if (prior.requires) built.requires = prior.requires;
+      else delete built.requires;
+      if (prior.resources) built.resources = prior.resources;
+      else delete built.resources;
       return built;
     }
   }
-  const result = await attachRequires({
+  const result = await attachFiles({
     scriptFileUrl: built.fileUrl,
     header: built.header,
-    prior: priorRequires,
+    priorRequires,
+    priorResources,
     recheck,
     fetchCache,
     now,
@@ -388,25 +406,22 @@ async function applyRequires(
     // Preserve the last-known-good script state when we have one.
     // This rolls the *entire* refresh back to the prior — the new
     // body isn't applied either, because injecting a fresh body
-    // against partial/stale requires would be unsafe. The user sees
-    // the error message and their script keeps running its prior
-    // version until they fix the require.
+    // against partial/stale dependencies would be unsafe. The user
+    // sees the error message and their script keeps running its
+    // prior version until they fix the bad reference.
     if (prior && prior.status === 'ok') {
       return { ...prior, status: 'error', errorMessage: result.errorMessage };
     }
     built.status = 'error';
     built.errorMessage = result.errorMessage;
-    built.requires = [];
+    delete built.requires;
+    delete built.resources;
     return built;
   }
-  if (result.requires.length > 0) {
-    built.requires = result.requires;
-  } else {
-    // Script declared no @require — leave the field undefined so the
-    // storage row stays minimal. Drop any leftover from a prior build
-    // that DID declare some.
-    delete built.requires;
-  }
+  if (result.requires.length > 0) built.requires = result.requires;
+  else delete built.requires;
+  if (result.resources.length > 0) built.resources = result.resources;
+  else delete built.resources;
   return built;
 }
 
@@ -424,24 +439,25 @@ interface RebuildArgs {
   fetchResults: Map<string, FetchResult>;  // keyed by relativePath
   now: number;
   newId?: () => string;
-  // `@require` policy:
-  //   - 'all'     : refetch every declared require regardless of whether
+  // `@require` + `@resource` recheck policy:
+  //   - 'all'     : refetch every declared dep regardless of whether
   //                 the script body changed. Used by explicit Refresh
-  //                 so users can pick up remote require updates even
-  //                 when the main script body is unchanged.
-  //   - 'preserve': reuse cached requires verbatim; only fetch refs the
+  //                 so users can pick up remote updates even when the
+  //                 main script body is unchanged.
+  //   - 'preserve': reuse cached priors verbatim; only fetch refs the
   //                 script newly declares. Used by opportunistic
   //                 (background) refresh to keep page-load cost
   //                 bounded — the user can always click Refresh to
-  //                 pick up require updates.
+  //                 pick up remote dep updates.
   // Defaults to 'all' so the conservative behavior is the fallback.
-  recheckRequires?: 'all' | 'preserve';
-  // Cross-script require-fetch cache. Two scripts requiring the same
-  // canonical URL share one fetch. Caller passes a fresh map per
-  // top-level refresh entry point (refreshSource / refreshScript /
+  recheckFiles?: 'all' | 'preserve';
+  // Cross-script file-fetch cache. Two scripts referencing the same
+  // canonical URL share one fetch — and a require + resource pointing
+  // at the same URL also share. Caller passes a fresh map per top-
+  // level refresh entry point (refreshSource / refreshScript /
   // refreshAllSources); rebuildSource itself never mutates the entry
-  // semantics, just hands the cache to attachRequires.
-  requireFetchCache?: RequireFetchCache;
+  // semantics, just hands the cache to attachFiles.
+  fileFetchCache?: FileFetchCache;
 }
 
 // Pure orchestrator: given the prior state for a source plus a fresh
@@ -459,8 +475,8 @@ interface RebuildArgs {
 //     stays so the viewer keeps working.
 export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
-  const recheckRequires = args.recheckRequires ?? 'all';
-  const requireFetchCache: RequireFetchCache = args.requireFetchCache ?? new Map();
+  const recheckFiles = args.recheckFiles ?? 'all';
+  const fileFetchCache: FileFetchCache = args.fileFetchCache ?? new Map();
   const existingByPath = new Map<string, StoredScript>();
   for (const e of args.existing) existingByPath.set(e.relativePath, e);
 
@@ -499,7 +515,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         // Record the listing's mtime so the next refresh can decide to
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
-        return applyRequires(built, prior, recheckRequires, requireFetchCache, args.now);
+        return applyFiles(built, prior, recheckFiles, fileFetchCache, args.now);
       })());
     } else if (fr && 'unchanged' in fr) {
       // Optimization path: the listing's size+mtime matched the prior
@@ -515,10 +531,11 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         if (found.mtime !== undefined) next.fsMtime = found.mtime;
         if (found.size !== undefined) next.size = found.size;
         // Even when the body is unchanged, explicit Refresh still
-        // rechecks @require bodies (the user may want to pick up remote
-        // require updates without touching the main script). The
-        // opportunistic path passes 'preserve' which short-circuits.
-        entryPromises.push(applyRequires(next, prior, recheckRequires, requireFetchCache, args.now));
+        // rechecks @require + @resource bodies (the user may want to
+        // pick up remote dep updates without touching the main
+        // script). The opportunistic path passes 'preserve' which
+        // short-circuits.
+        entryPromises.push(applyFiles(next, prior, recheckFiles, fileFetchCache, args.now));
       } else {
         entryPromises.push(Promise.resolve(buildInitialErrorEntry({
           id,
@@ -709,18 +726,18 @@ export async function removeScript(id: string): Promise<void> {
 // (304 from the server). This keeps "Refresh All" cheap when most
 // scripts are unchanged.
 export interface RefreshOptions {
-  // `@require` recheck policy. Defaults to 'all' (explicit-Refresh
-  // semantics) so callers that don't care get the conservative
-  // behavior. The script-updater passes 'preserve' on the
-  // opportunistic path so background checks don't redownload every
-  // require body on every navigation.
-  recheckRequires?: 'all' | 'preserve';
-  // Shared cross-script require-fetch cache. When refreshAllSources
+  // `@require` + `@resource` recheck policy. Defaults to 'all'
+  // (explicit-Refresh semantics) so callers that don't care get the
+  // conservative behavior. The script-updater passes 'preserve' on
+  // the opportunistic path so background checks don't redownload
+  // every dep on every navigation.
+  recheckFiles?: 'all' | 'preserve';
+  // Shared cross-script file-fetch cache. When refreshAllSources
   // calls multiple refreshSource concurrently, threading one cache
-  // through them lets two scripts (across two sources) requiring the
-  // same URL share one fetch. Single refreshSource calls let it
+  // through them lets two scripts (across two sources) referencing
+  // the same URL share one fetch. Single refreshSource calls let it
   // default to an empty fresh map.
-  requireFetchCache?: RequireFetchCache;
+  fileFetchCache?: FileFetchCache;
 }
 
 export async function refreshSource(
@@ -777,8 +794,8 @@ export async function refreshSource(
     scan,
     fetchResults,
     now,
-    recheckRequires: opts.recheckRequires,
-    requireFetchCache: opts.requireFetchCache,
+    recheckFiles: opts.recheckFiles,
+    fileFetchCache: opts.fileFetchCache,
   });
 
   const nextSource: StoredSource = {
@@ -871,8 +888,8 @@ export async function refreshScript(
     scan,
     fetchResults,
     now: Date.now(),
-    recheckRequires: opts.recheckRequires,
-    requireFetchCache: opts.requireFetchCache,
+    recheckFiles: opts.recheckFiles,
+    fileFetchCache: opts.fileFetchCache,
   });
   const next = result[0];
   if (!next) return null;
@@ -954,13 +971,13 @@ export async function refreshAllSources(
   opts: RefreshOptions = {},
 ): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
   const sources = await getSources();
-  // One shared require-fetch cache across every source in this pass so
-  // two scripts (across two sources) requiring the same canonical URL
-  // share one fetch. Caller can override by passing their own.
-  const requireFetchCache = opts.requireFetchCache ?? new Map();
+  // One shared file-fetch cache across every source in this pass so
+  // two scripts (across two sources) referencing the same canonical
+  // URL share one fetch. Caller can override by passing their own.
+  const fileFetchCache = opts.fileFetchCache ?? new Map();
   const entries = await Promise.all(
     sources.map(async (s) => {
-      const r = await refreshSource(s.id, { ...opts, requireFetchCache });
+      const r = await refreshSource(s.id, { ...opts, fileFetchCache });
       return [s.id, r] as const;
     }),
   );

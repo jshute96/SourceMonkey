@@ -17,7 +17,7 @@ import {
   type StoredScript,
 } from './script-store.js';
 import { basenameOf, computeLogIds } from './script-log-id.js';
-import type { StoredRequire } from './requires.js';
+import type { StoredRequire } from './external-files.js';
 import {
   clearScriptLog,
   getScriptLog,

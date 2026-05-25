@@ -3,9 +3,9 @@
 ## Skeleton
 
 - Injection follow-ups — see the **Limitations / future work**
-  section of [docs/injection.md](docs/injection.md): `@resource`,
-  `@noframes` / `allFrames`. (`@grant` / `GM_*` and `@require`
-  themselves are implemented; per-area follow-ups below.)
+  section of [docs/injection.md](docs/injection.md): `@noframes` /
+  `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
+  all implemented; per-area follow-ups below.)
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -41,11 +41,6 @@ Host, Referer, User-Agent). Today `fetch()` silently strips them.
 - Strip our `Origin` header by default; apply caller-supplied
   overrides for forbidden headers; capture redirected URLs in
   `finalUrl` accurately.
-
-### GM_* APIs still stubbed (bindings emit, body throws)
-
-- `GM_getResourceText` / `GM_getResourceURL` — depends on `@resource`
-  storage landing (see require/resource follow-ups below).
 
 ### GM_* APIs not yet in the catalog
 
@@ -276,9 +271,6 @@ during cumulative review of the GM_* phases:
   the URL through resolveScriptResource verbatim and never check the
   fragment. Either validate post-fetch and reject on mismatch, or
   document explicitly that the hash is informational.
-- **`@resource` support.** Companion to `GM_getResourceText` /
-  `GM_getResourceURL`. Same fetch + storage pipeline as `@require`;
-  moot until the `GM_*` API is wired up.
 - **Absolute `file://` URLs in `@require`.** Tampermonkey supports
   these; SourceMonkey rejects them, sharing the rule with `@icon`
   (the extension holds `file:///*` host permission, so an HTTP-

@@ -50,18 +50,20 @@ Shared (content-addressed) storage is a planned follow-up — see
 
 ## Refresh policy
 
-The refresh path takes a `recheckRequires: 'all' | 'preserve'` option:
+The refresh path takes a `recheckFiles: 'all' | 'preserve'` option
+(same policy now covers both `@require` and `@resource`):
 
 - **Explicit Refresh** (manual button click) → `'all'`: refetch every
-  declared require so the user can pick up remote require updates even
-  when the main script body hasn't changed.
+  declared dep so the user can pick up remote updates even when the
+  main script body hasn't changed.
 - **Opportunistic refresh** (background check on navigation) →
-  `'preserve'`: reuse every cached require verbatim; only fetch refs
+  `'preserve'`: reuse every cached entry verbatim; only fetch refs
   the script newly declares. Keeps per-navigation cost bounded — the
   user can always click Refresh to surface remote updates.
 
-If the `@require` list on a script is unchanged across an opportunistic
-refresh, the work short-circuits entirely — no resolution, no fetching.
+If both the `@require` and `@resource` lists on a script are
+unchanged across an opportunistic refresh, the work short-circuits
+entirely — no resolution, no fetching.
 
 Consequence for `file://` sources: editing a require file on disk
 (without touching the host script) does **not** surface on the next
@@ -71,12 +73,17 @@ require bodies. Mirrors how TM/VM treat requires — they're fetched
 on install, not on every page load — and keeps per-navigation cost
 bounded for users with many requires.
 
-## Cross-script dedup
+## Cross-script + cross-kind dedup
 
-A `RequireFetchCache` is threaded through every refresh entry point.
-Two scripts (within or across sources) that require the same canonical
-URL in the same refresh pass share one fetch. The cache only lives for
-the duration of one top-level refresh; the next refresh starts fresh.
+A `FileFetchCache` is threaded through every refresh entry point.
+Two scripts (within or across sources) that reference the same
+canonical URL in the same refresh pass share one fetch.
+
+- A `@require` and a `@resource` pointing at the same URL also share
+  one fetch — the cache stores raw bytes + Content-Type, and each
+  call site does its own typed assembly.
+- The cache only lives for one top-level refresh; the next refresh
+  starts fresh.
 
 ## Failure handling
 
@@ -87,6 +94,15 @@ message naming the offending URL:
 - Non-`.js` suffix.
 - Fetch failure (404, oversize, content-type rejected, timeout).
 - `data:` URLs (resolution accepts them; the require gate rejects).
+- **Non-UTF-8 response body** (strict decode fails). A `.js` URL that
+  serves binary slips past the suffix gate and the content-type
+  predicate but gets caught here, so the user sees "not valid UTF-8"
+  rather than a confusing `SyntaxError` at eval.
+
+Accepted Content-Type for `@require`: anything with `javascript`
+or starting with `text/`. `application/octet-stream` is *not*
+accepted — it was a "give us anything binary" hole when combined
+with the `.js` suffix-only URL gate.
 
 Running a userscript without its declared deps almost always breaks
 worse than not injecting; erroring out is safer than running headless.

@@ -45,7 +45,7 @@ interface BadCase {
 // Expected outcomes when tests/bad-examples/ is added as a source. Status
 // is determined by buildScriptFromText → splitHeaderBody / parseHeader
 // / validateHeader; the require failure on missing-require comes
-// through the @require attach pipeline (see src/requires.ts).
+// through the @require attach pipeline (see src/external-files.ts).
 const BAD_CASES: BadCase[] = [
   { file: 'empty.user.js',                 expectedStatus: 'error', errorMatcher: /no metadata block/ },
   { file: 'no-header.user.js',             expectedStatus: 'error', errorMatcher: /no metadata block/ },
