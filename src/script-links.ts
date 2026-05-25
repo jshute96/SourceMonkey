@@ -188,6 +188,51 @@ export function splitResourceValue(value: string): ResourceValueParts | null {
   };
 }
 
+// Build a click-through URL for one `@connect` value. The
+// body-linkifier wraps the verbatim value text in an anchor pointing
+// here; the anchor's `href` is normalised via the URL parser so the
+// click goes somewhere navigable even when the header value was just
+// a bare host.
+//
+// Rules:
+//   - `*` and `self` → null (no single site to point at).
+//   - `<scheme>://…` → verbatim URL (only http/https accepted).
+//   - `*.example.com` → `https://example.com/` (dewildcarded apex,
+//     matching the same rule `matchTargetInfo` applies for @match
+//     subdomain wildcards).
+//   - bare host (`example.com`, `localhost`, `1.2.3.4`) →
+//     `https://<host>/`.
+//   - Anything that doesn't parse as a URL after that → null.
+//
+// HTTPS is the assumed default for bare hosts even though the
+// userscript may issue HTTP requests via GM_xmlhttpRequest — the
+// click-through is just "visit this site to look it up", and
+// HTTPS is the right default for that.
+export function connectLinkUrl(raw: string): string | null {
+  const t = raw.trim();
+  if (!t || t === '*') return null;
+  if (t.toLowerCase() === 'self') return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) {
+    try {
+      const u = new URL(t);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        return u.toString();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  let host = t;
+  if (host.startsWith('*.')) host = host.slice(2);
+  if (!host || host.includes('*')) return null;
+  try {
+    return new URL(`https://${host}/`).toString();
+  } catch {
+    return null;
+  }
+}
+
 // Sentinel line shapes that bracket the metadata block. Used by the
 // body-linkifier to flip its "inside header" state.
 const HEADER_OPEN_RE = /^[ \t]*\/\/[ \t]*==UserScript==[ \t]*$/;

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   MATCH_HEADER_TAGS,
   RESOLVABLE_HEADER_TAGS,
+  connectLinkUrl,
   isHeaderCloseLine,
   isHeaderOpenLine,
   parseTagLine,
@@ -260,6 +261,53 @@ test('splitResourceValue: rejects values where the URL portion is empty', () => 
   // would already strip the trailing whitespace into `after`, so this
   // mostly guards against future regressions.
   assert.equal(splitResourceValue('name'), null);
+});
+
+test('connectLinkUrl: bare host gets an https:// scheme', () => {
+  // Matches the exact value the example script uses.
+  assert.equal(
+    connectLinkUrl('api.dictionaryapi.dev'),
+    'https://api.dictionaryapi.dev/',
+  );
+  assert.equal(connectLinkUrl('example.com'), 'https://example.com/');
+  assert.equal(connectLinkUrl('localhost'), 'https://localhost/');
+});
+
+test('connectLinkUrl: subdomain wildcard collapses to apex', () => {
+  assert.equal(
+    connectLinkUrl('*.example.com'),
+    'https://example.com/',
+  );
+});
+
+test('connectLinkUrl: full URL preserved verbatim', () => {
+  assert.equal(
+    connectLinkUrl('https://example.com/api'),
+    'https://example.com/api',
+  );
+  assert.equal(
+    connectLinkUrl('http://localhost:8080/api'),
+    'http://localhost:8080/api',
+  );
+});
+
+test('connectLinkUrl: rejects values that name no single site', () => {
+  assert.equal(connectLinkUrl('*'), null);
+  assert.equal(connectLinkUrl('self'), null);
+  assert.equal(connectLinkUrl('SELF'), null);
+  assert.equal(connectLinkUrl(''), null);
+  assert.equal(connectLinkUrl('   '), null);
+});
+
+test('connectLinkUrl: rejects non-http(s) schemes and values the URL parser throws on', () => {
+  assert.equal(connectLinkUrl('ftp://example.com'), null);
+  assert.equal(connectLinkUrl('file:///etc/hosts'), null);
+  // Literal space inside a host makes `new URL` throw. The URL
+  // parser is otherwise permissive (`example..com`, `$$$`, tabs all
+  // pass), so this isn't a thorough "malformed host" guard — we
+  // accept whatever the URL parser does, and the click-through
+  // surfaces any garbage as the browser's error page.
+  assert.equal(connectLinkUrl('exa mple.com'), null);
 });
 
 test('parseTagLine tolerates a stray CRLF `\\r` at end of line', () => {

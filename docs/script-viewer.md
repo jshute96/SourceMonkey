@@ -189,6 +189,12 @@ class so a string literal `"// ==UserScript=="` can't flip it.
     whitespace by Tampermonkey's grammar). The `<name>` plus the
     gap after it stay as plain prefix; only the `<url>` token is
     resolved (like the other single-URL tags) and wrapped.
+  - `@connect` carve-out: the value is a host (`example.com`,
+    `*.example.com`) or a full URL, not a match pattern.
+    `connectLinkUrl` picks the target: bare host gets an `https://`
+    prefix; subdomain wildcard collapses to the apex; a full http(s)
+    URL is preserved verbatim. `*`, `self`, non-http(s) schemes, and
+    anything the URL parser rejects fall back to plain text.
 - Anything else falls through to URL-mode for that line.
 
 #### Outside the metadata block

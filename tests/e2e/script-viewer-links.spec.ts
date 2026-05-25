@@ -118,6 +118,8 @@ test.describe('userscript viewer link rendering', () => {
         extra: [
           '// @updateURL  https://example.com/c.user.js',
           '// @resource   myCSS https://example.com/style.css',
+          '// @connect    api.dictionaryapi.dev',
+          '// @connect    *',
         ],
       },
       body: 'const x = 1;\n',
@@ -168,6 +170,18 @@ test.describe('userscript viewer link rendering', () => {
     // the phantom-relative-path bug from the @resource review issue
     // is back.
     await expect(page.locator('#content a', { hasText: 'myCSS' })).toHaveCount(0);
+
+    // @connect: bare host linkifies to https://<host>/; the `*`
+    // wildcard entry doesn't name a single site and stays plain text.
+    const connectAnchor = page.locator('#content a', {
+      hasText: 'api.dictionaryapi.dev',
+    });
+    await expect(connectAnchor).toHaveAttribute(
+      'href',
+      'https://api.dictionaryapi.dev/',
+    );
+    // No anchor should wrap the lone `*` from the second @connect line.
+    await expect(page.locator('#content a', { hasText: /^\*$/ })).toHaveCount(0);
 
     await page.close();
   });

@@ -39,6 +39,7 @@ import { resolveScriptResource } from './file-loader.js';
 import {
   MATCH_HEADER_TAGS,
   RESOLVABLE_HEADER_TAGS,
+  connectLinkUrl,
   isHeaderCloseLine,
   isHeaderOpenLine,
   parseTagLine,
@@ -725,6 +726,15 @@ function linkForHeaderTag(
       href: resolved.url,
       suffix: parts.suffix,
     };
+  }
+  if (tag === 'connect') {
+    // `@connect` values are hosts (`example.com`, `*.example.com`)
+    // or full URLs, not match patterns. `connectLinkUrl` picks the
+    // click target; `*` and `self` return null and fall through to
+    // plain text since neither names a single site.
+    const href = connectLinkUrl(value);
+    if (!href) return null;
+    return { prefix: '', linkText: value, href, suffix: '' };
   }
   return null;
 }
