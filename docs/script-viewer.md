@@ -13,14 +13,19 @@ Two related pieces:
 
 ### `splitHeaderBody(source)`
 
-Returns `{headerText, bodyText, error?}`:
+Returns `{leadingText, headerText, bodyText, error?}`:
 
+- `leadingText` — anything in the source file above the
+  `// ==UserScript==` line; `''` when the block starts at file top
+  (the common case). The viewer prepends this to the rendered tab
+  body so a license blurb / shebang / etc. doesn't disappear.
 - `headerText` — raw block including both marker lines.
 - `bodyText` — everything after the closing marker (a single
   trailing newline is stripped so the body doesn't lead with a blank
   line).
 - `error` — `'no metadata block'` or `'unterminated metadata
-  block'`. On error, `headerText = ''` and `bodyText = source`.
+  block'`. On error, `leadingText = ''`, `headerText = ''`, and
+  `bodyText = source`.
 
 ### `parseHeader(source)`
 
@@ -91,8 +96,9 @@ reports.
      consistent.
 6. **Code pane / Log pane** — the active tab decides which is shown:
    - Code tabs paint a `<pre><code>` highlighted by Prism. Main-script
-     tab shows `headerText + '\n' + bodyText`; require tabs show the
-     prefetched `source`.
+     tab shows `leadingText + headerText + '\n' + bodyText` (the
+     `leadingText` covers anything in the source file above the
+     `==UserScript==` line); require tabs show the prefetched `source`.
    - Log tab swaps in a `<table>` view of the script's event log.
      Columns: Time / Level / Source / Message. See
      [script-log.md](script-log.md) for the data model and what gets
@@ -136,6 +142,51 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
   highlighted spans.
 - The default Prism theme ships as `prism.css`.
 
+### Userscript-header syntax highlighting extension
+
+`src/userscript.ts` extends Prism's JavaScript grammar (via
+`Prism.languages.insertBefore('javascript', 'comment', …)`) with a
+`userscript-header` token that wraps the entire
+`// ==UserScript== … // ==/UserScript==` block.
+
+The outer token keeps the `comment` alias so non-tag lines inside
+the block still read as comment-grey. Inner tokens use existing
+Prism theme classes via `alias`:
+
+- `header-marker` → `bold` — wraps `==UserScript==` and
+  `==/UserScript==` (the leading `//` stays plain).
+- `header-tag-name` → `constant` — wraps `@tag` (with optional
+  `:locale` suffix). Same colour as JS constants in the body.
+- `header-tag-value` → `string` — wraps the value text after the
+  tag. Same colour as JS string literals.
+
+Inner-pattern order matters: `header-tag-value` must run before
+`header-tag-name`, because its lookbehind needs the `@tag` substring
+to still be present in unconsumed text.
+
+Because the header block is recognised structurally by Prism (not by
+line-shape post-walk), a single-line string literal like
+`"// ==UserScript=="` can't spoof header mode — Prism tokenises it
+as a string, not as our header block. A multi-line template literal
+containing both marker lines can still be picked up (our pattern is
+inserted before the string/template tokens), but no real userscript
+embeds a fake metadata block that way.
+
+Files with two metadata blocks (see
+`tests/bad-examples/two-headers.user.js`) get a tinted band
+over each block; SourceMonkey itself only honours the first one and
+treats everything past it as body, so the second band is purely a
+visual cue that there's a stray block down there.
+
+The `userscript-header` span also gets a tinted band background in
+`src/userscript.html` (`display: block` with a negative left/right
+margin matched to the code-box's padding) so the metadata block
+reads as a visually distinct strip at the top of the file. The
+pattern consumes the line-terminating `\n` after `==/UserScript==`
+into the span so the block break the browser inserts for `display:
+block` doesn't compound with the source `\n` and produce an extra
+blank line above the body.
+
 ## Link rendering
 
 Both the details panel and the highlighted code box turn eligible
@@ -163,18 +214,22 @@ so the body header and the details panel agree.
 ### Code box (post-Prism walk)
 
 `linkifyCodeBlock` in `src/userscript.ts` runs after
-`Prism.highlightElement` and walks the highlighted text nodes. A
-state machine driven by the metadata-block markers toggles between
-two modes; the marker check is gated on Prism's `.token.comment`
-class so a string literal `"// ==UserScript=="` can't flip it.
+`Prism.highlightElement` in two passes:
+
+1. **Header pass** — finds each `.userscript-header` span left by
+   the grammar extension above, walks its `.header-tag-value`
+   children, and (for each) walks back to the preceding
+   `.header-tag-name` to recover the tag. Eligible tags rewrite the
+   value span's contents; others fall through to URL-only mode on
+   the value's text.
+2. **URL pass** — every text node outside `.header-marker /
+   .header-tag-name / .header-tag-value` has its absolute http(s) /
+   file:// URLs wrapped via `splitTextByUrls`.
 
 #### Inside the metadata block
 
-- Each line is matched against the `// @tag value` shape via
-  `parseTagLine`.
-- Eligible tags rewrite a sub-range of the `value` substring to an
-  anchor (prefix and suffix stay as plain text so the line
-  round-trips verbatim):
+- The value span is rewritten as `[prefix-text]<anchor>[suffix-text]`
+  so the line round-trips verbatim. Eligible tags:
   - `MATCH_HEADER_TAGS` (`@match`, `@exclude`, `@include`) →
     `matchTargetInfo` linkUrl. The anchor text is the full pattern;
     the href is the trimmed link URL.

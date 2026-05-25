@@ -150,6 +150,7 @@ test('splitHeaderBody returns the raw block and the body', () => {
 `;
   const result = splitHeaderBody(src);
   assert.equal(result.error, undefined);
+  assert.equal(result.leadingText, '');
   assert.equal(
     result.headerText,
     '// ==UserScript==\n// @name Foo\n// ==/UserScript==',
@@ -157,10 +158,29 @@ test('splitHeaderBody returns the raw block and the body', () => {
   assert.equal(result.bodyText, "(function () {\n  console.log('hi');\n})();\n");
 });
 
+test('splitHeaderBody captures text above the opening marker', () => {
+  const src = `/* license blurb */
+'use strict';
+// ==UserScript==
+// @name Foo
+// ==/UserScript==
+body();
+`;
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, undefined);
+  assert.equal(result.leadingText, "/* license blurb */\n'use strict';\n");
+  assert.equal(
+    result.headerText,
+    '// ==UserScript==\n// @name Foo\n// ==/UserScript==',
+  );
+  assert.equal(result.bodyText, 'body();\n');
+});
+
 test('splitHeaderBody flags missing opening marker', () => {
   const src = "console.log('no header');\n";
   const result = splitHeaderBody(src);
   assert.equal(result.error, 'no metadata block');
+  assert.equal(result.leadingText, '');
   assert.equal(result.headerText, '');
   assert.equal(result.bodyText, src);
 });
@@ -172,6 +192,7 @@ console.log('forgot the close');
 `;
   const result = splitHeaderBody(src);
   assert.equal(result.error, 'unterminated metadata block');
+  assert.equal(result.leadingText, '');
   assert.equal(result.headerText, '');
   assert.equal(result.bodyText, src);
 });
@@ -181,6 +202,7 @@ test('splitHeaderBody handles CRLF line endings', () => {
     '// ==UserScript==\r\n// @name CRLF\r\n// ==/UserScript==\r\nbody();\r\n';
   const result = splitHeaderBody(src);
   assert.equal(result.error, undefined);
+  assert.equal(result.leadingText, '');
   assert.equal(
     result.headerText,
     '// ==UserScript==\r\n// @name CRLF\r\n// ==/UserScript==',
@@ -192,5 +214,6 @@ test('splitHeaderBody returns empty bodyText when nothing follows the block', ()
   const src = '// ==UserScript==\n// @name Alone\n// ==/UserScript==';
   const result = splitHeaderBody(src);
   assert.equal(result.error, undefined);
+  assert.equal(result.leadingText, '');
   assert.equal(result.bodyText, '');
 });

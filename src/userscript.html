@@ -198,6 +198,18 @@
         font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       pre.code-box:focus { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* Tinted band behind the `// ==UserScript== … // ==/UserScript==`
+         block. `display: block` lets the highlight span every header
+         line; the negative left/right margin (paired with matching
+         padding) extends the band out to the code-box's padding
+         edges so it reads as a full-width strip rather than a
+         floating rectangle. */
+      pre.code-box .token.userscript-header {
+        display: block;
+        background: #f0f0f0;
+        margin: 0 -0.8em;
+        padding: 0 0.8em;
+      }
       /* Log pane mirrors the code box's outer dimensions so swapping
          between a code tab and the Log tab doesn't reflow the page.
          Same border/margin trick as .code-box so the active Log tab's

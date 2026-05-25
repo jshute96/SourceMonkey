@@ -98,6 +98,10 @@ export interface StoredScript {
   // the local size+mtime skip.
   httpEtag?: string;
   httpLastModified?: string;
+  // Anything in the source file above the `// ==UserScript==` line.
+  // Optional because pre-leadingText stored rows won't carry it; the
+  // viewer must treat `undefined` as empty.
+  leadingText?: string;
   headerText: string;
   bodyText: string;
   header: ParsedHeader | null;
@@ -262,6 +266,10 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   if (errorMessage) entry.errorMessage = errorMessage;
   if (args.httpEtag) entry.httpEtag = args.httpEtag;
   if (args.httpLastModified) entry.httpLastModified = args.httpLastModified;
+  // Only persist leadingText when non-empty so the vast majority of
+  // scripts (which start at `// ==UserScript==`) don't carry an
+  // empty-string field.
+  if (split.leadingText) entry.leadingText = split.leadingText;
   return entry;
 }
 

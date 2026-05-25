@@ -40,14 +40,61 @@ import {
   MATCH_HEADER_TAGS,
   RESOLVABLE_HEADER_TAGS,
   connectLinkUrl,
-  isHeaderCloseLine,
-  isHeaderOpenLine,
-  parseTagLine,
   splitResourceValue,
   splitTextByUrls,
 } from './script-links.js';
 
-declare const Prism: { highlightElement(el: Element): void };
+declare const Prism: {
+  highlightElement(el: Element): void;
+  languages: {
+    insertBefore(lang: string, before: string, grammar: Record<string, unknown>): void;
+  };
+};
+
+// Extend Prism's JavaScript syntax highlighting grammar to recognise the
+// `// ==UserScript== … // ==/UserScript==` block. The outer token
+// keeps the `comment` alias so any non-tag line inside the block
+// still reads as comment-grey. Inner tokens use existing Prism theme
+// classes via `alias`:
+//   - markers (`==UserScript==`, `==/UserScript==`, sans `//`) → `bold`
+//   - `@tag` names → `constant` (matches identifier color in the body)
+//   - values after the tag → `string` (matches string-literal color)
+// Order inside matters: `header-tag-value` must run before
+// `header-tag-name`, because the value's lookbehind needs the `@tag`
+// substring to still be present in the unconsumed text when it scans.
+Prism.languages.insertBefore('javascript', 'comment', {
+  'userscript-header': {
+    // Trailing `[ \t]*\r?\n?` swallows whitespace + the line-terminating
+    // newline after `==/UserScript==` (CRLF and LF). We need the
+    // newline inside the span because we render the span as
+    // `display: block` for the tinted band, and a newline left in
+    // the text node *after* the block would render as an extra blank
+    // line on top of the block break the browser already inserts.
+    pattern: /\/\/[ \t]*==UserScript==[\s\S]*?\/\/[ \t]*==\/UserScript==[ \t]*\r?\n?/,
+    alias: 'comment',
+    inside: {
+      'header-marker': {
+        pattern: /(\/\/[ \t]*)==\/?UserScript==/,
+        lookbehind: true,
+        alias: 'bold',
+      },
+      'header-tag-value': {
+        // `[^\r\n]*` (not `[^\n]*`) so a CRLF file doesn't sweep the
+        // line-terminating `\r` into the value span, which would
+        // leak a trailing `\r` into anchor hrefs / `matchTargetInfo`
+        // input downstream.
+        pattern: /(\/\/[ \t]*@[A-Za-z][\w-]*(?::[\w-]+)?[ \t]+)\S[^\r\n]*/,
+        lookbehind: true,
+        alias: 'string',
+      },
+      'header-tag-name': {
+        pattern: /(\/\/[ \t]*)@[A-Za-z][\w-]*(?::[\w-]+)?/,
+        lookbehind: true,
+        alias: 'constant',
+      },
+    },
+  },
+});
 
 const params = new URLSearchParams(location.search);
 const scriptId = params.get('script');
@@ -267,9 +314,7 @@ function buildTabs(script: StoredScript): Tab[] {
   const tabs: Tab[] = [{
     kind: 'code',
     label: basenameOf(script.relativePath),
-    body: script.headerText
-      ? script.headerText + '\n' + script.bodyText
-      : script.bodyText,
+    body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
   }];
   for (const r of script.requires ?? []) {
@@ -284,6 +329,18 @@ function buildTabs(script: StoredScript): Tab[] {
   // come and go.
   tabs.push({ kind: 'log', label: 'Log' });
   return tabs;
+}
+
+// Reconstruct the original on-disk source as best we can from the
+// stored split. `leadingText` is preserved verbatim — including its
+// terminating newline — so anything the user wrote above the
+// `// ==UserScript==` line shows up in the viewer. The `'\n'` we
+// inject between headerText and bodyText restores the line break
+// `splitHeaderBody` skipped past the closing marker.
+function buildMainTabBody(script: StoredScript): string {
+  const leading = script.leadingText ?? '';
+  if (!script.headerText) return leading + script.bodyText;
+  return leading + script.headerText + '\n' + script.bodyText;
 }
 
 // Pull a display basename off a require's resolved URL. Falls back to
@@ -605,66 +662,100 @@ function openInNewTabAnchor(href: string, text: string): HTMLAnchorElement {
 }
 
 // Post-Prism walk over the highlighted code: replace eligible text
-// runs with anchors. Two modes interleaved by a simple state machine
-// driven by the `// ==UserScript== … // ==/UserScript==` markers:
+// runs with anchors. Two passes:
 //
-//   - inside the metadata block: each line is matched against the
-//     `// @tag value` shape. For tags we know how to linkify
-//     (@match → wildcard-trimmed link, @icon/@require/@updateURL/…
-//     → resolved against the script's fileUrl) the value substring
-//     is wrapped in an anchor; other tags fall through to URL mode.
-//   - outside the metadata block (and on tag-line fallbacks): every
-//     absolute http(s) / file:// URL inside the text node becomes
-//     an anchor. The same rule applies to @require source bodies
-//     (which have no metadata block).
+//   1. Metadata blocks are recognised as `.token.userscript-header`
+//      spans by the Prism grammar extension above; inside each, the
+//      `@tag` is a `.header-tag-name` span and its value is a
+//      `.header-tag-value` span. For tags we know how to linkify
+//      (@match → wildcard-trimmed link, @icon/@require/@updateURL/…
+//      → resolved against the script's fileUrl) the value span's
+//      contents become an anchor; non-linkable tags fall through to
+//      URL mode on the value text.
+//   2. Every other text node has its absolute http(s) / file:// URLs
+//      turned into anchors — covers comment URLs outside the header,
+//      URLs inside strings, and `@require` source bodies (no header).
 //
-// Marker / tag matching is gated on Prism's `.token.comment` class
-// so a string literal like `"// ==UserScript=="` inside the body
-// can't flip the state machine.
+// Driving the header detection off the Prism token class (rather
+// than line-shape matching) means a single-line string literal like
+// `"// ==UserScript=="` can't trick the linkifier — Prism tokenises
+// it as a string, not as our header block. A multi-line template
+// literal that contains BOTH markers can still be picked up because
+// our pattern is inserted before `string`/template tokens; in
+// practice no userscript embeds a fake metadata block that way, but
+// it's worth knowing.
 function linkifyCodeBlock(root: HTMLElement, fileUrl: string): void {
-  // Snapshot text nodes first; we mutate the tree as we go, and a
-  // live TreeWalker would re-visit the new anchor children.
+  for (const headerEl of Array.from(root.querySelectorAll('.userscript-header'))) {
+    linkifyHeaderBlock(headerEl as HTMLElement, fileUrl);
+  }
+
+  // Walk text nodes AFTER the header pass so the tree mutations from
+  // linkifyHeaderBlock are reflected. Skip nodes inside marker /
+  // tag-name / tag-value spans — they were either handled by
+  // linkifyHeaderBlock or are anchor labels we just inserted and
+  // don't want to re-process.
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   let n: Node | null;
-  while ((n = walker.nextNode()) !== null) nodes.push(n as Text);
-
-  let inHeader = false;
-  for (const tn of nodes) {
+  while ((n = walker.nextNode()) !== null) {
+    const tn = n as Text;
     const parent = tn.parentElement;
-    const isComment = !!parent && parent.classList.contains('comment');
-    const text = tn.data;
-
-    if (isComment && isHeaderOpenLine(text)) {
-      inHeader = true;
+    if (parent && parent.closest('.header-marker, .header-tag-name, .header-tag-value')) {
       continue;
     }
-    if (isComment && isHeaderCloseLine(text)) {
-      inHeader = false;
-      continue;
-    }
+    nodes.push(tn);
+  }
+  for (const tn of nodes) linkifyTextNodeUrls(tn);
+}
 
-    if (inHeader && isComment) {
-      const parsed = parseTagLine(text);
-      if (parsed) {
-        const link = linkForHeaderTag(parsed.tag, parsed.value, fileUrl);
-        if (link) {
-          // The anchor wraps just the `linkText` substring inside the
-          // value; the `prefix` (e.g. the `<name>` of an `@resource`)
-          // and `suffix` stay as plain text either side of it.
-          const doc = root.ownerDocument;
-          tn.replaceWith(
-            doc.createTextNode(parsed.before + link.prefix),
-            openInNewTabAnchor(link.href, link.linkText),
-            doc.createTextNode(link.suffix + parsed.after),
-          );
-          continue;
-        }
+// Process one `.userscript-header` span: for each `.header-tag-value`
+// inside it, look back for the matching `.header-tag-name` and turn
+// the value into an anchor (or URL-linkified text for tags we don't
+// know how to resolve).
+function linkifyHeaderBlock(headerEl: HTMLElement, fileUrl: string): void {
+  const valueEls = headerEl.querySelectorAll<HTMLElement>('.header-tag-value');
+  for (const valueEl of Array.from(valueEls)) {
+    const tag = findPrecedingTagName(valueEl);
+    if (!tag) continue;
+    const value = valueEl.textContent ?? '';
+    const link = linkForHeaderTag(tag, value, fileUrl);
+    if (link) {
+      const doc = headerEl.ownerDocument;
+      valueEl.replaceChildren(
+        doc.createTextNode(link.prefix),
+        openInNewTabAnchor(link.href, link.linkText),
+        doc.createTextNode(link.suffix),
+      );
+    } else {
+      // Fall back to URL-only linkification (e.g. an http URL inside
+      // a `@description` value). Only touch the leaf text node so we
+      // don't disturb any nested tokens (shouldn't exist today, but
+      // safe if Prism's grammar evolves).
+      const tn = valueEl.firstChild;
+      if (tn && tn.nodeType === Node.TEXT_NODE) {
+        linkifyTextNodeUrls(tn as Text);
       }
     }
-
-    linkifyTextNodeUrls(tn);
   }
+}
+
+// Walk back from a tag-value span past whitespace text nodes to find
+// the immediately-preceding tag-name span; returns the lowercased
+// canonical tag (no `@`, no locale suffix), or null if the structure
+// doesn't match (defensive — Prism should always pair them).
+function findPrecedingTagName(valueEl: Element): string | null {
+  let prev: Node | null = valueEl.previousSibling;
+  while (prev) {
+    if (prev.nodeType === Node.ELEMENT_NODE) {
+      const el = prev as Element;
+      if (!el.classList.contains('header-tag-name')) return null;
+      const text = el.textContent ?? '';
+      const m = /^@([A-Za-z][\w-]*)(?::[\w-]+)?$/.exec(text);
+      return m ? m[1].toLowerCase() : null;
+    }
+    prev = prev.previousSibling;
+  }
+  return null;
 }
 
 function linkifyTextNodeUrls(tn: Text): void {

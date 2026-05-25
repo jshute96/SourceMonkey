@@ -29,27 +29,31 @@ const BLOCK_END = /^[ \t]*\/\/[ \t]*==\/UserScript==[ \t]*$/m;
 export type SplitError = 'no metadata block' | 'unterminated metadata block';
 
 export interface SplitResult {
+  leadingText: string; // anything before the `==UserScript==` line; '' when block starts at file top
   headerText: string;  // raw block including both markers; '' on error
   bodyText: string;    // everything after the closing marker; full source on error
   error?: SplitError;
 }
 
-// Split a userscript source into its raw metadata block and body text.
+// Split a userscript source into the (rare) text above the metadata
+// block, the raw metadata block itself, and the body text.
 //
 // Failure modes:
 //   - no `==UserScript==` line          → error: 'no metadata block'
 //   - open marker but no matching close → error: 'unterminated metadata block'
-// In both cases we return headerText = '' and bodyText = the whole source so
-// callers always have something to display.
+// In both cases we return leadingText = '', headerText = '', and
+// bodyText = the whole source so callers always have something to
+// display.
 export function splitHeaderBody(source: string): SplitResult {
   const startMatch = BLOCK_START.exec(source);
   if (!startMatch) {
-    return { headerText: '', bodyText: source, error: 'no metadata block' };
+    return { leadingText: '', headerText: '', bodyText: source, error: 'no metadata block' };
   }
   const afterStart = source.slice(startMatch.index + startMatch[0].length);
   const endMatch = BLOCK_END.exec(afterStart);
   if (!endMatch) {
     return {
+      leadingText: '',
       headerText: '',
       bodyText: source,
       error: 'unterminated metadata block',
@@ -63,6 +67,7 @@ export function splitHeaderBody(source: string): SplitResult {
   if (source[bodyStart] === '\r') bodyStart++;
   if (source[bodyStart] === '\n') bodyStart++;
   return {
+    leadingText: source.slice(0, startMatch.index),
     headerText: source.slice(startMatch.index, blockEnd),
     bodyText: source.slice(bodyStart),
   };

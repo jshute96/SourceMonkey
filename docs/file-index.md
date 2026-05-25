@@ -157,6 +157,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
+| `tests/bad-examples/` | Deliberately malformed `*.user.js` files for the SM-only spec; lives outside `tests/examples/` so the TM loader doesn't see them |
+| `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status and the viewer renders it byte-for-byte |
 
 ## Docs (`docs/`)
 

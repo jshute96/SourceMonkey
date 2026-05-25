@@ -18,6 +18,22 @@ All three files share the directory's stem (e.g.
 `gm-info/gm-info.html` + `gm-info/gm-info.user.js` +
 `gm-info/gm-info.spec.ts`).
 
+### Sibling: `../bad-examples/`
+
+Deliberately-broken userscripts (zero-byte, unterminated marker,
+malformed tag line, etc.) live in `tests/bad-examples/`, **outside**
+this directory on purpose:
+
+- The TM cross-manager sync walks `tests/examples/` only, so the
+  malformed files stay invisible to TM (which would refuse most of
+  them anyway).
+- Add `tests/bad-examples/` as its own SourceMonkey source if you
+  want to toggle the whole bad-script corpus on or off without
+  touching the good examples.
+
+`tests/e2e/bad-scripts.spec.ts` covers them end-to-end (expected
+status per file + byte-for-byte viewer round-trip).
+
 ### Multi-script directories
 
 Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
