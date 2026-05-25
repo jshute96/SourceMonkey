@@ -1,11 +1,15 @@
 // Per-script `GM_*` / `GM.*` binding emitter.
 //
 // The injector calls `emitGmBindings` once per script at wrapper-build
-// time. The returned source string is concatenated into the wrapper
-// between the head and the matcher block (inside the outer IIFE, so
-// the bindings are visible to BOTH the baked-in body AND the
-// run-new swap-eval branch). When no APIs are granted (or the script
-// is `@grant none`), `emitGmBindings` returns the empty string.
+// time. The result is `{ js, prelude, granted }`:
+//   - `js` is spliced at the IIFE top so the lazy `const GM_X = ...`
+//     declarations are visible to BOTH the baked-in body AND the
+//     run-new swap-eval branch via closure.
+//   - `prelude` is spliced inside `__smWaitForRunAt`'s callback so
+//     the one eager call (`storage.init`) runs AFTER the GM runtime
+//     is installed. See `GmBindingEmit` below.
+// When no APIs are granted (or the script is `@grant none`),
+// `emitGmBindings` returns `{ js: '', prelude: '', granted: [] }`.
 //
 // Topology recap:
 //   - SYNC API bodies delegate to `window.__SM_GM__.<method>(...)`,

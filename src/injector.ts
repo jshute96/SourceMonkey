@@ -272,8 +272,8 @@ export function buildWrappedBody(args: {
 // chrome.storage.local at register time so the page-side cache is
 // populated synchronously before the user body runs.
 //
-// Returns `{ js: '', granted: [] }` when the script declares no @grant
-// or @grant none.
+// Returns `{ js: '', prelude: '', granted: [] }` when the script
+// declares no @grant or @grant none.
 //
 // Side effects. When the script declares `@grant` lines that aren't in
 // the catalog (TM-only APIs we don't support, typos like

@@ -36,18 +36,29 @@ SourceMonkey actually does today.
 
 ## Bindings layout in the wrapper
 
-The wrapper-head has a placeholder `"__SM_GM_BINDINGS__"` placed
-inside the outer IIFE but BEFORE `__smAwaitDecision(...)`. The
-substituted text contains the per-script `const GM_X = ...`
-declarations. Two consequences:
+The wrapper-head has TWO placeholders that the injector substitutes
+from `emitGmBindings`'s return value:
 
-- Both the baked-in body (run path) AND the run-new swap eval see
-  the bindings via closure.
-- Bindings are in scope before the SW round-trip, but the runtime
-  `__SM_GM__` may not be installed yet for early `document_start`
-  scripts. Sync bodies dereference `window.__SM_GM__` lazily (at
-  call time), so the runtime just has to be there by the time the
-  script makes a GM call.
+- `"__SM_GM_BINDINGS__"` sits inside the outer IIFE, BEFORE
+  `__smAwaitDecision(...)`. The substituted text is the lazy
+  `const GM_X = ...` declarations + the GM4 alias object. Both the
+  baked-in body and the run-new swap eval see them via closure.
+  Each declaration only dereferences `window.__SM_GM__` from inside
+  its own function body, so emitting them this early is safe even
+  when the runtime spec hasn't run yet.
+- `"__SM_GM_PRELUDE__"` sits INSIDE the `__smWaitForRunAt` callback,
+  before the run-new / baked-body branch. The substituted text is
+  eager `__SM_GM__.*` calls — today just `storage.init(scriptId,
+  initialValues)` for scripts with a storage grant. By the time the
+  callback fires, both `sm:check-pending` (microtask) and the
+  declared `@run-at` lifecycle event have resolved, so the GM runtime
+  is guaranteed installed.
+
+The split matters because `storage.init` MUST run before the body
+(so `GM_getValue` reads see the persisted snapshot), but if it ran
+at IIFE top alongside the const declarations it would race against
+the runtime spec's own `document_start` registration. See the
+"Runtime ordering" caveat below.
 
 ## World gating
 
@@ -93,13 +104,35 @@ if needed.
   the local isolated `window` — no cross-world reach into page
   globals. A future phase can bridge to MAIN via postMessage if
   needed.
-- **Runtime ordering safety relies on lazy dereference.** The wrapper
-  reads `window.__SM_GM__` at GM-call time, not at binding-emission
-  time. Sync calls happen inside the `__smAwaitDecision` microtask
-  (a turn after the wrapper's synchronous init), giving the GM
-  runtime time to install. So `chrome.userScripts`'s document_start
-  registration order doesn't have to be a guarantee — the lazy
-  deref is the real safety net.
+- **Runtime ordering safety has two layers.** The lazy `const GM_X =
+  ...` declarations read `window.__SM_GM__` only inside their own
+  bodies — first GM call wins, by which point the runtime is
+  installed. The one eager call (`storage.init`) does NOT live with
+  the consts; it's emitted into the prelude and runs inside
+  `__smWaitForRunAt`'s callback, after both `sm:check-pending` and
+  the declared `@run-at` event resolve. So `chrome.userScripts`'s
+  document_start registration order doesn't have to be a guarantee.
+
+- **Prelude throws bypass the body's try/catch.** The prelude is
+  spliced outside the `try { body } catch { sm:error }` block, so a
+  `storage.init` throw (only possible if `__SM_GM__` is somehow
+  *still* undefined after `__smWaitForRunAt`) escapes as a plain
+  page-level uncaught error — no `sm:start`, no `sm:error`. In
+  normal operation `__SM_GM__` is guaranteed installed by then, so
+  this is mostly theoretical; flagged here because the failure mode
+  is silent to the SW.
+
+- **Cross-tab `applyRemoteUpdate` ignores writes before init.** The
+  remote-update handler early-returns when the per-script store
+  isn't `ready`. Since the prelude now runs inside
+  `__smWaitForRunAt`, `ready` flips later than it used to (after the
+  declared `@run-at` lifecycle event). For `@run-at document-idle`
+  the gap can stretch to `window.load` — long enough that another
+  tab's `GM_setValue` in the meantime won't propagate into THIS
+  tab's snapshot. The first local `GM_getValue` post-body would
+  read the register-time snapshot, not the sibling tab's later
+  write. Rare in practice (cross-tab traffic during page load is
+  uncommon) but worth knowing.
 - **`GM_info.script.grant` is the canonicalized set, not the raw
   `@grant` lines.** `@grant GM.setValue` shows up as `GM_setValue` in
   `GM_info.script.grant`. Matches VM; TM exposes the raw declared

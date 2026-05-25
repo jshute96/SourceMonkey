@@ -258,12 +258,14 @@
   } catch (_lE) {}
 
   var storage = {
-    /* Called by the compile-in bindings, top-of-file, with the
-       scriptId and the literal initial-value snapshot. Populates the
-       per-script cache and flags it as ready. Calling init twice
-       (e.g. two compile-in bindings for the same scriptId — shouldn't
-       happen) is idempotent: the second call replaces the cache,
-       which matches "newest wrapper registration wins". */
+    /* Called from the wrapper's prelude (inside __smWaitForRunAt's
+       callback in wrapper-head.js, after the GM runtime is guaranteed
+       installed) with the scriptId and the literal initial-value
+       snapshot. Populates the per-script cache and flags it as ready.
+       Calling init twice (e.g. two compile-in bindings for the same
+       scriptId — shouldn't happen) is idempotent: the second call
+       replaces the cache, matching "newest wrapper registration
+       wins". */
     init: function (scriptId, values) {
       var s = ensureStore(scriptId);
       /* Defensive copy so the userscript can't mutate the literal
