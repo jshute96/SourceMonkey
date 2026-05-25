@@ -57,12 +57,28 @@ export interface GmInfoInput {
   initialValues: Record<string, unknown>;
 }
 
-// The compile-in result. `js` is the literal source to splice into the
-// wrapper; `granted` is the resolved set of GM_x names (for logging
-// + the e2e permission test surface). When `js === ''` no bindings
-// were emitted (either ungranted or all unknown).
+// The compile-in result.
+//
+//   - `js`       — the lazy const declarations + GM4 alias object,
+//                  spliced at the IIFE top. Every dereference of
+//                  `window.__SM_GM__` here lives inside a function
+//                  body, so it doesn't fire until the script body
+//                  calls a GM_* API.
+//   - `prelude`  — eager calls that have to run BEFORE the user body
+//                  but AFTER the GM runtime is installed (today: the
+//                  `storage.init` call that primes the per-script
+//                  cache). The injector splices this at a point inside
+//                  the `__smWaitForRunAt` callback in the wrapper —
+//                  by then the runtime spec has had time to register
+//                  and run.
+//   - `granted`  — the resolved set of GM_x names (for logging + the
+//                  e2e permission test surface).
+//
+// When `js === ''` no bindings were emitted (either ungranted or all
+// unknown), and `prelude` is also empty.
 export interface GmBindingEmit {
   js: string;
+  prelude: string;
   granted: readonly string[];
 }
 
@@ -293,30 +309,18 @@ export function emitGmBindings(
   granted: readonly string[],
   info: GmInfoInput,
 ): GmBindingEmit {
-  if (granted.length === 0) return { js: '', granted: [] };
+  if (granted.length === 0) return { js: '', prelude: '', granted: [] };
   const specs: GmApiSpec[] = [];
   for (const n of granted) {
     const spec = findApi(n);
     if (spec) specs.push(spec);
   }
-  if (specs.length === 0) return { js: '', granted: [] };
+  if (specs.length === 0) return { js: '', prelude: '', granted: [] };
   // GM_info is always emitted when any binding is emitted — TM/VM
   // both treat it as implicit (no @grant required). This is a useful
   // way for a script to introspect its own metadata even without
   // declaring other grants.
   const parts: string[] = [emitGmInfo(info)];
-  // Storage init. When the script has any storage grants, prime the
-  // page-side cache with the values we read at register time. The
-  // call is emitted whenever a storage grant is present, even when
-  // `initialValues` is empty — the runtime marks the cache as
-  // "ready" so a later read of an unknown key returns the
-  // defaultValue rather than waiting for a phantom load.
-  const hasStorageGrant = specs.some((s) => s.subsystem === 'storage');
-  if (hasStorageGrant) {
-    parts.push(
-      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, ${jsLit(info.initialValues)});`,
-    );
-  }
   for (const spec of specs) {
     if (spec.name === 'GM_info') continue;
     const line = emitOneBinding(spec, info.scriptId);
@@ -328,8 +332,21 @@ export function emitGmBindings(
   );
   const gmObject = emitGmObject(allSpecsIncludingInfo);
   if (gmObject) parts.push(gmObject);
+  // Storage init goes in the prelude — it's the one eager call into
+  // __SM_GM__ at compile time. Emitted whenever a storage grant is
+  // present, even when `initialValues` is empty: the runtime marks
+  // the cache as ready so a later read of an unknown key returns
+  // defaultValue rather than waiting for a phantom load. Splicing
+  // it in the IIFE top would race with the runtime's own document_start
+  // registration in some Chrome builds — see __SM_GM_PRELUDE__ in
+  // wrapper-head.js for the deferred-execution contract.
+  const hasStorageGrant = specs.some((s) => s.subsystem === 'storage');
+  const prelude = hasStorageGrant
+    ? `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, ${jsLit(info.initialValues)});`
+    : '';
   return {
     js: parts.join('\n') + '\n',
+    prelude,
     granted: specs.map((s) => s.name),
   };
 }

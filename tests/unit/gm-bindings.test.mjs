@@ -59,16 +59,22 @@ test('emitGmBindings: storage bodies route to __SM_GM__.storage helpers', () => 
   assert.doesNotMatch(out.js, /notImplemented\("GM_setValue"\)/);
 });
 
-test('emitGmBindings: storage init call is emitted with the initial value snapshot', () => {
+test('emitGmBindings: storage init call lands in the prelude (not the lazy js)', () => {
   const out = emitGmBindings(['GM_setValue'], makeInfo({
     initialValues: { foo: 'bar', count: 42 },
   }));
-  assert.match(out.js, /__SM_GM__\.storage\.init\("script-1", \{"foo":"bar","count":42\}\)/);
+  // Eager `storage.init` must NOT sit in the IIFE-top js block — the
+  // GM runtime may not be installed yet at that point. It moves to
+  // the prelude, which the injector splices into the wrapper inside
+  // `__smWaitForRunAt`'s callback (runtime is guaranteed ready by then).
+  assert.doesNotMatch(out.js, /storage\.init/);
+  assert.match(out.prelude, /__SM_GM__\.storage\.init\("script-1", \{"foo":"bar","count":42\}\)/);
 });
 
-test('emitGmBindings: storage init emitted as empty object when no values yet', () => {
+test('emitGmBindings: storage init prelude has empty object when no values yet', () => {
   const out = emitGmBindings(['GM_setValue'], makeInfo({ initialValues: {} }));
-  assert.match(out.js, /__SM_GM__\.storage\.init\("script-1", \{\}\)/);
+  assert.doesNotMatch(out.js, /storage\.init/);
+  assert.match(out.prelude, /__SM_GM__\.storage\.init\("script-1", \{\}\)/);
 });
 
 test('emitGmBindings: storage init NOT emitted when no storage grant', () => {
@@ -76,6 +82,7 @@ test('emitGmBindings: storage init NOT emitted when no storage grant', () => {
     grants: ['GM_xmlhttpRequest'],
   }));
   assert.doesNotMatch(out.js, /storage\.init/);
+  assert.equal(out.prelude, '');
 });
 
 test('emitGmBindings: DOM bodies route to __SM_GM__.dom helpers', () => {

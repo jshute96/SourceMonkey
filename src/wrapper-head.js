@@ -277,6 +277,14 @@
        moment so document-end / document-idle observe the same DOM
        state TM/VM would give them. */
     __smWaitForRunAt(function () {
+    /* GM runtime prelude: eager calls like __SM_GM__.storage.init(...)
+       that have to run BEFORE the body but AFTER the runtime is
+       installed. The injector substitutes this with the prelude
+       string returned by emitGmBindings; empty when no storage-style
+       grant is declared. Sitting inside __smWaitForRunAt's callback
+       guarantees __SM_GM__ is ready (we already waited for the
+       check-pending round-trip and the @run-at lifecycle event). */
+    "__SM_GM_PRELUDE__";
     if (__smDecision && __smDecision.action === "run-new" && typeof __smDecision.body === "string") {
       /* SW handed us a fresher user-code body. Try to eval it.
 

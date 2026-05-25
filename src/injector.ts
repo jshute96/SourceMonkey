@@ -231,6 +231,11 @@ export function buildWrappedBody(args: {
   // GM bindings source produced by gm-bindings.ts. Empty string when
   // the script declared no @grant lines (or `@grant none`).
   gmBindings?: string;
+  // GM prelude — eager `__SM_GM__.*` calls (today: storage.init) that
+  // must run BEFORE the body but AFTER the runtime is installed.
+  // Spliced into the wrapper inside `__smWaitForRunAt`'s callback,
+  // not at the IIFE top. Empty when no storage grant is declared.
+  gmPrelude?: string;
 }): string {
   // Pass replacements as functions so `$&` / `$1` etc. inside our
   // generated wrappers aren't interpreted as String.prototype.replace
@@ -251,7 +256,8 @@ export function buildWrappedBody(args: {
     .replace('"__SM_SOURCE_URL__"', () => JSON.stringify(sourceUrl))
     .replace('"__SM_RUN_AT__"', () => JSON.stringify(args.declaredRunAt ?? 'document-idle'))
     .replace('"__SM_MATCHER_BLOCK__";', () => matcherBlock)
-    .replace('"__SM_GM_BINDINGS__";', () => args.gmBindings ?? '');
+    .replace('"__SM_GM_BINDINGS__";', () => args.gmBindings ?? '')
+    .replace('"__SM_GM_PRELUDE__";', () => args.gmPrelude ?? '');
   // No newline between head and body so body line N stays at physical
   // line N. Tail goes on its own line after the body for readability
   // when inspecting the registered code. The `//# sourceURL=` directive
@@ -277,8 +283,8 @@ export function buildWrappedBody(args: {
 export async function buildGmBindingsForScript(
   script: StoredScript,
   scriptHandlerVersion: string,
-): Promise<{ js: string; granted: readonly string[] }> {
-  if (!script.header) return { js: '', granted: [] };
+): Promise<{ js: string; prelude: string; granted: readonly string[] }> {
+  if (!script.header) return { js: '', prelude: '', granted: [] };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
   if (resolved.unknown.length > 0) {
@@ -288,7 +294,7 @@ export async function buildGmBindingsForScript(
     );
   }
   if (resolved.hasNone || resolved.granted.size === 0) {
-    return { js: '', granted: [] };
+    return { js: '', prelude: '', granted: [] };
   }
   const name = getValue(script.header, 'name') ?? script.relativePath;
   // Only bother reading storage if a storage API is actually granted.
@@ -382,9 +388,9 @@ export async function buildRegistrationSpec(
   // skip the bindings so the script gets a natural ReferenceError if
   // it touches a GM_* name. This is a documented limitation (see
   // docs/GM-API-strategy.md).
-  const gmBindings = world === 'USER_SCRIPT'
-    ? (await buildGmBindingsForScript(script, scriptHandlerVersion)).js
-    : '';
+  const gmEmit = world === 'USER_SCRIPT'
+    ? await buildGmBindingsForScript(script, scriptHandlerVersion)
+    : { js: '', prelude: '', granted: [] };
   // Register at document_start regardless of the declared @run-at. The
   // wrapper itself awaits the matching lifecycle event (DOMContentLoaded
   // for document-end, load for document-idle, etc.) before invoking the
@@ -401,7 +407,8 @@ export async function buildRegistrationSpec(
       loadedAt: script.loadedAt,
       declaredRunAt,
       matching: needsWrapperFilter ? script.matching : undefined,
-      gmBindings,
+      gmBindings: gmEmit.js,
+      gmPrelude: gmEmit.prelude,
     }) }],
     runAt: 'document_start',
     world,
