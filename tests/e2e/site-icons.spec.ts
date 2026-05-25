@@ -233,10 +233,11 @@ test.describe('site-icon slot', () => {
           `section.directory[data-source-id="${source!.id}"] tbody tr:has-text("${name}")`,
         );
 
-      // Each script gets its own probe URL → its own pathIcon entry.
-      // The root script's probeUrl equals the origin root, so it bypasses
-      // the path layer and lands on the origin-level fallback — which
-      // begins with a root-HTML probe and therefore sees ICON_ROOT.
+      // Each deep-section script gets its own page URL → its own
+      // pathIcon entry. The root script's page URL equals the origin
+      // root, so it bypasses the path layer and lands on the
+      // origin-level fallback — which begins with a root-HTML probe
+      // and therefore sees ICON_ROOT.
       await expect(rowFor('section-a.user.js').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_A}`);
       await expect(rowFor('section-b.user.js').locator('.site-icon img'))

@@ -1,191 +1,21 @@
 // Tests for src/site-icon.ts (compiled to dist/site-icon.js).
 //
-// Covers the pure helpers: origin/probe-URL extraction, link-path
-// segment trimming, `@icon`-header URL extraction, icon-link parsing
-// + scoring, and cache-freshness rules. The network fetch pipeline
-// is not unit-tested here — it depends on real HTTP.
+// Covers the icon-specific pure helpers: `@icon`-header URL
+// extraction, icon-link parsing + scoring, and cache-freshness rules.
+// `@match`-pattern → origin/linkUrl extraction lives in
+// src/match-targets.ts and is tested separately. The network fetch
+// pipeline is not unit-tested here — it depends on real HTTP.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  originFromMatchPattern,
-  representativeOrigin,
-  representativeMatch,
-  linkPathFromMatchPath,
   iconRefFromHeader,
   isCacheFresh,
   parseIconLinks,
   pickBestIconCandidate,
   maxDeclaredSize,
 } from '../../dist/site-icon.js';
-
-// ---------- originFromMatchPattern ----------
-
-test('originFromMatchPattern: exact host with explicit scheme', () => {
-  assert.equal(
-    originFromMatchPattern('https://example.com/*'),
-    'https://example.com',
-  );
-  assert.equal(
-    originFromMatchPattern('http://example.com/*'),
-    'http://example.com',
-  );
-});
-
-test('originFromMatchPattern: scheme wildcard becomes https', () => {
-  assert.equal(
-    originFromMatchPattern('*://example.com/*'),
-    'https://example.com',
-  );
-});
-
-test('originFromMatchPattern: subdomain wildcard collapses to base host', () => {
-  assert.equal(
-    originFromMatchPattern('https://*.example.com/*'),
-    'https://example.com',
-  );
-  assert.equal(
-    originFromMatchPattern('*://*.example.co.uk/*'),
-    'https://example.co.uk',
-  );
-});
-
-test('originFromMatchPattern: strips trailing :port', () => {
-  assert.equal(
-    originFromMatchPattern('http://localhost:8080/*'),
-    'http://localhost',
-  );
-});
-
-test('originFromMatchPattern: host of `*` is too broad', () => {
-  assert.equal(originFromMatchPattern('*://*/*'), null);
-  assert.equal(originFromMatchPattern('https://*/*'), null);
-});
-
-test('originFromMatchPattern: TLD wildcard rejected', () => {
-  assert.equal(originFromMatchPattern('https://example.*/*'), null);
-});
-
-test('originFromMatchPattern: non-http schemes rejected', () => {
-  assert.equal(originFromMatchPattern('file:///home/user/*'), null);
-  assert.equal(originFromMatchPattern('ftp://example.com/*'), null);
-});
-
-test('originFromMatchPattern: <all_urls> has no representative site', () => {
-  assert.equal(originFromMatchPattern('<all_urls>'), null);
-});
-
-test('originFromMatchPattern: malformed patterns return null', () => {
-  assert.equal(originFromMatchPattern(''), null);
-  assert.equal(originFromMatchPattern('not a pattern'), null);
-  assert.equal(originFromMatchPattern('://example.com/*'), null);
-});
-
-test('originFromMatchPattern: lowercases the host', () => {
-  assert.equal(
-    originFromMatchPattern('HTTPS://Example.COM/*'),
-    'https://example.com',
-  );
-});
-
-// ---------- representativeOrigin ----------
-
-test('representativeOrigin: returns first usable @match', () => {
-  assert.equal(
-    representativeOrigin({
-      matches: ['file:///x/*', '*://example.com/*'],
-    }),
-    'https://example.com',
-  );
-});
-
-test('representativeOrigin: null when no matches yield an origin', () => {
-  assert.equal(
-    representativeOrigin({
-      matches: ['<all_urls>', 'file:///x/*'],
-    }),
-    null,
-  );
-  assert.equal(representativeOrigin({ matches: [] }), null);
-});
-
-// ---------- representativeMatch (probe + link URLs) ----------
-
-test('representativeMatch: probe URL keeps the literal path prefix', () => {
-  assert.deepEqual(
-    representativeMatch({ matches: ['https://connect.garmin.com/app/*'] }),
-    {
-      origin: 'https://connect.garmin.com',
-      probeUrl: 'https://connect.garmin.com/app/',
-      linkUrl: 'https://connect.garmin.com/app/',
-    },
-  );
-  assert.deepEqual(
-    representativeMatch({ matches: ['https://example.com/posts/*/edit'] }),
-    {
-      origin: 'https://example.com',
-      probeUrl: 'https://example.com/posts/',
-      linkUrl: 'https://example.com/posts/',
-    },
-  );
-});
-
-test('representativeMatch: all-glob path collapses to /', () => {
-  assert.deepEqual(
-    representativeMatch({ matches: ['https://example.com/*'] }),
-    {
-      origin: 'https://example.com',
-      probeUrl: 'https://example.com/',
-      linkUrl: 'https://example.com/',
-    },
-  );
-});
-
-test('representativeMatch: subdomain-wildcard pattern keeps the path', () => {
-  // probeUrl uses the literal-prefix cut (mid-segment), while linkUrl
-  // backs off to the last complete segment so the click-through lands
-  // on a valid directory.
-  assert.deepEqual(
-    representativeMatch({ matches: ['*://*.example.com/foo/bar*'] }),
-    {
-      origin: 'https://example.com',
-      probeUrl: 'https://example.com/foo/bar',
-      linkUrl: 'https://example.com/foo/',
-    },
-  );
-});
-
-test('representativeMatch: null for patterns without a usable origin', () => {
-  assert.equal(representativeMatch({ matches: ['<all_urls>'] }), null);
-  assert.equal(representativeMatch({ matches: ['file:///x/*'] }), null);
-  assert.equal(representativeMatch({ matches: [] }), null);
-});
-
-// ---------- linkPathFromMatchPath ----------
-
-test('linkPathFromMatchPath: full-glob path is just /', () => {
-  assert.equal(linkPathFromMatchPath('/*'), '/');
-});
-
-test('linkPathFromMatchPath: keeps complete segments up to the first wildcard', () => {
-  assert.equal(linkPathFromMatchPath('/app/*'), '/app/');
-  assert.equal(linkPathFromMatchPath('/posts/*/edit'), '/posts/');
-  assert.equal(linkPathFromMatchPath('/a/b/c/*'), '/a/b/c/');
-});
-
-test('linkPathFromMatchPath: trims partial wildcard segments', () => {
-  // `bar*` is partial: link target backs off to the parent directory.
-  assert.equal(linkPathFromMatchPath('/foo/bar*'), '/foo/');
-  assert.equal(linkPathFromMatchPath('/foo/bar*/baz'), '/foo/');
-});
-
-test('linkPathFromMatchPath: pure-literal paths pass through unchanged', () => {
-  assert.equal(linkPathFromMatchPath('/'), '/');
-  assert.equal(linkPathFromMatchPath('/foo'), '/foo');
-  assert.equal(linkPathFromMatchPath('/foo/bar'), '/foo/bar');
-  assert.equal(linkPathFromMatchPath('/foo/bar/'), '/foo/bar/');
-});
 
 // ---------- iconRefFromHeader ----------
 //

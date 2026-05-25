@@ -69,11 +69,14 @@ reports.
      - `Match`
      - `Exclude`
    - Always present (per script):
-     - `Filename` — absolute path (source directory +
-       `relativePath`), shown next to a square icon button that
-       copies it to the clipboard via `navigator.clipboard.writeText`.
-       The icon swaps to a checkmark for ~1.2 s on success. Row
-       omitted if the parent source row has vanished.
+     - `Location` — anchor wrapping the resolved location
+       (file:// → bare fs path, http(s):// → URL). Anchor href is the
+       canonical `fileUrl`. Adjacent square button copies the
+       displayed text to the clipboard via
+       `navigator.clipboard.writeText`; icon swaps to a checkmark for
+       ~1.2 s on success. Row omitted if the parent source row has
+       vanished. See the Link rendering section below for the linkify
+       rules.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
      - `Status` — `OK` / `ERROR` / `MISSING`, color-coded; the
        row's `title` carries `errorMessage` when present.
@@ -132,3 +135,82 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
 - `Prism.highlightElement` walks the text node and replaces it with
   highlighted spans.
 - The default Prism theme ships as `prism.css`.
+
+## Link rendering
+
+Both the details panel and the highlighted code box turn eligible
+text into open-in-new-tab anchors (`target="_blank"`,
+`rel="noopener noreferrer"`). Same per-tag rules apply in both places
+so the body header and the details panel agree.
+
+### Details panel
+
+- `Match` / `Exclude` — every pattern is fed through `matchTargetInfo`
+  from [`src/match-targets.ts`](../src/match-targets.ts). The
+  `linkUrl` rule: keep the literal prefix when `*` is at the end of
+  the last segment; otherwise trim back to the last complete
+  directory; dewildcard `*.host` to its apex; drop `<all_urls>`,
+  host wildcards, and regex literals to plain text. `@exclude`'s
+  formal grammar is a free-form glob, but values are almost always
+  written as match patterns in practice and a click target is more
+  useful than plain text.
+- `Location` — anchor wrapping the path text. Href is
+  `script.fileUrl` (http(s) or file://). Display text stays the bare
+  fs path for file:// scripts. Chromium typically refuses to navigate
+  to a `file://` link from a chrome-extension page; the path is still
+  readable, selectable, and copyable via the adjacent button.
+
+### Code box (post-Prism walk)
+
+`linkifyCodeBlock` in `src/userscript.ts` runs after
+`Prism.highlightElement` and walks the highlighted text nodes. A
+state machine driven by the metadata-block markers toggles between
+two modes; the marker check is gated on Prism's `.token.comment`
+class so a string literal `"// ==UserScript=="` can't flip it.
+
+#### Inside the metadata block
+
+- Each line is matched against the `// @tag value` shape via
+  `parseTagLine`.
+- Eligible tags rewrite a sub-range of the `value` substring to an
+  anchor (prefix and suffix stay as plain text so the line
+  round-trips verbatim):
+  - `MATCH_HEADER_TAGS` (`@match`, `@exclude`, `@include`) →
+    `matchTargetInfo` linkUrl. The anchor text is the full pattern;
+    the href is the trimmed link URL.
+  - `RESOLVABLE_HEADER_TAGS` (`@icon`, `@iconURL`, `@defaultIcon`,
+    `@icon64`, `@icon64URL`, `@require`, `@updateURL`,
+    `@downloadURL`, `@homepage`, `@homepageURL`, `@website`,
+    `@source`, `@supportURL`) → resolved against the tab's
+    `fileUrl` via `resolveScriptResource`. A `..`-bearing ref,
+    unknown-scheme ref, or `data:` URL falls back to plain text.
+  - `@resource` carve-out: the value has shape `<name> <url>` (two
+    whitespace-separated tokens; the `<name>` token has no internal
+    whitespace by Tampermonkey's grammar). The `<name>` plus the
+    gap after it stay as plain prefix; only the `<url>` token is
+    resolved (like the other single-URL tags) and wrapped.
+- Anything else falls through to URL-mode for that line.
+
+#### Outside the metadata block
+
+- Absolute `http(s)` / `file://` URLs are extracted via
+  `splitTextByUrls` and wrapped. `*` is excluded from the URL
+  character class so `https://example.com/foo/*` linkifies as
+  `https://example.com/foo/` plus a literal `*`.
+- Always-peelable trailing punctuation (`.,;:!?`) comes off the URL
+  and back into the literal run.
+- Closing brackets (`)`, `]`) only peel when the URL has no matching
+  open bracket, so `https://en.wikipedia.org/wiki/Foo_(disambig)`
+  keeps its `)`.
+- `@require` source tabs have no metadata block, so they stay in
+  URL-only mode for the entire body.
+
+#### Anchor styling
+
+- Anchors get `class="code-link"` and inherit Prism's token colour
+  (CSS: `color: inherit; text-decoration: none;`); the hover
+  underline is the only signal of clickability so the code box keeps
+  reading as code.
+
+Pure helpers (URL tokenizer, tag-line parser, tag-classifier sets)
+live in `src/script-links.ts` and are unit-tested without a DOM.

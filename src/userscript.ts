@@ -33,7 +33,18 @@ import {
   getValues,
 } from './userscript-header.js';
 import { scriptAbsolutePath } from './directories.js';
+import { matchTargetInfo } from './match-targets.js';
 import { renderSiteIconInto } from './site-icon.js';
+import { resolveScriptResource } from './file-loader.js';
+import {
+  MATCH_HEADER_TAGS,
+  RESOLVABLE_HEADER_TAGS,
+  isHeaderCloseLine,
+  isHeaderOpenLine,
+  parseTagLine,
+  splitResourceValue,
+  splitTextByUrls,
+} from './script-links.js';
 
 declare const Prism: { highlightElement(el: Element): void };
 
@@ -236,9 +247,14 @@ function render(script: StoredScript): void {
 
 // Tab strip entries. Code tabs paint into the code-pane (main script
 // first, then one per @require in declaration order); the trailing
-// Log tab swaps the code pane for the log table.
+// Log tab swaps the code pane for the log table. `fileUrl` is the
+// tab body's canonical fetchable URL — main-script tabs use
+// `script.fileUrl`; require tabs use the require's resolved URL so
+// any relative ref inside the require resolves against the require,
+// not the host script (uncommon — require sources rarely have their
+// own metadata block — but cheap to get right).
 type Tab =
-  | { kind: 'code'; label: string; body: string }
+  | { kind: 'code'; label: string; body: string; fileUrl: string }
   | { kind: 'log'; label: string };
 
 // Index of the currently selected tab. Preserved across re-renders
@@ -253,9 +269,15 @@ function buildTabs(script: StoredScript): Tab[] {
     body: script.headerText
       ? script.headerText + '\n' + script.bodyText
       : script.bodyText,
+    fileUrl: script.fileUrl,
   }];
   for (const r of script.requires ?? []) {
-    tabs.push({ kind: 'code', label: requireBasename(r), body: r.source });
+    tabs.push({
+      kind: 'code',
+      label: requireBasename(r),
+      body: r.source,
+      fileUrl: r.url,
+    });
   }
   // Log tab always last so the file order stays stable as @requires
   // come and go.
@@ -325,6 +347,7 @@ function renderTabsAndBody(script: StoredScript): void {
     // keeps untrusted file content from being interpreted as markup.
     contentEl.textContent = active.body;
     Prism.highlightElement(contentEl);
+    linkifyCodeBlock(contentEl, active.fileUrl);
   }
 }
 
@@ -469,9 +492,9 @@ function renderDetails(script: StoredScript): void {
   }
   if (script.header) {
     const matches = getValues(script.header, 'match');
-    if (matches.length) appendRow(dl, 'Match', urlList(matches));
+    if (matches.length) appendRow(dl, 'Match', patternList(matches));
     const excludes = getValues(script.header, 'exclude');
-    if (excludes.length) appendRow(dl, 'Exclude', urlList(excludes));
+    if (excludes.length) appendRow(dl, 'Exclude', patternList(excludes));
   }
 
   // Resolved location for the script: an absolute filesystem path for
@@ -480,7 +503,9 @@ function renderDetails(script: StoredScript): void {
   // under a "Location" label would be misleading.
   if (sourcePath) {
     currentFilenamePath = scriptAbsolutePath(sourcePath, script.relativePath);
-    appendRow(dl, 'Location', filenameCell(currentFilenamePath));
+    // Anchor target: the canonical fetchable URL (http(s) or file://).
+    // Display text stays the human form (bare fs path for file://).
+    appendRow(dl, 'Location', filenameCell(currentFilenamePath, script.fileUrl));
   } else {
     currentFilenamePath = '';
   }
@@ -503,12 +528,25 @@ function logIdCell(logId: string): Node {
   return span;
 }
 
-function filenameCell(path: string): Node {
+function filenameCell(path: string, hrefUrl: string): Node {
   const cell = document.createElement('span');
   cell.className = 'filename-cell';
 
-  const pathEl = document.createElement('span');
+  // Wrap the path in an anchor so it doubles as an open-in-new-tab
+  // link. http(s) URLs navigate normally; file:// links are accepted
+  // by the anchor but Chromium typically refuses to navigate to them
+  // from a chrome-extension page — the path is still readable, still
+  // selectable, and the Copy button beside it is the reliable
+  // "send this to another app" affordance.
+  const pathEl = document.createElement('a') as HTMLAnchorElement;
   pathEl.className = 'filename-text';
+  pathEl.href = hrefUrl;
+  pathEl.target = '_blank';
+  pathEl.rel = 'noopener noreferrer';
+  // Display text is the bare fs path for file:// scripts; tooltip
+  // surfaces the actual href so the user can see what would open
+  // (file://... vs http://...) without clicking through.
+  pathEl.title = hrefUrl;
   pathEl.textContent = path;
   cell.appendChild(pathEl);
 
@@ -533,15 +571,162 @@ function textNode(s: string): Text {
   return document.createTextNode(s);
 }
 
-function urlList(items: string[]): Node {
-  if (items.length === 1) return textNode(items[0]);
+// `@match` / `@exclude` / `@include` row renderer: each pattern that
+// resolves to a usable linkUrl via the same wildcard-trim rule as the
+// site favicon becomes a clickable open-in-new-tab anchor. Patterns
+// we can't linkify (host wildcard, `<all_urls>`, regex literals,
+// file://) render as plain text so the row still shows every entry.
+function patternList(items: string[]): Node {
+  if (items.length === 1) return patternValueNode(items[0]);
   const ul = document.createElement('ul');
   for (const item of items) {
     const li = document.createElement('li');
-    li.textContent = item;
+    li.appendChild(patternValueNode(item));
     ul.appendChild(li);
   }
   return ul;
+}
+
+function patternValueNode(pattern: string): Node {
+  const info = matchTargetInfo(pattern);
+  if (!info) return textNode(pattern);
+  return openInNewTabAnchor(info.linkUrl, pattern);
+}
+
+function openInNewTabAnchor(href: string, text: string): HTMLAnchorElement {
+  const a = document.createElement('a') as HTMLAnchorElement;
+  a.className = 'code-link';
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = text;
+  return a;
+}
+
+// Post-Prism walk over the highlighted code: replace eligible text
+// runs with anchors. Two modes interleaved by a simple state machine
+// driven by the `// ==UserScript== … // ==/UserScript==` markers:
+//
+//   - inside the metadata block: each line is matched against the
+//     `// @tag value` shape. For tags we know how to linkify
+//     (@match → wildcard-trimmed link, @icon/@require/@updateURL/…
+//     → resolved against the script's fileUrl) the value substring
+//     is wrapped in an anchor; other tags fall through to URL mode.
+//   - outside the metadata block (and on tag-line fallbacks): every
+//     absolute http(s) / file:// URL inside the text node becomes
+//     an anchor. The same rule applies to @require source bodies
+//     (which have no metadata block).
+//
+// Marker / tag matching is gated on Prism's `.token.comment` class
+// so a string literal like `"// ==UserScript=="` inside the body
+// can't flip the state machine.
+function linkifyCodeBlock(root: HTMLElement, fileUrl: string): void {
+  // Snapshot text nodes first; we mutate the tree as we go, and a
+  // live TreeWalker would re-visit the new anchor children.
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  let n: Node | null;
+  while ((n = walker.nextNode()) !== null) nodes.push(n as Text);
+
+  let inHeader = false;
+  for (const tn of nodes) {
+    const parent = tn.parentElement;
+    const isComment = !!parent && parent.classList.contains('comment');
+    const text = tn.data;
+
+    if (isComment && isHeaderOpenLine(text)) {
+      inHeader = true;
+      continue;
+    }
+    if (isComment && isHeaderCloseLine(text)) {
+      inHeader = false;
+      continue;
+    }
+
+    if (inHeader && isComment) {
+      const parsed = parseTagLine(text);
+      if (parsed) {
+        const link = linkForHeaderTag(parsed.tag, parsed.value, fileUrl);
+        if (link) {
+          // The anchor wraps just the `linkText` substring inside the
+          // value; the `prefix` (e.g. the `<name>` of an `@resource`)
+          // and `suffix` stay as plain text either side of it.
+          const doc = root.ownerDocument;
+          tn.replaceWith(
+            doc.createTextNode(parsed.before + link.prefix),
+            openInNewTabAnchor(link.href, link.linkText),
+            doc.createTextNode(link.suffix + parsed.after),
+          );
+          continue;
+        }
+      }
+    }
+
+    linkifyTextNodeUrls(tn);
+  }
+}
+
+function linkifyTextNodeUrls(tn: Text): void {
+  const runs = splitTextByUrls(tn.data);
+  if (runs.length === 1 && runs[0].kind === 'text') return;
+  const doc = tn.ownerDocument;
+  const replacement: Node[] = runs.map((r) =>
+    r.kind === 'url'
+      ? openInNewTabAnchor(r.value, r.value)
+      : doc.createTextNode(r.value),
+  );
+  tn.replaceWith(...replacement);
+}
+
+// One header-tag link spec. `prefix` + `linkText` + `suffix` together
+// reconstruct the parsed.value verbatim, so the line round-trips
+// without losing any characters. Most tags use the whole value as
+// the link text (prefix=suffix=''); `@resource` is the carve-out
+// where prefix is the `<name>` token + gap and only the URL portion
+// is wrapped.
+interface HeaderTagLink {
+  prefix: string;
+  linkText: string;
+  href: string;
+  suffix: string;
+}
+
+function linkForHeaderTag(
+  tag: string,
+  value: string,
+  fileUrl: string,
+): HeaderTagLink | null {
+  if (MATCH_HEADER_TAGS.has(tag)) {
+    const linkUrl = matchTargetInfo(value)?.linkUrl;
+    if (!linkUrl) return null;
+    return { prefix: '', linkText: value, href: linkUrl, suffix: '' };
+  }
+  if (RESOLVABLE_HEADER_TAGS.has(tag)) {
+    const resolved = resolveScriptResource(value, fileUrl);
+    if (!resolved) return null;
+    // A `data:` URL is technically navigable but its href would be
+    // many KB long inside the anchor, drowning the code box. Inline
+    // data URLs are already rendered via the favicon path; in the
+    // body we just show the value as plain text.
+    if (resolved.kind === 'data') return null;
+    return { prefix: '', linkText: value, href: resolved.url, suffix: '' };
+  }
+  if (tag === 'resource') {
+    // `@resource <name> <url>`: keep the name + gap as plain text;
+    // linkify only the URL portion. The pure splitter in
+    // script-links.ts owns the round-trip — see `splitResourceValue`.
+    const parts = splitResourceValue(value);
+    if (!parts) return null;
+    const resolved = resolveScriptResource(parts.url, fileUrl);
+    if (!resolved || resolved.kind === 'data') return null;
+    return {
+      prefix: parts.prefix,
+      linkText: parts.url,
+      href: resolved.url,
+      suffix: parts.suffix,
+    };
+  }
+  return null;
 }
 
 function showMissing(message: string): void {

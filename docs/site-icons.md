@@ -37,43 +37,38 @@
   `@icon` is purely a visual override — it doesn't change which site
   the favicon links to.
 
-## How an origin is picked
+## How an origin and link URL are picked
 
-- Iterate the script's `@match` list in order.
-- For each pattern, parse it as `<scheme>://<host>/<path>`:
-  - Scheme `*` is treated as `https`. `http` / `https` are taken
-    verbatim. Other schemes (`file`, `ftp`) are skipped.
-  - Host `*` is too broad and is skipped.
-  - Host `*.example.com` collapses to `example.com`.
-  - A trailing `:port` is stripped (favicons are origin-scoped in
-    practice; default-port hits are the broadest).
-- Return the first pattern that yields an `https://host` (or
-  `http://host`) string. If none do, the script gets no icon.
+Pure transforms over a `@match` pattern; live in
+[`src/match-targets.ts`](../src/match-targets.ts) and are also
+consumed by the userscript-viewer linkifier for
+`@match`/`@exclude`/`@include` rows — see
+[script-viewer.md](script-viewer.md#link-rendering). The icon module
+picks the first `@match` whose pattern yields a usable origin via
+`representativeMatch`; it then uses the same `linkUrl` for both
+HTML icon discovery and the favicon click-through.
 
 `@include` patterns are not consulted: they're free-form globs and
 regexes over the whole URL, not URL templates, so the origin you'd
 extract from `*://*/foo.html` would be misleading.
 
-## Probe and link URLs
+Worked examples:
 
-`representativeMatch` returns a set of URLs derived from the first
-usable `@match`:
-
-- `origin` — cache key (`scheme://host`, no path).
-- `probeUrl` — the page to fetch when discovering `<link rel="icon">`. Cut at the literal prefix of the `@match` path (just before the first `*`).
-- `linkUrl` — where to navigate when the user clicks the favicon. Cut at the last complete path segment without a wildcard, so the click always lands on a valid directory.
-
-| `@match`                              | Probe URL                       | Link URL                         |
-|---------------------------------------|---------------------------------|----------------------------------|
-| `https://example.com/*`               | `https://example.com/`          | `https://example.com/`           |
-| `https://example.com/app/*`           | `https://example.com/app/`      | `https://example.com/app/`       |
-| `https://example.com/posts/*/edit`    | `https://example.com/posts/`    | `https://example.com/posts/`     |
-| `*://*.example.com/foo/bar*`          | `https://example.com/foo/bar`   | `https://example.com/foo/`       |
+| `@match`                              | Origin                  | Link URL                          |
+|---------------------------------------|-------------------------|-----------------------------------|
+| `https://example.com/*`               | `https://example.com`   | `https://example.com/`            |
+| `https://example.com/app/*`           | `https://example.com`   | `https://example.com/app/`        |
+| `https://example.com/posts/*/edit`    | `https://example.com`   | `https://example.com/posts/`      |
+| `*://*.example.com/foo/bar*`          | `https://example.com`   | `https://example.com/foo/bar`     |
+| `https://x.example/ol.php?type=p*`    | `https://x.example`     | `https://x.example/ol.php?type=p` |
+| `https://example.com/a/b*c`           | `https://example.com`   | `https://example.com/a/`          |
+| `http://localhost:8080/app/*`         | `http://localhost:8080` | `http://localhost:8080/app/`      |
+| `http://localhost:*/path`             | *(no usable target)*    | *(no usable target)*              |
 
 ## Fetch + cache
 
-- `ensureSiteIcon(origin, probeUrl)` is called from each row's render
-  path. `probeUrl` (e.g. `https://connect.garmin.com/app/home`) comes
+- `ensureSiteIcon(origin, pageUrl)` is called from each row's render
+  path. `pageUrl` (e.g. `https://connect.garmin.com/app/home`) comes
   from `representativeMatch` and points at a page closer to what the
   script actually targets — many sites only ship the proper
   `<link rel="icon">` on authed/deep pages and serve a barebones SSO
@@ -85,19 +80,19 @@ The lookup is split so deep-targeted scripts (one userscript per
 section of a big site) each get their own icon instead of all sharing
 the first one discovered for the host.
 
-- **Path-scoped layer** (`pathIcon:<probeUrl>`): when the probe URL is
+- **Path-scoped layer** (`pathIcon:<pageUrl>`): when the page URL is
   deeper than `<origin>/`, try HTML discovery there first. Positive
   hits are returned immediately; a null result (no usable icon on
   that page) falls through to the origin layer instead of refetching.
 - **Origin fallback** (`siteIcon:<origin>`): shared across every
   script on the host. Runs origin-root HTML → `/favicon.ico` →
   Google S2 in order and caches whichever wins.
-- When the probe URL is already the origin root the path layer is
+- When the page URL is already the origin root the path layer is
   skipped — it would just duplicate the origin-root HTML fetch.
 
 ### Discovery strategies
 
-- **HTML discovery (probe URL or origin root)**: fetch the page,
+- **HTML discovery (page URL or origin root)**: fetch the page,
   scan the `<head>` for `<link rel="icon">` (also `shortcut icon`,
   `apple-touch-icon`). The fetch follows redirects, so even when the
   server bounces us to an SSO host we still get that page's icon
@@ -129,7 +124,7 @@ the first one discovered for the host.
   their favicon, or hosts that briefly fell back to Google's globe
   placeholder, self-heal without the user clearing storage.
 - An in-flight `Map` de-dups concurrent fetches per cache key —
-  multiple rows targeting the same probe URL or origin share one
+  multiple rows targeting the same page URL or origin share one
   network round trip.
 
 ### Scoring `<link rel="icon">` candidates
@@ -149,8 +144,8 @@ the first one discovered for the host.
 Parallel cache rows for the icon-source paths, sharing the same
 `{ dataUrl, fetchedAt }` shape and TTLs:
 
-- `pathIcon:<probeUrl>` — HTML-discovery result for a specific
-  deep page. Key is the full probe URL; lets two scripts on the
+- `pathIcon:<pageUrl>` — HTML-discovery result for a specific
+  deep page. Key is the full page URL; lets two scripts on the
   same host but different sections keep distinct icons. A null entry
   here means "no icon on this page" — the lookup falls through to
   the origin row.

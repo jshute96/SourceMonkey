@@ -21,7 +21,7 @@ Key spaces in `chrome.storage.local`:
 | `"sources"`            | `string[]`          | Index of source IDs in display order. |
 | `"source:<sid>"`       | `StoredSource`      | Per-directory metadata. |
 | `"script:<scid>"`      | `StoredScript`      | Per-file content, parsed header, status. |
-| `"pathIcon:<probe>"`   | `SiteIconEntry`     | Per-probe-URL favicon hit (deep-page HTML discovery; see [site-icons.md](site-icons.md)). |
+| `"pathIcon:<pageUrl>"` | `SiteIconEntry`     | Per-page-URL favicon hit (deep-page HTML discovery; see [site-icons.md](site-icons.md)). |
 | `"siteIcon:<orig>"`    | `SiteIconEntry`     | Origin-level favicon fallback for an `https://host` (see [site-icons.md](site-icons.md)). |
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
 

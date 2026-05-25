@@ -1,4 +1,5 @@
 import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
+import { representativeMatch } from './match-targets.js';
 
 // Site-icon (favicon) extraction + cache. Used by the options page
 // and userscript viewer to show a 16x16 icon next to each script.
@@ -6,22 +7,23 @@ import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
 // Two-tier lookup, so deep-targeted scripts (e.g. one userscript per
 // section of a big site) each get their own icon instead of sharing
 // the first one discovered for the origin:
-//   1. probe URL → HTML discovery there (cached per probe URL).
+//   1. page URL → HTML discovery there (cached per page URL).
 //   2. origin fallback → origin-root HTML → /favicon.ico → Google S2
 //      (cached per origin, shared across every script on that host).
-// Probe URL comes from the literal prefix of the first useful @match.
+// The page URL is the script's `representativeMatch.linkUrl` — the
+// same URL the favicon click-through navigates to.
 //
 // Caches in chrome.storage.local:
-//   `pathIcon:<probeUrl>` — HTML-discovery result for that specific
+//   `pathIcon:<pageUrl>`  — HTML-discovery result for that specific
 //      page. Null means "no icon on this page" — we fall back to
 //      the origin cache, not refetch the page.
 //   `siteIcon:<origin>`   — origin-level fallback result (root HTML
 //      + /favicon.ico + Google S2). Shared across all scripts on
 //      the origin.
 // Success entries live 7d, null entries 24h so a transient outage
-// doesn't permanently blank the row. The probe-URL cache layer is
-// skipped entirely when the probe URL is just the origin root —
-// the two would otherwise duplicate the same fetch.
+// doesn't permanently blank the row. The page-URL cache layer is
+// skipped entirely when the page URL is just the origin root — the
+// two would otherwise duplicate the same fetch.
 
 export interface SiteIconEntry {
   dataUrl: string | null;
@@ -32,14 +34,14 @@ const KEY_PREFIX = 'siteIcon:';
 const siteIconKey = (origin: string): string => `${KEY_PREFIX}${origin}`;
 
 // Path-scoped cache for icons discovered by probing a non-root URL.
-// Key is the full probe URL (origin + literal-prefix path) — each deep
+// Key is the full page URL (origin + `linkUrl` path) — each deep
 // section gets its own entry so e.g. nytimes.com/puzzles/spelling-bee/
 // can have a different icon from nytimes.com/athletic/. Hits here are
 // strictly the HTML-discovery result; origin-level fallbacks live in
 // `siteIcon:` so the /favicon.ico + S2 fetches happen at most once
 // per host.
 const PATH_ICON_KEY_PREFIX = 'pathIcon:';
-const pathIconKey = (probeUrl: string): string => `${PATH_ICON_KEY_PREFIX}${probeUrl}`;
+const pathIconKey = (pageUrl: string): string => `${PATH_ICON_KEY_PREFIX}${pageUrl}`;
 
 // Separate cache prefix for icons declared via `@icon`/`@iconURL`/etc.
 // Same `SiteIconEntry` shape and TTLs as the origin-discovered path; the
@@ -56,106 +58,6 @@ const MAX_HTML_BYTES = 1024 * 1024;
 // Base64 inflates by ~4/3 and the `data:image/...;base64,` prefix adds
 // a few dozen chars; round up and add slack rather than guess.
 const MAX_INLINE_DATA_URL_LEN = Math.ceil((MAX_ICON_BYTES * 4) / 3) + 64;
-
-// ---------- Origin extraction ----------
-
-// Parsed shape of a Chrome `@match` pattern that survived our
-// origin-extraction filter. `path` keeps the original path so probe-URL
-// construction can extract its literal prefix.
-interface ParsedMatch {
-  scheme: 'http' | 'https';
-  host: string;
-  path: string;
-}
-
-// Pull a Chrome match pattern apart and dewildcard its host. Returns
-// null when the pattern can't identify a single site (`<all_urls>`,
-// host of `*`, non-http(s) schemes, embedded `*` after dewildcard,
-// or syntactically invalid).
-function parseMatchPattern(pattern: string): ParsedMatch | null {
-  if (pattern === '<all_urls>') return null;
-  const parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)?$/i.exec(pattern);
-  if (!parts) return null;
-  const [, rawScheme, rawHost] = parts;
-  const scheme = rawScheme === '*' ? 'https' : rawScheme.toLowerCase();
-  if (scheme !== 'http' && scheme !== 'https') return null;
-
-  // Strip an optional :port. Custom-port sites are rare in userscripts,
-  // and targeting the default port gives the broadest favicon hit rate.
-  const colon = rawHost.lastIndexOf(':');
-  const hasPort = colon > 0 && /^\d+$/.test(rawHost.slice(colon + 1));
-  let host = (hasPort ? rawHost.slice(0, colon) : rawHost).toLowerCase();
-  if (host === '*' || host === '') return null;
-  if (host.startsWith('*.')) host = host.slice(2);
-  if (!host || host.includes('*')) return null;
-
-  return { scheme, host, path: parts[3] ?? '/' };
-}
-
-export function originFromMatchPattern(pattern: string): string | null {
-  const p = parseMatchPattern(pattern);
-  return p ? `${p.scheme}://${p.host}` : null;
-}
-
-// Iterate `matching.matches` and return the first origin we can
-// extract. @include patterns are intentionally skipped: they're
-// free-form globs/regexes over the whole URL, not URL templates.
-export function representativeOrigin(matching: {
-  matches: string[];
-}): string | null {
-  return representativeMatch(matching)?.origin ?? null;
-}
-
-// Like representativeOrigin, but also yields a probe URL one step
-// deeper than the origin root — see file header — and a linkUrl
-// suitable for opening in a new tab from the favicon (segment-based,
-// not partial-segment, so it's always a valid path to navigate to).
-//   https://example.com/*              → probe `/`,        link `/`
-//   https://example.com/app/home/*     → probe `/app/home/`, link `/app/home/`
-//   https://example.com/posts/*/edit   → probe `/posts/`,  link `/posts/`
-//   https://example.com/foo/bar*       → probe `/foo/bar`, link `/foo/`
-export function representativeMatch(matching: {
-  matches: string[];
-}): { origin: string; probeUrl: string; linkUrl: string } | null {
-  for (const m of matching.matches) {
-    const got = matchTargetInfo(m);
-    if (got) return got;
-  }
-  return null;
-}
-
-function matchTargetInfo(pattern: string): { origin: string; probeUrl: string; linkUrl: string } | null {
-  const p = parseMatchPattern(pattern);
-  if (!p) return null;
-  const origin = `${p.scheme}://${p.host}`;
-  const star = p.path.indexOf('*');
-  const literalPath = star < 0 ? p.path : p.path.slice(0, star);
-  // Empty prefix means the path started with `*`. Use `/` for a
-  // well-formed URL.
-  const probeUrl = origin + (literalPath || '/');
-  const linkUrl = origin + linkPathFromMatchPath(p.path);
-  return { origin, probeUrl, linkUrl };
-}
-
-// Build the path for the favicon click-through. Walk segments
-// left-to-right and stop at the first segment containing a `*`; trim
-// off that partial segment so the URL ends on a clean directory
-// boundary the server is likely to actually serve. Pure-literal paths
-// (no `*` anywhere) pass through unchanged.
-export function linkPathFromMatchPath(path: string): string {
-  const segments = path.split('/');
-  const kept: string[] = [];
-  for (let i = 1; i < segments.length; i++) {
-    const seg = segments[i];
-    if (seg.includes('*')) {
-      // Trailing slash when we kept at least one segment; bare `/`
-      // when the first segment was already a wildcard.
-      return '/' + (kept.length ? kept.join('/') + '/' : '');
-    }
-    kept.push(seg);
-  }
-  return '/' + kept.join('/');
-}
 
 // ---------- Header-icon extraction ----------
 
@@ -207,13 +109,13 @@ async function storeSiteIcon(origin: string, entry: SiteIconEntry): Promise<void
   await chrome.storage.local.set({ [siteIconKey(origin)]: entry });
 }
 
-async function loadPathIcon(probeUrl: string): Promise<SiteIconEntry | undefined> {
-  const got = await chrome.storage.local.get(pathIconKey(probeUrl));
-  return got[pathIconKey(probeUrl)] as SiteIconEntry | undefined;
+async function loadPathIcon(pageUrl: string): Promise<SiteIconEntry | undefined> {
+  const got = await chrome.storage.local.get(pathIconKey(pageUrl));
+  return got[pathIconKey(pageUrl)] as SiteIconEntry | undefined;
 }
 
-async function storePathIcon(probeUrl: string, entry: SiteIconEntry): Promise<void> {
-  await chrome.storage.local.set({ [pathIconKey(probeUrl)]: entry });
+async function storePathIcon(pageUrl: string, entry: SiteIconEntry): Promise<void> {
+  await chrome.storage.local.set({ [pathIconKey(pageUrl)]: entry });
 }
 
 async function loadUrlIcon(url: string): Promise<SiteIconEntry | undefined> {
@@ -232,13 +134,13 @@ export function isCacheFresh(entry: SiteIconEntry, now: number = Date.now()): bo
 
 // ---------- Favicon fetch ----------
 
-// Discover an icon by HTML-probing `probeUrl` only — no fallbacks.
-// Cached under `pathIcon:<probeUrl>` so each deep-targeted script gets
+// Discover an icon by HTML-probing `pageUrl` only — no fallbacks.
+// Cached under `pathIcon:<pageUrl>` so each deep-targeted script gets
 // its own entry. A null result means "no usable icon on this page";
 // callers fall back to the origin-level cache rather than retrying.
-async function fetchAndCachePathIcon(probeUrl: string): Promise<string | null> {
-  const dataUrl = await tryDiscoverIconViaHtml(probeUrl);
-  await storePathIcon(probeUrl, { dataUrl, fetchedAt: Date.now() });
+async function fetchAndCachePathIcon(pageUrl: string): Promise<string | null> {
+  const dataUrl = await tryDiscoverIconViaHtml(pageUrl);
+  await storePathIcon(pageUrl, { dataUrl, fetchedAt: Date.now() });
   return dataUrl;
 }
 
@@ -455,26 +357,26 @@ const inflight = new Map<string, Promise<string | null>>();
 
 export async function ensureSiteIcon(
   origin: string,
-  probeUrl?: string,
+  pageUrl?: string,
 ): Promise<string | null> {
   const rootUrl = origin + '/';
   // The path-scoped layer only earns its keep when the probe is deeper
   // than the origin root — otherwise it would just duplicate the
   // origin-root HTML fetch the fallback chain already does.
-  const usePath = probeUrl !== undefined && probeUrl !== rootUrl && probeUrl !== origin;
+  const usePath = pageUrl !== undefined && pageUrl !== rootUrl && pageUrl !== origin;
   if (usePath) {
-    const pathHit = await ensurePathIcon(probeUrl!);
+    const pathHit = await ensurePathIcon(pageUrl!);
     if (pathHit !== null) return pathHit;
   }
   return ensureOriginIcon(origin);
 }
 
-async function ensurePathIcon(probeUrl: string): Promise<string | null> {
-  const key = pathIconKey(probeUrl);
+async function ensurePathIcon(pageUrl: string): Promise<string | null> {
+  const key = pathIconKey(pageUrl);
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const cached = await loadPathIcon(probeUrl);
+  const cached = await loadPathIcon(pageUrl);
   if (cached && isCacheFresh(cached)) return cached.dataUrl;
 
   // Re-check after the storage await: another caller may have started
@@ -482,7 +384,7 @@ async function ensurePathIcon(probeUrl: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = fetchAndCachePathIcon(probeUrl).finally(() => {
+  const p = fetchAndCachePathIcon(pageUrl).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -593,7 +495,7 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
       // when the script doesn't pin its own icon.
       dataUrl = resolvedIcon
         ? await ensureIconForUrl(resolvedIcon.url)
-        : await ensureSiteIcon(target!.origin, target!.probeUrl);
+        : await ensureSiteIcon(target!.origin, target!.linkUrl);
     } catch {
       return;
     }

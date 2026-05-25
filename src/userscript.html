@@ -95,9 +95,9 @@
         margin: 0;
         padding-left: 1.1em;
       }
-      /* Filename row: monospace path with a square copy-icon button
-         immediately to its right. min-width:0 lets long paths shrink
-         and wrap rather than blow out the grid column. */
+      /* Location row: path text + a square copy-icon button to its
+         right. min-width:0 lets long paths shrink and wrap rather
+         than blow out the grid column. */
       .filename-cell {
         display: flex;
         align-items: center;
@@ -105,10 +105,20 @@
         min-width: 0;
       }
       .filename-text {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         word-break: break-all;
         min-width: 0;
       }
+      /* Anchors in the details panel (Match patterns, Location)
+         read as plain text by default; underline only on hover so
+         the rows stay calm. */
+      #header-summary dd a { color: inherit; text-decoration: none; }
+      #header-summary dd a:hover { text-decoration: underline; }
+      /* Anchors inside the highlighted code block. Inherit Prism's
+         token color (comment-grey, string-green, etc.) so the code
+         box keeps reading as code; only the hover underline signals
+         clickability. */
+      pre.code-box a.code-link { color: inherit; text-decoration: none; }
+      pre.code-box a.code-link:hover { text-decoration: underline; }
       .log-id-cell {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         word-break: break-all;
