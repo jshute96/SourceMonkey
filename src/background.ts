@@ -124,6 +124,12 @@ import {
   unregisterMenuCommand,
   type MenuCommandEntry,
 } from './gm-menu.js';
+import {
+  ACTION_MENU_MORE_LABEL,
+  planActionMenu,
+  type ActionMenuPlan,
+  type ActionMenuScript,
+} from './action-menu.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -194,6 +200,17 @@ interface SourceMonkeyApi {
     scriptId: string;
     commands: MenuCommandEntry[];
   }[]>;
+  // Inspect the planned action context menu for `tabId`, including the
+  // overflow split into a "More" submenu. Tests use this to verify the
+  // 6-item-limit packing without driving the real Chrome menu UI.
+  // Reads the planner inputs directly — does NOT go through the
+  // serialized rebuild coalescer, so a value here reflects intent, not
+  // the chrome.contextMenus state mid-rebuild. Tests that race a
+  // register with this call should poll via `waitFor`. Also: the plan
+  // is computed for the given tab regardless of whether it's the
+  // currently-active one (production rendering only happens for the
+  // active tab — see `rebuildActionContextMenu`).
+  getActionContextMenuPlan: (tabId: number) => Promise<ActionMenuPlan>;
   fireActionContextMenuItem: (
     tabId: number,
     scriptId: string,
@@ -242,6 +259,11 @@ const api: SourceMonkeyApi = {
       out.push({ scriptId, commands: commands.slice() });
     }
     return out;
+  },
+  getActionContextMenuPlan: async (tabId: number) => {
+    const record = await getTabRecord(tabId);
+    const state = getCurrentState(record);
+    return buildActionMenuPlan(state, tabId);
   },
   fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
     // Goes through the same dispatchActionMenuCommand helper the real
@@ -504,10 +526,18 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
 let activeTabId: number | null = null;
 const ACTION_MENU_PREFIX = 'sm-script:';
 const ACTION_MENU_CMD_PREFIX = 'sm-menucmd:';
+// chrome.contextMenus.create id for the overflow parent. Fixed (rather
+// than generated per rebuild) so `createScriptGroupMenuItems` can
+// reference it as `parentId` without threading a value through.
+const ACTION_MENU_MORE_ID = 'sm-more';
 // Indent + glyph for nested menu-command rows. Chrome preserves the
 // leading whitespace in context-menu titles; four spaces + ↳ reads as
 // "indented under the row above" at typical zoom rather than as a
-// top-level entry.
+// top-level entry. Applied at every level (top + inside More) because
+// the submenu nesting only shows "this lives under More" — it does
+// NOT visually distinguish a script row from its command rows, so the
+// ↳ prefix is what tells the user which commands belong to which
+// script inside the submenu too.
 const ACTION_MENU_CMD_INDENT = '    ↳ ';
 
 function viewerUrlForScript(scriptId: string): string {
@@ -557,35 +587,77 @@ async function runMenuRebuildLoop(): Promise<void> {
   }
 }
 
+// Build the planned action menu for `state` + `tabId`. Pure aside
+// from the gm-menu lookup; shared by the live rebuild path and the
+// `getActionContextMenuPlan` test surface so both see the same packing.
+function buildActionMenuPlan(
+  state: TabMatchState | null,
+  tabId: number | null,
+): ActionMenuPlan {
+  const rows = state ? computeBadge(state).rows : [];
+  const cmdsByScript: ReadonlyMap<string, readonly MenuCommandEntry[]> =
+    tabId != null ? getMenuCommandsForTab(tabId) : new Map();
+  const groups: ActionMenuScript[] = rows.map((row) => ({
+    scriptId: row.id,
+    title: formatRowLabel(row),
+    commands: (cmdsByScript.get(row.id) ?? []).map((cmd) => ({
+      commandId: cmd.commandId,
+      title: cmd.name,
+    })),
+  }));
+  return planActionMenu(groups);
+}
+
 async function doRebuildActionContextMenu(
   state: TabMatchState | null,
   tabId: number | null,
 ): Promise<void> {
   if (!chrome.contextMenus) return;
-  const rows = state ? computeBadge(state).rows : [];
-  // Look up menu commands for the tab whose state we're rendering.
-  // Empty map when no script has registered anything yet.
-  const cmdsByScript = tabId != null ? getMenuCommandsForTab(tabId) : new Map();
+  const plan = buildActionMenuPlan(state, tabId);
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
   menuItemToCommand.clear();
-  for (const row of rows) {
+  // Top-level script groups. Each script row is followed by its
+  // indented menu-command rows in registration order.
+  for (const group of plan.top) {
+    createScriptGroupMenuItems(group, undefined);
+  }
+  // Overflow: a single "More" parent, then every overflowed group
+  // nested beneath it. Commands keep the same "↳" indent inside the
+  // submenu — the submenu nesting only shows "lives under More," not
+  // which commands belong to which script row.
+  if (plan.more.length > 0) {
     chrome.contextMenus.create({
-      id: ACTION_MENU_PREFIX + row.id,
-      title: formatRowLabel(row),
+      id: ACTION_MENU_MORE_ID,
+      title: ACTION_MENU_MORE_LABEL,
       contexts: ['action'],
     });
-    // Menu commands appear directly beneath their script, indented and
-    // prefixed with a "↳" glyph. Order matches registration order.
-    const commands = cmdsByScript.get(row.id) ?? [];
-    for (const cmd of commands) {
-      const menuItemId = `${ACTION_MENU_CMD_PREFIX}${row.id}:${cmd.commandId}`;
-      menuItemToCommand.set(menuItemId, { scriptId: row.id, commandId: cmd.commandId });
-      chrome.contextMenus.create({
-        id: menuItemId,
-        title: ACTION_MENU_CMD_INDENT + cmd.name,
-        contexts: ['action'],
-      });
+    for (const group of plan.more) {
+      createScriptGroupMenuItems(group, ACTION_MENU_MORE_ID);
     }
+  }
+}
+
+function createScriptGroupMenuItems(
+  group: ActionMenuScript,
+  parentId: string | undefined,
+): void {
+  const scriptItem: chrome.contextMenus.CreateProperties = {
+    id: ACTION_MENU_PREFIX + group.scriptId,
+    title: group.title,
+    contexts: ['action'],
+  };
+  if (parentId) scriptItem.parentId = parentId;
+  chrome.contextMenus.create(scriptItem);
+  for (const cmd of group.commands) {
+    const menuItemId = `${ACTION_MENU_CMD_PREFIX}${group.scriptId}:${cmd.commandId}`;
+    menuItemToCommand.set(menuItemId, { scriptId: group.scriptId, commandId: cmd.commandId });
+    const cmdItem: chrome.contextMenus.CreateProperties = {
+      id: menuItemId,
+      title: ACTION_MENU_CMD_INDENT + cmd.title,
+      contexts: ['action'],
+    };
+    if (parentId) cmdItem.parentId = parentId;
+    chrome.contextMenus.create(cmdItem);
   }
 }
 

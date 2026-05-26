@@ -33,6 +33,9 @@ interface SmApi {
     scriptId: string;
     commands: { commandId: string; name: string }[];
   }[]>;
+  // Returns the planned action context-menu layout for the tab,
+  // including the 6-item-cap overflow split into a "More" submenu.
+  getActionContextMenuPlan(tabId: number): Promise<ActionMenuPlanLike>;
   fireActionContextMenuItem(
     tabId: number,
     scriptId: string,
@@ -42,6 +45,17 @@ interface SmApi {
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.
   setDebugForceSnapshotFailure(value: boolean): Promise<void>;
+}
+
+export interface ActionMenuPlanLike {
+  top: ActionMenuScriptLike[];
+  more: ActionMenuScriptLike[];
+}
+
+export interface ActionMenuScriptLike {
+  scriptId: string;
+  title: string;
+  commands: { commandId: string; title: string }[];
 }
 
 export interface StoredScriptLike {

@@ -166,6 +166,19 @@ For each tab we:
     `sm:gm-menu-fire` to the active tab so the wrapper invokes
     the registered callback. See [GM-APIs.md](GM-APIs.md) for the
     full lifecycle.
+  - **6-item cap + "More" submenu** — Chrome skips action
+    context menus after 6 top-level rows. We pre-empt that by capping
+    the top level ourselves:
+    - Total rows = sum over groups of `1 (script row) + N commands`.
+    - If the total fits in 6, everything renders top-level.
+    - Otherwise we reserve one top slot for a "More" parent, pack
+      script groups into the remaining 5 in incoming order, and
+      push any group that doesn't fit (plus every later group, to
+      preserve visible order) into the submenu.
+    - A script's row and its menu commands always travel as a unit —
+      no group is split between the top level and "More".
+    - The layout decision lives in `src/action-menu.ts` and is
+      reflected by the SW test surface `getActionContextMenuPlan(tabId)`.
 
 ### Actual reports from injected wrappers
 

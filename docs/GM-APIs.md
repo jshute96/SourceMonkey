@@ -515,6 +515,11 @@ Returns `undefined` (matches TM/VM signature).
   `doRebuildActionContextMenu`)** — folds the per-tab mirror into
   the rebuild after the script rows: each script row gets its
   registered commands appended as `↳ <name>` entries.
+- **Overflow planner (`src/action-menu.ts`,
+  `planActionMenu`)** — caps the top level at Chrome's 6-item limit
+  by reserving one slot for a "More" submenu when the (script row +
+  N commands) totals would exceed it. Splits happen between groups,
+  never within one — see [matching.md](matching.md#per-tab-badge--tooltip) for the rules.
 - **Click routing** — `chrome.contextMenus.onClicked` for an
   `sm-menucmd:<scriptId>:<commandId>` item sends `sm:gm-menu-fire`
   to the active tab. The runtime listener invokes the matching
@@ -542,6 +547,10 @@ Returns `undefined` (matches TM/VM signature).
   rendered (scriptId, commands[]) groups, used by
   `tests/e2e/gm-menu.spec.ts` to assert on registration state
   without driving the real Chrome UI.
+- `self.SourceMonkey.getActionContextMenuPlan(tabId)` returns the
+  planned `{ top, more }` layout the SW would hand to
+  `chrome.contextMenus`. Lets tests verify overflow packing without
+  inspecting the real Chrome menu (which Playwright can't reach).
 - `self.SourceMonkey.fireActionContextMenuItem(tabId, scriptId,
   commandId)` synthesizes a click on a specific entry by sending
   the same `sm:gm-menu-fire` message the real click handler does.

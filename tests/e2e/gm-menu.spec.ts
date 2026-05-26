@@ -281,6 +281,84 @@ test.describe('GM_registerMenuCommand', () => {
     await page.close();
   });
 
+  test('more than 6 rows spill into a "More" submenu, scripts stay grouped with their commands', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // Two scripts both matching the page. Script A registers 3 menu
+    // commands (cost 4 rows) and B registers 4 (cost 5 rows). Together
+    // that's 9 rows, well past Chrome's 6-item cap. The planner should
+    // top-level the first group that fits in the 5-slot budget (4 rows
+    // ≤ 5 → A fits) and shove the rest into More. Splitting A's commands
+    // across the two menus would orphan them visually from the A row.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'AlphaScript',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_registerMenuCommand'],
+      },
+      body: `
+        GM_registerMenuCommand('A1', () => {});
+        GM_registerMenuCommand('A2', () => {});
+        GM_registerMenuCommand('A3', () => {});
+      `,
+    });
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: {
+        name: 'BetaScript',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_registerMenuCommand'],
+      },
+      body: `
+        GM_registerMenuCommand('B1', () => {});
+        GM_registerMenuCommand('B2', () => {});
+        GM_registerMenuCommand('B3', () => {});
+        GM_registerMenuCommand('B4', () => {});
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+
+    // Wait until both scripts have registered all their commands. The
+    // wrapper-side registers stream in over chrome.runtime messages, so
+    // polling for the terminal shape is necessary.
+    const plan = await waitFor(
+      () => sm.getActionContextMenuPlan(tabId),
+      (p) => p.top.length === 1 && p.more.length === 1
+        && p.top[0]!.commands.length === 3
+        && p.more[0]!.commands.length === 4,
+      { label: 'overflow plan resolved' },
+    );
+
+    // AlphaScript stays whole at the top level; BetaScript moves whole
+    // into More. Each commands array is preserved verbatim.
+    expect(plan.top.map((g) => g.title)).toEqual([
+      expect.stringContaining('AlphaScript'),
+    ]);
+    expect(plan.top[0]!.commands.map((c) => c.title)).toEqual(['A1', 'A2', 'A3']);
+    expect(plan.more.map((g) => g.title)).toEqual([
+      expect.stringContaining('BetaScript'),
+    ]);
+    expect(plan.more[0]!.commands.map((c) => c.title)).toEqual(['B1', 'B2', 'B3', 'B4']);
+
+    // Firing a command that lives inside More still routes through the
+    // shared dispatch path — the More nesting is purely a UI layout
+    // concern, not a behavioral one.
+    const betaScriptId = plan.more[0]!.scriptId;
+    const b1 = plan.more[0]!.commands[0]!;
+    const fired = await sm.fireActionContextMenuItem(tabId, betaScriptId, b1.commandId);
+    expect(fired).toEqual({ ok: true });
+
+    await page.close();
+  });
+
   test('GM_registerMenuCommand with options.id updates the existing entry', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {

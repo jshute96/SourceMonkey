@@ -77,6 +77,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
 | `src/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, script) command registry feeding the action menu |
+| `src/action-menu.ts` | Action context-menu planner — packs script + command groups into Chrome's 6-item cap with a "More" overflow submenu |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -138,6 +139,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching exact allowed, `*` wildcard, subdomain match, mismatched host blocked |
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
+| `tests/unit/action-menu.test.mjs` | Unit tests for the action context-menu planner: 6-item cap, More-submenu overflow, group cohesion, order preservation |
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |
 | `tests/e2e/gm-log.spec.ts` | E2E tests for `GM_log` (per-script prefix, GM4 alias, gating) |
 | `tests/e2e/gm-open-in-tab.spec.ts` | E2E tests for `GM_openInTab` (URL, call shapes, onclose, gating) |
