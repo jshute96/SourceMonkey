@@ -215,9 +215,10 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_xmlhttpRequest = function (details) { return window.__SM_GM__.xhr.start(${jsLit(scriptId)}, details); };`;
     }
   }
-  // Log subsystem: GM_log is a thin wrapper over console.log with a
-  // per-script prefix. The script name is baked in at compile-in time
-  // so calls don't need an SW round-trip or per-call lookup.
+  // Log subsystem: GM_log writes to the page console with a per-script
+  // prefix AND fires a fire-and-forget sm:gm-log to the SW so the call
+  // also lands on the script's Log tab. The scriptId is baked in at
+  // compile-in time so each call avoids a per-call lookup.
   if (spec.subsystem === 'log') {
     switch (spec.name) {
       case 'GM_log':

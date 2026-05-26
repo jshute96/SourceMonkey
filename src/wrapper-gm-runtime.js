@@ -740,27 +740,76 @@
 
   /* ---------- GM_log ----------
 
-     Page-side console wrapper. Prefixes the script id so multi-script
-     pages stay greppable. We capture scriptId because the script's
-     @name isn't available without an SW round-trip. We hand back
-     `undefined` (matches TM/VM signature) regardless of the underlying
-     console.log return. */
+     Page-side console wrapper that ALSO fans the call out to the SW
+     so it lands on the script's Log tab in the options-page viewer.
+     Two channels:
+       1. console.log to the page DevTools — unchanged, with a
+          "[SourceMonkey:<scriptId>]" prefix for grep-ability. The
+          original args are passed through (not stringified) so
+          DevTools formatters (%c, %o, object inspectors) still work.
+       2. sm:gm-log to the SW (fire-and-forget). The args have to be
+          stringified at the page boundary because
+          chrome.runtime.sendMessage can only carry
+          structured-cloneable data and the Log tab is text-only
+          anyway.
+
+     We capture scriptId from the binding rather than calling back to
+     the SW for the script's @name on every log line. Return value is
+     `undefined` to match TM/VM's GM_log signature. */
   var _consoleLog = null;
   try {
     if (typeof console !== "undefined" && typeof console.log === "function") {
       _consoleLog = console.log.bind(console);
     }
   } catch (_clogE) {}
+  /* Best-effort text rendering of one argument. Strings pass through.
+     null / undefined render as their literal. Primitives use String().
+     Objects try JSON.stringify (with a try/catch for cycles). On any
+     failure fall back to String() which yields something like
+     "[object Object]" — better than dropping the entry entirely. */
+  var _renderArg = function (v) {
+    if (v === null) return "null";
+    if (v === undefined) return "undefined";
+    var t = typeof v;
+    if (t === "string") return v;
+    if (t === "number" || t === "boolean" || t === "bigint") return String(v);
+    /* Functions: JSON.stringify returns the literal value `undefined`
+       (not a string, not a throw) for functions, which would coerce
+       to "undefined" via Array.join and look like the script logged
+       nothing. Handle explicitly so the user sees something useful. */
+    if (t === "function") return "[Function: " + (v.name || "anonymous") + "]";
+    if (v instanceof Error) {
+      var stack = "";
+      try { stack = v.stack ? "\n" + v.stack : ""; } catch (_eS) {}
+      return String(v.message || v) + stack;
+    }
+    try { return JSON.stringify(v); } catch (_eJ) {}
+    try { return String(v); } catch (_eS2) { return "[unserializable]"; }
+  };
+  var _renderArgs = function (args) {
+    var parts = [];
+    for (var i = 0; i < args.length; i++) parts.push(_renderArg(args[i]));
+    return parts.join(" ");
+  };
   var log = {
     write: function (scriptId, args) {
-      if (!_consoleLog) return;
-      /* Build a prefix that's easy to grep. We DON'T stringify the
-         args here — pass them through so console formatters (Chrome's
-         %c, %o, etc.) and DevTools object inspectors stay intact. */
-      var prefix = "[SourceMonkey:" + scriptId + "]";
-      var arr = [prefix];
-      for (var i = 0; i < args.length; i++) arr.push(args[i]);
-      try { _consoleLog.apply(null, arr); } catch (_e) {}
+      /* Page-console fan-out (preserve formatter args). */
+      if (_consoleLog) {
+        var arr = ["[SourceMonkey:" + scriptId + "]"];
+        for (var i = 0; i < args.length; i++) arr.push(args[i]);
+        try { _consoleLog.apply(null, arr); } catch (_e) {}
+      }
+      /* SW fan-out (text-only). __SM_GM__.sendAsync is the
+         chrome.runtime.sendMessage / bridge-postMessage helper the
+         async APIs use; here we fire-and-forget so the script's GM_log
+         call stays sync. */
+      try {
+        var text = _renderArgs(args);
+        if (window.__SM_GM__ && typeof window.__SM_GM__.sendAsync === "function") {
+          var p = window.__SM_GM__.sendAsync({ type: "sm:gm-log", scriptId: scriptId, message: text });
+          if (p && typeof p.catch === "function") p.catch(function () {});
+        }
+      } catch (_eS) {}
     },
   };
 

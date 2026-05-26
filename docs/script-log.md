@@ -78,6 +78,16 @@ present, and just `source` otherwise.
     for every persisted script — without this the Log tab would be
     empty after a browser restart even though the diagnostics still
     apply.
+- **GM_log fan-out** (handled in `installScriptMessageListener`):
+  - `<rendered args>` (info, `source: 'gm-log'`, `tabId` attached) —
+    one entry per `GM_log(...)` call. The script's own
+    `console.log` line in the page DevTools still happens too; this
+    is just the SW-side mirror so users browsing the options page
+    see what their script said without opening DevTools. Args are
+    rendered page-side (primitives via `String()`, objects via
+    `JSON.stringify`, joined by spaces) because
+    `chrome.runtime.sendMessage` can't carry non-cloneable values
+    and the Log tab is text-only.
 - **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.

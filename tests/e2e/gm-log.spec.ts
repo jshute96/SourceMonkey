@@ -3,6 +3,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitFor } from '../fixtures/sw-api';
 
 test.describe('GM_log', () => {
   let scriptsDir: ScriptsDir;
@@ -72,6 +73,101 @@ test.describe('GM_log', () => {
     await page.waitForTimeout(100);
     const matched = captured.find((line) => line.includes('via GM dot'));
     expect(matched).toBeTruthy();
+    await page.close();
+  });
+
+  test('GM_log calls also land on the script Log tab with source=gm-log', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'LogToTab',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_log'],
+      },
+      body: `
+        GM_log('first line');
+        GM_log('second', 42, { k: 'v' });
+        document.body.dataset.smReady = '1';
+      `,
+    });
+    const added = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+    const sources = await sm.getSources();
+    const scriptId = sources.find((s) => s.id === added!.id)!.scriptIds[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-ready', '1');
+
+    // Wait for both GM_log calls to land in the per-script log.
+    const log = await waitFor(
+      () => sm.getScriptLog(scriptId),
+      (entries) => entries.filter((e) => e.source === 'gm-log').length >= 2,
+      { label: 'two gm-log entries' },
+    );
+    const gmRows = log.filter((e) => e.source === 'gm-log');
+    expect(gmRows[0].level).toBe('info');
+    expect(gmRows[0].message).toBe('first line');
+    // Multi-arg: primitives stringified, object JSON-encoded, joined by spaces.
+    expect(gmRows[1].message).toBe('second 42 {"k":"v"}');
+    // tabId is attached so the viewer can render "tab N · gm-log".
+    expect(typeof gmRows[0].tabId).toBe('number');
+    await page.close();
+  });
+
+  test('GM_log renders Error / undefined / null / function arguments without dropping the call', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Covers the tricky branches in _renderArg: Error → "message\nstack",
+    // undefined / null → literal words, function → "[Function: name]"
+    // (rather than the JSON.stringify-returns-undefined trap).
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'EdgeArgs',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_log'],
+      },
+      body: `
+        GM_log(new Error('boom'));
+        GM_log(undefined, null);
+        GM_log('cb is', function namedFn() {});
+        document.body.dataset.smReady = '1';
+      `,
+    });
+    const added = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+    const sources = await sm.getSources();
+    const scriptId = sources.find((s) => s.id === added!.id)!.scriptIds[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-ready', '1');
+
+    const log = await waitFor(
+      () => sm.getScriptLog(scriptId),
+      (entries) => entries.filter((e) => e.source === 'gm-log').length >= 3,
+      { label: 'three gm-log entries' },
+    );
+    const rows = log.filter((e) => e.source === 'gm-log');
+    // Error: message first, stack appended on a new line. We don't
+    // assert the full stack — just that the message is at the head
+    // and a stack frame snuck in.
+    expect(rows[0].message.startsWith('boom')).toBe(true);
+    expect(rows[0].message).toContain('\n');
+    // undefined / null render as literal words; join is " ".
+    expect(rows[1].message).toBe('undefined null');
+    // Function renders with name; would have been "undefined" if we
+    // relied on JSON.stringify alone.
+    expect(rows[2].message).toBe('cb is [Function: namedFn]');
     await page.close();
   });
 

@@ -386,14 +386,30 @@ Known limitations:
 
 ## `GM_log`
 
-Page-side wrapper around `console.log`. The binding emitter routes
-`GM_log(...)` to `window.__SM_GM__.log.write(scriptId, arguments)`.
-The runtime captures `console.log` at init time (so a sibling
-userscript reassigning `console.log` later can't subvert the wrapper)
-and prepends a `[SourceMonkey:<scriptId>]` prefix before forwarding
-the rest of the arguments verbatim. Chrome's `%c`/`%o` formatters
-and DevTools object expansion stay intact because we pass through
-the original argument list, not a stringified version.
+Page-side wrapper around `console.log` with an SW-side fan-out so
+the call also lands on the script's Log tab in the options-page
+viewer. The binding emitter routes `GM_log(...)` to
+`window.__SM_GM__.log.write(scriptId, arguments)`.
+
+Two channels per call:
+
+- **Page DevTools console.** The runtime captures `console.log` at
+  init time (so a sibling userscript reassigning `console.log` later
+  can't subvert the wrapper) and prepends a
+  `[SourceMonkey:<scriptId>]` prefix before forwarding the rest of
+  the arguments verbatim. Chrome's `%c`/`%o` formatters and DevTools
+  object expansion stay intact because we pass through the original
+  argument list.
+- **Script Log tab.** A fire-and-forget `sm:gm-log` message is sent
+  to the SW (via `__SM_GM__.sendAsync`). The SW handler appends an
+  info-level entry with `source: 'gm-log'` and the originating tab
+  id. Args are stringified at the page boundary (primitives via
+  `String()`, objects via `JSON.stringify`, Errors flattened to
+  message + stack, joined by spaces) because the messaging channel
+  can only carry structured-cloneable data and the Log tab is
+  text-only. Failures in the SW fan-out don't affect the page
+  console output — the script's `GM_log` call is sync and never
+  awaits the round-trip.
 
 Returns `undefined` (matches TM/VM signature).
 

@@ -75,6 +75,12 @@ export const SM_ERROR_MSG = 'sm:error';
 export const SM_CHECK_PENDING_MSG = 'sm:check-pending';
 export const SM_SWAPPED_MSG = 'sm:swapped';
 export const SM_ABANDONED_MSG = 'sm:abandoned';
+// GM_log capture: the page-side runtime sends one of these for every
+// GM_log() call so the SW can append it to the script's Log tab. The
+// page console still gets its own console.log; this is purely the
+// fan-out so users browsing the options page see what their scripts
+// are saying without opening DevTools.
+export const SM_GM_LOG_MSG = 'sm:gm-log';
 
 // Reserved registration id for the MAIN-world bridge (see
 // buildBridgeSpec). Chrome's userScripts API rejects ids that start

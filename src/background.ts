@@ -42,6 +42,7 @@ import {
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
   SM_ERROR_MSG,
+  SM_GM_LOG_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
 } from './injector.js';
@@ -1674,6 +1675,22 @@ function installScriptMessageListener(): void {
         // state; skip the rebuild so a noisy unregister loop doesn't
         // churn chrome.contextMenus.
         if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+      }
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return false;
+    }
+    if (type === SM_GM_LOG_MSG) {
+      // Fan-out from the page-side GM_log helper. Fire-and-forget; the
+      // wrapper doesn't await this. We still ack so the message channel
+      // doesn't stay pinned open.
+      const payload = msg as { scriptId?: unknown; message?: unknown };
+      if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
+        logScriptEvent(payload.scriptId, {
+          level: 'info',
+          source: 'gm-log',
+          tabId,
+          message: payload.message,
+        });
       }
       try { sendResponse({ ok: true }); } catch { /* gone */ }
       return false;
