@@ -730,6 +730,25 @@ export async function addSource(path: string): Promise<StoredSource | null> {
   return refreshed?.source ?? seed;
 }
 
+// Reorder the sources index by moving the given source one position
+// up or down. No-op if the source is already at the boundary in the
+// requested direction (caller-side Up/Down buttons disable themselves
+// at the ends, but the function tolerates a redundant call). Only the
+// index row is rewritten; per-source rows are untouched.
+export async function moveSource(
+  id: string,
+  direction: 'up' | 'down',
+): Promise<void> {
+  const ids = await readSourceIndex();
+  const idx = ids.indexOf(id);
+  if (idx < 0) return;
+  const swapWith = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= ids.length) return;
+  const next = ids.slice();
+  [next[idx], next[swapWith]] = [next[swapWith]!, next[idx]!];
+  await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: next });
+}
+
 export async function removeSource(id: string): Promise<void> {
   const source = await getRaw<StoredSource>(sourceKey(id));
   const ids = await readSourceIndex();

@@ -40,9 +40,10 @@ loaded into the extension's storage. A source can be any of:
   HTTP unchanged.
 
 Each source shows up as its own section on the options page with a
-per-source enable toggle, per-script enable toggles, a **Refresh**
-button (re-scans + re-fetches just that source), and a **Remove**
-button. The page-level **Refresh All** does every source at once.
+per-source enable toggle, per-script enable toggles, **↑ / ↓** buttons
+to reorder it in the list, a **Refresh** button (re-scans + re-fetches
+just that source), and a **Remove** button. The page-level
+**Refresh All** does every source at once.
 
 ### Manifest format
 

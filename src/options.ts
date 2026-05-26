@@ -26,6 +26,7 @@ import {
   getSources,
   isScriptEnabled,
   isSourceEnabled,
+  moveSource,
   removeScript,
   removeSource,
   setScriptEnabled,
@@ -189,6 +190,7 @@ async function render(): Promise<void> {
   for (const source of sources) {
     directoriesEl.appendChild(await renderSourceSection(source));
   }
+  refreshMoveButtons();
 }
 
 function emptyPlaceholder(): HTMLElement {
@@ -232,6 +234,9 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
 
   const buttons = document.createElement('div');
   buttons.className = 'directory-buttons';
+
+  buttons.appendChild(makeMoveButton('up', source.id));
+  buttons.appendChild(makeMoveButton('down', source.id));
 
   const refreshBtn = document.createElement('button');
   refreshBtn.textContent = 'Refresh';
@@ -442,6 +447,7 @@ async function onAddDirectory(rawPath: string): Promise<boolean> {
     removeEmptyPlaceholder();
     await refreshLogIds();
     directoriesEl.appendChild(await renderSourceSection(latest));
+    refreshMoveButtons();
     jumpToSource(created.id);
     return true;
   } finally {
@@ -488,6 +494,96 @@ function jumpToSource(sourceId: string): void {
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// Build an Up or Down arrow button for a source row. Centralizes the
+// arrow glyph, the visible/announced label, and the click wiring so
+// both buttons stay in lockstep when copy or behaviour changes.
+function makeMoveButton(direction: 'up' | 'down', sourceId: string): HTMLButtonElement {
+  const arrow = direction === 'up' ? '↑' : '↓';
+  const label = `Move source ${direction}`;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `move-source move-${direction}`;
+  btn.textContent = arrow;
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.addEventListener('click', () => void onMoveSource(sourceId, direction));
+  return btn;
+}
+
+// Serializes Up/Down clicks across every source row. A user clicking
+// two arrows in quick succession (or one arrow on each of two rows)
+// would otherwise issue two interleaved read-modify-write cycles on the
+// `"sources"` index, last-write-wins — leaving the DOM out of sync with
+// storage. Routing every move through this gate keeps the index write
+// + DOM swap atomic w.r.t. other moves on this page.
+let moveInFlight: Promise<void> = Promise.resolve();
+
+// Swap the source one position up or down in the index and reflect the
+// change in the DOM without rebuilding any section. The store call
+// rewrites the index row; the local DOM move swaps the two sibling
+// sections (cheaper than a re-render and preserves the per-section
+// state — checkbox spinners, scroll position, row highlights).
+async function onMoveSource(
+  id: string,
+  direction: 'up' | 'down',
+): Promise<void> {
+  const run = async (): Promise<void> => {
+    const section = findSection(id);
+    if (!section) return;
+    const sibling = direction === 'up'
+      ? section.previousElementSibling
+      : section.nextElementSibling;
+    if (!(sibling instanceof HTMLElement) || !sibling.classList.contains('directory')) return;
+    setMoveButtonsBusy(true);
+    try {
+      await moveSource(id, direction);
+      if (direction === 'up') {
+        directoriesEl.insertBefore(section, sibling);
+      } else {
+        directoriesEl.insertBefore(sibling, section);
+      }
+    } finally {
+      // refreshMoveButtons recomputes per-position disabled state, so
+      // we don't need to undo setMoveButtonsBusy explicitly — the
+      // refresh writes the correct enabled/disabled value for each
+      // arrow based on its new index.
+      refreshMoveButtons();
+    }
+  };
+  // Chain onto the prior in-flight move so the read-modify-write of
+  // the index is serialized. We swallow prior rejection so one
+  // failure doesn't poison subsequent moves; each run() also catches
+  // its own errors via the finally above.
+  moveInFlight = moveInFlight.then(run, run);
+  await moveInFlight;
+}
+
+// Disable every move arrow on the page while a move is in flight. The
+// follow-up refreshMoveButtons() restores per-position disabled state
+// (Up off on first, Down off on last, everything else on).
+function setMoveButtonsBusy(busy: boolean): void {
+  for (const btn of directoriesEl.querySelectorAll<HTMLButtonElement>('.move-source')) {
+    btn.disabled = busy;
+  }
+}
+
+// Walk every rendered source section and set each Up/Down button's
+// disabled state from its current position: Up off on the first
+// section, Down off on the last. Called after the initial render,
+// after any move, and after add/remove flows change the section count.
+// Filters on `section.directory` so the empty-list placeholder
+// (`p.empty-placeholder`) that shares this container is ignored.
+function refreshMoveButtons(): void {
+  const sections = directoriesEl.querySelectorAll<HTMLElement>('section.directory');
+  const last = sections.length - 1;
+  sections.forEach((section, i) => {
+    const up = section.querySelector<HTMLButtonElement>('.move-up');
+    const down = section.querySelector<HTMLButtonElement>('.move-down');
+    if (up) up.disabled = i === 0;
+    if (down) down.disabled = i === last;
+  });
+}
+
 async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButtonElement): Promise<void> {
   // Guard non-empty sources behind a confirm: removing a source drops
   // every script it owns, and the action is irreversible from the UI.
@@ -518,6 +614,7 @@ async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButt
     if (directoriesEl.querySelector('.directory') == null) {
       directoriesEl.appendChild(emptyPlaceholder());
     }
+    refreshMoveButtons();
     await refreshLogIds();
   } catch (err) {
     section.classList.remove('removing');
@@ -548,6 +645,7 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
       await refreshLogIds();
       const fresh = await renderSourceSection(latest);
       section.replaceWith(fresh);
+      refreshMoveButtons();
       const after = await getSourceWithScripts(id);
       applyChangeHighlights(fresh, priorScripts, after?.scripts ?? []);
     } else {
@@ -592,6 +690,7 @@ async function onRefreshAll(): Promise<void> {
       const after = await getSourceWithScripts(s.id);
       applyChangeHighlights(fresh, priorsBySource.get(s.id) ?? [], after?.scripts ?? []);
     }
+    refreshMoveButtons();
   } finally {
     setRefreshAllBusy(false);
   }

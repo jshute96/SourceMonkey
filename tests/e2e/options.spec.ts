@@ -271,6 +271,65 @@ test.describe('options page', () => {
     await page.close();
   });
 
+  test('Up/Down buttons reorder sources and disable at the ends', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Two separate source dirs so we get two sections to reorder.
+    const dirA = ScriptsDir.create();
+    const dirB = ScriptsDir.create();
+    dirA.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    dirB.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    try {
+      const sourceA = await sm.addSource(dirA.path);
+      const sourceB = await sm.addSource(dirB.path);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/options.html`);
+
+      const sections = page.locator('section.directory');
+      await expect(sections).toHaveCount(2);
+      // Initial order matches add order; first row's Up is disabled and
+      // last row's Down is disabled.
+      await expect(sections.nth(0)).toHaveAttribute('data-source-id', sourceA!.id);
+      await expect(sections.nth(1)).toHaveAttribute('data-source-id', sourceB!.id);
+      await expect(sections.nth(0).locator('.move-up')).toBeDisabled();
+      await expect(sections.nth(0).locator('.move-down')).toBeEnabled();
+      await expect(sections.nth(1).locator('.move-up')).toBeEnabled();
+      await expect(sections.nth(1).locator('.move-down')).toBeDisabled();
+
+      // Move A down — sections swap and the disabled bookends follow.
+      await sections.nth(0).locator('.move-down').click();
+      await expect(sections.nth(0)).toHaveAttribute('data-source-id', sourceB!.id);
+      await expect(sections.nth(1)).toHaveAttribute('data-source-id', sourceA!.id);
+      await expect(sections.nth(0).locator('.move-up')).toBeDisabled();
+      await expect(sections.nth(1).locator('.move-down')).toBeDisabled();
+
+      // Persisted in the store too.
+      const stored = await sm.getSources();
+      expect(stored.map((s) => s.id)).toEqual([sourceB!.id, sourceA!.id]);
+
+      // Move A back up — round-trip restores the original order.
+      await sections.nth(1).locator('.move-up').click();
+      await expect(sections.nth(0)).toHaveAttribute('data-source-id', sourceA!.id);
+      await expect(sections.nth(1)).toHaveAttribute('data-source-id', sourceB!.id);
+      const stored2 = await sm.getSources();
+      expect(stored2.map((s) => s.id)).toEqual([sourceA!.id, sourceB!.id]);
+
+      await page.close();
+    } finally {
+      dirA.cleanup();
+      dirB.cleanup();
+    }
+  });
+
   test('per-script toggle disables matching for that script', async ({
     extensionContext, extensionId, fixtureServer, sm,
   }) => {

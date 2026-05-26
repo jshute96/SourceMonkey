@@ -232,6 +232,9 @@ Every load path goes through the same pipeline:
   button and by the `?refresh` URL trigger.
 - `removeSource(id)` — drop the source row + every child script row +
   rewrite the index.
+- `moveSource(id, 'up' | 'down')` — swap the source one position in
+  the `"sources"` index. No-op at the boundary. Only the index row
+  is rewritten; per-source rows untouched.
 - `removeScript(id)` — drop a single script row and remove its ID
   from the parent source's `scriptIds`. Used by the options page's
   trash-can button on `'missing'` rows.
@@ -320,6 +323,11 @@ source**:
 - **Enable** toggle (checkbox) for the source as a whole, placed to
   the left of the directory path.
 - Heading with the directory path.
+- **Up / Down** arrow buttons → `moveSource`. Swap this source's
+  position in the `"sources"` index. Up is disabled on the first
+  section; Down is disabled on the last. The DOM moves the two
+  sibling sections directly instead of re-rendering, so per-section
+  state (highlights, scroll) is preserved.
 - **Refresh** button → `refreshSource`.
 - **Remove** button → `removeSource`. If the source owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove source with N scripts?" first;

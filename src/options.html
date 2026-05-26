@@ -16,7 +16,14 @@
       .directory-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
       .directory-header h2 { flex: 1 1 auto; min-width: 0; }
       .directory-toggle { flex: 0 0 auto; }
-      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; }
+      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
+      /* Up/Down arrow buttons that sit left of Refresh. Keep the
+         vertical padding identical to the standard button rule above
+         so heights line up with Refresh/Remove; only the horizontal
+         padding is tightened so the arrow glyph isn't drowned in
+         whitespace. */
+      .move-source { padding: 0.3em 0.5em; }
+      .move-source:disabled { cursor: not-allowed; opacity: 0.35; }
       .script-table { width: 100%; border-collapse: collapse; }
       .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
       .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
