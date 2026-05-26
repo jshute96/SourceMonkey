@@ -132,3 +132,159 @@ test('gate: failure in task clears in-flight so the next caller can retry', asyn
   const result = await gate(state, 'a', 'manual', async () => 'ok', 'skipped');
   assert.equal(result, 'ok');
 });
+
+// ---------- replayStartupLogsAtBoot ----------
+//
+// Boot-replay exists because chrome.storage.session (where the Log
+// tab lives) is wiped on Chrome shutdown, while the script's
+// startupLogs are persisted on the StoredScript in chrome.storage.local.
+// On a fresh Chrome session the Log tab is empty even though the
+// diagnostics still apply — boot-replay refills it once per session,
+// gated by a session-storage sentinel so SW restarts within a session
+// don't duplicate rows.
+
+const localStore = new Map();
+const sessionStore = new Map();
+// `?? globalThis.chrome` so this file is safe if node:test ever runs
+// these tests in the same context as another file that already
+// installed a chrome stub.
+globalThis.chrome = globalThis.chrome ?? {
+  storage: {
+    local: {
+      get: async (key) => {
+        if (key === null || key === undefined) {
+          return Object.fromEntries(localStore);
+        }
+        if (typeof key === 'string') {
+          return localStore.has(key) ? { [key]: localStore.get(key) } : {};
+        }
+        return {};
+      },
+      set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
+    },
+    session: {
+      get: async (key) => (sessionStore.has(key) ? { [key]: sessionStore.get(key) } : {}),
+      set: async (obj) => { for (const [k, v] of Object.entries(obj)) sessionStore.set(k, v); },
+      remove: async (key) => { sessionStore.delete(key); },
+    },
+  },
+};
+
+const { replayStartupLogsAtBoot } = await import('../../dist/script-updater.js');
+const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
+
+function seedScript({ scriptId, sourceId = 'src-x', startupLogs }) {
+  // replayStartupLogsAtBoot reads via getAllScripts (one storage.local
+  // .get(null) scan filtered to `script:` keys), so we only need the
+  // script row — no source row, no `sources` index.
+  const script = {
+    id: scriptId, sourceId, relativePath: 'a.user.js', fileUrl: 'file:///a.user.js',
+    status: 'ok', size: 10, headerText: '', bodyText: '',
+    header: { tags: [{ tag: 'name', value: 'X' }] },
+    matching: { matches: ['https://e/*'], excludes: [], includes: [] },
+    loadedAt: 0, enabled: true,
+  };
+  if (startupLogs) script.startupLogs = startupLogs;
+  localStore.set(`script:${scriptId}`, script);
+}
+
+// Set up state shared between the basic boot-replay assertions.
+// Each test calls this so the assertions don't depend on the previous
+// test's leftover sessionStore / localStore contents.
+async function seedSingleScriptThenReplay(scriptId = 'sc-1') {
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({
+    scriptId,
+    startupLogs: [{ level: 'warn', message: 'unknown @grant entries dropped: GM_audio' }],
+  });
+  await replayStartupLogsAtBoot();
+  await _flushScriptLogQueueForTests(scriptId);
+}
+
+test('replayStartupLogsAtBoot: emits one Log entry per script.startupLogs entry on first call', async () => {
+  await seedSingleScriptThenReplay();
+  const log = await getScriptLog('sc-1');
+  assert.equal(log.length, 1);
+  assert.equal(log[0].level, 'warning');
+  assert.equal(log[0].source, 'parser');
+  assert.match(log[0].message, /GM_audio/);
+});
+
+test('replayStartupLogsAtBoot: idempotent within a session — second call adds nothing', async () => {
+  await seedSingleScriptThenReplay();
+  const before = await getScriptLog('sc-1');
+  // Sentinel is now set, so a second call should bail immediately
+  // and not append duplicate rows.
+  await replayStartupLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-1');
+  const after = await getScriptLog('sc-1');
+  assert.equal(after.length, before.length);
+});
+
+test('replayStartupLogsAtBoot: re-fires after a fresh-Chrome-session reset (session storage cleared)', async () => {
+  await seedSingleScriptThenReplay();
+  // Real Chrome shutdown clears `chrome.storage.session` — both the
+  // sentinel and the log entries — so the next session's replay
+  // should walk the persisted scripts and refill the log.
+  sessionStore.clear();
+  await replayStartupLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-1');
+  const log = await getScriptLog('sc-1');
+  assert.equal(log.length, 1);
+  assert.match(log[0].message, /GM_audio/);
+});
+
+test('replayStartupLogsAtBoot: skips diagnostics already present in the log (cold-boot race protection)', async () => {
+  // Simulate the cold-boot scenario where a refresh wrote the parser
+  // row first: the script's log already has it. Replay must NOT
+  // duplicate.
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({
+    scriptId: 'sc-race',
+    startupLogs: [{ level: 'warn', message: 'unknown @grant entries dropped: GM_audio' }],
+  });
+  // Pre-seed the log with what a refresh path would have written.
+  await (await import('../../dist/script-log.js')).appendScriptLog('sc-race', {
+    level: 'warning',
+    source: 'parser',
+    message: 'unknown @grant entries dropped: GM_audio',
+  });
+  await replayStartupLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-race');
+  const log = await getScriptLog('sc-race');
+  assert.equal(log.length, 1, 'replay must not duplicate the pre-existing parser row');
+});
+
+test('replayStartupLogsAtBoot: scripts without startupLogs contribute nothing', async () => {
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({ sourceId: 'src-2', scriptId: 'sc-2' /* no startupLogs */ });
+  await replayStartupLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-2');
+  const log = await getScriptLog('sc-2');
+  assert.equal(log.length, 0);
+});
+
+test('replayStartupLogsAtBoot: walks across multiple sources', async () => {
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({
+    sourceId: 'src-A', scriptId: 'sc-A',
+    startupLogs: [{ level: 'warn', message: 'msg A' }],
+  });
+  seedScript({
+    sourceId: 'src-B', scriptId: 'sc-B',
+    startupLogs: [{ level: 'error', message: 'msg B' }],
+  });
+  await replayStartupLogsAtBoot();
+  await Promise.all(['sc-A', 'sc-B'].map(_flushScriptLogQueueForTests));
+  const logA = await getScriptLog('sc-A');
+  const logB = await getScriptLog('sc-B');
+  assert.equal(logA.length, 1);
+  assert.equal(logA[0].message, 'msg A');
+  assert.equal(logB.length, 1);
+  assert.equal(logB[0].level, 'error');
+  assert.equal(logB[0].message, 'msg B');
+});

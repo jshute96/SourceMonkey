@@ -24,6 +24,7 @@ interface SmApi {
   getTabState(tabId: number): Promise<TabStateSnapshot>;
   resetAllState(): Promise<void>;
   syncNow(): Promise<{ registered: { id: string }[] }>;
+  replayStartupLogsAtBoot(): Promise<void>;
   debugMatchIndex(url: string): Promise<{
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledSources: string[] };

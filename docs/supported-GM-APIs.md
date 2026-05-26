@@ -315,10 +315,15 @@ baked into the per-script wrapper. See
 ## Not in the catalog at all
 
 Granting any of these names logs an "unknown @grant entries dropped"
-warning: a `console.warn` in the **page** DevTools console (via the
-wrapper's startup-log channel — see [docs/logging.md][logging]) on
-every matching page load, plus a one-time `warning`-level row in the
-viewer's Log tab (deduped per-script until the unknown set changes).
+warning. Detection happens at parse time; the diagnostic is persisted
+on the stored script and surfaces two ways:
+
+- a `console.warn` in the **page** DevTools console (via the wrapper's
+  startup-log channel — see [docs/logging.md][logging]) on every
+  matching page load, and
+- a `warning`-level row in the viewer's Log tab, emitted once per
+  loaded content version right after the "loaded new content" line.
+
 The script's call sites get a `ReferenceError`. Adding any of these
 is a catalog entry + a body — nothing structural.
 

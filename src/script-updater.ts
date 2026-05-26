@@ -28,18 +28,20 @@
 // imagined) triggers the same propagation.
 
 import {
+  getAllScripts,
   getScript,
   getSources,
   getSourceWithScripts,
   refreshAllSources,
   refreshScript,
   refreshSource,
+  type StartupLog,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
 import { dlog } from './debug-log.js';
 import { getScriptLogLabel } from './script-log-id.js';
-import { logScriptEvent } from './script-log.js';
+import { getScriptLog, logScriptEvent } from './script-log.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -311,6 +313,17 @@ function emitScriptOutcomeLog(
       source: `refresh-${mode}`,
       message: `loaded new content${size}`,
     });
+    // Replay parse-time diagnostics whenever a new version lands. They
+    // appear AFTER the "loaded new content" line so it's clear which
+    // version the warning belongs to. One entry per content version —
+    // a refresh that doesn't change content adds nothing.
+    for (const entry of next.startupLogs ?? []) {
+      logScriptEvent(scriptId, {
+        level: startupLogLevelToLogLevel(entry.level),
+        source: 'parser',
+        message: entry.message,
+      });
+    }
     return;
   }
   if (mode === 'manual') {
@@ -318,6 +331,76 @@ function emitScriptOutcomeLog(
       level: 'info',
       source: `refresh-${mode}`,
       message: 'no change',
+    });
+  }
+}
+
+// Map a StartupLog level (page-console-flavored: log/info/warn/error)
+// to the per-script LogEntry level (info/warning/error). 'log' and
+// 'info' both land as 'info' because the Log tab doesn't render a
+// separate 'log' level.
+function startupLogLevelToLogLevel(level: StartupLog['level']): 'info' | 'warning' | 'error' {
+  if (level === 'warn') return 'warning';
+  if (level === 'error') return 'error';
+  return 'info';
+}
+
+// Sentinel key in chrome.storage.session that records "we've already
+// replayed startup logs for THIS Chrome session." session storage is
+// cleared on Chrome shutdown, so a fresh Chrome session always misses
+// the sentinel; SW restarts within a session always hit it.
+const BOOT_REPLAY_SENTINEL_KEY = 'sm:startup-logs-replayed-at';
+
+// Surface parse-time diagnostics into the Log tab once per Chrome
+// session, at SW startup. Without this, a fresh Chrome session sees
+// an empty Log tab even when storage.local already has scripts whose
+// `startupLogs` were computed in a prior session — the user would
+// have to manually refresh each script to see the warnings again.
+//
+// The sentinel makes it idempotent: SW restarts within the same
+// Chrome session bail out immediately. The replay itself reuses the
+// same `parser`-source log line format as the refresh path so the
+// Log tab is visually uniform.
+export async function replayStartupLogsAtBoot(): Promise<void> {
+  const got = await chrome.storage.session.get(BOOT_REPLAY_SENTINEL_KEY);
+  if (got[BOOT_REPLAY_SENTINEL_KEY]) return;
+  await chrome.storage.session.set({ [BOOT_REPLAY_SENTINEL_KEY]: Date.now() });
+
+  // Single chrome.storage.local.get(null) scan via getAllScripts —
+  // cheaper than per-source reads when most scripts won't have
+  // diagnostics anyway.
+  for (const script of await getAllScripts()) {
+    await ensureStartupLogsInLogTab(script);
+  }
+}
+
+// Append any of `script.startupLogs` that aren't already present in
+// the per-script Log tab as a `parser`-source row. The existence
+// check protects against the cold-boot race where an opportunistic
+// refresh fires concurrently with `replayStartupLogsAtBoot` — if the
+// refresh path already wrote the same parser row this turn, replay
+// sees it and skips.
+//
+// Residual race: if replay emits first and then a refresh for the
+// same content version fires, the refresh path will still write a
+// duplicate row (it doesn't consult existing entries). Bounded to at
+// most one extra row per script per Chrome session and only triggers
+// when content actually changed on disk between Chrome shutdown and
+// the user's first navigation after restart.
+async function ensureStartupLogsInLogTab(script: StoredScript): Promise<void> {
+  const logs = script.startupLogs ?? [];
+  if (logs.length === 0) return;
+  const existing = await getScriptLog(script.id);
+  const seenParserMessages = new Set<string>();
+  for (const entry of existing) {
+    if (entry.source === 'parser') seenParserMessages.add(entry.message);
+  }
+  for (const sl of logs) {
+    if (seenParserMessages.has(sl.message)) continue;
+    logScriptEvent(script.id, {
+      level: startupLogLevelToLogLevel(sl.level),
+      source: 'parser',
+      message: sl.message,
     });
   }
 }

@@ -63,14 +63,21 @@ present, and just `source` otherwise.
     pipeline (covers `@require` resolve/fetch failures too).
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
-- **Injector** (`src/injector.ts`'s `buildGmBindingsForScript`):
-  - `unknown @grant entries dropped: <names>` (warning) — emitted the
-    first time a script's `@grant` list resolves to one or more names
-    we don't support (typos, TM-only APIs). Deduped per `(scriptId,
-    unknown set)` for the SW's lifetime; the entry re-fires when the
-    unknown set changes (e.g. the user fixes one of two typos).
-    Mirrored into the page DevTools console via the wrapper's
-    [startup-log channel](logging.md#page-console-startup-logs).
+- **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
+  by `emitScriptOutcomeLog` in `src/script-updater.ts`):
+  - `unknown @grant entries dropped: <names>` (warning) — emitted
+    once per loaded content version, immediately after the
+    `loaded new content` row. Detection happens at parse time and is
+    persisted on `StoredScript.startupLogs`, so SW restarts don't
+    re-fire the row. A refresh that doesn't change the bytes adds
+    nothing. Also mirrored into the page DevTools console via the
+    wrapper's [startup-log channel](logging.md#page-console-startup-logs)
+    on every matching page load.
+  - On the first SW boot of a fresh Chrome session, a
+    [boot-replay pass](logging.md#boot-replay) appends parser rows
+    for every persisted script — without this the Log tab would be
+    empty after a browser restart even though the diagnostics still
+    apply.
 - **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.

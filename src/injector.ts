@@ -46,6 +46,7 @@ import {
   describeError,
   isScriptEnabled,
   isSourceEnabled,
+  type StartupLog,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
@@ -59,7 +60,6 @@ import {
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import { emitGmBindings, type GmInfoInput } from './gm-bindings.js';
-import { logScriptEvent } from './script-log.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -285,16 +285,17 @@ export function buildWrappedBody(args: {
   return head + args.body + '\n' + WRAPPER_TAIL + '\n//# sourceURL=' + sourceUrl + '\n';
 }
 
-// Generic page-console diagnostic channel. Each entry becomes one
-// `console.<level>("[SourceMonkey] <name>: <message>")` call spliced
-// into the wrapper. The wrapper's __smName is in scope at the splice
-// point so we don't re-inline the script name. JSON.stringify on the
-// message keeps quotes/backslashes/newlines from breaking the wrapper.
-// Wrapped in try/catch per call because some pages clobber console.
-export type StartupLog = {
-  level: 'log' | 'info' | 'warn' | 'error';
-  message: string;
-};
+// Splice the script's persisted startup-log entries into the wrapper
+// as `console.<level>("[SourceMonkey] " + __smName + ": <msg>")`
+// calls. The list is computed once at parse time
+// (`extractStartupLogs` in script-store.ts) and stored on the script,
+// so a SW restart that re-runs `syncRegistrations` produces the same
+// wrapper text without re-deriving anything.
+//
+// `__smName` is in scope at the splice point so we don't re-inline
+// the script name. JSON.stringify on the message keeps
+// quotes/backslashes/newlines from breaking the wrapper. Wrapped in
+// try/catch per call because some pages clobber console.
 function buildStartupLogsSnippet(logs: ReadonlyArray<StartupLog> | undefined): string {
   if (!logs || logs.length === 0) return '';
   // Newline-separated rather than space-joined so the registered code
@@ -303,69 +304,13 @@ function buildStartupLogsSnippet(logs: ReadonlyArray<StartupLog> | undefined): s
   // because the build's minifier collapses whitespace; the
   // line-number-preservation invariant only applies to the body.
   return logs.map((l) => {
-    // Whitelist the level so a buggy caller can't splice
-    // `console.constructor` or similar into the wrapper.
+    // Whitelist the level so a buggy caller (or a forward-incompatible
+    // persisted entry) can't splice `console.constructor` or similar
+    // into the wrapper.
     const level = (['log', 'info', 'warn', 'error'].includes(l.level) ? l.level : 'warn');
     const msg = JSON.stringify(`[SourceMonkey] `) + ' + __smName + ' + JSON.stringify(`: ${l.message}`);
     return `try { console.${level}(${msg}); } catch (_e) {}`;
   }).join('\n  ');
-}
-
-// Per-(scriptId) memo of the last unknown-grants signature we warned
-// about. Resets on SW shutdown. Lets buildRegistrationSpec be called on
-// every sync without spamming the console / script log; we only re-warn
-// when the unknown set actually changes (e.g. user fixed one of two
-// typos and saved).
-const lastUnknownGrantsWarned = new Map<string, string>();
-
-// Wipe the dedup memo. Called by resetAllState (test surface) so a
-// fresh test starts with a clean slate; also safe to call from a
-// future storage.onChanged path that wants to invalidate on script
-// delete.
-export function _resetUnknownGrantsMemoForTests(): void {
-  lastUnknownGrantsWarned.clear();
-}
-
-// Translate the SW-detected diagnostics for one script into the
-// generic startup-log list that gets baked into its wrapper. Add new
-// producers by widening `ctx` (partial @resource failures, header
-// warnings, deprecation notices, etc.) — they'll surface in the page
-// console alongside the unknown-@grant warning.
-interface StartupLogContext {
-  unknownGrants?: readonly string[];
-  // Future:
-  //   resourceFailures?: ReadonlyArray<{ name: string; reason: string }>;
-  //   headerWarnings?: readonly string[];
-}
-function collectStartupLogs(ctx: StartupLogContext): StartupLog[] {
-  const logs: StartupLog[] = [];
-  if (ctx.unknownGrants && ctx.unknownGrants.length > 0) {
-    logs.push({
-      level: 'warn',
-      message: `unknown @grant entries dropped: ${ctx.unknownGrants.join(', ')}`,
-    });
-  }
-  return logs;
-}
-
-// Append a warning-level entry to the script's Log tab for an unknown
-// @grant set. The primary surfacing channel is the wrapper's
-// startup-log splice (page DevTools console — see
-// `collectStartupLogs` + `buildStartupLogsSnippet`); this Log-tab
-// entry just gives users a persistent record they can find from the
-// options page even if they aren't looking at the page DevTools.
-//
-// Deduped per (scriptId, unknown set) so the Log tab doesn't fill up
-// with duplicate rows when syncRegistrations re-runs.
-function maybeLogUnknownGrants(script: StoredScript, unknown: readonly string[]): void {
-  const signature = [...unknown].sort().join('|');
-  if (lastUnknownGrantsWarned.get(script.id) === signature) return;
-  lastUnknownGrantsWarned.set(script.id, signature);
-  logScriptEvent(script.id, {
-    level: 'warning',
-    source: 'injector',
-    message: `unknown @grant entries dropped: ${unknown.join(', ')}`,
-  });
 }
 
 // Build the GM-binding source string for one script. Async because
@@ -374,27 +319,19 @@ function maybeLogUnknownGrants(script: StoredScript, unknown: readonly string[])
 // populated synchronously before the user body runs.
 //
 // Returns empty `js`/`prelude`/`granted` when the script declares no
-// @grant or @grant none. `unknownGrants` carries any @grant names
-// that weren't in the catalog (typos, TM-only APIs) regardless of
-// whether any usable bindings were emitted — the caller threads them
-// into the wrapper so the page console gets a console.warn on
-// activation.
-//
-// Side effect: when there are unknown grants, also append a warning
-// entry to the script's Log tab (deduped per-SW-lifetime per
-// (scriptId, unknown-set) so re-syncs don't spam).
+// @grant or @grant none, or when every @grant resolves to a name
+// outside the catalog. Unknown-`@grant` warnings are produced once
+// at parse time and persisted on `script.startupLogs` — this function
+// doesn't redo that detection.
 export async function buildGmBindingsForScript(
   script: StoredScript,
   scriptHandlerVersion: string,
-): Promise<{ js: string; prelude: string; granted: readonly string[]; needsValues: boolean; unknownGrants: readonly string[] }> {
-  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false, unknownGrants: [] };
+): Promise<{ js: string; prelude: string; granted: readonly string[]; needsValues: boolean }> {
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
-  if (resolved.unknown.length > 0) {
-    maybeLogUnknownGrants(script, resolved.unknown);
-  }
   if (resolved.hasNone || resolved.granted.size === 0) {
-    return { js: '', prelude: '', granted: [], needsValues: false, unknownGrants: resolved.unknown };
+    return { js: '', prelude: '', granted: [], needsValues: false };
   }
   const name = getValue(script.header, 'name') ?? script.relativePath;
   // Bake declared @resource entries into the wrapper as a literal
@@ -421,7 +358,7 @@ export async function buildGmBindingsForScript(
     scriptHandlerVersion,
     resources,
   };
-  return { ...emitGmBindings([...resolved.granted], info), unknownGrants: resolved.unknown };
+  return emitGmBindings([...resolved.granted], info);
 }
 
 // Pure: build the spec we'll hand to chrome.userScripts.register for
@@ -486,7 +423,7 @@ export async function buildRegistrationSpec(
   // docs/GM-API-strategy.md).
   const gmEmit = world === 'USER_SCRIPT'
     ? await buildGmBindingsForScript(script, scriptHandlerVersion)
-    : { js: '', prelude: '', granted: [], needsValues: false, unknownGrants: [] as readonly string[] };
+    : { js: '', prelude: '', granted: [], needsValues: false };
   // Register at document_start regardless of the declared @run-at. The
   // wrapper itself awaits the matching lifecycle event (DOMContentLoaded
   // for document-end, load for document-idle, etc.) before invoking the
@@ -506,7 +443,7 @@ export async function buildRegistrationSpec(
       gmBindings: gmEmit.js,
       gmPrelude: gmEmit.prelude,
       needsGmValues: gmEmit.needsValues,
-      startupLogs: collectStartupLogs({ unknownGrants: gmEmit.unknownGrants }),
+      startupLogs: script.startupLogs,
     }) }],
     runAt: 'document_start',
     world,

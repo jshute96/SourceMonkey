@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import {
   distillMatching,
+  extractStartupLogs,
   validateHeader,
   buildScriptFromText,
   applyFetchError,
@@ -96,6 +97,61 @@ test('validateHeader complains about a null header', async () => {
   assert.equal(validateHeader(null), 'no metadata block');
 });
 
+// ---------- extractStartupLogs ----------
+
+test('extractStartupLogs returns [] for a null header', () => {
+  assert.deepEqual(extractStartupLogs(null), []);
+});
+
+test('extractStartupLogs returns [] when every @grant is in the catalog', () => {
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_setValue
+// @grant GM_getValue
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header), []);
+});
+
+test('extractStartupLogs returns [] when there are no @grant lines at all', () => {
+  // No @grant ≠ unknown @grant. The path that resolves grants only
+  // fires when at least one @grant line was declared, so a script
+  // without any grants is silent.
+  const header = parseHeader(VALID_SCRIPT);
+  assert.deepEqual(extractStartupLogs(header), []);
+});
+
+test('extractStartupLogs emits a warn entry naming each unknown @grant in declaration order', () => {
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_setValue
+// @grant GM_webRequest
+// @grant GM_audio
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header), [
+    { level: 'warn', message: 'unknown @grant entries dropped: GM_webRequest, GM_audio' },
+  ]);
+});
+
+test('extractStartupLogs surfaces unknown names even when @grant none also appears', () => {
+  // `@grant none` plus a typo is a useful case to flag — the script
+  // author probably meant to grant the typo'd API, and @grant none is
+  // either stale or a copy-paste mistake.
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant none
+// @grant GM_typo
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header), [
+    { level: 'warn', message: 'unknown @grant entries dropped: GM_typo' },
+  ]);
+});
+
 // ---------- buildScriptFromText ----------
 
 const COMMON = {
@@ -125,6 +181,38 @@ test('buildScriptFromText produces an OK entry for a valid script', async () => 
     excludes: ['https://example.com/admin/*'],
     includes: [],
   });
+  // No unknown @grant entries — startupLogs should be absent so the
+  // persisted row stays minimal.
+  assert.equal(entry.startupLogs, undefined);
+});
+
+test('buildScriptFromText attaches startupLogs when the header has unknown @grant names', async () => {
+  const src = `// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_setValue
+// @grant GM_typoName
+// ==/UserScript==
+console.log('hi');
+`;
+  const entry = await buildScriptFromText({ ...COMMON, source: src });
+  assert.equal(entry.status, 'ok');
+  assert.deepEqual(entry.startupLogs, [
+    { level: 'warn', message: 'unknown @grant entries dropped: GM_typoName' },
+  ]);
+});
+
+test('buildScriptFromText omits startupLogs on error rows even if the header would have flagged unknown grants', async () => {
+  // Errors don't run, so persisting the diagnostics would be dead
+  // bytes. Confirm we don't attach them when status !== 'ok'.
+  const src = `// ==UserScript==
+// @grant GM_typoName
+// ==/UserScript==
+body
+`;
+  const entry = await buildScriptFromText({ ...COMMON, source: src });
+  assert.equal(entry.status, 'error');
+  assert.equal(entry.startupLogs, undefined);
 });
 
 test('buildScriptFromText reports a missing metadata block', async () => {

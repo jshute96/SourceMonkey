@@ -55,6 +55,7 @@ import {
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
+import { resolveGrants } from './gm-api-catalog.js';
 
 export type ScriptStatus = 'ok' | 'error' | 'missing';
 
@@ -62,6 +63,20 @@ export interface ScriptMatching {
   matches: string[];   // @match values
   excludes: string[];  // @exclude values
   includes: string[];  // @include values
+}
+
+// Diagnostic produced at parse time and surfaced two ways:
+//   1. spliced into the script's wrapper as a `console.<level>(...)`
+//      that fires in the page DevTools console on every matching page
+//      load (see buildStartupLogsSnippet in injector.ts), and
+//   2. emitted as a Log-tab entry once per content version (see
+//      emitScriptOutcomeLog in script-updater.ts).
+// Today's only producer is the unknown-`@grant` check; future
+// detectors (header validation warnings, deprecated-tag notices, etc.)
+// can append in extractStartupLogs.
+export interface StartupLog {
+  level: 'log' | 'info' | 'warn' | 'error';
+  message: string;
 }
 
 export interface StoredScript {
@@ -122,6 +137,15 @@ export interface StoredScript {
   // but carry raw bytes (base64) rather than decoded text — so they
   // can serve images, fonts, JSON, CSS, etc. via GM_getResource*.
   resources?: StoredResource[];
+  // Parse-time diagnostics (today: unknown @grant names). Only
+  // populated for `status === 'ok'` rows; error rows don't run so the
+  // diagnostics would be dead bytes, and applyMissing / applyFetchError
+  // inherit whatever the prior `ok` row had (correct because they also
+  // preserve the body the diagnostics were derived from). Persisted so
+  // the wrapper rebuild at every SW startup doesn't have to re-derive
+  // them — and so the Log-tab emission at content-change time can read
+  // them straight off the freshly built row.
+  startupLogs?: readonly StartupLog[];
 }
 
 export interface StoredSource {
@@ -182,6 +206,28 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
     excludes: getValues(header, 'exclude'),
     includes: getValues(header, 'include'),
   };
+}
+
+// Derive parse-time diagnostics from the metadata block. Today this
+// only flags unknown `@grant` names; add other producers here as
+// they come up (e.g. deprecated header tags, soft `@resource`
+// failures, `@grant`-but-never-called dead grants). Anything that
+// blocks `validateHeader` belongs in there instead — error rows skip
+// the startup-logs attachment in `buildScriptFromText`.
+export function extractStartupLogs(header: ParsedHeader | null): StartupLog[] {
+  if (!header) return [];
+  const logs: StartupLog[] = [];
+  const grants = getValues(header, 'grant');
+  if (grants.length > 0) {
+    const resolved = resolveGrants(grants);
+    if (resolved.unknown.length > 0) {
+      logs.push({
+        level: 'warn',
+        message: `unknown @grant entries dropped: ${resolved.unknown.join(', ')}`,
+      });
+    }
+  }
+  return logs;
 }
 
 // Verify the parsed header has the fields we require to consider a
@@ -279,6 +325,14 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   // scripts (which start at `// ==UserScript==`) don't carry an
   // empty-string field.
   if (split.leadingText) entry.leadingText = split.leadingText;
+  // Parse-time diagnostics. Only attached when status is `ok` — error
+  // rows don't run and never reach the wrapper, so the diagnostics
+  // would just be dead bytes in storage. Same shape filter for the
+  // empty case keeps the persisted row free of empty arrays.
+  if (status === 'ok') {
+    const startupLogs = extractStartupLogs(header);
+    if (startupLogs.length > 0) entry.startupLogs = startupLogs;
+  }
   return entry;
 }
 

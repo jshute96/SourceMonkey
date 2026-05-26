@@ -83,6 +83,8 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 | `abandoned <logId> tab=<n> <url> (reason=…)` | no | log |
 | `error <logId> tab=<n> <url>: <msg>` | no | info |
 
+Per-script `parser`-source rows (e.g. `unknown @grant entries dropped: <names>`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
+
 SW logs deliberately avoid `console.warn` / `console.error`: Chrome
 forwards both into chrome://extensions/?errors, which should be
 reserved for actual extension bugs (not userscript failures,
@@ -98,26 +100,78 @@ script author should actually see, the wrapper has a generic
 `try { console.<level>("[SourceMonkey] " + __smName + ": " + msg) }
 catch {} ` per entry into the wrapper, right below the matcher block.
 
+### Where startup logs come from
+
+- Detection happens at **parse time**, in
+  `extractStartupLogs(header)` (`src/script-store.ts`). The resulting
+  list is stored on `StoredScript.startupLogs` and persisted to
+  `chrome.storage.local` alongside the rest of the script row.
+- `buildRegistrationSpec` reads `script.startupLogs` straight off the
+  stored row and passes it to `buildWrappedBody`. No rederivation at
+  sync time — SW restarts produce the same wrapper bytes for the same
+  script version, no log spam.
+- Today's only producer is the unknown-`@grant` check (emits `warn`).
+  Future detectors (partial `@resource` failures, header validation
+  warnings, deprecation notices, etc.) extend `extractStartupLogs`.
+
+### Properties
+
 - Fires in the page DevTools console on every matching page load
   (whichever world the script runs in).
 - Levels: `log`, `info`, `warn`, `error`. Anything else is
-  whitelisted down to `warn` so a buggy caller can't splice
+  whitelisted down to `warn` so a buggy caller (or a
+  forward-incompatible persisted entry) can't splice
   `console.constructor(...)`.
-- Producers live in `collectStartupLogs(ctx)` in `src/injector.ts`.
-  Today's only producer is the unknown-`@grant` check (emits
-  `warn`); add new SW-detected issues — partial `@resource`
-  failures, header warnings, etc. — by widening `ctx` and appending
-  entries.
-- **Baked at register time**, not pushed at runtime. Two consequences:
-  - The reload fast-path's `run-new` swap shows the **prior**
-    version's startup logs on the swap navigation; the next full
-    re-sync rebuilds the wrapper with the fresh set.
-  - On a `skip` decision (file vanished, script disabled mid-refresh)
-    the logs still fire before the wrapper sends `sm:abandoned`. The
-    next navigation has no registration and stays quiet.
+- On a `skip` decision (file vanished, script disabled mid-refresh)
+  the logs still fire before the wrapper sends `sm:abandoned`. The
+  next navigation has no registration and stays quiet.
+- Updated content (loadedAt bumps) re-runs `extractStartupLogs`, so
+  fixing a typo'd `@grant` and saving silences both the page console
+  (on next sync) and the Log tab (on the next "loaded new content"
+  event — see below).
 
-For diagnostics that should also be surfaced from the options page,
-write a matching `logScriptEvent(scriptId, …)` entry at detection
-time. The unknown-`@grant` path does both; see [script-log.md].
+### Mirror to the Log tab
+
+When the refresh pipeline records a "loaded new content" entry for a
+script (see `emitScriptOutcomeLog` in `src/script-updater.ts`), it
+also walks `script.startupLogs` and appends one Log-tab entry per
+diagnostic, with `source: 'parser'`. Result: every persisted version
+of a script lands one diagnostic row immediately after its load row,
+regardless of how many times the SW restarts in between.
+
+### Boot replay
+
+`chrome.storage.session` (where the Log tab lives) is cleared on
+Chrome shutdown, so a fresh Chrome session starts with an empty Log
+tab even though every script's `startupLogs` are still persisted in
+`chrome.storage.local`. To repopulate without forcing a manual
+refresh, `replayStartupLogsAtBoot()` (in `src/script-updater.ts`)
+runs once at SW startup and emits one `parser` row per diagnostic
+for every stored script.
+
+- Gated by a sentinel key in `chrome.storage.session`. The sentinel
+  is missing on first SW boot of a Chrome session and present on
+  every subsequent SW restart within that session, so MV3's
+  aggressive SW eviction doesn't produce duplicate rows.
+- Idempotent within a session: SW restarts read the sentinel and
+  bail. The sentinel auto-clears on Chrome shutdown (same lifecycle
+  as the Log tab itself), so the next Chrome session always replays
+  exactly once.
+- Wired into `background.ts`'s top-level startup block — fires on
+  every SW boot. On the cold-boot of a fresh Chrome session the
+  sentinel is missing, so the replay runs; on SW restarts within the
+  same session the sentinel is set and the replay bails. (Top-level
+  rather than `chrome.runtime.onStartup` because that event isn't
+  guaranteed to land before the SW's own first wake-up.)
+- Also defensive against a cold-boot + concurrent-refresh race: the
+  per-script append checks the existing log for a matching parser row
+  before writing, so a refresh path that wrote the same diagnostic
+  first won't get duplicated by replay. The inverse ordering (replay
+  first, refresh second) is still possible and would produce one
+  duplicate row per affected script per Chrome session — bounded and
+  rare (requires the script's content to have changed between Chrome
+  shutdown and the user's first navigation after restart).
+
+See [script-log.md].
 
 [script-log.md]: script-log.md

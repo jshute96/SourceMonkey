@@ -44,7 +44,6 @@ import {
   SM_ERROR_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
-  _resetUnknownGrantsMemoForTests,
 } from './injector.js';
 import {
   applyScriptReport,
@@ -62,6 +61,7 @@ import {
   type TabRecord,
 } from './tab-status.js';
 import {
+  replayStartupLogsAtBoot,
   requestOpportunisticScriptChecks,
   updateAllSources,
   updateScript,
@@ -180,6 +180,10 @@ interface SourceMonkeyApi {
   // updateScript / setSourceEnabled so the navigation that follows
   // can't out-race the debounced registration.
   syncNow: () => Promise<{ registered: { id: string }[] }>;
+  // Re-run the SW-boot startup-log replay. Tests use this after
+  // seeding a script with diagnostics to verify the Log-tab population
+  // path without having to actually restart the SW.
+  replayStartupLogsAtBoot: () => Promise<void>;
   // Diagnostic: the match-index's current view of the world. Tests use
   // this when a badge classification looks wrong to distinguish between
   // "matcher cache stale" and "wrapper never reported". Returns the
@@ -298,6 +302,7 @@ const api: SourceMonkeyApi = {
     const list = await chrome.userScripts.getScripts();
     return { registered: list.map((s) => ({ id: s.id })) };
   },
+  replayStartupLogsAtBoot,
   resetAllState: async () => {
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
@@ -309,7 +314,6 @@ const api: SourceMonkeyApi = {
     }
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
-    _resetUnknownGrantsMemoForTests();
     // Tear down whatever Chrome currently has registered so the next
     // test doesn't inherit injections from the previous one. The
     // storage.onChanged listener will also fire syncRegistrations() in
@@ -1902,6 +1906,11 @@ installActionContextMenu();
 void ensureLoaded();
 void syncRegistrations();
 void loadDebugLoggingFlag();
+// Surface parse-time diagnostics into each script's Log tab the first
+// time the SW boots in a Chrome session. The replay is gated by a
+// session-storage sentinel so SW restarts within the session bail out
+// immediately. See `replayStartupLogsAtBoot` in script-updater.ts.
+void replayStartupLogsAtBoot();
 
 // background.ts is compiled as an ES module (declared via
 // `"type": "module"` in manifest.json's service_worker entry). The

@@ -739,8 +739,6 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
 
 // ---------- startup-log channel (page-console diagnostics) ----------
 
-import { _flushScriptLogQueueForTests, getScriptLog } from '../../dist/script-log.js';
-
 // The generic mechanism: buildWrappedBody splices one
 // `try { console.<level>(...) } catch {} ` per startupLogs entry into
 // the wrapper. Today the only producer is buildRegistrationSpec
@@ -810,74 +808,21 @@ test('buildWrappedBody: startupLogs whitelists level — unknown values fall bac
   assert.match(wrapped, /console\.warn\("\[SourceMonkey\] " \+ __smName \+ ": sneaky"\)/);
 });
 
-test('buildRegistrationSpec: unknown @grant names produce a wrapper console.warn AND a deduped Log-tab entry', async () => {
-  sessionStore.clear();
-  const id = 'warn-test-1';
+test('buildRegistrationSpec: passes script.startupLogs through to the wrapper', async () => {
+  // Detection now happens at parse time (extractStartupLogs in
+  // script-store), so the injector just forwards what's already on
+  // the StoredScript. See script-store.test.mjs for the detection
+  // tests proper.
   const script = makeScript({
-    id,
-    header: {
-      tags: [
-        { tag: 'name', value: 'Warn Test' },
-        { tag: 'grant', value: 'GM_setValue' },     // known
-        { tag: 'grant', value: 'GM_webRequest' },   // unknown
-        { tag: 'grant', value: 'GM_audio' },        // unknown
-      ],
-    },
+    id: 'forwarded',
+    startupLogs: [{ level: 'warn', message: 'unknown @grant entries dropped: GM_audio' }],
   });
   const spec = await buildRegistrationSpec(script);
-  const code = spec.js[0].code;
-  assert.match(code, /console\.warn/);
-  assert.match(code, /unknown @grant entries dropped: GM_webRequest, GM_audio/);
-
-  // Re-syncing must not duplicate the Log-tab entry for the same
-  // unknown set.
-  await buildRegistrationSpec(script);
-  await buildRegistrationSpec(script);
-  await _flushScriptLogQueueForTests(id);
-  const log = await getScriptLog(id);
-  const warnings = log.filter((e) => e.level === 'warning');
-  assert.equal(warnings.length, 1, 'exactly one log entry for the unknown set');
-  assert.equal(warnings[0].source, 'injector');
-  assert.match(warnings[0].message, /GM_webRequest/);
-  assert.match(warnings[0].message, /GM_audio/);
+  assert.match(spec.js[0].code, /console\.warn/);
+  assert.match(spec.js[0].code, /unknown @grant entries dropped: GM_audio/);
 });
 
-test('buildRegistrationSpec: Log-tab re-emits when the unknown @grant set changes', async () => {
-  sessionStore.clear();
-  const id = 'warn-test-2';
-  const mk = (grant) => makeScript({
-    id,
-    header: { tags: [{ tag: 'name', value: 'Warn Test 2' }, { tag: 'grant', value: grant }] },
-  });
-  await buildRegistrationSpec(mk('GM_webRequest'));
-  await buildRegistrationSpec(mk('GM_audio'));
-  await _flushScriptLogQueueForTests(id);
-  const log = await getScriptLog(id);
-  const logWarnings = log.filter((e) => e.level === 'warning');
-  assert.equal(logWarnings.length, 2);
-  assert.match(logWarnings[0].message, /GM_webRequest/);
-  assert.match(logWarnings[1].message, /GM_audio/);
-});
-
-test('buildRegistrationSpec: only known @grant entries → no wrapper warning, no Log-tab entry', async () => {
-  sessionStore.clear();
-  const id = 'warn-test-3';
-  const script = makeScript({
-    id,
-    header: {
-      tags: [
-        { tag: 'name', value: 'Quiet Script' },
-        { tag: 'grant', value: 'GM_setValue' },
-        { tag: 'grant', value: 'GM_getValue' },
-      ],
-    },
-  });
-  const spec = await buildRegistrationSpec(script);
-  // No console.warn spliced into the head. (The wrapper-tail still
-  // has its own console.* calls for activation/error reporting; the
-  // assertion is specific to the startup-log channel marker.)
+test('buildRegistrationSpec: missing startupLogs splices no warnings', async () => {
+  const spec = await buildRegistrationSpec(makeScript());
   assert.doesNotMatch(spec.js[0].code, /unknown @grant/);
-  await _flushScriptLogQueueForTests(id);
-  const log = await getScriptLog(id);
-  assert.equal(log.filter((e) => e.level === 'warning').length, 0);
 });
