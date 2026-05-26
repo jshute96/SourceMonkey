@@ -88,6 +88,8 @@ import {
 import {
   applyBatchValues,
   DELETED_SENTINEL,
+  isDeletionSentinel,
+  loadAllValues,
   type ValueWrite,
 } from './gm-values.js';
 import {
@@ -197,6 +199,12 @@ interface SourceMonkeyApi {
     scriptId: string,
     commandId: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // Test-only fault injection: when true, the check-pending handler's
+  // snapshot read throws, mimicking the "SW snapshot unavailable"
+  // failure mode. Used by tests/e2e/gm-storage-freshness.spec.ts to
+  // verify the wrapper hard-aborts cleanly rather than running with
+  // empty storage. No production caller flips this.
+  setDebugForceSnapshotFailure: (value: boolean) => void;
 }
 
 const api: SourceMonkeyApi = {
@@ -248,6 +256,7 @@ const api: SourceMonkeyApi = {
       cache: debugDumpCache(),
     };
   },
+  setDebugForceSnapshotFailure,
   syncNow: async () => {
     // Cancel any pending debounced sync first — otherwise its work
     // would fire just after we return, and a test that does addSource
@@ -1024,11 +1033,24 @@ interface CheckPendingPayload {
   name?: string;
   loadedAt?: number;
   url?: string;
+  // True when the wrapper @grants a storage API; computed at register
+  // time. The SW uses this to skip the per-script storage snapshot
+  // read for scripts that don't use GM_setValue, keeping check-pending
+  // fast on multi-script pages. See `needsGmValues` in injector.ts.
+  needsValues?: boolean;
 }
 
+// `gmValues` is attached by the check-pending message handler (not
+// by handleCheckPending itself, which only decides the reload-
+// fast-path action). It carries the script's current GM_setValue
+// state — the SW-authoritative snapshot, including in-flight writes
+// from `gmValueOverlay` that haven't been confirmed persisted yet.
+// The wrapper's prelude uses this as the SOLE source for its
+// initial cache; if it's missing the prelude hard-aborts (sm:error
+// + return) and the user body doesn't run.
 type CheckPendingReply =
-  | { action: 'run' }
-  | { action: 'run-new'; body: string; loadedAt: number }
+  | { action: 'run'; gmValues?: Record<string, unknown> }
+  | { action: 'run-new'; body: string; loadedAt: number; gmValues?: Record<string, unknown> }
   | { action: 'skip'; reason: string };
 
 async function handleCheckPending(
@@ -1270,6 +1292,110 @@ function clearTabFromGmOpeners(tabId: number): void {
   }
 }
 
+// ---------- In-flight value-write overlay ----------
+//
+// Per-script in-memory record of writes that have been received via
+// `sm:gm-batch-write` but whose `chrome.storage.local.set` hasn't
+// resolved yet. Used by `loadSnapshotForCheckPending` to merge the
+// authoritative SW view (overlay + persisted rows) into the snapshot
+// we ship back on the check-pending reply, so a new document that
+// starts loading WHILE its predecessor's pagehide flush is still
+// hitting the disk still sees the latest values.
+//
+// Eviction: each call to `handleBatchWrite` writes its tuples into
+// the bucket, awaits the persistence call, then evicts only the
+// entries whose value reference is still the one IT installed. If a
+// later write overwrote the key, the new value stays in the overlay
+// until ITS own persistence resolves. This avoids the otherwise
+// possible "evict races a fresher write" hazard without needing
+// generation tokens.
+//
+// We mark deletions with `GMVAL_DELETED` (a local symbol) rather than
+// the `DELETED_SENTINEL` exported by gm-values, because that sentinel
+// only lives long enough to flow through `applyBatchValues` — there's
+// nothing wrong with using a second sentinel here that's local to
+// the overlay layer.
+const GMVAL_DELETED: unique symbol = Symbol('sm:overlay-deleted');
+type OverlayValue = unknown | typeof GMVAL_DELETED;
+const gmValueOverlay = new Map<string, Map<string, OverlayValue>>();
+
+function overlayInstallWrites(
+  scriptId: string,
+  writes: readonly ValueWrite[],
+): Map<string, OverlayValue> {
+  let bucket = gmValueOverlay.get(scriptId);
+  if (!bucket) {
+    bucket = new Map();
+    gmValueOverlay.set(scriptId, bucket);
+  }
+  const installed = new Map<string, OverlayValue>();
+  for (const w of writes) {
+    const v: OverlayValue = isDeletionSentinel(w.value) ? GMVAL_DELETED : w.value;
+    bucket.set(w.key, v);
+    installed.set(w.key, v);
+  }
+  return installed;
+}
+
+function overlayEvictIfUnchanged(
+  scriptId: string,
+  installed: Map<string, OverlayValue>,
+): void {
+  const bucket = gmValueOverlay.get(scriptId);
+  if (!bucket) return;
+  for (const [k, v] of installed) {
+    // Identity compare: only drop the entry if the value we wrote is
+    // still there. A subsequent write has its own (newer) install
+    // that will evict itself when its own persistence resolves.
+    //
+    // Correctness assumption: chrome.storage.local serializes set /
+    // remove calls FIFO per area. Two parallel `handleBatchWrite`
+    // calls for the same key therefore land in `chrome.storage.local`
+    // in their start order — the overlay tracks what's in flight, not
+    // what's persistence-ordered. If chrome were ever to reorder
+    // writes internally, the persisted state could disagree with the
+    // overlay's last-installed value and this scheme would need
+    // revisiting.
+    if (bucket.get(k) === v) bucket.delete(k);
+  }
+  if (bucket.size === 0) gmValueOverlay.delete(scriptId);
+}
+
+// Test-only knob — when set, `loadSnapshotForCheckPending` throws,
+// which makes the check-pending handler reply without `gmValues`,
+// which makes the wrapper's prelude hard-abort. Drives the
+// "SW snapshot unavailable → script doesn't run" e2e test. Lives
+// here rather than in a separate test-support module because flipping
+// it from a Playwright test is one less indirection.
+let __debugForceSnapshotFailure = false;
+function setDebugForceSnapshotFailure(value: boolean): void {
+  __debugForceSnapshotFailure = !!value;
+}
+
+// Read the full snapshot for one script: chrome.storage.local rows
+// merged with the in-flight overlay. The overlay wins on conflict
+// (a write that hasn't persisted is still authoritative — the
+// persisted row, if any, is older).
+//
+// Caller is responsible for only invoking this when the script
+// actually grants a storage API (via the `needsValues` flag the
+// wrapper passes on sm:check-pending) — the snapshot read scans
+// chrome.storage.local and isn't free.
+async function loadSnapshotForCheckPending(scriptId: string): Promise<Record<string, unknown>> {
+  if (__debugForceSnapshotFailure) {
+    throw new Error('[SourceMonkey] debug: forced snapshot failure');
+  }
+  const persisted = await loadAllValues(scriptId);
+  const bucket = gmValueOverlay.get(scriptId);
+  if (!bucket || bucket.size === 0) return persisted;
+  const out: Record<string, unknown> = { ...persisted };
+  for (const [k, v] of bucket) {
+    if (v === GMVAL_DELETED) delete out[k];
+    else out[k] = v;
+  }
+  return out;
+}
+
 async function handleBatchWrite(
   payload: BatchWritePayload,
   sender: chrome.runtime.MessageSender,
@@ -1282,7 +1408,15 @@ async function handleBatchWrite(
     key: w.key,
     value: w.deleted ? DELETED_SENTINEL : w.value,
   }));
-  await applyBatchValues(payload.scriptId, internal);
+  // Park the writes in the overlay BEFORE awaiting persistence: a
+  // concurrent check-pending that races us to the snapshot read
+  // must see these writes too.
+  const installed = overlayInstallWrites(payload.scriptId, internal);
+  try {
+    await applyBatchValues(payload.scriptId, internal);
+  } finally {
+    overlayEvictIfUnchanged(payload.scriptId, installed);
+  }
   // Broadcast the delta to every OTHER tab running this script.
   // The originating tab already has the writes applied in its
   // page-side cache (it issued the writes); broadcasting back would
@@ -1341,12 +1475,28 @@ function installScriptMessageListener(): void {
       // typically mean the tab navigated away or the wrapper's
       // document was torn down, in which case nobody is listening
       // for the reply anyway.
+      //
+      // Race `handleCheckPending` (reload-fast-path decision) with
+      // `loadSnapshotForCheckPending` (storage snapshot, only when
+      // the wrapper opted in via `needsValues`). See CheckPendingReply
+      // above for the snapshot's role.
       const payload = msg as CheckPendingPayload;
-      handleCheckPending(sender, payload).then(
-        (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
+      const decisionP = handleCheckPending(sender, payload);
+      const snapshotP: Promise<Record<string, unknown> | undefined> =
+        payload.needsValues
+          ? loadSnapshotForCheckPending(payload.id)
+          : Promise.resolve(undefined);
+      Promise.all([decisionP, snapshotP]).then(
+        ([reply, gmValues]) => {
+          const enriched: CheckPendingReply =
+            gmValues !== undefined && reply.action !== 'skip'
+              ? { ...reply, gmValues }
+              : reply;
+          try { sendResponse(enriched); } catch { /* gone */ }
+        },
         (err) => {
           console.info('[SourceMonkey] check-pending handler threw:', err);
-          try { sendResponse({ action: 'run' }); } catch { /* receiver gone */ }
+          try { sendResponse({ action: 'run' }); } catch { /* gone */ }
         },
       );
       return true;

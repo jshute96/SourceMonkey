@@ -431,6 +431,29 @@ and file:// reads are fast enough that 500ms covers the common case.
 If we add HTTP-fetched scripts later, a second timeout for the body
 fetch belongs here.
 
+### Snapshot piggyback for storage-granting scripts
+
+The check-pending reply doubles as the channel that delivers the
+script's initial GM_setValue cache contents:
+
+- **Wrapper side.** Sends `needsValues: true` in its
+  `sm:check-pending` payload iff it @grants a storage API
+  (computed at register time).
+- **SW side.** For `needsValues: true` payloads, attaches a
+  `gmValues` field carrying the script's current snapshot
+  (`chrome.storage.local` rows merged with the in-flight overlay).
+- **No fallback.** This is the **only** way the wrapper learns
+  its initial storage state — there's no baked literal.
+- **On missing snapshot.** Prelude logs a console error, sends
+  `sm:error`, and `return`s out before the body runs. Triggers
+  when the SW is unreachable past the wrapper's 2 s safety timer
+  or `handleCheckPending` errored.
+- **Non-storage scripts.** Skip the snapshot read; the message
+  handler short-circuits before `loadSnapshotForCheckPending`.
+
+See [GM-APIs-storage.md](GM-APIs-storage.md) for the full storage
+model.
+
 ### Wrapper protocol
 
 The wrapper-head opens an outer IIFE, runs the matcher (which `return`s

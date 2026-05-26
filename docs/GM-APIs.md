@@ -49,10 +49,13 @@ from `emitGmBindings`'s return value:
 - `"__SM_GM_PRELUDE__"` sits INSIDE the `__smWaitForRunAt` callback,
   before the run-new / baked-body branch. The substituted text is
   eager `__SM_GM__.*` calls — today just `storage.init(scriptId,
-  initialValues)` for scripts with a storage grant. By the time the
+  __smDecision.gmValues)` for scripts with a storage grant. The
+  snapshot is attached to the `sm:check-pending` reply by the SW;
+  if it's missing the prelude hard-aborts (see
+  [GM-APIs-storage.md](GM-APIs-storage.md)). By the time the
   callback fires, both `sm:check-pending` (microtask) and the
-  declared `@run-at` lifecycle event have resolved, so the GM runtime
-  is guaranteed installed.
+  declared `@run-at` lifecycle event have resolved, so both the GM
+  runtime is installed and `__smDecision` is in scope.
 
 The split matters because `storage.init` MUST run before the body
 (so `GM_getValue` reads see the persisted snapshot), but if it ran
@@ -124,15 +127,18 @@ if needed.
 
 - **Cross-tab `applyRemoteUpdate` ignores writes before init.** The
   remote-update handler early-returns when the per-script store
-  isn't `ready`. Since the prelude now runs inside
-  `__smWaitForRunAt`, `ready` flips later than it used to (after the
-  declared `@run-at` lifecycle event). For `@run-at document-idle`
-  the gap can stretch to `window.load` — long enough that another
-  tab's `GM_setValue` in the meantime won't propagate into THIS
-  tab's snapshot. The first local `GM_getValue` post-body would
-  read the register-time snapshot, not the sibling tab's later
-  write. Rare in practice (cross-tab traffic during page load is
-  uncommon) but worth knowing.
+  isn't `ready`. Since the prelude runs inside `__smWaitForRunAt`,
+  `ready` flips later than it used to (after the declared `@run-at`
+  lifecycle event). For `@run-at document-idle` the gap can stretch
+  to `window.load`. A sibling tab's `GM_setValue` that broadcasts
+  during that window gets dropped on the floor by this document. In
+  the common case the same write is already reflected in the
+  check-pending snapshot the SW sent us (the SW persisted it before
+  broadcasting), so the body sees it anyway. The edge case: the
+  write hits the SW AFTER we've issued check-pending but BEFORE
+  `ready` flips — the snapshot is older than the broadcast and we
+  drop the broadcast. Rare in practice (cross-tab traffic during
+  page load is uncommon) but worth knowing.
 - **`GM_info.script.grant` is the canonicalized set, not the raw
   `@grant` lines.** `@grant GM.setValue` shows up as `GM_setValue` in
   `GM_info.script.grant`. Matches VM; TM exposes the raw declared
@@ -164,50 +170,11 @@ GM4 spec.
 
 ## Storage (`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`)
 
-End-to-end shape:
-
-- **Backing store.** SW-side, `chrome.storage.local` with
-  `gmval:<scriptId>:<key>` rows per value. Per-key rows so a write
-  doesn't churn sibling rows and so we don't bump the per-row size
-  ceiling on a large value.
-- **Page-side cache.** Baked into the wrapper at register time
-  (`emitGmBindings` reads `chrome.storage.local`, JSON-encodes the
-  snapshot, and emits a `window.__SM_GM__.storage.init(scriptId,
-  {...})` call). Sync reads (`GM_getValue`) hit the cache; default
-  values are returned when the key isn't present.
-- **Batched writes.** `GM_setValue` / `GM_deleteValue` update the
-  cache synchronously and queue a write. The runtime debounces 150 ms
-  after each write with a 1 s hard cap, then ships a single
-  `sm:gm-batch-write` envelope to the SW. `pagehide` and
-  `visibilitychange → hidden` force-flush so bfcache eviction doesn't
-  drop in-flight writes.
-- **Last-write-wins** semantics inside one batch — same as a
-  sequence of `set` / `delete` calls run one after the other.
-- **Deletion sentinel.** Page-side `DELETED_SENTINEL` is a private
-  reference; on the wire it travels as `{key, deleted: true}` so the
-  JSON round-trip preserves intent. The SW translates back to its own
-  symbol when calling `applyBatchValues`.
-- **GM4 promise forms.** `GM.setValue` / `GM.getValue` / etc are
-  emitted by the binding emitter as Promise wrappers around the
-  legacy `GM_x` calls — same behavior, async return.
-
-Persistence model: writes are eventually-consistent across
-documents. A write on page A is visible to page B in two ways:
-
-- **Live broadcast (Phase 6).** When the page-side batched write
-  reaches the SW, the SW iterates the in-memory openers table
-  (`scriptId → Set<tabId>`) and ships a `sm:gm-value-update` to
-  every OTHER tab running this script. The page-side runtime
-  listens on `chrome.runtime.onMessage`, dispatches by scriptId,
-  and applies the delta to its cache. The originating tab is
-  excluded — it already applied the write locally.
-- **Cold start.** A new wrapper registration re-reads
-  `chrome.storage.local` and bakes the current values in (covers
-  the "SW restarted and lost the openers table" case).
-
-Cross-script isolation: each script's `(scriptId, key)` namespace
-is independent — `GM_listValues` from script A never returns script
-B's keys.
+See [`GM-APIs-storage.md`](GM-APIs-storage.md) for the full
+treatment: why values have to sit in the document's realm, how the
+snapshot gets seeded at document start, the freshness mechanisms
+that keep running and newly-starting documents up to date after a
+`GM_setValue`, and the wire format / batched-write details.
 
 ## `GM_xmlhttpRequest`
 
@@ -371,15 +338,18 @@ its own dispatch doesn't corrupt iteration.
   registration and its sm:start arrival isn't broadcast to that
   tab.** The openers table is populated on sm:start, so a write
   during that small window goes only to tabs whose sm:start has
-  already been received. The target tab's compile-in cache still
-  reflects whatever was in storage at register time. The window
-  closes once sm:start lands; subsequent writes broadcast normally.
+  already been received. The target tab's check-pending snapshot
+  already incorporated whatever was in storage when the SW handled
+  it; a write that lands after that but before sm:start arrives is
+  missed by this tab until the next document. The window closes
+  once sm:start lands; subsequent writes broadcast normally.
 - **Iframe-of-same-tab broadcast skip.** The openers table dedupes
   by tabId, so a write in the main frame of tab T doesn't broadcast
   to other frames of T (the `tabId === excludeTabId` guard fires
-  for every frame in T). Each frame has its own compile-in cache;
-  they're consistent at register time and diverge on writes until
-  the next reload. Acceptable for now.
+  for every frame in T). Each frame gets its own check-pending
+  snapshot at load time; they're consistent at that moment and
+  diverge on writes until each frame's next reload. Acceptable for
+  now.
 - **Cross-script storage spoofing is within the trust boundary.**
   The `scriptId` in the `sm:gm-batch-write` envelope is supplied
   by the wrapper's compiled-in literal. A misbehaving userscript

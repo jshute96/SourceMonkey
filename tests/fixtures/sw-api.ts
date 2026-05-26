@@ -38,6 +38,10 @@ interface SmApi {
     scriptId: string,
     commandId: string,
   ): Promise<{ ok: boolean; error?: string }>;
+  // Fault-injection knob used by gm-storage-freshness.spec.ts to
+  // verify the wrapper hard-aborts when the SW can't supply a
+  // gmValues snapshot.
+  setDebugForceSnapshotFailure(value: boolean): Promise<void>;
 }
 
 export interface StoredScriptLike {

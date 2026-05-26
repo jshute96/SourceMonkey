@@ -135,6 +135,12 @@ export async function applyBatchValues(
 // deleted script with its prior values, which TM/VM both do.
 // Exported so a future "wipe all data for this script" UI action can
 // call it.
+//
+// When this is wired up, the caller must also drop the script's
+// entry from the SW's `gmValueOverlay` (in `background.ts`).
+// Otherwise an in-flight write that lands during the wipe leaves
+// an orphan overlay entry that would seed a freshly-loaded
+// document with bogus pre-wipe state.
 export async function wipeScriptValues(scriptId: string): Promise<number> {
   const prefix = valueKeyPrefix(scriptId);
   const all = await chrome.storage.local.get(null);

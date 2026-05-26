@@ -59,7 +59,6 @@ import {
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import { emitGmBindings, type GmInfoInput } from './gm-bindings.js';
-import { loadAllValues } from './gm-values.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -236,6 +235,14 @@ export function buildWrappedBody(args: {
   // Spliced into the wrapper inside `__smWaitForRunAt`'s callback,
   // not at the IIFE top. Empty when no storage grant is declared.
   gmPrelude?: string;
+  // True iff this script @grants a storage API. Substituted into the
+  // wrapper as a boolean literal and sent on every sm:check-pending so
+  // the SW can skip the storage snapshot read for scripts that don't
+  // use values. Without this flag the SW would do a per-script lookup
+  // on every check-pending — fine in isolation, but the extra latency
+  // perturbs the relative ordering of multi-script pages (see the
+  // run-at-order test in tests/e2e/injection.spec.ts).
+  needsGmValues?: boolean;
 }): string {
   // Pass replacements as functions so `$&` / `$1` etc. inside our
   // generated wrappers aren't interpreted as String.prototype.replace
@@ -257,7 +264,8 @@ export function buildWrappedBody(args: {
     .replace('"__SM_RUN_AT__"', () => JSON.stringify(args.declaredRunAt ?? 'document-idle'))
     .replace('"__SM_MATCHER_BLOCK__";', () => matcherBlock)
     .replace('"__SM_GM_BINDINGS__";', () => args.gmBindings ?? '')
-    .replace('"__SM_GM_PRELUDE__";', () => args.gmPrelude ?? '');
+    .replace('"__SM_GM_PRELUDE__";', () => args.gmPrelude ?? '')
+    .replace('"__SM_NEEDS_GM_VALUES__"', () => args.needsGmValues ? 'true' : 'false');
   // No newline between head and body so body line N stays at physical
   // line N. Tail goes on its own line after the body for readability
   // when inspecting the registered code. The `//# sourceURL=` directive
@@ -283,8 +291,8 @@ export function buildWrappedBody(args: {
 export async function buildGmBindingsForScript(
   script: StoredScript,
   scriptHandlerVersion: string,
-): Promise<{ js: string; prelude: string; granted: readonly string[] }> {
-  if (!script.header) return { js: '', prelude: '', granted: [] };
+): Promise<{ js: string; prelude: string; granted: readonly string[]; needsValues: boolean }> {
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
   if (resolved.unknown.length > 0) {
@@ -294,22 +302,9 @@ export async function buildGmBindingsForScript(
     );
   }
   if (resolved.hasNone || resolved.granted.size === 0) {
-    return { js: '', prelude: '', granted: [] };
+    return { js: '', prelude: '', granted: [], needsValues: false };
   }
   const name = getValue(script.header, 'name') ?? script.relativePath;
-  // Only bother reading storage if a storage API is actually granted.
-  // Saves an O(everything) chrome.storage.local.get(null) scan for
-  // scripts that only @grant non-storage APIs.
-  const storageNames = new Set([
-    'GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues',
-  ]);
-  let initialValues: Record<string, unknown> = {};
-  for (const n of resolved.granted) {
-    if (storageNames.has(n)) {
-      initialValues = await loadAllValues(script.id);
-      break;
-    }
-  }
   // Bake declared @resource entries into the wrapper as a literal
   // `{name: {b64, ct}}` map. Empty when the script declares no
   // @resource or none of them resolved/fetched cleanly. The bindings
@@ -332,7 +327,6 @@ export async function buildGmBindingsForScript(
     runAt: getValue(script.header, 'run-at') ?? '',
     scriptMetaStr: script.headerText,
     scriptHandlerVersion,
-    initialValues,
     resources,
   };
   return emitGmBindings([...resolved.granted], info);
@@ -400,7 +394,7 @@ export async function buildRegistrationSpec(
   // docs/GM-API-strategy.md).
   const gmEmit = world === 'USER_SCRIPT'
     ? await buildGmBindingsForScript(script, scriptHandlerVersion)
-    : { js: '', prelude: '', granted: [] };
+    : { js: '', prelude: '', granted: [], needsValues: false };
   // Register at document_start regardless of the declared @run-at. The
   // wrapper itself awaits the matching lifecycle event (DOMContentLoaded
   // for document-end, load for document-idle, etc.) before invoking the
@@ -419,6 +413,7 @@ export async function buildRegistrationSpec(
       matching: needsWrapperFilter ? script.matching : undefined,
       gmBindings: gmEmit.js,
       gmPrelude: gmEmit.prelude,
+      needsGmValues: gmEmit.needsValues,
     }) }],
     runAt: 'document_start',
     world,

@@ -79,9 +79,10 @@
 
      Per-script in-page cache + batched async writes. Reads go to the
      cache (sync); writes update the cache locally and queue a batched
-     `sm:gm-batch-write` message to the SW. Initial values are baked
-     into the wrapper at register time (see gm-bindings.ts), so the
-     cache is populated before any user code runs.
+     `sm:gm-batch-write` message to the SW. The cache is seeded by
+     the wrapper's prelude calling `storage.init(scriptId, snapshot)`,
+     where `snapshot` came in on the sm:check-pending reply from the
+     SW. See docs/GM-APIs-storage.md.
 
      Batched write shape:
        - Debounce 150ms after each write.
@@ -271,18 +272,17 @@
   var storage = {
     /* Called from the wrapper's prelude (inside __smWaitForRunAt's
        callback in wrapper-head.js, after the GM runtime is guaranteed
-       installed) with the scriptId and the literal initial-value
-       snapshot. Populates the per-script cache and flags it as ready.
-       Calling init twice (e.g. two compile-in bindings for the same
-       scriptId — shouldn't happen) is idempotent: the second call
-       replaces the cache, matching "newest wrapper registration
-       wins". */
+       installed) with the scriptId and the SW-attached initial-value
+       snapshot from the sm:check-pending reply. Populates the
+       per-script cache and flags it as ready. Calling init twice for
+       the same scriptId — shouldn't happen in normal flow — is
+       idempotent: the second call replaces the cache. */
     init: function (scriptId, values) {
       var s = ensureStore(scriptId);
-      /* Defensive copy so the userscript can't mutate the literal
-         that was baked into the wrapper. Use Object.create(null) so
-         a user that has clobbered Object.prototype can't shadow our
-         cached keys via inherited properties. */
+      /* Defensive copy so the userscript can't mutate the values
+         object the SW handed us. Use Object.create(null) so a user
+         that has clobbered Object.prototype can't shadow our cached
+         keys via inherited properties. */
       var copy = _ObjectCreate(null);
       var keys = _ObjectKeys(values || {});
       for (var i = 0; i < keys.length; i++) copy[keys[i]] = values[keys[i]];
@@ -508,13 +508,13 @@
   }
   var resource = {
     /* Called from the wrapper's prelude with the scriptId and the
-       resource map { name: { b64, ct } }. Defensive copy so the
-       userscript can't mutate the literal we baked in. Calling init
-       twice for the same scriptId (a hot-reload bridge, a debugging
-       surface, …) is idempotent: the second call REPLACES the box,
-       matching storage.init's "newest wrapper registration wins"
-       semantics. Stale entries from a prior init don't leak, and the
-       lazy text/url caches are reset alongside. */
+       resource map { name: { b64, ct } } baked into the wrapper at
+       register time. Defensive copy so the userscript can't mutate
+       the literal we baked in. Calling init twice for the same
+       scriptId (a hot-reload bridge, a debugging surface, …) is
+       idempotent: the second call REPLACES the box. Stale entries
+       from a prior init don't leak, and the lazy text/url caches
+       are reset alongside. */
     init: function (scriptId, items) {
       var b = ensureResourceBox(scriptId);
       b.byName = _ObjectCreate(null);

@@ -106,6 +106,12 @@ Adding any of these is a catalog entry + a body — nothing structural.
   encode with type tags (`o`/`n`/`b`/`s`/`u`) so `Date` and other
   non-JSON-clean values survive. Add when a real userscript needs
   it.
+- **Cache the gmValues snapshot in SW memory.** Every storage-
+  granting script's `sm:check-pending` reply triggers a
+  `chrome.storage.local.get(null)` on the document-start critical
+  path. A per-script in-SW cache invalidated by `handleBatchWrite`
+  would skip it on cache hit. See
+  [docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#cost-on-the-document-start-critical-path).
 - **Shim cache audit.** The page-side runtime captures `Promise`,
   `Error`, `Object.keys`, `Object.create`, `Object.prototype.
   hasOwnProperty`, `document.createElement`, `Node.appendChild`,

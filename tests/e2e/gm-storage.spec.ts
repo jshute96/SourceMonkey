@@ -166,11 +166,10 @@ test.describe('GM_* storage (Phase 3)', () => {
     await page1.waitForTimeout(300);
     await page1.close();
 
-    // Force a re-register so the wrapper bakes in the new initial value.
-    await sm.syncNow();
-
     // Second load: previous now reads 1 (the value the FIRST load
-    // persisted), and the script bumps it to 2.
+    // persisted), and the script bumps it to 2. No re-register
+    // needed — the SW attaches the current snapshot to every
+    // sm:check-pending reply.
     const page2 = await extensionContext.newPage();
     await page2.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page2.locator('body')).toHaveAttribute('data-sm-probe', '1');

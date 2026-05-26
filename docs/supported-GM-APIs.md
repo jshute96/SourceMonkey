@@ -68,9 +68,12 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 ## Storage
 
 Page-side cache + batched async writes. `GM_getValue` is a synchronous
-read from a cache baked into the wrapper at register time. `GM.setValue`
-returns a Promise per GM4 spec. Per-script namespace —
-`GM_listValues` from script A never returns script B's keys.
+read from a per-document in-memory cache; the cache is seeded at
+document start from a snapshot the SW attaches to the wrapper's
+`sm:check-pending` reply. `GM.setValue` returns a Promise per GM4
+spec. Per-script namespace — `GM_listValues` from script A never
+returns script B's keys. See
+[GM-APIs-storage.md](GM-APIs-storage.md) for the full story.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
@@ -84,11 +87,13 @@ returns a Promise per GM4 spec. Per-script namespace —
 ### Storage caveats
 
 - Writes are eventually-consistent across tabs. A live cross-tab
-  broadcast covers most cases; a SW restart or a write that lands
-  during another tab's bootstrap may be missed by that tab until
-  its next page reload (re-bake from `chrome.storage.local`).
+  broadcast covers already-running documents; new documents always
+  fetch a fresh snapshot from the SW on `sm:check-pending`.
 - A write made in the last ~150 ms before tab close may be lost if
   the SW is idle/suspended and the page goes into bfcache.
+- If the SW is unreachable past the wrapper's 2 s safety timeout,
+  storage-granting scripts log a console error and refuse to run
+  (no silent stale-data). Reload to retry.
 - Same-extension userscripts share the trust boundary —
   technically, userscript A can impersonate userscript B's
   `scriptId` in the storage envelope and corrupt B's keys. This is

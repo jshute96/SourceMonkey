@@ -53,12 +53,6 @@ export interface GmInfoInput {
   scriptMetaStr: string;
   // Filled in from chrome.runtime.getManifest().version at the SW.
   scriptHandlerVersion: string;
-  // Pre-loaded storage values for this script. Baked into the wrapper
-  // as a literal so the page-side cache is populated synchronously,
-  // before any user code can call `GM_getValue`. Loaded at register
-  // time from chrome.storage.local. Empty object when the script
-  // hasn't written any values yet (or doesn't @grant storage APIs).
-  initialValues: Record<string, unknown>;
   // Prefetched `@resource` blobs the script declared, keyed by
   // resource name. `b64` is the base64-encoded body; `ct` is the
   // server-reported Content-Type (used as the blob: URL MIME). Baked
@@ -91,6 +85,13 @@ export interface GmBindingEmit {
   js: string;
   prelude: string;
   granted: readonly string[];
+  // True iff any granted API is in the storage subsystem. Echoed
+  // into the wrapper's `__smNeedsGmValues` literal so the SW knows
+  // whether to attach a `gmValues` snapshot to the sm:check-pending
+  // reply. Same `subsystem === 'storage'` test that drives the
+  // prelude's `storage.init` emission — exposed here so the injector
+  // doesn't have to re-derive it from the granted-name list.
+  needsValues: boolean;
 }
 
 // JSON-encode but inside a JavaScript source context: the standard
@@ -345,13 +346,13 @@ export function emitGmBindings(
   granted: readonly string[],
   info: GmInfoInput,
 ): GmBindingEmit {
-  if (granted.length === 0) return { js: '', prelude: '', granted: [] };
+  if (granted.length === 0) return { js: '', prelude: '', granted: [], needsValues: false };
   const specs: GmApiSpec[] = [];
   for (const n of granted) {
     const spec = findApi(n);
     if (spec) specs.push(spec);
   }
-  if (specs.length === 0) return { js: '', prelude: '', granted: [] };
+  if (specs.length === 0) return { js: '', prelude: '', granted: [], needsValues: false };
   // GM_info is always emitted when any binding is emitted — TM/VM
   // both treat it as implicit (no @grant required). This is a useful
   // way for a script to introspect its own metadata even without
@@ -374,10 +375,11 @@ export function emitGmBindings(
   // __SM_GM_PRELUDE__ in wrapper-head.js for the deferred-execution
   // contract.
   //
-  // - storage.init: emitted whenever a storage grant is present,
-  //   even when `initialValues` is empty, so the cache is marked
-  //   ready and a later read of an unknown key returns defaultValue
-  //   rather than waiting for a phantom load.
+  // - storage.init: emitted whenever a storage grant is present;
+  //   the prelude reads the snapshot off `__smDecision.gmValues`
+  //   (attached by the SW to the sm:check-pending reply) and hard-
+  //   aborts the script if the snapshot is missing. See
+  //   docs/GM-APIs-storage.md.
   // - resource.init: emitted whenever GM_getResource* is granted,
   //   even when `resources` is empty. Why "even when empty": the
   //   runtime's resource box persists across `chrome.userScripts`
@@ -391,8 +393,26 @@ export function emitGmBindings(
   const hasResourceGrant = specs.some((s) => s.subsystem === 'resource');
   const preludeLines: string[] = [];
   if (hasStorageGrant) {
+    // Single source of truth: the SW-attached snapshot. We do NOT
+    // bake a fallback literal — getting the snapshot wrong is more
+    // dangerous than failing visibly, because a read-modify-write
+    // userscript that started with stale data would silently
+    // overwrite the user's real values with defaults.
+    //
+    // When the snapshot is missing (SW unreachable past the
+    // wrapper's safety timeout, or handleCheckPending errored): log
+    // a console error, send sm:error so the failure surfaces on the
+    // per-script log + badge, and `return` from the @run-at
+    // callback so the user body never runs. The user can recover by
+    // reloading.
     preludeLines.push(
-      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, ${jsLit(info.initialValues)});`,
+      `var __smGmSnap = (typeof __smDecision === "object" && __smDecision && __smDecision.gmValues);`,
+      `if (!__smGmSnap) {`,
+      `  try { console.error("[SourceMonkey] " + __smName + ": GM storage snapshot unavailable (SW unreachable?); script body will not run. Reload to retry."); } catch (_smSE0) {}`,
+      `  __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, message: "GM storage snapshot unavailable (SW unreachable?)" });`,
+      `  return;`,
+      `}`,
+      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, __smGmSnap);`,
     );
   }
   if (hasResourceGrant) {
@@ -405,6 +425,7 @@ export function emitGmBindings(
     js: parts.join('\n') + '\n',
     prelude,
     granted: specs.map((s) => s.name),
+    needsValues: hasStorageGrant,
   };
 }
 

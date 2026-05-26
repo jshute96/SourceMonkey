@@ -53,6 +53,13 @@
   var __smLoadedAt = "__SM_LOADED_AT__";
   var __smSourceUrl = "__SM_SOURCE_URL__";
   var __smRunAt = "__SM_RUN_AT__";
+  /* True iff this script @grants a storage API. The SW reads this on
+     sm:check-pending to decide whether to attach a `gmValues` snapshot
+     to the reply; without the flag the SW would have to read the
+     StoredScript to find out, adding an O(few ms) round-trip to every
+     script load even when the script can't use storage. Pre-computed
+     at register time by buildRegistrationSpec. */
+  var __smNeedsGmValues = "__SM_NEEDS_GM_VALUES__";
   /* Telemetry transport. In USER_SCRIPT world chrome.runtime.sendMessage
      is exposed (configureWorld({ messaging: true }) was called by the
      injector), so we use it directly. In MAIN world chrome.runtime is
@@ -96,7 +103,14 @@
        listener if any, then finish. The safety timer also routes
        through seal so it doesn't leak the bridge listener. */
     var cleanup = function () {};
-    var safetyTimer = setTimeout(function () { seal({ action: "run" }); }, 6000);
+    /* Safety timeout. Normal MV3 SW wake-up + handleCheckPending
+       round-trip is ~5-50ms; 2s leaves plenty of headroom for
+       cold-start under load (e.g. many tabs restoring at once)
+       without making the failure mode noticeably slow. Synthesizing
+       {action: "run"} on timeout means non-storage scripts still
+       execute; storage-granting scripts' preludes will hard-abort
+       because the synthesized reply has no gmValues. */
+    var safetyTimer = setTimeout(function () { seal({ action: "run" }); }, 2000);
     var seal = function (decision) {
       try { clearTimeout(safetyTimer); } catch (_e) {}
       try { cleanup(); } catch (_e2) {}
@@ -109,7 +123,8 @@
           id: __smId,
           name: __smName,
           loadedAt: __smLoadedAt,
-          url: location.href
+          url: location.href,
+          needsValues: __smNeedsGmValues
         });
         if (p && typeof p.then === "function") {
           p.then(
@@ -145,7 +160,8 @@
           id: __smId,
           name: __smName,
           loadedAt: __smLoadedAt,
-          url: location.href
+          url: location.href,
+          needsValues: __smNeedsGmValues
         }
       }, "*");
     } catch (_e3) { seal({ action: "run" }); }

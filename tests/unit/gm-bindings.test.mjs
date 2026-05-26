@@ -19,7 +19,6 @@ function makeInfo(over = {}) {
     runAt: 'document_idle',
     scriptMetaStr: '// ==UserScript==\n// @name Hello\n// ==/UserScript==',
     scriptHandlerVersion: '0.0.1',
-    initialValues: {},
     resources: {},
     ...over,
   };
@@ -60,22 +59,23 @@ test('emitGmBindings: storage bodies route to __SM_GM__.storage helpers', () => 
   assert.doesNotMatch(out.js, /notImplemented\("GM_setValue"\)/);
 });
 
-test('emitGmBindings: storage init call lands in the prelude (not the lazy js)', () => {
-  const out = emitGmBindings(['GM_setValue'], makeInfo({
-    initialValues: { foo: 'bar', count: 42 },
-  }));
-  // Eager `storage.init` must NOT sit in the IIFE-top js block — the
-  // GM runtime may not be installed yet at that point. It moves to
-  // the prelude, which the injector splices into the wrapper inside
-  // `__smWaitForRunAt`'s callback (runtime is guaranteed ready by then).
+test('emitGmBindings: storage prelude reads the SW-attached snapshot, no baked literal', () => {
+  const out = emitGmBindings(['GM_setValue'], makeInfo());
+  // The eager `storage.init` must NOT sit in the IIFE-top js block —
+  // the GM runtime may not be installed yet at that point. It moves
+  // to the prelude, which the injector splices into the wrapper
+  // inside `__smWaitForRunAt`'s callback (runtime is guaranteed
+  // ready by then).
   assert.doesNotMatch(out.js, /storage\.init/);
-  assert.match(out.prelude, /__SM_GM__\.storage\.init\("script-1", \{"foo":"bar","count":42\}\)/);
-});
-
-test('emitGmBindings: storage init prelude has empty object when no values yet', () => {
-  const out = emitGmBindings(['GM_setValue'], makeInfo({ initialValues: {} }));
-  assert.doesNotMatch(out.js, /storage\.init/);
-  assert.match(out.prelude, /__SM_GM__\.storage\.init\("script-1", \{\}\)/);
+  assert.match(out.prelude, /window\.__SM_GM__\.storage\.init\("script-1", __smGmSnap\)/);
+  // The SW-attached snapshot is the SINGLE source of truth — no
+  // baked literal fallback. The prelude hard-aborts (sm:error +
+  // return) when the snapshot is missing.
+  assert.match(out.prelude, /typeof __smDecision === "object"/);
+  assert.match(out.prelude, /__smDecision && __smDecision\.gmValues/);
+  assert.match(out.prelude, /if \(!__smGmSnap\)/);
+  assert.match(out.prelude, /sm:error/);
+  assert.match(out.prelude, /\breturn\b/);
 });
 
 test('emitGmBindings: storage init NOT emitted when no storage grant', () => {
