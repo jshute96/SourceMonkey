@@ -30,6 +30,7 @@ import {
   installDebugLoggingListener,
   loadDebugLoggingFlag,
 } from './debug-log.js';
+import { installDeepLinkRedirect } from './deep-link.js';
 import {
   ensureLogIdsLoaded,
   getScriptLogLabel,
@@ -1913,6 +1914,7 @@ void ensureLogIdsLoaded();
 installStorageListener();
 installStaleScriptListener();
 installNavigationListeners();
+installDeepLinkRedirect();
 installScriptMessageListener();
 installDebugLoggingListener();
 installNotificationListeners();
