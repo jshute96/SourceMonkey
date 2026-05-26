@@ -64,7 +64,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries |
-| `src/wrapper-head.js` | Wrapper prelude (IIFE, vars, send helper, sm:check-pending await, @run-at gate on DCL/load, matcher slot, try-open) — minified to one line |
+| `src/wrapper-head.js` | Wrapper prelude (IIFE, helpers, check-pending await, @run-at gate, matcher, startup-logs, GM bindings slots) — minified to one line |
 | `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, runAt + decision callback closes, IIFE close) — minified to one line by the build |
 | `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |

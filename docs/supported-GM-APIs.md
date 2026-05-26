@@ -18,7 +18,7 @@ strategy/phasing that produced this surface, see
 |:------:|---------|
 | ✅ | **Implemented** — granting the API exposes a real working binding. |
 | 🟡 | **Stubbed** — binding exists, throws "not implemented yet" on call (so the script at least sees a clear error and `typeof` reports `function`). |
-| ⚪ | **Not in catalog** — not exposed; granting it logs an "unknown @grant" warning. |
+| ⚪ | **Not in catalog** — not exposed; granting it logs an "unknown @grant" warning to the page console + Log tab. |
 
 ## Granting
 
@@ -314,10 +314,15 @@ baked into the per-script wrapper. See
 
 ## Not in the catalog at all
 
-Granting any of these names logs a "unknown @grant entries dropped"
-info line at sync time; the script's call sites get a
-`ReferenceError`. Adding any of these is a catalog entry + a body —
-nothing structural.
+Granting any of these names logs an "unknown @grant entries dropped"
+warning: a `console.warn` in the **page** DevTools console (via the
+wrapper's startup-log channel — see [docs/logging.md][logging]) on
+every matching page load, plus a one-time `warning`-level row in the
+viewer's Log tab (deduped per-script until the unknown set changes).
+The script's call sites get a `ReferenceError`. Adding any of these
+is a catalog entry + a body — nothing structural.
+
+[logging]: logging.md#page-console-startup-logs
 
 - `GM_cookie` (and `GM.cookie`) — TM's cross-origin cookie store.
 - `GM_audio`, `GM_webRequest`, `GM_getTab`, `GM_saveTab`,

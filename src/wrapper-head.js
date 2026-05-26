@@ -271,6 +271,15 @@
      out of the outer IIFE on a miss. Runs BEFORE __smAwaitDecision so
      non-matching pages don't bother the SW with a check-in. */
   "__SM_MATCHER_BLOCK__";
+  /* Startup logs (page console). Generic channel for diagnostics the
+     SW wants the user to see in DevTools at script-activation time —
+     today: unknown @grant names, partial @resource fetch failures,
+     etc. Substituted by the injector with a sequence of
+     `try { console.<level>(...) } catch (_e) {}` calls, one per
+     entry. Empty when there are no diagnostics. Sits below the
+     matcher so logs only fire on pages where the script would
+     actually run. */
+  "__SM_STARTUP_LOGS__";
   /* GM_* bindings (granted APIs only). The injector substitutes this
      with `const GM_setValue = ...; const GM_getValue = ...;` etc. — see
      src/gm-bindings.ts. Empty when the script is @grant none. The

@@ -9,11 +9,19 @@ import assert from 'node:assert/strict';
 
 // chrome.storage stub — buildGmBindingsForScript reads chrome.storage.local
 // at register time for storage-granting scripts to bake in the initial
-// cache. Unit tests run in plain Node so we install a minimal stub.
+// cache. The unknown-@grant warning path also appends to a per-script
+// log via chrome.storage.session. Unit tests run in plain Node so we
+// install a minimal stub for both areas.
+const sessionStore = new Map();
 globalThis.chrome = globalThis.chrome ?? {
   storage: {
     local: {
       get: async () => ({}),
+    },
+    session: {
+      get: async (key) => (sessionStore.has(key) ? { [key]: sessionStore.get(key) } : {}),
+      set: async (obj) => { for (const [k, v] of Object.entries(obj)) sessionStore.set(k, v); },
+      remove: async (key) => { sessionStore.delete(key); },
     },
   },
 };
@@ -727,4 +735,149 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
   delete source.enabled;
   const specs = await collectActiveSpecs([script], new Map([['source-1', source]]));
   assert.equal(specs.length, 1);
+});
+
+// ---------- startup-log channel (page-console diagnostics) ----------
+
+import { _flushScriptLogQueueForTests, getScriptLog } from '../../dist/script-log.js';
+
+// The generic mechanism: buildWrappedBody splices one
+// `try { console.<level>(...) } catch {} ` per startupLogs entry into
+// the wrapper. Today the only producer is buildRegistrationSpec
+// translating unknown @grant names; future detectors (partial
+// @resource failures, etc.) can append.
+
+test('buildWrappedBody: startupLogs splices one console.<level> call per entry', () => {
+  const wrapped = buildWrappedBody({
+    id: 'x',
+    name: 'X',
+    body: '',
+    startupLogs: [
+      { level: 'warn', message: 'one' },
+      { level: 'info', message: 'two' },
+      { level: 'error', message: 'three' },
+    ],
+  });
+  assert.match(wrapped, /console\.warn\("\[SourceMonkey\] " \+ __smName \+ ": one"\)/);
+  assert.match(wrapped, /console\.info\("\[SourceMonkey\] " \+ __smName \+ ": two"\)/);
+  assert.match(wrapped, /console\.error\("\[SourceMonkey\] " \+ __smName \+ ": three"\)/);
+});
+
+test('buildWrappedBody: startupLogs omitted → channel splices nothing into the wrapper', () => {
+  // The wrapper-tail still has its own console.* calls for activation /
+  // error reporting, so we can't assert "no console.warn anywhere". The
+  // signal that THIS channel did nothing is that the with-and-without
+  // wrappers differ only by the spliced calls — and the recognizable
+  // "__smName + ": <msg>"" pattern doesn't appear at all when the
+  // channel was empty.
+  const empty = buildWrappedBody({ id: 'x', name: 'X', body: '' });
+  const withWarn = buildWrappedBody({
+    id: 'x', name: 'X', body: '',
+    startupLogs: [{ level: 'warn', message: 'msg' }],
+  });
+  assert.ok(withWarn.length > empty.length, 'startupLogs should add bytes');
+  assert.match(withWarn, /__smName \+ ": msg"/);
+  assert.doesNotMatch(empty, /__smName \+ ": /);
+  // The placeholder itself is always substituted; checking it doesn't
+  // survive into the output too just so a future bug that leaves it
+  // in place gets caught.
+  assert.doesNotMatch(empty, /__SM_STARTUP_LOGS__/);
+});
+
+test('buildWrappedBody: startupLogs JSON-escapes the message so quotes / backslashes can\'t break the wrapper', () => {
+  const wrapped = buildWrappedBody({
+    id: 'x',
+    name: 'X',
+    body: '',
+    startupLogs: [{ level: 'warn', message: 'has "quotes" and \\ backslash' }],
+  });
+  // JSON.stringify on the embedded `: <message>` chunk escapes the
+  // quotes and backslash so the spliced string literal stays valid JS.
+  assert.match(wrapped, /": has \\"quotes\\" and \\\\ backslash"/);
+});
+
+test('buildWrappedBody: startupLogs whitelists level — unknown values fall back to "warn"', () => {
+  const wrapped = buildWrappedBody({
+    id: 'x',
+    name: 'X',
+    body: '',
+    // @ts-expect-error — deliberately invalid level
+    startupLogs: [{ level: 'constructor', message: 'sneaky' }],
+  });
+  // Should NOT contain `console.constructor(...)`; should contain a
+  // `console.warn(...)` instead.
+  assert.doesNotMatch(wrapped, /console\.constructor/);
+  assert.match(wrapped, /console\.warn\("\[SourceMonkey\] " \+ __smName \+ ": sneaky"\)/);
+});
+
+test('buildRegistrationSpec: unknown @grant names produce a wrapper console.warn AND a deduped Log-tab entry', async () => {
+  sessionStore.clear();
+  const id = 'warn-test-1';
+  const script = makeScript({
+    id,
+    header: {
+      tags: [
+        { tag: 'name', value: 'Warn Test' },
+        { tag: 'grant', value: 'GM_setValue' },     // known
+        { tag: 'grant', value: 'GM_webRequest' },   // unknown
+        { tag: 'grant', value: 'GM_audio' },        // unknown
+      ],
+    },
+  });
+  const spec = await buildRegistrationSpec(script);
+  const code = spec.js[0].code;
+  assert.match(code, /console\.warn/);
+  assert.match(code, /unknown @grant entries dropped: GM_webRequest, GM_audio/);
+
+  // Re-syncing must not duplicate the Log-tab entry for the same
+  // unknown set.
+  await buildRegistrationSpec(script);
+  await buildRegistrationSpec(script);
+  await _flushScriptLogQueueForTests(id);
+  const log = await getScriptLog(id);
+  const warnings = log.filter((e) => e.level === 'warning');
+  assert.equal(warnings.length, 1, 'exactly one log entry for the unknown set');
+  assert.equal(warnings[0].source, 'injector');
+  assert.match(warnings[0].message, /GM_webRequest/);
+  assert.match(warnings[0].message, /GM_audio/);
+});
+
+test('buildRegistrationSpec: Log-tab re-emits when the unknown @grant set changes', async () => {
+  sessionStore.clear();
+  const id = 'warn-test-2';
+  const mk = (grant) => makeScript({
+    id,
+    header: { tags: [{ tag: 'name', value: 'Warn Test 2' }, { tag: 'grant', value: grant }] },
+  });
+  await buildRegistrationSpec(mk('GM_webRequest'));
+  await buildRegistrationSpec(mk('GM_audio'));
+  await _flushScriptLogQueueForTests(id);
+  const log = await getScriptLog(id);
+  const logWarnings = log.filter((e) => e.level === 'warning');
+  assert.equal(logWarnings.length, 2);
+  assert.match(logWarnings[0].message, /GM_webRequest/);
+  assert.match(logWarnings[1].message, /GM_audio/);
+});
+
+test('buildRegistrationSpec: only known @grant entries → no wrapper warning, no Log-tab entry', async () => {
+  sessionStore.clear();
+  const id = 'warn-test-3';
+  const script = makeScript({
+    id,
+    header: {
+      tags: [
+        { tag: 'name', value: 'Quiet Script' },
+        { tag: 'grant', value: 'GM_setValue' },
+        { tag: 'grant', value: 'GM_getValue' },
+      ],
+    },
+  });
+  const spec = await buildRegistrationSpec(script);
+  // No console.warn spliced into the head. (The wrapper-tail still
+  // has its own console.* calls for activation/error reporting; the
+  // assertion is specific to the startup-log channel marker.)
+  assert.doesNotMatch(spec.js[0].code, /unknown @grant/);
+  await _flushScriptLogQueueForTests(id);
+  const log = await getScriptLog(id);
+  assert.equal(log.filter((e) => e.level === 'warning').length, 0);
 });

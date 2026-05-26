@@ -63,6 +63,14 @@ present, and just `source` otherwise.
     pipeline (covers `@require` resolve/fetch failures too).
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
+- **Injector** (`src/injector.ts`'s `buildGmBindingsForScript`):
+  - `unknown @grant entries dropped: <names>` (warning) — emitted the
+    first time a script's `@grant` list resolves to one or more names
+    we don't support (typos, TM-only APIs). Deduped per `(scriptId,
+    unknown set)` for the SW's lifetime; the entry re-fires when the
+    unknown set changes (e.g. the user fixes one of two typos).
+    Mirrored into the page DevTools console via the wrapper's
+    [startup-log channel](logging.md#page-console-startup-logs).
 - **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.

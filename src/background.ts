@@ -44,6 +44,7 @@ import {
   SM_ERROR_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
+  _resetUnknownGrantsMemoForTests,
 } from './injector.js';
 import {
   applyScriptReport,
@@ -308,6 +309,7 @@ const api: SourceMonkeyApi = {
     }
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    _resetUnknownGrantsMemoForTests();
     // Tear down whatever Chrome currently has registered so the next
     // test doesn't inherit injections from the previous one. The
     // storage.onChanged listener will also fire syncRegistrations() in

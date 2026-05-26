@@ -88,3 +88,36 @@ forwards both into chrome://extensions/?errors, which should be
 reserved for actual extension bugs (not userscript failures,
 fetch errors, or expected fallbacks). Diagnostic chatter uses
 `console.info` so it stays in the SW DevTools console only.
+
+## Page-console "startup logs"
+
+The SW console is hard for end users to find. For diagnostics the
+script author should actually see, the wrapper has a generic
+**startup-log channel**: `buildWrappedBody` accepts a `startupLogs:
+{level, message}[]` list and splices one
+`try { console.<level>("[SourceMonkey] " + __smName + ": " + msg) }
+catch {} ` per entry into the wrapper, right below the matcher block.
+
+- Fires in the page DevTools console on every matching page load
+  (whichever world the script runs in).
+- Levels: `log`, `info`, `warn`, `error`. Anything else is
+  whitelisted down to `warn` so a buggy caller can't splice
+  `console.constructor(...)`.
+- Producers live in `collectStartupLogs(ctx)` in `src/injector.ts`.
+  Today's only producer is the unknown-`@grant` check (emits
+  `warn`); add new SW-detected issues — partial `@resource`
+  failures, header warnings, etc. — by widening `ctx` and appending
+  entries.
+- **Baked at register time**, not pushed at runtime. Two consequences:
+  - The reload fast-path's `run-new` swap shows the **prior**
+    version's startup logs on the swap navigation; the next full
+    re-sync rebuilds the wrapper with the fresh set.
+  - On a `skip` decision (file vanished, script disabled mid-refresh)
+    the logs still fire before the wrapper sends `sm:abandoned`. The
+    next navigation has no registration and stays quiet.
+
+For diagnostics that should also be surfaced from the options page,
+write a matching `logScriptEvent(scriptId, …)` entry at detection
+time. The unknown-`@grant` path does both; see [script-log.md].
+
+[script-log.md]: script-log.md

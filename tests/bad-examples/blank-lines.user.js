@@ -7,6 +7,7 @@
 
 //
 
-// @grant       none
+// @grant       GM_info
+// @grant       GM_BadAPI
 // ==/UserScript==
 console.log('[bad-examples/blank-lines] blank lines and bare `//` lines inside the header block are silently ignored by the parser');
