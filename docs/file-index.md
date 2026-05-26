@@ -197,3 +197,13 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey today, with triage notes for each divergence |
 | `docs/redirect-page.md` | Canonical GitHub-hosted "front door" the extension watches for; deep-link target that rewrites to `chrome-extension://...` |
 | `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
+
+## Companion Userscripts (`userscripts/`)
+
+Userscripts SourceMonkey publishes for other sites to install (via the
+`docs/redirect-page.md` deep link).
+
+| File | Description |
+|------|-------------|
+| `userscripts/installers/greasyfork-installer.user.js` | Adds an "Install in SourceMonkey" button next to GreasyFork's install button; opens the deep link with `add_source=<.user.js URL>` |
+| `userscripts/installers/greasyfork-installer.md` | Design notes + GreasyFork DOM assumptions for the installer userscript |
