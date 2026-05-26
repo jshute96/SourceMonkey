@@ -45,6 +45,7 @@ import {
 import { DEBUG_LOGGING_KEY } from './debug-log.js';
 import { computeLogIds } from './script-log-id.js';
 import { renderSiteIconInto } from './site-icon.js';
+import { isHttpUrl, isFileUrl } from './directories.js';
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -52,6 +53,7 @@ const addForm = document.getElementById('add-form') as HTMLFormElement;
 const addInput = document.getElementById('add-path') as HTMLInputElement;
 const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonElement;
 const refreshAllBtn = document.getElementById('refresh-all') as HTMLButtonElement;
+const addErrorEl = document.getElementById('add-error') as HTMLParagraphElement;
 const versionEl = document.getElementById('version');
 
 if (versionEl) {
@@ -107,11 +109,51 @@ function suffixFromLogId(logId: string): string {
 // render is done. Lets external tools poke the extension via
 //   google-chrome chrome-extension://<id>/options.html?refresh
 // after they've written new userscripts.
+//
+// `?add_source=<path-or-url>` does the equivalent of typing the value
+// into the Add Source field and clicking Add. Validates the input;
+// shows an error if it doesn't look like an absolute path or URL.
+// On success or duplicate, jumps to the resulting source section.
+// Lets the docs/redirect-page.md deep link route here from anywhere
+// on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
   await render();
-  if (new URLSearchParams(location.search).has('refresh')) {
+  const params = new URLSearchParams(location.search);
+  if (params.has('refresh')) {
     await onRefreshAll();
+    scrubQueryParams(['refresh']);
   }
+  const addSourceArg = params.get('add_source');
+  if (addSourceArg !== null) {
+    await handleAddSourceParam(addSourceArg);
+  }
+}
+
+// Drive the Add Source flow from a `?add_source=` query param. Pre-
+// fills the form field (so the user sees what was attempted) and
+// runs the same flow as the manual Add button. The URL is scrubbed
+// only on success/duplicate; an invalid value is left in place so
+// the user can copy/share/edit it.
+async function handleAddSourceParam(raw: string): Promise<void> {
+  addInput.value = raw;
+  const ok = await onAddDirectory(raw);
+  if (ok) scrubQueryParams(['add_source']);
+}
+
+// Remove the given query params from the current URL via
+// replaceState. Preserves the rest of the URL (including any hash
+// the add flow may have just written) so the user can reload without
+// re-triggering a consumed action.
+function scrubQueryParams(names: readonly string[]): void {
+  const url = new URL(location.href);
+  let changed = false;
+  for (const name of names) {
+    if (url.searchParams.has(name)) {
+      url.searchParams.delete(name);
+      changed = true;
+    }
+  }
+  if (changed) history.replaceState(null, '', url.toString());
 }
 
 // ---------- Initial render ----------
@@ -164,6 +206,9 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   const section = document.createElement('section');
   section.className = 'directory';
   section.dataset.sourceId = source.id;
+  // Stable per-source anchor; lets deep links (and the post-add
+  // `jumpToSource` helper) scroll directly to this section.
+  section.id = sourceAnchorId(source.id);
   if (!sourceOn) section.classList.add('disabled');
 
   const header = document.createElement('div');
@@ -356,16 +401,39 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
 
 // ---------- Flow handlers ----------
 
-async function onAddDirectory(rawPath: string): Promise<void> {
+// Returns true if the input was accepted by the validator and the
+// add flow ran (whether the source was newly created or already
+// existed). Returns false if validation rejected the input. Used by
+// `handleAddSourceParam` to decide whether to scrub the `add_source`
+// query param — invalid input keeps the URL so the user can edit
+// and retry.
+async function onAddDirectory(rawPath: string): Promise<boolean> {
   const path = rawPath.trim();
-  if (!path) return;
+  if (!path) return false;
+
+  if (!isValidSourceInput(path)) {
+    showAddError(
+      'Sources must be an absolute path (starting with /) or an http(s):// / file:// URL.',
+    );
+    return false;
+  }
+  showAddError(null);
 
   setAddFormBusy(true);
   try {
     const created = await addSource(path);
     addInput.value = '';
-    // null = path is already registered; nothing to append.
-    if (!created) return;
+    if (!created) {
+      // Already registered: find the existing source by path, jump
+      // to it, and tell the user why nothing new appeared (otherwise
+      // a deep-link with a duplicate just silently scrolls).
+      const existing = (await getSources()).find((s) => s.path === path);
+      if (existing) {
+        showAddError('This source is already registered.');
+        jumpToSource(existing.id);
+      }
+      return true;
+    }
     // refreshSource ran inside addSource, but addSource returns the
     // seed row. Re-read so we get the post-refresh scriptIds (the
     // section render queries getSourceWithScripts anyway, but reading
@@ -374,12 +442,74 @@ async function onAddDirectory(rawPath: string): Promise<void> {
     removeEmptyPlaceholder();
     await refreshLogIds();
     directoriesEl.appendChild(await renderSourceSection(latest));
+    jumpToSource(created.id);
+    return true;
   } finally {
     setAddFormBusy(false);
   }
 }
 
+// Accept three forms: an http(s):// URL, a file:// URL, or an
+// absolute POSIX path of length > 1. Everything else (relative
+// paths, bare names, other schemes, bare `/`) is rejected so the
+// user gets a clear message instead of a downstream scan failure or
+// a scan of the filesystem root.
+function isValidSourceInput(value: string): boolean {
+  if (isHttpUrl(value) || isFileUrl(value)) return true;
+  return value.startsWith('/') && value.length > 1;
+}
+
+// Anchor target for a section so it can be scrolled to by id and
+// linked to via `#source-<id>`.
+function sourceAnchorId(sourceId: string): string {
+  return `source-${sourceId}`;
+}
+
+// Show or clear the Add Source error line below the form. Pass null
+// to hide it; pass a string to surface a validation failure.
+function showAddError(message: string | null): void {
+  if (message === null) {
+    addErrorEl.textContent = '';
+    addErrorEl.hidden = true;
+    return;
+  }
+  addErrorEl.textContent = message;
+  addErrorEl.hidden = false;
+}
+
+// Scroll the section into view and tag the URL with its anchor so a
+// reload or share-the-URL preserves the selection. Triggered after a
+// successful add and after a duplicate-add (where the section already
+// existed).
+function jumpToSource(sourceId: string): void {
+  const section = findSection(sourceId);
+  if (!section) return;
+  history.replaceState(null, '', `#${sourceAnchorId(sourceId)}`);
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  // Guard non-empty sources behind a confirm: removing a source drops
+  // every script it owns, and the action is irreversible from the UI.
+  // For an empty source there's nothing to lose, so skip the prompt.
+  //
+  // The count read is a snapshot — a background refresh adding or
+  // removing a script while the dialog is open could leave the number
+  // slightly stale. The window is short and the error bounded; not
+  // worth a re-read.
+  const data = await getSourceWithScripts(id);
+  if (!data) {
+    // Source row has been removed elsewhere (e.g. another tab).
+    // Nothing to remove from the store; drop the orphan section.
+    section.remove();
+    return;
+  }
+  const scriptCount = data.scripts.length;
+  if (scriptCount > 0) {
+    const scriptWord = scriptCount === 1 ? 'script' : 'scripts';
+    if (!confirm(`Remove source with ${scriptCount} ${scriptWord}?`)) return;
+  }
+
   section.classList.add('removing');
   btn.disabled = true;
   try {

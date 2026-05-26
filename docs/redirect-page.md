@@ -22,7 +22,7 @@ extension page named in the `page` query parameter.
 
 | `page=` | Lands on | Useful params |
 |---------|----------|---------------|
-| `options.html` | Options page | `refresh` (existing); `add_source=<url-or-path>` (planned, no handler yet) |
+| `options.html` | Options page | `refresh`; `add_source=<url-or-path>` |
 | `userscript.html` | Script viewer | `script=<id>` |
 
 Anything else is ignored — the redirect simply does not fire, and the
@@ -34,9 +34,9 @@ user sees this page.
   `…/redirect-page.md?page=options.html`
 - Open options and trigger a refresh-all:
   `…/redirect-page.md?page=options.html&refresh`
-- Add a userscript source (path or URL) to the options page
-  *(planned — the URL is reserved but the options page does not yet
-  consume `add_source`)*:
+- Add a userscript source (path or URL) to the options page; the
+  page validates the input, jumps to the new section on success, or
+  jumps to the existing section if the source is already registered:
   `…/redirect-page.md?page=options.html&add_source=https://example.com/foo.user.js`
 - View a specific script:
   `…/redirect-page.md?page=userscript.html&script=<id>`

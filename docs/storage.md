@@ -321,7 +321,9 @@ source**:
   the left of the directory path.
 - Heading with the directory path.
 - **Refresh** button → `refreshSource`.
-- **Remove** button → `removeSource`.
+- **Remove** button → `removeSource`. If the source owns ≥ 1 script,
+  a `confirm()` dialog prompts "Remove source with N scripts?" first;
+  cancel aborts the remove. An empty source removes silently.
 - Table with columns **(bulk toggle) | Filename | Size | Status**.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
     flips every script under this source on (when not all are on) or
@@ -345,7 +347,15 @@ source**:
     won't re-add a row whose file the scan no longer reports.
 
 Adding a directory triggers a full load immediately — no need to
-click Refresh after adding.
+click Refresh after adding. The input is validated client-side:
+- accepted: `http(s)://…`, `file://…`, or an absolute POSIX path.
+- anything else surfaces an inline error and the add is rejected
+  before it touches the store.
+
+Each rendered source section gets a stable DOM id
+(`source-<sourceId>`) so it can be scrolled to via the URL fragment
+or via `jumpToSource(id)`. After a successful add the page scrolls
+to the new section and writes `#source-<id>` into the URL.
 
 A page-level **Refresh All** button at the top of the options page
 runs `refreshAllSources()` and re-renders every section in place. The
@@ -359,6 +369,17 @@ google-chrome chrome-extension://<extension-id>/options.html?refresh
 
 after writing new userscripts to disk. Combined with the unchanged-
 file skip, this is cheap when most files are untouched.
+
+Similarly, `?add_source=<path-or-url>`:
+
+- Runs the same flow as typing the value into Add Source and
+  clicking Add (validation, dedup, scroll-to-section).
+- Scrubs the param from the URL only on success/duplicate; an
+  invalid value stays in the URL so the user can edit and retry.
+- `?refresh` is also scrubbed once it's been consumed, so a reload
+  after the bootstrap actions doesn't re-fire them.
+- Is the entry point used by `docs/redirect-page.md` (see
+  [`deep-link.md`](deep-link.md)).
 
 ### Row highlights after refresh
 

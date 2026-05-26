@@ -54,7 +54,7 @@
 
 | `page=` | Target | Recognised forwarded params |
 |---------|--------|-----------------------------|
-| `options.html` | Options page | `refresh` (existing), `add_source` (planned) |
+| `options.html` | Options page | `refresh`, `add_source=<path-or-url>` |
 | `userscript.html` | Script viewer | `script=<id>` |
 
 - Adding a new entrypoint means:
