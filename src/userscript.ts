@@ -32,6 +32,7 @@ import {
 import {
   getValue,
   getValues,
+  joinFullSource,
 } from './userscript-header.js';
 import { isFileUrl, scriptAbsolutePath } from './directories.js';
 import {
@@ -54,6 +55,8 @@ import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from './github-auth.js';
+import { parseStackRefs } from './stack-link.js';
+import { buildSourceUrl } from './script-source-url.js';
 
 // The viewer's Refresh button runs fetchHttpText in the page context,
 // so the page needs its own copy of the cached GitHub token. The
@@ -66,6 +69,11 @@ declare const Prism: {
   highlightElement(el: Element): void;
   languages: {
     insertBefore(lang: string, before: string, grammar: Record<string, unknown>): void;
+  };
+  plugins?: {
+    lineNumbers?: {
+      getLine(pre: Element, lineNumber: number): HTMLElement | undefined;
+    };
   };
 };
 
@@ -224,6 +232,11 @@ let currentFilenamePath = '';
 // adding/removing a sibling with the same basename would otherwise
 // leave a stale `#N` on screen).
 let currentLogId = '';
+// Most recently rendered script. The session-storage listener calls
+// paintLog without re-reading the script, so we capture the latest
+// here so log-pane linkification can build tabs (and their
+// `sourceUrl`s) without re-reading storage.
+let currentScript: StoredScript | null = null;
 
 async function load(): Promise<void> {
   if (!scriptId) {
@@ -301,6 +314,7 @@ async function onCopyFilename(): Promise<void> {
 }
 
 function render(script: StoredScript): void {
+  currentScript = script;
   controlsRowEl.hidden = false;
   renderFilenameHeading(script);
   document.title = `${script.relativePath} — SourceMonkey`;
@@ -327,8 +341,14 @@ function render(script: StoredScript): void {
 // any relative ref inside the require resolves against the require,
 // not the host script (uncommon — require sources rarely have their
 // own metadata block — but cheap to get right).
+// `sourceUrl` is the `sourcemonkey://…` URL we expect stack frames
+// for code in this tab to carry. Stack-ref links in the Log tab are
+// linkified only when their URL matches one of the tabs' sourceUrls
+// (today only the main tab — the injector doesn't yet emit a
+// per-require `//# sourceURL=`, so frames inside `@require` code
+// share the main URL and currently aren't routed to require tabs).
 type Tab =
-  | { kind: 'code'; label: string; body: string; fileUrl: string }
+  | { kind: 'code'; label: string; body: string; fileUrl: string; sourceUrl: string }
   | { kind: 'log'; label: string };
 
 // Index of the currently selected tab. Preserved across re-renders
@@ -337,11 +357,13 @@ type Tab =
 let currentTabIndex = 0;
 
 function buildTabs(script: StoredScript): Tab[] {
+  const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
   const tabs: Tab[] = [{
     kind: 'code',
     label: basenameOf(script.relativePath),
     body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
+    sourceUrl: buildSourceUrl(script.id, name),
   }];
   for (const r of script.requires ?? []) {
     tabs.push({
@@ -349,6 +371,10 @@ function buildTabs(script: StoredScript): Tab[] {
       label: requireBasename(r),
       body: r.source,
       fileUrl: r.url,
+      // Empty until the injector emits per-require sourceURLs; a
+      // ref will never match an empty sourceUrl, so require tabs
+      // simply aren't linkified for now.
+      sourceUrl: '',
     });
   }
   // Log tab always last so the file order stays stable as @requires
@@ -357,16 +383,16 @@ function buildTabs(script: StoredScript): Tab[] {
   return tabs;
 }
 
-// Reconstruct the original on-disk source as best we can from the
-// stored split. `leadingText` is preserved verbatim — including its
-// terminating newline — so anything the user wrote above the
-// `// ==UserScript==` line shows up in the viewer. The `'\n'` we
-// inject between headerText and bodyText restores the line break
-// `splitHeaderBody` skipped past the closing marker.
+// Reconstruct the original on-disk source from the stored split.
+// Same string the injector splices into the registered code, so the
+// viewer's main tab line N matches the file line N AND injected line
+// N (modulo any @require sections that sit before the main script).
 function buildMainTabBody(script: StoredScript): string {
-  const leading = script.leadingText ?? '';
-  if (!script.headerText) return leading + script.bodyText;
-  return leading + script.headerText + '\n' + script.bodyText;
+  return joinFullSource(
+    script.leadingText ?? '',
+    script.headerText ?? '',
+    script.bodyText,
+  );
 }
 
 // Pull a display basename off a require's resolved URL. Falls back to
@@ -432,6 +458,7 @@ function renderTabsAndBody(script: StoredScript): void {
     contentEl.textContent = active.body;
     Prism.highlightElement(contentEl);
     linkifyCodeBlock(contentEl, active.fileUrl);
+    installGutterClickHandlers();
   }
 }
 
@@ -484,6 +511,12 @@ function paintLog(entries: LogEntry[]): void {
   thead.appendChild(trHead);
   table.appendChild(thead);
 
+  // Compute the tab list once for the whole render; every row's
+  // message column needs the same set to look up stack refs by
+  // URL. Falls back to an empty list when the script isn't yet
+  // hydrated — appendLogMessageContent handles that case.
+  const tabs = currentScript ? buildTabs(currentScript) : [];
+
   const tbody = document.createElement('tbody');
   // Newest first so recent events are visible without scrolling.
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -512,13 +545,204 @@ function paintLog(entries: LogEntry[]): void {
 
     const tdMsg = document.createElement('td');
     tdMsg.className = 'log-msg';
-    tdMsg.textContent = e.message;
+    appendLogMessageContent(tdMsg, e.message, tabs);
     tr.appendChild(tdMsg);
 
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
   logPaneEl.appendChild(table);
+}
+
+// Paint a log entry's message into a <td>. Each
+// `sourcemonkey://<this-script's-id>/<file>:<line>:<col>` reference
+// whose URL matches a code tab's `sourceUrl` becomes a clickable
+// link that switches to that tab and jumps to line/col. Refs whose
+// URL doesn't match any tab render as plain text — they may point
+// at a file the viewer doesn't have a tab for (e.g. an `@require`
+// source, until the injector emits per-require sourceURLs).
+function appendLogMessageContent(
+  td: HTMLElement,
+  message: string,
+  tabs: Tab[],
+): void {
+  const script = currentScript;
+  if (!script) {
+    td.textContent = message;
+    return;
+  }
+  const runs = parseStackRefs(message, script.id);
+  if (runs.length === 1 && runs[0].kind === 'text') {
+    td.textContent = message;
+    return;
+  }
+  td.replaceChildren();
+  for (const run of runs) {
+    if (run.kind === 'text') {
+      td.appendChild(document.createTextNode(run.text));
+      continue;
+    }
+    const tabIndex = tabs.findIndex(
+      (t) => t.kind === 'code' && t.sourceUrl && t.sourceUrl === run.url,
+    );
+    if (tabIndex < 0) {
+      td.appendChild(document.createTextNode(run.text));
+      continue;
+    }
+    const a = document.createElement('a');
+    a.className = 'log-stack-link';
+    a.href = '#';
+    a.textContent = run.text;
+    a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      goToTabLine(tabIndex, run.line, run.col);
+    });
+    td.appendChild(a);
+  }
+}
+
+// Switch to the given tab (if not already active), then scroll the
+// code pane to bring the requested line into view and highlight it.
+// `col` (1-based) positions the vertical accent bar at the character
+// column from the stack ref. Pass `undefined` (e.g. line-number
+// gutter clicks) to place the bar at the start of the line.
+function goToTabLine(tabIndex: number, tabLine: number, col?: number): void {
+  if (!currentScript) return;
+  if (currentTabIndex !== tabIndex) {
+    currentTabIndex = tabIndex;
+    renderTabsAndBody(currentScript);
+  }
+  scrollToAndHighlightLine(tabLine, col);
+}
+
+function scrollToAndHighlightLine(
+  tabLine: number,
+  col?: number,
+  // Gutter clicks pass `false`: the user is clicking on a row
+  // they're already looking at, so re-centering it is jarring.
+  // Stack-ref clicks (default `true`) need the scroll — the
+  // target line may be off-screen or in a different tab.
+  scroll = true,
+): void {
+  if (codePaneEl.hidden) return;
+  const api = Prism.plugins?.lineNumbers;
+  if (!api?.getLine) return;
+  const gutterSpan = api.getLine(codePaneEl, tabLine);
+  if (!gutterSpan) return;
+
+  // gutterSpan's offsetParent is `.line-numbers-rows`, which is
+  // positioned absolutely at top: 0 of <code>. So its offsetTop
+  // doubles as the y-coordinate of the matching code line within
+  // <code>, and inside the <pre> the same value lines up with the
+  // pre's scrollable content.
+  const top = gutterSpan.offsetTop;
+  const height = gutterSpan.offsetHeight || 0;
+
+  if (scroll) {
+    codePaneEl.scrollTop = top - codePaneEl.clientHeight / 2 + height / 2;
+  }
+
+  // Replace any leftover highlight so successive clicks land on the
+  // newest line only (we never stack overlays).
+  for (const prior of Array.from(contentEl.querySelectorAll('.line-flash'))) {
+    prior.remove();
+  }
+  const flash = document.createElement('div');
+  flash.className = 'line-flash';
+  flash.style.top = `${top}px`;
+  flash.style.height = `${height}px`;
+
+  // Accent bar at the column position, but only when the caller
+  // supplied one (stack-ref clicks carry `col`; line-number gutter
+  // clicks don't). Skip on line 1: the wrapper prefix shares that
+  // physical line, so a reported column points into the shim rather
+  // than user code.
+  if (col !== undefined && col > 0 && tabLine > 1) {
+    const cs = getComputedStyle(codePaneEl);
+    // Tabs in V8's column count are one character each, but the
+    // viewer renders them as `tab-size` columns wide (Prism's CSS
+    // sets 4). Walk the source line and expand each tab to the next
+    // tab stop so the bar lands on the actual rendered glyph.
+    const lineText = lineTextAt(tabLine);
+    const tabSize = parseInt(cs.tabSize, 10) || 8;
+    const visualCol = expandToVisualColumn(lineText, col, tabSize);
+    // `.line-flash` extends 0.8em left of <code>'s content area so
+    // the highlight can cover the header band's negative-margin
+    // extension. The bar's `left:` is measured from the flash's
+    // edge, so add that 0.8em back to anchor at code's column 0.
+    const fontSize = parseFloat(cs.fontSize) || 13;
+    const flashLeftEm = 0.8;
+    const bar = document.createElement('div');
+    bar.className = 'line-flash-col-bar';
+    bar.style.left = `${flashLeftEm * fontSize + visualCol * measureCodeCharWidth()}px`;
+    flash.appendChild(bar);
+  }
+
+  contentEl.appendChild(flash);
+}
+
+// Wire up clicks on each line-number span in the gutter so the user
+// can highlight any line (clearing any prior highlight). The gutter
+// spans are populated by the Prism line-numbers plugin during
+// `Prism.highlightElement`, so this must run after that call.
+function installGutterClickHandlers(): void {
+  const rows = contentEl.querySelector('.line-numbers-rows');
+  if (!rows) return;
+  rows.classList.add('clickable');
+  const spans = rows.children;
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i] as HTMLElement;
+    const lineNumber = i + 1;
+    span.addEventListener('click', () => {
+      scrollToAndHighlightLine(lineNumber, undefined, false);
+    });
+  }
+}
+
+// Read the Nth (1-based) line of the currently-displayed source
+// from <code>'s text content. The line-numbers gutter's children
+// are empty spans (line numbers are CSS counters, not text), so
+// textContent reconstructs the source faithfully.
+function lineTextAt(tabLine: number): string {
+  const text = contentEl.textContent ?? '';
+  const lines = text.split('\n');
+  return lines[tabLine - 1] ?? '';
+}
+
+// Convert a 1-based column from V8's stack trace into a 0-based
+// visual column count, expanding each tab character to the next
+// `tabSize` boundary. V8 counts every tab as one column; the
+// viewer renders it as enough spaces to reach the next tab stop.
+function expandToVisualColumn(lineText: string, col: number, tabSize: number): number {
+  let visualCol = 0;
+  const stop = Math.min(Math.max(col - 1, 0), lineText.length);
+  for (let i = 0; i < stop; i++) {
+    if (lineText.charCodeAt(i) === 9) {
+      visualCol += tabSize - (visualCol % tabSize);
+    } else {
+      visualCol++;
+    }
+  }
+  return visualCol;
+}
+
+// Cached monospace character width in CSS pixels for the code-pane
+// font. Computed lazily on first highlight; the viewer's font never
+// changes during a session, so a single measurement is enough.
+let cachedCharWidth = 0;
+function measureCodeCharWidth(): number {
+  if (cachedCharWidth > 0) return cachedCharWidth;
+  const probe = document.createElement('span');
+  // Measure across 20 'M's so sub-pixel rounding averages out.
+  probe.textContent = 'M'.repeat(20);
+  probe.style.visibility = 'hidden';
+  probe.style.position = 'absolute';
+  probe.style.whiteSpace = 'pre';
+  contentEl.appendChild(probe);
+  const w = probe.getBoundingClientRect().width / 20;
+  probe.remove();
+  cachedCharWidth = w;
+  return w;
 }
 
 async function onClearLog(): Promise<void> {
@@ -902,6 +1126,7 @@ function linkForHeaderTag(
 }
 
 function showMissing(message: string): void {
+  currentScript = null;
   controlsRowEl.hidden = true;
   filenameEl.textContent = 'Not available';
   messageEl.textContent = message;

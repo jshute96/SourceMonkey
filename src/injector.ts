@@ -50,7 +50,7 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
-import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
+import { getValue, getValues, joinFullSource, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -60,6 +60,7 @@ import {
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import { emitGmBindings, type GmInfoInput } from './gm-bindings.js';
+import { buildSourceUrl } from './script-source-url.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -157,17 +158,25 @@ function isRegexLiteral(s: string): boolean {
 }
 
 // Concatenate every prefetched `@require` body, in declaration order,
-// before the script's own body. A `;\n` separator between each segment
+// in front of the **full on-disk script source** (leadingText +
+// headerText + bodyText). A `;\n` separator between each segment
 // ensures that an ASI-sensitive expression at the end of one require
 // (e.g. an IIFE that returns a value with no trailing semicolon) can't
 // merge into the next segment. The leading `// @require <url>` per
 // require makes the registered code easier to scan in devtools.
 //
-// Why a line comment (`// …`) rather than a block comment: a URL
-// can legitimately contain `*/` in its path (`*` is a valid path
-// char), which would prematurely close a block comment and break the
-// wrapper. Line comments terminate at newline, and URLs can't carry
-// newlines.
+// We inject the full source (header lines included) — not just the
+// body — so the line numbers V8 reports in stack traces line up with
+// the original file. The metadata block is comment-only JS, so the
+// engine sees it as inert noise; the wrapper-head still sits on
+// physical line 1 (with no trailing newline) and shares that line
+// with whatever the original file had as line 1.
+//
+// Why a line comment (`// …`) rather than a block comment for the
+// `@require` marker: a URL can legitimately contain `*/` in its path
+// (`*` is a valid path char), which would prematurely close a block
+// comment and break the wrapper. Line comments terminate at newline,
+// and URLs can't carry newlines.
 //
 // No per-require `//# sourceURL=` directive — JS only honors the LAST
 // such comment in a source file, and the wrapper appends one for the
@@ -175,31 +184,21 @@ function isRegexLiteral(s: string): boolean {
 // traces inside required code will still point at the userscript's
 // sourceURL; that matches TM/VM behavior.
 export function composeRequiredBody(script: StoredScript): string {
+  const mainSource = joinFullSource(
+    script.leadingText ?? '',
+    script.headerText ?? '',
+    script.bodyText,
+  );
   const requires = script.requires ?? [];
-  if (requires.length === 0) return script.bodyText;
+  if (requires.length === 0) return mainSource;
   const parts: string[] = [];
   for (const r of requires) {
     parts.push(`// @require ${r.url}`);
     parts.push(r.source);
     parts.push(';');
   }
-  parts.push(script.bodyText);
+  parts.push(mainSource);
   return parts.join('\n');
-}
-
-// Build the per-script sourceURL the wrapper uses to attribute async
-// errors back to this script. Two requirements:
-//   - The string must be unique per script (we filter error events by
-//     `indexOf(sourceUrl) !== -1` against stack/filename), so we include
-//     the stored UUID.
-//   - The string must be a valid URL-shaped value because the engine
-//     parses `//# sourceURL=...` as one — slashes, colons, dots, dashes
-//     and underscores are safe; we replace everything else in the name
-//     with `_` so a script titled "Foo / Bar (v2)" still produces a
-//     well-formed sourceURL.
-function buildSourceUrl(id: string, name: string): string {
-  const safe = String(name).replace(/[^a-zA-Z0-9._-]/g, '_') || 'script';
-  return `sourcemonkey://${id}/${safe}.user.js`;
 }
 
 // Wrap a userscript body with our activation/error logging shim plus

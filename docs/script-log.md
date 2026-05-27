@@ -120,6 +120,23 @@ present, and just `source` otherwise.
 - Live updates: a `chrome.storage.onChanged` listener on the session
   area repaints the table whenever the script's log key changes —
   but only while the Log tab is the currently selected one.
+- **Clickable stack refs:** every `sourcemonkey://<scriptId>/…:L:C`
+  reference in the message column whose URL matches a code tab's
+  `sourceUrl` becomes a clickable anchor.
+  - Clicking switches to that tab and jumps to gutter line `L`,
+    with an accent bar at column `C`.
+  - Matching is naive — V8's URL is trusted as-is; no offset
+    arithmetic for `@require` lines.
+  - `parseStackRefs` (`src/stack-link.ts`) splits the message into
+    plain-text and `{url, line, col}` ref runs.
+  - The main tab carries `sourceUrl = buildSourceUrl(id, name)`
+    (`src/script-source-url.ts`) — the same string the injector
+    hands to `//# sourceURL=`.
+  - Require tabs leave `sourceUrl` empty until the injector emits
+    a per-`@require` sourceURL; their stack refs render as text.
+  - Line 1 IS linkable, but its column-accent bar is suppressed —
+    the wrapper-prefix shim shares that physical line, so the
+    reported column points into the shim, not user code.
 
 ## Lifecycle and reset
 

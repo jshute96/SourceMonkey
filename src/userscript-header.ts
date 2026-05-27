@@ -78,6 +78,25 @@ export function splitHeaderBody(source: string): SplitResult {
 // optional so flag tags like `@noframes` parse with value = "".
 const TAG_LINE = /^[ \t]*\/\/[ \t]*@([A-Za-z][\w-]*)(?::([\w-]+))?(?:[ \t]+(.*\S))?[ \t]*$/;
 
+// Reassemble the original on-disk source from the three parts
+// produced by `splitHeaderBody`. The reassembly is line-for-line
+// faithful so that an error reported on injected line N also points
+// at line N of this reconstructed string (which is what the viewer
+// shows in the main tab).
+//
+// The `'\n'` between `headerText` and `bodyText` restores the line
+// break `splitHeaderBody` skipped past the closing marker; with no
+// metadata block, both `leadingText` and `headerText` are empty so
+// the body is returned verbatim.
+export function joinFullSource(
+  leadingText: string,
+  headerText: string,
+  bodyText: string,
+): string {
+  if (!headerText) return leadingText + bodyText;
+  return leadingText + headerText + '\n' + bodyText;
+}
+
 // Parse the metadata block. Returns null if there is no
 // `==UserScript==` / `==/UserScript==` pair.
 export function parseHeader(source: string): ParsedHeader | null {

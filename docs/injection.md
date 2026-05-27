@@ -242,13 +242,24 @@ into `dist/`). The fragments:
   telemetry — the bridge](#main-world-telemetry--the-bridge)).
 
 Why one line: the HEAD is concatenated immediately before the user's
-body with no trailing newline, so the body's line N lands at physical
-line N of the registered script — *body* line N, not source-file line
-N. The header lines (the `// ==UserScript== … // ==/UserScript==`
-block) are stripped before the body is sent to Chrome, so a stack
-trace pointing at "line 7" means line 7 of the body, not line 7 of
-the `.user.js` file. Column offsets on body line 1 are still shifted
-by the HEAD's character count; line numbers are not.
+script with no trailing newline, so file line N lands at physical
+line N of the registered script. The injector now sends the **full
+on-disk source** — leading text + metadata block + body — to Chrome
+(metadata lines are comment-only JS, so they're inert). A stack
+trace pointing at "line 7" means line 7 of the `.user.js` file.
+
+Caveats for `@require`:
+
+- Requires are concatenated *before* the main script (see
+  `composeRequiredBody`), so main-script frames report a line
+  number shifted down by the requires' total line count.
+- A frame inside `@require` code still carries the main script's
+  `//# sourceURL=`. Per-require sourceURLs are a future change.
+- The viewer's Log tab takes V8's URL and line at face value — no
+  offset arithmetic.
+
+Column offsets on physical line 1 are still shifted by the HEAD's
+character count; line numbers are not.
 
 Placeholders the injector substitutes at registration time:
 

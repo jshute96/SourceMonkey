@@ -222,16 +222,26 @@
       }
       pre.code-box:focus { outline: 2px solid #4a90e2; outline-offset: -2px; }
       /* Tinted band behind the `// ==UserScript== … // ==/UserScript==`
-         block. `display: block` lets the highlight span every header
-         line; the negative left/right margin (paired with matching
-         padding) extends the band out to the code-box's padding
-         edges so it reads as a full-width strip rather than a
-         floating rectangle. */
+         block. `display: block` lets the band span every header line;
+         the negative left/right margin (paired with matching padding)
+         extends the band out to the code-box's padding edges so it
+         reads as a full-width strip rather than a floating rectangle.
+         The grey paint lives on a ::before with z-index: -1 (rather
+         than `background:` on the span) so the line-highlight
+         overlay can sit at the same z-index and, by document order,
+         paint over the grey when a header line is highlighted. */
       pre.code-box .token.userscript-header {
         display: block;
-        background: #f0f0f0;
+        position: relative;
         margin: 0 -0.8em;
         padding: 0 0.8em;
+      }
+      pre.code-box .token.userscript-header::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: #f0f0f0;
+        z-index: -1;
       }
       /* Log pane mirrors the code box's outer dimensions so swapping
          between a code tab and the Log tab doesn't reflow the page.
@@ -301,6 +311,67 @@
         font: inherit;
         padding: 0.2em 0.7em;
         cursor: pointer;
+      }
+      /* Clickable `sourcemonkey://…:L:C` refs inside log messages.
+         The log table renders with a monospace font, so a regular
+         blue underline reads clearly without disrupting the column. */
+      .log-pane .log-stack-link {
+        color: #1d4ed8;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .log-pane .log-stack-link:hover { color: #2563eb; }
+      /* The line-numbers plugin makes <code> position: relative but
+         leaves it inline; without an explicit display:block the
+         absolute .line-flash overlay below sizes to the line box
+         instead of the full code area. `z-index: 0` turns <code>
+         into a stacking context so the highlight overlay can sit
+         BEHIND the text via z-index: -1 without escaping <code>. */
+      pre.code-box.line-numbers > code { display: block; z-index: 0; }
+      /* Highlight overlay used by the log-message link click handler
+         and the clickable line-number gutter. Sits BEHIND the
+         syntax-highlighted text so the line stays maximally
+         readable. Persists until the user highlights a different
+         line or switches to a different tab (tab swap replaces
+         <code>'s textContent and the overlay with it). */
+      .line-flash {
+        position: absolute;
+        /* Extend by 0.8em on each side so the highlight covers the
+           full visual extent of any line — including the userscript
+           header band, which uses `margin: 0 -0.8em` to reach the
+           code-box's padding edges. */
+        left: -0.8em;
+        right: -0.8em;
+        pointer-events: none;
+        background: #fff3a6;
+        z-index: -1;
+      }
+      /* Vertical accent bar inside .line-flash. Rendered only when
+         the highlight came from a stack ref that carried a column;
+         inline `left:` is set to (col - 1) * char width so the bar
+         points at the reported character position. */
+      .line-flash-col-bar {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #f5b500;
+        pointer-events: none;
+      }
+      /* Make the line-numbers gutter behave like a clickable strip:
+         each line number highlights its row when clicked. The plugin
+         renders the numbers via `::before` on the span, so we set
+         pointer-events: auto on the span (default is `none` on the
+         parent rows) and add a hover affordance. */
+      .line-numbers .line-numbers-rows.clickable {
+        pointer-events: auto;
+      }
+      .line-numbers .line-numbers-rows.clickable > span {
+        cursor: pointer;
+      }
+      .line-numbers .line-numbers-rows.clickable > span:hover::before {
+        color: #1d4ed8;
+        font-weight: 600;
       }
     </style>
   </head>

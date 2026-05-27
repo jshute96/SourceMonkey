@@ -60,6 +60,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-display.ts` | Source-display helpers: type classification, short-name inference, manifest flag, anchor id, plus a small DOM helper for the colored bubble `<a>` |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
+| `src/stack-link.ts` | Pure `parseStackRefs(text, scriptId)` — splits a log message into plain-text + `{url, line, col}` ref runs |
+| `src/script-source-url.ts` | `buildSourceUrl(id, name)` — canonical `sourcemonkey://…` URL the injector emits and the viewer matches against |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local` |
@@ -125,6 +127,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) |
 | `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
+| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction, scriptId filter, distinct filename URLs |
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `basenameOf` + `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |

@@ -158,6 +158,16 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
   `Prism.highlightElement` call, so the gutter repaints on every tab
   switch. Plugin assets vendor alongside Prism as
   `prism-line-numbers.{js,css}` (see `scripts/build.mjs`).
+- Gutter line numbers are clickable:
+  - A click paints a persistent yellow `.line-flash` overlay on
+    that row. Only one row is highlighted at a time — a new click
+    replaces the prior overlay; tab switches wipe it via
+    `textContent =`.
+  - Gutter clicks highlight in place (no scroll) so the viewport
+    doesn't jump when the user clicks a row they can already see.
+  - Stack-ref clicks from the Log tab reuse the same highlighter
+    but with scroll-into-view enabled and an amber column-accent
+    bar at the reported column. See [`script-log.md`](script-log.md).
 
 ### Userscript-header syntax highlighting extension
 

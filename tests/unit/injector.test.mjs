@@ -245,6 +245,24 @@ test('composeRequiredBody: passes through bodyText when no @require', () => {
   assert.equal(composeRequiredBody(makeScript()), 'console.log("hi");');
 });
 
+test('composeRequiredBody: includes leadingText + headerText so injected line numbers match the file', () => {
+  // The metadata block is comment-only JS, so the engine treats it as
+  // inert noise — but its presence keeps the file's line numbers
+  // intact in stack traces.
+  const header = '// ==UserScript==\n// @name X\n// ==/UserScript==';
+  const out = composeRequiredBody(makeScript({
+    leadingText: '// shebang-ish comment\n',
+    headerText: header,
+    bodyText: 'console.log("hi");',
+  }));
+  assert.equal(
+    out,
+    '// shebang-ish comment\n' +
+    '// ==UserScript==\n// @name X\n// ==/UserScript==\n' +
+    'console.log("hi");',
+  );
+});
+
 test('composeRequiredBody: prepends every require body in declaration order', () => {
   const script = makeScript({
     requires: [
