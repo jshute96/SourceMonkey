@@ -3,10 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <title>SourceMonkey — Sources</title>
+    <link rel="stylesheet" href="styles.css" />
     <style>
       body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
       h1 { margin-top: 0; }
-      h2 { font-size: 1em; margin: 0; word-break: break-all; }
+      /* Grid layout so a long display name that needs to wrap stays
+         inside the right-hand column instead of dropping back to the
+         row's left edge. Column 1 sizes to the bubble; column 2 takes
+         the remaining space and is where the name wraps. */
+      h2 {
+        font-size: 1em;
+        margin: 0;
+        word-break: break-all;
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        column-gap: 0.5em;
+        align-items: baseline;
+      }
+      /* `.source-type-bubble` + colored `.bubble-*` variants +
+         `.source-display-name` typography are in styles.css (the
+         cross-page shared stylesheet). */
       button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
       input[type="text"] { font: inherit; padding: 0.3em 0.5em; }
       .placeholder { color: #666; }

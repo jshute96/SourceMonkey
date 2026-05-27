@@ -47,11 +47,13 @@ await cp(resolve(prismDir, 'themes', 'prism.min.css'), resolve(dist, 'vendor', '
 //    unpacked from dist/.
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
 
-// 4. Copy every top-level HTML asset (sources.html, etc.). Iterate so
-//    new pages get picked up automatically without editing this script.
+// 4. Copy every top-level HTML / CSS asset (sources.html, etc., plus
+//    any shared *.css the pages <link> in). Iterate so new pages and
+//    stylesheets get picked up automatically without editing this script.
 for (const entry of await readdir(src, { withFileTypes: true })) {
   if (!entry.isFile()) continue;
-  if (extname(entry.name) === '.html') {
+  const ext = extname(entry.name);
+  if (ext === '.html' || ext === '.css') {
     await cp(resolve(src, entry.name), resolve(dist, entry.name));
   }
 }

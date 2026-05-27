@@ -15,6 +15,7 @@ import {
   isSourceEnabled,
   setScriptEnabled,
   type StoredScript,
+  type StoredSource,
 } from './script-store.js';
 import { basenameOf, computeLogIds } from './script-log-id.js';
 import type { StoredRequire } from './external-files.js';
@@ -33,6 +34,12 @@ import {
   getValues,
 } from './userscript-header.js';
 import { scriptAbsolutePath } from './directories.js';
+import {
+  appendWithSlashBreaks,
+  effectiveDisplayName,
+  makeSourceTypeBubble,
+  sourceAnchorId,
+} from './source-display.js';
 import { matchTargetInfo } from './match-targets.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { resolveScriptResource } from './file-loader.js';
@@ -190,8 +197,11 @@ async function rehydrateAfterStorageChange(): Promise<void> {
 // Source-enabled state is needed for greying the toggle. We cache it so
 // onToggle doesn't have to re-read storage. sourcePath is cached for
 // the same reason — render() builds the absolute filename from it.
+// sourceRow holds the whole StoredSource (when found) so the Source
+// row can render its bubble + display name without a second read.
 let sourceEnabled = true;
 let sourcePath = '';
+let sourceRow: StoredSource | null = null;
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 // Path currently shown in the Filename cell. onCopyFilename copies
 // this rather than reading textContent, which would also break if the
@@ -217,6 +227,7 @@ async function load(): Promise<void> {
   const source = await getSource(script.sourceId);
   sourceEnabled = source ? isSourceEnabled(source) : true;
   sourcePath = source?.path ?? '';
+  sourceRow = source ?? null;
   await refreshLogId();
   render(script);
 }
@@ -527,7 +538,7 @@ function renderFilenameHeading(script: StoredScript): void {
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   filenameEl.appendChild(iconSlot);
-  filenameEl.appendChild(document.createTextNode(script.relativePath));
+  appendWithSlashBreaks(filenameEl, script.relativePath);
   renderSiteIconInto(iconSlot, script);
 }
 
@@ -553,6 +564,15 @@ function renderDetails(script: StoredScript): void {
     if (matches.length) appendRow(dl, 'Match', patternList(matches));
     const excludes = getValues(script.header, 'exclude');
     if (excludes.length) appendRow(dl, 'Exclude', patternList(excludes));
+  }
+
+  // Source row: same colored bubble + display name combo the sources
+  // page uses, with the display name doubling as a back-link to the
+  // sources page (anchored to this source's section). Renders above
+  // the Location row so the viewer's "where did this come from"
+  // information is grouped.
+  if (sourceRow) {
+    appendRow(dl, 'Source', sourceCell(sourceRow));
   }
 
   // Resolved location for the script: an absolute filesystem path for
@@ -586,6 +606,28 @@ function logIdCell(logId: string): Node {
   return span;
 }
 
+// Source-row cell: colored type bubble on the left (linking out to the
+// underlying file:// / http(s):// URL), followed by the source's
+// display name as a back-link to the sources page anchored at this
+// source's section.
+function sourceCell(source: StoredSource): Node {
+  const cell = document.createElement('span');
+  cell.className = 'source-cell';
+
+  cell.appendChild(makeSourceTypeBubble(source.path));
+
+  const nameLink = document.createElement('a');
+  nameLink.className = 'source-display-name';
+  appendWithSlashBreaks(nameLink, effectiveDisplayName(source));
+  nameLink.href = chrome.runtime.getURL(`sources.html#${sourceAnchorId(source.id)}`);
+  // Tooltip surfaces the raw stored path; the anchor itself jumps to
+  // the section on the sources page.
+  nameLink.title = source.path;
+  cell.appendChild(nameLink);
+
+  return cell;
+}
+
 function filenameCell(path: string, hrefUrl: string): Node {
   const cell = document.createElement('span');
   cell.className = 'filename-cell';
@@ -603,9 +645,11 @@ function filenameCell(path: string, hrefUrl: string): Node {
   pathEl.rel = 'noopener noreferrer';
   // Display text is the bare fs path for file:// scripts; tooltip
   // surfaces the actual href so the user can see what would open
-  // (file://... vs http://...) without clicking through.
+  // (file://... vs http://...) without clicking through. Slash-aware
+  // appender lets long paths wrap at `/` boundaries before breaking
+  // mid-segment.
   pathEl.title = hrefUrl;
-  pathEl.textContent = path;
+  appendWithSlashBreaks(pathEl, path);
   cell.appendChild(pathEl);
 
   // Reuses the module-level button; appendChild moves it into the
@@ -647,7 +691,14 @@ function patternList(items: string[]): Node {
 
 function patternValueNode(pattern: string): Node {
   const info = matchTargetInfo(pattern);
-  if (!info) return textNode(pattern);
+  if (!info) {
+    // Non-linkable pattern (`<all_urls>`, regex literal, etc.); render
+    // as plain text but still allow slash-aware wrapping in case the
+    // pattern is long.
+    const span = document.createElement('span');
+    appendWithSlashBreaks(span, pattern);
+    return span;
+  }
   return openInNewTabAnchor(info.linkUrl, pattern);
 }
 
@@ -657,7 +708,8 @@ function openInNewTabAnchor(href: string, text: string): HTMLAnchorElement {
   a.href = href;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  a.textContent = text;
+  // Slash-aware appender so a long URL/pattern wraps at `/` first.
+  appendWithSlashBreaks(a, text);
   return a;
 }
 

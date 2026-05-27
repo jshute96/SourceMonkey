@@ -56,6 +56,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline, parse-time diagnostics (startup logs), size+mtime skip, refreshAllSources |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
 | `src/script-display.ts` | Pure display helpers shared by the sources page + viewer: `formatBytes`, `formatScriptSize`, `formatScriptStatusLabel` |
+| `src/source-display.ts` | Source-display helpers: type classification, short-name inference, manifest flag, anchor id, plus a small DOM helper for the colored bubble `<a>` |
+| `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
@@ -119,6 +121,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
 | `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate |
 | `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) |
+| `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `basenameOf` + `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |

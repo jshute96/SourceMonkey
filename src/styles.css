@@ -1,0 +1,43 @@
+/* Shared stylesheet linked from every SourceMonkey extension page
+   (sources.html, options.html, userscript.html). Pages still carry
+   their own page-specific styles in a <style> block; rules here are
+   for elements that show up on more than one page. New cross-page
+   styles belong in this file rather than copy-pasted into each
+   <style> block.
+
+   Currently shared: the source-type bubble + its display-name sibling
+   (DOM helper in src/source-display.ts, used on the sources page
+   heading and the userscript viewer's Source row). */
+
+.source-display-name {
+  /* Prefer space / slash boundaries when wrapping. `<wbr>` markers
+     inserted after each `/` (see appendDisplayNameContent in
+     src/source-display.ts) give the browser preferred break points
+     before it has to break inside a word. */
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-width: 0;
+}
+
+.source-type-bubble {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-decoration: none;
+  line-height: 1.5;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.source-type-bubble:hover { opacity: 0.85; }
+
+.bubble-file            { background: #d97706; }
+.bubble-file-manifest   { background: #92400e; }
+.bubble-http            { background: #2563eb; }
+.bubble-http-manifest   { background: #1e3a8a; }
+.bubble-github          { background: #6f42c1; }
+.bubble-github-manifest { background: #4c2889; }

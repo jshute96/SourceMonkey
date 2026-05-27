@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>SourceMonkey — Userscript</title>
     <link rel="stylesheet" href="vendor/prism/prism.css" />
+    <link rel="stylesheet" href="styles.css" />
     <style>
       html, body { height: 100%; margin: 0; }
       body {
@@ -18,7 +19,11 @@
         font-size: 1em;
         font-weight: 600;
         margin: 0 0 0.4em;
-        word-break: break-all;
+        /* Slash-aware wrap: prefer spaces / slashes (with `<wbr>`
+           markers inserted by appendWithSlashBreaks), then anywhere
+           inside a word only when nothing else fits. */
+        overflow-wrap: anywhere;
+        word-break: normal;
       }
       /* Fixed-width slot for the site favicon, immediately before the
          filename text in the h1. Always present so the text always
@@ -89,7 +94,10 @@
       }
       #header-summary dd {
         margin: 0;
-        word-break: break-word;
+        /* Slash-aware wrap for any long URL/path that lands in a
+           dd value (Location, Match, Exclude patterns, …). */
+        overflow-wrap: anywhere;
+        word-break: normal;
       }
       #header-summary ul {
         margin: 0;
@@ -105,14 +113,17 @@
         min-width: 0;
       }
       .filename-text {
-        word-break: break-all;
+        /* Slash-aware wrap; see h1 above. */
+        overflow-wrap: anywhere;
+        word-break: normal;
         min-width: 0;
       }
       /* Anchors in the details panel (Match patterns, Location)
          read as plain text by default; underline only on hover so
-         the rows stay calm. */
-      #header-summary dd a { color: inherit; text-decoration: none; }
-      #header-summary dd a:hover { text-decoration: underline; }
+         the rows stay calm. The bubble is excluded so its `color:#fff`
+         survives — its hover affordance is the opacity dip below. */
+      #header-summary dd a:not(.source-type-bubble) { color: inherit; text-decoration: none; }
+      #header-summary dd a:not(.source-type-bubble):hover { text-decoration: underline; }
       /* Anchors inside the highlighted code block. Inherit Prism's
          token color (comment-grey, string-green, etc.) so the code
          box keeps reading as code; only the hover underline signals
@@ -122,6 +133,17 @@
       .log-id-cell {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         word-break: break-all;
+      }
+      /* Source row layout. Grid layout so a long display name wraps
+         inside the right-hand column instead of dropping back to the
+         row's left edge. The bubble's own styling (color, padding,
+         hover) is in styles.css, the cross-page shared stylesheet. */
+      .source-cell {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        column-gap: 0.5em;
+        align-items: baseline;
+        min-width: 0;
       }
       /* Square icon-only button. Swaps the copy icon for a checkmark
          while the .copied class is on it (set briefly after a

@@ -135,9 +135,11 @@ against the prior so identical content still counts as "no change."
   Description / Match / Exclude), and the highlighted source. The
   viewer reads from storage; its own **Refresh** button re-fetches
   just this one script (from disk for local sources, over HTTP for
-  URL-backed ones). The **Location** row shows the absolute
-  filesystem path for local sources and the resolved URL for
-  URL-backed ones.
+  URL-backed ones). The **Source** row shows the same type bubble +
+  display name as the sources page; the display name doubles as a
+  back-link to the parent source's section. The **Location** row
+  shows the absolute filesystem path for local sources and the
+  resolved URL for URL-backed ones.
 - As you browse, the SourceMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The

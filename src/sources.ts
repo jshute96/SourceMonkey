@@ -20,6 +20,7 @@
 
 import {
   addSource,
+  backfillSourceDisplayNames,
   getAllScripts,
   getSource,
   getSourceWithScripts,
@@ -35,6 +36,12 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import {
+  appendWithSlashBreaks,
+  effectiveDisplayName,
+  makeSourceTypeBubble,
+  sourceAnchorId,
+} from './source-display.js';
 import {
   updateAllSources,
   updateSource,
@@ -160,6 +167,11 @@ async function render(): Promise<void> {
   bannerSlot.textContent = '';
   directoriesEl.textContent = '';
 
+  // One-shot backfill so older source rows (pre-displayName) pick up
+  // an inferred label on first view after upgrade. Cheap no-op once
+  // every row carries a name.
+  await backfillSourceDisplayNames();
+
   // Surface the file:// access state up-front. Without the toggle on
   // chrome://extensions, every fetch we try will fail.
   if (!(await isFileSchemeAccessAllowed())) {
@@ -226,7 +238,14 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   header.appendChild(enableLabel);
 
   const heading = document.createElement('h2');
-  heading.textContent = source.path;
+  heading.appendChild(makeSourceTypeBubble(source.path));
+  const nameEl = document.createElement('span');
+  nameEl.className = 'source-display-name';
+  appendWithSlashBreaks(nameEl, effectiveDisplayName(source));
+  // Tooltip surfaces the raw stored path so the user can still see the
+  // canonical URL / fs path behind a shortened display name.
+  nameEl.title = source.path;
+  heading.appendChild(nameEl);
   header.appendChild(heading);
 
   const buttons = document.createElement('div');
@@ -474,12 +493,6 @@ async function onAddDirectory(rawPath: string): Promise<boolean> {
 function isValidSourceInput(value: string): boolean {
   if (isHttpUrl(value) || isFileUrl(value)) return true;
   return value.startsWith('/') && value.length > 1;
-}
-
-// Anchor target for a section so it can be scrolled to by id and
-// linked to via `#source-<id>`.
-function sourceAnchorId(sourceId: string): string {
-  return `source-${sourceId}`;
 }
 
 // Show or clear the Add Source error line below the form. Pass null

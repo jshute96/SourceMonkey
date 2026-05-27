@@ -74,6 +74,12 @@ reports.
      - `Match`
      - `Exclude`
    - Always present (per script):
+     - `Source` — colored type bubble (linking to the source's
+       file:// / http(s) URL) + the source's display name (linking
+       back to the parent section on the sources page via
+       `sources.html#source-<id>`). Same bubble/name combo the sources
+       page renders. Row omitted if the parent source row has
+       vanished. See [`src/source-display.ts`](../src/source-display.ts).
      - `Location` — anchor wrapping the resolved location
        (file:// → bare fs path, http(s):// → URL). Anchor href is the
        canonical `fileUrl`. Adjacent square button copies the

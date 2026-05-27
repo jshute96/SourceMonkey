@@ -28,16 +28,26 @@ Key spaces in `chrome.storage.local`:
 ### `StoredSource`
 
 - `id` — UUID.
-- `path` — absolute filesystem path the user typed in. Either a
-  directory (the usual case — scanned recursively for `*.user.js`)
-  or a single `.user.js` file (treated as a one-script source; see
-  [file-access.md](file-access.md#single-file-paths)).
+- `path` — canonical source location the user added. One of:
+  - absolute filesystem path or `file://` URL (directory or
+    `.user.js` file; see [file-access.md](file-access.md#single-file-paths))
+  - `http(s)://` URL to a `.user.js` file or a
+    `script_manifest.json` (see [http-sources.md](http-sources.md))
+  - `github.com/<o>/<r>/tree/<ref>(/<path>?)` URL for a directory
+    source (blob / file URLs are rewritten to `raw.githubusercontent.com`
+    at add time).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
 - `enabled` — user-controlled on/off toggle. When `false`, every
   script under this source is treated as effectively disabled by the
   match index (independent of each script's own `enabled`).
+- `displayName?` — short, human-readable label shown on the sources
+  page heading and the viewer's Source row. Backfilled from
+  `inferDisplayName(path)` on first read after upgrade
+  (`backfillSourceDisplayNames`). Future user-rename UI would write
+  this field; the UI prefers it over the inferred form whenever it's
+  set (see [`src/source-display.ts`](../src/source-display.ts)).
 
 ### `StoredScript`
 

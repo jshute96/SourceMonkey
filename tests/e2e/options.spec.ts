@@ -24,7 +24,7 @@ test.describe('sources page', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    await expect(page.locator(`section.directory[data-source-id="${source!.id}"] h2`))
+    await expect(page.locator(`section.directory[data-source-id="${source!.id}"] h2 .source-display-name`))
       .toHaveText(scriptsDir.path);
     await expect(page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`))
       .toHaveCount(1);
@@ -49,7 +49,7 @@ test.describe('sources page', () => {
 
     // Section appears with the new script row.
     await expect(page.locator('section.directory')).toHaveCount(1);
-    await expect(page.locator('section.directory h2')).toHaveText(scriptsDir.path);
+    await expect(page.locator('section.directory h2 .source-display-name')).toHaveText(scriptsDir.path);
     await expect(page.locator('section.directory tbody tr')).toHaveCount(1);
 
     // And the SW now sees the source.
@@ -101,7 +101,7 @@ test.describe('sources page', () => {
     // Section gets rendered, URL hash points to it, query param is scrubbed.
     const section = page.locator('section.directory').first();
     await expect(section).toBeVisible();
-    await expect(section.locator('h2')).toHaveText(scriptsDir.path);
+    await expect(section.locator('h2 .source-display-name')).toHaveText(scriptsDir.path);
 
     const sources = await sm.getSources();
     expect(sources).toHaveLength(1);

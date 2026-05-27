@@ -57,6 +57,7 @@ import {
   type StoredResource,
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import { inferDisplayName } from './source-display.js';
 
 export type ScriptStatus = 'ok' | 'error' | 'missing';
 
@@ -156,6 +157,13 @@ export interface StoredSource {
   scriptIds: string[];
   scanError?: string;    // set when the scan itself failed (directory listing, manifest fetch, bad URL shape)
   enabled: boolean;      // per-source toggle; defaults true on first load
+  // Short, human-readable label for the sources page heading + the
+  // viewer's Source row. Backfilled from `inferDisplayName(path)` on
+  // first read after upgrade (see `backfillSourceDisplayNames`) so
+  // every persisted row carries one. Treated as a future user-
+  // overridable value: when set, the UI uses it verbatim; the inferred
+  // form is only consulted when this field is absent/empty.
+  displayName?: string;
 }
 
 // Treat any pre-`enabled`-era stored entry as enabled. The schema now
@@ -728,6 +736,10 @@ export async function addSource(rawPath: string): Promise<StoredSource | null> {
     lastRefreshedAt: 0,
     scriptIds: [],
     enabled: true,
+    // Seed an inferred displayName at add-time so a viewer opened
+    // mid-add (or any other reader) doesn't briefly see a row whose
+    // name only materialises on the next backfill pass.
+    displayName: inferDisplayName(path),
   };
   const nextIndex = [...sources.map((s) => s.id), id];
   await chrome.storage.local.set({
@@ -736,6 +748,25 @@ export async function addSource(rawPath: string): Promise<StoredSource | null> {
   });
   const refreshed = await refreshSource(id);
   return refreshed?.source ?? seed;
+}
+
+// Fill in `displayName` on any source row that doesn't have one yet.
+// Runs at sources-page boot (and at any other entry point that wants
+// stable display labels for older rows). Cheap — one read of the
+// source index plus one bulk write iff anything was missing. The
+// pure-inference rules live in `source-display.ts`; that module only
+// imports a TYPE from this file so the cycle is compile-time only.
+export async function backfillSourceDisplayNames(): Promise<void> {
+  const sources = await getSources();
+  const toSet: Record<string, unknown> = {};
+  for (const s of sources) {
+    if (s.displayName && s.displayName.trim()) continue;
+    const next: StoredSource = { ...s, displayName: inferDisplayName(s.path) };
+    toSet[sourceKey(s.id)] = next;
+  }
+  if (Object.keys(toSet).length > 0) {
+    await chrome.storage.local.set(toSet);
+  }
 }
 
 // Reorder the sources index by moving the given source one position
