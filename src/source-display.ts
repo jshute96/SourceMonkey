@@ -13,6 +13,7 @@
 // label) that mirrors `isManifestSource`.
 
 import {
+  githubRawToBlobUrl,
   isFileUrl,
   isHttpUrl,
   pathToFileUrl,
@@ -51,13 +52,20 @@ export function sourceBubbleKey(path: string): string {
   return sourceHasManifest(path) ? `${t}-manifest` : t;
 }
 
-// Fetchable / openable URL for a source — the link target the bubble
-// uses. http(s) and file:// pass through; raw filesystem paths become
-// file:// URLs so the anchor has a valid href (Chromium typically
-// refuses to navigate to file:// from a chrome-extension page, but the
-// URL is still readable + copyable).
+// Openable URL for a source — the link target the bubble uses. For
+// github raw URLs (single-file or manifest sources, post-add-time
+// normalization) we return the `github.com/.../blob/...` page URL
+// instead, since the bubble exists for humans to click — the raw
+// bytes are only used internally for fetching. All other http(s) /
+// file:// URLs pass through; raw filesystem paths become file:// URLs
+// so the anchor has a valid href (Chromium typically refuses to
+// navigate to file:// from a chrome-extension page, but the URL is
+// still readable + copyable).
 export function sourceClickUrl(path: string): string {
-  if (isHttpUrl(path) || isFileUrl(path)) return path;
+  if (isHttpUrl(path)) {
+    return githubRawToBlobUrl(path) ?? path;
+  }
+  if (isFileUrl(path)) return path;
   return pathToFileUrl(path);
 }
 

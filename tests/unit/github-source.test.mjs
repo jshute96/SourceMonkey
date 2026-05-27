@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  githubRawToBlobUrl,
   isGithubDirSource,
   normalizeGithubInput,
   parseGithubUrl,
@@ -317,4 +318,35 @@ test('scanGithubDir surfaces HTTP errors from the Contents API with a rate-limit
     ),
     /HTTP 403.*rate limit/,
   );
+});
+
+// ---------- githubRawToBlobUrl ----------
+
+test('githubRawToBlobUrl converts a raw URL to its github.com blob URL', () => {
+  assert.equal(
+    githubRawToBlobUrl('https://raw.githubusercontent.com/owner/repo/main/foo.user.js'),
+    'https://github.com/owner/repo/blob/main/foo.user.js',
+  );
+});
+
+test('githubRawToBlobUrl handles the new-style /refs/heads/<branch>/ shape', () => {
+  assert.equal(
+    githubRawToBlobUrl('https://raw.githubusercontent.com/owner/repo/refs/heads/main/sub/foo.user.js'),
+    'https://github.com/owner/repo/blob/main/sub/foo.user.js',
+  );
+});
+
+test('githubRawToBlobUrl strips a trailing query string', () => {
+  // The github.com page doesn't carry the raw URL's `?token=…`, so we
+  // drop it. Hash too — fragments are not meaningful on a blob page.
+  assert.equal(
+    githubRawToBlobUrl('https://raw.githubusercontent.com/o/r/main/foo.user.js?token=abc'),
+    'https://github.com/o/r/blob/main/foo.user.js',
+  );
+});
+
+test('githubRawToBlobUrl returns null for non-raw URLs', () => {
+  assert.equal(githubRawToBlobUrl('https://github.com/owner/repo/blob/main/foo.user.js'), null);
+  assert.equal(githubRawToBlobUrl('https://example.com/foo.user.js'), null);
+  assert.equal(githubRawToBlobUrl('file:///home/me/foo.user.js'), null);
 });

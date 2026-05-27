@@ -89,6 +89,26 @@ function githubFileUrlToRaw(p: ParsedGithubUrl): string {
   return `https://raw.githubusercontent.com/${p.owner}/${p.repo}/${p.ref}/${p.path}`;
 }
 
+// Reverse of `githubFileUrlToRaw`: take a `raw.githubusercontent.com`
+// URL and return its `github.com/<o>/<r>/blob/<ref>/<path>` counterpart
+// — the page a human would open in a browser. Used wherever the UI
+// surfaces a github URL for clicking (sources-page bubble, viewer
+// Location row): the raw URL is what we fetch from, but the blob URL
+// is what the user wants to see.
+//
+// Handles both the legacy shape (`/<ref>/<path>`) and the new-style
+// shape with an extra `/refs/heads/` segment before the branch name.
+// Returns null for any URL that isn't a recognised raw URL.
+//
+// Query strings get stripped — a `?token=…` on the raw URL would carry
+// no meaning on the github.com page, and the github page rejects it.
+export function githubRawToBlobUrl(rawUrl: string): string | null {
+  const m = /^https?:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/(?:refs\/heads\/)?([^\/]+)\/([^?#]+)/i.exec(rawUrl);
+  if (!m) return null;
+  const [, owner, repo, ref, path] = m;
+  return `https://github.com/${owner}/${repo}/blob/${ref}/${path}`;
+}
+
 // Resolve a per-script entry under a github-dir source to its raw URL
 // (what `fetchHttpText` reads). Exported for `directories.ts`'s
 // `scriptFileUrl` dispatch.

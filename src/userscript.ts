@@ -33,7 +33,7 @@ import {
   getValue,
   getValues,
 } from './userscript-header.js';
-import { scriptAbsolutePath } from './directories.js';
+import { isFileUrl as isFileUrlString, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -576,14 +576,18 @@ function renderDetails(script: StoredScript): void {
   }
 
   // Resolved location for the script: an absolute filesystem path for
-  // file:// sources, or the fully-resolved URL for HTTP sources. Skip
-  // the row entirely if the source row is gone — a bare relative path
-  // under a "Location" label would be misleading.
+  // file:// sources, the github page URL for github sources, or the
+  // resolved URL for non-github HTTP sources. Skip the row entirely if
+  // the source row is gone — a bare relative path under a "Location"
+  // label would be misleading.
   if (sourcePath) {
     currentFilenamePath = scriptAbsolutePath(sourcePath, script.relativePath);
-    // Anchor target: the canonical fetchable URL (http(s) or file://).
-    // Display text stays the human form (bare fs path for file://).
-    appendRow(dl, 'Location', filenameCell(currentFilenamePath, script.fileUrl));
+    // Anchor href: for file:// sources we use the file:// URL (the
+    // display string is the bare fs path, not navigable). For
+    // everything else display = href, so the user clicks the same URL
+    // they'd copy from the row.
+    const href = isFileUrlString(script.fileUrl) ? script.fileUrl : currentFilenamePath;
+    appendRow(dl, 'Location', filenameCell(currentFilenamePath, href));
   } else {
     currentFilenamePath = '';
   }

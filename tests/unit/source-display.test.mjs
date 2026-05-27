@@ -215,3 +215,18 @@ test('sourceClickUrl: http(s) and file:// URLs pass through; raw paths become fi
   assert.equal(sourceClickUrl('file:///home/me/foo.user.js'), 'file:///home/me/foo.user.js');
   assert.equal(sourceClickUrl('/home/me/foo.user.js'), 'file:///home/me/foo.user.js');
 });
+
+test('sourceClickUrl: github raw URLs convert to their github.com page URL', () => {
+  // The stored path is the raw URL (post `normalizeGithubInput`), but
+  // the bubble exists for humans to click — link them to the github
+  // page, not the raw bytes.
+  assert.equal(
+    sourceClickUrl('https://raw.githubusercontent.com/owner/repo/main/foo.user.js'),
+    'https://github.com/owner/repo/blob/main/foo.user.js',
+  );
+  // /tree/<ref> URLs are already github.com pages; pass through.
+  assert.equal(
+    sourceClickUrl('https://github.com/owner/repo/tree/main'),
+    'https://github.com/owner/repo/tree/main',
+  );
+});

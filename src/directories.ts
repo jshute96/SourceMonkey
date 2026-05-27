@@ -137,9 +137,11 @@ export { normalizeGithubInput as normalizeSourceInput } from './github-source.js
 import {
   githubDirScriptFileUrl,
   githubDirScriptDisplayUrl,
+  githubRawToBlobUrl,
   isGithubDirSource,
   scanGithubDir,
 } from './github-source.js';
+export { githubRawToBlobUrl } from './github-source.js';
 
 // Leaf name (last path segment) of an http(s) URL — used as the
 // FoundScript.name / relativePath for an HTTP single-file source so
@@ -603,19 +605,27 @@ export function scriptFileUrl(sourcePath: string, relativePath: string): string 
   return pathToFileUrl(joinPath(sourceFsPath(sourcePath), relativePath));
 }
 
-// Human-displayable location for a specific scanned script. The rule
-// is uniform: file:// → bare fs path (more readable than the
-// percent-encoded URL form), http(s):// → URL. This is what the
-// viewer's Location row shows for every source kind — including local
-// manifest entries (file://) and HTTP manifest entries (http://) —
+// Human-displayable location for a specific scanned script. Three
+// distinct shapes:
+//   - file:// → bare fs path (more readable than the percent-encoded
+//     URL form).
+//   - github (any flavour — dir source, single-file source, or
+//     manifest source stored as a raw URL after add-time
+//     normalization) → `github.com/<o>/<r>/blob/<ref>/<path>` page
+//     URL. The raw URL is what we fetch from; the blob URL is what a
+//     human would open in a browser.
+//   - non-github http(s):// → URL verbatim.
+// This is what the viewer's Location row shows for every source kind
 // without each source-kind needing its own special case.
 export function scriptAbsolutePath(sourcePath: string, relativePath: string): string {
-  // GitHub directory sources have two URLs per entry: the raw URL we
-  // fetch from (`scriptFileUrl`) and the github.com URL a human would
-  // open in a browser. The viewer's Location row wants the latter.
   if (isGithubDirSource(sourcePath)) {
     return githubDirScriptDisplayUrl(sourcePath, relativePath);
   }
   const url = scriptFileUrl(sourcePath, relativePath);
+  // GitHub single-file / manifest sources are stored as raw URLs after
+  // `normalizeGithubInput`. Convert back to the github page URL so the
+  // Location row matches a github-dir source's display.
+  const blobUrl = githubRawToBlobUrl(url);
+  if (blobUrl) return blobUrl;
   return isFileUrl(url) ? sourceFsPath(url) : url;
 }

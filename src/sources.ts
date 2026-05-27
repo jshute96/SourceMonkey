@@ -123,6 +123,13 @@ function suffixFromLogId(logId: string): string {
 // on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
   await render();
+  // Re-trigger any `#source-<id>` hash scroll after the async render.
+  // The browser's initial jump fires immediately on page load, before
+  // our render() finishes building the sections, so it finds no
+  // matching element and gives up. Look at the hash again now that
+  // every section is in the DOM and scroll the matching one into
+  // view. Triggered for any hash matching the source-anchor shape.
+  scrollToHashSourceIfPresent();
   const params = new URLSearchParams(location.search);
   if (params.has('refresh')) {
     await onRefreshAll();
@@ -132,6 +139,16 @@ async function bootstrap(): Promise<void> {
   if (addSourceArg !== null) {
     await handleAddSourceParam(addSourceArg);
   }
+}
+
+// If the URL hash points at a rendered source section, scroll it into
+// view. No-op otherwise; safe to call any time after render().
+function scrollToHashSourceIfPresent(): void {
+  if (!location.hash.startsWith('#source-')) return;
+  const id = location.hash.slice(1);
+  const section = document.getElementById(id);
+  if (!section) return;
+  section.scrollIntoView({ block: 'start' });
 }
 
 // Drive the Add Source flow from a `?add_source=` query param. Pre-

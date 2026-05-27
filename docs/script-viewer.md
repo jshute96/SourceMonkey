@@ -80,14 +80,19 @@ reports.
        `sources.html#source-<id>`). Same bubble/name combo the sources
        page renders. Row omitted if the parent source row has
        vanished. See [`src/source-display.ts`](../src/source-display.ts).
-     - `Location` — anchor wrapping the resolved location
-       (file:// → bare fs path, http(s):// → URL). Anchor href is the
-       canonical `fileUrl`. Adjacent square button copies the
-       displayed text to the clipboard via
-       `navigator.clipboard.writeText`; icon swaps to a checkmark for
-       ~1.2 s on success. Row omitted if the parent source row has
-       vanished. See the Link rendering section below for the linkify
-       rules.
+     - `Location` — anchor wrapping the resolved location. Display
+       form depends on source kind:
+       - `file://` → bare fs path
+       - `github` (any flavour) → `github.com/<o>/<r>/blob/<ref>/<path>`
+         page URL (raw URL is internal-only)
+       - non-github `http(s)://` → URL verbatim
+       Anchor href matches the display URL for everything except
+       `file://`, where the href is the file:// URL (the bare fs path
+       isn't navigable). Adjacent square button copies the displayed
+       text to the clipboard via `navigator.clipboard.writeText`; icon
+       swaps to a checkmark for ~1.2 s on success. Row omitted if the
+       parent source row has vanished. See the Link rendering section
+       below for the linkify rules.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
      - `Status` — `OK` / `ERROR` / `MISSING`, color-coded; the
        row's `title` carries `errorMessage` when present.
