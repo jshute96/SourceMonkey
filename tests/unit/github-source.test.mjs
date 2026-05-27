@@ -336,6 +336,36 @@ test('githubRawToBlobUrl handles the new-style /refs/heads/<branch>/ shape', () 
   );
 });
 
+test('githubRawToBlobUrl handles refs/tags/<tag>/ shape', () => {
+  // GitHub's blob route accepts tag refs the same way it accepts
+  // branch refs, so the conversion is symmetric.
+  assert.equal(
+    githubRawToBlobUrl('https://raw.githubusercontent.com/owner/repo/refs/tags/v1.2.3/foo.user.js'),
+    'https://github.com/owner/repo/blob/v1.2.3/foo.user.js',
+  );
+});
+
+test('githubRawToBlobUrl handles the github.com/<o>/<r>/raw/ shape', () => {
+  // The "Raw" button on github.com produces this form. It 302s to
+  // raw.githubusercontent.com, but we may store / resolve URLs in
+  // this shape (notably for github-manifest sources whose stored
+  // path is `github.com/.../raw/refs/heads/main/script_manifest.json`).
+  assert.equal(
+    githubRawToBlobUrl('https://github.com/owner/repo/raw/refs/heads/main/foo.user.js'),
+    'https://github.com/owner/repo/blob/main/foo.user.js',
+  );
+  // Manifest source itself.
+  assert.equal(
+    githubRawToBlobUrl('https://github.com/owner/repo/raw/refs/heads/main/script_manifest.json'),
+    'https://github.com/owner/repo/blob/main/script_manifest.json',
+  );
+  // Legacy /raw/<ref>/ shape (no /refs/heads/).
+  assert.equal(
+    githubRawToBlobUrl('https://github.com/owner/repo/raw/main/foo.user.js'),
+    'https://github.com/owner/repo/blob/main/foo.user.js',
+  );
+});
+
 test('githubRawToBlobUrl strips a trailing query string', () => {
   // The github.com page doesn't carry the raw URL's `?token=…`, so we
   // drop it. Hash too — fragments are not meaningful on a blob page.

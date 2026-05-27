@@ -33,7 +33,7 @@ import {
   getValue,
   getValues,
 } from './userscript-header.js';
-import { isFileUrl as isFileUrlString, scriptAbsolutePath } from './directories.js';
+import { isFileUrl, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -586,7 +586,7 @@ function renderDetails(script: StoredScript): void {
     // display string is the bare fs path, not navigable). For
     // everything else display = href, so the user clicks the same URL
     // they'd copy from the row.
-    const href = isFileUrlString(script.fileUrl) ? script.fileUrl : currentFilenamePath;
+    const href = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
     appendRow(dl, 'Location', filenameCell(currentFilenamePath, href));
   } else {
     currentFilenamePath = '';

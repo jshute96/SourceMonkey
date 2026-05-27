@@ -89,21 +89,44 @@ function githubFileUrlToRaw(p: ParsedGithubUrl): string {
   return `https://raw.githubusercontent.com/${p.owner}/${p.repo}/${p.ref}/${p.path}`;
 }
 
-// Reverse of `githubFileUrlToRaw`: take a `raw.githubusercontent.com`
-// URL and return its `github.com/<o>/<r>/blob/<ref>/<path>` counterpart
-// — the page a human would open in a browser. Used wherever the UI
-// surfaces a github URL for clicking (sources-page bubble, viewer
-// Location row): the raw URL is what we fetch from, but the blob URL
-// is what the user wants to see.
+// Reverse of `githubFileUrlToRaw`: take a raw-content GitHub URL and
+// return its `github.com/<o>/<r>/blob/<ref>/<path>` counterpart — the
+// page a human would open in a browser. Used wherever the UI surfaces
+// a github URL for clicking (sources-page bubble, viewer Location
+// row): the raw URL is what we fetch from, but the blob URL is what
+// the user wants to see.
 //
-// Handles both the legacy shape (`/<ref>/<path>`) and the new-style
-// shape with an extra `/refs/heads/` segment before the branch name.
-// Returns null for any URL that isn't a recognised raw URL.
+// "Raw" here covers both hosts GitHub serves raw bytes from:
+//   - `raw.githubusercontent.com/<o>/<r>/[refs/<type>/]<ref>/<path>`
+//   - `github.com/<o>/<r>/raw/[refs/<type>/]<ref>/<path>` (the form
+//     produced by github.com's own "Raw" button — it 302s to the
+//     `raw.githubusercontent.com` host but we may store the URL in
+//     this form when the user pastes it directly, or when a manifest
+//     entry resolves to a URL in this shape).
 //
-// Query strings get stripped — a `?token=…` on the raw URL would carry
-// no meaning on the github.com page, and the github page rejects it.
+// The optional `/refs/<type>/` segment is the new-style raw URL.
+// `<type>` is typically `heads` (branch) but can also be `tags` or
+// `pull` — we accept any single segment there so tag URLs map
+// correctly to `blob/<tag>/<path>`. Both stripped shapes resolve to
+// the same content.
+//
+// Limitation inherited from the rest of this module: branch names
+// containing `/` (e.g. `feature/foo`) are not supported — the
+// first ref segment is taken and the rest folded into the path.
+//
+// Returns null for any URL that isn't a recognised raw URL — callers
+// fall back to the original URL.
+//
+// Query strings + fragments get stripped — they don't carry over to
+// the github.com page (a `?token=…` is raw-only; an `#L42` fragment
+// would point at the wrong viewer anchor).
 export function githubRawToBlobUrl(rawUrl: string): string | null {
-  const m = /^https?:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/(?:refs\/heads\/)?([^\/]+)\/([^?#]+)/i.exec(rawUrl);
+  // Two regexes (rather than one with alternation) because owner/repo
+  // sit at different positions in the two shapes.
+  let m = /^https?:\/\/raw\.githubusercontent\.com\/([^\/]+)\/([^\/]+)\/(?:refs\/[^\/]+\/)?([^\/]+)\/([^?#]+)/i.exec(rawUrl);
+  if (!m) {
+    m = /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/raw\/(?:refs\/[^\/]+\/)?([^\/]+)\/([^?#]+)/i.exec(rawUrl);
+  }
   if (!m) return null;
   const [, owner, repo, ref, path] = m;
   return `https://github.com/${owner}/${repo}/blob/${ref}/${path}`;

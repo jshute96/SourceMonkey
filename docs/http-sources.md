@@ -43,6 +43,9 @@ recognises three shapes:
     time and stored as a regular HTTP single-file / manifest source.
   - Why: the `github.com/.../blob/...` URL serves an HTML rendering, not
     the raw bytes.
+  - The reverse `githubRawToBlobUrl` (in `github-source.ts`) converts
+    back for any UI link target — the bubble and Location row link to
+    the github page, not the raw URL.
 - **A directory**: `https://github.com/<o>/<r>/tree/<ref>/<path>`
   (a `/blob/<ref>/<dir>` typo is also accepted).
   - Stored as-is. Scanned via the GitHub Contents API (one call per
