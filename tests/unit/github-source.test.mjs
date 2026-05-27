@@ -19,6 +19,7 @@ import {
   parseGithubUrl,
   scanGithubDir,
 } from '../../dist/github-source.js';
+import { _setGithubAuthTokenForTests } from '../../dist/github-auth.js';
 
 async function withFetch(impl, fn) {
   const original = globalThis.fetch;
@@ -222,8 +223,46 @@ test('normalizeGithubInput appends a private-repo hint on 404', async () => {
     withFetch(fakeFetch, () =>
       normalizeGithubInput('https://github.com/foo/bar'),
     ),
-    /repo is private/,
+    // No token configured → hint points at the Options page so the
+    // user has a concrete next step rather than a dead end.
+    /set a GitHub token on the Options page/,
   );
+});
+
+test('normalizeGithubInput hint differs when a token is already configured', async () => {
+  // With a token set, "private repo" or "rate limit" advice would be
+  // wrong/stale — the user already has auth, so the failure is about
+  // the token's access scope. Verify the copy adapts on each status.
+  _setGithubAuthTokenForTests('ghp_x');
+  try {
+    const make = (status) => async () => ({ ok: false, status, json: async () => ({}) });
+
+    // 404 with token: "token can't see this repo"
+    await assert.rejects(
+      withFetch(make(404), () => normalizeGithubInput('https://github.com/foo/bar')),
+      /your token can't see this repo/,
+    );
+
+    // 403 with token: scope / rate-limit (5000/hr)
+    await assert.rejects(
+      withFetch(make(403), () => normalizeGithubInput('https://github.com/foo/bar')),
+      /5000\/hour/,
+    );
+
+    // 401: token rejected
+    await assert.rejects(
+      withFetch(make(401), () => normalizeGithubInput('https://github.com/foo/bar')),
+      /token rejected/,
+    );
+
+    // 429: rate-limit explicit. Hint should mirror 403's "rate limit" guidance.
+    await assert.rejects(
+      withFetch(make(429), () => normalizeGithubInput('https://github.com/foo/bar')),
+      /rate limit/,
+    );
+  } finally {
+    _setGithubAuthTokenForTests('');
+  }
 });
 
 test('normalizeGithubInput rejects a bare repo with no default_branch in the metadata', async () => {

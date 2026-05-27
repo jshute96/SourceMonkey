@@ -30,6 +30,7 @@
 // rest is the path.
 
 import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './source-scan.js';
+import { githubAuthHeaders, getGithubAuthToken } from './github-auth.js';
 
 const GITHUB_URL_RE = /^https?:\/\/github\.com\/([^\/?#]+)\/([^\/?#]+)\/(blob|tree)\/([^\/?#]+)(?:\/([^?#]*))?(?:\?[^#]*)?(?:#.*)?$/i;
 
@@ -174,7 +175,10 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
   try {
     response = await fetch(apiUrl, {
       cache: 'no-store',
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        ...githubAuthHeaders(apiUrl),
+      },
     });
   } catch (err) {
     throw new Error(`error fetching ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
@@ -240,13 +244,26 @@ function githubContentsApiUrl(p: ParsedGithubUrl, subPath: string): string {
 // the failure is self-diagnosing. GitHub returns the same 404 for
 // "repo doesn't exist" and "repo exists but you can't see it without
 // auth", so the hint covers both. 403 unauthenticated almost always
-// means the per-IP rate limit ran out; auth would raise it.
+// means the per-IP rate limit ran out; an authenticated 403 means the
+// token doesn't have access to the repo or is missing a scope.
+// The hint text branches on whether a token is configured so the
+// user gets a next-step pointer rather than stale advice.
 function githubAuthHint(status: number): string {
+  const hasToken = !!getGithubAuthToken();
   if (status === 404) {
-    return ' (repo / path not found, or repo is private — private repos require auth, not yet supported)';
+    if (hasToken) {
+      return ' (repo / path not found, or your token can\'t see this repo — check the token\'s repo access on github.com)';
+    }
+    return ' (repo / path not found, or repo is private — set a GitHub token on the Options page to fetch private repos)';
   }
-  if (status === 403) {
-    return ' (likely the unauthenticated 60/hr API rate limit — authenticated sources not yet supported)';
+  if (status === 403 || status === 429) {
+    if (hasToken) {
+      return ' (rate limit hit, or your token lacks the required scope — authenticated requests get 5000/hour against api.github.com)';
+    }
+    return ' (likely the unauthenticated 60/hr API rate limit — set a GitHub token on the Options page to raise it to 5000/hr)';
+  }
+  if (status === 401) {
+    return ' (token rejected — re-check the value on the Options page)';
   }
   return '';
 }
@@ -268,7 +285,10 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
   try {
     response = await fetch(apiUrl, {
       cache: 'no-store',
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        ...githubAuthHeaders(apiUrl),
+      },
     });
   } catch (err) {
     throw new Error(`error fetching ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);

@@ -30,6 +30,10 @@ import {
   installDebugLoggingListener,
   loadDebugLoggingFlag,
 } from './debug-log.js';
+import {
+  installGithubAuthListener,
+  loadGithubAuthToken,
+} from './github-auth.js';
 import { installDeepLinkRedirect } from './deep-link.js';
 import {
   ensureLogIdsLoaded,
@@ -1918,6 +1922,7 @@ installNavigationListeners();
 installDeepLinkRedirect();
 installScriptMessageListener();
 installDebugLoggingListener();
+installGithubAuthListener();
 installNotificationListeners();
 installActionContextMenu();
 // Kick off the initial cache load so the very first navigation doesn't
@@ -1926,6 +1931,7 @@ installActionContextMenu();
 void ensureLoaded();
 void syncRegistrations();
 void loadDebugLoggingFlag();
+void loadGithubAuthToken();
 // Surface parse-time diagnostics into each script's Log tab the first
 // time the SW boots in a Chrome session. The replay is gated by a
 // session-storage sentinel so SW restarts within the session bail out

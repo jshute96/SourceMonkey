@@ -54,12 +54,27 @@ diagnosing matcher or updater behavior but too noisy for default.
 Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 
 - Off by default.
-- Toggle: "Enable debug logging" checkbox at the bottom of the
-  sources page.
+- Toggle: "Enable debug logging" checkbox on the Options page
+  (linked from the top of the sources page).
 - Storage key: `chrome.storage.local.smDebugLogging` — set/clear
   from DevTools to flip without the UI.
 - Live update: the SW listens via `storage.onChanged` so the change
   takes effect without reloading the extension.
+
+## GitHub-token suffix
+
+Source-refresh and per-script update-check log lines get an extra
+` (with GitHub token)` suffix when the URL would carry the Options-
+page GitHub PAT (`src/github-auth.ts`, host-gated):
+
+- `source refresh (mode): <path> (with GitHub token)` — fires when
+  the source is a github.com / raw.githubusercontent.com URL AND a
+  token is configured.
+- `update check (mode): <logId> (with GitHub token)` — same idea for
+  per-script checks whose `fileUrl` is a GitHub URL.
+
+Empty suffix when no token is set, or when the URL isn't GitHub —
+non-GitHub sources stay quiet.
 
 ## Message catalog
 

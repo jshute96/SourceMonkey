@@ -40,8 +40,8 @@ details live in the topic-specific docs linked below.
   source directories and inspect per-script status. See
   [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
-  settings page (currently just the debug-logging toggle). Reached
-  via the Options link at the top of the sources page.
+  settings page: debug-logging toggle and GitHub auth token entry.
+  Reached via the Options link at the top of the sources page.
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
   [storage.md](storage.md).
@@ -55,6 +55,14 @@ details live in the topic-specific docs linked below.
   provider (URL parsing, blob→raw rewrite, Contents-API scanner) which
   lives in its own module and is dispatched to from `directories.ts`.
   See [file-access.md](file-access.md) and
+  [http-sources.md](http-sources.md).
+- **GitHub auth** (`src/github-auth.ts`) — persisted PAT cache +
+  `githubAuthHeaders(url)` host-gated helper. Spread into every
+  fetch site that talks to `api.github.com` or
+  `raw.githubusercontent.com`; never attached to any other host
+  (including `github.com/<o>/<r>/raw/`, which 302s to raw and the
+  Fetch spec strips Authorization on cross-origin redirects). See
+  the GitHub-authentication section of
   [http-sources.md](http-sources.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
   (`@icon`, `@require`, `@resource`) into absolute URLs against the

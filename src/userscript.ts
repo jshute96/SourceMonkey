@@ -50,6 +50,17 @@ import {
   splitResourceValue,
   splitTextByUrls,
 } from './script-links.js';
+import {
+  installGithubAuthListener,
+  loadGithubAuthToken,
+} from './github-auth.js';
+
+// The viewer's Refresh button runs fetchHttpText in the page context,
+// so the page needs its own copy of the cached GitHub token. The
+// Refresh handler awaits the initial load before issuing the fetch so
+// a click before hydration can't run unauthenticated.
+installGithubAuthListener();
+const githubTokenReady = loadGithubAuthToken();
 
 declare const Prism: {
   highlightElement(el: Element): void;
@@ -245,6 +256,10 @@ async function onRefresh(): Promise<void> {
   const prior = refreshBtn.textContent;
   refreshBtn.textContent = 'Refreshing…';
   try {
+    // Wait for the GitHub token cache to hydrate first; otherwise a
+    // very fast Refresh click can fire before chrome.storage.local
+    // has resolved and the fetch goes out unauthenticated.
+    await githubTokenReady;
     // Routed through the shared updater: if a background opportunistic
     // check is already in flight for this script, we wait for it
     // instead of starting a second fetch.

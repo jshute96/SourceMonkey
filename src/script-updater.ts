@@ -40,6 +40,7 @@ import {
   type StoredSource,
 } from './script-store.js';
 import { dlog } from './debug-log.js';
+import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
 import { getScriptLog, logScriptEvent } from './script-log.js';
 
@@ -181,7 +182,8 @@ async function runScriptCheck(
   // Opportunistic checks fire on every navigation and are gated by the
   // debug flag.
   const checkLog = mode === 'manual' ? console.log : dlog;
-  checkLog(`[SourceMonkey] update check (${mode}): ${label}`);
+  const tokenSuffix = prior?.fileUrl ? githubTokenLogSuffix(prior.fileUrl) : '';
+  checkLog(`[SourceMonkey] update check (${mode}): ${label}${tokenSuffix}`);
   logScriptEvent(scriptId, {
     level: 'info',
     source: `refresh-${mode}`,
@@ -212,7 +214,13 @@ async function runSourceCheck(
   const prior = await getSourceWithScripts(sourceId);
   const priorBy = new Map((prior?.scripts ?? []).map((s) => [s.id, s]));
   const label = prior?.source.path ?? sourceId;
-  console.log(`[SourceMonkey] source refresh (${mode}): ${label}`);
+  // Suffix the start line with "(with GitHub token)" when the source
+  // URL would carry the GitHub auth header on fetch. Lets the user
+  // confirm from the SW console that their Options-page token is
+  // actually in play for this source (otherwise a silent "still
+  // hitting unauthenticated rate limits" is hard to diagnose).
+  const tokenSuffix = prior?.source.path ? githubTokenLogSuffix(prior.source.path) : '';
+  console.log(`[SourceMonkey] source refresh (${mode}): ${label}${tokenSuffix}`);
   let result: { source: StoredSource; scripts: StoredScript[] } | null;
   try {
     result = await refreshSource(sourceId, { recheckFiles: fileRecheckMode(mode) });

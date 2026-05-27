@@ -14,6 +14,20 @@
       .settings-row { display: inline-flex; align-items: center; gap: 0.5em; cursor: pointer; }
       .settings-row input[type="checkbox"] { cursor: pointer; margin: 0; }
       .settings-hint { margin: 0.3em 0 0; font-size: 0.85em; color: #666; }
+      .settings-section { margin-top: 2em; padding-top: 1em; border-top: 1px solid #eee; }
+      .token-row { display: flex; gap: 0.5em; align-items: center; margin: 0.5em 0; }
+      .token-row input[type="password"],
+      .token-row input[type="text"] {
+        flex: 1; font: inherit; padding: 0.3em 0.5em;
+      }
+      .token-status { font-size: 0.85em; color: #666; min-height: 1.2em; margin: 0.3em 0 0; }
+      .token-status.ok { color: #1a7f37; }
+      .token-status.err { color: #b00020; }
+      details.token-help { margin-top: 0.8em; font-size: 0.9em; }
+      details.token-help summary { cursor: pointer; color: #555; }
+      details.token-help ol { margin: 0.5em 0 0; padding-left: 1.4em; }
+      details.token-help li { margin: 0.3em 0; }
+      details.token-help code { background: #f4f4f4; padding: 0 0.25em; border-radius: 2px; }
       #version { font-size: 0.85em; color: #888; margin-top: 2em; }
     </style>
   </head>
@@ -33,7 +47,57 @@
       <p class="settings-hint">Logs per-navigation match lists and per-script update checks to the service-worker console. Off by default.</p>
     </div>
 
-    <p id="version" class="placeholder"></p>
+    <div id="github-auth" class="settings-section">
+      <h2 class="settings-heading">GitHub authentication</h2>
+      <p class="settings-hint">
+        Optional personal access token used when fetching from
+        <code>api.github.com</code> and
+        <code>raw.githubusercontent.com</code>. Lets you add private
+        repos and lifts the GitHub API limit from <strong>60</strong>
+        to <strong>5000</strong> requests per hour. Stored in
+        <code>chrome.storage.local</code> on this machine; never sent
+        to any non-GitHub host.
+      </p>
+      <div class="token-row">
+        <input id="github-token" type="password" autocomplete="off" spellcheck="false"
+               placeholder="ghp_… or github_pat_…" />
+        <button id="github-token-reveal" type="button" title="Show / hide the token">Show</button>
+        <button id="github-token-save" type="button">Save</button>
+        <button id="github-token-clear" type="button" title="Remove the saved token">Clear</button>
+      </div>
+      <p id="github-token-status" class="token-status"></p>
+      <details class="token-help">
+        <summary>How to create a token</summary>
+        <ol>
+          <li>
+            Open
+            <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">
+              github.com/settings/personal-access-tokens
+            </a>
+            and click <strong>Generate new token</strong> (fine-grained recommended).
+          </li>
+          <li>
+            <strong>Repository access</strong>: pick the repos you want
+            SourceMonkey to reach (or <em>All repositories</em> for
+            convenience). For public repos you just want higher rate
+            limits on, the default <em>Public repositories</em> selection
+            is enough.
+          </li>
+          <li>
+            <strong>Permissions → Repository → Contents</strong>: select
+            <code>Read-only</code>. That's the only scope SourceMonkey
+            uses; leave everything else at <em>No access</em>.
+          </li>
+          <li>Set an expiry, generate the token, and paste it above.</li>
+        </ol>
+        <p class="settings-hint">
+          Tip: revoke the token from the same settings page if you
+          stop using SourceMonkey. Tokens never expire automatically
+          unless you set an expiry.
+        </p>
+      </details>
+    </div>
+
     <script src="options.js" type="module"></script>
   </body>
 </html>

@@ -142,6 +142,7 @@ import {
   scanGithubDir,
 } from './github-source.js';
 export { githubRawToBlobUrl } from './github-source.js';
+import { githubAuthHeaders } from './github-auth.js';
 
 // Leaf name (last path segment) of an http(s) URL — used as the
 // FoundScript.name / relativePath for an HTTP single-file source so
@@ -278,6 +279,13 @@ export async function fetchHttpText(
   const headers: Record<string, string> = {};
   if (opts.etag) headers['If-None-Match'] = opts.etag;
   if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified;
+  // Attach the configured GitHub token when the URL targets a GitHub
+  // host. No-op for any other URL. Lets private-repo raw URLs and
+  // private repo manifests fetch under auth without each call site
+  // having to opt in. Header host-gating is enforced inside
+  // githubAuthHeaders so a token can never be leaked to a non-GitHub
+  // host.
+  Object.assign(headers, githubAuthHeaders(url));
 
   let response: Response;
   try {

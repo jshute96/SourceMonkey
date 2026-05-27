@@ -53,6 +53,19 @@ import {
 import { computeLogIds } from './script-log-id.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { isHttpUrl, isFileUrl, normalizeSourceInput } from './directories.js';
+import {
+  installGithubAuthListener,
+  loadGithubAuthToken,
+} from './github-auth.js';
+
+// Refresh-from-sources-page paths run fetchHttpText in the page
+// context, so the page needs its own copy of the cached GitHub token
+// — the SW's cached value isn't reachable from here. Listen
+// synchronously; bootstrap() awaits the initial load before any
+// refresh can fire so a `?refresh` query-param can't race against
+// hydration and run unauthenticated.
+installGithubAuthListener();
+const githubTokenReady = loadGithubAuthToken();
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -122,6 +135,10 @@ function suffixFromLogId(logId: string): string {
 // Lets the docs/redirect-page.md deep link route here from anywhere
 // on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
+  // Ensure the GitHub auth token is hydrated before any refresh fires.
+  // Otherwise a `?refresh` query-param can race the chrome.storage.local
+  // read and the first refresh-on-load runs unauthenticated.
+  await githubTokenReady;
   await render();
   // Re-trigger any `#source-<id>` hash scroll after the async render.
   // The browser's initial jump fires immediately on page load, before

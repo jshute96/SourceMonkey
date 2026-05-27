@@ -36,6 +36,7 @@
 // reached via a manifest.
 
 import { isFileUrl, isHttpUrl } from './directories.js';
+import { githubAuthHeaders } from './github-auth.js';
 
 export type ResolvedKind = 'http' | 'file' | 'data';
 
@@ -151,6 +152,11 @@ async function fetchHttpBytes(
       redirect: 'follow',
       referrerPolicy: 'no-referrer',
       signal: controller.signal,
+      // Attach GitHub auth header when the URL targets a GitHub host so
+      // `@require` / `@resource` / icon fetches against private raw
+      // URLs work. Host-gated inside `githubAuthHeaders` so non-GitHub
+      // hosts never see the token.
+      headers: { ...githubAuthHeaders(url) },
     });
   } catch {
     return null;

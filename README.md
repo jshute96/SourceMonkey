@@ -175,6 +175,13 @@ against the prior so identical content still counts as "no change."
   clicks still log unconditionally. Enable the verbose lines via the
   "Enable debug logging" checkbox on the Options page (linked from the
   top of the sources page).
+- **GitHub authentication.** Paste a GitHub personal access token on
+  the Options page to fetch private repos and to raise the GitHub
+  API rate limit from 60/hour (unauthenticated, per-IP) to
+  5000/hour (per-token). The token is attached only to requests at
+  `api.github.com` and `raw.githubusercontent.com` — never sent
+  anywhere else. A fine-grained PAT with **Contents: Read-only** is
+  enough; the Options page has the step-by-step.
 - **Log IDs.** Every script gets a short, file-derived label used in
   every SW log line and shown on the script viewer page (as **Log
   ID**). The label is the script's basename (`foo.user.js`); if two

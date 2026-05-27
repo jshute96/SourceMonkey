@@ -72,14 +72,53 @@ Limits:
   Contents-API call per walked directory. Per-script raw fetches don't
   count against this budget — `raw.githubusercontent.com` has no API
   rate limit and uses ETag-based conditional GETs, so refresh of
-  unchanged scripts is bandwidth-cheap. Authenticated-source support
-  is tracked in `TODO.md`.
+  unchanged scripts is bandwidth-cheap.
+- **Authenticated requests** (via the GitHub token on the Options
+  page) raise the API budget to **5000/hour** and unlock private
+  repos. See the [GitHub authentication](#github-authentication)
+  section below.
 - Branch names containing slashes (e.g. `feature/foo`) aren't
   supported — the parser takes the first ref segment as `<ref>` and
   treats everything after as the path.
 - A repo's default branch can change after the source is added; the
   stored URL keeps the originally-resolved branch (re-add to track a
   new default).
+
+## GitHub authentication
+
+A personal access token configured on the Options page lets
+SourceMonkey:
+
+- **Fetch private repos** — needed for both Contents-API scans and
+  per-script raw fetches.
+- **Raise the API rate limit** from 60/hour (per-IP) to 5000/hour
+  (per-token) against `api.github.com`.
+
+Where the token is sent:
+
+- `api.github.com` — repo-metadata + Contents-API calls.
+- `raw.githubusercontent.com` — per-script raw fetches.
+- Nothing else — host gate is strict; no token leaks to other origins.
+
+Notable omission: `github.com/<o>/<r>/raw/<ref>/<path>`.
+
+- That route 302s to `raw.githubusercontent.com`.
+- The Fetch spec strips `Authorization` on cross-origin redirects,
+  so the token wouldn't survive the hop.
+- `normalizeGithubInput` rewrites `/blob/` + bare-repo URLs to the
+  raw form at add time, so the common case is already handled.
+
+What benefits automatically (no per-call opt-in needed):
+
+- Single-file HTTP sources at a GitHub URL.
+- Manifest sources, including per-entry resolved URLs.
+- `@require` / `@resource` / `@icon` fetches targeting GitHub.
+
+All flow through `fetchHttpText` / `fetchResourceBytes`, both of
+which spread `githubAuthHeaders(url)` into the request headers.
+
+Token scope: **Contents: Read-only** is enough for a fine-grained
+PAT. See the Options page for the step-by-step.
 
 ## Manifest format
 

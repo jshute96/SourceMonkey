@@ -253,9 +253,10 @@ during cumulative review of the GM_* phases:
 - End-to-end test coverage for the HTTP pipeline (the in-test
   fixture server can already serve arbitrary files; needs a
   `*.user.js` route plus a manifest route, then `sm.addSource(url)`).
-- Authenticated sources (basic-auth header, GitHub PAT, etc.) for
-  private repos or unlisted gists. The current design only handles
-  publicly-fetchable URLs.
+- Authenticated sources for non-GitHub hosts (basic-auth header,
+  per-source bearer token, etc.). GitHub PATs are wired up via
+  `src/github-auth.ts`; everything else still relies on URLs being
+  publicly fetchable.
 
 ## `@require` follow-ups
 
