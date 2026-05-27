@@ -5,6 +5,7 @@ console.log('[bad-examples/leading-text] logging above the ==UserScript== header
 
 // ==UserScript==
 // @name        Leading Text
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @match       https://example.com/*
 // @version     1.0.1
 // ==/UserScript==

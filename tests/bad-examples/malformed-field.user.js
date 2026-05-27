@@ -1,5 +1,6 @@
 // ==UserScript==
 // @name        Malformed Field
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @match=https://example.com/*
 // @grant
 // @version     1.0.0

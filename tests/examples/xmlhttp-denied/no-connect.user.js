@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_xmlhttpRequest with no @connect
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Demonstrates strict-by-default @connect: no @connect lines blocks every URL.
 // @match       *://*/xmlhttp-denied/xmlhttp-denied.html

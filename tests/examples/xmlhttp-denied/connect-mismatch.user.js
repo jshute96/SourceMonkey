@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_xmlhttpRequest with @connect not covering target
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Demonstrates that @connect for the wrong host still blocks the request.
 // @match       *://*/xmlhttp-denied/xmlhttp-denied.html

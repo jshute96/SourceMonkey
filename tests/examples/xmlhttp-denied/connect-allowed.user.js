@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_xmlhttpRequest with @connect covering target
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Demonstrates that @connect 127.0.0.1 lets the request through.
 // @match       *://*/xmlhttp-denied/xmlhttp-denied.html

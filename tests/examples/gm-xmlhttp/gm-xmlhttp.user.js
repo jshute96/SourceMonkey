@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_xmlhttpRequest
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Issue cross-origin HTTP requests via GM_xmlhttpRequest.
 // @match       *://*/gm-xmlhttp/gm-xmlhttp.html

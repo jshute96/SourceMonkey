@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM value-change listeners
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Register/remove GM_addValueChangeListener callbacks.
 // @match       *://*/gm-value-listeners/gm-value-listeners.html

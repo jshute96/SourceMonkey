@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_registerMenuCommand
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Register and unregister entries in the toolbar action's right-click menu.
 // @match       *://*/gm-menu/gm-menu.html

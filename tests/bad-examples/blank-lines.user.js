@@ -1,5 +1,6 @@
 // ==UserScript==
 // @name        Blank Lines
+// @namespace   https://github.com/jshute96/SourceMonkey
 
 // @match       https://example.com/*
 //

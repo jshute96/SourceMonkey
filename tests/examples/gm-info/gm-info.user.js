@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_info
-// @namespace   sourcemonkey.example
+// @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Render GM_info as JSON onto the page.
 // @match       *://*/gm-info/gm-info.html

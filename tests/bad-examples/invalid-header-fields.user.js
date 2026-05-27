@@ -1,5 +1,6 @@
 // ==UserScript==
 // @name             Invalid Header Fields
+// @namespace        https://github.com/jshute96/SourceMonkey
 // @match            https://example.com/*
 // @version          1.0.0
 // @cookie-jar       enabled
