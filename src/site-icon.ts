@@ -1,7 +1,7 @@
 import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
 import { representativeMatch } from './match-targets.js';
 
-// Site-icon (favicon) extraction + cache. Used by the options page
+// Site-icon (favicon) extraction + cache. Used by the sources page
 // and userscript viewer to show a 16x16 icon next to each script.
 //
 // Two-tier lookup, so deep-targeted scripts (e.g. one userscript per

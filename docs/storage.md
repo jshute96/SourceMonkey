@@ -99,7 +99,7 @@ Key spaces in `chrome.storage.local`:
     preserved so the viewer keeps working.
   - If the file returns on a later refresh, the prior `enabled` is
     preserved so the user's choice survives.
-  - The options page surfaces a trash-can button on missing rows
+  - The sources page surfaces a trash-can button on missing rows
     (`removeScript`) for clearing records the user doesn't expect back.
   - **Re-enabling** a missing row makes it run again from the cached
     body — match-index and injector both treat enabled `missing` rows
@@ -137,7 +137,7 @@ each one supports, and then has a universal fallback:
 3. **Post-fetch content compare** — `buildScriptFromText` rehashes the
    freshly fetched bytes and compares with the prior `contentHash`.
    Match → `loadedAt` is preserved (the row is logically unchanged,
-   so the options page's "row updated" highlight doesn't fire).
+   so the sources page's "row updated" highlight doesn't fire).
    Mismatch → `loadedAt` is bumped to now.
 
 This makes the **outcome** uniform across every combination of
@@ -228,7 +228,7 @@ Every load path goes through the same pipeline:
 - `refreshSource(id)` — full rescan + reload of one source
   (with the unchanged-file skip described above).
 - `refreshAllSources()` — runs `refreshSource` for every registered
-  source in parallel. Used by the options page's "Refresh All"
+  source in parallel. Used by the sources page's "Refresh All"
   button and by the `?refresh` URL trigger.
 - `removeSource(id)` — drop the source row + every child script row +
   rewrite the index.
@@ -236,7 +236,7 @@ Every load path goes through the same pipeline:
   the `"sources"` index. No-op at the boundary. Only the index row
   is rewritten; per-source rows untouched.
 - `removeScript(id)` — drop a single script row and remove its ID
-  from the parent source's `scriptIds`. Used by the options page's
+  from the parent source's `scriptIds`. Used by the sources page's
   trash-can button on `'missing'` rows.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildSource`
@@ -254,7 +254,7 @@ Every load path goes through the same pipeline:
   write. The match index picks up the change via `storage.onChanged`.
 - `setScriptsEnabled(updates)` — bulk variant: flips many scripts'
   enabled flags in a **single** `chrome.storage.local.set` call.
-  Used by the options page's bulk +/− toggle so 15 flips fire one
+  Used by the sources page's bulk +/− toggle so 15 flips fire one
   `storage.onChanged` event (and therefore one background re-sync)
   instead of one per script.
 
@@ -315,9 +315,9 @@ unit tests don't need a `chrome.storage` stub:
 
 Covered by `tests/unit/script-store.test.mjs`.
 
-## Options-page render
+## Sources-page render
 
-The options page reads from the store and renders **one section per
+The sources page reads from the store and renders **one section per
 source**:
 
 - **Enable** toggle (checkbox) for the source as a whole, placed to
@@ -365,14 +365,14 @@ Each rendered source section gets a stable DOM id
 or via `jumpToSource(id)`. After a successful add the page scrolls
 to the new section and writes `#source-<id>` into the URL.
 
-A page-level **Refresh All** button at the top of the options page
+A page-level **Refresh All** button at the top of the sources page
 runs `refreshAllSources()` and re-renders every section in place. The
-same flow is auto-triggered when the options page is opened with
+same flow is auto-triggered when the sources page is opened with
 `?refresh` in the query string — i.e. an external tool can poke the
 extension with:
 
 ```
-google-chrome chrome-extension://<extension-id>/options.html?refresh
+google-chrome chrome-extension://<extension-id>/sources.html?refresh
 ```
 
 after writing new userscripts to disk. Combined with the unchanged-
@@ -409,7 +409,7 @@ See [change detection](#change-detection-the-last-change-token).
 
 ### In-place updates (no full re-render)
 
-The options page does **not** re-render the whole `#directories` list
+The sources page does **not** re-render the whole `#directories` list
 on every interaction. Each user action mutates only the affected DOM:
 
 - Per-source toggle → flips `.disabled` on the section, retitles each

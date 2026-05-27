@@ -20,8 +20,8 @@ details live in the topic-specific docs linked below.
 
 ```
 +------------------+        +-----------------------+        +---------------+
-| Options page UI  |  -->   | background service    |  -->   | chrome.storage
-| (options.html)   |        | worker (background.ts)|        |  .local       |
+| Sources page UI  |  -->   | background service    |  -->   | chrome.storage
+| (sources.html)   |        | worker (background.ts)|        |  .local       |
 +------------------+        +-----------------------+        +---------------+
                                       |
                                       v
@@ -33,12 +33,15 @@ details live in the topic-specific docs linked below.
 ```
 
 - **Service worker** (`src/background.ts`) — central event handler.
-  Opens the options page on toolbar click, watches tab navigation,
+  Opens the sources page on toolbar click, watches tab navigation,
   and surfaces per-tab match counts via the action badge. See
   [matching.md](matching.md).
-- **Options page** (`src/options.html` + `src/options.ts`) — manage
+- **Sources page** (`src/sources.html` + `src/sources.ts`) — manage
   source directories and inspect per-script status. See
   [storage.md](storage.md).
+- **Options page** (`src/options.html` + `src/options.ts`) — small
+  settings page (currently just the debug-logging toggle). Reached
+  via the Options link at the top of the sources page.
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
   [storage.md](storage.md).
@@ -89,12 +92,13 @@ details live in the topic-specific docs linked below.
   [script-viewer.md](script-viewer.md).
 - **Log IDs** (`src/script-log-id.ts`) — assigns each script a short
   file-derived label (basename, with `#N` suffix on dupes) used in
-  every SW log line and shown in the options/viewer UI so users can
-  correlate console output with the rows on the options page. See
+  every SW log line and shown in the sources/viewer UI so users can
+  correlate console output with the rows on the sources page. See
   [logging.md](logging.md).
 - **Debug logging** (`src/debug-log.ts`) — gates the noisier
   navigation/refresh log lines behind a storage-backed flag
-  (`smDebugLogging`), toggled via a checkbox on the options page.
+  (`smDebugLogging`), toggled via a checkbox on the Options page
+  (linked from the top of the sources page).
 - **Per-script event log** (`src/script-log.ts`) — structured per-
   script log of refresh outcomes and wrapper reports, stored in
   `chrome.storage.session` and surfaced through the viewer's Log
@@ -143,7 +147,7 @@ details live in the topic-specific docs linked below.
 ## Cross-cutting docs
 
 - [storage.md](storage.md) — `chrome.storage.local` schema, status
-  model, load/refresh pipeline, options-page table rendering.
+  model, load/refresh pipeline, sources-page table rendering.
 - [file-access.md](file-access.md) — `file://` permissions, why we
   chose paths over the File System Access API, directory-listing
   enumeration, format caveats.
@@ -162,7 +166,7 @@ details live in the topic-specific docs linked below.
 - [script-log.md](script-log.md) — per-script structured event log
   shown in the viewer's Log tab.
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,
-  favicon fetch + cache, icon slot in the options/viewer UI.
+  favicon fetch + cache, icon slot in the sources/viewer UI.
 - [GM-APIs.md](GM-APIs.md) — `GM_*` / `GM.*` implementation: the
   catalog, page-side runtime, SW-side storage / XHR, `@connect`
   gating, and the per-API surface SourceMonkey ships.

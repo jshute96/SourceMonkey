@@ -1,4 +1,4 @@
-// Options page UI: adding a directory through the form, toggling a
+// Sources page UI: adding a directory through the form, toggling a
 // script, removing a source. The page talks to the same script-store
 // the SW does, so these exercise the real add/remove pipeline without
 // any SW-side shortcut.
@@ -6,7 +6,7 @@
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
-test.describe('options page', () => {
+test.describe('sources page', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
@@ -23,7 +23,7 @@ test.describe('options page', () => {
     expect(source).not.toBeNull();
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     await expect(page.locator(`section.directory[data-source-id="${source!.id}"] h2`))
       .toHaveText(scriptsDir.path);
     await expect(page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`))
@@ -41,7 +41,7 @@ test.describe('options page', () => {
     });
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
     await page.locator('#add-path').fill(scriptsDir.path);
@@ -70,7 +70,7 @@ test.describe('options page', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
     await expect(section).toBeVisible();
 
@@ -94,7 +94,7 @@ test.describe('options page', () => {
     });
 
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/options.html`);
+    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
     url.searchParams.set('add_source', scriptsDir.path);
     await page.goto(url.toString());
 
@@ -127,7 +127,7 @@ test.describe('options page', () => {
     const existing = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/options.html`);
+    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
     url.searchParams.set('add_source', scriptsDir.path);
     await page.goto(url.toString());
 
@@ -150,7 +150,7 @@ test.describe('options page', () => {
     extensionContext, extensionId, sm,
   }) => {
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/options.html`);
+    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
     url.searchParams.set('add_source', 'not-a-valid-path-or-url');
     await page.goto(url.toString());
 
@@ -172,7 +172,7 @@ test.describe('options page', () => {
     extensionContext, extensionId, sm,
   }) => {
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/options.html`);
+    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
     url.searchParams.set('add_source', '/');
     await page.goto(url.toString());
 
@@ -198,7 +198,7 @@ test.describe('options page', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
     await expect(section).toBeVisible();
 
@@ -227,7 +227,7 @@ test.describe('options page', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
     await expect(section).toBeVisible();
 
@@ -252,7 +252,7 @@ test.describe('options page', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
     await expect(section).toBeVisible();
 
@@ -292,7 +292,7 @@ test.describe('options page', () => {
       const sourceB = await sm.addSource(dirB.path);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      await page.goto(`chrome-extension://${extensionId}/sources.html`);
 
       const sections = page.locator('section.directory');
       await expect(sections).toHaveCount(2);
@@ -341,9 +341,9 @@ test.describe('options page', () => {
     const source = await sm.addSource(scriptsDir.path);
     await sm.syncNow();
 
-    // Toggle the script OFF via the options page.
+    // Toggle the script OFF via the sources page.
     const optionsPage = await extensionContext.newPage();
-    await optionsPage.goto(`chrome-extension://${extensionId}/options.html`);
+    await optionsPage.goto(`chrome-extension://${extensionId}/sources.html`);
     const row = optionsPage.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
     const checkbox = row.locator('.toggle input[type="checkbox"]');
     await expect(checkbox).toBeChecked();

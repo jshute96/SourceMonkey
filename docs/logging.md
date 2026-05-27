@@ -13,13 +13,13 @@ or UI surface refers to it.
 - Dupe basenames: each dupe gets a `#N` suffix
   (`foo.user.js#1`, `foo.user.js#2`, ...).
 - Dupe ordering: sorted by stable UUID `id` lexicographically.
-  Arbitrary but deterministic — the SW and the options page agree.
+  Arbitrary but deterministic — the SW and the sources page agree.
 
 ### Where you see them
 
 - SW console — every `[SourceMonkey] …` line that mentions a script
   uses its log ID. See [the message list below](#message-catalog).
-- Options page — a faint `#N` is rendered after the filename link
+- Sources page — a faint `#N` is rendered after the filename link
   whenever a script is part of a dupe group. No suffix for unique
   basenames.
 - Userscript viewer — a `Log ID` row in the details panel, always
@@ -30,7 +30,7 @@ or UI surface refers to it.
 `src/script-log-id.ts`:
 
 - Pure: `basenameOf(path)`, `computeLogIds(scripts)` — used by the
-  options page + viewer at render time and unit-tested directly.
+  sources page + viewer at render time and unit-tested directly.
 - SW runtime: a `Map<id, {id, relativePath}>` populated by one
   `chrome.storage.local.get(null)` scan at SW startup
   (`ensureLogIdsLoaded`) and kept fresh by `storage.onChanged`
@@ -43,7 +43,7 @@ or UI surface refers to it.
 ### Dupe reshuffle behavior
 
 Adding/removing a script in a dupe group can renumber siblings. The
-options page recomputes its `currentLogIds` after every
+sources page recomputes its `currentLogIds` after every
 add/remove/refresh and walks `applyLogIdSuffixesToDom()` over OTHER
 sections so their suffixes stay in sync after a partial re-render.
 
@@ -55,7 +55,7 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 
 - Off by default.
 - Toggle: "Enable debug logging" checkbox at the bottom of the
-  options page.
+  sources page.
 - Storage key: `chrome.storage.local.smDebugLogging` — set/clear
   from DevTools to flip without the UI.
 - Live update: the SW listens via `storage.onChanged` so the change

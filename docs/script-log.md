@@ -82,7 +82,7 @@ present, and just `source` otherwise.
   - `<rendered args>` (info, `source: 'gm-log'`, `tabId` attached) —
     one entry per `GM_log(...)` call. The script's own
     `console.log` line in the page DevTools still happens too; this
-    is just the SW-side mirror so users browsing the options page
+    is just the SW-side mirror so users browsing the sources page
     see what their script said without opening DevTools. Args are
     rendered page-side (primitives via `String()`, objects via
     `JSON.stringify`, joined by spaces) because

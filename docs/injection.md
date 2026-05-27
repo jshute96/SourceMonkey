@@ -44,7 +44,7 @@ Until the user flips that, **every** `register()` call throws. The
 badge logic is unaffected (it's local code, not the userScripts API),
 so the toolbar still counts matches — only injection is blocked.
 
-The options page probes the API at render time and shows a banner with
+The sources page probes the API at render time and shows a banner with
 a copy-pasteable `chrome://extensions/?id=<id>` link when the call
 fails.
 

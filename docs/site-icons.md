@@ -1,6 +1,6 @@
 # Site icons
 
-- Each row in the options page (and the H1 of the script viewer)
+- Each row in the sources page (and the H1 of the script viewer)
   shows a small favicon next to the script filename.
 - Source priority:
   - A script-declared `@icon` (or its TM aliases — see below) wins

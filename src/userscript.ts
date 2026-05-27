@@ -1,7 +1,7 @@
 // Userscript viewer. Loaded as chrome-extension://…/userscript.html
 // with a single query param `script=<scriptId>`. Hydrates from the
 // persistent store (chrome.storage.local) rather than re-reading the
-// file, so the content always matches what the options page shows.
+// file, so the content always matches what the sources page shows.
 //
 // Layout: a thin controls row (Enable toggle + Refresh) on top, then
 // a details panel (parsed-header fields + Location / Size / Status),
@@ -146,7 +146,7 @@ const filenameCopyBtn = (() => {
 void load();
 
 // Keep the displayed Log ID in sync with the global dupe set: if
-// another tab (options page, viewer of a sibling) adds or removes a
+// another tab (sources page, viewer of a sibling) adds or removes a
 // script that shares this basename, our `#N` would otherwise go
 // stale. Listen for any script:* mutation and re-derive.
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -180,7 +180,7 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   // If THIS script was removed, drop into the not-found state.
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage. Open it from the options page.');
+    showMissing('Script not found in storage. Open it from the sources page.');
     return;
   }
   await refreshLogId();
@@ -211,7 +211,7 @@ async function load(): Promise<void> {
   }
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage. Open it from the options page.');
+    showMissing('Script not found in storage. Open it from the sources page.');
     return;
   }
   const source = await getSource(script.sourceId);

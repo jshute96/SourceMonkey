@@ -34,7 +34,7 @@
 //
 // HTTP requirements:
 //   - manifest: "<all_urls>" (or a narrower http(s) pattern) in
-//     host_permissions so the SW/options page can fetch arbitrary
+//     host_permissions so the SW/sources page can fetch arbitrary
 //     origins without CORS blocking the response body.
 //
 // File requirements:

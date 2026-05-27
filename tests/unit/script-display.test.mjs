@@ -1,6 +1,6 @@
 // Tests for src/script-display.ts (compiled to dist/script-display.js).
 //
-// Pure display helpers shared by the options page + userscript viewer.
+// Pure display helpers shared by the sources page + userscript viewer.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

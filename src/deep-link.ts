@@ -21,7 +21,7 @@
 
 const REDIRECT_URL = 'https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md';
 
-const ALLOWED_PAGES = new Set(['options.html', 'userscript.html']);
+const ALLOWED_PAGES = new Set(['sources.html', 'options.html', 'userscript.html']);
 
 // Pure: maps a source URL to its rewrite target, or null when the URL
 // is not a deep link we should act on. Exported for unit tests.

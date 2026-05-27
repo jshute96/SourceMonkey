@@ -1,6 +1,6 @@
 // Smoke test for the SourceMonkey stub extension. Asserts the unpacked
 // extension actually loads, the MV3 service worker is reachable from
-// Playwright, and the options page renders. These are the floor —
+// Playwright, and the sources page renders. These are the floor —
 // every later feature test inherits these guarantees from the fixture.
 
 import { test, expect } from '../fixtures/extension';
@@ -17,13 +17,22 @@ test('service worker exposes the SourceMonkey api', async ({ getServiceWorker })
   expect(result.echoed).toBe('hi');
 });
 
-test('options page loads and renders the version', async ({
+test('sources page loads', async ({
+  extensionContext,
+  extensionId,
+}) => {
+  const page = await extensionContext.newPage();
+  await page.goto(`chrome-extension://${extensionId}/sources.html`);
+  await expect(page.locator('h1')).toHaveText('SourceMonkey');
+  await page.close();
+});
+
+test('options page renders the version', async ({
   extensionContext,
   extensionId,
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
-  await expect(page.locator('h1')).toHaveText('SourceMonkey');
   await expect(page.locator('#version')).toHaveText(/^Version /);
   await page.close();
 });

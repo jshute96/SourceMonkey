@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey — Sources</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
+      h1 { margin-top: 0; }
+      h2 { font-size: 1em; margin: 0; word-break: break-all; }
+      button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
+      input[type="text"] { font: inherit; padding: 0.3em 0.5em; }
+      .placeholder { color: #666; }
+      .add-form { display: flex; gap: 0.5em; margin-bottom: 1em; align-items: center; }
+      .add-form input[type="text"] { flex: 1 1 auto; }
+      .directory { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
+      .directory-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
+      .directory-header h2 { flex: 1 1 auto; min-width: 0; }
+      .directory-toggle { flex: 0 0 auto; }
+      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
+      /* Up/Down arrow buttons that sit left of Refresh. Keep the
+         vertical padding identical to the standard button rule above
+         so heights line up with Refresh/Remove; only the horizontal
+         padding is tightened so the arrow glyph isn't drowned in
+         whitespace. */
+      .move-source { padding: 0.3em 0.5em; }
+      .move-source:disabled { cursor: not-allowed; opacity: 0.35; }
+      .script-table { width: 100%; border-collapse: collapse; }
+      .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
+      .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
+      .script-table tbody tr:last-child td { border-bottom: none; }
+      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell { white-space: nowrap; width: 1%; }
+      .script-table td.toggle-cell { padding-right: 0.2em; }
+      /* When a source is off, its whole section dims; when a script is off, just the row dims.
+         The toggle itself stays at full opacity so users can flip it back. */
+      .directory.disabled .directory-header h2,
+      .script-table tr.disabled td:not(.toggle-cell) { opacity: 0.45; }
+      .toggle { display: inline-flex; align-items: center; cursor: pointer; }
+      .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
+      .toggle-disabled { cursor: not-allowed; opacity: 0.5; }
+      .toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
+      /* Bulk-toggle button in the script-table header. Sized like the
+         per-row checkbox so the column lines up. */
+      .bulk-toggle { width: 14px; height: 14px; padding: 0; font: inherit; font-weight: 700; line-height: 1; border: 1px solid #888; border-radius: 2px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+      .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
+      .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
+      .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 0.2em; }
+      /* Dupe-basename suffix (e.g. " #2") shown after the script's
+         filename link. Empty for unique basenames so the column stays
+         clean. */
+      .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+      .log-id-suffix:not(:empty)::before { content: ' '; }
+      /* Fixed-width slot for the site favicon to the left of the
+         filename link. Always present so the filename column has a
+         stable left edge. Holds either a clickable <a class="site-icon-inner">
+         (when the script's @match yields a usable origin) or an inert
+         <span class="site-icon-inner">. Inside is a globe placeholder
+         that gets swapped for the real favicon once it loads. */
+      .site-icon {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        margin-right: 0.4em;
+        vertical-align: text-bottom;
+        flex: 0 0 auto;
+      }
+      .site-icon-inner {
+        display: block;
+        width: 16px;
+        height: 16px;
+        color: #888;
+      }
+      a.site-icon-inner { text-decoration: none; }
+      a.site-icon-inner:hover { color: #444; }
+      .site-icon img { width: 16px; height: 16px; display: block; }
+      .site-icon-globe { width: 16px; height: 16px; display: block; }
+      .script-table td.name-cell { white-space: nowrap; }
+      .status-ok { color: #166534; }
+      .status-error, .status-missing { color: #b00; }
+      /* Small trash-can button shown beside the Status label on missing
+         rows, so users can clear out records for files that are gone
+         for good (refresh won't re-add them). */
+      .remove-script {
+        margin-left: 0.4em;
+        padding: 0 0.3em;
+        font: inherit;
+        line-height: 1;
+        border: 1px solid #ddd;
+        background: transparent;
+        cursor: pointer;
+        color: #888;
+      }
+      .remove-script:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
+      .remove-script:disabled { cursor: not-allowed; opacity: 0.5; }
+      .empty { color: #666; font-style: italic; }
+      .error { color: #b00; }
+      .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 1em; }
+      .banner strong { display: block; margin-bottom: 0.3em; }
+      .banner p { margin: 0.3em 0; }
+      .banner code { background: #fef3c7; padding: 0.15em 0.4em; border-radius: 3px; user-select: all; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .banner a.chrome-link { display: inline-block; background: #fef3c7; padding: 0.15em 0.4em; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #92400e; text-decoration: none; cursor: pointer; }
+      .banner a.chrome-link:hover { text-decoration: underline; }
+      .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
+      /* Inline busy spinner for individual controls (toggles, add form). */
+      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
+      /* Bulk-toggle button shows its spinner in place of the +/- glyph. */
+      .bulk-toggle.busy { position: relative; color: transparent; }
+      .bulk-toggle.busy::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -5px 0 0 -5px; width: 10px; height: 10px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
+      /* While a directory is being removed, dim the whole section and block further clicks. */
+      .directory.removing { opacity: 0.5; pointer-events: none; }
+      /* Highlight rows that changed during a refresh. The color
+         persists until the next refresh re-renders the section, so the
+         user can leave the page and come back without losing the
+         what-changed signal. */
+      .script-table tr.row-updated td { background: #cdebcf; }
+      .script-table tr.row-failed  td { background: #f5c2c7; }
+      /* Top-of-page action bar — sits above the add form. The Options
+         button anchors the left edge; Refresh All anchors the right. */
+      .top-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5em; }
+      .top-actions .right-actions { display: flex; align-items: center; }
+      .top-actions .busy-spinner { margin-left: 0.5em; }
+    </style>
+  </head>
+  <body>
+    <h1>SourceMonkey</h1>
+
+    <div id="banner-slot"></div>
+
+    <div class="top-actions">
+      <button id="open-options" type="button" title="Open the options page">Options</button>
+      <div class="right-actions">
+        <button id="refresh-all" type="button" title="Refresh every source">Refresh All</button>
+      </div>
+    </div>
+
+    <form id="add-form" class="add-form">
+      <input id="add-path" type="text" placeholder="Absolute path (file or directory) or URL for a .user.js or script_manifest.json file" required autocomplete="off" spellcheck="false" />
+      <button type="submit">Add source</button>
+    </form>
+    <p id="add-error" class="error" hidden></p>
+
+    <div id="directories"></div>
+
+    <script src="sources.js" type="module"></script>
+  </body>
+</html>

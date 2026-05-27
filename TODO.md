@@ -62,7 +62,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **Live `@grant` revocation.** Today `@grant` is baked into the
   wrapper at register time, so changes only take effect on reload.
   Worth doing per-call permission checks (with caching + invalidation
-  broadcasts) if users start expecting options-page edits to take
+  broadcasts) if users start expecting sources-page edits to take
   effect immediately.
 - **Offscreen-doc fallback for clipboard.** `navigator.clipboard.
   writeText` may reject without focus / transient activation. TM/VM
@@ -211,7 +211,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **`@connect *` install-time warning.** A wildcard `@connect`
   effectively asks for cross-origin fetch reach against any host.
   TM prompts, VM logs a warning. Surface a "this script wants to
-  talk to any host" signal in the options-page row at install /
+  talk to any host" signal in the sources-page row at install /
   refresh time.
 
 ## Test coverage gaps
@@ -267,9 +267,9 @@ during cumulative review of the GM_* phases:
   contentHash, validators, loadedAt }`. Add a sweeper that drops a
   `require:<hash>` row when its refcount across scripts hits zero.
 - **UI surface for prefetched requires.** The viewer now shows one
-  tab per require with its full source, but the options page row and
+  tab per require with its full source, but the sources page row and
   the viewer's details panel still don't expose require state. Add a
-  count badge / chip per options-page row ("3 requires") and a sub-
+  count badge / chip per sources-page row ("3 requires") and a sub-
   list in the viewer details panel showing each require's URL, size,
   and loadedAt.
 - **HTTP conditional GETs on require fetches.** `fetchResourceText`

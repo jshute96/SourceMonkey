@@ -108,7 +108,7 @@ test.describe('manifest source refresh', () => {
     expect(afterByPath['a.user.js'].enabled).toBe(false);
     expect(afterByPath['b.user.js'].status).toBe('ok');
     expect(afterByPath['b.user.js'].enabled).toBe(true);
-    // The scanError surfaces on the source row so the options page can
+    // The scanError surfaces on the source row so the sources page can
     // show it.
     expect(after!.source.scanError).toBeDefined();
     expect(after!.source.scanError).toMatch(/JSON|manifest/i);

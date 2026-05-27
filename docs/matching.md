@@ -84,7 +84,7 @@ Lifecycle:
   re-evaluate every script under it in O(1).
 - **Subscribers**: `onCacheChanged(fn)` lets the background SW re-badge
   every open tab when the script set itself changes (e.g. after a
-  directory Refresh on the options page or a per-source / per-script
+  directory Refresh on the sources page or a per-source / per-script
   enabled toggle).
 
 Per-navigation cost is one `Map` iteration + the pattern checks for

@@ -48,7 +48,7 @@ export function computeLogIds(scripts: LogIdInput[]): Map<string, string> {
     }
     // Plain byte-order comparison rather than localeCompare so the
     // assignment is locale-independent — a Turkish-locale SW must
-    // agree with a US-locale options page, and UUIDs are ASCII anyway.
+    // agree with a US-locale sources page, and UUIDs are ASCII anyway.
     arr.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     arr.forEach((s, i) => out.set(s.id, `${base}#${i + 1}`));
   }

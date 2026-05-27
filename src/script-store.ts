@@ -256,7 +256,7 @@ interface BuildArgs {
   // Prior row, if any. Used purely for the content-hash compare: if
   // the freshly fetched bytes hash to the same value as the prior
   // row's `contentHash`, we preserve the prior `loadedAt` so callers
-  // (notably the options page's row-highlight code) can tell that
+  // (notably the sources page's row-highlight code) can tell that
   // nothing actually changed. This is the universal post-fetch
   // change-detection path — it catches cases the cheap pre-fetch
   // skips (size+mtime, HTTP 304) couldn't handle, e.g. manifest
@@ -295,7 +295,7 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   }
 
   // Same bytes as last time → preserve the prior load timestamp so
-  // the options page's "what changed" highlight stays accurate even
+  // the sources page's "what changed" highlight stays accurate even
   // when the cheap skip paths didn't fire. Status still reflects the
   // current parse outcome (parser fixes between refreshes are rare
   // but shouldn't be silently masked).
@@ -692,7 +692,7 @@ export async function getScript(scriptId: string): Promise<StoredScript | undefi
 
 // Read every stored script (across all sources, regardless of status).
 // One `get(null)` scan rather than N per-source reads; used by the
-// options page + viewer to compute global log IDs in one pass.
+// sources page + viewer to compute global log IDs in one pass.
 export async function getAllScripts(): Promise<StoredScript[]> {
   const all = await chrome.storage.local.get(null);
   const out: StoredScript[] = [];
@@ -767,7 +767,7 @@ export async function removeSource(id: string): Promise<void> {
 }
 
 // Drop a single script row from storage and remove its ID from the
-// parent source's scriptIds list. Used by the options-page trash-can
+// parent source's scriptIds list. Used by the sources-page trash-can
 // next to a `missing` row so the user can clear out records for files
 // that are gone for good — refreshSource won't recreate the row because
 // it only adds entries the scan currently reports.
@@ -843,7 +843,7 @@ export async function refreshSource(
   // bad URL shape) is treated as "we don't actually know what's there
   // right now" — keep every existing script row, its content, and its
   // enabled state untouched. The source row records the scanError so
-  // the options page can surface it. Without this guard, the
+  // the sources page can surface it. Without this guard, the
   // rebuildSource path below would mark every script `missing` (or, for
   // manifest sources, drop them entirely) — both of which silently
   // disable the scripts. That's the wrong call when the source might

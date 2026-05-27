@@ -5,11 +5,11 @@
 Adds an "Install in SourceMonkey" button next to GreasyFork's normal
 "Install this script" button. Clicking it opens a SourceMonkey-hosted
 redirect page with the script's `.user.js` URL as a query parameter;
-the redirector forwards into the extension's options page, which
+the redirector forwards into the extension's sources page, which
 auto-fills and submits its add-source form.
 
 The userscript only handles the GreasyFork side. The redirector page
-and the auto-fill behavior on `options.html` both live inside the
+and the auto-fill behavior on `sources.html` both live inside the
 SourceMonkey project.
 
 ## Visible changes
@@ -18,7 +18,7 @@ SourceMonkey project.
   immediately to the right of GreasyFork's existing install button
   and its `?` help link.
 - Clicking it opens a new tab at
-  `https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=options.html&add_source=<encoded .user.js URL>`.
+  `https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=sources.html&add_source=<encoded .user.js URL>`.
 
 ## Implementation
 

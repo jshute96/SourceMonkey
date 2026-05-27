@@ -37,7 +37,7 @@ test.describe('missing-row trash-can', () => {
     expect(ws!.scripts).toHaveLength(3);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(3);
     await expect(section.locator('button.remove-script')).toHaveCount(3);
@@ -83,7 +83,7 @@ test.describe('missing-row trash-can', () => {
     expect(ws!.scripts.filter((s) => s.status === 'ok')).toHaveLength(1);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(3);
     await expect(section.locator('button.remove-script')).toHaveCount(2);

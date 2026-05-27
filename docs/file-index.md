@@ -44,8 +44,10 @@ One-line descriptions of every source file, grouped by directory.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap |
 | `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
-| `src/options.html` | Options page markup: path-entry form, file-access banner slot, directory list |
-| `src/options.ts` | Options page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source` triggers, per-source anchors |
+| `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
+| `src/sources.ts` | Sources page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source` triggers, per-source anchors |
+| `src/options.html` | Options page markup: settings list (currently just the debug-logging toggle) plus a link back to the sources page |
+| `src/options.ts` | Options page controller — hydrates the debug-logging checkbox and mirrors writes to `chrome.storage.local` |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, tab strip, highlighted code box, log pane |
 | `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl + tabbed code view (main script + one tab per `@require` + Log tab) |
 | `src/directories.ts` | Source I/O: file:// + http(s) fetch (conditional GETs), listing parser, recursive scanner, JSON manifest parser, URL helpers; dispatches github sources to `github-source.ts` |
@@ -53,7 +55,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline, parse-time diagnostics (startup logs), size+mtime skip, refreshAllSources |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
-| `src/script-display.ts` | Pure display helpers shared by the options page + viewer: `formatBytes`, `formatScriptSize`, `formatScriptStatusLabel` |
+| `src/script-display.ts` | Pure display helpers shared by the sources page + viewer: `formatBytes`, `formatScriptSize`, `formatScriptStatusLabel` |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
@@ -61,10 +63,10 @@ One-line descriptions of every source file, grouped by directory.
 | `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts` and wraps each body with an activation/error shim |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
-| `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the options/viewer UI |
+| `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the sources/viewer UI |
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor; shared by site-icon and the viewer linkifier |
-| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both options page and viewer |
+| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both sources page and viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries |
 | `src/wrapper-head.js` | Wrapper prelude (IIFE, helpers, check-pending await, @run-at gate, matcher, startup-logs, GM bindings slots) — minified to one line |
@@ -100,7 +102,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at ordering test |
-| `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, options page renders, fixture server responds |
+| `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, sources page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
@@ -178,7 +180,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `docs/file-index.md` | This file |
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
-| `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, options-page render |
+| `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, sources-page render |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
 | `docs/http-sources.md` | `http(s)://` single-script sources + scheme-agnostic JSON manifests (local + URL), conditional GETs |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |

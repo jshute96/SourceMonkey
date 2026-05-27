@@ -52,7 +52,7 @@ for the tag catalog.
 
 Loaded as `userscript.html?script=<scriptId>`. Hydrates from the
 [script store](storage.md) — it does **not** re-fetch from disk on
-open, so what the user sees matches what the options page table
+open, so what the user sees matches what the sources page table
 reports.
 
 ### Layout

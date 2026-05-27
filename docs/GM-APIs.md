@@ -387,7 +387,7 @@ Known limitations:
 ## `GM_log`
 
 Page-side wrapper around `console.log` with an SW-side fan-out so
-the call also lands on the script's Log tab in the options-page
+the call also lands on the script's Log tab in the sources-page
 viewer. The binding emitter routes `GM_log(...)` to
 `window.__SM_GM__.log.write(scriptId, arguments)`.
 

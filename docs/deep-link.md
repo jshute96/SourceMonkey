@@ -7,7 +7,7 @@
 - The extension's ID differs between unpacked installs and Web Store
   installs, so no fixed URL can be baked into external pages.
 - We still want one-click flows from the web into specific extension
-  pages — "open the options page", "add this source", "view this
+  pages — "open the sources page", "add this source", "view this
   script".
 
 ## Approach
@@ -54,7 +54,8 @@
 
 | `page=` | Target | Recognised forwarded params |
 |---------|--------|-----------------------------|
-| `options.html` | Options page | `refresh`, `add_source=<path-or-url>` |
+| `sources.html` | Sources page | `refresh`, `add_source=<path-or-url>` |
+| `options.html` | Options page | — |
 | `userscript.html` | Script viewer | `script=<id>` |
 
 - Adding a new entrypoint means:
@@ -87,7 +88,7 @@
   so embedding the stub URL in an iframe will not trigger it.
 - **Privacy: passthrough params reach GitHub when the extension is
   not installed.** A user clicking
-  `…/redirect-page.md?page=options.html&add_source=https://corp/internal.user.js`
+  `…/redirect-page.md?page=sources.html&add_source=https://corp/internal.user.js`
   without SourceMonkey installed loads the URL on GitHub normally,
   and the full query string (including `add_source=…`) appears in
   GitHub's request logs and any `Referer` chain from there. Anyone

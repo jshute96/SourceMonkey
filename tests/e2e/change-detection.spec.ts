@@ -123,7 +123,7 @@ test.describe('change detection', () => {
 
     // Change only `b`. `a`'s loadedAt must remain pinned to its prior
     // value while `b` advances — proves the new-file / updated-file
-    // distinction the options page relies on for its highlights.
+    // distinction the sources page relies on for its highlights.
     server.setRoute('/b.user.js', userscriptText('B', ' /* v2 */'));
     await sm.updateSource(source!.id, 'manual');
     after = await sm.getSourceWithScripts(source!.id);

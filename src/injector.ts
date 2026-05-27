@@ -25,7 +25,7 @@
 // the user must enable the "Allow User Scripts" toggle (Chrome ≥138) or
 // developer mode (Chrome 120–137) on chrome://extensions. If the toggle
 // is off, chrome.userScripts.register throws; we surface that via
-// getLastError() so the options page can prompt the user.
+// getLastError() so the sources page can prompt the user.
 //
 // Handling /regex/ @include / @exclude: the User Scripts API has no
 // equivalent for these. We work around it by:
@@ -78,7 +78,7 @@ export const SM_ABANDONED_MSG = 'sm:abandoned';
 // GM_log capture: the page-side runtime sends one of these for every
 // GM_log() call so the SW can append it to the script's Log tab. The
 // page console still gets its own console.log; this is purely the
-// fan-out so users browsing the options page see what their scripts
+// fan-out so users browsing the sources page see what their scripts
 // are saying without opening DevTools.
 export const SM_GM_LOG_MSG = 'sm:gm-log';
 

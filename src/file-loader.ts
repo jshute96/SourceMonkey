@@ -18,7 +18,7 @@
 // `file:///*` host permission so any caller code can read arbitrary
 // local files via the byte fetcher; we don't want a malicious
 // HTTP-sourced userscript pointing `@icon file:///etc/passwd` and
-// having us inline a host file into the options-page DOM. A file://
+// having us inline a host file into the sources-page DOM. A file://
 // result is only reachable as the *resolution* of a relative path
 // against a file:// script, in which case the containment check
 // confines it to the script's own directory tree.

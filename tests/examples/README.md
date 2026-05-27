@@ -97,7 +97,7 @@ events.
 
 ### Installing the userscripts
 
-- **SourceMonkey** — open the options page, add a directory source
+- **SourceMonkey** — open the sources page, add a directory source
   pointing at `tests/examples/`. The scanner picks up every nested
   `*.user.js` and the `@match` patterns route each one to its own
   page.

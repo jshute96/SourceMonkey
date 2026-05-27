@@ -48,7 +48,7 @@ test.describe('site-icon slot', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // Anchor wrapper with the segment-trimmed linkUrl.
@@ -80,7 +80,7 @@ test.describe('site-icon slot', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // Anchor still points at the @match-derived linkUrl — the @icon
@@ -106,7 +106,7 @@ test.describe('site-icon slot', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // No anchor — `<all_urls>` doesn't yield an origin to link to.
@@ -136,7 +136,7 @@ test.describe('site-icon slot', () => {
     const source = await sm.addSource(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // The MIME prefix Chrome's file:// XHR layer reports is unreliable
@@ -163,7 +163,7 @@ test.describe('site-icon slot', () => {
       const source = await sm.addSource(`${server.baseUrl}/scripts/foo.user.js`);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      await page.goto(`chrome-extension://${extensionId}/sources.html`);
       const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
       const slot = row.locator('.site-icon');
       await expect(slot.locator('a.site-icon-inner img'))
@@ -227,7 +227,7 @@ test.describe('site-icon slot', () => {
       const source = await sm.addSource(scriptsDir.path);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      await page.goto(`chrome-extension://${extensionId}/sources.html`);
       const rowFor = (name: string) =>
         page.locator(
           `section.directory[data-source-id="${source!.id}"] tbody tr:has-text("${name}")`,
@@ -281,7 +281,7 @@ test.describe('site-icon slot', () => {
       const source = await sm.addSource(child);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/options.html`);
+      await page.goto(`chrome-extension://${extensionId}/sources.html`);
       // Every row's icon slot must show only the globe placeholder —
       // never an <img>. If any traversal had been honored we'd see the
       // PNG's data URL swapped in.

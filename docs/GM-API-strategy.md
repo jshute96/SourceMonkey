@@ -504,7 +504,7 @@ Our wrapper compiles GM_* bindings into the registered script source,
 so `@grant` is naturally a register-time decision: changing it
 requires a reload. The alternative — per-call permission checks
 backed by a cache and invalidation broadcasts — gives instantaneous
-options-page edits but adds an IPC on every call. **Default to
+sources-page edits but adds an IPC on every call. **Default to
 bake-in for v1**; revisit if real users want live revocation.
 
 ## A loose phasing for Option B

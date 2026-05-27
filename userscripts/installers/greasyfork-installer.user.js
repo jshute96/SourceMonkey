@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GreasyFork: Install in SourceMonkey
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      1.0.0
+// @version      1.0.1
 // @description  Add an "Install in SourceMonkey" button next to GreasyFork's install button.
 // @author       Jeff Shute <jshute@gmail.com>
 // @match        https://greasyfork.org/*
@@ -19,7 +19,7 @@
   const TAG = '[grsy-sm]';
   // Web pages can't navigate directly to chrome-extension:// URLs;
   // SourceMonkey provides a redirector hosted on github.com that
-  // forwards us into the extension's options page.
+  // forwards us into the extension's sources page.
   const REDIRECT_URL = 'https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md';
   const BTN_ID = 'jshute-install-in-sourcemonkey';
 
@@ -52,7 +52,7 @@
       ev.preventDefault();
       ev.stopPropagation();
       const target = REDIRECT_URL +
-        '?page=options.html' +
+        '?page=sources.html' +
         '&add_source=' + encodeURIComponent(userJsUrl);
       console.log(TAG, 'opening', target);
       window.open(target, '_blank');

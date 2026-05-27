@@ -1,4 +1,4 @@
-// Display helpers shared by the options page and the userscript viewer.
+// Display helpers shared by the sources page and the userscript viewer.
 //
 // Both pages render the same script-status row (size + status label) so
 // the formatting logic lives here and is unit-tested. Pure functions —

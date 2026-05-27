@@ -7,7 +7,7 @@
 //   3. Copies src/manifest.json -> dist/manifest.json verbatim. Chrome loads
 //      the unpacked extension from dist/, so the manifest must live there.
 //   4. Copies src/*.html -> dist/*.html (extension pages such as
-//      options.html).
+//      sources.html).
 //   5. Runs the TypeScript compiler (tsc) to compile src/*.ts -> dist/*.js.
 //      With --watch, tsc keeps running and rebuilds on change.
 //
@@ -47,7 +47,7 @@ await cp(resolve(prismDir, 'themes', 'prism.min.css'), resolve(dist, 'vendor', '
 //    unpacked from dist/.
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
 
-// 4. Copy every top-level HTML asset (options.html, etc.). Iterate so
+// 4. Copy every top-level HTML asset (sources.html, etc.). Iterate so
 //    new pages get picked up automatically without editing this script.
 for (const entry of await readdir(src, { withFileTypes: true })) {
   if (!entry.isFile()) continue;

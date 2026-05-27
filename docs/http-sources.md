@@ -56,7 +56,7 @@ recognises three shapes:
   - The default branch is resolved once at add time via the repo
     metadata endpoint and baked into the stored source path so refresh
     is deterministic afterwards. The resolved URL is what appears in
-    the options-page heading.
+    the sources-page heading.
 
 Limits:
 
@@ -186,7 +186,7 @@ source row is tracked in `TODO.md`.
 - This matches the [storage.md](storage.md) policy for unreadable
   directory listings: we don't auto-disable scripts because the source
   is temporarily unreachable (timed-out creds, flaky network).
-- The options page surfaces the `scanError` as a banner on the source
+- The sources page surfaces the `scanError` as a banner on the source
   section so the failure is visible.
 
 ## Query-string propagation

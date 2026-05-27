@@ -1,7 +1,7 @@
 // SourceMonkey MV3 service worker.
 //
 // Today the SW does these real jobs:
-//   - Opens the options page on toolbar click (no popup configured).
+//   - Opens the sources page on toolbar click (no popup configured).
 //   - Watches every tab navigation, finds matching userscripts via the
 //     in-memory match index, listens to sm:start / sm:error reports
 //     from injected wrappers, and surfaces the combined state as a
@@ -11,7 +11,7 @@
 //   - Mirrors the badge's per-script status lines into the toolbar
 //     icon's right-click menu (chrome.contextMenus, action context),
 //     so users can jump to a script's viewer page without going
-//     through the options page first.
+//     through the sources page first.
 //
 // The `self.SourceMonkey` surface exists so e2e tests can drive the
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
@@ -146,7 +146,7 @@ interface SourceMonkeyApi {
   // These methods exist so Playwright tests can drive the extension via
   // `serviceWorker.evaluate(...)`. MV3 service workers can't be poked
   // from a Playwright UI action (no toolbar click); without these the
-  // tests would have to navigate to the options page for every state
+  // tests would have to navigate to the sources page for every state
   // transition, which is both slow and couples tests to the page's DOM.
   // All of them delegate straight to the production functions — they
   // are not test-only logic, just convenience accessors.
@@ -343,10 +343,11 @@ const api: SourceMonkeyApi = {
 
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
 
-// Clicking the toolbar icon opens the options page. We have no popup
-// configured, so onClicked fires on every action click; openOptionsPage
-// honors `options_ui.open_in_tab` (true) and focuses an existing tab
-// if one is already open.
+// Clicking the toolbar icon opens the sources page (the extension's
+// declared `options_ui.page`). We have no popup configured, so
+// onClicked fires on every action click; openOptionsPage honors
+// `options_ui.open_in_tab` (true) and focuses an existing tab if one
+// is already open.
 chrome.action.onClicked.addListener(() => {
   chrome.runtime.openOptionsPage();
 });

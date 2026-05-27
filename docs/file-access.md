@@ -32,7 +32,7 @@ For any reading to work the user must:
   `host_permissions`.
 
 When the toggle is off, `chrome.extension.isAllowedFileSchemeAccess()`
-returns false and the options page renders a banner with the
+returns false and the sources page renders a banner with the
 extension's settings URL and instructions.
 
 ## Reading a file

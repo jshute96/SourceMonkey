@@ -2,7 +2,7 @@
 
 A userscript manager Chrome extension that treats userscripts like source code, built and managed with real coding tools.
 
-> **Status:** Works end-to-end for the common cases. The options
+> **Status:** Works end-to-end for the common cases. The sources
 > page can register local directories or HTTP manifests, every
 > `*.user.js` it finds is persistently loaded, matching scripts are
 > injected via `chrome.userScripts`, and the most-used `GM_*` /
@@ -15,8 +15,10 @@ A userscript manager Chrome extension that treats userscripts like source code, 
 
 ## Usage
 
-Open the options page by clicking the SourceMonkey toolbar icon, or via
+Open the sources page by clicking the SourceMonkey toolbar icon, or via
 `chrome://extensions` → SourceMonkey → "Details" → "Extension options".
+The sources page has an **Options** link at the top-left for the
+configurable settings (currently just the debug-logging toggle).
 
 ### Registering sources
 
@@ -45,7 +47,7 @@ loaded into the extension's storage. A source can be any of:
   GitHub Contents API. A bare repo URL (`github.com/<o>/<r>`)
   resolves to the repo's default branch.
 
-Each source shows up as its own section on the options page with a
+Each source shows up as its own section on the sources page with a
 per-source enable toggle, per-script enable toggles, **↑ / ↓** buttons
 to reorder it in the list, a **Refresh** button (re-scans + re-fetches
 just that source), and a **Remove** button. The page-level
@@ -123,9 +125,9 @@ against the prior so identical content still counts as "no change."
   vanished script is automatically disabled so it stops being
   injected; the row stays in storage and the user can re-enable it
   if it comes back.
-- External tools can trigger a refresh-all by opening the options
+- External tools can trigger a refresh-all by opening the sources
   page with `?refresh` in the query string, e.g.
-  `google-chrome chrome-extension://<extension-id>/options.html?refresh`
+  `google-chrome chrome-extension://<extension-id>/sources.html?refresh`
   after writing new userscripts to disk.
 - Clicking a script name opens a viewer in a new tab showing the
   file's name, size, status, an enable toggle (greyed out when the
@@ -149,7 +151,7 @@ against the prior so identical content still counts as "no change."
   Hovering the icon shows one line per script as
   `"<name> | <STATUS>"` (`OK` / `ERROR` / `MISSING` / `UNEXPECTED` /
   `Reload to update`). The state updates on navigation and re-counts
-  immediately when you flip an enable toggle on the options page.
+  immediately when you flip an enable toggle on the sources page.
 - **Auto-update.** While you browse a page that uses your scripts,
   SourceMonkey checks (in the background, rate-limited, never blocking
   navigation) whether their source files on disk have changed. Any
@@ -169,13 +171,14 @@ against the prior so identical content still counts as "no change."
   `no change` lines that fire on every navigation — are off by
   default to keep the service-worker console quiet. Manual Refresh
   clicks still log unconditionally. Enable the verbose lines via the
-  "Enable debug logging" checkbox at the bottom of the options page.
+  "Enable debug logging" checkbox on the Options page (linked from the
+  top of the sources page).
 - **Log IDs.** Every script gets a short, file-derived label used in
   every SW log line and shown on the script viewer page (as **Log
   ID**). The label is the script's basename (`foo.user.js`); if two
   scripts share a basename they're disambiguated as `foo.user.js#1`,
   `foo.user.js#2`, etc., and the same suffix is rendered next to the
-  filename link on the options page so you can map a log entry back
+  filename link on the sources page so you can map a log entry back
   to its row.
 
 **One-time setup:** on `chrome://extensions`, for SourceMonkey enable:
@@ -184,7 +187,7 @@ against the prior so identical content still counts as "no change."
   read your local directories.
 - **"Allow User Scripts"** (or, on Chrome 120–137, the page-wide
   Developer mode toggle) — without it Chrome will refuse to inject
-  anything, though the badge will still count matches. The options
+  anything, though the badge will still count matches. The sources
   page surfaces a banner with a copy-pasteable details URL when this
   toggle is off.
 

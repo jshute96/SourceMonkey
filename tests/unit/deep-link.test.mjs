@@ -20,25 +20,32 @@ const { buildDeepLinkTarget } = await import('../../dist/deep-link.js');
 const PREFIX = 'https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md';
 const EXT = `chrome-extension://${EXT_ID}`;
 
+test('sources.html with no extra params', () => {
+  assert.equal(
+    buildDeepLinkTarget(`${PREFIX}?page=sources.html`),
+    `${EXT}/sources.html`,
+  );
+});
+
+test('sources.html forwards refresh flag', () => {
+  assert.equal(
+    buildDeepLinkTarget(`${PREFIX}?page=sources.html&refresh`),
+    `${EXT}/sources.html?refresh=`,
+  );
+});
+
+test('sources.html forwards add_source value', () => {
+  const src = 'https://example.com/foo.user.js';
+  assert.equal(
+    buildDeepLinkTarget(`${PREFIX}?page=sources.html&add_source=${encodeURIComponent(src)}`),
+    `${EXT}/sources.html?add_source=${encodeURIComponent(src)}`,
+  );
+});
+
 test('options.html with no extra params', () => {
   assert.equal(
     buildDeepLinkTarget(`${PREFIX}?page=options.html`),
     `${EXT}/options.html`,
-  );
-});
-
-test('options.html forwards refresh flag', () => {
-  assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=options.html&refresh`),
-    `${EXT}/options.html?refresh=`,
-  );
-});
-
-test('options.html forwards add_source value', () => {
-  const src = 'https://example.com/foo.user.js';
-  assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=options.html&add_source=${encodeURIComponent(src)}`),
-    `${EXT}/options.html?add_source=${encodeURIComponent(src)}`,
   );
 });
 
@@ -50,7 +57,7 @@ test('userscript.html forwards script id', () => {
 });
 
 test('page param is stripped from passthrough query', () => {
-  const out = buildDeepLinkTarget(`${PREFIX}?page=options.html&a=1&b=2`);
+  const out = buildDeepLinkTarget(`${PREFIX}?page=sources.html&a=1&b=2`);
   assert.ok(out);
   assert.ok(!out.includes('page='));
   assert.ok(out.includes('a=1'));
@@ -71,11 +78,11 @@ test('missing page returns null', () => {
 
 test('non-matching URL returns null', () => {
   assert.equal(
-    buildDeepLinkTarget('https://github.com/jshute96/SourceMonkey/blob/main/README.md?page=options.html'),
+    buildDeepLinkTarget('https://github.com/jshute96/SourceMonkey/blob/main/README.md?page=sources.html'),
     null,
   );
   assert.equal(
-    buildDeepLinkTarget('https://example.com/redirect-page.md?page=options.html'),
+    buildDeepLinkTarget('https://example.com/redirect-page.md?page=sources.html'),
     null,
   );
 });
@@ -89,14 +96,14 @@ test('hash fragment does not block the match and is not forwarded', () => {
   // The hash on the source URL addresses the markdown's section, not
   // the extension page; intentionally dropped on the rewrite.
   assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=options.html#section`),
-    `${EXT}/options.html`,
+    buildDeepLinkTarget(`${PREFIX}?page=sources.html#section`),
+    `${EXT}/sources.html`,
   );
 });
 
 test('userinfo on the URL rejects the match', () => {
   assert.equal(
-    buildDeepLinkTarget(`https://user:pass@github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=options.html`),
+    buildDeepLinkTarget(`https://user:pass@github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=sources.html`),
     null,
   );
 });

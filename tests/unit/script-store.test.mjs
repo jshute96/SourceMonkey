@@ -570,7 +570,7 @@ test('buildScriptFromText preserves prior loadedAt when the fetched bytes are id
   // The universal post-fetch leg of change detection: even when a
   // refresh did fetch the body (because the per-scheme cheap skips —
   // size+mtime, HTTP 304 — couldn't fire), if the bytes are the same
-  // as last time we don't bump loadedAt, so the options page's row
+  // as last time we don't bump loadedAt, so the sources page's row
   // highlight stays accurate.
   const prior = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT, now: 50 });
   const next = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT, now: 999, prior });
@@ -590,7 +590,7 @@ test('rebuildSource: identical bytes after a forced refetch preserve loadedAt (m
   // The bug this guards against: manifest sources (and HTTP servers
   // without ETag / Last-Modified) always re-fetch every refresh.
   // Without the content-hash compare every row would flip its
-  // loadedAt and flash in the options page. With it, only rows whose
+  // loadedAt and flash in the sources page. With it, only rows whose
   // bytes actually changed are flagged.
   const prior = await buildScriptFromText({
     id: 'a-id',

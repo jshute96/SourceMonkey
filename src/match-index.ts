@@ -127,7 +127,7 @@ export function installStorageListener(): void {
 }
 
 // Allow the background SW to refresh open-tab badges when the script
-// set changes (e.g. after a directory Refresh on the options page, or a
+// set changes (e.g. after a directory Refresh on the sources page, or a
 // per-source / per-script enabled toggle).
 type ChangeListener = () => void;
 const changeListeners: ChangeListener[] = [];
