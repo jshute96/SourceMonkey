@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <title>SourceMonkey — Userscript</title>
     <link rel="stylesheet" href="vendor/prism/prism.css" />
+    <link rel="stylesheet" href="vendor/prism/prism-line-numbers.css" />
     <link rel="stylesheet" href="styles.css" />
     <style>
       html, body { height: 100%; margin: 0; }
@@ -315,9 +316,10 @@
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
     <div id="tabs" class="tabs" role="tablist" hidden></div>
-    <pre id="code-pane" class="code-box" tabindex="0"><code id="content" class="language-javascript"></code></pre>
+    <pre id="code-pane" class="code-box line-numbers" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>
     <script src="vendor/prism/prism.js"></script>
+    <script src="vendor/prism/prism-line-numbers.js"></script>
     <script src="userscript.js" type="module"></script>
   </body>
 </html>

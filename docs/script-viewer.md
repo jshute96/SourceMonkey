@@ -152,6 +152,12 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
 - `Prism.highlightElement` walks the text node and replaces it with
   highlighted spans.
 - The default Prism theme ships as `prism.css`.
+- The **line-numbers** plugin renders a left-side line-number gutter
+  inside each code tab. Activated by the `line-numbers` class on the
+  `<pre>`; the plugin's `complete` hook fires from each
+  `Prism.highlightElement` call, so the gutter repaints on every tab
+  switch. Plugin assets vendor alongside Prism as
+  `prism-line-numbers.{js,css}` (see `scripts/build.mjs`).
 
 ### Userscript-header syntax highlighting extension
 

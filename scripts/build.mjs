@@ -42,6 +42,17 @@ const prismDir = resolve(root, 'node_modules', 'prismjs');
 await mkdir(resolve(dist, 'vendor', 'prism'), { recursive: true });
 await cp(resolve(prismDir, 'prism.js'), resolve(dist, 'vendor', 'prism', 'prism.js'));
 await cp(resolve(prismDir, 'themes', 'prism.min.css'), resolve(dist, 'vendor', 'prism', 'prism.css'));
+// Line-numbers plugin: adds a left-side gutter of line numbers next
+// to each highlighted code block. Loaded after prism.js by the
+// viewer page; activated by the `line-numbers` class on the <pre>.
+await cp(
+  resolve(prismDir, 'plugins', 'line-numbers', 'prism-line-numbers.min.js'),
+  resolve(dist, 'vendor', 'prism', 'prism-line-numbers.js'),
+);
+await cp(
+  resolve(prismDir, 'plugins', 'line-numbers', 'prism-line-numbers.min.css'),
+  resolve(dist, 'vendor', 'prism', 'prism-line-numbers.css'),
+);
 
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
 //    unpacked from dist/.
