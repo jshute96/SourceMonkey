@@ -41,12 +41,9 @@
 // The toggle is persistent across browser sessions, so unlike the File
 // System Access API there is no per-session re-grant.
 
-export interface FoundScript {
-  name: string;         // leaf file name, e.g. "foo.user.js"
-  relativePath: string; // path relative to the source root (basename for single-file / manifest entries)
-  size?: number;        // file byte size as reported by Chrome's listing (file:// only — undefined for HTTP)
-  mtime?: number;       // modification time as reported by Chrome's listing — opaque integer used only for equality (file:// only)
-}
+export type { FoundScript } from './source-scan.js';
+import { type FoundScript, MAX_SCAN_DEPTH } from './source-scan.js';
+export { MAX_SCAN_DEPTH } from './source-scan.js';
 
 // ---------- Source-kind detection ----------
 
@@ -121,6 +118,21 @@ export function isSingleFileSource(source: string): boolean {
 export function isManifestSource(source: string): boolean {
   return sourcePathname(source).endsWith('.json');
 }
+
+// GitHub-specific source handling lives in `github-source.ts`. We
+// re-export only the symbols `script-store.ts` and `options.ts` use
+// directly. Callers always go through `normalizeSourceInput`; today
+// that's just `normalizeGithubInput` under its public name, but
+// keeping the public name generic lets future providers slot in
+// without changing the callers.
+export { isGithubDirSource } from './github-source.js';
+export { normalizeGithubInput as normalizeSourceInput } from './github-source.js';
+import {
+  githubDirScriptFileUrl,
+  githubDirScriptDisplayUrl,
+  isGithubDirSource,
+  scanGithubDir,
+} from './github-source.js';
 
 // Leaf name (last path segment) of an http(s) URL — used as the
 // FoundScript.name / relativePath for an HTTP single-file source so
@@ -343,8 +355,6 @@ export async function statFromListing(
 
 // ---------- Scanning ----------
 
-export const MAX_SCAN_DEPTH = 2; // levels of subdirectory below the root
-
 // Parse a manifest body. Accepts either a bare JSON array of strings
 // or `{scripts: [...]}`. Anything else is rejected with a message that
 // points at the supported shapes. Empty strings inside the list are
@@ -392,6 +402,9 @@ export async function scanForUserScripts(
     }
     if (isSingleFileSource(absolutePath)) {
       return scanSingleFile(absolutePath);
+    }
+    if (isGithubDirSource(absolutePath)) {
+      return scanGithubDir(absolutePath);
     }
     if (isHttpUrl(absolutePath)) {
       throw new Error('URL must end in .user.js (single script) or .json (manifest)');
@@ -574,6 +587,9 @@ export function scriptFileUrl(sourcePath: string, relativePath: string): string 
   if (isSingleFileSource(sourcePath)) {
     return sourceCanonicalUrl(sourcePath);
   }
+  if (isGithubDirSource(sourcePath)) {
+    return githubDirScriptFileUrl(sourcePath, relativePath);
+  }
   // Local directory.
   return pathToFileUrl(joinPath(sourceFsPath(sourcePath), relativePath));
 }
@@ -585,6 +601,12 @@ export function scriptFileUrl(sourcePath: string, relativePath: string): string 
 // manifest entries (file://) and HTTP manifest entries (http://) —
 // without each source-kind needing its own special case.
 export function scriptAbsolutePath(sourcePath: string, relativePath: string): string {
+  // GitHub directory sources have two URLs per entry: the raw URL we
+  // fetch from (`scriptFileUrl`) and the github.com URL a human would
+  // open in a browser. The viewer's Location row wants the latter.
+  if (isGithubDirSource(sourcePath)) {
+    return githubDirScriptDisplayUrl(sourcePath, relativePath);
+  }
   const url = scriptFileUrl(sourcePath, relativePath);
   return isFileUrl(url) ? sourceFsPath(url) : url;
 }

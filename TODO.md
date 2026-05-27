@@ -236,9 +236,16 @@ during cumulative review of the GM_* phases:
 
 ## HTTP sources — follow-ups
 
-- GitHub-aware adapter so users can point at a repo (or subpath +
-  ref) and have SourceMonkey enumerate `*.user.js` via the Git Trees /
-  Contents API rather than maintaining a manifest by hand.
+- GitHub directory sources are scanned via the unauthenticated Contents
+  API (60 req/hour/IP). Worth optimising: stash the listing's ETag and
+  send `If-None-Match` on refresh so unchanged dirs don't burn budget.
+- GitHub Contents API pagination. `scanGithubDir` reads only the first
+  page; trees with >1000 entries silently truncate. Add `?per_page=100`
+  + Link-header following when a real source hits the cap.
+- Branch names containing slashes (e.g. `feature/foo`) aren't supported
+  by the github URL parser — the first ref segment is taken as the ref
+  and everything after as the path. Disambiguating would need an extra
+  branches/tags lookup.
 - Conditional GET on the manifest itself. Today every refresh
   re-fetches and re-parses the manifest body even when nothing
   changed. Stashing the manifest's ETag/Last-Modified on the source

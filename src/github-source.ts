@@ -1,0 +1,280 @@
+// GitHub-specific source handling: URL parsing, default-branch
+// resolution, raw-URL normalization, recursive Contents-API scanner,
+// and the per-script file/display URL builders for the github-dir
+// source kind. `directories.ts` dispatches to the exports here from
+// its source-kind branches; nothing in this file is aware of file://
+// or local-filesystem sources.
+//
+// Two ergonomic problems we paper over here:
+//
+// 1. `github.com/<o>/<r>/blob/<ref>/<path>` URLs (what the user copies
+//    from the browser address bar) serve an HTML rendering of the
+//    file, not the raw bytes. `normalizeGithubInput` rewrites those to
+//    their `raw.githubusercontent.com` counterpart at add-source time
+//    so the rest of the pipeline treats them as ordinary HTTP single-
+//    file / manifest sources.
+// 2. GitHub directory URLs (`/tree/<ref>/<path>` and, by extension, a
+//    misused `/blob/<ref>/<dir>` form) have no direct "give me all the
+//    `.user.js` files inside" endpoint. `scanGithubDir` uses the
+//    Contents API to walk the tree at scan time, returning the same
+//    `FoundScript` shape the other source kinds produce.
+//
+// Bare repo URLs (`github.com/<o>/<r>` with no `/blob|tree/...`
+// segment) resolve to `tree/<default-branch>` via one repo-metadata
+// API call at add time; the resolved branch is baked into the stored
+// source path so refreshes are deterministic afterwards.
+//
+// Branch names containing slashes (e.g. `feature/foo`) aren't
+// supported — the matcher takes the first ref segment and assumes the
+// rest is the path.
+
+import { type FoundScript, MAX_SCAN_DEPTH } from './source-scan.js';
+
+const GITHUB_URL_RE = /^https?:\/\/github\.com\/([^\/?#]+)\/([^\/?#]+)\/(blob|tree)\/([^\/?#]+)(?:\/([^?#]*))?(?:\?[^#]*)?(?:#.*)?$/i;
+
+// Matches a bare `https://github.com/<owner>/<repo>` URL — no
+// `/blob|tree/...` segment, no path. Used to recognise repo-root
+// inputs at add time so we can resolve the default branch and store
+// a canonical `/tree/<branch>` URL.
+const GITHUB_REPO_ROOT_RE = /^https?:\/\/github\.com\/([^\/?#]+)\/([^\/?#]+?)(?:\.git)?\/?(?:\?[^#]*)?(?:#.*)?$/i;
+
+export interface ParsedGithubUrl {
+  owner: string;
+  repo: string;
+  kind: 'blob' | 'tree';
+  ref: string;
+  path: string;       // empty when the URL points at the directory root for that ref
+}
+
+// Parse a github.com browser URL. Returns null for anything that
+// doesn't match the `(blob|tree)/<ref>/...` shape (including repo-root
+// URLs and any non-github host).
+export function parseGithubUrl(source: string): ParsedGithubUrl | null {
+  const m = GITHUB_URL_RE.exec(source);
+  if (!m) return null;
+  return {
+    owner: m[1]!,
+    repo: m[2]!.replace(/\.git$/, ''),
+    kind: m[3]!.toLowerCase() as 'blob' | 'tree',
+    ref: m[4]!,
+    path: (m[5] ?? '').replace(/\/+$/, ''),
+  };
+}
+
+// True for a github.com URL pointing at a directory. `/tree/...` is the
+// canonical form, but we also accept `/blob/<ref>/<dir>` (the form a
+// user might end up with by editing a blob URL by hand) as long as the
+// path doesn't end in a recognised file suffix.
+export function isGithubDirSource(source: string): boolean {
+  const p = parseGithubUrl(source);
+  if (!p) return false;
+  return !p.path.endsWith('.user.js') && !p.path.endsWith('.json');
+}
+
+// Build the raw.githubusercontent.com URL for a parsed file URL. Caller
+// must have already verified the URL's path ends in `.user.js` or
+// `.json` (see `normalizeGithubInput`'s inline check).
+function githubFileUrlToRaw(p: ParsedGithubUrl): string {
+  return `https://raw.githubusercontent.com/${p.owner}/${p.repo}/${p.ref}/${p.path}`;
+}
+
+// Resolve a per-script entry under a github-dir source to its raw URL
+// (what `fetchHttpText` reads). Exported for `directories.ts`'s
+// `scriptFileUrl` dispatch.
+export function githubDirScriptFileUrl(sourcePath: string, relativePath: string): string {
+  const p = parseGithubUrl(sourcePath);
+  if (!p) throw new Error(`not a GitHub URL: ${sourcePath}`);
+  const full = p.path ? `${p.path}/${relativePath}` : relativePath;
+  return `https://raw.githubusercontent.com/${p.owner}/${p.repo}/${p.ref}/${full}`;
+}
+
+// Resolve a per-script entry under a github-dir source to its
+// human-displayable github.com URL (what the viewer's Location row
+// shows). Exported for `directories.ts`'s `scriptAbsolutePath`
+// dispatch.
+export function githubDirScriptDisplayUrl(sourcePath: string, relativePath: string): string {
+  const p = parseGithubUrl(sourcePath);
+  if (!p) throw new Error(`not a GitHub URL: ${sourcePath}`);
+  const full = p.path ? `${p.path}/${relativePath}` : relativePath;
+  return `https://github.com/${p.owner}/${p.repo}/blob/${p.ref}/${full}`;
+}
+
+// Parse a bare `github.com/<owner>/<repo>` URL — repo root, no ref.
+// Returns null for anything that already parses via `parseGithubUrl`
+// (i.e. URLs that bring their own `/blob|tree/...` segment).
+function parseGithubRepoRoot(source: string): { owner: string; repo: string } | null {
+  if (parseGithubUrl(source)) return null;
+  const m = GITHUB_REPO_ROOT_RE.exec(source);
+  if (!m) return null;
+  return { owner: m[1]!, repo: m[2]!.replace(/\.git$/, '') };
+}
+
+// Fetch a repo's default branch via the GitHub repository metadata
+// endpoint. One API call (counts against the same 60/hr/IP budget as
+// the Contents API for unauthenticated callers). Called only at
+// add-source time for bare-repo URLs; resolved branch gets baked into
+// the canonical source path so refresh is deterministic afterwards.
+async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<string> {
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
+  let response: Response;
+  try {
+    response = await fetch(apiUrl, {
+      cache: 'no-store',
+      headers: { 'Accept': 'application/vnd.github+json' },
+    });
+  } catch (err) {
+    throw new Error(`error fetching ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!response.ok) {
+    throw new Error(
+      `GitHub repo metadata ${apiUrl} returned HTTP ${response.status}${githubAuthHint(response.status)}`,
+    );
+  }
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch (err) {
+    throw new Error(`GitHub repo metadata ${apiUrl} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const branch = (json as { default_branch?: unknown } | null)?.default_branch;
+  if (typeof branch !== 'string' || !branch) {
+    throw new Error(`GitHub repo metadata ${apiUrl} missing default_branch`);
+  }
+  return branch;
+}
+
+// At add-source time, transparently rewrite a github.com input into
+// the canonical form the rest of the pipeline expects:
+//   - File URL (`/blob/<ref>/<path>.user.js` or `.json`) → raw URL.
+//   - Bare repo URL (`github.com/<o>/<r>` with no ref) → `/tree/<default-branch>`,
+//     resolved via the repo metadata endpoint (one API call).
+//   - Directory URLs (`/tree/<ref>/...`) pass through unchanged.
+//   - Non-github inputs pass through unchanged (no network call).
+// Async because the repo-root case needs to consult the GitHub API to
+// resolve the default branch. Idempotent on canonical outputs so the
+// caller-and-callee normalize pattern (see `addSource`) doesn't
+// double-up on API calls.
+export async function normalizeGithubInput(source: string): Promise<string> {
+  const p = parseGithubUrl(source);
+  if (p) {
+    if (p.path && (p.path.endsWith('.user.js') || p.path.endsWith('.json'))) {
+      return githubFileUrlToRaw(p);
+    }
+    return source;
+  }
+  const root = parseGithubRepoRoot(source);
+  if (root) {
+    const branch = await fetchGithubDefaultBranch(root.owner, root.repo);
+    return `https://github.com/${root.owner}/${root.repo}/tree/${branch}`;
+  }
+  return source;
+}
+
+// Build the GitHub Contents API URL for a directory inside a repo.
+// Empty `path` lists the repo root at the given ref.
+function githubContentsApiUrl(p: ParsedGithubUrl, subPath: string): string {
+  const base = `https://api.github.com/repos/${p.owner}/${p.repo}/contents`;
+  const full = subPath ? `${p.path ? p.path + '/' : ''}${subPath}` : p.path;
+  const encPath = full
+    ? '/' + full.split('/').map(encodeURIComponent).join('/')
+    : '';
+  return `${base}${encPath}?ref=${encodeURIComponent(p.ref)}`;
+}
+
+// Tack a private-repo / rate-limit hint onto the GitHub API error so
+// the failure is self-diagnosing. GitHub returns the same 404 for
+// "repo doesn't exist" and "repo exists but you can't see it without
+// auth", so the hint covers both. 403 unauthenticated almost always
+// means the per-IP rate limit ran out; auth would raise it.
+function githubAuthHint(status: number): string {
+  if (status === 404) {
+    return ' (repo / path not found, or repo is private — private repos require auth, not yet supported)';
+  }
+  if (status === 403) {
+    return ' (likely the unauthenticated 60/hr API rate limit — authenticated sources not yet supported)';
+  }
+  return '';
+}
+
+interface GithubContentsEntry {
+  // GitHub returns 'file' | 'dir' | 'submodule' | 'symlink'; we only
+  // act on the first two and skip everything else.
+  type: string;
+  name: string;
+  path: string;
+  size?: number;
+}
+
+// Fetch a single Contents API response. Returns the parsed JSON array.
+// Throws on non-2xx, non-array, or network failure — caller (refreshSource)
+// turns the error into a per-source `scanError`.
+async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[]> {
+  let response: Response;
+  try {
+    response = await fetch(apiUrl, {
+      cache: 'no-store',
+      headers: { 'Accept': 'application/vnd.github+json' },
+    });
+  } catch (err) {
+    throw new Error(`error fetching ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!response.ok) {
+    // 403 with rate-limit headers is the common failure mode for
+    // unauthenticated repeat callers; 404 means either the repo / path
+    // doesn't exist OR it's a private repo (GitHub returns the same
+    // status for both unauthenticated). Surface the status plus the
+    // private-repo hint so the user has something concrete to act on.
+    throw new Error(
+      `GitHub Contents API ${apiUrl} returned HTTP ${response.status}${githubAuthHint(response.status)}`,
+    );
+  }
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch (err) {
+    throw new Error(`GitHub Contents API ${apiUrl} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!Array.isArray(json)) {
+    throw new Error(`GitHub Contents API ${apiUrl} did not return a directory listing`);
+  }
+  return json as GithubContentsEntry[];
+}
+
+// Recursive scan of a GitHub directory source via the Contents API.
+// Mirrors the shape of `scanForUserScripts` / `scanManifest`: returns a
+// flat `FoundScript[]` keyed by paths relative to the source's root
+// dir, capped at MAX_SCAN_DEPTH levels deep.
+//
+// Cost: one Contents API call per directory walked. Unauthenticated
+// callers share a 60/hour budget per IP, so deep trees can drain
+// quickly; authenticated-sources support is in TODO.md.
+export async function scanGithubDir(
+  source: string,
+  depth = 0,
+  prefix = '',
+): Promise<FoundScript[]> {
+  const p = parseGithubUrl(source);
+  if (!p) throw new Error(`not a GitHub URL: ${source}`);
+  // `prefix` carries a trailing slash on every recursive call
+  // (`prefix + entry.name + '/'`); strip it so the Contents-API path
+  // ends in the directory name without an extra `/`.
+  const subPath = prefix.replace(/\/+$/, '');
+  const apiUrl = githubContentsApiUrl(p, subPath);
+  const entries = await fetchGithubContents(apiUrl);
+  const results: FoundScript[] = [];
+  for (const entry of entries) {
+    if (entry.type === 'file' && entry.name.endsWith('.user.js')) {
+      const found: FoundScript = {
+        name: entry.name,
+        relativePath: prefix + entry.name,
+      };
+      if (typeof entry.size === 'number') found.size = entry.size;
+      results.push(found);
+    } else if (entry.type === 'dir' && depth < MAX_SCAN_DEPTH) {
+      const sub = await scanGithubDir(source, depth + 1, prefix + entry.name + '/');
+      results.push(...sub);
+    }
+  }
+  results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  return results;
+}

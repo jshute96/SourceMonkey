@@ -46,10 +46,12 @@ details live in the topic-specific docs linked below.
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when
   a tab uses some scripts. See [storage.md](storage.md#updater).
-- **Source I/O** (`src/directories.ts`) — `file://` fetcher,
-  directory-listing parser, recursive `*.user.js` scanner, plus the
-  `http(s)://` fetcher and JSON manifest parser. See
-  [file-access.md](file-access.md) and
+- **Source I/O** (`src/directories.ts` + `src/github-source.ts`) —
+  `file://` fetcher, directory-listing parser, recursive `*.user.js`
+  scanner, `http(s)://` fetcher, JSON manifest parser, and the GitHub
+  provider (URL parsing, blob→raw rewrite, Contents-API scanner) which
+  lives in its own module and is dispatched to from `directories.ts`.
+  See [file-access.md](file-access.md) and
   [http-sources.md](http-sources.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
   (`@icon`, `@require`, `@resource`) into absolute URLs against the

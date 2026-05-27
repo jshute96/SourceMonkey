@@ -16,6 +16,7 @@ by the [script store](storage.md). Companion to
   - an `http(s)://` URL,
   - a `file://` URL, or
   - an absolute local filesystem path.
+- A **github.com URL** — see the GitHub section below.
 
 The URL's *pathname* drives the suffix test, so query strings and
 fragments don't break detection (`…/foo.user.js?v=2` still classifies
@@ -24,6 +25,52 @@ as a single-file source).
 Anything else (an http URL with no recognised suffix, etc.) is
 rejected with `URL must end in .user.js (single script) or .json
 (manifest)`.
+
+## GitHub URLs
+
+Paste a `github.com` browser URL straight in — SourceMonkey
+recognises three shapes:
+
+- **A single file**: `https://github.com/<o>/<r>/blob/<ref>/<path>`
+  whose path ends in `.user.js` or `.json`.
+  - Rewritten to its `raw.githubusercontent.com` counterpart at add-source
+    time and stored as a regular HTTP single-file / manifest source.
+  - Why: the `github.com/.../blob/...` URL serves an HTML rendering, not
+    the raw bytes.
+- **A directory**: `https://github.com/<o>/<r>/tree/<ref>/<path>`
+  (a `/blob/<ref>/<dir>` typo is also accepted).
+  - Stored as-is. Scanned via the GitHub Contents API (one call per
+    walked directory) to discover `.user.js` entries recursively, with
+    the same `MAX_SCAN_DEPTH` cap as local directory sources.
+  - Each entry fetches from its raw URL; the viewer's Location row
+    links to the github.com `/blob/<ref>/<path>` view.
+- **A repo root**: `https://github.com/<o>/<r>` (with optional
+  trailing `/` or `.git`).
+  - Treated as the equivalent of `https://github.com/<o>/<r>/tree/<default-branch>`.
+  - The default branch is resolved once at add time via the repo
+    metadata endpoint and baked into the stored source path so refresh
+    is deterministic afterwards. The resolved URL is what appears in
+    the options-page heading.
+
+Limits:
+
+- A `.user.js` file deleted from the repo (or absent on the resolved
+  branch) is tagged `missing` and auto-disabled — same handling as a
+  local-directory source, since the file might come back if the user
+  reverts. Use the per-row trash to clear it for good.
+- Unauthenticated GitHub API budget is **60 requests / hour / IP**.
+  Each repo-root add costs one call (metadata); each refresh costs one
+  Contents-API call per walked directory. Per-script raw fetches don't
+  count against this budget — `raw.githubusercontent.com` has no API
+  rate limit and uses ETag-based conditional GETs, so refresh of
+  unchanged scripts is bandwidth-cheap. Authenticated-source support
+  is tracked in `TODO.md`.
+- Branch names containing slashes (e.g. `feature/foo`) aren't
+  supported — the parser takes the first ref segment as `<ref>` and
+  treats everything after as the path.
+- A repo's default branch can change after the source is added; the
+  stored URL keeps the originally-resolved branch (re-add to track a
+  new default).
 
 ## Manifest format
 
@@ -174,6 +221,7 @@ source row is tracked in `TODO.md`.
 | Local single-file      | basename                               | `pathToFileUrl(sourcePath)`                         |
 | HTTP single-file       | basename of URL pathname               | `sourcePath` (the URL itself)                       |
 | Manifest entry         | raw manifest entry (relative or abs)   | `resolveManifestEntryUrl(rel, sourceCanonicalUrl(manifest)).href` |
+| GitHub directory entry | path relative to the source dir        | `https://raw.githubusercontent.com/<o>/<r>/<ref>/<dir>/<rel>`     |
 
 `sourceCanonicalUrl()` turns a raw local path into its `file://` URL;
 URLs pass through. `scriptAbsolutePath()` returns the resolved URL
@@ -188,6 +236,7 @@ path form):
 
 - `isSingleFileSource(s)` — pathname ends in `.user.js`.
 - `isManifestSource(s)` — pathname ends in `.json`.
+- `isGithubDirSource(s)` — github.com URL pointing at a directory.
 
 Scheme classifiers (used at the rare call sites that genuinely care):
 
@@ -200,6 +249,23 @@ needed for I/O — used everywhere instead of branching on scheme):
   `file://`, URLs pass through).
 - `sourceFsPath(s)` — the inverse for local inputs (file:// → bare
   fs path with percent-decoded segments; raw paths pass through).
+- `normalizeSourceInput(s)` — at add-source time, rewrites the user's
+  input to the canonical form the rest of the pipeline expects: a
+  github.com `/blob/.../foo.user.js` (or `.json`) URL becomes its raw
+  counterpart; a bare repo URL becomes `tree/<default-branch>` after
+  a metadata API call; everything else passes through. Async because
+  the bare-repo case does I/O and can throw on rate-limit / 404.
+
+GitHub helpers (live in `src/github-source.ts`):
+
+- `parseGithubUrl(s)` — splits a `(blob|tree)/<ref>/<path>` URL into
+  `{owner, repo, kind, ref, path}` (null on no match).
+- `scanGithubDir(s)` — Contents-API-driven recursive directory scan,
+  returns the same `FoundScript[]` shape as the other scanners.
+
+`isGithubDirSource` and `normalizeGithubInput` are re-exported through
+`directories.ts` (the latter as `normalizeSourceInput`) so consumers
+don't need to know about the module split.
 
 Fetchers and parsers:
 

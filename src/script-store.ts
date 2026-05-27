@@ -34,6 +34,7 @@ import {
   isManifestSource,
   isSingleFileSource,
   joinPath,
+  normalizeSourceInput,
   parentDir,
   scanForUserScripts,
   scriptFileUrl,
@@ -709,7 +710,14 @@ export async function getSource(id: string): Promise<StoredSource | undefined> {
 // UUID, persists an empty source row, then immediately runs a refresh
 // to populate the scripts. Returns null if a source with this path is
 // already registered.
-export async function addSource(path: string): Promise<StoredSource | null> {
+//
+// `normalizeSourceInput` runs first so a github.com `/blob/.../foo.user.js`
+// (or `.json`) URL gets rewritten to its raw counterpart before we hit
+// the duplicate check. The github blob URL serves HTML, not raw bytes,
+// so storing it verbatim would silently load the page chrome instead of
+// the script — see [docs/http-sources.md].
+export async function addSource(rawPath: string): Promise<StoredSource | null> {
+  const path = await normalizeSourceInput(rawPath);
   const sources = await getSources();
   if (sources.some((s) => s.path === path)) return null;
 

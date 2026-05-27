@@ -38,6 +38,11 @@ loaded into the extension's storage. A source can be any of:
   Works at an http(s) URL, a `file://` URL, or a bare local path —
   the same manifest file can be tested locally and then served over
   HTTP unchanged.
+- A **GitHub URL** — paste a `github.com` URL straight from the
+  browser. A `/blob/.../foo.user.js` (or `.json`) URL is rewritten to
+  its `raw.githubusercontent.com` counterpart on add. A `/tree/<ref>/<dir>`
+  URL is scanned recursively via the GitHub Contents API. A bare repo
+  URL (`github.com/<o>/<r>`) resolves to the repo's default branch.
 
 Each source shows up as its own section on the options page with a
 per-source enable toggle, per-script enable toggles, **↑ / ↓** buttons

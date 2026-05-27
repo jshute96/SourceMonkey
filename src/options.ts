@@ -46,7 +46,7 @@ import {
 import { DEBUG_LOGGING_KEY } from './debug-log.js';
 import { computeLogIds } from './script-log-id.js';
 import { renderSiteIconInto } from './site-icon.js';
-import { isHttpUrl, isFileUrl } from './directories.js';
+import { isHttpUrl, isFileUrl, normalizeSourceInput } from './directories.js';
 
 const bannerSlot = document.getElementById('banner-slot')!;
 const directoriesEl = document.getElementById('directories')!;
@@ -426,13 +426,27 @@ async function onAddDirectory(rawPath: string): Promise<boolean> {
 
   setAddFormBusy(true);
   try {
-    const created = await addSource(path);
+    // Normalize once up front so we don't burn a second GitHub API
+    // call on the duplicate-jump lookup below — and so any failure
+    // (rate limit, private repo, network down) surfaces here with a
+    // user-visible message instead of dead-ending in the page console.
+    // `addSource` re-normalizes internally, but the second call is
+    // a no-op on already-canonical inputs (idempotent for non-github
+    // and for already-resolved github `/tree/<ref>/...` URLs).
+    let stored;
+    try {
+      stored = await normalizeSourceInput(path);
+    } catch (err) {
+      showAddError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+    const created = await addSource(stored);
     addInput.value = '';
     if (!created) {
-      // Already registered: find the existing source by path, jump
-      // to it, and tell the user why nothing new appeared (otherwise
-      // a deep-link with a duplicate just silently scrolls).
-      const existing = (await getSources()).find((s) => s.path === path);
+      // Already registered: find the existing source by its stored
+      // (normalized) path so a deep-link with a duplicate doesn't
+      // silently scroll without explanation.
+      const existing = (await getSources()).find((s) => s.path === stored);
       if (existing) {
         showAddError('This source is already registered.');
         jumpToSource(existing.id);

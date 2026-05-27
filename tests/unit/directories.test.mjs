@@ -474,11 +474,11 @@ test('parseManifest returns [] for an empty list (both shapes)', () => {
 // HTTP-side code (everything downstream trusts the result shape), so
 // each branch gets a direct test.
 
-function withFetch(impl, fn) {
+async function withFetch(impl, fn) {
   const original = globalThis.fetch;
   globalThis.fetch = impl;
   try {
-    return fn();
+    return await fn();
   } finally {
     globalThis.fetch = original;
   }
@@ -557,3 +557,40 @@ test('fetchHttpText: a thrown fetch surfaces with the underlying message', async
     /error fetching .*: Failed to fetch/,
   );
 });
+
+// ---------- GitHub-dir dispatch ----------
+//
+// scriptFileUrl / scriptAbsolutePath delegate to github-source.ts for
+// github-dir sources. The github helpers themselves are covered in
+// tests/unit/github-source.test.mjs; the tests here lock down that
+// directories.ts's source-kind dispatch routes through them correctly.
+
+test('scriptFileUrl resolves github-dir entries to raw.githubusercontent.com URLs', () => {
+  // Same shape as a manifest entry: the source URL is the dir's
+  // github.com URL, the relativePath is the path relative to that dir,
+  // and the fetch URL is the raw URL.
+  assert.equal(
+    scriptFileUrl('https://github.com/foo/bar/tree/main/dir', 'sub/script.user.js'),
+    'https://raw.githubusercontent.com/foo/bar/main/dir/sub/script.user.js',
+  );
+  // Bare basename relative to a tree URL.
+  assert.equal(
+    scriptFileUrl('https://github.com/foo/bar/tree/main/dir', 'script.user.js'),
+    'https://raw.githubusercontent.com/foo/bar/main/dir/script.user.js',
+  );
+  // /blob/<ref>/<dir> form is treated the same (user typo tolerance).
+  assert.equal(
+    scriptFileUrl('https://github.com/foo/bar/blob/main/dir', 'script.user.js'),
+    'https://raw.githubusercontent.com/foo/bar/main/dir/script.user.js',
+  );
+});
+
+test('scriptAbsolutePath returns the github.com blob URL for a github-dir entry', () => {
+  // The viewer's Location row links to where the user can browse the
+  // file on github.com, NOT the raw URL.
+  assert.equal(
+    scriptAbsolutePath('https://github.com/foo/bar/tree/main/dir', 'sub/script.user.js'),
+    'https://github.com/foo/bar/blob/main/dir/sub/script.user.js',
+  );
+});
+
