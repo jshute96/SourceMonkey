@@ -22,3 +22,8 @@ export interface FoundScript {
 // stopping. Applies to local directory sources AND GitHub directory
 // sources (the cost model is different but the cap keeps both bounded).
 export const MAX_SCAN_DEPTH = 2;
+
+// The one and only filename SourceMonkey recognises as a userscript
+// manifest. Lives here (not in `directories.ts`) so `github-source.ts`
+// can import it without forming a runtime cycle with `directories.ts`.
+export const MANIFEST_FILENAME = 'script_manifest.json';

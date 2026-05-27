@@ -156,8 +156,8 @@ test.describe('@require', () => {
         '// ==/UserScript==',
         '',
       ].join('\n'));
-      server.setManifest('/pkg/manifest.json', ['a.user.js', 'b.user.js']);
-      await sm.addSource(`${server.baseUrl}/pkg/manifest.json`);
+      server.setManifest('/pkg/script_manifest.json', ['a.user.js', 'b.user.js']);
+      await sm.addSource(`${server.baseUrl}/pkg/script_manifest.json`);
       // Both scripts' requires resolve to the same URL — must hit it
       // exactly once during the addSource refresh pass.
       expect(server.countResponses('/lib.js', 200)).toBe(1);

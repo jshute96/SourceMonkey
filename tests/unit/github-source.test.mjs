@@ -80,6 +80,10 @@ test('isGithubDirSource recognises directory URLs and rejects file URLs', () => 
   // these to raw before they reach the source-kind dispatch.
   assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/a.user.js'), false);
   assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/script_manifest.json'), false);
+  // An arbitrary `.json` file is NOT a recognised manifest filename, so
+  // it's treated as a directory (a later scan attempt will surface the
+  // mismatch). The fixed manifest filename is the only one we honor.
+  assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/other.json'), true);
   // Non-github URLs always classify as non-dir.
   assert.equal(isGithubDirSource('https://example.com/dir'), false);
   assert.equal(isGithubDirSource('/home/me/scripts'), false);
@@ -87,21 +91,46 @@ test('isGithubDirSource recognises directory URLs and rejects file URLs', () => 
 
 // ---------- normalizeGithubInput ----------
 
-test('normalizeGithubInput rewrites github blob URLs of .user.js / .json to raw', async () => {
+test('normalizeGithubInput rewrites github blob URLs of .user.js / script_manifest.json to raw', async () => {
   assert.equal(
     await normalizeGithubInput('https://github.com/foo/bar/blob/main/dir/script.user.js'),
     'https://raw.githubusercontent.com/foo/bar/main/dir/script.user.js',
   );
   // Manifest files get the same treatment — the user shouldn't have to
-  // hand-edit the URL to point at raw.githubusercontent.com.
+  // hand-edit the URL to point at raw.githubusercontent.com. Only the
+  // fixed `script_manifest.json` basename is recognised; arbitrary
+  // .json files are left alone.
   assert.equal(
     await normalizeGithubInput('https://github.com/foo/bar/blob/main/script_manifest.json'),
     'https://raw.githubusercontent.com/foo/bar/main/script_manifest.json',
+  );
+  assert.equal(
+    await normalizeGithubInput('https://github.com/foo/bar/blob/main/dir/script_manifest.json'),
+    'https://raw.githubusercontent.com/foo/bar/main/dir/script_manifest.json',
   );
   // tree URLs work too (a user might paste a /tree/ URL of a file).
   assert.equal(
     await normalizeGithubInput('https://github.com/foo/bar/tree/main/a.user.js'),
     'https://raw.githubusercontent.com/foo/bar/main/a.user.js',
+  );
+  // A blob URL of an arbitrary .json file is NOT rewritten — it's not
+  // a recognised file shape, so it falls through and downstream
+  // classification treats it as a github directory source.
+  assert.equal(
+    await normalizeGithubInput('https://github.com/foo/bar/blob/main/other.json'),
+    'https://github.com/foo/bar/blob/main/other.json',
+  );
+  // A filename that *suffix-matches* `script_manifest.json` but isn't
+  // preceded by a `/` (so the basename is something else) is not a
+  // manifest. Pins the `'/' + MANIFEST_FILENAME` guard in
+  // isGithubFilePath against an accidental bare endsWith.
+  assert.equal(
+    await normalizeGithubInput('https://github.com/foo/bar/blob/main/nope_script_manifest.json'),
+    'https://github.com/foo/bar/blob/main/nope_script_manifest.json',
+  );
+  assert.equal(
+    isGithubDirSource('https://github.com/foo/bar/blob/main/nope_script_manifest.json'),
+    true,
   );
 });
 

@@ -12,7 +12,8 @@
 //    file, not the raw bytes. `normalizeGithubInput` rewrites those to
 //    their `raw.githubusercontent.com` counterpart at add-source time
 //    so the rest of the pipeline treats them as ordinary HTTP single-
-//    file / manifest sources.
+//    file / manifest sources. Recognised file shapes are `.user.js`
+//    files and the fixed `script_manifest.json` manifest filename.
 // 2. GitHub directory URLs (`/tree/<ref>/<path>` and, by extension, a
 //    misused `/blob/<ref>/<dir>` form) have no direct "give me all the
 //    `.user.js` files inside" endpoint. `scanGithubDir` uses the
@@ -28,7 +29,7 @@
 // supported — the matcher takes the first ref segment and assumes the
 // rest is the path.
 
-import { type FoundScript, MAX_SCAN_DEPTH } from './source-scan.js';
+import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './source-scan.js';
 
 const GITHUB_URL_RE = /^https?:\/\/github\.com\/([^\/?#]+)\/([^\/?#]+)\/(blob|tree)\/([^\/?#]+)(?:\/([^?#]*))?(?:\?[^#]*)?(?:#.*)?$/i;
 
@@ -64,16 +65,26 @@ export function parseGithubUrl(source: string): ParsedGithubUrl | null {
 // True for a github.com URL pointing at a directory. `/tree/...` is the
 // canonical form, but we also accept `/blob/<ref>/<dir>` (the form a
 // user might end up with by editing a blob URL by hand) as long as the
-// path doesn't end in a recognised file suffix.
+// path doesn't look like a recognised file: `.user.js` (single script)
+// or basename `script_manifest.json` (manifest).
 export function isGithubDirSource(source: string): boolean {
   const p = parseGithubUrl(source);
   if (!p) return false;
-  return !p.path.endsWith('.user.js') && !p.path.endsWith('.json');
+  return !isGithubFilePath(p.path);
+}
+
+// True when the parsed GitHub path points at one of the file shapes we
+// recognise (a userscript or a manifest under its fixed filename).
+function isGithubFilePath(p: string): boolean {
+  if (p.endsWith('.user.js')) return true;
+  if (p === MANIFEST_FILENAME) return true;
+  if (p.endsWith('/' + MANIFEST_FILENAME)) return true;
+  return false;
 }
 
 // Build the raw.githubusercontent.com URL for a parsed file URL. Caller
-// must have already verified the URL's path ends in `.user.js` or
-// `.json` (see `normalizeGithubInput`'s inline check).
+// must have already verified the URL's path is a recognised file shape
+// (see `isGithubFilePath` / `normalizeGithubInput`'s inline check).
 function githubFileUrlToRaw(p: ParsedGithubUrl): string {
   return `https://raw.githubusercontent.com/${p.owner}/${p.repo}/${p.ref}/${p.path}`;
 }
@@ -145,7 +156,8 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
 
 // At add-source time, transparently rewrite a github.com input into
 // the canonical form the rest of the pipeline expects:
-//   - File URL (`/blob/<ref>/<path>.user.js` or `.json`) → raw URL.
+//   - File URL — `/blob/<ref>/<path>.user.js` or a path whose basename
+//     is `script_manifest.json` — gets rewritten to its raw URL.
 //   - Bare repo URL (`github.com/<o>/<r>` with no ref) → `/tree/<default-branch>`,
 //     resolved via the repo metadata endpoint (one API call).
 //   - Directory URLs (`/tree/<ref>/...`) pass through unchanged.
@@ -157,7 +169,7 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
 export async function normalizeGithubInput(source: string): Promise<string> {
   const p = parseGithubUrl(source);
   if (p) {
-    if (p.path && (p.path.endsWith('.user.js') || p.path.endsWith('.json'))) {
+    if (p.path && isGithubFilePath(p.path)) {
       return githubFileUrlToRaw(p);
     }
     return source;

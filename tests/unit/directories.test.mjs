@@ -110,7 +110,7 @@ test('isSingleFileSource matches *.user.js across all schemes', () => {
   // Non-matches
   assert.equal(isSingleFileSource('/home/me/scripts'), false);
   assert.equal(isSingleFileSource('/home/me/notes.txt'), false);
-  assert.equal(isSingleFileSource('https://x/manifest.json'), false);
+  assert.equal(isSingleFileSource('https://x/script_manifest.json'), false);
   assert.equal(isSingleFileSource('file:///home/me/scripts'), false);
 });
 
@@ -200,21 +200,30 @@ test('isHttpUrl is true for http and https, false for file/path', () => {
 });
 
 
-test('isManifestSource matches .json URLs/paths regardless of scheme or query', () => {
-  // Manifest support is scheme-agnostic: anything with a .json
-  // pathname counts so the same manifest file can be tested locally
-  // and then served over HTTP without changing the source kind.
-  assert.equal(isManifestSource('https://x/manifest.json'), true);
-  assert.equal(isManifestSource('http://x/manifest.json'), true);
-  assert.equal(isManifestSource('https://x/sub/list.json?branch=main'), true);
-  assert.equal(isManifestSource('file:///home/me/manifest.json'), true);
-  assert.equal(isManifestSource('/home/me/manifest.json'), true);
+test('isManifestSource matches the script_manifest.json basename regardless of scheme or query', () => {
+  // Manifest support is scheme-agnostic AND filename-specific: a path
+  // counts as a manifest iff its pathname basename is exactly
+  // `script_manifest.json`. Arbitrary `.json` files are NOT manifests.
+  assert.equal(isManifestSource('https://x/script_manifest.json'), true);
+  assert.equal(isManifestSource('http://x/script_manifest.json'), true);
+  assert.equal(isManifestSource('https://x/sub/script_manifest.json?branch=main'), true);
+  assert.equal(isManifestSource('file:///home/me/script_manifest.json'), true);
+  assert.equal(isManifestSource('/home/me/script_manifest.json'), true);
+  // Arbitrary .json files (including the legacy `manifest.json` name)
+  // are NOT manifests — only the exact `script_manifest.json` basename
+  // counts.
+  assert.equal(isManifestSource('https://x/manifest.json'), false);
+  assert.equal(isManifestSource('/home/me/manifest.json'), false);
+  assert.equal(isManifestSource('/home/me/list.json'), false);
+  // A file whose name *contains* script_manifest.json as a suffix but
+  // isn't actually that file (no `/` before it) doesn't count either.
+  assert.equal(isManifestSource('https://x/nope_script_manifest.json'), false);
   assert.equal(isManifestSource('https://x/foo.user.js'), false);
   assert.equal(isManifestSource('/home/me/scripts'), false);
 });
 
 test('isFileUrl recognises file:// URLs', () => {
-  assert.equal(isFileUrl('file:///home/me/manifest.json'), true);
+  assert.equal(isFileUrl('file:///home/me/script_manifest.json'), true);
   assert.equal(isFileUrl('FILE:///etc/passwd'), true);
   assert.equal(isFileUrl('https://x/foo.json'), false);
   assert.equal(isFileUrl('/local/foo.json'), false);
@@ -224,16 +233,16 @@ test('sourceCanonicalUrl normalises raw paths to file:// URLs and passes URLs th
   // Used as the base for new URL(entry, base) when resolving manifest
   // entries, so a local manifest's relative paths resolve correctly.
   assert.equal(
-    sourceCanonicalUrl('/home/me/scripts/manifest.json'),
-    'file:///home/me/scripts/manifest.json',
+    sourceCanonicalUrl('/home/me/scripts/script_manifest.json'),
+    'file:///home/me/scripts/script_manifest.json',
   );
   assert.equal(
     sourceCanonicalUrl('file:///already/url.json'),
     'file:///already/url.json',
   );
   assert.equal(
-    sourceCanonicalUrl('https://example.com/manifest.json'),
-    'https://example.com/manifest.json',
+    sourceCanonicalUrl('https://example.com/script_manifest.json'),
+    'https://example.com/script_manifest.json',
   );
 });
 
@@ -252,20 +261,20 @@ test('scriptFileUrl resolves manifest entries relative to the manifest URL', () 
   // A bare filename inside a manifest resolves against the manifest's
   // *parent* path — same semantics as RFC 3986 relative resolution.
   assert.equal(
-    scriptFileUrl('https://example.com/scripts/manifest.json', 'foo.user.js'),
+    scriptFileUrl('https://example.com/scripts/script_manifest.json', 'foo.user.js'),
     'https://example.com/scripts/foo.user.js',
   );
   // Absolute URLs in the manifest pass through unchanged.
   assert.equal(
     scriptFileUrl(
-      'https://example.com/scripts/manifest.json',
+      'https://example.com/scripts/script_manifest.json',
       'https://other.example.com/bar.user.js',
     ),
     'https://other.example.com/bar.user.js',
   );
   // Subdirectory entries resolve relative to the manifest too.
   assert.equal(
-    scriptFileUrl('https://example.com/scripts/manifest.json', 'sub/baz.user.js'),
+    scriptFileUrl('https://example.com/scripts/script_manifest.json', 'sub/baz.user.js'),
     'https://example.com/scripts/sub/baz.user.js',
   );
 });
@@ -277,7 +286,7 @@ test('scriptAbsolutePath returns the resolved URL for HTTP sources', () => {
     'https://example.com/foo.user.js',
   );
   assert.equal(
-    scriptAbsolutePath('https://example.com/scripts/manifest.json', 'foo.user.js'),
+    scriptAbsolutePath('https://example.com/scripts/script_manifest.json', 'foo.user.js'),
     'https://example.com/scripts/foo.user.js',
   );
 });
@@ -287,19 +296,19 @@ test('scriptFileUrl resolves entries against a local manifest path', () => {
   // works when added locally and when later served over HTTP.
   // Relative entries resolve against the manifest's parent dir.
   assert.equal(
-    scriptFileUrl('/home/me/scripts/manifest.json', 'foo.user.js'),
+    scriptFileUrl('/home/me/scripts/script_manifest.json', 'foo.user.js'),
     'file:///home/me/scripts/foo.user.js',
   );
   // Subdirectory entries.
   assert.equal(
-    scriptFileUrl('/home/me/scripts/manifest.json', 'sub/bar.user.js'),
+    scriptFileUrl('/home/me/scripts/script_manifest.json', 'sub/bar.user.js'),
     'file:///home/me/scripts/sub/bar.user.js',
   );
   // Absolute HTTP entries inside a local manifest are honoured —
   // useful for "host most scripts locally, pull one off the web".
   assert.equal(
     scriptFileUrl(
-      '/home/me/scripts/manifest.json',
+      '/home/me/scripts/script_manifest.json',
       'https://elsewhere.example.com/baz.user.js',
     ),
     'https://elsewhere.example.com/baz.user.js',
@@ -321,7 +330,7 @@ test('scriptFileUrl propagates a manifest URL query string onto relative entries
   // Sub-path entries get the same treatment.
   assert.equal(
     scriptFileUrl(
-      'https://x.example.com/dir/manifest.json?token=ABC',
+      'https://x.example.com/dir/script_manifest.json?token=ABC',
       'sub/bar.user.js',
     ),
     'https://x.example.com/dir/sub/bar.user.js?token=ABC',
@@ -330,7 +339,7 @@ test('scriptFileUrl propagates a manifest URL query string onto relative entries
   // every file the manifest names on its own origin).
   assert.equal(
     scriptFileUrl(
-      'https://x.example.com/dir/manifest.json?token=ABC',
+      'https://x.example.com/dir/script_manifest.json?token=ABC',
       'https://x.example.com/elsewhere/baz.user.js',
     ),
     'https://x.example.com/elsewhere/baz.user.js?token=ABC',
@@ -339,7 +348,7 @@ test('scriptFileUrl propagates a manifest URL query string onto relative entries
   // scoped to its own origin and shouldn't leak to third parties.
   assert.equal(
     scriptFileUrl(
-      'https://x.example.com/dir/manifest.json?token=ABC',
+      'https://x.example.com/dir/script_manifest.json?token=ABC',
       'https://other.example.com/qux.user.js',
     ),
     'https://other.example.com/qux.user.js',
@@ -347,7 +356,7 @@ test('scriptFileUrl propagates a manifest URL query string onto relative entries
   // An entry that brings its own query string keeps it; no merge.
   assert.equal(
     scriptFileUrl(
-      'https://x.example.com/dir/manifest.json?token=ABC',
+      'https://x.example.com/dir/script_manifest.json?token=ABC',
       'foo.user.js?v=2',
     ),
     'https://x.example.com/dir/foo.user.js?v=2',
@@ -357,7 +366,7 @@ test('scriptFileUrl propagates a manifest URL query string onto relative entries
 test('resolveManifestEntryUrl propagates query only for same-origin no-query entries', () => {
   // Direct unit test of the helper so the propagation rule is pinned
   // down without going through scriptFileUrl's source-kind dispatch.
-  const base = 'https://x.example.com/dir/manifest.json?t=1';
+  const base = 'https://x.example.com/dir/script_manifest.json?t=1';
   assert.equal(resolveManifestEntryUrl('foo.user.js', base).href,
     'https://x.example.com/dir/foo.user.js?t=1');
   assert.equal(resolveManifestEntryUrl('foo.user.js?v=2', base).href,
@@ -366,7 +375,7 @@ test('resolveManifestEntryUrl propagates query only for same-origin no-query ent
     'https://other/x.user.js');
   // No-query manifest → nothing to propagate.
   assert.equal(
-    resolveManifestEntryUrl('foo.user.js', 'https://x/dir/manifest.json').href,
+    resolveManifestEntryUrl('foo.user.js', 'https://x/dir/script_manifest.json').href,
     'https://x/dir/foo.user.js',
   );
 });
@@ -374,7 +383,7 @@ test('resolveManifestEntryUrl propagates query only for same-origin no-query ent
 test('scriptFileUrl resolves entries against a file:// manifest URL', () => {
   // file:// input form should behave identically to a bare path.
   assert.equal(
-    scriptFileUrl('file:///home/me/scripts/manifest.json', 'foo.user.js'),
+    scriptFileUrl('file:///home/me/scripts/script_manifest.json', 'foo.user.js'),
     'file:///home/me/scripts/foo.user.js',
   );
 });
@@ -385,19 +394,19 @@ test('scriptAbsolutePath shows the resolved fs path for local manifest entries',
   // is the same display rule that local directories and local
   // single-file sources use.
   assert.equal(
-    scriptAbsolutePath('/home/me/scripts/manifest.json', 'foo.user.js'),
+    scriptAbsolutePath('/home/me/scripts/script_manifest.json', 'foo.user.js'),
     '/home/me/scripts/foo.user.js',
   );
   // file:// manifest input form gives the same result.
   assert.equal(
-    scriptAbsolutePath('file:///home/me/scripts/manifest.json', 'foo.user.js'),
+    scriptAbsolutePath('file:///home/me/scripts/script_manifest.json', 'foo.user.js'),
     '/home/me/scripts/foo.user.js',
   );
   // An HTTPS entry inside a local manifest still surfaces as the URL,
   // because that's where it actually lives.
   assert.equal(
     scriptAbsolutePath(
-      '/home/me/scripts/manifest.json',
+      '/home/me/scripts/script_manifest.json',
       'https://elsewhere.example.com/baz.user.js',
     ),
     'https://elsewhere.example.com/baz.user.js',

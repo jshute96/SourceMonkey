@@ -11,20 +11,25 @@ by the [script store](storage.md). Companion to
 
 - An **http(s) URL ending in `.user.js`** → fetched as a single-script
   source (mirrors the local single-file mode).
-- **Anything whose pathname ends in `.json`** → treated as a
-  **manifest** that lists script URLs. The manifest itself can live at:
+- **Anything whose pathname's basename is `script_manifest.json`** →
+  treated as a **manifest** that lists script URLs. The manifest itself
+  can live at:
   - an `http(s)://` URL,
   - a `file://` URL, or
   - an absolute local filesystem path.
 - A **github.com URL** — see the GitHub section below.
 
-The URL's *pathname* drives the suffix test, so query strings and
+The manifest filename is fixed — `script_manifest.json` is the only
+name we recognise.
+
+The URL's *pathname* drives the basename test, so query strings and
 fragments don't break detection (`…/foo.user.js?v=2` still classifies
-as a single-file source).
+as a single-file source; `…/script_manifest.json?token=…` still
+classifies as a manifest).
 
 Anything else (an http URL with no recognised suffix, etc.) is
-rejected with `URL must end in .user.js (single script) or .json
-(manifest)`.
+rejected with `URL must end in .user.js (single script) or
+script_manifest.json (manifest)`.
 
 ## GitHub URLs
 
@@ -32,7 +37,8 @@ Paste a `github.com` browser URL straight in — SourceMonkey
 recognises three shapes:
 
 - **A single file**: `https://github.com/<o>/<r>/blob/<ref>/<path>`
-  whose path ends in `.user.js` or `.json`.
+  whose path ends in `.user.js`, or whose basename is
+  `script_manifest.json`.
   - Rewritten to its `raw.githubusercontent.com` counterpart at add-source
     time and stored as a regular HTTP single-file / manifest source.
   - Why: the `github.com/.../blob/...` URL serves an HTML rendering, not
@@ -91,9 +97,9 @@ Each entry is a URL (string). Resolution rules:
 - **Relative** URLs resolve against the manifest URL via standard
   RFC 3986 semantics — the manifest's last path segment is replaced.
   So `foo.user.js` listed in
-  `https://example.com/scripts/manifest.json` becomes
+  `https://example.com/scripts/script_manifest.json` becomes
   `https://example.com/scripts/foo.user.js`; the same entry in
-  `/home/me/scripts/manifest.json` becomes
+  `/home/me/scripts/script_manifest.json` becomes
   `file:///home/me/scripts/foo.user.js`.
 
 Entries are trimmed; empty strings are dropped. Duplicates collapse
@@ -106,14 +112,14 @@ Because a manifest's entries resolve against *its own* URL, the same
 manifest JSON can be tested locally and then served unchanged over
 HTTP. A typical workflow:
 
-1. Write `manifest.json` next to your `*.user.js` files (or generate
-   it with `scripts/make_manifest.sh`).
-2. Add the local path (e.g. `/home/me/scripts/manifest.json`) as a
-   source in SourceMonkey to verify the entries load and inject.
+1. Write `script_manifest.json` next to your `*.user.js` files (or
+   generate it with `scripts/make_manifest.sh`).
+2. Add the local path (e.g. `/home/me/scripts/script_manifest.json`)
+   as a source in SourceMonkey to verify the entries load and inject.
 3. Serve the directory over HTTP; replace the source with the
-   `https://…/manifest.json` URL. The script contents and stable IDs
-   come from `relativePath` (the raw entry text), so identity carries
-   across the swap.
+   `https://…/script_manifest.json` URL. The script contents and
+   stable IDs come from `relativePath` (the raw entry text), so
+   identity carries across the swap.
 
 ## Conditional GETs (the `unchanged` path)
 
@@ -235,7 +241,9 @@ input's pathname suffix, regardless of `http://`, `file://`, or raw
 path form):
 
 - `isSingleFileSource(s)` — pathname ends in `.user.js`.
-- `isManifestSource(s)` — pathname ends in `.json`.
+- `isManifestSource(s)` — pathname's basename is `script_manifest.json`
+  (re-exported as `MANIFEST_FILENAME`). Arbitrary `.json` files are
+  rejected.
 - `isGithubDirSource(s)` — github.com URL pointing at a directory.
 
 Scheme classifiers (used at the rare call sites that genuinely care):
@@ -251,10 +259,11 @@ needed for I/O — used everywhere instead of branching on scheme):
   fs path with percent-decoded segments; raw paths pass through).
 - `normalizeSourceInput(s)` — at add-source time, rewrites the user's
   input to the canonical form the rest of the pipeline expects: a
-  github.com `/blob/.../foo.user.js` (or `.json`) URL becomes its raw
-  counterpart; a bare repo URL becomes `tree/<default-branch>` after
-  a metadata API call; everything else passes through. Async because
-  the bare-repo case does I/O and can throw on rate-limit / 404.
+  github.com `/blob/.../foo.user.js` (or a `/blob/.../script_manifest.json`)
+  URL becomes its raw counterpart; a bare repo URL becomes
+  `tree/<default-branch>` after a metadata API call; everything else
+  passes through. Async because the bare-repo case does I/O and can
+  throw on rate-limit / 404.
 
 GitHub helpers (live in `src/github-source.ts`):
 

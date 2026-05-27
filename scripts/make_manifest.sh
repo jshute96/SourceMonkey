@@ -2,10 +2,11 @@
 # Generate a SourceMonkey HTTP-manifest JSON from the *.user.js files
 # under the current working directory and write it to stdout.
 #
-# Intended workflow:
-#   $ cd /path/to/userscripts && sh scripts/make_manifest.sh > manifest.json
+# SourceMonkey only recognises manifests under the fixed filename
+# `script_manifest.json`, so the intended workflow is:
+#   $ cd /path/to/userscripts && sh scripts/make_manifest.sh > script_manifest.json
 # then serve the directory over HTTP and point SourceMonkey at
-# https://.../manifest.json. Relative entries resolve against the
+# https://.../script_manifest.json. Relative entries resolve against the
 # manifest URL's parent (so "foo.user.js" becomes
 # "<manifest-dir>/foo.user.js"); see docs/http-sources.md.
 #

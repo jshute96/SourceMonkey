@@ -712,10 +712,10 @@ export async function getSource(id: string): Promise<StoredSource | undefined> {
 // already registered.
 //
 // `normalizeSourceInput` runs first so a github.com `/blob/.../foo.user.js`
-// (or `.json`) URL gets rewritten to its raw counterpart before we hit
-// the duplicate check. The github blob URL serves HTML, not raw bytes,
-// so storing it verbatim would silently load the page chrome instead of
-// the script — see [docs/http-sources.md].
+// (or `/blob/.../script_manifest.json`) URL gets rewritten to its raw
+// counterpart before we hit the duplicate check. The github blob URL
+// serves HTML, not raw bytes, so storing it verbatim would silently
+// load the page chrome instead of the script — see [docs/http-sources.md].
 export async function addSource(rawPath: string): Promise<StoredSource | null> {
   const path = await normalizeSourceInput(rawPath);
   const sources = await getSources();

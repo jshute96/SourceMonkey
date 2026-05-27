@@ -101,9 +101,9 @@ test.describe('change detection', () => {
     // the fix every entry would flip its loadedAt every refresh.
     server.setRoute('/a.user.js', userscriptText('A'));
     server.setRoute('/b.user.js', userscriptText('B'));
-    server.setManifest('/manifest.json', ['a.user.js', 'b.user.js']);
+    server.setManifest('/script_manifest.json', ['a.user.js', 'b.user.js']);
 
-    const source = await sm.addSource(`${server.baseUrl}/manifest.json`);
+    const source = await sm.addSource(`${server.baseUrl}/script_manifest.json`);
     const before = await sm.getSourceWithScripts(source!.id);
     expect(before!.scripts).toHaveLength(2);
     const priorByPath = Object.fromEntries(
@@ -148,7 +148,7 @@ test.describe('change detection', () => {
       });
       const fs = await import('node:fs');
       const path = await import('node:path');
-      const manifestPath = path.join(scriptsDir.path, 'manifest.json');
+      const manifestPath = path.join(scriptsDir.path, 'script_manifest.json');
       fs.writeFileSync(manifestPath, JSON.stringify(['a.user.js']));
 
       const source = await sm.addSource(manifestPath);

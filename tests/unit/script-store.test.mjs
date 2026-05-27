@@ -446,7 +446,7 @@ test('rebuildSource drops vanished entries entirely for a manifest source', asyn
   ];
   const result = await rebuildSource({
     sourceId: 'src-1',
-    sourcePath: 'https://example.com/scripts/manifest.json',
+    sourcePath: 'https://example.com/scripts/script_manifest.json',
     existing,
     scan: [{ relativePath: 'a.user.js' }],
     fetchResults: new Map([
@@ -477,7 +477,7 @@ test('rebuildSource drops vanished entries for a local manifest source too', asy
   ];
   const result = await rebuildSource({
     sourceId: 'src-1',
-    sourcePath: '/home/me/scripts/manifest.json',
+    sourcePath: '/home/me/scripts/script_manifest.json',
     existing,
     scan: [],
     fetchResults: new Map(),
@@ -602,7 +602,7 @@ test('rebuildSource: identical bytes after a forced refetch preserve loadedAt (m
   });
   const result = await rebuildSource({
     sourceId: 'src-1',
-    sourcePath: 'https://example.com/scripts/manifest.json',
+    sourcePath: 'https://example.com/scripts/script_manifest.json',
     existing: [prior],
     scan: [{ relativePath: 'a.user.js' }],
     fetchResults: new Map([
@@ -707,7 +707,7 @@ test('rebuildSource persists httpEtag / httpLastModified from a successful HTTP 
   // would redownload the body.
   const result = await rebuildSource({
     sourceId: 'src-1',
-    sourcePath: 'https://example.com/scripts/manifest.json',
+    sourcePath: 'https://example.com/scripts/script_manifest.json',
     existing: [],
     scan: [{ relativePath: 'a.user.js' }],
     fetchResults: new Map([
@@ -743,7 +743,7 @@ test('rebuildSource: HTTP unchanged preserves the prior entry and its validators
   };
   const result = await rebuildSource({
     sourceId: 'src-1',
-    sourcePath: 'https://example.com/scripts/manifest.json',
+    sourcePath: 'https://example.com/scripts/script_manifest.json',
     existing: [prior],
     scan: [{ relativePath: 'a.user.js' }],
     fetchResults: new Map([
@@ -796,7 +796,7 @@ function fakeResponse({ status, headers = {}, body = '' }) {
 }
 
 test('fetchOrSkipInParallel: mixed-scheme manifest dispatches per resolved entry URL', async () => {
-  // Manifest source at https://x/m.json with two entries:
+  // Manifest source at https://x/script_manifest.json with two entries:
   //   - "foo.user.js"            → resolves to https://x/foo.user.js (HTTP)
   //   - "file:///etc/bar.user.js" → resolves to file:///etc/bar.user.js
   // The HTTP entry has a prior etag → fetch must include If-None-Match.
@@ -822,7 +822,7 @@ test('fetchOrSkipInParallel: mixed-scheme manifest dispatches per resolved entry
       httpEtag: 'W/"abc"',
     };
     const results = await fetchOrSkipInParallel(
-      'https://x/m.json',  // manifest source
+      'https://x/script_manifest.json',  // manifest source
       [
         { relativePath: 'foo.user.js' },
         { relativePath: 'file:///etc/bar.user.js' },

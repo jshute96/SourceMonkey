@@ -10,10 +10,12 @@
 //   - local directory   (an absolute filesystem path; recursive scan)
 //   - local single file (an absolute path ending in .user.js)
 //   - http single file  (an http(s) URL whose pathname ends in .user.js)
-//   - manifest          (anything whose pathname ends in .json — an
-//                        absolute local path, a file:// URL, or an
-//                        http(s) URL — returning a JSON list of script
-//                        URLs that resolve against the manifest URL)
+//   - manifest          (anything whose pathname's basename is
+//                        `script_manifest.json` — an absolute local
+//                        path, a file:// URL, or an http(s) URL —
+//                        returning a JSON list of script URLs that
+//                        resolve against the manifest URL. The exact
+//                        filename is the only manifest shape we accept.)
 //
 // Why XMLHttpRequest in page contexts (for file://): fetch() treats
 // chrome-extension:// → file:// as cross-origin and returns an opaque
@@ -42,7 +44,7 @@
 // System Access API there is no per-session re-grant.
 
 export type { FoundScript } from './source-scan.js';
-import { type FoundScript, MAX_SCAN_DEPTH } from './source-scan.js';
+import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './source-scan.js';
 export { MAX_SCAN_DEPTH } from './source-scan.js';
 
 // ---------- Source-kind detection ----------
@@ -113,10 +115,15 @@ export function isSingleFileSource(source: string): boolean {
 }
 
 // True for any manifest source — http(s):// URL, file:// URL, or an
-// absolute local path — whose pathname ends in `.json`. Scheme-agnostic
-// counterpart to `isSingleFileSource`.
+// absolute local path — whose pathname's basename is exactly
+// `MANIFEST_FILENAME`. Scheme-agnostic counterpart to
+// `isSingleFileSource`. The fixed-filename rule (rather than a generic
+// `.json` suffix) keeps unrelated JSON files from being mistaken for
+// script manifests and gives the convention a single, searchable name.
 export function isManifestSource(source: string): boolean {
-  return sourcePathname(source).endsWith('.json');
+  const p = sourcePathname(source);
+  return p === MANIFEST_FILENAME
+    || p.endsWith('/' + MANIFEST_FILENAME);
 }
 
 // GitHub-specific source handling lives in `github-source.ts`. We
@@ -407,7 +414,9 @@ export async function scanForUserScripts(
       return scanGithubDir(absolutePath);
     }
     if (isHttpUrl(absolutePath)) {
-      throw new Error('URL must end in .user.js (single script) or .json (manifest)');
+      throw new Error(
+        `URL must end in .user.js (single script) or ${MANIFEST_FILENAME} (manifest)`,
+      );
     }
     // Local-directory only. Normalise file:// → raw path once so the
     // downstream listing + recursion all see a single form.

@@ -33,16 +33,17 @@ loaded into the extension's storage. A source can be any of:
   bare path works, the URL form works too).
 - An **`http(s)://` URL ending in `.user.js`** — fetched as a single
   remote script.
-- A **manifest**: anything whose pathname ends in `.json`. The
-  manifest is fetched and the URLs it lists become individual scripts.
-  Works at an http(s) URL, a `file://` URL, or a bare local path —
-  the same manifest file can be tested locally and then served over
-  HTTP unchanged.
+- A **manifest**: anything whose pathname's basename is
+  `script_manifest.json`. The manifest is fetched and the URLs it
+  lists become individual scripts. Works at an http(s) URL, a
+  `file://` URL, or a bare local path — the same manifest file can be
+  tested locally and then served over HTTP unchanged.
 - A **GitHub URL** — paste a `github.com` URL straight from the
-  browser. A `/blob/.../foo.user.js` (or `.json`) URL is rewritten to
-  its `raw.githubusercontent.com` counterpart on add. A `/tree/<ref>/<dir>`
-  URL is scanned recursively via the GitHub Contents API. A bare repo
-  URL (`github.com/<o>/<r>`) resolves to the repo's default branch.
+  browser. A `/blob/.../foo.user.js` (or a `/blob/.../script_manifest.json`)
+  URL is rewritten to its `raw.githubusercontent.com` counterpart on
+  add. A `/tree/<ref>/<dir>` URL is scanned recursively via the
+  GitHub Contents API. A bare repo URL (`github.com/<o>/<r>`)
+  resolves to the repo's default branch.
 
 Each source shows up as its own section on the options page with a
 per-source enable toggle, per-script enable toggles, **↑ / ↓** buttons
@@ -66,9 +67,9 @@ Each entry is a URL string. Resolution rules:
 
 - **Absolute** URLs (`https://…`, `file:///…`) are used verbatim.
 - **Relative** URLs resolve against the manifest URL's parent:
-  `foo.user.js` listed in `https://example.com/scripts/manifest.json`
+  `foo.user.js` listed in `https://example.com/scripts/script_manifest.json`
   becomes `https://example.com/scripts/foo.user.js`; the same entry
-  in `/home/me/scripts/manifest.json` becomes
+  in `/home/me/scripts/script_manifest.json` becomes
   `/home/me/scripts/foo.user.js`.
 - Entries are trimmed; empty strings and duplicates are skipped.
 - A non-string entry or a body that isn't one of the two supported
@@ -76,8 +77,8 @@ Each entry is a URL string. Resolution rules:
 
 To generate a manifest from a directory of userscripts, run
 `scripts/make_manifest.sh` inside that directory and redirect stdout
-to `manifest.json` — it scans recursively for `*.user.js` and emits
-the bare-array shape.
+to `script_manifest.json` — it scans recursively for `*.user.js` and
+emits the bare-array shape.
 
 ### Refresh behaviour
 

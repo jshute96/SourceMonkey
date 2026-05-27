@@ -13,7 +13,7 @@ import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
 function writeManifest(dir: string, entries: string[]): string {
-  const manifestPath = path.join(dir, 'manifest.json');
+  const manifestPath = path.join(dir, 'script_manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify(entries));
   return manifestPath;
 }
