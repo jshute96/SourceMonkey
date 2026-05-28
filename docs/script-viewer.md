@@ -94,8 +94,14 @@ reports.
        parent source row has vanished. See the Link rendering section
        below for the linkify rules.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
-     - `Status` — `OK` / `ERROR` / `MISSING`, color-coded; the
-       row's `title` carries `errorMessage` when present.
+     - `Status` — `OK` / `INVALID` / `MISSING` / `WARNING` / `ERROR`
+       (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
+       color-coded; the row's `title` carries `errorMessage` when
+       present. Rendered as an `<a href="#Log">` so clicking switches
+       to the Log tab via the same hashchange listener as a manual
+       tab click. The level promotes live as new log entries arrive
+       — the `storage.session.onChanged` listener for
+       `loglevel:<scriptId>` repaints just this row.
 5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab:
    - Main script first, labeled with the basename of `relativePath`.
    - Then one tab per `@require` in declaration order, labeled with
@@ -133,10 +139,13 @@ Clicking Refresh:
    one storage row.
 3. Re-renders from the returned `StoredScript`.
 
-Failures (file gone, permission denied, etc.) flip status to ERROR
-with the message exposed in the message line and the status cell's
-tooltip. The prior content stays visible so the user can still read
-the last successful load.
+Failures (file gone, permission denied, etc.) flip status to
+`INVALID` (or `MISSING` for a vanished file) with the message exposed
+in the message line and the status cell's tooltip. The Log tab also
+gains an error-level entry carrying the same message (see
+[script-log.md](script-log.md#status-column-promotion)). The prior
+content stays visible so the user can still read the last successful
+load.
 
 ### Not-found
 

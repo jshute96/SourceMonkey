@@ -47,10 +47,16 @@ import {
   updateSource,
 } from './script-updater.js';
 import {
+  effectiveScriptStatus,
   formatScriptSize,
   formatScriptStatusLabel,
 } from './script-display.js';
 import { computeLogIds } from './script-log-id.js';
+import {
+  LOG_LEVEL_KEY_PREFIX,
+  getAllMaxLogLevels,
+  type LogLevel,
+} from './script-log.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { isHttpUrl, isFileUrl, normalizeSourceInput } from './directories.js';
 import {
@@ -89,15 +95,115 @@ openOptionsBtn.addEventListener('click', () => {
 
 void bootstrap();
 
+// Repaint Status cells when the per-script max-log-level row changes
+// on the SW side (a fresh error / warning was appended, or the log
+// was cleared). Filtering on the `loglevel:` prefix keeps unrelated
+// session-storage writes from kicking off pointless DOM walks.
+if (chrome.storage?.session?.onChanged) {
+  chrome.storage.session.onChanged.addListener((changes) => {
+    let touched = false;
+    for (const key of Object.keys(changes)) {
+      if (!key.startsWith(LOG_LEVEL_KEY_PREFIX)) continue;
+      const scriptId = key.slice(LOG_LEVEL_KEY_PREFIX.length);
+      const next = changes[key]?.newValue;
+      if (next === 'info' || next === 'warning' || next === 'error') {
+        currentLogLevels.set(scriptId, next);
+      } else {
+        currentLogLevels.delete(scriptId);
+      }
+      touched = true;
+    }
+    if (touched) applyStatusCellsToDom();
+  });
+}
+
 // Page-wide map of {scriptId → log ID}, refreshed whenever scripts are
 // added / removed / refreshed. Renders the `#N` dupe suffix in the
 // filename cell. Empty until `refreshLogIds()` runs.
 let currentLogIds = new Map<string, string>();
 
+// Page-wide map of {scriptId → highest log level seen}. Drives the
+// Status-cell promotion to WARNING / ERROR; absent entries collapse
+// to OK (or whatever the stored status mandates). Kept in sync via
+// the `chrome.storage.session.onChanged` listener installed at module
+// top so a fresh log entry on the SW side updates the column without
+// a full page reload. Seeded from `getAllMaxLogLevels()` inside
+// `render()` so the first paint already reflects the current state.
+let currentLogLevels = new Map<string, LogLevel>();
+
 async function refreshLogIds(): Promise<void> {
   const all = await getAllScripts();
   currentLogIds = computeLogIds(all);
   applyLogIdSuffixesToDom();
+}
+
+
+// Mirror of `applyLogIdSuffixesToDom` for the Status column. After a
+// storage.session change for one or more `loglevel:` rows, walk every
+// rendered script row and rewrite its status cell content + class to
+// reflect the latest effective status. Pulls the StoredScript.status
+// off the row's data-script-status attribute so we don't have to refetch.
+function applyStatusCellsToDom(): void {
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    '.script-table tr[data-script-id]',
+  )) {
+    const id = row.dataset.scriptId;
+    const storedStatus = row.dataset.scriptStatus as StoredScript['status'] | undefined;
+    if (!id || !storedStatus) continue;
+    const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
+    if (!cell) continue;
+    paintStatusCell(cell, id, storedStatus, row.dataset.scriptError ?? undefined);
+  }
+}
+
+// Apply `effectiveScriptStatus` to one status cell: rewrite the link
+// label, classes, and trash-can affordance. Used by both initial
+// render and the post-storage-change repaint so the two paths can't
+// drift on label / class details.
+function paintStatusCell(
+  cell: HTMLTableCellElement,
+  scriptId: string,
+  storedStatus: StoredScript['status'],
+  errorMessage: string | undefined,
+): void {
+  cell.textContent = '';
+  cell.className = 'status-cell';
+  const level = currentLogLevels.get(scriptId);
+  const effective = effectiveScriptStatus({ status: storedStatus }, level);
+  cell.classList.add(`status-${effective}`);
+  // Anchor that takes the user straight to the script viewer's Log
+  // tab — the same destination regardless of effective status, since
+  // even OK rows may have informative entries.
+  const link = document.createElement('a');
+  link.href = viewerUrl(scriptId, 'log').toString();
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = formatScriptStatusLabel(effective);
+  if (errorMessage) link.title = errorMessage;
+  cell.appendChild(link);
+  // Trash-can affordance only on persisted-missing rows (the file
+  // genuinely vanished from its listing). A row that's merely flagged
+  // ERROR/WARNING via the log still has a backing file and shouldn't
+  // get the destructive button.
+  if (storedStatus === 'missing') {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-script';
+    removeBtn.textContent = '🗑';
+    removeBtn.title = 'Remove this script record';
+    removeBtn.setAttribute('aria-label', 'Remove this script record');
+    // Defer the row → sourceId lookup until click time. paintStatusCell
+    // may be called before the cell is appended to its parent row (the
+    // initial render path builds the cell first and only inserts it
+    // afterwards), so a synchronous `closest('tr')` here would read
+    // null and the dispatcher would be left with no sourceId.
+    removeBtn.addEventListener('click', () => {
+      const row = removeBtn.closest<HTMLTableRowElement>('tr[data-script-id]');
+      const sourceId = row?.dataset.sourceId ?? '';
+      void onRemoveScript(scriptId, sourceId, removeBtn);
+    });
+    cell.appendChild(removeBtn);
+  }
 }
 
 function applyLogIdSuffixesToDom(): void {
@@ -230,6 +336,10 @@ async function render(): Promise<void> {
   }
 
   await refreshLogIds();
+  // Pre-populate log levels so the very first paint of each row's
+  // Status cell already reflects WARNING / ERROR, rather than briefly
+  // showing OK and then flipping when the async listener fires.
+  currentLogLevels = await getAllMaxLogLevels();
   for (const source of sources) {
     directoriesEl.appendChild(await renderSourceSection(source));
   }
@@ -354,6 +464,12 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
 
   const tr = document.createElement('tr');
   tr.dataset.scriptId = script.id;
+  // Stash the persisted status + sourceId + errorMessage on the row so
+  // `applyStatusCellsToDom` can repaint the Status cell after a
+  // chrome.storage.session change without re-querying the store.
+  tr.dataset.scriptStatus = script.status;
+  tr.dataset.sourceId = script.sourceId;
+  if (script.errorMessage) tr.dataset.scriptError = script.errorMessage;
   if (!sourceOn || !scriptOn) tr.classList.add('disabled');
 
   const toggleCell = document.createElement('td');
@@ -398,25 +514,7 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   tr.appendChild(sizeCell);
 
   const statusCell = document.createElement('td');
-  statusCell.className = 'status-cell';
-  const statusText = document.createElement('span');
-  statusText.textContent = formatScriptStatusLabel(script.status);
-  statusCell.appendChild(statusText);
-  statusCell.classList.add(`status-${script.status}`);
-  if (script.errorMessage) statusCell.title = script.errorMessage;
-  // Trash-can affordance only for missing rows. Refresh won't recreate
-  // a missing row (the scan no longer reports the file), so the user
-  // needs an explicit way to clear records they don't want to see.
-  if (script.status === 'missing') {
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-script';
-    removeBtn.textContent = '🗑';
-    removeBtn.title = 'Remove this script record';
-    removeBtn.setAttribute('aria-label', 'Remove this script record');
-    removeBtn.addEventListener('click', () => void onRemoveScript(script.id, script.sourceId, removeBtn));
-    statusCell.appendChild(removeBtn);
-  }
+  paintStatusCell(statusCell, script.id, script.status, script.errorMessage);
   tr.appendChild(statusCell);
 
   return tr;
@@ -1030,9 +1128,11 @@ function makeToggle(
   return label;
 }
 
-function viewerUrl(scriptId: string): URL {
+function viewerUrl(scriptId: string, tab?: 'log'): URL {
   const url = new URL(chrome.runtime.getURL('userscript.html'));
   url.searchParams.set('script', scriptId);
+  // The viewer parses #Log via parseHash and lands on the Log pane.
+  if (tab === 'log') url.hash = 'Log';
   return url;
 }
 

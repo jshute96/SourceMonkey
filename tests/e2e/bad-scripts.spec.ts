@@ -38,7 +38,7 @@ const GM_INFO_DIR = path.resolve(__dirname, '..', 'examples', 'gm-info');
 
 interface BadCase {
   file: string;
-  expectedStatus: 'ok' | 'error';
+  expectedStatus: 'ok' | 'invalid';
   errorMatcher?: RegExp;
 }
 
@@ -47,16 +47,16 @@ interface BadCase {
 // / validateHeader; the require failure on missing-require comes
 // through the @require attach pipeline (see src/external-files.ts).
 const BAD_CASES: BadCase[] = [
-  { file: 'empty.user.js',                 expectedStatus: 'error', errorMatcher: /no metadata block/ },
-  { file: 'no-header.user.js',             expectedStatus: 'error', errorMatcher: /no metadata block/ },
-  { file: 'empty-header.user.js',          expectedStatus: 'error', errorMatcher: /missing @name/ },
-  { file: 'unclosed-header.user.js',       expectedStatus: 'error', errorMatcher: /unterminated metadata block/ },
-  { file: 'malformed-field.user.js',       expectedStatus: 'error', errorMatcher: /missing @match or @include/ },
+  { file: 'empty.user.js',                 expectedStatus: 'invalid', errorMatcher: /no metadata block/ },
+  { file: 'no-header.user.js',             expectedStatus: 'invalid', errorMatcher: /no metadata block/ },
+  { file: 'empty-header.user.js',          expectedStatus: 'invalid', errorMatcher: /missing @name/ },
+  { file: 'unclosed-header.user.js',       expectedStatus: 'invalid', errorMatcher: /unterminated metadata block/ },
+  { file: 'malformed-field.user.js',       expectedStatus: 'invalid', errorMatcher: /missing @match or @include/ },
   { file: 'two-headers.user.js',           expectedStatus: 'ok' },
   { file: 'leading-text.user.js',          expectedStatus: 'ok' },
   { file: 'invalid-header-fields.user.js', expectedStatus: 'ok' },
   { file: 'blank-lines.user.js',           expectedStatus: 'ok' },
-  { file: 'missing-require.user.js',       expectedStatus: 'error', errorMatcher: /@require \.\/does-not-exist\.js:.*fetch/ },
+  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js:.*fetch/ },
 ];
 
 async function openViewer(extensionContext: BrowserContext, extensionId: string, scriptId: string): Promise<Page> {

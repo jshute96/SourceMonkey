@@ -16,8 +16,27 @@
 // LOG_CAP the oldest entries are dropped. The cap is generous enough
 // to cover a normal day of refreshes + a few crashy injections but
 // small enough that a runaway error loop can't fill storage.
+//
+// Alongside the log we maintain a sibling `loglevel:<scriptId>` row
+// recording the highest level any entry has carried so far. Bumped
+// only when an append carries a strictly higher level; cleared on
+// `clearScriptLog`. It lives in session storage (not on the
+// StoredScript row) because:
+//   - Lifetime matches the log itself — Chrome shutdown drops both
+//     together, so a WARNING/ERROR badge can't outlive its entries.
+//   - One bulk `get(null)` yields every script's level in O(scripts)
+//     rather than O(scripts × entries) — the sources page needs this
+//     to render the Status column cheaply.
 
 export type LogLevel = 'info' | 'warning' | 'error';
+
+// Ordinal compare for LogLevel: error > warning > info. Used to decide
+// whether an append should bump the stored max.
+const LEVEL_RANK: Record<LogLevel, number> = { info: 1, warning: 2, error: 3 };
+function isHigher(candidate: LogLevel, prior: LogLevel | undefined): boolean {
+  if (prior === undefined) return true;
+  return LEVEL_RANK[candidate] > LEVEL_RANK[prior];
+}
 
 export interface LogEntry {
   // Epoch ms when the event was recorded.
@@ -41,6 +60,10 @@ export interface LogEntry {
 export const LOG_CAP = 500;
 
 const logKey = (scriptId: string) => `log:${scriptId}`;
+const levelKey = (scriptId: string) => `loglevel:${scriptId}`;
+// Prefix used by the bulk-read path. Kept here so callers don't have
+// to hardcode it.
+export const LOG_LEVEL_KEY_PREFIX = 'loglevel:';
 
 // Per-script promise chain. chrome.storage.session has no atomic
 // append, so two concurrent appendScriptLog calls for the same id
@@ -76,9 +99,11 @@ export async function appendScriptLog(
   input: AppendLogInput,
 ): Promise<void> {
   return enqueue(scriptId, async () => {
-    const key = logKey(scriptId);
-    const got = await chrome.storage.session.get(key);
-    const prior: LogEntry[] = Array.isArray(got[key]) ? (got[key] as LogEntry[]) : [];
+    const lk = logKey(scriptId);
+    const mk = levelKey(scriptId);
+    const got = await chrome.storage.session.get([lk, mk]);
+    const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
+    const priorLevel = got[mk] as LogLevel | undefined;
     const entry: LogEntry = {
       timestamp: input.timestamp ?? Date.now(),
       level: input.level,
@@ -89,7 +114,9 @@ export async function appendScriptLog(
     const next = prior.length >= LOG_CAP
       ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
       : [...prior, entry];
-    await chrome.storage.session.set({ [key]: next });
+    const toSet: Record<string, unknown> = { [lk]: next };
+    if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+    await chrome.storage.session.set(toSet);
   });
 }
 
@@ -101,8 +128,41 @@ export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {
 
 export async function clearScriptLog(scriptId: string): Promise<void> {
   return enqueue(scriptId, async () => {
-    await chrome.storage.session.remove(logKey(scriptId));
+    await chrome.storage.session.remove([logKey(scriptId), levelKey(scriptId)]);
   });
+}
+
+// Read the persisted "highest log level seen" sentinel for one script.
+// Returns undefined only when the log is empty (no entries have ever
+// been appended this session, or `clearScriptLog` ran). The sentinel
+// is monotonic within a session — LOG_CAP rotation does NOT decrease
+// it. Once a script has hit ERROR, subsequent rotation that drops the
+// only error entry leaves the badge at ERROR until the user clicks
+// "Clear log" or Chrome shuts down. We accept that drift because
+// recomputing on every rotation would dominate the cost of an append
+// and the log itself is session-scoped anyway.
+export async function getMaxLogLevel(
+  scriptId: string,
+): Promise<LogLevel | undefined> {
+  const key = levelKey(scriptId);
+  const got = await chrome.storage.session.get(key);
+  const v = got[key];
+  return v === 'info' || v === 'warning' || v === 'error' ? v : undefined;
+}
+
+// Read every script's max log level in one storage round trip. The
+// sources page uses this to render the Status column without N
+// per-script reads. Returns a Map keyed by scriptId.
+export async function getAllMaxLogLevels(): Promise<Map<string, LogLevel>> {
+  const all = await chrome.storage.session.get(null);
+  const out = new Map<string, LogLevel>();
+  for (const [key, value] of Object.entries(all)) {
+    if (!key.startsWith(LOG_LEVEL_KEY_PREFIX)) continue;
+    if (value === 'info' || value === 'warning' || value === 'error') {
+      out.set(key.slice(LOG_LEVEL_KEY_PREFIX.length), value);
+    }
+  }
+  return out;
 }
 
 // Convenience: fire-and-forget. Used by call sites that already have a

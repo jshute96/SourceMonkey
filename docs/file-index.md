@@ -56,7 +56,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline, parse-time diagnostics (startup logs), size+mtime skip, refreshAllSources |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
-| `src/script-display.ts` | Pure display helpers shared by the sources page + viewer: `formatBytes`, `formatScriptSize`, `formatScriptStatusLabel` |
+| `src/script-display.ts` | Pure size + status display helpers (`formatBytes`, `formatScriptSize`, `effectiveScriptStatus`, `formatScriptStatusLabel`) shared by the sources page + viewer |
 | `src/source-display.ts` | Source-display helpers: type classification, short-name inference, manifest flag, anchor id, plus a small DOM helper for the colored bubble `<a>` |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
@@ -70,7 +70,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the sources/viewer UI |
-| `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap |
+| `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, plus a sibling `loglevel:` sentinel that tracks the highest level seen |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor; shared by site-icon and the viewer linkifier |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both sources page and viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |

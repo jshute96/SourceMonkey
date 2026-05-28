@@ -14,7 +14,7 @@
 //   listing → fetch each file → splitHeaderBody → parseHeader →
 //   validateHeader → distillMatching → buildScriptFromText.
 // A script is `ok` iff fetch succeeded AND splitHeaderBody returned no
-// error AND validateHeader returned null. Otherwise `status: 'error'`
+// error AND validateHeader returned null. Otherwise `status: 'invalid'`
 // with an `errorMessage`. On refresh, files that were known before but
 // no longer appear in the scan listing are reconciled per source kind:
 // directory sources mark them `status: 'missing'` (file may come
@@ -58,8 +58,17 @@ import {
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import { inferDisplayName } from './source-display.js';
+import { appendScriptLog } from './script-log.js';
 
-export type ScriptStatus = 'ok' | 'error' | 'missing';
+// `invalid` is the umbrella for "we couldn't load/use this script":
+// metadata-block parse failure, header validation failure, fetch
+// failure, or a missing/broken @require / @resource. All of them
+// surface in the UI as INVALID (the user-facing label) because from
+// the user's perspective the script can't run. `missing` is reserved
+// for the narrower case where the source file vanished from its
+// listing — the row is preserved with its last-known content but the
+// file is gone.
+export type ScriptStatus = 'ok' | 'invalid' | 'missing';
 
 export interface ScriptMatching {
   matches: string[];   // @match values
@@ -292,12 +301,12 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   let status: ScriptStatus = 'ok';
   let errorMessage: string | undefined;
   if (split.error) {
-    status = 'error';
+    status = 'invalid';
     errorMessage = split.error;
   } else {
     const validationError = validateHeader(header);
     if (validationError) {
-      status = 'error';
+      status = 'invalid';
       errorMessage = validationError;
     }
   }
@@ -352,13 +361,13 @@ export function applyFetchError(
   existing: StoredScript,
   errorMessage: string,
 ): StoredScript {
-  return { ...existing, status: 'error', errorMessage };
+  return { ...existing, status: 'invalid', errorMessage };
 }
 
-// Build an `error` entry for a brand-new (never-loaded-successfully)
+// Build an `invalid` entry for a brand-new (never-loaded-successfully)
 // script whose first fetch failed. No content to preserve, so the
 // content fields stay empty and size is null.
-export function buildInitialErrorEntry(args: {
+export function buildInitialInvalidEntry(args: {
   id: string;
   sourceId: string;
   relativePath: string;
@@ -371,7 +380,7 @@ export function buildInitialErrorEntry(args: {
     sourceId: args.sourceId,
     relativePath: args.relativePath,
     fileUrl: args.fileUrl,
-    status: 'error',
+    status: 'invalid',
     errorMessage: args.errorMessage,
     size: null,
     headerText: '',
@@ -411,7 +420,7 @@ export function applyMissing(existing: StoredScript): StoredScript {
 
 // Resolve + fetch a script's `@require` bodies AND `@resource` blobs,
 // attaching both lists onto the StoredScript. On any failure preserves
-// the prior's last-known-good state and flips status to 'error' with a
+// the prior's last-known-good state and flips status to 'invalid' with a
 // message naming the offending URL — mirrors `applyFetchError`'s
 // content-preservation policy for body-fetch failures, so a flaky
 // dependency doesn't clobber the user's working version. Without
@@ -473,9 +482,9 @@ async function applyFiles(
     // sees the error message and their script keeps running its
     // prior version until they fix the bad reference.
     if (prior && prior.status === 'ok') {
-      return { ...prior, status: 'error', errorMessage: result.errorMessage };
+      return { ...prior, status: 'invalid', errorMessage: result.errorMessage };
     }
-    built.status = 'error';
+    built.status = 'invalid';
     built.errorMessage = result.errorMessage;
     delete built.requires;
     delete built.resources;
@@ -600,7 +609,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         // short-circuits.
         entryPromises.push(applyFiles(next, prior, recheckFiles, fileFetchCache, args.now));
       } else {
-        entryPromises.push(Promise.resolve(buildInitialErrorEntry({
+        entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
           id,
           sourceId: args.sourceId,
           relativePath: found.relativePath,
@@ -615,7 +624,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       if (prior) {
         entryPromises.push(Promise.resolve(applyFetchError(prior, errorMessage)));
       } else {
-        entryPromises.push(Promise.resolve(buildInitialErrorEntry({
+        entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
           id,
           sourceId: args.sourceId,
           relativePath: found.relativePath,
@@ -630,7 +639,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       // orchestrator should always supply a result.
       entryPromises.push(Promise.resolve(prior
         ? applyFetchError(prior, 'not loaded')
-        : buildInitialErrorEntry({
+        : buildInitialInvalidEntry({
             id, sourceId: args.sourceId, relativePath: found.relativePath,
             fileUrl, errorMessage: 'not loaded', now: args.now,
           })));
@@ -747,7 +756,34 @@ export async function addSource(rawPath: string): Promise<StoredSource | null> {
     [sourceKey(id)]: seed,
   });
   const refreshed = await refreshSource(id);
+  // The updater-driven refresh paths already emit per-script Log
+  // entries when a script transitions into invalid / missing. This
+  // initial-add path bypasses the updater, so anything that lands
+  // already broken would otherwise have an empty Log tab. Emit once
+  // per non-OK script here so the user can always click the row's
+  // INVALID badge and read what went wrong. Awaited so the loglevel
+  // sentinel write lands before the caller's `getAllMaxLogLevels`
+  // read — otherwise the first paint of the row would briefly show
+  // OK and only flip on the storage-change listener.
+  if (refreshed) {
+    await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
+  }
   return refreshed?.source ?? seed;
+}
+
+async function emitInitialLoadLogIfBroken(script: StoredScript): Promise<void> {
+  // `applyMissing` is unreachable from the initial-add path (a brand-
+  // new source has nothing existing to mark missing), so this branch
+  // is effectively dead today; keep it so a future caller routing
+  // through this helper from another entry point gets the same
+  // treatment.
+  if (script.status !== 'invalid' && script.status !== 'missing') return;
+  await appendScriptLog(script.id, {
+    level: 'error',
+    source: 'add-source',
+    message: script.errorMessage
+      ?? (script.status === 'missing' ? 'source file is missing' : 'unknown error'),
+  });
 }
 
 // Fill in `displayName` on any source row that doesn't have one yet.
@@ -815,6 +851,13 @@ export async function removeScript(id: string): Promise<void> {
   }
   if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
   await chrome.storage.local.remove(scriptKey(id));
+  // Drop the per-script Log + max-log-level sentinel along with the
+  // row itself — otherwise an orphaned session-storage entry would
+  // outlive the script it described and confuse any later renderer
+  // that happens to scan log levels.
+  try {
+    await chrome.storage.session.remove([`log:${id}`, `loglevel:${id}`]);
+  } catch { /* best-effort: a missing session row isn't an error */ }
 }
 
 // Rescan a source + refetch all of its scripts. Adds new files, keeps
@@ -945,7 +988,7 @@ export async function refreshSource(
 // Note: does NOT re-scan the parent dir for VANISHED files, so this
 // can't promote a script to `missing` — that's the directory-level
 // Refresh's job. (If the file is gone, the fetch will fail and the
-// result is `status: 'error'`.)
+// result is `status: 'invalid'`.)
 export async function refreshScript(
   scriptId: string,
   opts: RefreshOptions = {},

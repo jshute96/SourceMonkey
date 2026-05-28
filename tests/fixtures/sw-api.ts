@@ -63,7 +63,7 @@ export interface StoredScriptLike {
   id: string;
   sourceId: string;
   relativePath: string;
-  status: 'ok' | 'error' | 'missing';
+  status: 'ok' | 'invalid' | 'missing';
   errorMessage?: string;
   size: number | null;
   loadedAt: number;

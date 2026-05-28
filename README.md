@@ -97,23 +97,27 @@ against the prior so identical content still counts as "no change."
 ### Per-source UI
 
 - Each source section shows a table with a per-script enable toggle
-  plus **Filename**, **Size**, and **Status** (`OK` or `ERROR`). The
-  source itself has an enable toggle to the left of its path/URL;
-  disabling a source greys out (and effectively disables) every
-  script under it without losing each script's own choice. The table
-  header has a small **+** / **−** button that bulk-enables or
-  bulk-disables every script in that source.
-- A script reports `ERROR` when its metadata block is missing or
-  malformed, or when required fields (`@name` plus `@match`/
-  `@include`) aren't present — hover the status cell to see the
-  reason. A 0-byte file shows `0 B` in the size column (still an
-  `ERROR` for the missing metadata block).
-- If a script was loaded before but no longer appears in the scan
-  (file deleted, manifest entry removed), its status becomes
-  `MISSING`. The Size column keeps showing the cached body's byte
-  count, and a small trash-can button next to the status lets you
-  clear the record for files you don't expect to come back. Refresh
-  alone won't re-add a missing row.
+  plus **Filename**, **Size**, and **Status**. The source itself has
+  an enable toggle to the left of its path/URL; disabling a source
+  greys out (and effectively disables) every script under it without
+  losing each script's own choice. The table header has a small **+** /
+  **−** button that bulk-enables or bulk-disables every script in
+  that source.
+- Status is one of `OK | INVALID | MISSING | WARNING | ERROR` and is
+  a link to the script's Log tab in the viewer.
+  - `INVALID` — metadata block missing/malformed, required fields
+    (`@name` plus `@match`/`@include`) missing, or a `@require` /
+    `@resource` dependency couldn't be loaded. Hover for the reason;
+    the same message is also written to the Log tab.
+  - `MISSING` — the script's file is no longer in the scan listing
+    (deleted on disk, manifest entry removed). The Size column still
+    shows the cached body's byte count, and a small trash-can button
+    next to the status lets you clear records you don't expect back.
+    Refresh alone won't re-add a missing row.
+  - `ERROR` / `WARNING` — the script loaded fine, but at least one
+    entry in its per-script Log carries that level (a refresh error,
+    an injection failure, a parser warning, etc.). Click the badge
+    to see the Log tab for the detail.
 - Each script row shows the favicon of the site its `@match`
   patterns target, to the left of the filename. Icons are discovered
   by fetching the matched page's HTML and parsing

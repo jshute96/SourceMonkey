@@ -70,7 +70,7 @@ test.describe('manifest source refresh', () => {
       result!.scripts.map((s) => [s.relativePath, s]),
     );
     expect(byPath['a.user.js'].status).toBe('ok');
-    expect(byPath['gone.user.js'].status).toBe('error');
+    expect(byPath['gone.user.js'].status).toBe('invalid');
   });
 
   test('unreadable manifest preserves scripts and their enabled state', async ({ sm }) => {

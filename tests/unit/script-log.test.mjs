@@ -16,11 +16,14 @@ globalThis.chrome = {
     session: {
       get: async (key) => {
         if (typeof key === 'string') {
-          return key in Object.fromEntries(store) || store.has(key)
-            ? { [key]: store.get(key) }
-            : {};
+          return store.has(key) ? { [key]: store.get(key) } : {};
         }
-        // get(null) → everything; not used here but matches the real shape
+        if (Array.isArray(key)) {
+          const out = {};
+          for (const k of key) if (store.has(k)) out[k] = store.get(k);
+          return out;
+        }
+        // get(null) → everything
         const out = {};
         for (const [k, v] of store) out[k] = v;
         return out;
@@ -44,6 +47,8 @@ const {
   appendScriptLog,
   clearScriptLog,
   getScriptLog,
+  getMaxLogLevel,
+  getAllMaxLogLevels,
   logScriptEvent,
   _flushScriptLogQueueForTests,
 } = await import('../../dist/script-log.js');
@@ -169,6 +174,51 @@ test('logScriptEvent is fire-and-forget but its write lands', async () => {
   const entries = await getScriptLog('s1');
   assert.equal(entries.length, 1);
   assert.equal(entries[0].level, 'warning');
+});
+
+// ---------- Max-log-level tracking ----------
+
+test('appendScriptLog seeds the max log level from the first entry', async () => {
+  // First entry is info → max level = info. Promotes Status display
+  // from "no logs" to "had info logs"; the column still shows OK but
+  // the data is there for future surfacing.
+  await appendScriptLog('s1', { level: 'info', source: 'x', message: 'hi', timestamp: 1 });
+  assert.equal(await getMaxLogLevel('s1'), 'info');
+});
+
+test('appendScriptLog only bumps the max when the new entry is strictly higher', async () => {
+  // Start at warning, then add info: max stays at warning. Then add
+  // error: max promotes to error. Then add warning again: max stays
+  // at error — once we've seen an error we don't go back down.
+  await appendScriptLog('s1', { level: 'warning', source: 'x', message: 'w', timestamp: 1 });
+  assert.equal(await getMaxLogLevel('s1'), 'warning');
+  await appendScriptLog('s1', { level: 'info', source: 'x', message: 'i', timestamp: 2 });
+  assert.equal(await getMaxLogLevel('s1'), 'warning');
+  await appendScriptLog('s1', { level: 'error', source: 'x', message: 'e', timestamp: 3 });
+  assert.equal(await getMaxLogLevel('s1'), 'error');
+  await appendScriptLog('s1', { level: 'warning', source: 'x', message: 'w2', timestamp: 4 });
+  assert.equal(await getMaxLogLevel('s1'), 'error');
+});
+
+test('clearScriptLog wipes the max-log-level alongside the entries', async () => {
+  await appendScriptLog('s1', { level: 'error', source: 'x', message: 'boom', timestamp: 1 });
+  assert.equal(await getMaxLogLevel('s1'), 'error');
+  await clearScriptLog('s1');
+  assert.equal(await getMaxLogLevel('s1'), undefined);
+});
+
+test('getAllMaxLogLevels returns each script keyed by id', async () => {
+  await appendScriptLog('a', { level: 'warning', source: 'x', message: 'a', timestamp: 1 });
+  await appendScriptLog('b', { level: 'error',   source: 'x', message: 'b', timestamp: 1 });
+  await appendScriptLog('c', { level: 'info',    source: 'x', message: 'c', timestamp: 1 });
+  const all = await getAllMaxLogLevels();
+  assert.equal(all.get('a'), 'warning');
+  assert.equal(all.get('b'), 'error');
+  assert.equal(all.get('c'), 'info');
+  // Cleared scripts should drop out of the bulk result.
+  await clearScriptLog('c');
+  const after = await getAllMaxLogLevels();
+  assert.equal(after.has('c'), false);
 });
 
 test('appendScriptLog defaults timestamp to Date.now()', async () => {

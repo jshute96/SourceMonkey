@@ -95,7 +95,7 @@ The runtime keeps a per-script box of:
 ## Failure handling
 
 Same conservative policy as `@require`. Any of these flips the parent
-script to `status: 'error'` with a message naming the resource name:
+script to `status: 'invalid'` with a message naming the resource name:
 
 - Resolution rejection (traversal, disallowed scheme, …).
 - Fetch failure (404, oversize, timeout).

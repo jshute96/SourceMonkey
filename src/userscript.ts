@@ -21,11 +21,14 @@ import { basenameOf, computeLogIds } from './script-log-id.js';
 import type { StoredRequire } from './external-files.js';
 import {
   clearScriptLog,
+  getMaxLogLevel,
   getScriptLog,
   type LogEntry,
+  type LogLevel,
 } from './script-log.js';
 import { updateScript } from './script-updater.js';
 import {
+  effectiveScriptStatus,
   formatScriptSize,
   formatScriptStatusLabel,
 } from './script-display.js';
@@ -186,6 +189,18 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     return;
   }
   if (areaName === 'session' && scriptId) {
+    // Track THIS script's max-log-level row so the Status cell ramps
+    // to WARNING / ERROR (or back down to OK) as entries arrive or
+    // the log is cleared. Independent of the log-pane repaint below
+    // because the Status row is visible on every tab.
+    const levelKey = `loglevel:${scriptId}`;
+    if (levelKey in changes) {
+      const nextLevel = changes[levelKey]?.newValue;
+      currentLogLevel = (nextLevel === 'info' || nextLevel === 'warning' || nextLevel === 'error')
+        ? nextLevel
+        : undefined;
+      if (currentScript) repaintStatusRow(currentScript);
+    }
     // Repaint the log pane only when THIS script's log changed and the
     // user is currently looking at it — the pane is hidden behind a
     // code tab the rest of the time, so we'd just be doing work the
@@ -201,6 +216,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     paintLog(entries);
   }
 });
+
+// Swap the Status row's inner content without rebuilding the rest of
+// the details panel — the row sits inside a <dl> we don't want to
+// thrash on every log append. Find the existing meta-status anchor
+// (or any node carrying the class) and replace it with a freshly
+// computed one.
+function repaintStatusRow(script: StoredScript): void {
+  const prior = summaryEl.querySelector('.meta-status');
+  if (!prior) return;
+  prior.replaceWith(buildStatusCell(script));
+}
 
 async function rehydrateAfterStorageChange(): Promise<void> {
   if (!scriptId) return;
@@ -242,6 +268,11 @@ let currentLogId = '';
 // here so log-pane linkification can build tabs (and their
 // `sourceUrl`s) without re-reading storage.
 let currentScript: StoredScript | null = null;
+// Highest level any log entry has carried so far for this script.
+// Used to promote the Status row to WARNING / ERROR. Refreshed on
+// load and from the storage.session.onChanged listener so the Status
+// row tracks the Log pane without a full re-render.
+let currentLogLevel: LogLevel | undefined;
 
 async function load(): Promise<void> {
   if (!scriptId) {
@@ -258,6 +289,11 @@ async function load(): Promise<void> {
   sourcePath = source?.path ?? '';
   sourceRow = source ?? null;
   await refreshLogId();
+  // Hydrate the max log level before render() so the first paint of
+  // the Status row already reflects WARNING / ERROR. Without this the
+  // row would briefly show OK and then flip when the storage listener
+  // fires.
+  currentLogLevel = await getMaxLogLevel(scriptId);
 
   // Pre-select the tab from `location.hash` so render() paints the
   // right one on the first pass — without this we'd flash main
@@ -987,13 +1023,27 @@ function renderDetails(script: StoredScript): void {
 
   appendRow(dl, 'Size', textNode(formatScriptSize(script)));
 
-  const status = document.createElement('span');
-  status.textContent = formatScriptStatusLabel(script.status);
-  status.className = `meta-status status-${script.status}`;
-  if (script.errorMessage) status.title = script.errorMessage;
-  appendRow(dl, 'Status', status);
+  appendRow(dl, 'Status', buildStatusCell(script));
 
   summaryEl.appendChild(dl);
+}
+
+// Build the Status row content: an anchor whose href is `#Log` so
+// clicking switches the viewer to the Log tab via the regular
+// hashchange listener. Labeled with the effective status (INVALID /
+// MISSING / ERROR / WARNING / OK) computed against the current log
+// level.
+function buildStatusCell(script: StoredScript): Node {
+  const effective = effectiveScriptStatus(
+    { status: script.status },
+    currentLogLevel,
+  );
+  const link = document.createElement('a');
+  link.href = '#Log';
+  link.textContent = formatScriptStatusLabel(effective);
+  link.className = `meta-status status-${effective}`;
+  if (script.errorMessage) link.title = script.errorMessage;
+  return link;
 }
 
 function logIdCell(logId: string): Node {

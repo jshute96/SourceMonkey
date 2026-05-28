@@ -55,8 +55,10 @@ Key spaces in `chrome.storage.local`:
 - `sourceId` — back-reference so the viewer can refresh without
   looking up the parent.
 - `relativePath`, `fileUrl` — identity + how to refetch.
-- `status` — `'ok' | 'error' | 'missing'`.
-- `errorMessage?` — set when `status === 'error'`.
+- `status` — `'ok' | 'invalid' | 'missing'`.
+- `errorMessage?` — set when `status === 'invalid'`. Cleared on the
+  transition to `missing` (the row's body is preserved, but the prior
+  error reason is dropped — the file is simply gone).
 - `size` — UTF-8 byte length of the cached content. `0` is a valid
   value (an empty file is a real file). `null` only when the entry
   has never successfully loaded — i.e. its first fetch failed and
@@ -94,13 +96,21 @@ Key spaces in `chrome.storage.local`:
 
 ## Status model
 
+The persisted `status` field has three values; the sources page +
+viewer combine it with each script's **highest log level seen** (from
+`chrome.storage.session`, see [script-log.md](script-log.md)) to
+render a five-label Status column.
+
+### Persisted statuses
+
 - `'ok'` — fetch succeeded, metadata block parsed, required fields
   present (`@name` plus at least one of `@match` / `@include`).
-- `'error'` — fetch failed, or split/parse/validate reported a
-  problem. `errorMessage` carries the reason:
+- `'invalid'` — fetch failed, split/parse/validate reported a problem,
+  or a `@require` / `@resource` dependency couldn't be loaded. The
+  script can't run. `errorMessage` carries the reason:
   `'no metadata block'`, `'unterminated metadata block'`,
-  `'missing @name'`, `'missing @match or @include'`, or a
-  fetch-failure message.
+  `'missing @name'`, `'missing @match or @include'`, a
+  fetch-failure message, or the offending dep URL.
 - `'missing'` — file was in the scan listing previously but no
   longer is. Behavior:
   - On the **ok → missing** transition (and only then), `enabled`
@@ -116,12 +126,31 @@ Key spaces in `chrome.storage.local`:
     as injectable, mirroring `ok`. Subsequent refreshes while the file
     is still gone leave `enabled` alone, so the user's opt-in survives.
 
-On error or missing we **preserve the prior content** (headerText,
+On invalid or missing we **preserve the prior content** (headerText,
 bodyText, parsed header, matching). The viewer keeps working. The
 injector runs the script if and only if `enabled` is true and `status`
-is `ok` or `missing` — `error` rows never inject (the current parse
+is `ok` or `missing` — `invalid` rows never inject (the current parse
 result is bad, so the cached body might mean something different from
 what the metadata claims).
+
+### Displayed status (UI-level)
+
+`src/script-display.ts` exports `effectiveScriptStatus(script,
+maxLogLevel)` which is what the sources page + viewer render. Priority
+order (highest wins):
+
+- `INVALID` — `status === 'invalid'`.
+- `MISSING` — `status === 'missing'`.
+- `ERROR` — `status === 'ok'` but the per-script log has an error
+  entry (max log level = `error`).
+- `WARNING` — `status === 'ok'` and the per-script log has a warning
+  entry (max log level = `warning`).
+- `OK` — everything else (no logs, or only info-level logs).
+
+The Status cell is a link to the script's viewer Log tab in both
+pages. For scripts that land as INVALID or MISSING the refresh /
+add-source paths also append an error-level entry to the per-script
+Log so the Log tab always carries the failure detail.
 
 ## Change detection: the last-change token
 
@@ -355,10 +384,12 @@ source**:
     `userscript.html?script=<scriptId>`.
   - Size shows the UTF-8 byte count of the cached content — including
     a `"0 B"` for an empty file, and the prior size for `missing` /
-    `error` rows that retain their last-read body. Only rows that have
+    `invalid` rows that retain their last-read body. Only rows that have
     never successfully loaded (`size == null`) render as `"—"`.
-  - Status shows `"OK"`, `"ERROR"`, or `"MISSING"`; the cell's `title`
-    attribute carries `errorMessage` for hover detail.
+  - Status shows one of `OK | INVALID | MISSING | WARNING | ERROR`
+    (see [Displayed status](#displayed-status-ui-level) for the
+    priority rules). The label is a link to the script viewer's Log
+    tab; the cell's `title` carries `errorMessage` for hover detail.
   - Missing rows get a small trash-can button next to the Status
     label. It calls `removeScript` to drop the row from storage (and
     from the parent source's `scriptIds`) — useful because a refresh

@@ -1146,10 +1146,10 @@ function makeSource(over = {}) {
   };
 }
 
-test('collectActiveSpecs: error scripts never run; missing scripts run only when explicitly enabled', async () => {
+test('collectActiveSpecs: invalid scripts never run; missing scripts run only when explicitly enabled', async () => {
   const sources = new Map([['source-1', makeSource()]]);
   const specs = await collectActiveSpecs([
-    makeScript({ id: 's1', status: 'error', errorMessage: 'x' }),
+    makeScript({ id: 's1', status: 'invalid', errorMessage: 'x' }),
     makeScript({ id: 's2', status: 'missing', enabled: false }),
     makeScript({ id: 's3', status: 'missing', enabled: true }),
     makeScript({ id: 's4' }),

@@ -14,6 +14,16 @@
 - Value is a flat array of `LogEntry` records in append order.
 - Hard cap: `LOG_CAP` (currently 500). Oldest entries are dropped on
   overflow.
+- Sibling key `loglevel:<scriptId>` records the **highest level any
+  entry in this log has carried so far** (`'info' | 'warning' |
+  'error'`). Bumped on `appendScriptLog` only when the new entry's
+  level is strictly higher than the stored one; cleared on
+  `clearScriptLog` alongside the entries. Lives next to the log
+  (rather than on the `StoredScript` row) so its lifetime exactly
+  matches the entries that back it — Chrome shutdown drops both
+  together. The sources page reads every script's row in one bulk
+  `storage.session.get(null)` to drive the Status column without N
+  per-script reads.
 
 Notes on the storage shape:
 
@@ -44,11 +54,35 @@ present, and just `source` otherwise.
 `src/script-log.ts` exports the public surface:
 
 - `appendScriptLog(scriptId, input)` — async write. Promise resolves
-  once the entry is persisted.
+  once the entry is persisted. Also bumps `loglevel:<scriptId>` when
+  the new entry's level exceeds the stored max.
 - `logScriptEvent(scriptId, input)` — fire-and-forget convenience.
   Swallows errors because the log isn't load-bearing.
 - `getScriptLog(scriptId)` — async read.
-- `clearScriptLog(scriptId)` — async wipe.
+- `clearScriptLog(scriptId)` — async wipe. Removes the log AND the
+  `loglevel:` sentinel.
+- `getMaxLogLevel(scriptId)` — async read of the persisted max
+  level. Used by the userscript viewer to seed the Status row.
+- `getAllMaxLogLevels()` — bulk read returning a `Map<scriptId,
+  LogLevel>`. Used by the sources page to drive every row's Status
+  column in one storage round trip.
+
+## Status column promotion
+
+The persisted `StoredScript.status` plus the per-script max log level
+drive the five-label Status column (`OK | INVALID | MISSING | WARNING
+| ERROR`). Rules + priority order live in
+[storage.md → Displayed status](storage.md#displayed-status-ui-level).
+
+Plumbing notes specific to logging:
+
+- The sources page listens for `chrome.storage.session.onChanged` on
+  `loglevel:` keys and repaints affected rows without a full re-render.
+- For scripts that land `invalid` / `missing`, refresh paths
+  (`emitScriptOutcomeLog` in `script-updater.ts`) and the initial
+  `addSource` path (`emitInitialLoadLogIfBroken` in `script-store.ts`)
+  append an error-level entry so the Log tab always carries the
+  detail behind the badge.
 
 ## What gets logged today
 

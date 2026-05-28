@@ -153,7 +153,10 @@ For each tab we:
 - **Action context menu** — same `"<name> | <STATUS>"` lines as
   additional entries under the right-click menu on the toolbar icon
   (below Chrome's built-in items). Clicking one opens that script's
-  viewer page in a new tab.
+  viewer page in a new tab. Rows whose status is `ERROR` (the wrapper
+  sent `sm:error` for this document) open the viewer with `#Log` so
+  the user lands on the Log pane with the failure detail in view;
+  every other status routes to the default (main script) tab.
   - `chrome.contextMenus` action items are global to the action, so
     we keep them synced to the active tab.
   - Rebuilt on `chrome.tabs.onActivated`,

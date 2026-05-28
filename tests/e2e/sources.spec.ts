@@ -63,7 +63,7 @@ test.describe('sources', () => {
     const source = await sm.addSource(scriptsDir.path);
     const result = await sm.getSourceWithScripts(source!.id);
     expect(result!.scripts).toHaveLength(1);
-    expect(result!.scripts[0].status).toBe('error');
+    expect(result!.scripts[0].status).toBe('invalid');
     expect(result!.scripts[0].errorMessage).toMatch(/@name/);
   });
 
@@ -134,7 +134,7 @@ test.describe('sources', () => {
     const ws = await sm.getSourceWithScripts(source!.id);
     expect(ws!.scripts).toHaveLength(1);
     expect(ws!.scripts[0].relativePath).toBe('empty.user.js');
-    expect(ws!.scripts[0].status).toBe('error');
+    expect(ws!.scripts[0].status).toBe('invalid');
     expect(ws!.scripts[0].size).toBe(0);
   });
 

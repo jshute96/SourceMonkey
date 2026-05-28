@@ -87,7 +87,7 @@ canonical URL in the same refresh pass share one fetch.
 
 ## Failure handling
 
-Any of these flips the parent script to `status: 'error'` with a
+Any of these flips the parent script to `status: 'invalid'` with a
 message naming the offending URL:
 
 - Resolution rejection (traversal, disallowed scheme, etc.).

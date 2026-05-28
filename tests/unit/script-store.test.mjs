@@ -12,7 +12,7 @@ import {
   buildScriptFromText,
   applyFetchError,
   applyMissing,
-  buildInitialErrorEntry,
+  buildInitialInvalidEntry,
   fetchOrSkipInParallel,
   hashSource,
   rebuildSource,
@@ -211,13 +211,13 @@ test('buildScriptFromText omits startupLogs on error rows even if the header wou
 body
 `;
   const entry = await buildScriptFromText({ ...COMMON, source: src });
-  assert.equal(entry.status, 'error');
+  assert.equal(entry.status, 'invalid');
   assert.equal(entry.startupLogs, undefined);
 });
 
 test('buildScriptFromText reports a missing metadata block', async () => {
   const entry = await buildScriptFromText({ ...COMMON, source: NO_BLOCK });
-  assert.equal(entry.status, 'error');
+  assert.equal(entry.status, 'invalid');
   assert.equal(entry.errorMessage, 'no metadata block');
   assert.equal(entry.headerText, '');
   assert.equal(entry.bodyText, NO_BLOCK);
@@ -227,13 +227,13 @@ test('buildScriptFromText reports a missing metadata block', async () => {
 test('buildScriptFromText reports an unterminated metadata block', async () => {
   const broken = '// ==UserScript==\n// @name Foo\nconsole.log("oops");\n';
   const entry = await buildScriptFromText({ ...COMMON, source: broken });
-  assert.equal(entry.status, 'error');
+  assert.equal(entry.status, 'invalid');
   assert.equal(entry.errorMessage, 'unterminated metadata block');
 });
 
 test('buildScriptFromText reports a missing required field', async () => {
   const entry = await buildScriptFromText({ ...COMMON, source: MISSING_NAME });
-  assert.equal(entry.status, 'error');
+  assert.equal(entry.status, 'invalid');
   assert.equal(entry.errorMessage, 'missing @name');
   // Even on validation failure we still record what was parsed so the
   // viewer can show the partial header.
@@ -241,12 +241,16 @@ test('buildScriptFromText reports a missing required field', async () => {
   assert.deepEqual(entry.matching.matches, ['https://example.com/*']);
 });
 
-// ---------- applyFetchError / applyMissing / buildInitialErrorEntry ----------
+// ---------- applyFetchError / applyMissing / buildInitialInvalidEntry ----------
+//
+// `applyFetchError` is named for the trigger (a failed fetch); the
+// resulting `status` is `'invalid'` since the rename. `applyMissing`
+// is keyed by vanished-listing-entry, not a fetch attempt.
 
 test('applyFetchError preserves content and flips status', async () => {
   const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   const errored = applyFetchError(ok, 'permission denied');
-  assert.equal(errored.status, 'error');
+  assert.equal(errored.status, 'invalid');
   assert.equal(errored.errorMessage, 'permission denied');
   assert.equal(errored.headerText, ok.headerText);
   assert.equal(errored.bodyText, ok.bodyText);
@@ -301,15 +305,15 @@ test('applyMissing preserves enabled when the row has already left the ok state'
   assert.equal(afterRefresh.enabled, true);
 
   // error → missing preserves enabled
-  const reEnabledErrored = { ...ok, enabled: true, status: /** @type {'error'} */ ('error'), errorMessage: 'gone' };
+  const reEnabledErrored = { ...ok, enabled: true, status: /** @type {'invalid'} */ ('invalid'), errorMessage: 'gone' };
   const fromError = applyMissing(reEnabledErrored);
   assert.equal(fromError.status, 'missing');
   assert.equal(fromError.enabled, true);
   assert.equal(fromError.errorMessage, undefined);
 });
 
-test('buildInitialErrorEntry leaves content empty', async () => {
-  const entry = buildInitialErrorEntry({
+test('buildInitialInvalidEntry leaves content empty', async () => {
+  const entry = buildInitialInvalidEntry({
     id: 'sc-2',
     sourceId: 'src-1',
     relativePath: 'b.user.js',
@@ -317,7 +321,7 @@ test('buildInitialErrorEntry leaves content empty', async () => {
     errorMessage: 'read failed',
     now: 42,
   });
-  assert.equal(entry.status, 'error');
+  assert.equal(entry.status, 'invalid');
   assert.equal(entry.errorMessage, 'read failed');
   assert.equal(entry.size, null);
   assert.equal(entry.headerText, '');
@@ -509,7 +513,7 @@ test('rebuildSource preserves prior content when a fetch fails on a known script
     now: 100,
     newId: fakeIdSequence(),
   });
-  assert.equal(result[0].status, 'error');
+  assert.equal(result[0].status, 'invalid');
   assert.equal(result[0].errorMessage, 'EACCES');
   assert.equal(result[0].bodyText, existing[0].bodyText);
   assert.equal(result[0].loadedAt, existing[0].loadedAt); // unchanged
@@ -769,7 +773,7 @@ test('rebuildSource creates an initial error entry when a new file fails to fetc
     now: 100,
     newId: fakeIdSequence(),
   });
-  assert.equal(result[0].status, 'error');
+  assert.equal(result[0].status, 'invalid');
   assert.equal(result[0].errorMessage, 'network');
   assert.equal(result[0].size, null);
   assert.equal(result[0].headerText, '');

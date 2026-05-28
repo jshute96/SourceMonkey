@@ -8,7 +8,7 @@
 //     dir (the same file-loader rule `@icon` uses) — works for both
 //     file:// and HTTP sources.
 //   - Refusing dangerous refs (path traversal, non-`.js` suffix,
-//     absolute file://) flips the script to status: 'error' and the
+//     absolute file://) flips the script to status: 'invalid' and the
 //     injection never happens.
 //   - Cross-script dedup: two scripts requiring the same canonical URL
 //     share one fetch in a refreshAllSources pass.
@@ -102,7 +102,7 @@ test.describe('@require', () => {
     });
     const source = await sm.addSource(scriptsDir.path);
     const data = await sm.getSourceWithScripts(source!.id);
-    expect(data!.scripts[0].status).toBe('error');
+    expect(data!.scripts[0].status).toBe('invalid');
     expect(data!.scripts[0].errorMessage).toMatch(/must end in \.js/);
   });
 
@@ -127,7 +127,7 @@ test.describe('@require', () => {
       );
       const source = await sm.addSource(child);
       const data = await sm.getSourceWithScripts(source!.id);
-      expect(data!.scripts[0].status).toBe('error');
+      expect(data!.scripts[0].status).toBe('invalid');
       expect(data!.scripts[0].errorMessage).toMatch(/blocked or invalid/);
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
@@ -194,7 +194,7 @@ test.describe('@require', () => {
       await sm.updateSource(source!.id, 'manual');
       const after = await sm.getSourceWithScripts(source!.id);
       // Status flipped to error, errorMessage names the URL.
-      expect(after!.scripts[0].status).toBe('error');
+      expect(after!.scripts[0].status).toBe('invalid');
       expect(after!.scripts[0].errorMessage).toMatch(/dep\.js/);
       // But the prior require body is still there — we didn't clobber it.
       expect(after!.scripts[0].requires?.[0]?.source).toBe(requireBody);

@@ -553,9 +553,14 @@ const ACTION_MENU_MORE_ID = 'sm-more';
 // script inside the submenu too.
 const ACTION_MENU_CMD_INDENT = '    ↳ ';
 
-function viewerUrlForScript(scriptId: string): string {
+function viewerUrlForScript(scriptId: string, tab?: 'log'): string {
   const url = new URL(chrome.runtime.getURL('userscript.html'));
   url.searchParams.set('script', scriptId);
+  // `#Log` is parsed by src/script-url-hash.ts and lands the viewer on
+  // the Log pane. Used when the user clicks a context-menu row that's
+  // currently reporting a per-tab injection ERROR so they go straight
+  // to the failure details.
+  if (tab === 'log') url.hash = 'Log';
   return url.toString();
 }
 
@@ -565,6 +570,14 @@ function viewerUrlForScript(scriptId: string): string {
 // no custom-data field — so we keep our own mapping and refresh it
 // every rebuild.
 const menuItemToCommand = new Map<string, { scriptId: string; commandId: string }>();
+
+// Script IDs whose action-menu row was rendered with the per-tab
+// injection ERROR status (per `formatRowLabel`/`computeBadge`). When
+// the user clicks one of these the dispatcher routes them to the
+// viewer's Log tab instead of the main script tab so the failure
+// reason is immediately on screen. Rebuilt on every menu rebuild so
+// stale entries can't outlive their row.
+const erroredScriptRows = new Set<string>();
 
 // Rebuilds are serialized AND coalesced. Two concurrent rebuilds would
 // race: removeAll/create is async-via-callback, and once both callbacks
@@ -613,6 +626,7 @@ function buildActionMenuPlan(
   const groups: ActionMenuScript[] = rows.map((row) => ({
     scriptId: row.id,
     title: formatRowLabel(row),
+    errored: row.status === 'ERROR',
     commands: (cmdsByScript.get(row.id) ?? []).map((cmd) => ({
       commandId: cmd.commandId,
       title: cmd.name,
@@ -629,6 +643,7 @@ async function doRebuildActionContextMenu(
   const plan = buildActionMenuPlan(state, tabId);
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
   menuItemToCommand.clear();
+  erroredScriptRows.clear();
   // Top-level script groups. Each script row is followed by its
   // indented menu-command rows in registration order.
   for (const group of plan.top) {
@@ -661,6 +676,7 @@ function createScriptGroupMenuItems(
   };
   if (parentId) scriptItem.parentId = parentId;
   chrome.contextMenus.create(scriptItem);
+  if (group.errored) erroredScriptRows.add(group.scriptId);
   for (const cmd of group.commands) {
     const menuItemId = `${ACTION_MENU_CMD_PREFIX}${group.scriptId}:${cmd.commandId}`;
     menuItemToCommand.set(menuItemId, { scriptId: group.scriptId, commandId: cmd.commandId });
@@ -693,7 +709,11 @@ function installActionContextMenu(): void {
     }
     if (id.startsWith(ACTION_MENU_PREFIX)) {
       const scriptId = id.slice(ACTION_MENU_PREFIX.length);
-      void chrome.tabs.create({ url: viewerUrlForScript(scriptId) });
+      // Rows currently reporting per-tab injection ERROR land on the
+      // Log tab so the user sees why; everything else opens on the
+      // default (main script) view.
+      const tab = erroredScriptRows.has(scriptId) ? 'log' : undefined;
+      void chrome.tabs.create({ url: viewerUrlForScript(scriptId, tab) });
       return;
     }
   });

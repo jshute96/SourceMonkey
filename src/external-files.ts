@@ -29,7 +29,7 @@
 //     two refs of either kind) pointing at the same URL share one
 //     fetch. The typed assembly happens after the cache hit.
 //   - Any failure (resolve-time or fetch-time) returns an error
-//     message; the caller flips the script to status:'error' with
+//     message; the caller flips the script to status:'invalid' with
 //     the message and preserves prior-known-good state.
 
 import {
@@ -210,8 +210,8 @@ export interface AttachFilesResult {
   requires: StoredRequire[];
   resources: StoredResource[];
   // Set when at least one file failed. The caller flips the script
-  // to status:'error' with this message. Partial lists aren't useful
-  // for injection so we return empty arrays alongside.
+  // to status:'invalid' with this message. Partial lists aren't
+  // useful for injection so we return empty arrays alongside.
   errorMessage?: string;
 }
 

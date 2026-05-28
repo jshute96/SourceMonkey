@@ -100,3 +100,19 @@ test('input array is not mutated', () => {
   planActionMenu(groups);
   assert.deepEqual(groups, snapshot);
 });
+
+test('errored flag passes through unchanged for top and More groups', () => {
+  // The dispatcher uses `errored` at click time to decide whether to
+  // route to the Log tab. Both packing paths (top + More) must
+  // preserve it so a row that overflows into the submenu still routes
+  // correctly when clicked.
+  const a = { ...mkGroup('a', 0), errored: true };
+  const b = { ...mkGroup('b', 0), errored: false };
+  const c = { ...mkGroup('c', 0), errored: true };
+  const groups = [a, b, c, mkGroup('d', 0), mkGroup('e', 0), mkGroup('f', 0), mkGroup('g', 0)];
+  const plan = planActionMenu(groups);
+  const all = [...plan.top, ...plan.more];
+  assert.equal(all.find((g) => g.scriptId === 'a').errored, true);
+  assert.equal(all.find((g) => g.scriptId === 'b').errored, false);
+  assert.equal(all.find((g) => g.scriptId === 'c').errored, true);
+});

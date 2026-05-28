@@ -22,6 +22,12 @@ export interface ActionMenuScript {
   scriptId: string;
   // Visible "<name> | <STATUS>" label for the script row itself.
   title: string;
+  // True when the row is currently reporting a per-tab injection
+  // ERROR (the wrapper sent sm:error this document). The dispatcher
+  // uses this to route the click straight to the viewer's Log tab so
+  // the user sees the failure reason instead of landing on the source
+  // and having to switch tabs.
+  errored?: boolean;
   commands: ActionMenuCommand[];
 }
 

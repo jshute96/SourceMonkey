@@ -270,8 +270,8 @@ function logScriptOutcome(
     console.info(`[SourceMonkey] update check: ${label}: row vanished`);
     return;
   }
-  if (next.status === 'error') {
-    console.info(`[SourceMonkey] update check: ${label}: error — ${next.errorMessage ?? 'unknown'}`);
+  if (next.status === 'invalid') {
+    console.info(`[SourceMonkey] update check: ${label}: invalid — ${next.errorMessage ?? 'unknown'}`);
     return;
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
@@ -306,11 +306,22 @@ function emitScriptOutcomeLog(
     });
     return;
   }
-  if (next.status === 'error') {
+  if (next.status === 'invalid') {
     logScriptEvent(scriptId, {
       level: 'error',
       source: `refresh-${mode}`,
       message: next.errorMessage ?? 'unknown error',
+    });
+    return;
+  }
+  if (next.status === 'missing' && prior?.status !== 'missing') {
+    // Surface the vanished-file transition once into the Log tab so
+    // users opening a MISSING row's logs see why it's flagged. Repeat
+    // refreshes against an already-missing row stay quiet.
+    logScriptEvent(scriptId, {
+      level: 'error',
+      source: `refresh-${mode}`,
+      message: next.errorMessage ?? 'source file is missing',
     });
     return;
   }
@@ -426,7 +437,7 @@ function summarizeSourceOutcome(
   for (const n of nextScripts) {
     const prior = priorBy.get(n.id);
     emitScriptOutcomeLog(n.id, prior, n, mode);
-    if (n.status === 'error') { errored++; continue; }
+    if (n.status === 'invalid') { errored++; continue; }
     if (!prior) { added++; continue; }
     if (prior.loadedAt !== n.loadedAt) changed++;
     else unchanged++;

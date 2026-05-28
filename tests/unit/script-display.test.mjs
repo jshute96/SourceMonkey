@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  effectiveScriptStatus,
   formatBytes,
   formatScriptSize,
   formatScriptStatusLabel,
@@ -43,7 +44,7 @@ test('formatScriptSize: null size → "—" (unknown)', () => {
   // failed with no prior content to fall back on. Render an em dash
   // rather than "0 B" (wrong) or "MISSING" (conflates with the missing
   // status).
-  assert.equal(formatScriptSize({ status: 'error', size: null }), '—');
+  assert.equal(formatScriptSize({ status: 'invalid', size: null }), '—');
   assert.equal(formatScriptSize({ status: 'missing', size: null }), '—');
 });
 
@@ -55,22 +56,51 @@ test('formatScriptSize: zero-byte file renders "0 B", not MISSING', () => {
   // An empty file is a real (if degenerate) file — it parses to a
   // header-less error, but the size cell should show "0 B" so the
   // user can see it's not missing.
-  assert.equal(formatScriptSize({ status: 'error', size: 0 }), '0 B');
+  assert.equal(formatScriptSize({ status: 'invalid', size: 0 }), '0 B');
   assert.equal(formatScriptSize({ status: 'ok', size: 0 }), '0 B');
 });
 
 test('formatScriptSize: error with known size still renders the bytes', () => {
   // Errored fetches preserve the prior size; show it so the user can
   // see the row didn't vanish.
-  assert.equal(formatScriptSize({ status: 'error', size: 500 }), '500 B');
+  assert.equal(formatScriptSize({ status: 'invalid', size: 500 }), '500 B');
 });
 
 // ---------- formatScriptStatusLabel ----------
 
-test('formatScriptStatusLabel: distinct labels per status', () => {
-  // Before the fix, missing scripts rendered "ERROR" while their size
-  // cell rendered "MISSING" — visibly inconsistent.
+test('formatScriptStatusLabel: distinct labels per display status', () => {
+  // Five display labels: OK is the calm state; INVALID and MISSING
+  // are the persisted load failures; WARNING and ERROR come from the
+  // per-script Log carrying entries at that level.
   assert.equal(formatScriptStatusLabel('ok'), 'OK');
-  assert.equal(formatScriptStatusLabel('error'), 'ERROR');
+  assert.equal(formatScriptStatusLabel('invalid'), 'INVALID');
   assert.equal(formatScriptStatusLabel('missing'), 'MISSING');
+  assert.equal(formatScriptStatusLabel('warning'), 'WARNING');
+  assert.equal(formatScriptStatusLabel('error'), 'ERROR');
+});
+
+// ---------- effectiveScriptStatus ----------
+
+test('effectiveScriptStatus: invalid always wins', () => {
+  // INVALID is the most-actionable surface: the script literally
+  // can't run, so we don't surface log-derived levels alongside it.
+  assert.equal(effectiveScriptStatus({ status: 'invalid' }, undefined), 'invalid');
+  assert.equal(effectiveScriptStatus({ status: 'invalid' }, 'info'), 'invalid');
+  assert.equal(effectiveScriptStatus({ status: 'invalid' }, 'warning'), 'invalid');
+  assert.equal(effectiveScriptStatus({ status: 'invalid' }, 'error'), 'invalid');
+});
+
+test('effectiveScriptStatus: missing wins over log-derived levels', () => {
+  assert.equal(effectiveScriptStatus({ status: 'missing' }, undefined), 'missing');
+  assert.equal(effectiveScriptStatus({ status: 'missing' }, 'warning'), 'missing');
+  assert.equal(effectiveScriptStatus({ status: 'missing' }, 'error'), 'missing');
+});
+
+test('effectiveScriptStatus: ok script reflects highest log level', () => {
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined), 'ok');
+  // info collapses to OK (we still track it internally, but the Status
+  // column only ramps when there's something actionable).
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, 'info'), 'ok');
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, 'warning'), 'warning');
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, 'error'), 'error');
 });
