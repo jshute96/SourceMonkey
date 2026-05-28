@@ -427,8 +427,14 @@ export function emitGmBindings(
     );
   }
   const prelude = preludeLines.join(' ');
+  // Join with spaces, not newlines: the injector splices this into
+  // the main-body wrap function ahead of the user body, and any
+  // newline here would push the body's line 1 onto physical line 2+
+  // — breaking the stack-trace line-number contract that
+  // `wrapMainBodyEntry` in src/injector.ts depends on. Each part is
+  // a complete `const … = …;` statement so `;` + ` ` is enough.
   return {
-    js: parts.join('\n') + '\n',
+    js: parts.join(' ') + ' ',
     prelude,
     granted: specs.map((s) => s.name),
     needsValues: hasStorageGrant,
