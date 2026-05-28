@@ -63,9 +63,9 @@ test('emitGmBindings: storage prelude reads the SW-attached snapshot, no baked l
   const out = emitGmBindings(['GM_setValue'], makeInfo());
   // The eager `storage.init` must NOT sit in the IIFE-top js block —
   // the GM runtime may not be installed yet at that point. It moves
-  // to the prelude, which the injector splices into the wrapper
-  // inside `__smWaitForRunAt`'s callback (runtime is guaranteed
-  // ready by then).
+  // to the `prelude` string, which the injector splices into the
+  // main-body wrap function (runs only after the prelude's
+  // awaitDecision + waitForRunAt gates — runtime guaranteed ready).
   assert.doesNotMatch(out.js, /storage\.init/);
   assert.match(out.prelude, /window\.__SM_GM__\.storage\.init\("script-1", __smGmSnap\)/);
   // The SW-attached snapshot is the SINGLE source of truth — no

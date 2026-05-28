@@ -228,7 +228,7 @@ there, but it only uses `chrome.runtime` (unreachable in MAIN, so
 we fall back to `postMessage`), `setTimeout`, `addEventListener`,
 and `String.indexOf`. All of those touch prototypes the page could
 have poisoned by `document_start`-after-first-inline-script time.
-That's an existing concern with the current `wrapper-head.js`,
+That's an existing concern with the current `userscript-prelude.js`,
 unchanged by GM_* work. (Discussion of hardening that lives in
 [injection.md](injection.md), not here.)
 
@@ -456,7 +456,7 @@ Two ways to give a script its GM_* bindings:
   a USER_SCRIPT-world shared runtime registered alongside.
 - **(b) Single shared runtime in scope.** A separate
   USER_SCRIPT-world script (`gm-runtime.js`) registered ahead of
-  every userscript exposes the API; per-script wrapper-head just
+  every userscript exposes the API; per-script wrapper just
   installs the granted bindings as locals at userscript-start time.
 
 (a) avoids any "did the shared runtime register first?" ordering
@@ -515,10 +515,9 @@ Not a commitment, just shape. Driven by the design decisions above.
    API name, its `SYNC` / `ASYNC` classification, its `@grant`
    keys, and any extra validation (e.g. `@connect` for
    `GM_xmlhttpRequest`). All later phases reference this catalog.
-2. **Compile-in surface.** Extend the wrapper-head emitter so that
-   for each granted name on a script, an inline
-   `const GM_X = function(...) {...}` is concatenated ahead of the
-   body. SYNC names delegate to a shared `__SM_GM__` global (set up
+2. **Compile-in surface.** Extend the wrap emitter so that for each
+   granted name on a script, an inline `const GM_X = function(...) {...}`
+   is spliced into the main-body wrap function's locals. SYNC names delegate to a shared `__SM_GM__` global (set up
    by a USER_SCRIPT-world helper registered alongside); ASYNC names
    `chrome.runtime.sendMessage` to the SW. Start with all bodies
    stubbed to throw "not implemented yet".

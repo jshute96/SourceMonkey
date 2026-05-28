@@ -1198,6 +1198,22 @@ async function handleCheckPending(
   if (!refreshed) return { action: 'run' };
   if (refreshed.status !== 'ok') return { action: 'run' };
   if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
+  // Storage-granting scripts can't take the run-new swap. The
+  // prelude's eval runs at runMain's function scope, NOT inside
+  // the main-body wrap function's closure — so the GM_setValue
+  // / GM_getValue / etc. bindings spliced into the wrap function
+  // aren't visible to the swap-evaluated body. A storage script
+  // that took this branch would throw `ReferenceError: GM_setValue
+  // is not defined` on its first storage call — a silent break
+  // until reload. Run the baked-in body this load; the next
+  // reload picks up the new body via syncRegistrations like any
+  // non-fast-path edit. See docs/injection-modes.md.
+  if (payload.needsValues) {
+    console.log(
+      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} grants storage; run-new can't see GM bindings (next reload will pick it up)`,
+    );
+    return { action: 'run' };
+  }
   console.log(
     `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
   );

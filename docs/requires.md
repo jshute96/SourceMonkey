@@ -110,33 +110,45 @@ worse than not injecting; erroring out is safer than running headless.
 ## Reload fast-path interaction
 
 The reload fast-path (see [injection.md](injection.md#reload-fast-path))
-ships the script's freshly-updated body to the in-page wrapper for
-in-place eval. The shipped payload must include the prepended
-`@require` source, not just the main `bodyText` — otherwise the
-swapped body's references to require-set-up globals throw
-`ReferenceError` on the swap and only resolve on the *next* reload
-(because by then `chrome.userScripts` has re-registered the script
-with the requires baked in again).
+ships the script's freshly-updated body to the in-page prelude for
+in-place `eval`. The shipped payload concatenates every `@require`
+body before the main body via `composeRequiredBody` in
+`src/injector.ts`, so the eval'd swap can see require-set-up
+globals. Without that, the swapped body's references to a require
+that was added between the registered version and the refreshed
+version would throw `ReferenceError` on the swap and only resolve
+on the *next* reload (because by then `chrome.userScripts` has
+re-registered the script with the new requires as separate entries).
 
 `handleCheckPending` in `src/background.ts` therefore returns
 `composeRequiredBody(refreshed)` rather than the raw body text.
 
+The eval-based swap path is the only place we still concatenate;
+the default-run path injects each require as its own `js[]` entry
+for clean stack traces — see
+[injection-modes.md](injection-modes.md).
+
 ## Injection
 
-[`src/injector.ts`](../src/injector.ts)'s `composeRequiredBody` walks
-the script's `requires` in order and emits, before the main body:
+In the default-run path, each `@require` becomes its own `{code}`
+entry in the script's `js[]` array, wrapped in
+`if(self.__smActive("<id>")){try{<body>}catch(e){...}}` with a
+trailing `//# sourceURL=<require URL>` directive. Devtools shows
+each require as its own file with original line numbers; a stack
+trace from inside a require points at that require's URL, not at
+the host userscript.
 
-```
-/* @require <url> */
-<require source>
-;
-```
+Top-level `var` declarations in a require still become globals on
+`globalThis` (top-level `var` writes a property on the global
+object), so libraries that attach to `window` work unchanged.
+Top-level `let`/`const` becomes script-scoped — a require that
+defines a cross-piece binding that way won't be visible to other
+requires or to the main body. Workaround: assign explicitly to
+`globalThis` / `window`.
 
-The `;` separator breaks any ASI hazard at the seam between segments.
-The whole composed string then goes through the existing activation
-wrapper, so the require code and the main body share one error
-boundary, one async-error attribution `sourceURL`, and (eventually)
-one `GM_*` shim.
+See [injection-modes.md](injection-modes.md) for the alternative
+arrangements considered (concatenated single blob, eval-per-require)
+and why we picked separate entries.
 
 ## Limits
 

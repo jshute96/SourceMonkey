@@ -36,32 +36,39 @@ SourceMonkey actually does today.
 
 ## Bindings layout in the wrapper
 
-The wrapper-head has TWO placeholders that the injector substitutes
-from `emitGmBindings`'s return value:
+`emitGmBindings` returns `{js, prelude}` — both strings are
+spliced into the main-body wrap function (`wrapMainBodyEntry` in
+`src/injector.ts`), so they're locals of that function and visible
+to the user body via closure:
 
-- `"__SM_GM_BINDINGS__"` sits inside the outer IIFE, BEFORE
-  `__smAwaitDecision(...)`. The substituted text is the lazy
-  `const GM_X = ...` declarations + the GM4 alias object. Both the
-  baked-in body and the run-new swap eval see them via closure.
-  Each declaration only dereferences `window.__SM_GM__` from inside
-  its own function body, so emitting them this early is safe even
-  when the runtime spec hasn't run yet.
-- `"__SM_GM_PRELUDE__"` sits INSIDE the `__smWaitForRunAt` callback,
-  before the run-new / baked-body branch. The substituted text is
-  eager `__SM_GM__.*` calls — today just `storage.init(scriptId,
-  __smDecision.gmValues)` for scripts with a storage grant. The
-  snapshot is attached to the `sm:check-pending` reply by the SW;
-  if it's missing the prelude hard-aborts (see
-  [GM-APIs-storage.md](GM-APIs-storage.md)). By the time the
-  callback fires, both `sm:check-pending` (microtask) and the
-  declared `@run-at` lifecycle event have resolved, so both the GM
-  runtime is installed and `__smDecision` is in scope.
+- `js` — lazy `const GM_X = ...` declarations plus the GM4 alias
+  object. Each declaration only dereferences `window.__SM_GM__`
+  from inside its own function body, so emitting them this early
+  is safe even when the runtime spec hasn't run yet — the
+  dereference doesn't fire until the user body actually calls a
+  `GM_*` API.
+- `prelude` — eager `__SM_GM__.*` calls — today just
+  `storage.init(scriptId, __smDecision.gmValues)` for scripts
+  with a storage grant. The snapshot is attached to the
+  `sm:check-pending` reply by the SW; if it's missing the prelude
+  hard-aborts (see [GM-APIs-storage.md](GM-APIs-storage.md)). By
+  the time the main-body wrap function fires, both
+  `sm:check-pending` (microtask) and the declared `@run-at`
+  lifecycle event have resolved, so the GM runtime is installed
+  and `__smDecision` (pulled out of the entry the prelude passes
+  in) is in scope.
 
-The split matters because `storage.init` MUST run before the body
-(so `GM_getValue` reads see the persisted snapshot), but if it ran
-at IIFE top alongside the const declarations it would race against
-the runtime spec's own `document_start` registration. See the
-"Runtime ordering" caveat below.
+Both `js` and `prelude` sit on the same physical line as the body's
+first line so the body's line N stays at physical line N of the
+main entry.
+
+Scope caveat: the GM bindings live in the main-body wrap function
+ONLY. `@require` entries are separate `{code}` blobs in the
+`js[]` array (see [injection-modes.md](injection-modes.md)) and
+do NOT see the bindings. Likewise, the reload-fast-path's `eval`
+swap runs at the prelude's function scope, not inside the wrap
+function's closure, so the swap-evaluated body also doesn't see
+the bindings.
 
 ## World gating
 
@@ -111,23 +118,24 @@ if needed.
   ...` declarations read `window.__SM_GM__` only inside their own
   bodies — first GM call wins, by which point the runtime is
   installed. The one eager call (`storage.init`) does NOT live with
-  the consts; it's emitted into the prelude and runs inside
-  `__smWaitForRunAt`'s callback, after both `sm:check-pending` and
-  the declared `@run-at` event resolve. So `chrome.userScripts`'s
-  document_start registration order doesn't have to be a guarantee.
+  the consts; it's emitted into the main-body wrap function and
+  runs only after the prelude's `awaitDecision` + `waitForRunAt`
+  gates resolve (both `sm:check-pending` and the declared `@run-at`
+  event). So `chrome.userScripts`'s document_start registration
+  order doesn't have to be a guarantee.
 
-- **Prelude throws bypass the body's try/catch.** The prelude is
-  spliced outside the `try { body } catch { sm:error }` block, so a
-  `storage.init` throw (only possible if `__SM_GM__` is somehow
-  *still* undefined after `__smWaitForRunAt`) escapes as a plain
-  page-level uncaught error — no `sm:start`, no `sm:error`. In
-  normal operation `__SM_GM__` is guaranteed installed by then, so
-  this is mostly theoretical; flagged here because the failure mode
-  is silent to the SW.
+- **Prelude throws bypass the body's try/catch.** The GM prelude
+  is spliced into the same main-body wrap function as the body,
+  AHEAD of the body — a `storage.init` throw (only possible if
+  `__SM_GM__` is somehow *still* undefined after `waitForRunAt`)
+  is caught by the prelude's `try { fn() } catch` in `runMain` and
+  surfaces as a normal `sm:error`. In normal operation `__SM_GM__`
+  is guaranteed installed by then, so this is mostly theoretical.
 
 - **Cross-tab `applyRemoteUpdate` ignores writes before init.** The
   remote-update handler early-returns when the per-script store
-  isn't `ready`. Since the prelude runs inside `__smWaitForRunAt`,
+  isn't `ready`. Since the GM prelude runs only after the
+  `waitForRunAt` gate resolves,
   `ready` flips later than it used to (after the declared `@run-at`
   lifecycle event). For `@run-at document-idle` the gap can stretch
   to `window.load`. A sibling tab's `GM_setValue` that broadcasts

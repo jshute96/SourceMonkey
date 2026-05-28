@@ -17,9 +17,21 @@
        on the same requestId. The MAIN wrapper's listener matches on
        requestId and resolves its awaiter.
 
-   Build rules match wrapper-head.js — only /* block * / comments,
-   strings must not start a line with //, the build minifies to one
-   physical line.
+   Build rules match userscript-prelude.js — only /* block * /
+   comments, strings must not start a line with //, the build minifies
+   to one physical line.
+
+   Timing vs. MAIN-world preludes. The bridge is a separate
+   chrome.userScripts registration from the per-script wrappers;
+   their relative injection order isn't guaranteed by the API. The
+   MAIN-world prelude's first sm:check-pending posts via
+   window.postMessage, which queues to the message task queue —
+   delivery happens in a later task. By then the bridge IIFE (also
+   document_start) has had time to install its addEventListener. If
+   ordering ever shifts, the bridge falls back to "reply with
+   {action: run}" via the prelude's own 2s safety timer; nothing
+   breaks, scripts just don't get the reload fast-path swap on
+   that one navigation.
 
    Trust model. postMessage is observable by the page, so the page
    can both read our sm:* events and forge them. We require
@@ -61,7 +73,7 @@
         /* Request/reply path. The MAIN wrapper expects a postMessage
            back with the matching requestId. We always reply, even on
            SW failure, so the wrapper's awaiter resolves quickly
-           rather than running out its 6s safety timeout. */
+           rather than running out its 2s safety timeout. */
         var requestId = data.requestId;
         if (typeof requestId !== "string") return;
         var post = function (reply) {

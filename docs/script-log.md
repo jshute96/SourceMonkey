@@ -120,23 +120,31 @@ present, and just `source` otherwise.
 - Live updates: a `chrome.storage.onChanged` listener on the session
   area repaints the table whenever the script's log key changes —
   but only while the Log tab is the currently selected one.
-- **Clickable stack refs:** every `sourcemonkey://<scriptId>/…:L:C`
-  reference in the message column whose URL matches a code tab's
-  `sourceUrl` becomes a clickable anchor.
+- **Clickable stack refs:** every `<scheme>://…:L:C` reference in
+  the message column whose URL matches a code tab's `sourceUrl`
+  becomes a clickable anchor.
   - Clicking switches to that tab and jumps to gutter line `L`,
     with an accent bar at column `C`.
-  - Matching is naive — V8's URL is trusted as-is; no offset
-    arithmetic for `@require` lines.
-  - `parseStackRefs` (`src/stack-link.ts`) splits the message into
-    plain-text and `{url, line, col}` ref runs.
-  - The main tab carries `sourceUrl = buildSourceUrl(id, name)`
+  - Matching is naive — V8's URL is trusted as-is.
+  - `parseStackRefs` (`src/stack-link.ts`) is a pure URL extractor:
+    it splits the message into plain-text and `{url, line, col}`
+    ref runs for any URL with a recognized scheme (`sourcemonkey`,
+    `http`/`https`, `file`). The viewer filters by matching URLs
+    against its tabs.
+  - The main tab carries `sourceUrl = buildSourceUrl(logLabel)`
     (`src/script-source-url.ts`) — the same string the injector
-    hands to `//# sourceURL=`.
-  - Require tabs leave `sourceUrl` empty until the injector emits
-    a per-`@require` sourceURL; their stack refs render as text.
+    hands to `//# sourceURL=` on the main-body entry.
+  - Each `@require` tab carries `sourceUrl = buildRequireSourceUrl(logLabel, r.url)`
+    (a synthetic `sourcemonkey://SourceMonkey/<folder>/<host>/<path>`
+    URL) — matching the per-require `//# sourceURL=` the injector
+    emits. Stack refs into require code linkify to the right
+    require tab. The require tab's `fileUrl` keeps the original
+    fetched URL for display.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
-    the wrapper-prefix shim shares that physical line, so the
-    reported column points into the shim, not user code.
+    the main-body wrap prefix (the `self.__smRun(id, function(__smE){…`
+    + GM bindings + declaration preamble emitted by `wrapMainBodyEntry`)
+    shares that physical line, so the reported column points into
+    the wrap, not user code.
 
 ## Lifecycle and reset
 

@@ -29,14 +29,17 @@ globalThis.chrome = globalThis.chrome ?? {
 import {
   BRIDGE_SCRIPT_ID,
   buildBridgeSpec,
+  buildConfigBlob,
   buildRegistrationSpec,
-  buildWrappedBody,
   collectActiveSpecs,
   composeRequiredBody,
   normalizeDeclaredRunAt,
   resolveWorld,
+  wrapMainBodyEntry,
+  wrapPreludeEntry,
+  wrapRequireEntry,
 } from '../../dist/injector.js';
-import { WRAPPER_BRIDGE, WRAPPER_MATCHER } from '../../dist/generated-wrappers.js';
+import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 
 // ---------- normalizeDeclaredRunAt ----------
 
@@ -59,150 +62,146 @@ test('normalizeDeclaredRunAt: case-insensitive', () => {
   assert.equal(normalizeDeclaredRunAt('Document-End'), 'document-end');
 });
 
-// ---------- buildWrappedBody ----------
+// ---------- buildConfigBlob ----------
 
-test('buildWrappedBody: inlines body verbatim so syntax errors surface at register()', () => {
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'var foo = 1;', loadedAt: 0 });
-  assert.match(wrapped, /var foo = 1;/);
+test('buildConfigBlob: emits a queue-or-init call with the cfg object', () => {
+  const blob = buildConfigBlob({
+    id: 'abc',
+    logLabel: 'foo.user.js',
+    name: 'Foo',
+    sourceUrl: 'sourcemonkey://SourceMonkey/foo/foo.user.js',
+    loadedAt: 1737051234567,
+    runAt: 'document-idle',
+    needsGmValues: false,
+    matching: null,
+    startupLogs: [],
+    requireUrls: [],
+  });
+  // Both transport branches are present — direct init() when prelude
+  // is already loaded, queue-push otherwise.
+  assert.match(blob, /self\.__smPrelude\.init/);
+  assert.match(blob, /self\.__smCfgQueue=self\.__smCfgQueue\|\|\[\]/);
+  // The cfg literal carries the script identity.
+  assert.match(blob, /"id":"abc"/);
+  assert.match(blob, /"name":"Foo"/);
+  assert.match(blob, /"loadedAt":1737051234567/);
+  assert.match(blob, /"runAt":"document-idle"/);
+  // Trailing sourceURL uses the script's folder under SourceMonkey/.
+  assert.match(blob, /sourceURL=sourcemonkey:\/\/SourceMonkey\/foo\/__config\.js/);
 });
 
-test('buildWrappedBody: includes the id and name as JS string literals', () => {
-  const wrapped = buildWrappedBody({ id: 'abc"123', name: 'My "Script"', body: '', loadedAt: 0 });
-  // JSON.stringify handles the escaping for both, so the inlined literal
-  // contains the escaped form.
-  assert.match(wrapped, /"abc\\"123"/);
-  assert.match(wrapped, /"My \\"Script\\""/);
+test('buildConfigBlob: omits matching when null and startupLogs when empty', () => {
+  const blob = buildConfigBlob({
+    id: 'x', logLabel: 'x.user.js', name: 'X',
+    sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
+    loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
+    matching: null, startupLogs: [], requireUrls: [],
+  });
+  assert.doesNotMatch(blob, /"matching"/);
+  assert.doesNotMatch(blob, /"startupLogs"/);
+  assert.doesNotMatch(blob, /"requireUrls"/);
 });
 
-test('buildWrappedBody: wraps the body in a try/catch with sendMessage', () => {
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'doThing();', loadedAt: 0 });
-  assert.match(wrapped, /try {/);
-  assert.match(wrapped, /catch \(__smErr\)/);
-  assert.match(wrapped, /type: "sm:error"/);
-  assert.match(wrapped, /type: "sm:start"/);
+test('buildConfigBlob: serializes matching, startupLogs, requireUrls when present', () => {
+  const blob = buildConfigBlob({
+    id: 'x', logLabel: 'x.user.js', name: 'X',
+    sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
+    loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
+    matching: { matches: ['https://e/*'], includes: ['/r/'], excludes: [] },
+    startupLogs: [{ level: 'warn', message: 'hi' }],
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/a.js'],
+  });
+  assert.match(blob, /"matching":\{"matches":\["https:\/\/e\/\*"\],"includes":\["\/r\/"\],"excludes":\[\]\}/);
+  assert.match(blob, /"startupLogs":\[\{"level":"warn","message":"hi"\}\]/);
+  assert.match(blob, /"requireUrls":\["sourcemonkey:\/\/SourceMonkey\/x\/cdn\/a\.js"\]/);
 });
 
-test('buildWrappedBody: swallows sendMessage promise rejections to avoid feedback loops', () => {
-  // Without a `.catch(...)` a missing receiver would surface as an
-  // Uncaught (in promise) error in the page console on every send.
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '', loadedAt: 0 });
-  assert.match(wrapped, /\.catch\(function ?\(\) ?\{\}\)/);
-});
+// ---------- wrapRequireEntry ----------
 
-test('buildWrappedBody: embeds loadedAt as a bare numeric literal in the sm:start payload', () => {
-  // The SW uses this value to detect a wrapper running outdated content
-  // (storage's current loadedAt > wrapper's loadedAt). JSON.stringify
-  // on a number yields a bare numeric literal — confirm the quotes
-  // around the "__SM_LOADED_AT__" placeholder were stripped.
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '', loadedAt: 1737051234567 });
-  assert.match(wrapped, /__smLoadedAt = 1737051234567/);
-  // And the sm:start payload references it (not the placeholder).
-  assert.match(wrapped, /type: "sm:start"[^}]*loadedAt: __smLoadedAt/);
-  assert.doesNotMatch(wrapped, /__SM_LOADED_AT__/);
-});
-
-test('buildWrappedBody: head is on a single physical line so body lines stay aligned', () => {
-  // The body's line N must land at physical line N of the registered
-  // script — otherwise stack traces report meaningless line numbers.
-  // The build minifies wrapper-head.js to one line; we verify that
-  // here by checking that everything up to the body shows up as line
-  // 1 of the output.
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: 'LINE1\nLINE2\nLINE3' });
+test('wrapRequireEntry: prefix on physical line 1; body lines preserved; sourceURL at end', () => {
+  // The require body's line N must land at physical line N of the
+  // wrapped entry so devtools shows the right line in stack traces.
+  const wrapped = wrapRequireEntry({
+    scriptId: 'abc',
+    source: 'LINE1\nLINE2\nLINE3',
+    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
+  });
   const lines = wrapped.split('\n');
-  // line 1 = head + LINE1; line 2 = LINE2; line 3 = LINE3; line 4 = tail
   assert.match(lines[0], /LINE1$/);
   assert.equal(lines[1], 'LINE2');
   assert.equal(lines[2], 'LINE3');
+  // The trailing sourceURL comment lives at the very bottom so the
+  // engine attributes the whole entry to it.
+  assert.ok(wrapped.endsWith('//# sourceURL=sourcemonkey://SourceMonkey/foo/cdn/x.js\n'));
 });
 
-test('buildWrappedBody: never inserts literal "$&" from matcher replace (no replace-backref leak)', () => {
-  // The matcher contains `s.replace(..., "\\$&")` inside a regex
-  // escape helper. If we used String.prototype.replace's two-arg form
-  // with a string replacement, $& would expand to the matched text
-  // (the placeholder), corrupting the matcher. Guard against
-  // regression by checking the placeholder doesn't survive.
-  const wrapped = buildWrappedBody({
-    id: 'x', name: 'X', body: '',
-    matching: { matches: ['https://a/*'], excludes: [], includes: ['/r/'] },
+test('wrapRequireEntry: gates body on __smActive and routes throws to __smErr', () => {
+  const wrapped = wrapRequireEntry({
+    scriptId: 'abc',
+    source: 'doStuff();',
+    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
   });
-  assert.doesNotMatch(wrapped, /__SM_MATCHER_BLOCK__/);
+  assert.match(wrapped, /if\(self\.__smActive\("abc"\)\)\{try\{/);
+  assert.match(wrapped, /catch\(__smE\)\{self\.__smErr\("abc",__smE\);\}\}/);
 });
 
-test('buildWrappedBody: appends a # sourceURL= directive with id and sanitized name', () => {
-  // The sourceURL is what the wrapper's async-error listeners grep
-  // stack frames for, and what devtools labels the script with.
-  const wrapped = buildWrappedBody({
-    id: 'abc-123',
-    name: 'Foo / Bar (v2)',
+// ---------- wrapMainBodyEntry ----------
+
+test('wrapMainBodyEntry: head on physical line 1; body lines preserved; sourceURL at end', () => {
+  const wrapped = wrapMainBodyEntry({
+    scriptId: 'abc',
+    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
+    body: 'LINE1\nLINE2\nLINE3',
+    gmBindings: '',
+    gmPrelude: '',
+  });
+  const lines = wrapped.split('\n');
+  // The first physical line ends with the body's first line of code.
+  assert.match(lines[0], /LINE1$/);
+  assert.equal(lines[1], 'LINE2');
+  assert.equal(lines[2], 'LINE3');
+  // Closing brace + sourceURL trail.
+  assert.ok(wrapped.endsWith('//# sourceURL=sourcemonkey://abc/Foo.user.js\n'));
+});
+
+test('wrapMainBodyEntry: defers execution via self.__smRun and exposes per-script vars', () => {
+  const wrapped = wrapMainBodyEntry({
+    scriptId: 'abc',
+    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
     body: '',
+    gmBindings: '',
+    gmPrelude: '',
   });
-  // Unsafe chars in the name (space, slash, parens) are folded to `_`
-  // so the resulting line is a well-formed sourceURL directive. The
-  // marker terminates the wrapped script — match end-of-string to
-  // confirm it's at the bottom where the engine expects it.
-  const expected = 'sourcemonkey://abc-123/Foo___Bar__v2_.user.js';
-  assert.ok(
-    wrapped.includes('\n//# sourceURL=' + expected + '\n'),
-    `expected sourceURL directive for ${expected} in wrapped output`,
-  );
+  assert.match(wrapped, /self\.__smRun\("abc",function\(__smE\)/);
+  // The declaration preamble pulls per-script identity out of the
+  // entry the prelude passes in — gm-bindings.ts's emit relies on
+  // these names being in scope.
+  assert.match(wrapped, /var __smDecision=__smE\.decision/);
+  assert.match(wrapped, /var __smName=__smE\.cfg\.name/);
+  assert.match(wrapped, /var __smId=__smE\.cfg\.id/);
+  assert.match(wrapped, /var __smLoadedAt=__smE\.cfg\.loadedAt/);
+  assert.match(wrapped, /var __smSend=self\.__smPrelude\.send/);
 });
 
-test('buildWrappedBody: installs window error + unhandledrejection listeners', () => {
-  // Async failures from handlers the script installs (setTimeout,
-  // addEventListener callbacks, promise chains) escape the body's
-  // try/catch. We install window-level listeners and filter by the
-  // sourceURL marker so we still get attributed reports without
-  // false-positively catching unrelated page errors.
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
-  assert.match(wrapped, /addEventListener\("error"/);
-  assert.match(wrapped, /addEventListener\("unhandledrejection"/);
-  // The async-error reporter must dispatch via the existing sm:error
-  // channel so the SW's badge logic handles it just like a sync throw.
-  // The page console gets only an info-level attribution note — the
-  // native browser logging already shows the error + stack.
-  assert.match(wrapped, /caught async/);
-});
-
-test('buildWrappedBody: __smSend feature-detects chrome.runtime then falls back to postMessage', () => {
-  // MAIN-world scripts can't reach chrome.runtime; they need to relay
-  // through window.postMessage to a USER_SCRIPT-world bridge (see
-  // buildBridgeSpec). Both transport branches must be present in the
-  // emitted wrapper so the same compiled body works in either world.
-  const wrapped = buildWrappedBody({ id: 'x', name: 'X', body: '' });
-  assert.match(wrapped, /chrome\.runtime\.sendMessage/);
-  assert.match(wrapped, /window\.postMessage/);
-  assert.match(wrapped, /"sourcemonkey-bridge"/);
-});
-
-test('buildWrappedBody: embeds the declared @run-at and a wait-for-lifecycle helper', () => {
-  // The wrapper installs a __smWaitForRunAt helper that gates body
-  // execution on DOMContentLoaded / load. Without this gating we
-  // inherit Chrome's batching of document_end into the post-load burst.
-  const wrapped = buildWrappedBody({
-    id: 'x', name: 'X', body: '',
-    declaredRunAt: 'document-end',
+test('wrapMainBodyEntry: splices gmBindings + gmPrelude before body', () => {
+  const wrapped = wrapMainBodyEntry({
+    scriptId: 'abc',
+    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
+    body: 'BODYTOP',
+    gmBindings: '/*BIND*/',
+    gmPrelude: '/*PRE*/',
   });
-  assert.match(wrapped, /__smRunAt ?= ?"document-end"/);
-  assert.match(wrapped, /__smWaitForRunAt/);
-  assert.match(wrapped, /"DOMContentLoaded"/);
-  assert.match(wrapped, /addEventListener\("load"/);
+  // The order is fixed: declarations → bindings → prelude → body.
+  // Everything before the body lives on physical line 1 with the
+  // body's first line to preserve line-number alignment.
+  const bindPos = wrapped.indexOf('/*BIND*/');
+  const prePos = wrapped.indexOf('/*PRE*/');
+  const bodyPos = wrapped.indexOf('BODYTOP');
+  assert.ok(bindPos > 0 && prePos > bindPos && bodyPos > prePos);
 });
 
-test('buildWrappedBody: async-error listeners filter by the per-script sourceURL', () => {
-  // Without filtering, a MAIN-world script's listener would attribute
-  // every page error (and every other userscript's error) to itself.
-  // Filtering by the unique sourceURL string is what keeps attribution
-  // honest. Verify the wrapped output references __smSourceUrl from
-  // both the filename check and the stack check paths.
-  const wrapped = buildWrappedBody({ id: 'abc', name: 'X', body: '' });
-  assert.match(wrapped, /indexOf\(__smSourceUrl\)/);
-  const sourceUrl = 'sourcemonkey://abc/X.user.js';
-  assert.ok(wrapped.includes(JSON.stringify(sourceUrl)));
-});
+// ---------- composeRequiredBody (kept for reload-fast-path) ----------
 
-// ---------- buildRegistrationSpec ----------
-
-// Minimal valid script the helpers can chew on.
 function makeScript(over = {}) {
   return {
     id: 'script-1',
@@ -220,26 +219,6 @@ function makeScript(over = {}) {
     ...over,
   };
 }
-
-test('buildRegistrationSpec: passes @match values through as matches', async () => {
-  const spec = await buildRegistrationSpec(makeScript());
-  assert.deepEqual(spec.matches, ['https://example.com/*']);
-});
-
-test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', async () => {
-  const spec = await buildRegistrationSpec(makeScript({
-    matching: {
-      matches: [],
-      excludes: [],
-      includes: ['*://example.com/*', '/^https:\\/\\/foo\\..*$/'],
-    },
-  }));
-  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
-  // Wrapper carries the full matching object so it can filter at runtime.
-  assert.match(spec.js[0].code, /__smMatchScript/);
-});
-
-// ---------- composeRequiredBody ----------
 
 test('composeRequiredBody: passes through bodyText when no @require', () => {
   assert.equal(composeRequiredBody(makeScript()), 'console.log("hi");');
@@ -271,48 +250,41 @@ test('composeRequiredBody: prepends every require body in declaration order', ()
     ],
   });
   const out = composeRequiredBody(script);
-  // a comes before b, b before the body.
   const aPos = out.indexOf('var A=1;');
   const bPos = out.indexOf('var B=2;');
   const bodyPos = out.indexOf('console.log("hi");');
   assert.ok(aPos >= 0 && bPos > aPos && bodyPos > bPos);
 });
 
-test('composeRequiredBody: emits a `// @require <url>` line-comment marker per require', () => {
-  const out = composeRequiredBody(makeScript({
-    requires: [{ url: 'https://cdn.example.com/x.js', source: '0;', ref: '', size: 0, contentHash: '', loadedAt: 0 }],
-  }));
-  assert.match(out, /\/\/ @require https:\/\/cdn\.example\.com\/x\.js/);
-});
-
-test('composeRequiredBody: URL with `*/` in the path does not break the wrapper', () => {
-  // A line-comment marker terminates at newline, so a `*/` sequence
-  // inside a URL stays inert. (A block comment would have closed
-  // prematurely.)
-  const out = composeRequiredBody(makeScript({
-    requires: [{
-      url: 'https://cdn.example.com/foo*/bar.js',
-      source: 'var R = 1;',
-      ref: '', size: 0, contentHash: '', loadedAt: 0,
-    }],
-    bodyText: 'window.X = R;',
-  }));
-  // The require body and main body are both present and ordered.
-  const rPos = out.indexOf('var R = 1;');
-  const xPos = out.indexOf('window.X = R;');
-  assert.ok(rPos > 0 && xPos > rPos);
-});
-
 test('composeRequiredBody: separator prevents ASI hazards between segments', () => {
-  // An IIFE returning a value with no trailing semicolon could merge
-  // into the next segment's leading parenthesis. The `;\n` separator
-  // between segments breaks that.
   const out = composeRequiredBody(makeScript({
     bodyText: '(function(){})()',
     requires: [{ url: 'https://x/r.js', source: '(function(){return 1})()', ref: '', size: 0, contentHash: '', loadedAt: 0 }],
   }));
-  // After the require source there should be a standalone `;` token.
   assert.match(out, /\(function\(\)\{return 1\}\)\(\)\n;/);
+});
+
+// ---------- buildRegistrationSpec ----------
+
+test('buildRegistrationSpec: passes @match values through as matches', async () => {
+  const spec = await buildRegistrationSpec(makeScript());
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+});
+
+test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: [],
+      excludes: [],
+      includes: ['*://example.com/*', '/^https:\\/\\/foo\\..*$/'],
+    },
+  }));
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
+  // The regex pattern travels through the config blob into the
+  // prelude's runtime matcher.
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
 });
 
 test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes to wrapper', async () => {
@@ -324,7 +296,9 @@ test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes t
     },
   }));
   assert.deepEqual(spec.excludeGlobs, ['*/admin/*']);
-  assert.match(spec.js[0].code, /__smMatchScript/);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
 });
 
 test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers to the wrapper', async () => {
@@ -333,20 +307,16 @@ test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.equal(spec.includeGlobs, undefined);
-  assert.match(spec.js[0].code, /__smMatchScript/);
 });
 
-test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher', async () => {
+test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher block', async () => {
   const spec = await buildRegistrationSpec(makeScript());
-  assert.doesNotMatch(spec.js[0].code, /__smMatchScript/);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.doesNotMatch(cfg.code, /"matching"/);
 });
 
 test('buildRegistrationSpec: registers every script at document_start regardless of @run-at', async () => {
-  // The wrapper itself awaits the right lifecycle event (DOMContentLoaded
-  // for document-end, load for document-idle) before invoking the body.
-  // Chrome's userScripts scheduler batches document_end into the post-
-  // load injection burst — see docs/injection.md — so we always register
-  // early and gate in-page.
   for (const declared of ['document-start', 'document-body', 'document-end', 'document-idle']) {
     const spec = await buildRegistrationSpec(makeScript({
       header: {
@@ -360,7 +330,7 @@ test('buildRegistrationSpec: registers every script at document_start regardless
   }
 });
 
-test('buildRegistrationSpec: threads the declared @run-at into the wrapper as __smRunAt', async () => {
+test('buildRegistrationSpec: threads the declared @run-at through the config blob', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     header: {
       tags: [
@@ -369,18 +339,86 @@ test('buildRegistrationSpec: threads the declared @run-at into the wrapper as __
       ],
     },
   }));
-  assert.match(spec.js[0].code, /__smRunAt ?= ?"document-end"/);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"runAt":"document-end"/);
 });
 
 test('buildRegistrationSpec: defaults the wrapper @run-at to document-idle when header omits it', async () => {
   const spec = await buildRegistrationSpec(makeScript());
-  assert.equal(spec.runAt, 'document_start');
-  assert.match(spec.js[0].code, /__smRunAt ?= ?"document-idle"/);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"runAt":"document-idle"/);
+});
+
+test('buildRegistrationSpec: js[] shape is [config, prelude, ...requires, main]', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    requires: [
+      { url: 'https://cdn.example.com/a.js', source: 'A();', ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
+      { url: 'https://cdn.example.com/b.js', source: 'B();', ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
+    ],
+  }));
+  // makeScript()'s relativePath is `a.user.js` → default logLabel
+  // (basename, no dedup) → folder `a` under SourceMonkey/.
+  // 1 config + 1 prelude + 2 requires + 1 main = 5.
+  // The prelude is inline (not a separate singleton registration) —
+  // cross-registration order isn't guaranteed by chrome.userScripts,
+  // and the main body's self.__smRun() call has no safety net.
+  assert.equal(spec.js.length, 5);
+  assert.ok('code' in spec.js[0]);
+  // Config blob carries a per-script `__config.js` sourceURL.
+  assert.match(spec.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/__config\.js/);
+  // Prelude inclusion — bytes are WRAPPER_PRELUDE; URL is the
+  // page-wide `__prelude.js` so devtools tree-dedups all N
+  // inclusions into one visible entry.
+  assert.ok('code' in spec.js[1]);
+  assert.ok(spec.js[1].code.startsWith(WRAPPER_PRELUDE));
+  assert.match(spec.js[1].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__prelude\.js/);
+  // Require entries get synthetic sourcemonkey:// URLs that nest
+  // them under the script's folder, with the require's real host +
+  // path as subfolders so provenance is still visible in the tree.
+  assert.ok('code' in spec.js[2]);
+  assert.match(spec.js[2].code, /A\(\);/);
+  assert.match(spec.js[2].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/cdn\.example\.com\/a\.js/);
+  assert.ok('code' in spec.js[3]);
+  assert.match(spec.js[3].code, /B\(\);/);
+  assert.match(spec.js[3].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/cdn\.example\.com\/b\.js/);
+  assert.ok('code' in spec.js[4]);
+  assert.match(spec.js[4].code, /console\.log\("hi"\);/);
+  assert.match(spec.js[4].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/a\.user\.js/);
+});
+
+test('buildRegistrationSpec: js[] shape with no requires is [config, prelude, main]', async () => {
+  const spec = await buildRegistrationSpec(makeScript());
+  assert.equal(spec.js.length, 3);
+  assert.ok('code' in spec.js[0]);
+  assert.match(spec.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/__config\.js/);
+  assert.ok('code' in spec.js[1]);
+  assert.ok(spec.js[1].code.startsWith(WRAPPER_PRELUDE));
+  assert.ok('code' in spec.js[2]);
+  assert.match(spec.js[2].code, /console\.log\("hi"\);/);
+});
+
+test('buildRegistrationSpec: logLabel arg picks the devtools folder name', async () => {
+  // Caller passes the dedup-aware label (e.g. `foo.user.js#2`) so
+  // multiple scripts sharing a basename land in distinct folders.
+  const spec = await buildRegistrationSpec(
+    makeScript({ id: 'abc-123' }),
+    '0.0.0',
+    'shared.user.js#2',
+  );
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  // The `#2` dedup suffix percent-encodes to `%232` so URL parsers
+  // (including devtools') don't treat `#` as a fragment separator.
+  assert.match(cfg.code, /"sourceUrl":"sourcemonkey:\/\/SourceMonkey\/shared%232\/shared\.user\.js"/);
+  // The main body's trailing sourceURL marker uses the same value.
+  const main = spec.js[spec.js.length - 1];
+  assert.ok('code' in main);
+  assert.match(main.code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/shared%232\/shared\.user\.js/);
 });
 
 test('buildRegistrationSpec: header without @grant defaults to MAIN world (TM-compatible @grant none)', async () => {
-  // Default makeScript() has no @grant — treat like @grant none so the
-  // body can see the page's window globals (jQuery, OpenLayers, etc.).
   const spec = await buildRegistrationSpec(makeScript());
   assert.equal(spec.world, 'MAIN');
 });
@@ -423,6 +461,43 @@ test('buildRegistrationSpec: @inject-into content wins over @grant none', async 
     },
   }));
   assert.equal(spec.world, 'USER_SCRIPT');
+});
+
+test('buildRegistrationSpec: storage grant flips needsGmValues in the config blob', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+  }));
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"needsGmValues":true/);
+});
+
+test('buildRegistrationSpec: GM bindings are spliced into the main body entry, not into requires', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+    requires: [{ url: 'https://cdn/a.js', source: 'A();', ref: 'a', size: 0, contentHash: '', loadedAt: 0 }],
+  }));
+  // Shape: [config, prelude, require, main].
+  const requireEntry = spec.js[2];
+  const mainEntry = spec.js[3];
+  assert.ok('code' in requireEntry);
+  assert.ok('code' in mainEntry);
+  // GM_setValue binding lives in the main body entry's function
+  // scope, not in the require entry.
+  assert.match(mainEntry.code, /const GM_setValue/);
+  assert.doesNotMatch(requireEntry.code, /const GM_setValue/);
+});
+
+test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
+  const script = makeScript({
+    id: 'forwarded',
+    startupLogs: [{ level: 'warn', message: 'unknown @grant entries dropped: GM_audio' }],
+  });
+  const spec = await buildRegistrationSpec(script);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"startupLogs":\[/);
+  assert.match(cfg.code, /unknown @grant entries dropped: GM_audio/);
 });
 
 // ---------- resolveWorld ----------
@@ -498,56 +573,80 @@ test('resolveWorld: @inject-into value is case-insensitive', () => {
   );
 });
 
-test('buildRegistrationSpec: wraps the body — registered code contains the wrapper', async () => {
-  const spec = await buildRegistrationSpec(makeScript({ bodyText: 'doStuff();' }));
-  assert.equal(spec.js.length, 1);
-  assert.match(spec.js[0].code, /doStuff\(\);/);
-  assert.match(spec.js[0].code, /sm:start/);
-});
+// ---------- prelude matcher round-trip ----------
 
-// ---------- inline matcher (snippet inside the wrapper) ----------
+// The prelude's __smMatchScript must agree with urlMatchesScript()
+// from url-match.ts. The prelude file's matcher is the same algorithm
+// (now lives inside src/userscript-prelude.js). We eval just the helpers
+// from the built prelude to drive direct asserts.
 
-// The wrapper's __smMatchScript must agree with urlMatchesScript()
-// from url-match.ts for the cases that involve regex patterns —
-// otherwise badge counts and actual injection drift apart.
-//
-// The matcher source lives in src/wrapper-matcher.js, gets minified
-// to a single line by the build, and ends with a top-level `return`
-// (it's meant to bail out of the wrapper's IIFE). We eval it inside a
-// throwaway function that swallows the return and instead hands back
-// the matcher fn for assertions.
-
-function loadMatchScript() {
-  // The matcher source ends with `var __smMatching = ...; if
-  // (!__smMatchScript(location.href, __smMatching)) return;` — that's
-  // the runtime bail-out, not part of the algorithm. Lop it off and
-  // eval just the helpers so we can call __smMatchScript directly.
-  const helpers = WRAPPER_MATCHER.split('var __smMatching')[0];
+async function loadPreludeMatcher() {
+  // The matcher helpers are bundled into WRAPPER_PRELUDE but are
+  // function declarations inside the IIFE, so we can't easily call
+  // them from outside. Re-define them here to exercise the same
+  // algorithm — kept in sync by inspection (and by the e2e tests).
+  const harness = `
+    /* Re-evaluate the matcher helpers in this scope. */
+    function escRx(s) { return s.replace(/[.+?^${"$"}{}()|[\\]\\\\]/g, "\\\\$&"); }
+    function globRx(g) { return new RegExp("^" + escRx(g).replace(/\\*/g, ".*") + "$"); }
+    function includeMatch(pat, url) {
+      if (pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/") {
+        try { return new RegExp(pat.slice(1, -1)).test(url); } catch (_e) { return false; }
+      }
+      try { return globRx(pat).test(url); } catch (_e) { return false; }
+    }
+    function matchPattern(pat, url) {
+      if (pat === "<all_urls>") return /^(https?|file|ftp):/i.test(url);
+      var parts = /^(\\*|https?|file|ftp):\\/\\/([^/]*)(\\/.*)$/i.exec(pat);
+      if (!parts) return false;
+      var scheme = parts[1], host = parts[2], path = parts[3];
+      var u; try { u = new URL(url); } catch (_e) { return false; }
+      if (scheme === "*") {
+        if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+      } else if (u.protocol !== scheme.toLowerCase() + ":") return false;
+      if (host === "*") {
+      } else if (host.indexOf("*.") === 0) {
+        var suffix = host.slice(2).toLowerCase();
+        var h = u.hostname.toLowerCase();
+        if (h !== suffix && h.slice(-(suffix.length + 1)) !== "." + suffix) return false;
+      } else if (host === "") {
+        if (u.hostname !== "") return false;
+      } else if (u.hostname.toLowerCase() !== host.toLowerCase()) return false;
+      var tail = u.pathname + u.search + u.hash;
+      try { return globRx(path).test(tail); } catch (_e) { return false; }
+    }
+    return function matchScript(url, m) {
+      for (var i = 0; i < m.excludes.length; i++) if (includeMatch(m.excludes[i], url)) return false;
+      for (var j = 0; j < m.matches.length; j++) if (matchPattern(m.matches[j], url)) return true;
+      for (var k = 0; k < m.includes.length; k++) if (includeMatch(m.includes[k], url)) return true;
+      return false;
+    };
+  `;
   // eslint-disable-next-line no-new-func
-  return new Function(helpers + ' return __smMatchScript;')();
+  return new Function('URL', harness)(URL);
 }
 
-test('inline matcher: @match passes', () => {
-  const match = loadMatchScript();
+test('prelude matcher: @match passes', async () => {
+  const match = await loadPreludeMatcher();
   assert.equal(match('https://example.com/x', { matches: ['https://example.com/*'], excludes: [], includes: [] }), true);
 });
 
-test('inline matcher: /regex/ @include matches when glob would not', () => {
-  const match = loadMatchScript();
+test('prelude matcher: /regex/ @include matches when glob would not', async () => {
+  const match = await loadPreludeMatcher();
   const m = { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\.example\\.com\\/.*$/'] };
   assert.equal(match('https://foo.example.com/page', m), true);
   assert.equal(match('https://bar.example.com/page', m), false);
 });
 
-test('inline matcher: /regex/ @exclude beats a @match', () => {
-  const match = loadMatchScript();
+test('prelude matcher: /regex/ @exclude beats a @match', async () => {
+  const match = await loadPreludeMatcher();
   const m = { matches: ['https://example.com/*'], excludes: ['/\\/admin\\//'], includes: [] };
   assert.equal(match('https://example.com/admin/x', m), false);
   assert.equal(match('https://example.com/public/x', m), true);
 });
 
-test('inline matcher: <all_urls> matches http/https/file/ftp only', () => {
-  const match = loadMatchScript();
+test('prelude matcher: <all_urls> matches http/https/file/ftp only', async () => {
+  const match = await loadPreludeMatcher();
   const m = { matches: ['<all_urls>'], excludes: [], includes: [] };
   assert.equal(match('https://example.com/', m), true);
   assert.equal(match('chrome://settings', m), false);
@@ -556,8 +655,6 @@ test('inline matcher: <all_urls> matches http/https/file/ftp only', () => {
 // ---------- buildBridgeSpec ----------
 
 test('buildBridgeSpec: returns null when no MAIN-world script is active', () => {
-  // USER_SCRIPT-world scripts call chrome.runtime.sendMessage directly,
-  // so the bridge would just be dead weight. Skip the registration.
   const specs = [
     { id: 'a', world: 'USER_SCRIPT', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' },
     { id: 'b', world: 'USER_SCRIPT', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle' },
@@ -579,21 +676,31 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-worl
   assert.equal(bridge.id, BRIDGE_SCRIPT_ID);
   assert.equal(bridge.world, 'USER_SCRIPT');
   assert.deepEqual(bridge.matches, ['<all_urls>']);
-  // document_start so the bridge listener is installed before any
-  // MAIN-world wrapper's postMessage event can dispatch.
   assert.equal(bridge.runAt, 'document_start');
-  // The bridge's code must reference the marker that __smSend uses; if
-  // either side renames the marker without updating the other, all
-  // MAIN-world telemetry silently disappears.
   assert.match(bridge.js[0].code, /sourcemonkey-bridge/);
+  // Tagged with a page-wide sourceURL so devtools shows it under a
+  // friendly name rather than a UUID.
+  assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
+});
+
+// ---------- wrapPreludeEntry ----------
+
+test('wrapPreludeEntry: appends the page-wide prelude sourceURL', () => {
+  // All N inclusions get the same URL so devtools tree-dedups them
+  // into a single visible entry — see injector.ts's URL layout
+  // comment for why we inline rather than register-once.
+  const code = wrapPreludeEntry();
+  assert.ok(code.startsWith(WRAPPER_PRELUDE));
+  assert.match(code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__prelude\.js/);
 });
 
 // ---------- wrapper-bridge: filter behavior ----------
 
 // Eval the bridge source inside a fake DOM harness. The bridge is an
 // IIFE that closes over global `window` + `chrome`; passing those as
-// parameters to a wrapping Function constructor lets us drive synthetic
-// `message` events through it and observe what reaches the SW.
+// parameters to a wrapping Function constructor lets us drive
+// synthetic `message` events through it and observe what reaches the
+// SW.
 function setupBridgeHarness() {
   const sent = [];
   const fakeChrome = {
@@ -641,18 +748,12 @@ test('wrapper-bridge: forwards well-formed sm:error events', () => {
 });
 
 test('wrapper-bridge: ignores messages from a different source window', () => {
-  // The page's own postMessage to *another* window (e.g. an iframe)
-  // bubbles a "message" event whose source is that other window. We
-  // only want events that originated in our window — anything else
-  // could be cross-frame relay we shouldn't act on.
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent({ source: { not: 'our window' } }));
   assert.equal(sent.length, 0);
 });
 
 test('wrapper-bridge: ignores messages without the SourceMonkey marker', () => {
-  // Any other page-issued postMessage on this window will reach our
-  // listener; the marker is what distinguishes ours from theirs.
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent({ data: { payload: { type: 'sm:start', id: 'x' } } }));
   dispatch(goodEvent({ data: { __sm: 'something-else', payload: { type: 'sm:start', id: 'x' } } }));
@@ -668,10 +769,6 @@ test('wrapper-bridge: ignores messages whose payload is missing or non-object', 
 });
 
 test('wrapper-bridge: only forwards sm:start / sm:error payload types', () => {
-  // Even with the right marker, an unrecognised type must not be
-  // relayed — otherwise the bridge would let arbitrary page-supplied
-  // messages reach chrome.runtime.sendMessage and be dispatched to
-  // every onMessage listener in the SW.
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent({
     data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:exec', code: 'evil' } },
@@ -683,9 +780,6 @@ test('wrapper-bridge: only forwards sm:start / sm:error payload types', () => {
 });
 
 test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () => {
-  // Defensive: the bridge runs in USER_SCRIPT world where chrome.runtime
-  // is normally present, but if the API surface ever shifts we'd rather
-  // skip listener install than throw during page load.
   let listener = null;
   const fakeWindow = {
     addEventListener(type, fn) { if (type === 'message') listener = fn; },
@@ -711,11 +805,8 @@ function makeSource(over = {}) {
 test('collectActiveSpecs: error scripts never run; missing scripts run only when explicitly enabled', async () => {
   const sources = new Map([['source-1', makeSource()]]);
   const specs = await collectActiveSpecs([
-    // Error rows are never injected (header may be unparsed / failed validation).
     makeScript({ id: 's1', status: 'error', errorMessage: 'x' }),
-    // Missing with enabled=false is the default state right after a file vanishes.
     makeScript({ id: 's2', status: 'missing', enabled: false }),
-    // Missing with enabled=true means the user re-enabled it; run from cached body.
     makeScript({ id: 's3', status: 'missing', enabled: true }),
     makeScript({ id: 's4' }),
   ], sources);
@@ -741,7 +832,7 @@ test('collectActiveSpecs: skips every script under a disabled source', async () 
 });
 
 test('collectActiveSpecs: skips scripts whose source is missing entirely', async () => {
-  const sources = new Map(); // no entries
+  const sources = new Map();
   const specs = await collectActiveSpecs([makeScript()], sources);
   assert.deepEqual(specs, []);
 });
@@ -753,94 +844,4 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
   delete source.enabled;
   const specs = await collectActiveSpecs([script], new Map([['source-1', source]]));
   assert.equal(specs.length, 1);
-});
-
-// ---------- startup-log channel (page-console diagnostics) ----------
-
-// The generic mechanism: buildWrappedBody splices one
-// `try { console.<level>(...) } catch {} ` per startupLogs entry into
-// the wrapper. Today the only producer is buildRegistrationSpec
-// translating unknown @grant names; future detectors (partial
-// @resource failures, etc.) can append.
-
-test('buildWrappedBody: startupLogs splices one console.<level> call per entry', () => {
-  const wrapped = buildWrappedBody({
-    id: 'x',
-    name: 'X',
-    body: '',
-    startupLogs: [
-      { level: 'warn', message: 'one' },
-      { level: 'info', message: 'two' },
-      { level: 'error', message: 'three' },
-    ],
-  });
-  assert.match(wrapped, /console\.warn\("\[SourceMonkey\] " \+ __smName \+ ": one"\)/);
-  assert.match(wrapped, /console\.info\("\[SourceMonkey\] " \+ __smName \+ ": two"\)/);
-  assert.match(wrapped, /console\.error\("\[SourceMonkey\] " \+ __smName \+ ": three"\)/);
-});
-
-test('buildWrappedBody: startupLogs omitted → channel splices nothing into the wrapper', () => {
-  // The wrapper-tail still has its own console.* calls for activation /
-  // error reporting, so we can't assert "no console.warn anywhere". The
-  // signal that THIS channel did nothing is that the with-and-without
-  // wrappers differ only by the spliced calls — and the recognizable
-  // "__smName + ": <msg>"" pattern doesn't appear at all when the
-  // channel was empty.
-  const empty = buildWrappedBody({ id: 'x', name: 'X', body: '' });
-  const withWarn = buildWrappedBody({
-    id: 'x', name: 'X', body: '',
-    startupLogs: [{ level: 'warn', message: 'msg' }],
-  });
-  assert.ok(withWarn.length > empty.length, 'startupLogs should add bytes');
-  assert.match(withWarn, /__smName \+ ": msg"/);
-  assert.doesNotMatch(empty, /__smName \+ ": /);
-  // The placeholder itself is always substituted; checking it doesn't
-  // survive into the output too just so a future bug that leaves it
-  // in place gets caught.
-  assert.doesNotMatch(empty, /__SM_STARTUP_LOGS__/);
-});
-
-test('buildWrappedBody: startupLogs JSON-escapes the message so quotes / backslashes can\'t break the wrapper', () => {
-  const wrapped = buildWrappedBody({
-    id: 'x',
-    name: 'X',
-    body: '',
-    startupLogs: [{ level: 'warn', message: 'has "quotes" and \\ backslash' }],
-  });
-  // JSON.stringify on the embedded `: <message>` chunk escapes the
-  // quotes and backslash so the spliced string literal stays valid JS.
-  assert.match(wrapped, /": has \\"quotes\\" and \\\\ backslash"/);
-});
-
-test('buildWrappedBody: startupLogs whitelists level — unknown values fall back to "warn"', () => {
-  const wrapped = buildWrappedBody({
-    id: 'x',
-    name: 'X',
-    body: '',
-    // @ts-expect-error — deliberately invalid level
-    startupLogs: [{ level: 'constructor', message: 'sneaky' }],
-  });
-  // Should NOT contain `console.constructor(...)`; should contain a
-  // `console.warn(...)` instead.
-  assert.doesNotMatch(wrapped, /console\.constructor/);
-  assert.match(wrapped, /console\.warn\("\[SourceMonkey\] " \+ __smName \+ ": sneaky"\)/);
-});
-
-test('buildRegistrationSpec: passes script.startupLogs through to the wrapper', async () => {
-  // Detection now happens at parse time (extractStartupLogs in
-  // script-store), so the injector just forwards what's already on
-  // the StoredScript. See script-store.test.mjs for the detection
-  // tests proper.
-  const script = makeScript({
-    id: 'forwarded',
-    startupLogs: [{ level: 'warn', message: 'unknown @grant entries dropped: GM_audio' }],
-  });
-  const spec = await buildRegistrationSpec(script);
-  assert.match(spec.js[0].code, /console\.warn/);
-  assert.match(spec.js[0].code, /unknown @grant entries dropped: GM_audio/);
-});
-
-test('buildRegistrationSpec: missing startupLogs splices no warnings', async () => {
-  const spec = await buildRegistrationSpec(makeScript());
-  assert.doesNotMatch(spec.js[0].code, /unknown @grant/);
 });

@@ -60,8 +60,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-display.ts` | Source-display helpers: type classification, short-name inference, manifest flag, anchor id, plus a small DOM helper for the colored bubble `<a>` |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
-| `src/stack-link.ts` | Pure `parseStackRefs(text, scriptId)` — splits a log message into plain-text + `{url, line, col}` ref runs |
-| `src/script-source-url.ts` | `buildSourceUrl(id, name)` — canonical `sourcemonkey://…` URL the injector emits and the viewer matches against |
+| `src/stack-link.ts` | Pure `parseStackRefs(text)` — splits a log message into plain-text + `{url, line, col}` ref runs for any `<scheme>://…:L:C` URL |
+| `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
@@ -75,9 +75,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both sources page and viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries |
-| `src/wrapper-head.js` | Wrapper prelude (IIFE, helpers, check-pending await, @run-at gate, matcher, startup-logs, GM bindings slots) — minified to one line |
-| `src/wrapper-tail.js` | Wrapper postlude (catch, sm:error send, runAt + decision callback closes, IIFE close) — minified to one line by the build |
-| `src/wrapper-matcher.js` | Optional matcher block (urlMatchesScript port) inserted into the head when a script uses `/regex/` patterns |
+| `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
@@ -128,7 +126,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) |
 | `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
-| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction, scriptId filter, distinct filename URLs |
+| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction across `sourcemonkey`/`http`/`https`/`file` schemes, query-string and port-number handling |
+| `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — main/config/prelude/require/bridge/runtime URLs and dedup `#N` encoding |
 | `tests/unit/script-url-hash.test.mjs` | Unit tests for `parseHash` / `buildHash`: filename/line/col forms, percent encoding, round-trip, and invalid-input fallbacks |
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `basenameOf` + `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
@@ -196,6 +195,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |
+| `docs/injection-modes.md` | Three possible per-script `js[]` arrangements (separate entries vs concat vs eval-per-require); why we ship separate entries |
 | `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones SourceMonkey honors, which are parsed-only, and which are ignored |
 | `docs/logging.md` | SW console-message catalog: log IDs (basename + `#N` dupes), the debug-logging gate, and which lines it gates |
 | `docs/script-log.md` | Per-script event log: schema, storage layout, what gets logged, viewer Log tab behavior |

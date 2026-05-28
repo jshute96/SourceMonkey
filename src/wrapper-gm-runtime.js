@@ -10,9 +10,9 @@
      - ASYNC API bodies don't go through here; they send messages
        straight to the SW via chrome.runtime.sendMessage.
 
-   Build rules match wrapper-head.js — block comments only, no `//`
-   sequences in strings, the build minifies to one physical line. See
-   scripts/build.mjs's minifyForInjection for the exact rules.
+   Build rules match userscript-prelude.js — block comments only, no
+   `//` sequences in strings, the build minifies to one physical line.
+   See scripts/build.mjs's minifyForInjection for the exact rules.
 
    Shim cache. See docs/GM-API-strategy.md "Recommendation: a tiny
    'shim cache', not a full vault". We capture a small set of native
@@ -270,10 +270,11 @@
   } catch (_lE) {}
 
   var storage = {
-    /* Called from the wrapper's prelude (inside __smWaitForRunAt's
-       callback in wrapper-head.js, after the GM runtime is guaranteed
-       installed) with the scriptId and the SW-attached initial-value
-       snapshot from the sm:check-pending reply. Populates the
+    /* Called from the GM prelude spliced into the main-body wrap
+       function (which only fires after the prelude's awaitDecision
+       + waitForRunAt gates, by which point the GM runtime is
+       guaranteed installed) with the scriptId and the SW-attached
+       initial-value snapshot from the sm:check-pending reply. Populates the
        per-script cache and flags it as ready. Calling init twice for
        the same scriptId — shouldn't happen in normal flow — is
        idempotent: the second call replaces the cache. */

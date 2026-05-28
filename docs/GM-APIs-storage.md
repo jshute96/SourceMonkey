@@ -43,15 +43,17 @@ old document's cache dies with it, and the new document boots up
 empty. Something in the wrapper has to seed the new realm before
 the body runs.
 
-The wrapper already brackets the body with an awaited round-trip:
+The prelude brackets the main-body wrap function with an awaited
+round-trip:
 
 ```
-wrapper IIFE start
-  ├─ install error listeners, set up the matcher
+prelude initScript
+  ├─ install error listeners, run the matcher
   ├─ AWAIT sm:check-pending  (reload fast-path machinery; injection.md)
-  ├─ AWAIT __smWaitForRunAt  (gate on @run-at lifecycle event)
-  ├─ __SM_GM__.storage.init(scriptId, snapshot)   ← prelude runs here
-  └─ user body runs
+  ├─ AWAIT waitForRunAt      (gate on @run-at lifecycle event)
+  └─ runMain → fn(entry)     ← main-body wrap function fires here
+      ├─ __SM_GM__.storage.init(scriptId, snapshot)   ← GM prelude
+      └─ user body runs
 ```
 
 The check-pending await is unconditional — it happens for every
@@ -85,8 +87,8 @@ the script doesn't run. The prelude:
    happened.
 2. Sends `sm:error` to the SW so the failure surfaces on the
    per-script log and the badge.
-3. `return`s out of the `__smWaitForRunAt` callback so the user
-   body never executes.
+3. `return`s out of the main-body wrap function so the user body
+   never executes.
 
 Why hard abort rather than degrading gracefully:
 
@@ -102,8 +104,8 @@ Why hard abort rather than degrading gracefully:
 
 When could this trigger:
 
-- The wrapper's 2-second safety timeout in `__smAwaitDecision`
-  fires because the SW didn't reply in time. MV3 SW wake-up is
+- The prelude's 2-second safety timeout in `awaitDecision` fires
+  because the SW didn't reply in time. MV3 SW wake-up is
   typically well under 50 ms; 2 s leaves plenty of headroom for
   cold-start under load (e.g. Chrome window restore with many
   tabs warming up at once). If 2 s isn't enough, the user's

@@ -236,4 +236,59 @@ test.describe('reload fast-path', () => {
     await expect(page).toHaveTitle('v2-swapped-v2');
     await page.close();
   });
+
+  test('storage-granting script does NOT take run-new (would ReferenceError on GM bindings)', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // The prelude's run-new swap eval runs at runMain's function
+    // scope, NOT inside the main-body wrap function's closure — so
+    // the GM_* bindings spliced into the wrap function are invisible
+    // to the swap-evaluated body. A storage-granting script that
+    // took the run-new branch would `ReferenceError: GM_setValue is
+    // not defined` on its first storage call.
+    //
+    // The SW (handleCheckPending in background.ts) detects this via
+    // payload.needsValues and returns {action: 'run'} instead of
+    // {action: 'run-new'} for storage-granting scripts. The reload
+    // runs the BAKED-IN body (the prior version); the next reload
+    // picks up the new body via the ordinary syncRegistrations
+    // path. This test guards against someone removing the
+    // needsValues check in handleCheckPending.
+    scriptsDir.write({
+      relativePath: 'store.user.js',
+      meta: {
+        name: 'Store',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue', 'GM_getValue'],
+      },
+      body: `
+        const prev = GM_getValue('marker', 'init');
+        document.title = 'v1:' + prev;
+        GM_setValue('marker', 'v1');
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1:init');
+
+    // Edit body — would normally swap-eval. SW must refuse because
+    // the script grants storage.
+    scriptsDir.rewriteBody('store.user.js', `
+      const prev = GM_getValue('marker', 'init');
+      document.title = 'v2:' + prev;
+      GM_setValue('marker', 'v2');
+    `);
+
+    await page.reload();
+    // OLD body runs again because SW refused run-new. If the SW had
+    // incorrectly taken the run-new branch, the title would be
+    // 'v2:v1' on success — or the page would show nothing (and a
+    // ReferenceError) on the actual failure mode.
+    await expect(page).toHaveTitle('v1:v1');
+    await page.close();
+  });
 });

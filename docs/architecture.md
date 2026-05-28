@@ -118,10 +118,11 @@ details live in the topic-specific docs linked below.
   set we'll emit bindings for. See [GM-APIs.md](GM-APIs.md).
 - **GM_* binding emitter** (`src/gm-bindings.ts`) — pure compiler.
   Given a script's resolved grants + parsed header, returns the JS
-  source spliced into the wrapper at register time. Emits real
-  bodies for every catalog entry except `unsafeWindow` (a passthrough
-  binding); the `notImplemented` stub remains only as a fall-through
-  for future catalog additions whose bodies haven't landed yet.
+  source spliced into the main-body wrap function at register time.
+  Emits real bodies for every catalog entry except `unsafeWindow`
+  (a passthrough binding); the `notImplemented` stub remains only
+  as a fall-through for future catalog additions whose bodies
+  haven't landed yet.
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
   USER_SCRIPT-world helper registered once per page (alongside the
   MAIN-world bridge). Installs `window.__SM_GM__` with per-subsystem
@@ -169,6 +170,10 @@ details live in the topic-specific docs linked below.
 - [injection.md](injection.md) — `chrome.userScripts` registration
   lifecycle, the activation/error wrapper, opt-in requirements,
   unsupported pattern forms.
+- [injection-modes.md](injection-modes.md) — the three possible
+  arrangements of a script's `js[]` entries (separate entries vs
+  concat vs eval-per-require); why we ship separate entries and what
+  the alternatives would buy.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [script-log.md](script-log.md) — per-script structured event log

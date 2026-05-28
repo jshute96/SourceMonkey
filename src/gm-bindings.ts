@@ -5,9 +5,11 @@
 //   - `js` is spliced at the IIFE top so the lazy `const GM_X = ...`
 //     declarations are visible to BOTH the baked-in body AND the
 //     run-new swap-eval branch via closure.
-//   - `prelude` is spliced inside `__smWaitForRunAt`'s callback so
-//     the one eager call (`storage.init`) runs AFTER the GM runtime
-//     is installed. See `GmBindingEmit` below.
+//   - `prelude` is spliced into the main-body wrap function ahead
+//     of the body so the one eager call (`storage.init`) runs AFTER
+//     the GM runtime is installed (the wrap function only fires
+//     after the prelude's awaitDecision + waitForRunAt gates).
+//     See `GmBindingEmit` below.
 // When no APIs are granted (or the script is `@grant none`),
 // `emitGmBindings` returns `{ js: '', prelude: '', granted: [] }`.
 //
@@ -72,10 +74,11 @@ export interface GmInfoInput {
 //   - `prelude`  — eager calls that have to run BEFORE the user body
 //                  but AFTER the GM runtime is installed (today: the
 //                  `storage.init` call that primes the per-script
-//                  cache). The injector splices this at a point inside
-//                  the `__smWaitForRunAt` callback in the wrapper —
-//                  by then the runtime spec has had time to register
-//                  and run.
+//                  cache). The injector splices this into the
+//                  main-body wrap function ahead of the body — by
+//                  the time that function fires (after the prelude's
+//                  awaitDecision + waitForRunAt gates), the GM
+//                  runtime spec has had time to register and run.
 //   - `granted`  — the resolved set of GM_x names (for logging + the
 //                  e2e permission test surface).
 //
@@ -372,9 +375,11 @@ export function emitGmBindings(
   if (gmObject) parts.push(gmObject);
   // Eager calls into __SM_GM__ at compile time go in the prelude.
   // Splicing them in the IIFE top would race with the runtime's own
-  // document_start registration in some Chrome builds — see
-  // __SM_GM_PRELUDE__ in wrapper-head.js for the deferred-execution
-  // contract.
+  // document_start registration in some Chrome builds; the injector
+  // splices `prelude` inside the main-body wrap function passed to
+  // self.__smRun, which only fires after both the GM runtime spec has
+  // registered AND the @run-at lifecycle event resolves. See
+  // wrapMainBodyEntry in src/injector.ts.
   //
   // - storage.init: emitted whenever a storage grant is present;
   //   the prelude reads the snapshot off `__smDecision.gmValues`

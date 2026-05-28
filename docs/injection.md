@@ -91,11 +91,18 @@ source's `enabled` flag are both true, we build a
   match-pattern grammar).
 - `includeGlobs` — `@include` glob patterns.
 - `excludeGlobs` — `@exclude` glob patterns.
-- `js: [{ code: <wrapped body> }]` — the script body wrapped in our
-  activation/error shim (see below). When the script has `@require`
-  declarations, each required file's prefetched source is prepended
-  before the body — same world, same wrapper, single
-  `//# sourceURL=…` — see [requires.md](requires.md).
+- `js` — a sequence of separate entries: the per-script config
+  blob, the inlined prelude, one entry per `@require`, and the
+  main body. Each `@require` and the main body carry their own
+  `//# sourceURL=…` directive so stack traces report the right
+  file and line number; the prelude shares one page-wide
+  `__prelude.js` URL across all N inclusions so devtools
+  tree-dedups them into a single visible entry. See
+  [injection-modes.md](injection-modes.md) for the full per-entry
+  layout, why we inline the prelude rather than registering it
+  once, and the alternative arrangements considered (concatenated
+  single blob, eval-per-require); see [requires.md](requires.md)
+  for the `@require`-specific details.
 - `runAt` — always `document_start`, regardless of the script's
   declared `@run-at`. See [`@run-at` gating](#run-at-gating) below.
 - `world` — `'MAIN'` (the page's own world) or `'USER_SCRIPT'`
@@ -126,10 +133,10 @@ Why not just pass `runAt` through to `chrome.userScripts.register`:
   batching: `DOMContentLoaded` listeners fire when the parser hits
   DCL, not when Chrome's injection scheduler gets around to it.
 
-The gating is implemented in `__smWaitForRunAt` in
-`src/wrapper-head.js`. The declared `@run-at` is threaded through
-`buildWrappedBody` and baked into the wrapper as the
-`__smRunAt` literal.
+The gating is implemented in `waitForRunAt` inside
+`src/userscript-prelude.js`. The declared `@run-at` is delivered
+via the per-script config blob (`buildConfigBlob` in
+`src/injector.ts`) and stored on the prelude's per-script entry.
 
 ### Execution world
 
@@ -163,7 +170,7 @@ scripts in page context for the same reason.
 the wrapper's `sm:start` / `sm:error` reports can't reach the SW
 directly from MAIN. To still get them through:
 
-- `__smSend` in `wrapper-head.js` feature-detects
+- `send` in `userscript-prelude.js` feature-detects
   `chrome.runtime.sendMessage`. In USER_SCRIPT world it calls it
   directly; in MAIN world it falls back to `window.postMessage({ __sm:
   "sourcemonkey-bridge", payload })`.
@@ -219,84 +226,77 @@ eval's the embedded snippet to verify the regex-relevant cases.
 
 ## The activation / error wrapper
 
-The wrapper lives in several plain JavaScript files, which the build
-(`scripts/build.mjs`) minifies to a single line each and emits as
-exported constants in `dist/generated-wrappers.js`. The type
+The wrapper lives in plain JavaScript source files in `src/`. The
+build (`scripts/build.mjs`) minifies each to a single line and emits
+them as exported constants in `dist/generated-wrappers.js`. The type
 declarations are hand-written in `src/generated-wrappers.d.ts` (tsc
 type-checks against the `.d.ts`; the runtime `.js` is built directly
-into `dist/`). The fragments:
+into `dist/`). The pieces:
 
-- `src/wrapper-head.js` — IIFE open, `__smName` / `__smId` /
-  `__smSend` declarations, `__smAwaitDecision` (the [reload
-  fast-path](#reload-fast-path) round-trip), the matcher slot (filled
-  per script), and the decision callback that branches into
-  run / run-new / skip. The default-run branch installs the async
-  error listeners, sends `sm:start`, and opens `try {`.
-- `src/wrapper-tail.js` — closing `catch (__smErr) {…}` for the body,
-  the closing `})` of the decision callback, and the IIFE close
-  `})();`.
-- `src/wrapper-matcher.js` — the URL recheck (only inserted for
-  scripts with `/regex/` patterns; see below).
-- `src/wrapper-bridge.js` — USER_SCRIPT-world relay registered
-  separately when any MAIN-world script is active (see [MAIN-world
-  telemetry — the bridge](#main-world-telemetry--the-bridge)).
+- `src/userscript-prelude.js` → `WRAPPER_PRELUDE` — static, byte-
+  identical across every script. Contains the IIFE, helpers
+  (`__smActive`, `__smRun`, `__smErr`), the check-pending round-trip,
+  the matcher recheck, the async-error listeners, and the
+  `@run-at` gate. Per-script identity comes via a tiny config
+  blob `{code}` entry that the injector emits ahead of this in the
+  `js[]` array — see [injection-modes.md](injection-modes.md).
+- `src/wrapper-bridge.js` → `WRAPPER_BRIDGE` — USER_SCRIPT-world
+  relay registered separately when any MAIN-world script is active
+  (see [MAIN-world telemetry — the bridge](#main-world-telemetry--the-bridge)).
+- `src/wrapper-gm-runtime.js` → `WRAPPER_GM_RUNTIME` — shared
+  USER_SCRIPT-world runtime for `GM_*` APIs. See
+  [GM-APIs.md](GM-APIs.md).
 
-Why one line: the HEAD is concatenated immediately before the user's
-script with no trailing newline, so file line N lands at physical
-line N of the registered script. The injector now sends the **full
-on-disk source** — leading text + metadata block + body — to Chrome
-(metadata lines are comment-only JS, so they're inert). A stack
-trace pointing at "line 7" means line 7 of the `.user.js` file.
-
-Caveats for `@require`:
-
-- Requires are concatenated *before* the main script (see
-  `composeRequiredBody`), so main-script frames report a line
-  number shifted down by the requires' total line count.
-- A frame inside `@require` code still carries the main script's
-  `//# sourceURL=`. Per-require sourceURLs are a future change.
-- The viewer's Log tab takes V8's URL and line at face value — no
-  offset arithmetic.
-
-Column offsets on physical line 1 are still shifted by the HEAD's
+Why one line per file: per-script wrap entries (the require and
+main-body entries) place a thin prefix on the same physical line as
+the body's first line. The injector also splices the **full on-disk
+source** — leading text + metadata block + body — into the main-body
+entry's body slot (the metadata block is comment-only JS, so the
+engine treats it as inert noise). The combination means a stack
+trace pointing at "line 7" of the main body's `//# sourceURL=`
+attribution lines up with line 7 of the `.user.js` file. Column
+offsets on physical line 1 are still shifted by the prefix's
 character count; line numbers are not.
 
-Placeholders the injector substitutes at registration time:
+Per-`@require` entries get their own `{code}` blob with a
+`//# sourceURL=<require URL>` directive, so a stack frame from
+inside `@require` code attributes to that require's URL with its
+original line numbers — not to the main script's sourceURL with
+a require-shifted offset.
 
-- `"__SM_NAME__"` → JSON-encoded `@name` (or relativePath fallback).
-- `"__SM_ID__"` → JSON-encoded stored script UUID.
-- `"__SM_SOURCE_URL__"` → JSON-encoded `sourcemonkey://<id>/<name>.user.js`
-  string. The injector also appends a `# sourceURL=<same>` directive
-  to the wrapped body so devtools labels the script with that URL AND
-  the wrapper's async-error listeners can attribute errors by stack
-  inspection.
-- `"__SM_MATCHER_BLOCK__";` → empty, or the minified matcher source
-  (which itself contains a `"__SM_MATCHING__"` placeholder).
-- `"__SM_MATCHING__"` (inside the matcher) → JSON-encoded
-  `{matches, includes, excludes}`.
+The per-script config blob carries every value that varies between
+scripts — `id`, `name`, `sourceUrl`, `runAt`, `loadedAt`,
+`needsGmValues`, the optional matcher block, the optional startup
+logs, and the URL list for each `@require` (used by the prelude's
+async-error filter). The prelude reads it once and stashes a
+per-script entry on `self.__smPrelude.scripts[id]`.
 
-Substitutions go through `String.replace(pattern, () => …)` callbacks
-so a literal `$&` inside the matcher (used as a regex back-reference
-in its escape helper) isn't expanded by `String.replace`'s
-replacement-string syntax.
+Every main body is wrapped (in `wrapMainBodyEntry`) to:
 
-Every registered body is wrapped in a tiny shim that:
+- Defer execution until the prelude's matcher + check-pending +
+  `@run-at` gates resolve (via `self.__smRun(id, fn)`).
+- Splice the GM bindings and the GM prelude (storage.init etc.)
+  into the function so they're locals visible to the body.
+- Carry a `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
+  directive so devtools labels the script and the prelude's
+  async-error listeners can attribute errors by stack inspection.
 
-- Logs `"[SourceMonkey] script <name> running on <url>"` to the page
-  console.
-- Sends a `{ type: 'sm:start', id, url }` message to the SW.
-- Wraps the body in `try { … } catch (__smErr) { … }`:
-  - Logs `"[SourceMonkey] script <name> threw: …"` to the page console.
-  - Sends a `{ type: 'sm:error', id, url, message }` message to the SW.
-- Installs window `"error"` and `"unhandledrejection"` listeners,
-  filtered by the per-script sourceURL (see [Async-error attribution](#async-error-attribution)
-  below).
-- All telemetry goes through `__smSend`. In USER_SCRIPT world it uses
-  `chrome.runtime.sendMessage` (catching the sync throw and silencing
+When the body fires (inside the prelude's `runMain`), the prelude:
+
+- Logs `"[SourceMonkey] script <name> running on <url>"`.
+- Sends `{ type: 'sm:start', id, url }` to the SW.
+- Wraps the body call in `try { … } catch { … }`:
+  - Logs `"[SourceMonkey] script <name> threw: …"` on a sync throw.
+  - Sends `{ type: 'sm:error', id, url, message }`.
+- Async failures are attributed via the window error listeners
+  installed at init time — see
+  [Async-error attribution](#async-error-attribution).
+- All telemetry goes through the prelude's `send` helper. In
+  USER_SCRIPT world it uses `chrome.runtime.sendMessage` (silencing
   the returned Promise so an unreachable SW doesn't surface as
-  `Uncaught (in promise)` on every page). In MAIN world (where
-  `chrome.runtime` is undefined) it falls back to `window.postMessage`
-  with a marker the bridge picks up — see [MAIN-world telemetry — the
+  `Uncaught (in promise)`). In MAIN world (where `chrome.runtime`
+  is undefined) it falls back to `window.postMessage` with a
+  marker the bridge picks up — see [MAIN-world telemetry — the
   bridge](#main-world-telemetry--the-bridge).
 
 ### Async-error attribution
@@ -307,22 +307,25 @@ the script returns control to the event loop, anything thrown later
 `MutationObserver`, etc.) escapes it.
 
 To catch those without falsely attributing the page's own errors to
-this script, the wrapper:
+this script, the prelude:
 
-- Appends `# sourceURL=sourcemonkey://<id>/<safe-name>.user.js` to the
-  wrapped body. The JS engine tags stack frames originating in this
-  registered script with that URL, and devtools labels the script
-  with it.
-- Stores the same URL in `__smSourceUrl` inside the wrapper IIFE.
+- Appends `# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js` to
+  the main body's wrap entry (and `# sourceURL=<require URL>` to
+  each `@require` entry). The JS engine tags stack frames from each
+  entry with its sourceURL, and devtools labels each script
+  accordingly.
+- Stores the main `sourceUrl` plus the list of `requireUrls` on the
+  per-script entry (`entry.cfg.sourceUrl`, `entry.cfg.requireUrls`).
 - Installs `window.addEventListener("error", …)` and
-  `…("unhandledrejection", …)`, both with the capture flag set.
+  `…("unhandledrejection", …)` once per script (in
+  `installAsyncListeners`), both with the capture flag set.
 - Each listener checks the event's `filename` (for `error`) and
-  `error.stack` / `reason.stack` for the marker via `indexOf`. Only
-  hits are reported via `__smSend({ type: 'sm:error', … })`; the
-  default page-side error logging is left in place (no
-  `preventDefault`).
-- A `WeakSet` de-dupes the error object so the same throw isn't
-  reported twice if it reaches both paths.
+  `error.stack` / `reason.stack` for ANY of this script's
+  sourceURL markers via `indexOf`. Only hits are reported via
+  `send({ type: 'sm:error', … })`; the default page-side error
+  logging is left in place (no `preventDefault`).
+- A module-shared `WeakSet` de-dupes the error object so the same
+  throw isn't reported twice if it reaches both paths.
 
 Trade-offs:
 
@@ -333,8 +336,13 @@ Trade-offs:
 - MAIN-world scripts share `window` with the page; the sourceURL
   filter is what keeps attribution honest.
 - Multiple userscripts in the same world each install their own
-  listeners; only the listener whose `__smSourceUrl` shows up in the
-  stack reports, so a single error produces a single `sm:error`.
+  listeners; only the listener whose `sourceUrl` / `requireUrls`
+  show up in the stack reports. **Edge case:** two scripts that
+  share an `@require` URL (e.g. both use jQuery from the same CDN)
+  could both match a throw from inside that require body; the
+  WeakSet ensures it's only reported once but attribution to one
+  specific script is non-deterministic. Worth knowing if you see
+  flaky cross-script attribution for shared library errors.
 - Stack-trace-free rejections (e.g. `Promise.reject("string")`) can't
   be attributed and are silently dropped — better than guessing.
 
@@ -467,22 +475,29 @@ model.
 
 ### Wrapper protocol
 
-The wrapper-head opens an outer IIFE, runs the matcher (which `return`s
-out early on a non-match), then calls `__smAwaitDecision`. The
-decision callback receives `{action}` and branches:
+The prelude initializes each script's entry, runs the matcher
+(which marks the entry inactive on a miss), installs async-error
+listeners, then calls `awaitDecision`. The decision callback
+receives `{action}` and branches:
 
-- `run` — installs async error listeners, sends `sm:start`, opens
-  the `try {` that wraps the baked-in body. Tail closes it.
-- `run-new` — installs the async error listeners with the NEW
-  `loadedAt`, sends `sm:swapped`, and `eval`s the SW-supplied body
-  string with `//# sourceURL=` appended so async error attribution
-  continues to work for the new code. Errors during the new body are
-  reported as `sm:error` with the new `loadedAt`.
+- `run` — gates body execution on the declared `@run-at`; when the
+  lifecycle event fires, sends `sm:start` and calls the main-body
+  wrap function. Sync throws are caught and reported as `sm:error`.
+- `run-new` — calls indirect `eval` with the SW-supplied body
+  string plus `//# sourceURL=`. Sends `sm:swapped` and records the
+  new `loadedAt` so subsequent async errors attribute to the new
+  body. **Caveat:** the swap eval runs at the prelude's function
+  scope, not inside the main-body wrap function's closure, so the
+  GM_* bindings spliced into the wrap function are NOT visible to
+  the swap-evaluated body. A storage-granting script that takes
+  this branch will see `ReferenceError` for `GM_setValue` etc.
+  Storage scripts should generally not be served `run-new`. See
+  [injection-modes.md](injection-modes.md#cons--caveats).
 - `skip` — sends `sm:abandoned` and exits without running anything.
 
-Wrapper-side safety timeout (6s) protects against the SW vanishing
-mid-handshake; on hit it defaults to `run` so the baked-in body still
-executes.
+Prelude-side safety timeout (2s) protects against the SW vanishing
+mid-handshake; on hit it defaults to `run` so the baked-in body
+still executes.
 
 ### Caveats
 
@@ -493,8 +508,8 @@ executes.
   postMessages — the threat model is unchanged from the existing
   bridge (the page already runs arbitrary code in MAIN world). Where
   the page's CSP forbids `unsafe-eval`, the swap eval throws; the
-  wrapper detects the CSP marker in the error message and falls
-  through to running the baked-in body, matching pre-fast-path
+  prelude detects the CSP marker in the error message and falls
+  through to running the baked-in main body, matching pre-fast-path
   behavior for that site.
 - **Latency on every navigation, not just reloads.** Every wrapper
   round-trips `sm:check-pending` regardless of `transitionType` — the

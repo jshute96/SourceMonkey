@@ -56,7 +56,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { parseStackRefs } from './stack-link.js';
-import { buildSourceUrl } from './script-source-url.js';
+import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { buildHash, parseHash } from './script-url-hash.js';
 
 // The viewer's Refresh button runs fetchHttpText in the page context,
@@ -385,24 +385,29 @@ let currentHighlightLine: number | undefined;
 let currentHighlightCol: number | undefined;
 
 function buildTabs(script: StoredScript): Tab[] {
-  const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
+  // currentLogId is the dedup-aware label the injector uses to build
+  // sourceURLs (see script-source-url.ts). Falls back to the bare
+  // basename if the log-id sweep hasn't run yet — same default the
+  // injector uses, so the two stay in lockstep.
+  const label = currentLogId || basenameOf(script.relativePath);
   const tabs: Tab[] = [{
     kind: 'code',
     label: basenameOf(script.relativePath),
     body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
-    sourceUrl: buildSourceUrl(script.id, name),
+    sourceUrl: buildSourceUrl(label),
   }];
   for (const r of script.requires ?? []) {
     tabs.push({
       kind: 'code',
       label: requireBasename(r),
       body: r.source,
+      // fileUrl is the original fetched URL (for display so the user
+      // sees the real provenance); sourceUrl is the synthetic
+      // sourcemonkey:// URL the injector tags stack frames with —
+      // the latter is what makes log-pane refs linkify to this tab.
       fileUrl: r.url,
-      // Empty until the injector emits per-require sourceURLs; a
-      // ref will never match an empty sourceUrl, so require tabs
-      // simply aren't linkified for now.
-      sourceUrl: '',
+      sourceUrl: buildRequireSourceUrl(label, r.url),
     });
   }
   // Log tab always last so the file order stays stable as @requires
@@ -592,13 +597,12 @@ function paintLog(entries: LogEntry[]): void {
   logPaneEl.appendChild(table);
 }
 
-// Paint a log entry's message into a <td>. Each
-// `sourcemonkey://<this-script's-id>/<file>:<line>:<col>` reference
-// whose URL matches a code tab's `sourceUrl` becomes a clickable
+// Paint a log entry's message into a <td>. Each URL:line:col stack
+// ref whose URL matches a code tab's `sourceUrl` becomes a clickable
 // link that switches to that tab and jumps to line/col. Refs whose
 // URL doesn't match any tab render as plain text — they may point
-// at a file the viewer doesn't have a tab for (e.g. an `@require`
-// source, until the injector emits per-require sourceURLs).
+// at code outside this script (the page, another userscript, a
+// browser internal).
 function appendLogMessageContent(
   td: HTMLElement,
   message: string,
@@ -609,7 +613,7 @@ function appendLogMessageContent(
     td.textContent = message;
     return;
   }
-  const runs = parseStackRefs(message, script.id);
+  const runs = parseStackRefs(message);
   if (runs.length === 1 && runs[0].kind === 'text') {
     td.textContent = message;
     return;
