@@ -57,6 +57,7 @@ import {
 } from './github-auth.js';
 import { parseStackRefs } from './stack-link.js';
 import { buildSourceUrl } from './script-source-url.js';
+import { buildHash, parseHash } from './script-url-hash.js';
 
 // The viewer's Refresh button runs fetchHttpText in the page context,
 // so the page needs its own copy of the cached GitHub token. The
@@ -211,6 +212,10 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   }
   await refreshLogId();
   render(script);
+  // render() wipes the flash overlay via `textContent =` and may
+  // have clamped currentTabIndex to 0 if a require disappeared.
+  // Re-anchor highlight + URL without scrolling the code pane.
+  applyHashToView(false);
 }
 
 // Source-enabled state is needed for greying the toggle. We cache it so
@@ -253,7 +258,16 @@ async function load(): Promise<void> {
   sourcePath = source?.path ?? '';
   sourceRow = source ?? null;
   await refreshLogId();
+
+  // Pre-select the tab from `location.hash` so render() paints the
+  // right one on the first pass — without this we'd flash main
+  // before applyHashToView re-rendered.
+  currentTabIndex = resolveHashTarget(location.hash, buildTabs(script)).tabIndex;
+
   render(script);
+  // applyHashToView handles the rest (highlight + URL normalize),
+  // and avoids re-rendering since currentTabIndex already matches.
+  applyHashToView(true);
 }
 
 async function refreshLogId(): Promise<void> {
@@ -280,6 +294,10 @@ async function onRefresh(): Promise<void> {
     if (next) {
       await refreshLogId();
       render(next);
+      // Re-anchor highlight + URL after the repaint (see notes on
+      // applyHashToView). Scroll skipped so a Refresh doesn't yank
+      // the user's scroll position.
+      applyHashToView(false);
     }
   } finally {
     refreshBtn.disabled = false;
@@ -290,7 +308,10 @@ async function onRefresh(): Promise<void> {
 async function onToggleEnabled(enabled: boolean): Promise<void> {
   if (!scriptId) return;
   const next = await setScriptEnabled(scriptId, enabled);
-  if (next) render(next);
+  if (next) {
+    render(next);
+    applyHashToView(false);
+  }
 }
 
 async function onCopyFilename(): Promise<void> {
@@ -355,6 +376,13 @@ type Tab =
 // when the new tab list still has an entry at that index; otherwise
 // falls back to 0 (the main script).
 let currentTabIndex = 0;
+// Highlight state tracked alongside currentTabIndex so the URL hash
+// can be rebuilt from a single source of truth. `undefined` means
+// "no line highlighted". Cleared on tab switch (a new tab's content
+// has no highlight to start) and set by scrollToAndHighlightLine
+// after a successful paint.
+let currentHighlightLine: number | undefined;
+let currentHighlightCol: number | undefined;
 
 function buildTabs(script: StoredScript): Tab[] {
   const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
@@ -422,7 +450,14 @@ function requireBasename(r: StoredRequire): string {
 
 function renderTabsAndBody(script: StoredScript): void {
   const tabs = buildTabs(script);
-  if (currentTabIndex >= tabs.length) currentTabIndex = 0;
+  if (currentTabIndex >= tabs.length) {
+    currentTabIndex = 0;
+    // The highlight pointed at a tab that no longer exists — drop
+    // it so the URL hash doesn't claim a line on the fallback tab
+    // the user never selected.
+    currentHighlightLine = undefined;
+    currentHighlightCol = undefined;
+  }
 
   tabsEl.replaceChildren();
   // Always render the strip — even a single main-script tab gives the
@@ -439,7 +474,10 @@ function renderTabsAndBody(script: StoredScript): void {
     btn.addEventListener('click', () => {
       if (currentTabIndex === idx) return;
       currentTabIndex = idx;
+      currentHighlightLine = undefined;
+      currentHighlightCol = undefined;
       renderTabsAndBody(script);
+      updateUrlHash();
     });
     tabsEl.appendChild(btn);
   });
@@ -610,9 +648,12 @@ function goToTabLine(tabIndex: number, tabLine: number, col?: number): void {
   if (!currentScript) return;
   if (currentTabIndex !== tabIndex) {
     currentTabIndex = tabIndex;
+    currentHighlightLine = undefined;
+    currentHighlightCol = undefined;
     renderTabsAndBody(currentScript);
   }
   scrollToAndHighlightLine(tabLine, col);
+  updateUrlHash();
 }
 
 function scrollToAndHighlightLine(
@@ -679,6 +720,13 @@ function scrollToAndHighlightLine(
   }
 
   contentEl.appendChild(flash);
+
+  // Update the tracked highlight state so the URL-hash builder
+  // can read the currently-highlighted line/col. Callers that
+  // initiate a UI change (gutter click, stack-ref click) then call
+  // updateUrlHash() to push this to location.hash.
+  currentHighlightLine = tabLine;
+  currentHighlightCol = col;
 }
 
 // Wire up clicks on each line-number span in the gutter so the user
@@ -695,9 +743,111 @@ function installGutterClickHandlers(): void {
     const lineNumber = i + 1;
     span.addEventListener('click', () => {
       scrollToAndHighlightLine(lineNumber, undefined, false);
+      updateUrlHash();
     });
   }
 }
+
+// ----- URL fragment navigation --------------------------------
+//
+// `location.hash` mirrors the current tab + highlight so the URL
+// is copyable and the page reopens in the same place.
+//   <empty>                   main script, no highlight
+//   #Log                      Log tab
+//   #<filename>               that code tab
+//   #<filename>:<line>        + highlighted line
+//   #<filename>:<line>:<col>  + column accent bar
+// See `src/script-url-hash.ts` for the grammar / parser.
+
+// Push the current viewer state to `location.hash` via
+// `history.replaceState` (no Back-button entries; no hashchange
+// event re-fires into our own listener). No-op when the fragment
+// is already correct.
+function updateUrlHash(): void {
+  if (!currentScript) return;
+  const tabs = buildTabs(currentScript);
+  const tab = tabs[currentTabIndex];
+  if (!tab) return;
+  const fragment = tab.kind === 'log'
+    ? buildHash({ tab: 'log' })
+    : buildHash({
+        tab: currentTabIndex === 0 ? 'main' : 'require',
+        filename: tab.label,
+        line: currentHighlightLine,
+        col: currentHighlightCol,
+      });
+  const desired = fragment ? '#' + fragment : '';
+  if (location.hash === desired) return;
+  // Empty fragment → drop the `#` from the URL entirely.
+  const next = desired || location.pathname + location.search;
+  history.replaceState(null, '', next);
+}
+
+interface HashTarget {
+  tabIndex: number;
+  line?: number;
+  col?: number;
+}
+
+// Resolve a raw hash string against the current tab list. Falls back
+// to the main tab when the filename doesn't match — in that case
+// `line` and `col` are dropped because the line number was relative
+// to the missing file, not main.
+function resolveHashTarget(rawHash: string, tabs: Tab[]): HashTarget {
+  const parsed = parseHash(rawHash);
+  if (parsed.kind === 'log') {
+    const idx = tabs.findIndex((t) => t.kind === 'log');
+    return { tabIndex: idx >= 0 ? idx : 0 };
+  }
+  if (parsed.kind === 'code') {
+    const idx = tabs.findIndex(
+      (t) => t.kind === 'code' && t.label === parsed.filename,
+    );
+    if (idx >= 0) return { tabIndex: idx, line: parsed.line, col: parsed.col };
+  }
+  return { tabIndex: 0 };
+}
+
+// Hydrate the view from `location.hash`. Called on initial load,
+// when the user manually edits the URL, on Back/Forward, and after
+// any re-render path that wipes the flash overlay (onRefresh /
+// onToggleEnabled / storage-change rehydrate). `scroll` defaults to
+// true so navigation jumps to the line; the re-render paths pass
+// false so a Refresh doesn't yank the user's scroll position.
+function applyHashToView(scroll = true): void {
+  if (!currentScript) return;
+  const tabs = buildTabs(currentScript);
+  const target = resolveHashTarget(location.hash, tabs);
+
+  if (currentTabIndex !== target.tabIndex) {
+    currentTabIndex = target.tabIndex;
+    currentHighlightLine = undefined;
+    currentHighlightCol = undefined;
+    renderTabsAndBody(currentScript);
+  }
+
+  if (target.line !== undefined && tabs[currentTabIndex].kind === 'code') {
+    scrollToAndHighlightLine(target.line, target.col, scroll);
+  } else {
+    clearLineHighlight();
+  }
+
+  // Normalize the URL so a partial / invalid hash collapses to the
+  // canonical form for whatever state we just landed in.
+  updateUrlHash();
+}
+
+function clearLineHighlight(): void {
+  for (const prior of Array.from(contentEl.querySelectorAll('.line-flash'))) {
+    prior.remove();
+  }
+  currentHighlightLine = undefined;
+  currentHighlightCol = undefined;
+}
+
+window.addEventListener('hashchange', () => {
+  applyHashToView();
+});
 
 // Read the Nth (1-based) line of the currently-displayed source
 // from <code>'s text content. The line-numbers gutter's children

@@ -105,6 +105,8 @@ reports.
    - Always rendered, even when there are no `@requires` — the lone
      main-script tab plus the Log tab keep the viewer's shape
      consistent.
+   - The currently selected tab + highlight is mirrored into
+     `location.hash` — see "URL fragment navigation" below.
 6. **Code pane / Log pane** — the active tab decides which is shown:
    - Code tabs paint a `<pre><code>` highlighted by Prism. Main-script
      tab shows `leadingText + headerText + '\n' + bodyText` (the
@@ -141,6 +143,42 @@ the last successful load.
 If the URL has no `script` param, or the ID doesn't resolve in the
 store, the viewer renders a "not available" message instead of
 crashing. The Refresh button is hidden.
+
+### URL fragment navigation
+
+The viewer keeps `location.hash` in sync with the selected tab +
+highlight so a URL can be copied or bookmarked and reopened in the
+same place. Pure parser / builder live in `src/script-url-hash.ts`.
+
+Fragment grammar:
+
+- *empty* — main script, no highlight (default landing).
+- `#Log` — the Log tab.
+- `#<filename>` — code tab whose label matches `filename`.
+- `#<filename>:<line>` — that tab, highlight line N.
+- `#<filename>:<line>:<col>` — also paints the column-accent bar.
+
+Behaviour:
+
+- Tab clicks, gutter clicks, and stack-ref clicks all update the
+  hash via `history.replaceState` (no Back-button entries, no
+  re-firing `hashchange`).
+- A `hashchange` listener re-applies the URL when the user edits
+  it manually or hits Back/Forward.
+- Filenames not matching any tab fall back to main, and the hash
+  is normalized (an invalid `#foo.user.js` collapses to no
+  fragment; the `line` and `col` are dropped because they were
+  relative to the missing file).
+- Main + no highlight is always written as no fragment — typing
+  `#<main-filename>` is silently rewritten to empty.
+- Filename matching is by tab label. Two `@require`s whose URLs
+  share a basename collide; the URL routes to whichever appears
+  first in the tab strip. Uncommon, but flagging it here so a
+  reader doesn't go looking for a bug.
+- Hash + URL are also re-anchored after a Refresh, an Enabled
+  toggle, or an external storage update — the re-render wipes
+  the flash overlay, so we re-paint (without scrolling) to keep
+  the visible state matching the URL.
 
 ## Syntax highlighting
 
