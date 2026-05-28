@@ -115,25 +115,50 @@ visible entry (V8 dedups script entries by URL in the tree).
     relied on bare top-level `let`/`const` for cross-piece sharing
     won't work; the workaround is to assign to `globalThis` /
     `window` (matches what every UMD library already does).
-- **GM_* bindings aren't visible to require bodies.** The bindings
-  (`const GM_setValue = ...` etc.) live as locals of the main-body
-  wrap function so they're scoped to the user's code. A require that
-  calls a `GM_*` API at parse time won't see it. Workaround: move
-  GM-API-using code into the main body. (Tampermonkey and
-  Violentmonkey both put requires inside the same IIFE as the body
-  and so don't have this limitation.)
-- **The reload-fast-path swap eval can't see GM bindings.** The
-  prelude's swap path is `(0,eval)(decision.body + "\n//# sourceURL=" + sourceUrl)`,
-  which evaluates at the prelude's function scope, NOT inside the
-  main-body wrap function's closure. A storage-granting script
-  that took the run-new branch would see `ReferenceError` for
-  `GM_setValue` etc. To avoid this silent break,
-  `handleCheckPending` in `src/background.ts` declines the swap
-  (returns `run` instead of `run-new`) when the wrapper sent
-  `needsValues: true` in its check-pending payload — the next
-  reload picks up the new body via the ordinary
-  `syncRegistrations` path. Non-storage scripts still get the
-  fast-path swap.
+- **GM_\* bindings are repeated in every require entry.**
+  - Each js[] entry is its own V8 script with its own lexical
+    scope, so a `const GM_setValue = ...` declared in the main-body
+    wrap is invisible to the require entries.
+  - The injector splices the same single-line bindings prefix into
+    every require's wrap so library code (e.g. `gm4-polyfill.js`)
+    sees the GM_* surface it expects.
+  - Cost: the prefix includes the full GM_info JSON literal
+    (`scriptMetaStr` — the raw `==UserScript==` block — plus
+    `matches` / `includes` / `excludes`) and a `const GM_x = ...`
+    per granted API. For a verbose header with many grants and
+    many requires this can be tens of KB of duplication. Visually
+    invisible — the prefix is minified onto physical line 1 and
+    the body's line N stays at line N — and well under any limit
+    we've hit with `chrome.userScripts.register`, but worth
+    knowing.
+  - `@resource` blobs are NOT in the prefix; they live in the
+    non-duplicated `prelude` block. Keep it that way.
+  - The `prelude` block (storage.init etc.) is NOT repeated; it
+    references `__smE` / `__smDecision`, which only exist in the
+    main-body wrap function.
+  - Edge case: a require that calls `GM_setValue` at top-level
+    (before the main body's `storage.init` runs) will hit an
+    uninitialized storage cache. In practice requires define
+    functions for the main body to call later, so the cache is
+    live by then.
+  - TM/VM avoid the duplication by concatenating everything into a
+    single IIFE.
+- **The reload-fast-path swap eval needs the GM bindings prepended.**
+  - The prelude's swap path is
+    `(0,eval)(decision.body + "\n//# sourceURL=" + sourceUrl)`,
+    which evaluates at the prelude's function scope, NOT inside the
+    main-body wrap function's closure. The `const GM_*` bindings
+    spliced into the wrap function are invisible at that scope.
+  - Workaround: `handleCheckPending` in `src/background.ts` calls
+    `buildSwapEvalBody`, which prepends the script's full GM-binding
+    block to the composed body. The single `(0,eval)` runs the
+    whole thing in one environment, so the body's references to
+    `GM_info` / `GM_addStyle` / etc. see the prepended `const`s.
+  - Storage-granting scripts (`needsValues: true`) still defer to
+    the next syncRegistrations because the gm `prelude`
+    (`storage.init(__smDecision.gmValues)`) reads `__smE`, which the
+    eval scope doesn't have. Wiring storage through swap is possible
+    but not implemented.
 - **The matcher and async-error attribution lists live in the
   prelude.** The prelude file is byte-identical across every script
   registered; per-script identity is delivered via the config blob.

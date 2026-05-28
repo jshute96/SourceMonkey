@@ -236,7 +236,11 @@ for `@grant none` / page-world scripts.
 SourceMonkey emits per-script bindings at registration time for
 every API declared in `@grant` (both legacy `GM_x` and GM4 `GM.x`
 forms canonicalize to the same name). Ungranted APIs are
-`undefined` in the script's scope.
+`undefined` in the script's scope. `GM_info` is implicit (no
+`@grant` required — matches TM/VM) and available in every world.
+`@require` library files see the same bindings their host script
+does, so polyfill helpers like `gm4-polyfill.js` work without
+modification.
 
 - **Storage** — `GM_setValue`, `GM_getValue`, `GM_deleteValue`,
   `GM_listValues`, plus `GM_addValueChangeListener` /

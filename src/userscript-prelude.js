@@ -421,11 +421,13 @@
          sourceURL so async error attribution still works; fall through
          to the baked-in body on a CSP refusal. The eval runs at
          function-scope of runMain, NOT inside `fn`'s closure — so the
-         GM bindings the injector spliced into `fn` are NOT visible to
-         the swap eval. That's a known limitation of the run-new path
-         under the separate-entries model; see docs/injection-modes.md.
-         (Indirect eval (0,eval) — global scope, no leakage into runMain's
-         locals.) */
+         GM bindings the injector spliced into `fn` are NOT visible
+         here. To compensate, `buildSwapEvalBody` (in src/injector.ts)
+         prepends the script's GM bindings to `decision.body`, and the
+         single (0,eval) call runs the bindings + body in one
+         environment so the body's GM_* references resolve. Storage
+         bindings are NOT included; the SW refuses run-new for storage
+         scripts upstream. See docs/injection-modes.md. */
       var newLoadedAt = typeof decision.loadedAt === "number" ? decision.loadedAt : cfg.loadedAt;
       var evalRefused = false;
       var evalErr = null;

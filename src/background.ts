@@ -41,7 +41,7 @@ import {
   installScriptLogIdListener,
 } from './script-log-id.js';
 import {
-  composeRequiredBody,
+  buildSwapEvalBody,
   isUserScriptsAvailable,
   syncRegistrations,
   SM_ABANDONED_MSG,
@@ -1198,35 +1198,33 @@ async function handleCheckPending(
   if (!refreshed) return { action: 'run' };
   if (refreshed.status !== 'ok') return { action: 'run' };
   if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
-  // Storage-granting scripts can't take the run-new swap. The
-  // prelude's eval runs at runMain's function scope, NOT inside
-  // the main-body wrap function's closure — so the GM_setValue
-  // / GM_getValue / etc. bindings spliced into the wrap function
-  // aren't visible to the swap-evaluated body. A storage script
-  // that took this branch would throw `ReferenceError: GM_setValue
-  // is not defined` on its first storage call — a silent break
-  // until reload. Run the baked-in body this load; the next
-  // reload picks up the new body via syncRegistrations like any
-  // non-fast-path edit. See docs/injection-modes.md.
+  // Storage-granting scripts still can't take the run-new swap. The
+  // gm `prelude` (storage.init etc.) reads `__smDecision.gmValues` /
+  // `__smE`, which aren't in scope at runMain's function-scope
+  // indirect eval. Prepending the bindings (below) is enough for the
+  // non-storage GM_* surface, but storage init needs more machinery
+  // we haven't wired up. Defer to the next reload, which picks the
+  // new body up via syncRegistrations like any non-fast-path edit.
   if (payload.needsValues) {
     console.log(
-      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} grants storage; run-new can't see GM bindings (next reload will pick it up)`,
+      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} grants storage; run-new can't init the storage cache (next reload will pick it up)`,
     );
     return { action: 'run' };
   }
   console.log(
     `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
   );
+  // buildSwapEvalBody prepends the script's GM bindings to the
+  // composed (requires + main) body so the indirect eval sees
+  // `GM_info` and the rest. Without this, a script that references
+  // `GM_info` (now implicit, so almost every script) would
+  // ReferenceError on the swapped body — the bindings spliced into
+  // the registered main-body wrap function aren't visible at
+  // runMain's scope.
+  const handlerVersion = chrome.runtime.getManifest().version;
   return {
     action: 'run-new',
-    // Send the same composed body the injector would have registered:
-    // any `@require` bodies prepended before the main script body.
-    // Sending only `bodyText` here means the eval'd swap can't see
-    // globals the requires set up, and any reference to them throws
-    // ReferenceError — the script then "works" only on the next
-    // reload because by then the registered code includes the new
-    // body via syncRegistrations.
-    body: composeRequiredBody(refreshed),
+    body: await buildSwapEvalBody(refreshed, handlerVersion),
     loadedAt: refreshed.loadedAt,
   };
 }

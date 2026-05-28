@@ -15,10 +15,11 @@ SourceMonkey actually does today.
   surfacing `unknown` names so the SW can warn.
 - **`src/gm-bindings.ts`** — per-script emitter. Given the granted set
   + the script's parsed header, returns the JS source to splice into
-  the wrapper. Always emits `GM_info` when ANY grant is present;
-  emits a `const GM_x = function (...){...}` for each granted
-  legacy name; emits a `const GM = Object.freeze({...})` GM4
-  namespace covering the granted APIs with `gmDotName`.
+  the wrapper. Always emits `GM_info` (matching TM/VM: implicit, no
+  `@grant` required); emits a `const GM_x = function (...){...}` for
+  each granted legacy name; emits a `const GM = Object.freeze({...})`
+  GM4 namespace covering the granted APIs with `gmDotName` plus
+  `GM.info`.
 - **`src/wrapper-gm-runtime.js`** — USER_SCRIPT-world shared runtime
   (`window.__SM_GM__`). Registered once per page at `document_start`
   like the MAIN-world bridge. Provides:
@@ -62,24 +63,41 @@ Both `js` and `prelude` sit on the same physical line as the body's
 first line so the body's line N stays at physical line N of the
 main entry.
 
-Scope caveat: the GM bindings live in the main-body wrap function
-ONLY. `@require` entries are separate `{code}` blobs in the
-`js[]` array (see [injection-modes.md](injection-modes.md)) and
-do NOT see the bindings. Likewise, the reload-fast-path's `eval`
-swap runs at the prelude's function scope, not inside the wrap
-function's closure, so the swap-evaluated body also doesn't see
-the bindings.
+Scope notes:
+
+- The same `js` block is also spliced into every `@require` entry
+  (see `wrapRequireEntry` in `src/injector.ts`). Each js[] entry is
+  its own V8 script with its own lexical scope, so the main-body's
+  `const GM_X = ...` declarations would otherwise be invisible to
+  requires. TM/VM concatenate everything into one IIFE; we repeat
+  the (single-line) prefix per entry, baking in the same `scriptId`
+  literal so every entry's bindings target the same storage bucket.
+- The `prelude` block is NOT spliced into requires — it references
+  `__smDecision` / `__smE`, which only exist inside the main-body
+  wrap function passed to `self.__smRun`. Storage gets initialized
+  by the main-body wrap before the user body runs, so a require's
+  top-level `GM_setValue` call would hit an uninitialized cache
+  (rare — requires are libraries that define functions for the main
+  body to call later).
+- The reload-fast-path's `eval` swap runs at the prelude's function
+  scope, not inside the wrap function's closure, so the
+  swap-evaluated body doesn't see the bindings; the SW refuses
+  run-new when `needsValues: true` to avoid this trap.
 
 ## World gating
 
-GM_* bindings are emitted ONLY for scripts that resolve to the
-`USER_SCRIPT` world. Scripts with an explicit `@inject-into page` or
-otherwise running in MAIN do not get bindings — they'd be unable to
-reach `__SM_GM__` (different world) or `chrome.runtime` (undefined
-in MAIN). Calls to any GM_* name in such a script throw a natural
-`ReferenceError`. This is a deliberate Phase-2 limitation; a future
-phase can route MAIN-world GM calls through the postMessage bridge
-if needed.
+- `GM_info` is emitted in **every** world (USER_SCRIPT and MAIN) and
+  for every script regardless of `@grant`. It's a baked literal with
+  no runtime dependency, so it works in MAIN with no `__SM_GM__`
+  needed. Matches TM/VM (both expose GM_info implicitly).
+- The rest of the GM_* surface is emitted ONLY in `USER_SCRIPT` world.
+  Scripts with an explicit `@inject-into page` or otherwise running
+  in MAIN don't get the non-info bindings — they'd be unable to reach
+  `__SM_GM__` (different world) or `chrome.runtime` (undefined in
+  MAIN). Calls to any non-info GM_* name in such a script throw a
+  natural `ReferenceError`. This is a known limitation; the TODO in
+  [GM-API-strategy.md](GM-API-strategy.md#things-to-revisit-later)
+  tracks bridging the rest of the surface into MAIN.
 
 ## `@grant` resolution
 

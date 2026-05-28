@@ -275,8 +275,12 @@ Every main body is wrapped (in `wrapMainBodyEntry`) to:
 
 - Defer execution until the prelude's matcher + check-pending +
   `@run-at` gates resolve (via `self.__smRun(id, fn)`).
-- Splice the GM bindings and the GM prelude (storage.init etc.)
-  into the function so they're locals visible to the body.
+- Splice the GM bindings (`const GM_info = ...`, `const GM_setValue
+  = ...`, etc.) and the GM prelude (`storage.init` etc.) into the
+  function so they're locals visible to the body. Each `@require`
+  entry gets the SAME bindings block (but not the prelude) for the
+  same reason — see [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper)
+  for the per-entry scope rationale.
 - Carry a `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
   directive so devtools labels the script and the prelude's
   async-error listeners can attribute errors by stack inspection.

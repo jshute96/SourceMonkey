@@ -24,10 +24,15 @@ function makeInfo(over = {}) {
   };
 }
 
-test('emitGmBindings: empty granted set → empty output', () => {
+test('emitGmBindings: empty granted set → only GM_info (always implicit)', () => {
+  // TM/VM both expose GM_info even with no @grant line. We follow.
   const out = emitGmBindings([], makeInfo({ grants: [] }));
-  assert.equal(out.js, '');
+  assert.match(out.js, /const GM_info = Object\.freeze/);
+  // No other GM_* bindings.
+  assert.doesNotMatch(out.js, /const GM_(?!info\b)\w+ = function/);
   assert.deepEqual(out.granted, []);
+  assert.equal(out.prelude, '');
+  assert.equal(out.needsValues, false);
 });
 
 test('emitGmBindings: emits GM_info even with a single grant', () => {
@@ -226,12 +231,15 @@ test('emitGmBindings: GM_info.scriptHandler is "SourceMonkey"', () => {
   assert.match(out.js, /"scriptHandler":"SourceMonkey"/);
 });
 
-test('emitGmBindings: unknown granted names are silently dropped', () => {
+test('emitGmBindings: unknown granted names are silently dropped (GM_info still emitted)', () => {
   const out = emitGmBindings(['GM_audio'], makeInfo({
     grants: ['GM_audio'],
   }));
-  // No GM_audio binding emitted, no GM_info either (no real grant present).
-  assert.equal(out.js, '');
+  // The unknown name is dropped from `granted` and produces no
+  // binding, but GM_info is still emitted (it's implicit, not driven
+  // by the resolved-spec set).
+  assert.match(out.js, /const GM_info = Object\.freeze/);
+  assert.doesNotMatch(out.js, /const GM_audio = /);
   assert.deepEqual(out.granted, []);
 });
 

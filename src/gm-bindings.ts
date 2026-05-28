@@ -337,9 +337,14 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
 // Public entry point. Build the binding source string for one script.
 //
 // Behavior:
-//   - If `granted` is empty, returns `{ js: '', granted: [] }`.
-//   - Otherwise emits GM_info (always), every granted GM_x, and the
-//     GM4 `GM` object covering granted APIs with gmDotName.
+//   - Always emits GM_info, matching TM/VM (it's available with no
+//     `@grant` line at all, with `@grant none`, and alongside any
+//     mix of real grants). A script with unknown grants only still
+//     gets GM_info — every other emitted artifact is keyed off the
+//     resolved-spec set.
+//   - For each known granted API: a `const GM_x = ...` binding.
+//   - The GM4 `GM` object covers granted APIs with gmDotName, plus
+//     `GM.info`.
 //   - Granted names not in the catalog (resolveGrants should have
 //     filtered these but be defensive) are skipped.
 //
@@ -350,17 +355,14 @@ export function emitGmBindings(
   granted: readonly string[],
   info: GmInfoInput,
 ): GmBindingEmit {
-  if (granted.length === 0) return { js: '', prelude: '', granted: [], needsValues: false };
   const specs: GmApiSpec[] = [];
   for (const n of granted) {
     const spec = findApi(n);
     if (spec) specs.push(spec);
   }
-  if (specs.length === 0) return { js: '', prelude: '', granted: [], needsValues: false };
-  // GM_info is always emitted when any binding is emitted — TM/VM
-  // both treat it as implicit (no @grant required). This is a useful
-  // way for a script to introspect its own metadata even without
-  // declaring other grants.
+  // GM_info is always emitted, even with an empty grant set. TM/VM
+  // both treat it as implicit so a script can introspect its own
+  // metadata without declaring a single grant.
   const parts: string[] = [emitGmInfo(info)];
   for (const spec of specs) {
     if (spec.name === 'GM_info') continue;

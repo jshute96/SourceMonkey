@@ -3,17 +3,21 @@
 //
 //   1. Granted GM_x names are defined in the script's scope.
 //   2. Ungranted GM_x names are NOT defined (typeof === 'undefined').
-//   3. GM_info is exposed when any grant is present, with the expected
-//      metadata fields.
-//   4. GM. (GM4 alias namespace) is exposed alongside GM_.
-//   5. @grant none results in NO GM_* bindings (USER_SCRIPT-world
-//      isolation aside — the script runs in MAIN, so it can't see
-//      __SM_GM__ either, but the binding emitter should still emit
-//      nothing).
+//   3. GM_info is exposed implicitly — matches TM/VM, so even
+//      `@grant none` and scripts with no @grant line at all get it.
+//   4. GM. (GM4 alias namespace) is exposed alongside GM_, with at
+//      least `GM.info` whenever GM_info is in scope.
+//   5. `@grant none` lands the script in MAIN world. Today that
+//      means only GM_info and the GM alias are reachable (the
+//      USER_SCRIPT-world `__SM_GM__` runtime isn't visible from
+//      MAIN); the other GM_x names are undefined.
 //
 // Phase 2 doesn't implement any actual API behavior — calling any
 // granted API just throws "not implemented yet". Tests assert on the
 // binding *shape*, not behavior. Behavior tests come in later phases.
+
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -115,14 +119,16 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
     await page.close();
   });
 
-  test('@grant none → no GM_* bindings emitted', async ({
+  test('@grant none → only GM_info / GM emitted (others undefined)', async ({
     extensionContext,
     fixtureServer,
     sm,
   }) => {
-    // @grant none makes the script MAIN-world, so __SM_GM__ isn't even
-    // reachable. Verify the binding emitter compiles in nothing and
-    // every probed name comes back undefined.
+    // @grant none makes the script MAIN-world, so __SM_GM__ isn't
+    // reachable — but GM_info is implicit (matches TM/VM) and is
+    // emitted as a baked literal with no runtime dependency. The
+    // GM4 alias `GM` is also emitted with at least `GM.info`.
+    // Everything else should still be undefined.
     scriptsDir.write({
       relativePath: 'probe.user.js',
       meta: {
@@ -138,14 +144,14 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-probe', /undefined/);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-probe', /GM_info/);
 
     const probeJson = await page.locator('body').getAttribute('data-sm-probe');
     const probe = JSON.parse(probeJson!);
     expect(probe.GM_setValue).toBe('undefined');
     expect(probe.GM_xmlhttpRequest).toBe('undefined');
-    expect(probe.GM_info).toBe('undefined');
-    expect(probe.GM).toBe('undefined');
+    expect(probe.GM_info).toBe('object');
+    expect(probe.GM).toBe('object');
     await page.close();
   });
 
@@ -210,6 +216,60 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-gm-xhr-type', 'function');
     await expect(page.locator('body')).toHaveAttribute('data-gm-dot-xhr-type', 'function');
+    await page.close();
+  });
+
+  test('@require sees GM_info and granted GM_* (gm4-polyfill-style use)', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Mode B injects each @require as its own js[] entry with its
+    // own lexical scope, so the main body's `const GM_X = ...`
+    // declarations are NOT visible to requires unless we splice the
+    // same bindings into each require's wrap. This test exercises
+    // the polyfill-style use case (a shared library that depends on
+    // GM_info / GM_setValue being in scope when the require's
+    // top-level code runs).
+    const requireBody = `
+      // Probe GM_info / GM_setValue from inside the require's own
+      // top-level scope (NOT from a function defined here and
+      // called later by the main body).
+      var reqGmInfo = typeof GM_info;
+      var reqGmInfoName = (typeof GM_info === 'object' && GM_info && GM_info.script && GM_info.script.name) || '';
+      var reqGmSetValue = typeof GM_setValue;
+      window.__SM_REQ_PROBE = JSON.stringify({
+        gmInfo: reqGmInfo,
+        gmInfoName: reqGmInfoName,
+        gmSetValue: reqGmSetValue,
+      });
+    `;
+    fs.writeFileSync(path.join(scriptsDir.path, 'helper.js'), requireBody);
+    scriptsDir.write({
+      relativePath: 'host.user.js',
+      meta: {
+        name: 'RequireHost',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue'],
+        extra: ['// @require     helper.js'],
+      },
+      body: `
+        // Surface the require's probe on the DOM so the test can read it.
+        document.body.dataset.reqProbe = window.__SM_REQ_PROBE || 'missing';
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-req-probe', /gmInfo/);
+    const probeJson = await page.locator('body').getAttribute('data-req-probe');
+    const probe = JSON.parse(probeJson!);
+    expect(probe.gmInfo).toBe('object');
+    expect(probe.gmInfoName).toBe('RequireHost');
+    expect(probe.gmSetValue).toBe('function');
     await page.close();
   });
 

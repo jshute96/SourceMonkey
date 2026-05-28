@@ -78,7 +78,7 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
-import { emitGmBindings, type GmInfoInput } from './gm-bindings.js';
+import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
 import {
   BRIDGE_SOURCE_URL,
   GM_RUNTIME_SOURCE_URL,
@@ -290,17 +290,18 @@ export function wrapPreludeEntry(): string {
 
 // Wrap one @require body. Output shape:
 //
-//   if(self.__smActive("<id>")){try{<BODY LINE 1>
+//   if(self.__smActive("<id>")){try{<GM BINDINGS><BODY LINE 1>
 //   <BODY LINE 2>
 //   ...
 //   }catch(__smE){self.__smErr("<id>",__smE);}}
 //   //# sourceURL=<synthetic sourcemonkey:// URL>
 //
-// Line preservation: the `if(...)` prefix and the body's first line
-// share physical line 1; subsequent body lines stay at their original
-// numbers. Column offset on line 1 only. The trailing `//# sourceURL=`
-// is on its own line at the bottom — JS engines honor it for the
-// entire entry (each js[] entry is its own "script").
+// Line preservation: the `if(...)` prefix, the inline GM bindings,
+// and the body's first line all share physical line 1; subsequent
+// body lines stay at their original numbers. Column offset on line
+// 1 only. The trailing `//# sourceURL=` is on its own line at the
+// bottom — JS engines honor it for the entire entry (each js[]
+// entry is its own "script").
 //
 // `sourceUrl` is the synthetic `sourcemonkey://SourceMonkey/<folder>/...`
 // URL the caller computed via `buildRequireSourceUrl`. We don't ship
@@ -308,13 +309,38 @@ export function wrapPreludeEntry(): string {
 // re-fetching at runtime (the bytes live in storage), and (b) the
 // synthetic URL clusters the require with its owning script in
 // devtools instead of scattering it under cdn.example.com.
+//
+// `gmBindings` is the SAME single-line `const GM_* = ...` block the
+// main body gets (from `buildGmBindingsForScript` / `emitGmBindings`).
+// Each js[] entry is its own V8 script with its own lexical scope, so
+// we have to declare the bindings in every entry that wants them —
+// the main body's `const`s are NOT visible here. TM/VM concatenate
+// everything into one IIFE and so don't need to repeat. The cost can
+// be non-trivial — the block bakes in the full GM_info JSON literal
+// (`scriptMetaStr` plus matches/includes/excludes) and a const per
+// granted API — so a script with a verbose header, many grants, and
+// many requires ships tens of KB of duplicated prefix. Not visible
+// to the user (minified onto physical line 1, body line N → physical
+// line N) and within chrome.userScripts' limits in practice.
+//
+// We do NOT splice the gm `prelude` (storage.init etc.) into requires
+// — that block reads `__smDecision` / `__smName` / `__smE`, which
+// only exist inside the main-body wrap function (passed by
+// `self.__smRun`). Require entries fire at document_start as part of
+// Chrome's userScripts injection burst; the storage cache is
+// initialized later, by the main-body wrap's `__SM_GM__.storage.init`
+// call, before the body runs. So require *top-level* code that calls
+// `GM_setValue` will see an uninitialized cache (rare in practice —
+// requires are libraries that DEFINE functions for the main body to
+// call later, and by then the cache is live).
 export function wrapRequireEntry(args: {
   scriptId: string;
   source: string;
   sourceUrl: string;
+  gmBindings?: string;
 }): string {
   const idLit = jsLit(args.scriptId);
-  const head = `if(self.__smActive(${idLit})){try{`;
+  const head = `if(self.__smActive(${idLit})){try{${args.gmBindings ?? ''}`;
   const tail = `\n}catch(__smE){self.__smErr(${idLit},__smE);}}\n//# sourceURL=${args.sourceUrl}\n`;
   return head + args.source + tail;
 }
@@ -426,47 +452,110 @@ function assembleSeparateEntries(parts: {
   return js;
 }
 
-// Build the GM-binding source string for one script. Async because
-// storage-granting scripts need to read their persisted values from
-// chrome.storage.local at register time so the page-side cache is
-// populated synchronously before the user body runs.
+// Pure: assemble the GmInfoInput literal we'll bake into GM_info.
+// `grantedNames` is the script's resolved grant set (empty for
+// `@grant none` / no-grants / unknown-only / MAIN world). It's
+// only used to populate `info.script.grant` — the choice of which
+// real bindings to emit lives in emitGmBindings.
 //
-// Returns empty `js`/`prelude`/`granted` when the script declares no
-// @grant or @grant none, or when every @grant resolves to a name
-// outside the catalog. Unknown-`@grant` warnings are produced once at
-// parse time and persisted on `script.startupLogs` — this function
-// doesn't redo that detection.
-export async function buildGmBindingsForScript(
+// Precondition: callers must check `script.header != null` before
+// calling this. Production callers (`buildGmBindingsForScript`,
+// `buildMainWorldGmInfoOnly`) early-return for headerless scripts.
+function buildGmInfoInput(
   script: StoredScript,
   scriptHandlerVersion: string,
-): Promise<{ js: string; prelude: string; granted: readonly string[]; needsValues: boolean }> {
-  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
-  const grants = getValues(script.header, 'grant');
-  const resolved = resolveGrants(grants);
-  if (resolved.hasNone || resolved.granted.size === 0) {
-    return { js: '', prelude: '', granted: [], needsValues: false };
-  }
-  const name = getValue(script.header, 'name') ?? script.relativePath;
+  grantedNames: readonly string[],
+): GmInfoInput {
+  const header = script.header!;
+  const name = getValue(header, 'name') ?? script.relativePath;
   const resources: Record<string, { b64: string; ct: string }> = {};
   for (const r of script.resources ?? []) {
     resources[r.name] = { b64: r.bytesBase64, ct: r.contentType };
   }
-  const info: GmInfoInput = {
+  return {
     scriptId: script.id,
     name,
-    version: getValue(script.header, 'version') ?? '',
-    namespace: getValue(script.header, 'namespace') ?? '',
-    description: getValue(script.header, 'description') ?? '',
+    version: getValue(header, 'version') ?? '',
+    namespace: getValue(header, 'namespace') ?? '',
+    description: getValue(header, 'description') ?? '',
     matches: script.matching.matches.slice(),
     includes: script.matching.includes.slice(),
     excludes: script.matching.excludes.slice(),
-    grants: [...resolved.granted],
-    runAt: getValue(script.header, 'run-at') ?? '',
+    grants: grantedNames,
+    runAt: getValue(header, 'run-at') ?? '',
     scriptMetaStr: script.headerText,
     scriptHandlerVersion,
     resources,
   };
-  return emitGmBindings([...resolved.granted], info);
+}
+
+// Build the full GM-binding source string for one USER_SCRIPT-world
+// script: a const declaration per granted API plus the implicit
+// `GM_info`. Async because we may eventually need to read persisted
+// values at register time (not today; the storage snapshot path
+// runs through the check-pending reply). For MAIN-world scripts use
+// `buildMainWorldGmInfoOnly` — most of the GM_* surface delegates
+// to `window.__SM_GM__`, which only exists in USER_SCRIPT world.
+export async function buildGmBindingsForScript(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+): Promise<GmBindingEmit> {
+  // No header at all → no GM_info either (we'd have nothing to put
+  // in it). Production callers never hit this because validateHeader
+  // rejects headerless scripts upstream; the guard is for unit tests.
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
+  const grants = getValues(script.header, 'grant');
+  const resolved = resolveGrants(grants);
+  // `@grant none` and no-grants both fall through to emitGmBindings
+  // with an empty set — emitGmBindings still emits GM_info (TM/VM
+  // compat). `resolved.granted` is the set of real bindings (empty
+  // for @grant none / no-grants); GM_info is implicit and not
+  // reflected here.
+  const grantedNames = resolved.hasNone ? [] : [...resolved.granted];
+  return emitGmBindings(grantedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
+}
+
+// MAIN-world variant: emit ONLY GM_info — the other GM_* bindings
+// can't work because `window.__SM_GM__` lives in USER_SCRIPT world.
+// (See the TODO in docs/GM-API-strategy.md for the work to bridge
+// the rest into MAIN.) This is what makes `GM_info` available to
+// every script regardless of world / grants, matching TM/VM.
+function buildMainWorldGmInfoOnly(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+): GmBindingEmit {
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
+  return emitGmBindings([], buildGmInfoInput(script, scriptHandlerVersion, []));
+}
+
+// Build the body string for the reload-fast-path swap eval. Prepends
+// the script's GM bindings to `composeRequiredBody(script)` so the
+// indirect eval — which runs at runMain's function scope, NOT inside
+// the main-body wrap function's closure — still sees `GM_info` /
+// `GM_addStyle` / etc. The whole prepended string is evaluated in a
+// single `(0,eval)(...)` call so `const`-declared bindings at the
+// top are in scope for the body that follows.
+//
+// What's NOT prepended: the gm `prelude` (storage.init etc.). It
+// references `__smE` / `__smDecision`, which the swap-eval scope
+// doesn't have. Storage-granting scripts (`needsValues: true`) are
+// excluded from run-new upstream in `handleCheckPending` for the
+// same reason.
+export async function buildSwapEvalBody(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+): Promise<string> {
+  const world = resolveWorld(script.header);
+  const gmEmit = world === 'USER_SCRIPT'
+    ? await buildGmBindingsForScript(script, scriptHandlerVersion)
+    : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
+  const composed = composeRequiredBody(script);
+  // gmEmit.js is single-line and ends with a space; safe to prepend
+  // directly. Add a newline so the composed body's own line numbers
+  // line up the same way they would in a fresh registration's main
+  // body entry (binding prefix on line 1, body content from line 2).
+  if (!gmEmit.js) return composed;
+  return gmEmit.js + '\n' + composed;
 }
 
 // Pure: build the spec we'll hand to chrome.userScripts.register for
@@ -520,15 +609,17 @@ export async function buildRegistrationSpec(
   const sourceUrl = buildSourceUrl(logLabel);
 
   const world = resolveWorld(script.header);
-  // GM_* bindings only make sense in USER_SCRIPT world today —
-  // wrapper-gm-runtime.js is registered there. A script that mixes
-  // `@grant something` with `@inject-into page` lands in MAIN; we
-  // skip the bindings so the script gets a natural ReferenceError if
-  // it touches a GM_* name. This is a documented limitation (see
+  // GM_info is implicit in TM/VM — available in every world, with or
+  // without an `@grant` line. We mirror that. The rest of the GM_*
+  // surface only makes sense in USER_SCRIPT world today (the
+  // `window.__SM_GM__` runtime is registered there): a script that
+  // mixes `@grant something` with `@inject-into page` lands in MAIN
+  // and gets only GM_info — its other GM_* calls produce a natural
+  // ReferenceError. This is a documented limitation (see
   // docs/GM-API-strategy.md).
   const gmEmit = world === 'USER_SCRIPT'
     ? await buildGmBindingsForScript(script, scriptHandlerVersion)
-    : { js: '', prelude: '', granted: [], needsValues: false };
+    : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
 
   const requires = script.requires ?? [];
   // Synthetic sourceURLs per require — these are what stack frames
@@ -550,12 +641,17 @@ export async function buildRegistrationSpec(
     requireUrls: requireSourceUrls,
   });
 
-  // One {code} per @require (entries 2..N-1).
+  // One {code} per @require (entries 2..N-1). Each gets the same
+  // single-line GM-binding prefix the main body gets so library code
+  // sees `GM_info` / `GM_setValue` / etc. — the polyfill-style
+  // helper requires (e.g. greasemonkey-polyfill) need this to load
+  // without ReferenceErrors.
   const requireEntries = requires.map((r, i) => ({
     code: wrapRequireEntry({
       scriptId: script.id,
       source: r.source,
       sourceUrl: requireSourceUrls[i],
+      gmBindings: gmEmit.js,
     }),
     url: r.url,
   }));

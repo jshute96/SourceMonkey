@@ -31,6 +31,7 @@ import {
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
+  buildSwapEvalBody,
   collectActiveSpecs,
   composeRequiredBody,
   normalizeDeclaredRunAt,
@@ -264,6 +265,53 @@ test('composeRequiredBody: separator prevents ASI hazards between segments', () 
   assert.match(out, /\(function\(\)\{return 1\}\)\(\)\n;/);
 });
 
+// ---------- buildSwapEvalBody ----------
+
+test('buildSwapEvalBody: prepends GM bindings ahead of the composed body', async () => {
+  // The reload-fast-path swap eval runs at runMain's function scope —
+  // not inside the main-body wrap function — so any `GM_*` reference
+  // in the swapped body would ReferenceError unless we prepend the
+  // bindings here. The single (0,eval) call evaluates the whole
+  // string in one environment, so `const`-declared bindings at the
+  // top are in scope for the body that follows.
+  const script = makeScript({
+    header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_setValue' }] },
+    bodyText: 'GM_setValue("k","v");',
+  });
+  const body = await buildSwapEvalBody(script, '0.0.0');
+  const gmPos = body.indexOf('const GM_setValue');
+  const userPos = body.indexOf('GM_setValue("k","v")');
+  assert.ok(gmPos >= 0, 'GM_setValue binding should be prepended');
+  assert.ok(userPos > gmPos, 'user-code reference should follow the binding');
+  // GM_info is also prepended (implicit, TM/VM compat) so a swapped
+  // body that touches GM_info doesn't ReferenceError.
+  assert.match(body, /const GM_info = /);
+});
+
+test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async () => {
+  // @grant none / no-grants lands in MAIN. The swap eval scope can't
+  // see the wrap function's `const GM_info`, so a swap on a body
+  // that does `GM_info.script.name` would ReferenceError without
+  // this prefix.
+  const script = makeScript({
+    header: { tags: [{ tag: 'name', value: 'MainSwap' }] },
+    bodyText: 'document.title = GM_info.script.name;',
+  });
+  const body = await buildSwapEvalBody(script, '0.0.0');
+  assert.match(body, /const GM_info = /);
+  // No __SM_GM__ in MAIN, so non-info bindings aren't included.
+  assert.doesNotMatch(body, /__SM_GM__/);
+});
+
+test('buildSwapEvalBody: passes through plain body when no header (defensive)', async () => {
+  // Headerless scripts aren't a production case (validateHeader
+  // rejects them), but the helper should still return something
+  // eval-able rather than throwing.
+  const script = { ...makeScript(), header: null };
+  const body = await buildSwapEvalBody(script, '0.0.0');
+  assert.equal(body, 'console.log("hi");');
+});
+
 // ---------- buildRegistrationSpec ----------
 
 test('buildRegistrationSpec: passes @match values through as matches', async () => {
@@ -472,7 +520,12 @@ test('buildRegistrationSpec: storage grant flips needsGmValues in the config blo
   assert.match(cfg.code, /"needsGmValues":true/);
 });
 
-test('buildRegistrationSpec: GM bindings are spliced into the main body entry, not into requires', async () => {
+test('buildRegistrationSpec: GM bindings spliced into BOTH main body and @require entries', async () => {
+  // Each js[] entry is its own V8 script with its own lexical scope,
+  // so a `const GM_setValue` declared in the main-body wrap is
+  // invisible to require entries. TM/VM concatenate everything into
+  // one IIFE; we repeat the binding prefix per entry to match
+  // semantics. See wrapRequireEntry in src/injector.ts.
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
     requires: [{ url: 'https://cdn/a.js', source: 'A();', ref: 'a', size: 0, contentHash: '', loadedAt: 0 }],
@@ -482,10 +535,73 @@ test('buildRegistrationSpec: GM bindings are spliced into the main body entry, n
   const mainEntry = spec.js[3];
   assert.ok('code' in requireEntry);
   assert.ok('code' in mainEntry);
-  // GM_setValue binding lives in the main body entry's function
-  // scope, not in the require entry.
   assert.match(mainEntry.code, /const GM_setValue/);
-  assert.doesNotMatch(requireEntry.code, /const GM_setValue/);
+  assert.match(requireEntry.code, /const GM_setValue/);
+  // Both wraps bake in the SAME scriptId so they target the same
+  // storage bucket.
+  assert.match(mainEntry.code, /__SM_GM__\.storage\.set\("script-1"/);
+  assert.match(requireEntry.code, /__SM_GM__\.storage\.set\("script-1"/);
+});
+
+test('buildRegistrationSpec: @require entries get GM_info even without any other @grant', async () => {
+  // GM_info is implicit (TM/VM compat). A library require that does
+  // `typeof GM_info !== "undefined"` should pass even when the host
+  // script has no grants at all.
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'Hello' }] },
+    requires: [{ url: 'https://cdn/p.js', source: 'P();', ref: 'p', size: 0, contentHash: '', loadedAt: 0 }],
+  }));
+  // [config, prelude, require, main]
+  const requireEntry = spec.js[2];
+  assert.ok('code' in requireEntry);
+  assert.match(requireEntry.code, /const GM_info = Object\.freeze/);
+});
+
+test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN scriptId into the require wrap', async () => {
+  // Each script's registration is built independently — the require
+  // source bytes are shared (file-loader dedups by canonical URL),
+  // but each script's require wrap is generated with that script's
+  // own scriptId baked into the gm bindings. Without this,
+  // GM_setValue calls inside the shared require would route to the
+  // wrong storage bucket.
+  const sharedRequire = { url: 'https://cdn/lib.js', source: 'L();', ref: 'lib', size: 0, contentHash: '', loadedAt: 0 };
+  const specA = await buildRegistrationSpec(makeScript({
+    id: 'script-A',
+    header: { tags: [{ tag: 'name', value: 'A' }, { tag: 'grant', value: 'GM_setValue' }] },
+    requires: [sharedRequire],
+  }));
+  const specB = await buildRegistrationSpec(makeScript({
+    id: 'script-B',
+    header: { tags: [{ tag: 'name', value: 'B' }, { tag: 'grant', value: 'GM_setValue' }] },
+    requires: [sharedRequire],
+  }));
+  // [config, prelude, require, main]
+  const requireA = specA.js[2];
+  const requireB = specB.js[2];
+  assert.ok('code' in requireA);
+  assert.ok('code' in requireB);
+  assert.match(requireA.code, /__SM_GM__\.storage\.set\("script-A"/);
+  assert.match(requireB.code, /__SM_GM__\.storage\.set\("script-B"/);
+  // Sanity: each only references its own id.
+  assert.doesNotMatch(requireA.code, /"script-B"/);
+  assert.doesNotMatch(requireB.code, /"script-A"/);
+});
+
+test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindings)', async () => {
+  // @grant none + no grants both land in MAIN world (resolveWorld);
+  // we don't have a USER_SCRIPT-world __SM_GM__ runtime there, so
+  // only GM_info — which is a baked literal with no runtime
+  // dependency — is exposed. Other GM_* would ReferenceError, which
+  // is the documented limitation.
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'M' }] },
+  }));
+  assert.equal(spec.world, 'MAIN');
+  // Shape: [config, prelude, main]
+  const mainEntry = spec.js[spec.js.length - 1];
+  assert.ok('code' in mainEntry);
+  assert.match(mainEntry.code, /const GM_info = Object\.freeze/);
+  assert.doesNotMatch(mainEntry.code, /__SM_GM__/);
 });
 
 test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
