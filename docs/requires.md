@@ -138,17 +138,91 @@ each require as its own file with original line numbers; a stack
 trace from inside a require points at that require's URL, not at
 the host userscript.
 
-Top-level `var` declarations in a require still become globals on
-`globalThis` (top-level `var` writes a property on the global
-object), so libraries that attach to `window` work unchanged.
-Top-level `let`/`const` becomes script-scoped — a require that
-defines a cross-piece binding that way won't be visible to other
-requires or to the main body. Workaround: assign explicitly to
-`globalThis` / `window`.
+Cross-entry visibility rules:
+
+- **`var` / `function`** — still attach to `globalThis` at script
+  top level (classic-script legacy semantics), so libraries that
+  hang things off `window` work unchanged.
+- **`let` / `const` / `class`** — script-scoped, invisible to sibling
+  entries by default. SourceMonkey bridges the gap when a require
+  lists the binding in a JSHint `/* exported */` directive (see
+  [below](#cross-entry-exports-via--exported-)).
+- Libraries without the directive get the pre-feature fallback —
+  assign to `globalThis` / `window` to share across entries.
 
 See [injection-modes.md](injection-modes.md) for the alternative
 arrangements considered (concatenated single blob, eval-per-require)
 and why we picked separate entries.
+
+## Cross-entry exports via `/* exported */`
+
+Userscript libraries commonly declare cross-piece helpers as
+top-level `const`/`let`/`class` and list them in a JSHint
+[`/* exported */`](https://jshint.com/docs/#exported) directive:
+
+```js
+/* exported $ $$ on */
+const $  = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+const on = (el, ev, cb) => el.addEventListener(ev, cb);
+```
+
+- In TM/VM, the require is concatenated with the main body so those
+  bindings are reachable by lexical scope.
+- In SourceMonkey's separate-entries mode they're trapped in the
+  require's own top-level scope.
+
+SourceMonkey closes the gap by reading the directive at registration
+time and emitting explicit forwarders on both sides of the wall:
+
+- **Producer**: each require's wrap appends
+  `;Object.assign(self.__smReqScope[<id>], {X, Y, Z});`
+  at the end of its `try` block (after the body, so body line
+  numbers are unaffected).
+- **Consumer**: the main body's wrap destructures the union of every
+  require's exported names from the same per-script object, alongside
+  the GM bindings on the head one-liner.
+
+`self.__smReqScope[<id>]` is (re)initialized as an empty object in the
+config blob (entry 0 in `js[]`) on every registration so a refresh
+doesn't bleed stale bindings into a new run. The init is
+unconditional and adds a fixed ~50 bytes to entry 0; the
+producer/consumer wraps are emit-only-when-needed so a require
+without `/* exported */` adds zero bytes to its own entry and to the
+main body.
+
+### Supported directive forms
+
+The keyword match is case-insensitive (matching JSHint's tolerance);
+names can be whitespace- or comma-separated, on one line or many. The
+multi-line JSDoc-decorated form (utilsjs.js, mutations.js) is
+recognized — leading `*` per line is stripped before tokenizing.
+
+### Filtered names
+
+Names matching `GM_*` or `__sm*` are silently dropped from the
+forwarder list:
+
+- A `var{GM_setValue} = …` destructure would redeclare the `const
+  GM_setValue` that the GM bindings emit (SyntaxError).
+- `__sm*` is SourceMonkey's internal namespace.
+
+In practice no real userscript library exports a name in these
+namespaces — the filter exists for safety, not for known cases.
+
+### Limitations
+
+- Only `/* exported */` directives are parsed; libraries that omit
+  the directive get the pre-feature behavior (`let`/`const`/`class`
+  invisible cross-entry).
+- Name collisions across multiple requires are resolved
+  last-write-wins at runtime (each require's `Object.assign`
+  overwrites the prior). The destructure mentions each name once.
+- The directive is parsed with a forgiving regex — it doesn't track
+  string / comment / regex literal state. The `/* exported */`
+  pattern is distinctive enough that false positives are vanishingly
+  rare in practice (no real userscript library would put the
+  sequence inside a string literal at top level).
 
 ## Limits
 

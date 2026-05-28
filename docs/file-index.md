@@ -79,6 +79,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
+| `src/require-exports.ts` | Reads JSHint `/* exported */` directives in `@require`s — names the injector forwards across separate-entry V8 scopes |
 | `src/wrapper-gm-runtime.js` | USER_SCRIPT-world shared runtime — installs `window.__SM_GM__` (shim cache, async sendMessage helper, storage cache + batched writes) |
 | `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
 | `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, timeout |
@@ -139,6 +140,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at normalization, spec build, active-spec collection) |
+| `tests/unit/require-exports.test.mjs` | Unit tests for the `/* exported */` directive parser and forwardable-name filter |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |

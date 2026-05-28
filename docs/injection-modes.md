@@ -110,11 +110,14 @@ visible entry (V8 dedups script entries by URL in the tree).
     references to `x` see it via the global scope chain. Most
     real-world libraries (jQuery, lodash, anything UMD) attach to
     `window`/`globalThis` explicitly and work as before.
-  - `let x = 1` or `const x = 1` at the top of a require becomes
-    script-scoped — invisible to other entries. A require that
-    relied on bare top-level `let`/`const` for cross-piece sharing
-    won't work; the workaround is to assign to `globalThis` /
-    `window` (matches what every UMD library already does).
+  - `let x = 1` / `const x = 1` / `class X {}` at the top of a
+    require is normally script-scoped (invisible to other entries).
+    SourceMonkey bridges that gap when the require lists the
+    binding in a JSHint `/* exported */` directive — the injector
+    forwards listed names through `self.__smReqScope[<id>]` to the
+    main body. Libraries without the directive fall back to the
+    pre-feature behavior; the workaround there is to assign to
+    `globalThis` / `window`. See [requires.md](requires.md#cross-entry-exports-via--exported-).
 - **GM_\* bindings are repeated in every require entry.**
   - Each js[] entry is its own V8 script with its own lexical
     scope, so a `const GM_setValue = ...` declared in the main-body
@@ -217,11 +220,13 @@ js: [
 ### When you might want this
 
 If you discover a real-world script whose requires use bare
-top-level `let`/`const` that the main body reads, or that depends
-on the wrapper's exact closure-scope semantics, Mode A would
-restore the old behavior. We don't expect this — but the wrap
-helpers in `src/injector.ts` are mode-neutral, so plugging in a
-"concatenate all wraps into one entry" assembler is straightforward.
+top-level `let`/`const` for cross-piece sharing AND the library
+omits the JSHint `/* exported */` directive that Mode B reads (see
+[requires.md](requires.md#cross-entry-exports-via--exported-)),
+Mode A would restore the all-in-one-scope behavior automatically.
+We don't expect this — but the wrap helpers in `src/injector.ts`
+are mode-neutral, so plugging in a "concatenate all wraps into one
+entry" assembler is straightforward.
 
 ## Mode C — eval-per-require (TM-style; not implemented)
 

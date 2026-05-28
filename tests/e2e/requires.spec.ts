@@ -203,6 +203,42 @@ test.describe('@require', () => {
     }
   });
 
+  test('/* exported */ in @require makes top-level const visible to the main body', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Regression for the github-html-preview bug: a @require library
+    // declares cross-piece helpers as top-level `const`s and lists them
+    // in a JSHint `/* exported */` directive. Without forwarding, the
+    // main body's call to one of those helpers throws ReferenceError
+    // because each js[] entry is its own V8 top-level scope. With
+    // forwarding, the require's top-level binding flows through
+    // self.__smReqScope[<id>] into the main body's destructure.
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), [
+      '/* exported tag */',
+      'const tag = (suffix) => "from-require:" + suffix;',
+    ].join('\n'));
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: {
+        name: 'ExportedConst',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        extra: ['// @require     lib.js'],
+      },
+      body: `
+        const el = document.getElementById('target');
+        if (el) el.textContent = tag('ok');
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('from-require:ok');
+    await page.close();
+  });
+
   test('manual refresh picks up remote require changes; opportunistic does not', async ({ sm }) => {
     const server = await UserscriptServer.start();
     try {

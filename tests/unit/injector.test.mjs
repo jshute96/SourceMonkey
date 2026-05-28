@@ -146,6 +146,39 @@ test('wrapRequireEntry: gates body on __smActive and routes throws to __smErr', 
   assert.match(wrapped, /catch\(__smE\)\{self\.__smErr\("abc",__smE\);\}\}/);
 });
 
+test('wrapRequireEntry: no exportedNames → no Object.assign tail', () => {
+  // Byte-identical to the pre-feature shape so requires without
+  // `/* exported */` directives carry no per-require overhead.
+  const wrapped = wrapRequireEntry({
+    scriptId: 'abc',
+    source: 'doStuff();',
+    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
+  });
+  assert.doesNotMatch(wrapped, /__smReqScope/);
+  assert.doesNotMatch(wrapped, /Object\.assign/);
+});
+
+test('wrapRequireEntry: exportedNames → trailing Object.assign onto __smReqScope[id]', () => {
+  // The forwarding goes AFTER the body, inside the try, so the body's
+  // line N still lands at physical line N — what stack traces need.
+  const wrapped = wrapRequireEntry({
+    scriptId: 'abc',
+    source: 'const on = () => {};\nconst $ = () => {};',
+    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
+    exportedNames: ['on', '$'],
+  });
+  assert.match(
+    wrapped,
+    /;Object\.assign\(self\.__smReqScope\["abc"\],\{on,\$\}\);/,
+  );
+  // Body line numbers unaffected: the body's two lines still land on
+  // physical lines 1 and 2 of the wrapped output (the forwarder
+  // arrives on line 3, AFTER the body).
+  const lines = wrapped.split('\n');
+  assert.match(lines[0], /const on = \(\) => \{\};$/);
+  assert.match(lines[1], /^const \$ = \(\) => \{\};$/);
+});
+
 // ---------- wrapMainBodyEntry ----------
 
 test('wrapMainBodyEntry: head on physical line 1; body lines preserved; sourceURL at end', () => {
@@ -199,6 +232,51 @@ test('wrapMainBodyEntry: splices gmBindings + gmPrelude before body', () => {
   const prePos = wrapped.indexOf('/*PRE*/');
   const bodyPos = wrapped.indexOf('BODYTOP');
   assert.ok(bindPos > 0 && prePos > bindPos && bodyPos > prePos);
+});
+
+test('wrapMainBodyEntry: no requireExports → no destructure emitted', () => {
+  const wrapped = wrapMainBodyEntry({
+    scriptId: 'abc',
+    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
+    body: 'BODYTOP',
+    gmBindings: '',
+    gmPrelude: '',
+  });
+  assert.doesNotMatch(wrapped, /__smReqScope/);
+});
+
+test('wrapMainBodyEntry: requireExports → destructure from __smReqScope[id] on the head line', () => {
+  // Destructure must land on physical line 1 (alongside declPreamble +
+  // gmBindings + gmPrelude) so the body's line 1 stays at physical
+  // line 1. Anything else breaks the stack-trace line contract.
+  const wrapped = wrapMainBodyEntry({
+    scriptId: 'abc',
+    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
+    body: 'BODYTOP',
+    gmBindings: '',
+    gmPrelude: '',
+    requireExports: ['on', '$', '$$'],
+  });
+  assert.match(wrapped, /var\{on,\$,\$\$\}=self\.__smReqScope\["abc"\];/);
+  const lines = wrapped.split('\n');
+  // The body's first line still arrives at physical line 1.
+  assert.match(lines[0], /BODYTOP$/);
+});
+
+// ---------- buildConfigBlob: __smReqScope init ----------
+
+test('buildConfigBlob: initializes self.__smReqScope[id] = {} before init/queue', () => {
+  // Entry 0 in the js[] array. Runs before any @require entry so the
+  // require's Object.assign has a target object. Re-runs per
+  // registration (incl. refresh) so a stale scope from a prior load
+  // doesn't bleed into the new one.
+  const blob = buildConfigBlob({
+    id: 'abc', logLabel: 'x.user.js', name: 'X',
+    sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
+    loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
+    matching: null, startupLogs: [], requireUrls: [],
+  });
+  assert.match(blob, /\(self\.__smReqScope=self\.__smReqScope\|\|\{\}\)\[c\.id\]=\{\};/);
 });
 
 // ---------- composeRequiredBody (kept for reload-fast-path) ----------
@@ -555,6 +633,156 @@ test('buildRegistrationSpec: @require entries get GM_info even without any other
   const requireEntry = spec.js[2];
   assert.ok('code' in requireEntry);
   assert.match(requireEntry.code, /const GM_info = Object\.freeze/);
+});
+
+test('buildRegistrationSpec: /* exported */ in a @require forwards names to the main body', async () => {
+  // The github-html-preview style: utilsjs.js declares `const on/$/$$`
+  // with a `/* exported */` directive at the top. Without forwarding,
+  // the main body's `on(...)` call throws ReferenceError because each
+  // js[] entry is its own V8 top-level scope.
+  const utilsSrc = `/* exported $ $$ on */
+"use strict";
+const $ = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
+const on = (el, ev, cb) => el.addEventListener(ev, cb);`;
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'Hello' }] },
+    bodyText: 'on(document, "x", () => {});',
+    requires: [{
+      url: 'https://cdn/utils.js', source: utilsSrc, ref: 'u',
+      size: 0, contentHash: '', loadedAt: 0,
+    }],
+  }));
+  // [config, prelude, require, main]
+  const requireEntry = spec.js[2];
+  const mainEntry = spec.js[3];
+  assert.ok('code' in requireEntry);
+  assert.ok('code' in mainEntry);
+  // Producer side: the require entry's tail Object.assigns all three
+  // names onto its per-script scope object.
+  assert.match(
+    requireEntry.code,
+    /Object\.assign\(self\.__smReqScope\["script-1"\],\{\$,\$\$,on\}\);/,
+  );
+  // Consumer side: the main body destructures them back out at the
+  // top of its head one-liner.
+  assert.match(
+    mainEntry.code,
+    /var\{\$,\$\$,on\}=self\.__smReqScope\["script-1"\];/,
+  );
+});
+
+test('buildRegistrationSpec: multiple @requires union their exported names', async () => {
+  // Two libraries each export distinct names → main body's destructure
+  // pulls from both. Declaration order is preserved across the union.
+  const a = `/* exported foo */\nconst foo = 1;`;
+  const b = `/* exported bar baz */\nconst bar = 2; const baz = 3;`;
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }] },
+    bodyText: 'foo;bar;baz;',
+    requires: [
+      { url: 'https://cdn/a.js', source: a, ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
+      { url: 'https://cdn/b.js', source: b, ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
+    ],
+  }));
+  // [config, prelude, a, b, main]
+  const mainEntry = spec.js[4];
+  assert.ok('code' in mainEntry);
+  assert.match(
+    mainEntry.code,
+    /var\{foo,bar,baz\}=self\.__smReqScope\["script-1"\];/,
+  );
+});
+
+test('buildRegistrationSpec: name collisions across @requires dedup (last-write-wins at runtime)', async () => {
+  // Both requires export `helper`. The destructure mentions it once.
+  // Each require's own Object.assign overwrites the prior — last
+  // require's value wins, matching TM/VM concat semantics.
+  const a = `/* exported helper */\nconst helper = "A";`;
+  const b = `/* exported helper */\nconst helper = "B";`;
+  const spec = await buildRegistrationSpec(makeScript({
+    requires: [
+      { url: 'https://cdn/a.js', source: a, ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
+      { url: 'https://cdn/b.js', source: b, ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
+    ],
+  }));
+  const mainEntry = spec.js[4];
+  assert.ok('code' in mainEntry);
+  // Single occurrence in the destructure list.
+  const matches = mainEntry.code.match(/var\{([^}]+)\}=self\.__smReqScope/);
+  assert.ok(matches);
+  assert.deepEqual(matches[1].split(','), ['helper']);
+});
+
+test('buildRegistrationSpec: /* exported */ names colliding with GM (bare) or unsafeWindow are filtered', async () => {
+  // gm-bindings.ts emits `const GM = ...` and `const unsafeWindow = window;`
+  // unconditionally on the main-body head line. A `var{GM}=...` /
+  // `var{unsafeWindow}=...` destructure on the same line would
+  // redeclare them — hard SyntaxError that kills the whole main body.
+  const src = `/* exported GM unsafeWindow ok */\nconst ok = 1;`;
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+    requires: [{
+      url: 'https://cdn/x.js', source: src, ref: 'x',
+      size: 0, contentHash: '', loadedAt: 0,
+    }],
+  }));
+  // [config, prelude, require, main]
+  const requireEntry = spec.js[2];
+  const mainEntry = spec.js[3];
+  assert.ok('code' in requireEntry);
+  assert.ok('code' in mainEntry);
+  const assignMatch = requireEntry.code.match(/Object\.assign\(self\.__smReqScope\["script-1"\],\{([^}]*)\}\)/);
+  assert.ok(assignMatch);
+  assert.deepEqual(assignMatch[1].split(',').filter(Boolean), ['ok']);
+  const destructureMatch = mainEntry.code.match(/var\{([^}]*)\}=self\.__smReqScope\["script-1"\]/);
+  assert.ok(destructureMatch);
+  assert.deepEqual(destructureMatch[1].split(',').filter(Boolean), ['ok']);
+});
+
+test('buildRegistrationSpec: /* exported */ names colliding with GM_*/__sm* are filtered', async () => {
+  // Forwarding `GM_foo` would redeclare a `const` we emit (SyntaxError);
+  // `__sm*` is SourceMonkey's internal namespace. Both classes are
+  // dropped from the forwarder on safety grounds.
+  const src = `/* exported GM_bad __smHack ok */\nconst ok = 1;`;
+  const spec = await buildRegistrationSpec(makeScript({
+    requires: [{
+      url: 'https://cdn/x.js', source: src, ref: 'x',
+      size: 0, contentHash: '', loadedAt: 0,
+    }],
+  }));
+  // [config, prelude, require, main]
+  const requireEntry = spec.js[2];
+  const mainEntry = spec.js[3];
+  assert.ok('code' in requireEntry);
+  assert.ok('code' in mainEntry);
+  // The filter applies to the forwarder list, not to the require's
+  // own source — the original `/* exported */` comment passes through
+  // verbatim (it's just a comment).
+  const assignMatch = requireEntry.code.match(/Object\.assign\(self\.__smReqScope\["script-1"\],\{([^}]*)\}\)/);
+  assert.ok(assignMatch);
+  assert.deepEqual(assignMatch[1].split(',').filter(Boolean), ['ok']);
+  const destructureMatch = mainEntry.code.match(/var\{([^}]*)\}=self\.__smReqScope\["script-1"\]/);
+  assert.ok(destructureMatch);
+  assert.deepEqual(destructureMatch[1].split(',').filter(Boolean), ['ok']);
+});
+
+test('buildRegistrationSpec: @require with no /* exported */ directive emits no forwarder', async () => {
+  // No regression for libraries that don't include the directive. The
+  // require still runs; only `var`/`function` top-level declarations
+  // leak through globalThis (the legacy behavior).
+  const spec = await buildRegistrationSpec(makeScript({
+    requires: [{
+      url: 'https://cdn/x.js', source: 'window.lib = {};', ref: 'x',
+      size: 0, contentHash: '', loadedAt: 0,
+    }],
+  }));
+  const requireEntry = spec.js[2];
+  const mainEntry = spec.js[3];
+  assert.ok('code' in requireEntry);
+  assert.ok('code' in mainEntry);
+  assert.doesNotMatch(requireEntry.code, /Object\.assign\(self\.__smReqScope/);
+  assert.doesNotMatch(mainEntry.code, /__smReqScope\["script-1"\]/);
 });
 
 test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN scriptId into the require wrap', async () => {
