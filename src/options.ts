@@ -13,6 +13,13 @@ openSourcesBtn.addEventListener('click', () => {
 
 initDebugLoggingToggle();
 initGithubTokenControls();
+initVersionFooter();
+
+function initVersionFooter(): void {
+  const el = document.getElementById('version');
+  if (!el) return;
+  el.textContent = `Version ${chrome.runtime.getManifest().version}`;
+}
 
 function initDebugLoggingToggle(): void {
   const cb = document.getElementById('debug-logging') as HTMLInputElement | null;
