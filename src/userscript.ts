@@ -1095,14 +1095,27 @@ function patternValueNode(pattern: string): Node {
   return openInNewTabAnchor(info.linkUrl, pattern);
 }
 
-function openInNewTabAnchor(href: string, text: string): HTMLAnchorElement {
+function openInNewTabAnchor(
+  href: string,
+  text: string,
+  // When true, insert `<wbr>` markers after each `/` so a long URL
+  // wraps at slash boundaries — desired in the details panel (Match
+  // patterns, Location row). The code box passes false: with
+  // `white-space: pre`, Chrome still honors `<wbr>` as a break
+  // opportunity, so a URL inside a single source line could wrap
+  // mid-line and misalign the line-numbers gutter.
+  slashBreaks = true,
+): HTMLAnchorElement {
   const a = document.createElement('a') as HTMLAnchorElement;
   a.className = 'code-link';
   a.href = href;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  // Slash-aware appender so a long URL/pattern wraps at `/` first.
-  appendWithSlashBreaks(a, text);
+  if (slashBreaks) {
+    appendWithSlashBreaks(a, text);
+  } else {
+    a.textContent = text;
+  }
   return a;
 }
 
@@ -1168,7 +1181,7 @@ function linkifyHeaderBlock(headerEl: HTMLElement, fileUrl: string): void {
       const doc = headerEl.ownerDocument;
       valueEl.replaceChildren(
         doc.createTextNode(link.prefix),
-        openInNewTabAnchor(link.href, link.linkText),
+        openInNewTabAnchor(link.href, link.linkText, false),
         doc.createTextNode(link.suffix),
       );
     } else {
@@ -1209,7 +1222,7 @@ function linkifyTextNodeUrls(tn: Text): void {
   const doc = tn.ownerDocument;
   const replacement: Node[] = runs.map((r) =>
     r.kind === 'url'
-      ? openInNewTabAnchor(r.value, r.value)
+      ? openInNewTabAnchor(r.value, r.value, false)
       : doc.createTextNode(r.value),
   );
   tn.replaceWith(...replacement);

@@ -337,6 +337,12 @@ so the body header and the details panel agree.
   (CSS: `color: inherit; text-decoration: none;`); the hover
   underline is the only signal of clickability so the code box keeps
   reading as code.
+- Code-box anchors are built with `openInNewTabAnchor(..., slashBreaks=false)`
+  so no `<wbr>` markers land in the text. Chrome honors `<wbr>` as a
+  break opportunity even under `white-space: pre`, which would soft-
+  wrap a long URL like `http://www.w3.org/2000/svg` mid-source-line
+  and misalign the line-numbers gutter. The details panel uses the
+  default `slashBreaks=true` because its rows DO need to wrap.
 
 Pure helpers (URL tokenizer, tag-line parser, tag-classifier sets)
 live in `src/script-links.ts` and are unit-tested without a DOM.
