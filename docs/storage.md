@@ -24,6 +24,7 @@ Key spaces in `chrome.storage.local`:
 | `"pathIcon:<pageUrl>"` | `SiteIconEntry`     | Per-page-URL favicon hit (deep-page HTML discovery; see [site-icons.md](site-icons.md)). |
 | `"siteIcon:<orig>"`    | `SiteIconEntry`     | Origin-level favicon fallback for an `https://host` (see [site-icons.md](site-icons.md)). |
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
+| `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default sources; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 
 ### `StoredSource`
 
@@ -358,6 +359,31 @@ Every load path goes through the same pipeline:
   Used by the sources page's bulk +/− toggle so 15 flips fire one
   `storage.onChanged` event (and therefore one background re-sync)
   instead of one per script.
+
+## First-run seeding
+
+So a freshly-installed extension isn't empty, SourceMonkey seeds the
+`DEFAULT_SOURCES` (`script-store.ts`) on the very first run. Seeding is
+**driven by the sources page**, not the SW, so the user watches the
+normal Add flow (each section appears, populated) instead of scripts
+materialising silently.
+
+- **Open trigger.** On `chrome.runtime.onInstalled` with reason
+  `install`, and only while `"firstRunComplete"` is unset, the SW opens
+  `sources.html?first_run=1`. The flag check matters because unpacked
+  reloads re-fire `onInstalled('install')`.
+- **Seed trigger.** `seedDefaultSourcesViaUi()` (`sources.ts`) runs only
+  when the page loads with `?first_run` AND the flag is unset — so an
+  ordinary sources-page visit never seeds. It adds each default via the
+  same `onAddDirectory` the Add button uses; `addSource` fetches the
+  source's scripts as part of the add, so no follow-up Refresh is needed.
+- **Run-once.** The page writes `"firstRunComplete"` after seeding;
+  once set, neither the SW open nor the page seed fires again —
+  including after the user deletes the seeded sources.
+- **Reset behavior.** The test-surface `resetAllState()` sets
+  `"firstRunComplete"` after clearing storage, and the e2e launch
+  fixture pre-sets it at startup, so the network seed never runs during
+  tests.
 
 ## Updater
 

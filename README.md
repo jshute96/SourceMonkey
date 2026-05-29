@@ -22,6 +22,11 @@ configurable settings (currently just the debug-logging toggle).
 
 ### Registering sources
 
+On its first run SourceMonkey opens the sources page and seeds a set of
+default sources so the page isn't empty out of the box — you'll see each
+one get added, with its scripts loaded. Remove them like any other
+source — they won't come back.
+
 Type a source into the Add Source field and click **Add source**.
 What you can type:
 

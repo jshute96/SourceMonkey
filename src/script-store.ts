@@ -668,6 +668,21 @@ const SOURCES_INDEX_KEY = 'sources';
 const sourceKey = (id: string) => `source:${id}`;
 const scriptKey = (id: string) => `script:${id}`;
 
+// Set to `true` the first time the SW seeds the default sources, so the
+// seeding never runs again even after the user removes those sources.
+const FIRST_RUN_DONE_KEY = 'firstRunComplete';
+
+// Sources seeded on the very first run (by the sources page — see
+// `seedDefaultSourcesViaUi` in sources.ts). Each is fed through the
+// normal add → Refresh flow, so any input shape `addSource` accepts
+// (github-dir / http(s) `.user.js` / manifest URL, or an absolute
+// directory path) works here. `addSource` dedupes by canonical source
+// path, so any accidental repeat collapses to one source.
+export const DEFAULT_SOURCES: readonly string[] = [
+  'https://github.com/jshute96/SourceMonkey/tree/main/tests/examples',
+  'https://github.com/jshute96/SourceMonkey/tree/main/userscripts',
+];
+
 async function getRaw<T>(key: string): Promise<T | undefined> {
   const result = await chrome.storage.local.get(key);
   return result[key] as T | undefined;
@@ -799,6 +814,23 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
     await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
   }
   return { kind: 'newSource', source: refreshed?.source ?? seed };
+}
+
+// First-run gate. Seeding the default sources is driven from the
+// sources page (so the user watches the normal add → Refresh flow,
+// rather than scripts appearing silently from the SW); the SW only
+// opens that page on install. These two helpers are the persisted flag
+// the page and SW share.
+export async function isFirstRunComplete(): Promise<boolean> {
+  return (await getRaw<boolean>(FIRST_RUN_DONE_KEY)) === true;
+}
+
+// Record that first-run handling is done so the SW stops opening the
+// seeding page and the sources page stops re-seeding — including after
+// the user deletes the seeded sources. Also called by the test-surface
+// reset so a cleared store isn't re-seeded.
+export async function markFirstRunComplete(): Promise<void> {
+  await chrome.storage.local.set({ [FIRST_RUN_DONE_KEY]: true });
 }
 
 // Add a single-file input to the matching container source. Creates

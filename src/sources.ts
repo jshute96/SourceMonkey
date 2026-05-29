@@ -21,12 +21,15 @@
 import {
   addSource,
   backfillSourceDisplayNames,
+  DEFAULT_SOURCES,
   getAllScripts,
   getSource,
   getSourceWithScripts,
   getSources,
+  isFirstRunComplete,
   isScriptEnabled,
   isSourceEnabled,
+  markFirstRunComplete,
   moveSource,
   removeScript,
   removeSource,
@@ -263,6 +266,17 @@ async function bootstrap(): Promise<void> {
   // view. Triggered for any hash matching the source-anchor shape.
   scrollToHashSourceIfPresent();
   const params = new URLSearchParams(location.search);
+  // First-run seeding. The SW opens this page with `?first_run` once on
+  // install (see background.ts); only that auto-opened page seeds, so an
+  // ordinary visit never adds the defaults. The flag is re-checked here
+  // so a manual reload of the same URL can't seed twice.
+  if (params.has('first_run')) {
+    const done = await isFirstRunComplete();
+    console.log(`[SourceMonkey] sources page opened with ?first_run (firstRunComplete=${done})`);
+    if (!done) await seedDefaultSourcesViaUi();
+    else console.log('[SourceMonkey] first run already complete; skipping seed');
+    scrubQueryParams(['first_run']);
+  }
   if (params.has('refresh')) {
     await onRefreshAll();
     scrubQueryParams(['refresh']);
@@ -270,6 +284,48 @@ async function bootstrap(): Promise<void> {
   const addSourceArg = params.get('add_source');
   if (addSourceArg !== null) {
     await handleAddSourceParam(addSourceArg);
+  }
+}
+
+// First-run seeding, driven from the page so the user watches the
+// familiar flow: each default source's section appears, populated, as it
+// loads. Reuses the manual Add handler (`onAddDirectory`), so there's no
+// separate code path that can drift. `addSource` fetches each source's
+// scripts as part of the add, so no follow-up Refresh is needed. Marks
+// first-run complete at the end (even if a source failed) so it never
+// repeats.
+async function seedDefaultSourcesViaUi(): Promise<void> {
+  // Best-effort + run-once: mark complete in a finally so a failure on
+  // one default (network down, bad URL) neither aborts the others nor
+  // leaves the flag unset (which can't auto-retry — onInstalled fires
+  // only once, so a re-open wouldn't carry ?first_run). A failed source
+  // still leaves a section with its Refresh button for manual recovery.
+  console.log('[SourceMonkey] first run: seeding default sources', [...DEFAULT_SOURCES]);
+  try {
+    // Skip exact-repeat entries up front; addSource also dedupes by
+    // canonical source path (so two spellings of the same source still
+    // yield one), this just avoids a pointless duplicate-add round-trip
+    // for a byte-identical repeat. `jump: false` so adding several in a
+    // row doesn't scroll-dance through each new section.
+    const seen = new Set<string>();
+    for (const raw of DEFAULT_SOURCES) {
+      const path = raw.trim();
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      console.log('[SourceMonkey] first run: adding source', path);
+      addInput.value = path;
+      try {
+        await onAddDirectory(path, { jump: false });
+      } catch (err) {
+        console.error('[SourceMonkey] first-run add failed', path, err);
+      }
+    }
+  } finally {
+    // Clear the Add field — onAddDirectory clears it on success, but a
+    // failed add leaves the last attempted path sitting there.
+    addInput.value = '';
+    console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
+    await markFirstRunComplete();
   }
 }
 
@@ -642,7 +698,15 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
 // `handleAddSourceParam` to decide whether to scrub the `add_source`
 // query param — invalid input keeps the URL so the user can edit
 // and retry.
-async function onAddDirectory(rawPath: string): Promise<boolean> {
+async function onAddDirectory(
+  rawPath: string,
+  opts: { jump?: boolean } = {},
+): Promise<boolean> {
+  // `jump` controls the post-add smooth-scroll. On by default for the
+  // manual Add button + `?add_source` (the user wants to land on the new
+  // section); off for first-run seeding, which adds several in a row and
+  // would otherwise scroll-dance through them.
+  const { jump = true } = opts;
   const path = rawPath.trim();
   if (!path) return false;
 
@@ -686,7 +750,7 @@ async function onAddDirectory(rawPath: string): Promise<boolean> {
             ? 'This script is already in its container.'
             : 'This source is already registered.',
         );
-        jumpToSource(existing.id);
+        if (jump) jumpToSource(existing.id);
       }
       return true;
     }
@@ -706,7 +770,7 @@ async function onAddDirectory(rawPath: string): Promise<boolean> {
       directoriesEl.appendChild(await renderSourceSection(latest));
     }
     refreshMoveButtons();
-    jumpToSource(latest.id);
+    if (jump) jumpToSource(latest.id);
     return true;
   } finally {
     setAddFormBusy(false);

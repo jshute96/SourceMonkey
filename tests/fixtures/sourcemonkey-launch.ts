@@ -62,6 +62,23 @@ export async function launchSourceMonkeyContext(opts: {
     ctx.on('serviceworker', wireUp);
   }
 
+  // Suppress first-run default-source seeding in tests. The SW opens a
+  // `sources.html?first_run` tab on install and that page seeds the
+  // defaults over the network (GitHub) — flaky and slow in a test run.
+  // Pre-setting the flag makes the SW skip the open and any seeding page
+  // skip the network add. (Key mirrors FIRST_RUN_DONE_KEY in
+  // script-store.ts.) Best-effort: this can lose the race against the
+  // SW's onInstalled('install') if that fires before the evaluate lands,
+  // but seeding is also gated on the `?first_run` param (only that tab
+  // carries it) and `resetAllState` re-marks the flag beforeEach, so a
+  // stray seed can't pollute a test's own page state.
+  try {
+    const sw = await makeGetServiceWorker(ctx)();
+    await sw.evaluate(() => chrome.storage.local.set({ firstRunComplete: true }));
+  } catch {
+    /* SW not reachable yet; the sm fixture's resetAllState also sets it */
+  }
+
   return {
     ctx,
     cleanup: () => {

@@ -42,10 +42,10 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `src/manifest.json` | MV3 extension manifest |
-| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap |
+| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap, first-run sources-page open |
 | `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
-| `src/sources.ts` | Sources page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source` triggers, per-source anchors |
+| `src/sources.ts` | Sources page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source`/`?first_run` triggers, per-source anchors |
 | `src/options.html` | Options page markup: settings list (debug-logging toggle, GitHub auth token) plus a link back to the sources page |
 | `src/options.ts` | Options page controller — hydrates the debug-logging checkbox + GitHub-token controls (save / clear / reveal) and mirrors writes to `chrome.storage.local` |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, tab strip, highlighted code box, log pane |
@@ -54,7 +54,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/github-source.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
-| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-source dispatch in addSource, parse-time diagnostics, refreshAllSources |
+| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-source dispatch in addSource, parse-time diagnostics, refreshAllSources, first-run flag + DEFAULT_SOURCES |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
 | `src/script-display.ts` | Pure size + status display helpers (`formatBytes`, `formatScriptSize`, `effectiveScriptStatus`, `formatScriptStatusLabel`) shared by the sources page + viewer |
 | `src/source-display.ts` | Source-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |

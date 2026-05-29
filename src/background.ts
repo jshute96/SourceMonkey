@@ -78,6 +78,8 @@ import {
   getScript,
   getSources,
   getSourceWithScripts,
+  isFirstRunComplete,
+  markFirstRunComplete,
   removeSource,
   setScriptEnabled,
   setSourceEnabled,
@@ -321,6 +323,14 @@ const api: SourceMonkeyApi = {
     }
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    // Mark first-run seeding as already done so a later SW restart
+    // doesn't repopulate the deliberately-emptied store with the default
+    // sources. A reset is meant to leave a clean slate, and re-seeding
+    // would contradict that. (This stops future seed runs from starting;
+    // a seed already in flight from the boot before this reset isn't
+    // cancelled — the in-loop flag re-check narrows but can't fully
+    // close that window.) Tests that want the defaults seed explicitly.
+    await markFirstRunComplete();
     // Tear down whatever Chrome currently has registered so the next
     // test doesn't inherit injections from the previous one. The
     // storage.onChanged listener will also fire syncRegistrations() in
@@ -355,6 +365,40 @@ const api: SourceMonkeyApi = {
 // is already open.
 chrome.action.onClicked.addListener(() => {
   chrome.runtime.openOptionsPage();
+});
+
+// First run: open the sources page so the user lands somewhere useful
+// instead of an empty toolbar, and so the page can seed the default
+// sources through the normal add → Refresh flow (see
+// `seedDefaultSourcesViaUi` in sources.ts). The `?first_run` param is
+// the seeding trigger — only this auto-opened page carries it, so an
+// ordinary sources-page visit never re-seeds. Gated by the persisted
+// flag (not just the install reason) because unpacked-extension reloads
+// re-fire onInstalled with reason 'install'; without the flag check
+// every dev reload would reopen the tab.
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log(`[SourceMonkey] onInstalled (reason=${details.reason})`);
+  if (details.reason !== 'install') return;
+  void (async () => {
+    if (await isFirstRunComplete()) {
+      console.log(
+        '[SourceMonkey] first run already complete (firstRunComplete=true); ' +
+        'not opening the sources page. Clear that storage key to re-seed.',
+      );
+      return;
+    }
+    console.log(
+      '[SourceMonkey] first run detected — opening sources.html?first_run=1 ' +
+      'so the page can seed the default sources',
+    );
+    try {
+      await chrome.tabs.create({
+        url: chrome.runtime.getURL('sources.html?first_run=1'),
+      });
+    } catch (err) {
+      console.info('[SourceMonkey] failed to open first-run sources page:', err);
+    }
+  })();
 });
 
 // ---------- Per-tab badge + tooltip ----------
