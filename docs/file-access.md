@@ -69,21 +69,13 @@ by relative path.
 
 ### Single-file paths
 
-A source path may also point directly at a `*.user.js` file rather
-than at a directory. `isSingleFilePath(path)` (true for any path
-ending in `.user.js`) flags this case and the rest of the pipeline
-treats the source as if it were a directory holding exactly one
-script:
-
-- `scanForUserScripts` lists the file's **parent** directory and
-  picks out just that entry (so it can carry size+mtime for the
-  unchanged-file skip). If the file isn't in the listing the scan
-  returns `[]`, which the refresh pipeline reads as "vanished" and
-  flags the prior entry as `missing`.
-- `scriptFileUrl` returns the source path's `file://` URL verbatim
-  (a directory-style join would double the basename).
-- `parentDir(path)` and `baseName(path)` are the small POSIX helpers
-  used to split the file path.
+A path that points directly at a `*.user.js` file (rather than at a
+directory) is **not** registered as its own source. `addSource`
+routes single-file inputs into the matching container source instead
+— see [storage.md](storage.md#container-sources). The script's
+`relativePath` carries the full path/URL the user added, and
+`scriptFileUrl` URL-coerces it back to the `file://` form for the
+fetcher.
 
 ## Listing-format caveat
 
@@ -104,13 +96,17 @@ Chrome's directory-listing HTML is an **undocumented format**:
 - `pathToFileUrl(absolutePath)` — percent-encode + add `file://`.
 - `joinPath(base, child)` — POSIX path join.
 - `parentDir(path)` / `baseName(path)` — split an absolute path.
-- `isSingleFilePath(path)` — true iff the path ends in `.user.js`.
+- `isSingleFileInput(path)` — true iff the path ends in `.user.js`.
+  Used at add-source time to route the input into the matching
+  container source rather than minting a single-file source row.
 - `scriptFileUrl(sourcePath, relativePath)` — composes the file URL
-  for a found script, handling both directory and single-file
-  sources.
+  for a found script, dispatching on source kind (directory /
+  manifest / github-dir / container).
 - `fetchFileUrlText(url)` — XHR a `file://` URL → text.
 - `parseListing(html)` — Chrome listing → `{name, isDir}[]`.
 - `scanForUserScripts(absolutePath, depth?, prefix?)` — recursive
-  `*.user.js` walk; falls back to a single-entry stat for paths that
-  point at a `.user.js` file.
+  `*.user.js` walk for directory / manifest / github-dir sources.
+  Container sources are never scanned through this entry point —
+  `refreshSource` builds a synthetic scan from their explicit
+  `scriptIds` instead.
 - `MAX_SCAN_DEPTH` — recursion cap (currently 2).

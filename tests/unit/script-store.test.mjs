@@ -684,24 +684,24 @@ test('rebuildSource: missing path also disables the entry', async () => {
   assert.equal(result[0].enabled, false);
 });
 
-test('rebuildSource builds the right fileUrl for a single-file source', async () => {
-  // Single-file sources store the *file* path in sourcePath; the scan
-  // entry's relativePath is the basename. scriptFileUrl must not
-  // double the filename — it should return the source path's URL.
+test('rebuildSource builds the right fileUrl for a container file script', async () => {
+  // Container scripts store the full URL/path as `relativePath`.
+  // scriptFileUrl must coerce raw fs paths into file:// URLs so the
+  // downstream fetcher sees a uniform form.
   const result = await rebuildSource({
     sourceId: 'src-1',
-    sourcePath: '/home/me/foo bar.user.js',
+    sourcePath: 'container:file',
     existing: [],
-    scan: [{ relativePath: 'foo bar.user.js' }],
+    scan: [{ relativePath: '/home/me/foo bar.user.js' }],
     fetchResults: new Map([
-      ['foo bar.user.js', { ok: true, source: VALID_SCRIPT }],
+      ['/home/me/foo bar.user.js', { ok: true, source: VALID_SCRIPT }],
     ]),
     now: 100,
     newId: fakeIdSequence(),
   });
   assert.equal(result.length, 1);
   assert.equal(result[0].fileUrl, 'file:///home/me/foo%20bar.user.js');
-  assert.equal(result[0].relativePath, 'foo bar.user.js');
+  assert.equal(result[0].relativePath, '/home/me/foo bar.user.js');
 });
 
 test('rebuildSource persists httpEtag / httpLastModified from a successful HTTP fetch', async () => {

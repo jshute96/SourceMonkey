@@ -29,7 +29,7 @@ test.describe('change detection', () => {
   test.beforeEach(async () => { server = await UserscriptServer.start(); });
   test.afterEach(async () => { await server.stop(); });
 
-  test('HTTP single-file: no validators — identical refetch preserves loadedAt, mutated bumps it', async ({ sm }) => {
+  test('HTTP container script: no validators — identical refetch preserves loadedAt, mutated bumps it', async ({ sm }) => {
     // Server returns no ETag / Last-Modified, so the conditional GET
     // can't 304 — every refresh re-fetches the full body. The
     // post-fetch contentHash compare is what keeps loadedAt stable
@@ -54,7 +54,7 @@ test.describe('change detection', () => {
     expect(after!.scripts[0].bodyText).toContain('v2');
   });
 
-  test('HTTP single-file: with ETag — conditional GET 304 preserves loadedAt, body change forces 200 + bump', async ({ sm }) => {
+  test('HTTP container script: with ETag — conditional GET 304 preserves loadedAt, body change forces 200 + bump', async ({ sm }) => {
     // Server returns an ETag the SW captures on the first fetch and
     // replays as If-None-Match next time. The cheap-skip HTTP 304 path
     // fires (no body crosses the wire); content-hash never needed.
@@ -177,7 +177,7 @@ test.describe('change detection', () => {
   });
 
   test('every loaded script carries a contentHash (the universal last-change token)', async ({ sm }) => {
-    // Smoke test: an HTTP single-file source's row must come back with
+    // Smoke test: an HTTP container script must come back with
     // contentHash populated regardless of whether the server supplied
     // validators. Without this field the post-fetch compare wouldn't
     // work on subsequent refreshes.

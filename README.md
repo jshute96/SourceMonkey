@@ -22,30 +22,36 @@ configurable settings (currently just the debug-logging toggle).
 
 ### Registering sources
 
-Type a source into the Add Source field and click **Add source**. The
-source is scanned immediately and every userscript it produces is
-loaded into the extension's storage. A source can be any of:
+Type a source into the Add Source field and click **Add source**.
+What you can type:
 
 - An **absolute path to a directory** of userscripts. Scanned
   recursively (up to two subdirectory levels deep); every
   `*.user.js` becomes a row.
-- An **absolute path to a single `.user.js` file**. Shows up as a
-  one-row source.
-- A **`file://` URL** in either of the two forms above (anywhere a
-  bare path works, the URL form works too).
-- An **`http(s)://` URL ending in `.user.js`** — fetched as a single
-  remote script.
+- A **`file://` URL** to the directory above.
+- An **`http(s)://` URL ending in `.user.js`** — folded into the
+  matching "Scripts from web" container source (or "Scripts from
+  GitHub" if the URL is a GitHub raw URL).
+- An **absolute path or `file://` URL to a single `.user.js` file**
+  — folded into the "Scripts from local disk" container.
 - A **manifest**: anything whose pathname's basename is
   `script_manifest.json`. The manifest is fetched and the URLs it
   lists become individual scripts. Works at an http(s) URL, a
   `file://` URL, or a bare local path — the same manifest file can be
   tested locally and then served over HTTP unchanged.
 - A **GitHub URL** — paste a `github.com` URL straight from the
-  browser. A `/blob/.../foo.user.js` (or a `/blob/.../script_manifest.json`)
-  URL is rewritten to its `raw.githubusercontent.com` counterpart on
-  add. A `/tree/<ref>/<dir>` URL is scanned recursively via the
-  GitHub Contents API. A bare repo URL (`github.com/<o>/<r>`)
-  resolves to the repo's default branch.
+  browser. A `/blob/.../foo.user.js` URL is rewritten to its
+  `raw.githubusercontent.com` counterpart and folded into the GitHub
+  container; a `/blob/.../script_manifest.json` URL is stored as a
+  github-manifest source. A `/tree/<ref>/<dir>` URL is scanned
+  recursively via the GitHub Contents API. A bare repo URL
+  (`github.com/<o>/<r>`) resolves to the repo's default branch.
+
+The three container sources — `Scripts from local disk`,
+`Scripts from web`, `Scripts from GitHub` — are created on demand
+when you add the first script of their kind. Subsequent single-file
+adds of the same kind join the existing container, and each row
+gets its own remove button.
 
 Each source shows up as its own section on the sources page with a
 per-source enable toggle, per-script enable toggles, **↑ / ↓** buttons
@@ -84,8 +90,8 @@ emits the bare-array shape.
 
 ### Refresh behaviour
 
-HTTP entries (whether a top-level single-file source or reached via a
-manifest) re-fetch with conditional GETs — SourceMonkey stores each
+HTTP entries (whether added into the web/GitHub container or reached
+via a manifest) re-fetch with conditional GETs — SourceMonkey stores each
 script's `ETag` / `Last-Modified` and sends them on the next refresh,
 so an unchanged file answers `304` and no body is re-downloaded.
 Local-directory sources skip refetches when the file's size +

@@ -9,6 +9,10 @@ import type { Worker } from '@playwright/test';
 type Mode = 'manual' | 'opportunistic';
 
 interface SmApi {
+  // Returns the resulting source row (existing container or new
+  // source); the proxy unwraps the `AddSourceResult` discriminant so
+  // tests can keep using `result?.id` and `result?.path` directly.
+  // Returns null on a duplicate.
   addSource(path: string): Promise<{ id: string; path: string } | null>;
   removeSource(id: string): Promise<void>;
   getSources(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
@@ -107,7 +111,22 @@ export function makeSwApi(getServiceWorker: () => Promise<Worker>): SmApi {
     ) as Promise<T>;
   };
   return new Proxy({} as SmApi, {
-    get: (_t, prop) => (...args: unknown[]) => call(prop as keyof SmApi, args),
+    get: (_t, prop) => {
+      // The real SW addSource returns a discriminated `AddSourceResult`
+      // (covers the container-create vs container-reuse vs new-source
+      // distinction). Tests just want the resulting source row; unwrap
+      // here so the SmApi contract stays a thin pass-through.
+      if (prop === 'addSource') {
+        return async (...args: unknown[]) => {
+          const result = await call<{
+            kind: string;
+            source: { id: string; path: string };
+          } | null>('addSource', args);
+          return result?.source ?? null;
+        };
+      }
+      return (...args: unknown[]) => call(prop as keyof SmApi, args);
+    },
   });
 }
 

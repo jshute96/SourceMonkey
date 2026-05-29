@@ -53,7 +53,7 @@ export { MAX_SCAN_DEPTH } from './source-scan.js';
 // `http://` / `https://` selects an HTTP source; everything else is
 // treated as an absolute filesystem path. Suffix tests look at the URL
 // pathname (sans query/fragment) so e.g. `…/foo.user.js?v=2` still
-// classifies as a single-file source.
+// classifies as a single-file URL.
 
 export function isHttpUrl(source: string): boolean {
   return /^https?:\/\//i.test(source);
@@ -61,6 +61,31 @@ export function isHttpUrl(source: string): boolean {
 
 export function isFileUrl(source: string): boolean {
   return /^file:\/\//i.test(source);
+}
+
+// Container sources aggregate individually-added scripts of one kind
+// (local files, web URLs, GitHub URLs). Their stored `path` is one of
+// the synthetic identifiers below — not a real URL — and per-script
+// `relativePath` carries the full URL/path the user added. There is no
+// scan step for a container source; refresh iterates the explicit
+// scriptIds list and refetches each entry.
+export type ContainerKind = 'file' | 'http' | 'github';
+
+const CONTAINER_PATH_PREFIX = 'container:';
+
+export function containerPath(kind: ContainerKind): string {
+  return CONTAINER_PATH_PREFIX + kind;
+}
+
+export function isContainerSource(source: string): boolean {
+  return containerKind(source) !== null;
+}
+
+export function containerKind(source: string): ContainerKind | null {
+  if (source === 'container:file') return 'file';
+  if (source === 'container:http') return 'http';
+  if (source === 'container:github') return 'github';
+  return null;
 }
 
 // Pathname of an http(s) or file:// URL, sans query and fragment.
@@ -106,24 +131,37 @@ export function sourceFsPath(source: string): string {
   }
 }
 
-// True for any single-file source — http(s):// URL, file:// URL, or
-// an absolute local path — whose pathname ends in `.user.js`.
-// Scheme-agnostic counterpart to `isManifestSource`. Call sites that
-// genuinely care about scheme combine this with `isHttpUrl(s)`.
-export function isSingleFileSource(source: string): boolean {
+// True for any input pointing at an individual `.user.js` script —
+// http(s):// URL, file:// URL, or absolute local path — based on the
+// pathname suffix. Single-script inputs no longer get their own source
+// row; the add flow routes them into the matching container source
+// (see `containerKindForSingleFileInput`).
+export function isSingleFileInput(source: string): boolean {
   return sourcePathname(source).endsWith('.user.js');
 }
 
 // True for any manifest source — http(s):// URL, file:// URL, or an
 // absolute local path — whose pathname's basename is exactly
-// `MANIFEST_FILENAME`. Scheme-agnostic counterpart to
-// `isSingleFileSource`. The fixed-filename rule (rather than a generic
+// `MANIFEST_FILENAME`. The fixed-filename rule (rather than a generic
 // `.json` suffix) keeps unrelated JSON files from being mistaken for
 // script manifests and gives the convention a single, searchable name.
 export function isManifestSource(source: string): boolean {
   const p = sourcePathname(source);
   return p === MANIFEST_FILENAME
     || p.endsWith('/' + MANIFEST_FILENAME);
+}
+
+// Classify a single-file input string by container kind. Callers that
+// have already verified the input passes `isSingleFileInput` use this
+// to pick which container source the script gets added to. github URLs
+// here mean both the human-facing `github.com/...` form and the
+// already-normalized `raw.githubusercontent.com/...` form, since
+// `normalizeSourceInput` may have rewritten the input before this runs.
+export function containerKindForSingleFileInput(source: string): ContainerKind {
+  if (/^https?:\/\/(www\.)?github\.com\//i.test(source)) return 'github';
+  if (/^https?:\/\/raw\.githubusercontent\.com\//i.test(source)) return 'github';
+  if (isHttpUrl(source)) return 'http';
+  return 'file';
 }
 
 // GitHub-specific source handling lives in `github-source.ts`. We
@@ -145,8 +183,8 @@ export { githubRawToBlobUrl } from './github-source.js';
 import { githubAuthHeaders } from './github-auth.js';
 
 // Leaf name (last path segment) of an http(s) URL — used as the
-// FoundScript.name / relativePath for an HTTP single-file source so
-// the options table shows "foo.user.js" rather than the whole URL.
+// FoundScript.name for HTTP manifest entries so the sources page
+// shows "foo.user.js" rather than the whole URL.
 function urlBaseName(source: string): string {
   const path = urlPathname(source);
   const slash = path.lastIndexOf('/');
@@ -407,25 +445,25 @@ export async function scanForUserScripts(
   depth = 0,
   prefix = '',
 ): Promise<FoundScript[]> {
-  // Source-kind dispatch. Order: manifest first, then single-file,
-  // then reject any HTTP URL with an unrecognised shape; everything
-  // else falls through to the local-directory listing. The first two
-  // branches are scheme-agnostic (raw path / file:// / http(s)://
-  // handled uniformly); local directory is the only branch that
-  // rejects HTTP, because there's no remote listing API.
+  // Source-kind dispatch. Container sources don't have a scannable
+  // backing store — refreshSource builds a synthetic scan from the
+  // existing scriptIds and never calls this for them.
+  // The remaining branches are scheme-agnostic (raw path / file:// /
+  // http(s):// handled uniformly); local directory is the only branch
+  // that rejects HTTP, because there's no remote listing API.
   if (depth === 0) {
+    if (isContainerSource(absolutePath)) {
+      throw new Error('container sources have no scan; refreshSource handles them directly');
+    }
     if (isManifestSource(absolutePath)) {
       return scanManifest(sourceCanonicalUrl(absolutePath));
-    }
-    if (isSingleFileSource(absolutePath)) {
-      return scanSingleFile(absolutePath);
     }
     if (isGithubDirSource(absolutePath)) {
       return scanGithubDir(absolutePath);
     }
     if (isHttpUrl(absolutePath)) {
       throw new Error(
-        `URL must end in .user.js (single script) or ${MANIFEST_FILENAME} (manifest)`,
+        `URL must point at a directory (use a github tree URL) or ${MANIFEST_FILENAME} (manifest); single .user.js URLs go into the matching container source`,
       );
     }
     // Local-directory only. Normalise file:// → raw path once so the
@@ -468,31 +506,6 @@ export async function scanForUserScripts(
 }
 
 // ---------- Per-source-kind scanners ----------
-
-// One-entry "scan" for a single-file source (any scheme). The two
-// sub-cases differ only in how the next refresh decides to skip
-// re-fetching: local sources record listing-reported size+mtime here
-// so the same Refresh-All skip applies, while HTTP sources rely on the
-// per-entry conditional GET (`If-None-Match` / `If-Modified-Since`)
-// and so don't need anything captured at scan time. Returning [] for
-// a vanished local file lets the refresh pipeline flag the prior
-// entry as `missing` (same treatment as a vanished file in a
-// directory source).
-async function scanSingleFile(source: string): Promise<FoundScript[]> {
-  if (isHttpUrl(source)) {
-    const name = urlBaseName(source) || source;
-    return [{ name, relativePath: name }];
-  }
-  const fsPath = sourceFsPath(source);
-  const dir = parentDir(fsPath);
-  const name = baseName(fsPath);
-  const stat = await statFromListing(dir, name);
-  if (!stat || stat.isDir) return [];
-  const found: FoundScript = { name, relativePath: name };
-  if (stat.size !== undefined) found.size = stat.size;
-  if (stat.mtime !== undefined) found.mtime = stat.mtime;
-  return [found];
-}
 
 // Scheme-aware text fetcher used for the manifest body. Per-entry
 // fetches (with their own per-scheme dispatch and conditional-GET
@@ -588,9 +601,9 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
 }
 
 // Build the fetchable URL for a specific scanned script. One branch
-// per source-kind (manifest, single-file, directory); each is
-// scheme-agnostic and works for raw paths, file:// URLs, and http(s)
-// URLs uniformly via `sourceCanonicalUrl` / `sourceFsPath`.
+// per source-kind (container, manifest, github-dir, directory); each
+// is scheme-agnostic and works for raw paths, file:// URLs, and
+// http(s) URLs uniformly via `sourceCanonicalUrl` / `sourceFsPath`.
 //
 // Why directory uses path-joining rather than URL resolution: the
 // `relativePath` for a local directory comes from Chrome's listing
@@ -600,11 +613,15 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
 // are user-authored and expected to already be properly URL-encoded
 // when they contain special characters.
 export function scriptFileUrl(sourcePath: string, relativePath: string): string {
+  if (isContainerSource(sourcePath)) {
+    // Container scripts carry the full URL/path the user added in
+    // their `relativePath`. Coerce raw fs paths to file:// URLs so the
+    // downstream fetcher sees a uniform URL form.
+    if (isHttpUrl(relativePath) || isFileUrl(relativePath)) return relativePath;
+    return pathToFileUrl(relativePath);
+  }
   if (isManifestSource(sourcePath)) {
     return resolveManifestEntryUrl(relativePath, sourceCanonicalUrl(sourcePath)).href;
-  }
-  if (isSingleFileSource(sourcePath)) {
-    return sourceCanonicalUrl(sourcePath);
   }
   if (isGithubDirSource(sourcePath)) {
     return githubDirScriptFileUrl(sourcePath, relativePath);
@@ -617,11 +634,11 @@ export function scriptFileUrl(sourcePath: string, relativePath: string): string 
 // distinct shapes:
 //   - file:// → bare fs path (more readable than the percent-encoded
 //     URL form).
-//   - github (any flavour — dir source, single-file source, or
-//     manifest source stored as a raw URL after add-time
-//     normalization) → `github.com/<o>/<r>/blob/<ref>/<path>` page
-//     URL. The raw URL is what we fetch from; the blob URL is what a
-//     human would open in a browser.
+//   - github (github-dir source, github-manifest source, or any github
+//     URL added as a script inside the github container) →
+//     `github.com/<o>/<r>/blob/<ref>/<path>` page URL. The raw URL is
+//     what we fetch from; the blob URL is what a human would open in
+//     a browser.
 //   - non-github http(s):// → URL verbatim.
 // This is what the viewer's Location row shows for every source kind
 // without each source-kind needing its own special case.
@@ -630,9 +647,9 @@ export function scriptAbsolutePath(sourcePath: string, relativePath: string): st
     return githubDirScriptDisplayUrl(sourcePath, relativePath);
   }
   const url = scriptFileUrl(sourcePath, relativePath);
-  // GitHub single-file / manifest sources are stored as raw URLs after
-  // `normalizeGithubInput`. Convert back to the github page URL so the
-  // Location row matches a github-dir source's display.
+  // GitHub manifest entries and github-container scripts are stored as
+  // raw URLs (after `normalizeGithubInput`). Convert back to the github
+  // page URL so the Location row matches a github-dir source's display.
   const blobUrl = githubRawToBlobUrl(url);
   if (blobUrl) return blobUrl;
   return isFileUrl(url) ? sourceFsPath(url) : url;

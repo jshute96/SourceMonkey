@@ -58,7 +58,15 @@ import {
   type LogLevel,
 } from './script-log.js';
 import { renderSiteIconInto } from './site-icon.js';
-import { isHttpUrl, isFileUrl, normalizeSourceInput } from './directories.js';
+import {
+  containerKindForSingleFileInput,
+  containerPath,
+  isContainerSource,
+  isHttpUrl,
+  isFileUrl,
+  isSingleFileInput,
+  normalizeSourceInput,
+} from './directories.js';
 import {
   installGithubAuthListener,
   loadGithubAuthToken,
@@ -387,8 +395,10 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   nameEl.className = 'source-display-name';
   appendWithSlashBreaks(nameEl, effectiveDisplayName(source));
   // Tooltip surfaces the raw stored path so the user can still see the
-  // canonical URL / fs path behind a shortened display name.
-  nameEl.title = source.path;
+  // canonical URL / fs path behind a shortened display name. Container
+  // sources have a synthetic identifier as their path, which would
+  // leak `container:file` etc. — skip the tooltip in that case.
+  if (!isContainerSource(source.path)) nameEl.title = source.path;
   heading.appendChild(nameEl);
   header.appendChild(heading);
 
@@ -421,9 +431,15 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
 async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promise<HTMLElement> {
   const data = await getSourceWithScripts(source.id);
   const scripts = data?.scripts ?? [];
+  const inContainer = isContainerSource(source.path);
 
   if (scripts.length === 0) {
-    return makeMessage('empty', 'No *.user.js files found.');
+    return makeMessage(
+      'empty',
+      inContainer
+        ? 'No scripts in this container yet — add one above.'
+        : 'No *.user.js files found.',
+    );
   }
 
   const allOn = scripts.every(isScriptEnabled);
@@ -450,16 +466,28 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
     th.textContent = label;
     headRow.appendChild(th);
   }
+  if (inContainer) {
+    // Trailing column carries the per-row remove button. Empty text
+    // would announce as "blank column header"; an aria-label tells
+    // screen-readers what it's for.
+    const actionsTh = document.createElement('th');
+    actionsTh.setAttribute('aria-label', 'Actions');
+    headRow.appendChild(actionsTh);
+  }
   thead.appendChild(headRow);
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  for (const script of scripts) tbody.appendChild(renderScriptRow(script, sourceOn));
+  for (const script of scripts) tbody.appendChild(renderScriptRow(script, sourceOn, inContainer));
   table.appendChild(tbody);
   return table;
 }
 
-function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowElement {
+function renderScriptRow(
+  script: StoredScript,
+  sourceOn: boolean,
+  inContainer: boolean,
+): HTMLTableRowElement {
   const scriptOn = isScriptEnabled(script);
 
   const tr = document.createElement('tr');
@@ -469,6 +497,7 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   // chrome.storage.session change without re-querying the store.
   tr.dataset.scriptStatus = script.status;
   tr.dataset.sourceId = script.sourceId;
+  if (inContainer) tr.dataset.inContainer = '1';
   if (script.errorMessage) tr.dataset.scriptError = script.errorMessage;
   if (!sourceOn || !scriptOn) tr.classList.add('disabled');
 
@@ -494,7 +523,14 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   nameCell.appendChild(iconSlot);
   renderSiteIconInto(iconSlot, script);
   const a = document.createElement('a');
-  a.textContent = script.relativePath;
+  // For container scripts the `relativePath` is the full URL/path —
+  // show just the basename in the filename column to keep rows
+  // scannable, and stash the full URL/path in the tooltip for
+  // verification. The viewer's Location row carries the URL in full.
+  a.textContent = inContainer
+    ? scriptBasename(script.relativePath)
+    : script.relativePath;
+  if (inContainer) a.title = script.relativePath;
   a.href = viewerUrl(script.id).toString();
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
@@ -517,7 +553,42 @@ function renderScriptRow(script: StoredScript, sourceOn: boolean): HTMLTableRowE
   paintStatusCell(statusCell, script.id, script.status, script.errorMessage);
   tr.appendChild(statusCell);
 
+  // Container rows always offer a remove button (every script inside a
+  // container was added one-by-one and can be taken back out the same
+  // way). Non-container rows rely on paintStatusCell's trash affordance
+  // for `missing` rows only.
+  if (inContainer) {
+    const actionCell = document.createElement('td');
+    actionCell.className = 'action-cell';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-script';
+    removeBtn.textContent = '🗑';
+    removeBtn.title = 'Remove this script';
+    removeBtn.setAttribute('aria-label', 'Remove this script');
+    removeBtn.addEventListener('click', () => {
+      void onRemoveScript(script.id, script.sourceId, removeBtn);
+    });
+    actionCell.appendChild(removeBtn);
+    tr.appendChild(actionCell);
+  }
+
   return tr;
+}
+
+// Last path segment of a URL or absolute path; falls back to the
+// whole string when nothing parses. Used to render container-script
+// rows without burying the page in URLs.
+function scriptBasename(urlOrPath: string): string {
+  try {
+    const u = new URL(urlOrPath);
+    const slash = u.pathname.lastIndexOf('/');
+    const last = slash < 0 ? u.pathname : u.pathname.slice(slash + 1);
+    try { return decodeURIComponent(last) || urlOrPath; } catch { return last || urlOrPath; }
+  } catch {
+    const slash = urlOrPath.lastIndexOf('/');
+    return slash < 0 ? urlOrPath : urlOrPath.slice(slash + 1);
+  }
 }
 
 async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButtonElement): Promise<void> {
@@ -588,33 +659,63 @@ async function onAddDirectory(rawPath: string): Promise<boolean> {
       showAddError(err instanceof Error ? err.message : String(err));
       return false;
     }
-    const created = await addSource(stored);
+    const result = await addSource(stored);
     addInput.value = '';
-    if (!created) {
-      // Already registered: find the existing source by its stored
-      // (normalized) path so a deep-link with a duplicate doesn't
-      // silently scroll without explanation.
-      const existing = (await getSources()).find((s) => s.path === stored);
+    if (!result) {
+      // Duplicate: either the source path is already registered, or
+      // (for a single-file input) the matching container already
+      // contains this URL/path. Surface the message and jump to
+      // whichever section owns it.
+      const sources = await getSources();
+      const existing = findDuplicateOwner(stored, sources)
+        ?? sources.find((s) => s.path === stored);
       if (existing) {
-        showAddError('This source is already registered.');
+        showAddError(
+          isContainerSource(existing.path)
+            ? 'This script is already in its container.'
+            : 'This source is already registered.',
+        );
         jumpToSource(existing.id);
       }
       return true;
     }
-    // refreshSource ran inside addSource, but addSource returns the
-    // seed row. Re-read so we get the post-refresh scriptIds (the
-    // section render queries getSourceWithScripts anyway, but reading
-    // the latest source row keeps the StoredSource we pass in sync).
-    const latest = (await getSource(created.id)) ?? created;
-    removeEmptyPlaceholder();
+    // refreshSource ran inside addSource; re-read the source row so
+    // the render sees post-refresh scriptIds in sync with storage.
+    const latest = (await getSource(result.source.id)) ?? result.source;
     await refreshLogIds();
-    directoriesEl.appendChild(await renderSourceSection(latest));
+    if (result.kind === 'existingContainer') {
+      // Add into an existing container — re-render that section in
+      // place to surface the new row without disturbing siblings.
+      const section = findSection(latest.id);
+      const fresh = await renderSourceSection(latest);
+      if (section) section.replaceWith(fresh);
+      else directoriesEl.appendChild(fresh);
+    } else {
+      removeEmptyPlaceholder();
+      directoriesEl.appendChild(await renderSourceSection(latest));
+    }
     refreshMoveButtons();
-    jumpToSource(created.id);
+    jumpToSource(latest.id);
     return true;
   } finally {
     setAddFormBusy(false);
   }
+}
+
+// For a duplicate add, find the section that already owns this
+// input. Single-file inputs route into a container, so the duplicate
+// is owned by the container of the matching kind; everything else
+// matches by stored source path. Returns the source row (or
+// undefined when nothing matches — caller surfaces no jump).
+function findDuplicateOwner(
+  normalizedInput: string,
+  sources: readonly StoredSource[],
+): StoredSource | undefined {
+  if (isSingleFileInput(normalizedInput)) {
+    const kind = containerKindForSingleFileInput(normalizedInput);
+    return sources.find((s) => s.path === containerPath(kind));
+  }
+  return sources.find((s) => s.path === normalizedInput);
 }
 
 // Accept three forms: an http(s):// URL, a file:// URL, or an

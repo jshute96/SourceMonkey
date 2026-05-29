@@ -44,7 +44,12 @@
       .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
       .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
       .script-table tbody tr:last-child td { border-bottom: none; }
-      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell { white-space: nowrap; width: 1%; }
+      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell { white-space: nowrap; width: 1%; }
+      /* Container-source action column: the per-row remove button.
+         Right-aligned so the trash icon hugs the table edge regardless
+         of how narrow / wide the filename column wants to be. */
+      .script-table td.action-cell { text-align: right; padding-left: 0.2em; }
+      .script-table th:last-child { width: 1%; }
       .script-table td.toggle-cell { padding-right: 0.2em; }
       /* When a source is off, its whole section dims; when a script is off, just the row dims.
          The toggle itself stays at full opacity so users can flip it back. */

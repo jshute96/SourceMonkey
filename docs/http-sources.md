@@ -9,8 +9,11 @@ by the [script store](storage.md). Companion to
 
 ## What you can point at
 
-- An **http(s) URL ending in `.user.js`** → fetched as a single-script
-  source (mirrors the local single-file mode).
+- An **http(s) URL ending in `.user.js`** → folded into the matching
+  container source (`Scripts from web` or `Scripts from GitHub` —
+  see [storage.md](storage.md#container-sources)). The script is
+  added to the container's `scriptIds` list rather than minting its
+  own source row.
 - **Anything whose pathname's basename is `script_manifest.json`** →
   treated as a **manifest** that lists script URLs. The manifest itself
   can live at:
@@ -24,12 +27,11 @@ name we recognise.
 
 The URL's *pathname* drives the basename test, so query strings and
 fragments don't break detection (`…/foo.user.js?v=2` still classifies
-as a single-file source; `…/script_manifest.json?token=…` still
+as a single-file URL; `…/script_manifest.json?token=…` still
 classifies as a manifest).
 
-Anything else (an http URL with no recognised suffix, etc.) is
-rejected with `URL must end in .user.js (single script) or
-script_manifest.json (manifest)`.
+Other http URLs (no recognised suffix) are rejected with a message
+that points at the supported shapes.
 
 ## GitHub URLs
 
@@ -39,8 +41,10 @@ recognises three shapes:
 - **A single file**: `https://github.com/<o>/<r>/blob/<ref>/<path>`
   whose path ends in `.user.js`, or whose basename is
   `script_manifest.json`.
-  - Rewritten to its `raw.githubusercontent.com` counterpart at add-source
-    time and stored as a regular HTTP single-file / manifest source.
+  - Rewritten to its `raw.githubusercontent.com` counterpart at
+    add-source time. A `.user.js` URL is folded into the
+    `Scripts from GitHub` container; a `script_manifest.json` URL is
+    stored as a regular HTTP manifest source.
   - Why: the `github.com/.../blob/...` URL serves an HTML rendering, not
     the raw bytes.
   - The reverse `githubRawToBlobUrl` (in `github-source.ts`) converts
@@ -266,8 +270,9 @@ source row is tracked in `TODO.md`.
 | Source kind            | `relativePath` (display + identity)    | `fileUrl` (what gets fetched)                       |
 |------------------------|----------------------------------------|-----------------------------------------------------|
 | Local directory        | path relative to the root              | `pathToFileUrl(join(root, rel))`                    |
-| Local single-file      | basename                               | `pathToFileUrl(sourcePath)`                         |
-| HTTP single-file       | basename of URL pathname               | `sourcePath` (the URL itself)                       |
+| Container (file)       | full URL or absolute fs path           | `relativePath` (URL-coerced via `pathToFileUrl`)    |
+| Container (http)       | full http(s) URL                       | `relativePath` (URL passes through)                 |
+| Container (github)     | full raw.githubusercontent.com URL     | `relativePath` (URL passes through)                 |
 | Manifest entry         | raw manifest entry (relative or abs)   | `resolveManifestEntryUrl(rel, sourceCanonicalUrl(manifest)).href` |
 | GitHub directory entry | path relative to the source dir        | `https://raw.githubusercontent.com/<o>/<r>/<ref>/<dir>/<rel>`     |
 
@@ -282,11 +287,19 @@ Source-kind classifiers (all scheme-agnostic — they classify by the
 input's pathname suffix, regardless of `http://`, `file://`, or raw
 path form):
 
-- `isSingleFileSource(s)` — pathname ends in `.user.js`.
+- `isSingleFileInput(s)` — pathname ends in `.user.js`. Gates the
+  add-source dispatch that routes the input into the matching
+  container source.
 - `isManifestSource(s)` — pathname's basename is `script_manifest.json`
   (re-exported as `MANIFEST_FILENAME`). Arbitrary `.json` files are
   rejected.
 - `isGithubDirSource(s)` — github.com URL pointing at a directory.
+- `isContainerSource(s)` / `containerKind(s)` / `containerPath(kind)`
+  — recognise / extract / build the synthetic `container:<kind>`
+  identifiers used by the three container source rows.
+- `containerKindForSingleFileInput(s)` — classify a single-file input
+  into `'file' | 'http' | 'github'` so `addSource` can pick the right
+  container.
 
 Scheme classifiers (used at the rare call sites that genuinely care):
 

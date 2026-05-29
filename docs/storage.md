@@ -29,13 +29,19 @@ Key spaces in `chrome.storage.local`:
 
 - `id` — UUID.
 - `path` — canonical source location the user added. One of:
-  - absolute filesystem path or `file://` URL (directory or
-    `.user.js` file; see [file-access.md](file-access.md#single-file-paths))
-  - `http(s)://` URL to a `.user.js` file or a
-    `script_manifest.json` (see [http-sources.md](http-sources.md))
+  - absolute filesystem path or `file://` URL pointing at a directory
+    of `.user.js` files (recursive scan; see
+    [file-access.md](file-access.md)).
+  - `http(s)://` URL to a `script_manifest.json` (see
+    [http-sources.md](http-sources.md)).
   - `github.com/<o>/<r>/tree/<ref>(/<path>?)` URL for a directory
     source (blob / file URLs are rewritten to `raw.githubusercontent.com`
     at add time).
+  - One of three **container** identifiers — `container:file`,
+    `container:http`, `container:github` — used by the synthetic
+    "Scripts from local disk / web / GitHub" sources that aggregate
+    individually added `.user.js` URLs and paths. Container sources
+    have no scan step; their `scriptIds` list is the source of truth.
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
@@ -55,6 +61,10 @@ Key spaces in `chrome.storage.local`:
 - `sourceId` — back-reference so the viewer can refresh without
   looking up the parent.
 - `relativePath`, `fileUrl` — identity + how to refetch.
+  - Directory/manifest/github-dir source: `relativePath` is the path
+    relative to the source root; `fileUrl` is the joined absolute URL.
+  - Container source: `relativePath` is the full URL or absolute path
+    the user added; `fileUrl` is its canonical URL form.
 - `status` — `'ok' | 'invalid' | 'missing'`.
 - `errorMessage?` — set when `status === 'invalid'`. Cleared on the
   transition to `missing` (the row's body is preserved, but the prior
@@ -199,16 +209,54 @@ appropriate-for-scheme cheap check couldn't prove it.
   fetch are still recorded — they let the next refresh take the cheap
   pre-fetch path even though this one didn't.
 
+## Container sources
+
+Container sources aggregate individually-added scripts of one kind:
+
+- `container:file` — "Scripts from local disk"
+- `container:http` — "Scripts from web"
+- `container:github` — "Scripts from GitHub"
+
+Properties:
+
+- Auto-created the first time the user adds a single-file URL/path of
+  the matching kind. Never created up-front.
+- Reused on subsequent single-file adds of the same kind.
+- Have no scan step. `scriptIds` is the explicit source of truth; the
+  refresh pipeline builds a synthetic scan from those rows and runs
+  the per-entry fetch path against each.
+- Survive `removeScript` of their last child (the empty container
+  stays until the user clicks Remove on the section).
+- Per-script duplicate detection compares the new URL/path against
+  every `relativePath` already in the container — adding the same URL
+  twice returns null from `addSource`.
+
+The dispatch rule sits in `addSource`:
+
+- input passes `isSingleFileInput` → folded into container by kind
+  (`containerKindForSingleFileInput` classifies `https://github.com/*`
+  and `raw.githubusercontent.com/*` as `github`, anything else
+  http(s) as `http`, raw paths / `file://` as `file`).
+- otherwise → directory / manifest / github-dir source (existing
+  behavior).
+
 ## Load / refresh pipeline
 
 Every load path goes through the same pipeline:
 
-1. List the source via `scanForUserScripts`
-   (see [file-access.md](file-access.md) for local directories /
-   single files, and [http-sources.md](http-sources.md) for HTTP
-   single-files and manifests of any scheme). Local-directory scans
-   carry each file's `size` and `mtime`; URL-style scans (HTTP
-   single-file, manifest entries) don't have a pre-fetch stat step.
+1. List the source:
+   - **Container sources** skip `scanForUserScripts` entirely. The
+     synthetic scan is built from the existing `scriptIds`, one entry
+     per child with `relativePath` set to the child's URL/path. No
+     size/mtime hints are carried, so the per-entry skip strategy in
+     `fetchOrSkipInParallel` (conditional GET for HTTP, always-fetch
+     for file://) is what decides whether to re-download each child.
+   - **All other sources** call `scanForUserScripts` (see
+     [file-access.md](file-access.md) for local directories and
+     [http-sources.md](http-sources.md) for HTTP manifests of any
+     scheme). Local-directory scans carry each file's `size` and
+     `mtime`; URL-style scans (manifest entries) don't have a
+     pre-fetch stat step.
 2. For each scanned file, decide whether to fetch — *per resolved
    entry URL*, not per source (so a manifest can mix schemes):
    - **file:// skip** (emit `{ unchanged: true }`) if the prior
@@ -243,6 +291,9 @@ Every load path goes through the same pipeline:
      - **Manifest sources** — drop the row entirely. The manifest
        is the user's source of truth; removing an entry is an
        explicit removal, not a "maybe gone" signal.
+     - **Container sources** — vanished is never observed, because
+       the synthetic scan is built from the existing scripts. Per-
+       script removal goes through `removeScript` instead.
 5. Persist the source row + every script row in a single
    `chrome.storage.local.set` call.
 
@@ -262,8 +313,18 @@ Every load path goes through the same pipeline:
 
 ### Entry points
 
-- `addSource(path)` — create an empty source row, then run
-  `refreshSource`. Returns `null` if the path is already registered.
+- `addSource(path)` — dispatches by input shape:
+  - **single-file `.user.js`** input (URL or path) → folded into the
+    matching container source (created if absent); the new script row
+    is seeded and refreshed. Returns
+    `{kind: 'newSource' | 'existingContainer', source, scriptId?}` to
+    tell the caller whether to render a new section or replace an
+    existing one. Returns `null` if the URL/path is already a script
+    in that container.
+  - **everything else** (directory / manifest / github-dir) →
+    create an empty source row, then run `refreshSource`. Returns
+    `{kind: 'newSource', source}`. Returns `null` if the source path
+    is already registered.
 - `refreshSource(id)` — full rescan + reload of one source
   (with the unchanged-file skip described above).
 - `refreshAllSources()` — runs `refreshSource` for every registered
@@ -276,7 +337,8 @@ Every load path goes through the same pipeline:
   is rewritten; per-source rows untouched.
 - `removeScript(id)` — drop a single script row and remove its ID
   from the parent source's `scriptIds`. Used by the sources page's
-  trash-can button on `'missing'` rows.
+  trash-can button on `'missing'` rows and (in container sources) on
+  every row.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildSource`
   pipeline as the source-level Refresh (so the two paths can't

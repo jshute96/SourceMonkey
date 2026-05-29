@@ -28,14 +28,16 @@
 // function's docstring for the rationale.
 
 import {
+  containerKindForSingleFileInput,
+  containerPath,
   fetchFileUrlText,
   fetchHttpText,
+  isContainerSource,
   isHttpUrl,
   isManifestSource,
-  isSingleFileSource,
+  isSingleFileInput,
   joinPath,
   normalizeSourceInput,
-  parentDir,
   scanForUserScripts,
   scriptFileUrl,
   sourceFsPath,
@@ -723,18 +725,46 @@ export async function getSource(id: string): Promise<StoredSource | undefined> {
   return await getRaw<StoredSource>(sourceKey(id));
 }
 
-// Register a brand-new source (local path or http(s) URL): mints a
-// UUID, persists an empty source row, then immediately runs a refresh
-// to populate the scripts. Returns null if a source with this path is
-// already registered.
+// Result of `addSource`. Three outcomes:
+//   - newSource: a brand-new source row was created (a directory /
+//     manifest / github-dir source, or a never-before-seen container
+//     auto-created for the first single-file add of its kind). The
+//     caller appends a fresh section to the DOM.
+//   - existingContainer: the input was a single-file URL/path added
+//     into a container that already existed. The caller re-renders
+//     that container's section in place.
+//   - null: the input was a duplicate (an already-registered source
+//     path, or a script URL/path already present in its container).
+//     The caller surfaces the duplicate message and jumps to the
+//     existing section.
+export type AddSourceResult =
+  | { kind: 'newSource'; source: StoredSource }
+  | { kind: 'existingContainer'; source: StoredSource; scriptId: string }
+  | null;
+
+// Register a new source from a raw user input. Dispatches by input
+// shape:
+//   - single-file `.user.js` URL/path → folded into the matching
+//     container source (created on demand if none exists). The script
+//     is added to the container's `scriptIds` and its initial fetch
+//     runs immediately so the table populates without a manual
+//     Refresh.
+//   - everything else (directory, manifest, github-dir URL) → mints a
+//     UUID, persists an empty source row, then refreshes to populate
+//     the scripts.
 //
 // `normalizeSourceInput` runs first so a github.com `/blob/.../foo.user.js`
 // (or `/blob/.../script_manifest.json`) URL gets rewritten to its raw
 // counterpart before we hit the duplicate check. The github blob URL
 // serves HTML, not raw bytes, so storing it verbatim would silently
 // load the page chrome instead of the script — see [docs/http-sources.md].
-export async function addSource(rawPath: string): Promise<StoredSource | null> {
+export async function addSource(rawPath: string): Promise<AddSourceResult> {
   const path = await normalizeSourceInput(rawPath);
+
+  if (isSingleFileInput(path)) {
+    return await addScriptToContainer(path);
+  }
+
   const sources = await getSources();
   if (sources.some((s) => s.path === path)) return null;
 
@@ -768,7 +798,73 @@ export async function addSource(rawPath: string): Promise<StoredSource | null> {
   if (refreshed) {
     await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
   }
-  return refreshed?.source ?? seed;
+  return { kind: 'newSource', source: refreshed?.source ?? seed };
+}
+
+// Add a single-file input to the matching container source. Creates
+// the container row if this is the first script of its kind. Returns
+// null if the URL/path is already registered as a script under its
+// container. The fetch runs as part of `refreshSource` so the new row
+// lands populated.
+async function addScriptToContainer(path: string): Promise<AddSourceResult> {
+  const kind = containerKindForSingleFileInput(path);
+  const cPath = containerPath(kind);
+  const sources = await getSources();
+  const existingContainer = sources.find((s) => s.path === cPath);
+  const isNew = !existingContainer;
+  if (existingContainer) {
+    // Each container script's `relativePath` is the full URL/path the
+    // user added; any prior row with the same value is a duplicate.
+    const existingScripts = await getMany(existingContainer.scriptIds.map(scriptKey));
+    for (const sid of existingContainer.scriptIds) {
+      const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
+      if (s?.relativePath === path) return null;
+    }
+  }
+
+  const now = Date.now();
+  const containerId = existingContainer?.id ?? crypto.randomUUID();
+  const scriptId = crypto.randomUUID();
+  const priorScriptIds = existingContainer?.scriptIds ?? [];
+  const nextContainer: StoredSource = existingContainer
+    ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
+    : {
+        id: containerId,
+        path: cPath,
+        lastRefreshedAt: 0,
+        scriptIds: [scriptId],
+        enabled: true,
+        displayName: inferDisplayName(cPath),
+      };
+  const seedScript = buildInitialInvalidEntry({
+    id: scriptId,
+    sourceId: containerId,
+    relativePath: path,
+    fileUrl: scriptFileUrl(cPath, path),
+    errorMessage: 'not loaded',
+    now,
+  });
+
+  // Single set call so a SW restart between writes can never leave a
+  // half-populated container — either the new script lands with its
+  // container's scriptIds pointing at it (and, for a new container,
+  // the sources index pointing at the container), or nothing does.
+  const toSet: Record<string, unknown> = {
+    [sourceKey(containerId)]: nextContainer,
+    [scriptKey(scriptId)]: seedScript,
+  };
+  if (isNew) {
+    toSet[SOURCES_INDEX_KEY] = [...sources.map((s) => s.id), containerId];
+  }
+  await chrome.storage.local.set(toSet);
+
+  const refreshed = await refreshSource(containerId);
+  if (refreshed) {
+    await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
+  }
+  const finalSource = refreshed?.source ?? nextContainer;
+  if (isNew) return { kind: 'newSource', source: finalSource };
+  return { kind: 'existingContainer', source: finalSource, scriptId };
 }
 
 async function emitInitialLoadLogIfBroken(script: StoredScript): Promise<void> {
@@ -905,10 +1001,19 @@ export async function refreshSource(
 
   let scan: { relativePath: string; size?: number; mtime?: number }[] = [];
   let scanError: string | undefined;
-  try {
-    scan = await scanForUserScripts(source.path);
-  } catch (err) {
-    scanError = describeError(err);
+  if (isContainerSource(source.path)) {
+    // Container sources have no scan step — their child scripts are
+    // explicit. Build a synthetic scan from the existing rows so the
+    // rest of the pipeline can refetch each URL/path. No size/mtime
+    // hints; HTTP entries skip via conditional GET, file:// entries
+    // always refetch.
+    scan = existingScripts.map((s) => ({ relativePath: s.relativePath }));
+  } else {
+    try {
+      scan = await scanForUserScripts(source.path);
+    } catch (err) {
+      scanError = describeError(err);
+    }
   }
 
   const now = Date.now();
@@ -998,32 +1103,28 @@ export async function refreshScript(
   const sourceRow = await getRaw<StoredSource>(sourceKey(prior.sourceId));
   if (!sourceRow) return null;
 
-  // Build a single-entry scan. Only local directory / single-file
-  // sources support the targeted size+mtime listing lookup; HTTP and
-  // manifest sources rely on the per-entry skip strategy inside
+  // Build a single-entry scan. Only local-directory sources support
+  // the targeted size+mtime listing lookup; HTTP, manifest, and
+  // container sources rely on the per-entry skip strategy inside
   // fetchOrSkipInParallel (conditional GETs for HTTP entries, always-
-  // fetch for file:// entries reached through a manifest).
+  // fetch for file:// entries reached through a manifest or container).
   const scan: { relativePath: string; size?: number; mtime?: number }[] = [
     { relativePath: prior.relativePath },
   ];
   const usesListingStat =
-    !isHttpUrl(sourceRow.path) && !isManifestSource(sourceRow.path);
+    !isHttpUrl(sourceRow.path) &&
+    !isManifestSource(sourceRow.path) &&
+    !isContainerSource(sourceRow.path);
   if (usesListingStat) {
     const slash = prior.relativePath.lastIndexOf('/');
     const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
     const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
-    // For a single-file source, the "scan directory" is the file's parent
-    // — sourceRow.path itself points at the file. For a directory source,
-    // it's the source path plus any subDir prefix from the relativePath.
-    // Normalise any file:// URL form back to a raw fs path before doing
-    // path arithmetic so parentDir/joinPath behave correctly. The
-    // local-vs-HTTP gate already happened above via `usesListingStat`,
-    // so isSingleFileSource here distinguishes single-file from
-    // directory within the local case.
+    // The "scan directory" is the source path plus any subDir prefix
+    // from the relativePath. Normalise any file:// URL form back to a
+    // raw fs path before doing path arithmetic so parentDir/joinPath
+    // behave correctly.
     const fsRoot = sourceFsPath(sourceRow.path);
-    const dirAbs = isSingleFileSource(sourceRow.path)
-      ? parentDir(fsRoot)
-      : (subDir ? joinPath(fsRoot, subDir) : fsRoot);
+    const dirAbs = subDir ? joinPath(fsRoot, subDir) : fsRoot;
     try {
       const stat = await statFromListing(dirAbs, fileName);
       if (stat) {

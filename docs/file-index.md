@@ -50,14 +50,14 @@ One-line descriptions of every source file, grouped by directory.
 | `src/options.ts` | Options page controller — hydrates the debug-logging checkbox + GitHub-token controls (save / clear / reveal) and mirrors writes to `chrome.storage.local` |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, tab strip, highlighted code box, log pane |
 | `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl + tabbed code view (main script + one tab per `@require` + Log tab) |
-| `src/directories.ts` | Source I/O: file:// + http(s) fetch (conditional GETs), listing parser, recursive scanner, JSON manifest parser, URL helpers; dispatches github sources to `github-source.ts` |
+| `src/directories.ts` | Source I/O + classifiers (single-file / manifest / github-dir / container), file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
 | `src/github-source.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
-| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus the load/refresh/validate pipeline, parse-time diagnostics (startup logs), size+mtime skip, refreshAllSources |
+| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-source dispatch in addSource, parse-time diagnostics, refreshAllSources |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
 | `src/script-display.ts` | Pure size + status display helpers (`formatBytes`, `formatScriptSize`, `effectiveScriptStatus`, `formatScriptStatusLabel`) shared by the sources page + viewer |
-| `src/source-display.ts` | Source-display helpers: type classification, short-name inference, manifest flag, anchor id, plus a small DOM helper for the colored bubble `<a>` |
+| `src/source-display.ts` | Source-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
 | `src/stack-link.ts` | Pure `parseStackRefs(text)` — splits a log message into plain-text + `{url, line, col}` ref runs for any `<scheme>://…:L:C` URL |
@@ -112,6 +112,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
+| `tests/e2e/container-sources.spec.ts` | Container-source lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
 | `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` header override, relative-path resolution, two-tier (path vs origin) cache |
@@ -193,7 +194,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
 | `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, sources-page render |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
-| `docs/http-sources.md` | `http(s)://` single-script sources + scheme-agnostic JSON manifests (local + URL), conditional GETs |
+| `docs/http-sources.md` | `http(s)://` script and manifest sources, container routing, GitHub handling, conditional GETs |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |

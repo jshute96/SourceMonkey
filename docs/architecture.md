@@ -37,8 +37,9 @@ details live in the topic-specific docs linked below.
   and surfaces per-tab match counts via the action badge. See
   [matching.md](matching.md).
 - **Sources page** (`src/sources.html` + `src/sources.ts`) — manage
-  source directories and inspect per-script status. See
-  [storage.md](storage.md).
+  sources (directory, manifest, github-dir, or one of the three
+  per-kind containers that hold individually added `.user.js` URLs /
+  paths) and inspect per-script status. See [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
   settings page: debug-logging toggle and GitHub auth token entry.
   Reached via the Options link at the top of the sources page.

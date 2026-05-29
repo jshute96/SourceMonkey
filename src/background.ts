@@ -81,6 +81,7 @@ import {
   removeSource,
   setScriptEnabled,
   setSourceEnabled,
+  type AddSourceResult,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
@@ -159,7 +160,7 @@ interface SourceMonkeyApi {
   // entry, so neither web pages nor other extensions can reach the SW
   // to call these. Practically callable only from DevTools on an
   // extension page or from Playwright's `serviceWorker.evaluate`.
-  addSource: (path: string) => Promise<StoredSource | null>;
+  addSource: (path: string) => Promise<AddSourceResult>;
   removeSource: (id: string) => Promise<void>;
   getSources: () => Promise<StoredSource[]>;
   getSourceWithScripts: (id: string) => Promise<{ source: StoredSource; scripts: StoredScript[] } | null>;

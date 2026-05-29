@@ -10,14 +10,19 @@
 //   - file   : raw filesystem path or file:// URL
 //
 // Manifest is an orthogonal flag (`-manifest` suffix on the bubble
-// label) that mirrors `isManifestSource`.
+// label) that mirrors `isManifestSource`. Container sources (whose
+// path is `container:<kind>`) classify to their kind and never carry
+// the manifest suffix.
 
 import {
+  containerKind,
   githubRawToBlobUrl,
+  isContainerSource,
   isFileUrl,
   isHttpUrl,
   pathToFileUrl,
   isManifestSource,
+  type ContainerKind,
 } from './directories.js';
 import { MANIFEST_FILENAME } from './source-scan.js';
 import type { StoredSource } from './script-store.js';
@@ -31,16 +36,32 @@ const RAW_GITHUB_HOST_RE = /^https?:\/\/raw\.githubusercontent\.com\//i;
 // depends on the source path. GitHub recognition is intentionally broad
 // — it covers both the canonical browse URL (`github.com/.../tree/...`)
 // and the raw-content host (`raw.githubusercontent.com/...`) so any
-// scheme of GitHub source reads as `github` in the UI.
+// scheme of GitHub source reads as `github` in the UI. Container
+// sources project to their own container kind so the bubble matches
+// the scripts they hold.
 export function inferSourceType(path: string): SourceTypeKey {
+  const ck = containerKind(path);
+  if (ck) return ck;
   if (GITHUB_HOST_RE.test(path) || RAW_GITHUB_HOST_RE.test(path)) return 'github';
   if (isHttpUrl(path)) return 'http';
   return 'file';
 }
 
+// Fixed human-readable titles for the three container sources. These
+// drive both the displayName backfill and the heading the sources
+// page renders for each container.
+export const CONTAINER_DISPLAY_NAMES: Record<ContainerKind, string> = {
+  file: 'Scripts from local disk',
+  http: 'Scripts from web',
+  github: 'Scripts from GitHub',
+};
+
 // True for manifest sources of any scheme. Thin wrapper so callers
-// don't have to import `directories` just for this.
+// don't have to import `directories` just for this. Container sources
+// can never be manifests — their `path` is the synthetic
+// `container:<kind>` identifier.
 export function sourceHasManifest(path: string): boolean {
+  if (isContainerSource(path)) return false;
   return isManifestSource(path);
 }
 
@@ -53,15 +74,17 @@ export function sourceBubbleKey(path: string): string {
 }
 
 // Openable URL for a source — the link target the bubble uses. For
-// github raw URLs (single-file or manifest sources, post-add-time
-// normalization) we return the `github.com/.../blob/...` page URL
-// instead, since the bubble exists for humans to click — the raw
-// bytes are only used internally for fetching. All other http(s) /
-// file:// URLs pass through; raw filesystem paths become file:// URLs
-// so the anchor has a valid href (Chromium typically refuses to
-// navigate to file:// from a chrome-extension page, but the URL is
-// still readable + copyable).
-export function sourceClickUrl(path: string): string {
+// github raw URLs (manifest sources, post-add-time normalization) we
+// return the `github.com/.../blob/...` page URL instead, since the
+// bubble exists for humans to click — the raw bytes are only used
+// internally for fetching. All other http(s) / file:// URLs pass
+// through; raw filesystem paths become file:// URLs so the anchor has
+// a valid href (Chromium typically refuses to navigate to file:// from
+// a chrome-extension page, but the URL is still readable + copyable).
+// Container sources have no underlying URL — return null and let
+// callers render the bubble as a non-link.
+export function sourceClickUrl(path: string): string | null {
+  if (isContainerSource(path)) return null;
   if (isHttpUrl(path)) {
     return githubRawToBlobUrl(path) ?? path;
   }
@@ -84,6 +107,8 @@ export function sourceClickUrl(path: string): string {
 // short enough for the sources-page heading, and a reasonable seed for
 // a future user-renamed displayName.
 export function inferDisplayName(path: string): string {
+  const ck = containerKind(path);
+  if (ck) return CONTAINER_DISPLAY_NAMES[ck];
   let s = path.trim();
 
   // Strip the fragment + query first so trailing noise can't leak into
@@ -189,16 +214,26 @@ export function sourceAnchorId(sourceId: string): string {
   return `source-${sourceId}`;
 }
 
-// Construct the colored type-bubble `<a>` for a source. Shared by
-// the sources page (heading) and the userscript viewer (Source row)
-// so the markup, classes, tooltip, and anchor target all stay in
-// lockstep across both views.
-export function makeSourceTypeBubble(path: string): HTMLAnchorElement {
+// Construct the colored type-bubble for a source. Shared by the
+// sources page (heading) and the userscript viewer (Source row) so the
+// markup, classes, tooltip, and anchor target all stay in lockstep
+// across both views. Returns an `<a>` for sources backed by a real
+// URL/path, and a `<span>` for container sources (which have no
+// underlying URL to link to).
+export function makeSourceTypeBubble(path: string): HTMLElement {
   const key = sourceBubbleKey(path);
+  const href = sourceClickUrl(path);
+  if (href === null) {
+    const span = document.createElement('span');
+    span.className = `source-type-bubble bubble-${key}`;
+    span.textContent = key;
+    span.title = `Container: ${key}`;
+    return span;
+  }
   const a = document.createElement('a');
   a.className = `source-type-bubble bubble-${key}`;
   a.textContent = key;
-  a.href = sourceClickUrl(path);
+  a.href = href;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
   a.title = `Open source: ${path}`;

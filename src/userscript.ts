@@ -37,7 +37,7 @@ import {
   getValues,
   joinFullSource,
 } from './userscript-header.js';
-import { isFileUrl, scriptAbsolutePath } from './directories.js';
+import { isContainerSource, isFileUrl, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -1068,8 +1068,9 @@ function sourceCell(source: StoredSource): Node {
   appendWithSlashBreaks(nameLink, effectiveDisplayName(source));
   nameLink.href = chrome.runtime.getURL(`sources.html#${sourceAnchorId(source.id)}`);
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
-  // the section on the sources page.
-  nameLink.title = source.path;
+  // the section on the sources page. Container sources have a
+  // synthetic `container:<kind>` path which would leak — skip then.
+  if (!isContainerSource(source.path)) nameLink.title = source.path;
   cell.appendChild(nameLink);
 
   return cell;

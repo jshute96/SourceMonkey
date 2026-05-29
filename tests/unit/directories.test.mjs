@@ -20,7 +20,11 @@ import {
   scriptAbsolutePath,
   isHttpUrl,
   isFileUrl,
-  isSingleFileSource,
+  isSingleFileInput,
+  isContainerSource,
+  containerKind,
+  containerPath,
+  containerKindForSingleFileInput,
   isManifestSource,
   sourceCanonicalUrl,
   sourceFsPath,
@@ -97,21 +101,61 @@ test('scriptFileUrl joins dir + relative and encodes the result', () => {
   );
 });
 
-test('isSingleFileSource matches *.user.js across all schemes', () => {
-  // Scheme-agnostic companion to isManifestSource. Local paths,
-  // file:// URLs, and http(s) URLs all classify the same — callers
-  // that genuinely care about scheme combine with isHttpUrl.
-  assert.equal(isSingleFileSource('/home/me/foo.user.js'), true);
-  assert.equal(isSingleFileSource('file:///home/me/foo.user.js'), true);
-  assert.equal(isSingleFileSource('file:///home/me/my%20scripts/foo.user.js'), true);
-  assert.equal(isSingleFileSource('https://x/foo.user.js'), true);
-  assert.equal(isSingleFileSource('https://x/foo.user.js?v=2'), true);
-  assert.equal(isSingleFileSource('http://x/foo.user.js#frag'), true);
+test('isSingleFileInput matches *.user.js across all schemes', () => {
+  // Single-file inputs no longer become top-level sources — they get
+  // folded into the matching container source. This predicate is the
+  // gate that routes addSource to the container path.
+  assert.equal(isSingleFileInput('/home/me/foo.user.js'), true);
+  assert.equal(isSingleFileInput('file:///home/me/foo.user.js'), true);
+  assert.equal(isSingleFileInput('file:///home/me/my%20scripts/foo.user.js'), true);
+  assert.equal(isSingleFileInput('https://x/foo.user.js'), true);
+  assert.equal(isSingleFileInput('https://x/foo.user.js?v=2'), true);
+  assert.equal(isSingleFileInput('http://x/foo.user.js#frag'), true);
   // Non-matches
-  assert.equal(isSingleFileSource('/home/me/scripts'), false);
-  assert.equal(isSingleFileSource('/home/me/notes.txt'), false);
-  assert.equal(isSingleFileSource('https://x/script_manifest.json'), false);
-  assert.equal(isSingleFileSource('file:///home/me/scripts'), false);
+  assert.equal(isSingleFileInput('/home/me/scripts'), false);
+  assert.equal(isSingleFileInput('/home/me/notes.txt'), false);
+  assert.equal(isSingleFileInput('https://x/script_manifest.json'), false);
+  assert.equal(isSingleFileInput('file:///home/me/scripts'), false);
+});
+
+test('container helpers classify the three container kinds', () => {
+  assert.equal(containerPath('file'), 'container:file');
+  assert.equal(containerPath('http'), 'container:http');
+  assert.equal(containerPath('github'), 'container:github');
+  assert.equal(isContainerSource('container:file'), true);
+  assert.equal(isContainerSource('container:http'), true);
+  assert.equal(isContainerSource('container:github'), true);
+  assert.equal(isContainerSource('/home/me/scripts'), false);
+  assert.equal(isContainerSource('https://x/foo.user.js'), false);
+  assert.equal(containerKind('container:file'), 'file');
+  assert.equal(containerKind('container:github'), 'github');
+  assert.equal(containerKind('/home/me/scripts'), null);
+});
+
+test('containerKindForSingleFileInput routes single-file inputs by host', () => {
+  // GitHub URLs (both human and raw forms) → github container.
+  assert.equal(
+    containerKindForSingleFileInput('https://github.com/o/r/blob/main/foo.user.js'),
+    'github',
+  );
+  assert.equal(
+    containerKindForSingleFileInput('https://raw.githubusercontent.com/o/r/main/foo.user.js'),
+    'github',
+  );
+  // Any other http(s) → http container.
+  assert.equal(
+    containerKindForSingleFileInput('https://example.com/foo.user.js'),
+    'http',
+  );
+  // file:// URLs and raw fs paths → file container.
+  assert.equal(
+    containerKindForSingleFileInput('file:///home/me/foo.user.js'),
+    'file',
+  );
+  assert.equal(
+    containerKindForSingleFileInput('/home/me/foo.user.js'),
+    'file',
+  );
 });
 
 test('sourceFsPath strips file:// and percent-decodes the path', () => {
@@ -127,29 +171,26 @@ test('sourceFsPath strips file:// and percent-decodes the path', () => {
   assert.equal(sourceFsPath('https://x/foo.user.js'), 'https://x/foo.user.js');
 });
 
-test('scriptFileUrl round-trips a file:// single-file source through pathToFileUrl', () => {
-  // The user's original bug report: adding a file:// .user.js source
-  // was failing because parentDir/pathToFileUrl mangled the URL form.
-  // After the fix, scriptFileUrl converts to a raw path internally
-  // and emits the proper file:// URL.
+test('scriptFileUrl resolves container scripts to their URL/path form', () => {
+  // Container scripts carry the full URL/path the user added as their
+  // relativePath. scriptFileUrl returns the URL form so the fetcher
+  // can hit it directly.
   assert.equal(
-    scriptFileUrl('file:///home/me/foo.user.js', 'foo.user.js'),
+    scriptFileUrl('container:http', 'https://example.com/foo.user.js'),
+    'https://example.com/foo.user.js',
+  );
+  assert.equal(
+    scriptFileUrl('container:file', 'file:///home/me/foo.user.js'),
     'file:///home/me/foo.user.js',
   );
-  // Percent-encoded names round-trip via decode-then-re-encode.
+  // Raw fs paths get URL-encoded.
   assert.equal(
-    scriptFileUrl('file:///home/me/my%20scripts/foo%20bar.user.js', 'foo bar.user.js'),
+    scriptFileUrl('container:file', '/home/me/my scripts/foo bar.user.js'),
     'file:///home/me/my%20scripts/foo%20bar.user.js',
   );
 });
 
-test('scriptAbsolutePath returns the bare fs path for file:// local sources', () => {
-  // Display in the viewer's Location row: a percent-encoded URL is
-  // harder to read than the on-disk path, so we show the path.
-  assert.equal(
-    scriptAbsolutePath('file:///home/me/foo.user.js', 'foo.user.js'),
-    '/home/me/foo.user.js',
-  );
+test('scriptAbsolutePath returns the bare fs path for file:// local directory sources', () => {
   assert.equal(
     scriptAbsolutePath('file:///home/me/scripts', 'sub/foo.user.js'),
     '/home/me/scripts/sub/foo.user.js',
@@ -164,26 +205,17 @@ test('parentDir and baseName split an absolute path', () => {
   assert.equal(baseName('/foo.user.js'), 'foo.user.js');
 });
 
-test('scriptFileUrl uses the source path verbatim for a single-file source', () => {
-  // relativePath equals the basename, so the directory-style join
-  // would double the filename — the single-file branch returns the
-  // source path's URL directly.
+test('scriptAbsolutePath returns the resolved fs path for a container file script', () => {
+  // Container scripts are added one at a time via the sources page;
+  // scriptAbsolutePath returns the bare on-disk path so the viewer's
+  // Location row is readable.
   assert.equal(
-    scriptFileUrl('/home/me/foo bar.user.js', 'foo bar.user.js'),
-    'file:///home/me/foo%20bar.user.js',
-  );
-});
-
-test('scriptAbsolutePath returns the source path for a single-file source', () => {
-  // Shared by scriptFileUrl and the viewer's Location row so both
-  // representations of the file's location stay in lock-step.
-  assert.equal(
-    scriptAbsolutePath('/home/me/foo.user.js', 'foo.user.js'),
+    scriptAbsolutePath('container:file', '/home/me/foo.user.js'),
     '/home/me/foo.user.js',
   );
   assert.equal(
-    scriptAbsolutePath('/home/me/scripts', 'sub/foo.user.js'),
-    '/home/me/scripts/sub/foo.user.js',
+    scriptAbsolutePath('container:file', 'file:///home/me/foo.user.js'),
+    '/home/me/foo.user.js',
   );
 });
 
@@ -248,11 +280,11 @@ test('sourceCanonicalUrl normalises raw paths to file:// URLs and passes URLs th
 
 // ---------- HTTP URL builders ----------
 
-test('scriptFileUrl returns the source URL verbatim for an HTTP single-file source', () => {
-  // relativePath is just the basename for display; the actual URL to
-  // fetch is the source URL itself.
+test('scriptFileUrl returns the URL verbatim for an HTTP container script', () => {
+  // Container HTTP scripts store the absolute URL in `relativePath`,
+  // so scriptFileUrl just returns it.
   assert.equal(
-    scriptFileUrl('https://example.com/dir/foo.user.js', 'foo.user.js'),
+    scriptFileUrl('container:http', 'https://example.com/dir/foo.user.js'),
     'https://example.com/dir/foo.user.js',
   );
 });
@@ -279,10 +311,10 @@ test('scriptFileUrl resolves manifest entries relative to the manifest URL', () 
   );
 });
 
-test('scriptAbsolutePath returns the resolved URL for HTTP sources', () => {
-  // The viewer's Location row reads this, so it must work for URLs too.
+test('scriptAbsolutePath returns the resolved URL for HTTP container + manifest sources', () => {
+  // The viewer's Location row reads this for both flavours.
   assert.equal(
-    scriptAbsolutePath('https://example.com/foo.user.js', 'foo.user.js'),
+    scriptAbsolutePath('container:http', 'https://example.com/foo.user.js'),
     'https://example.com/foo.user.js',
   );
   assert.equal(

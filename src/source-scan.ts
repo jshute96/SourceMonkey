@@ -13,8 +13,8 @@
 // report both; HTTP and GitHub scans report only size).
 export interface FoundScript {
   name: string;         // leaf file name, e.g. "foo.user.js"
-  relativePath: string; // path relative to the source root (basename for single-file / manifest entries)
-  size?: number;        // file byte size — undefined for HTTP single-file sources
+  relativePath: string; // path relative to the source root (the raw entry string for manifest entries)
+  size?: number;        // file byte size — undefined for URL-style scans
   mtime?: number;       // modification time (opaque integer used only for equality — file:// only)
 }
 
