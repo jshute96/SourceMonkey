@@ -484,6 +484,11 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
     a.title = target.linkUrl;
+  } else {
+    // No usable target URL for this script's @match set (file://,
+    // `<all_urls>`, malformed pattern, …). Surface that explicitly so
+    // hovering the inert globe isn't silent.
+    inner.title = 'Unable to extract link to target site';
   }
   slot.replaceChildren(inner);
   if (!target && !resolvedIcon) return;

@@ -42,6 +42,7 @@ import {
   makeSourceTypeBubble,
   sourceAnchorId,
 } from './source-display.js';
+import { getValue } from './userscript-header.js';
 import {
   updateAllSources,
   updateSource,
@@ -525,12 +526,14 @@ function renderScriptRow(
   const a = document.createElement('a');
   // For container scripts the `relativePath` is the full URL/path —
   // show just the basename in the filename column to keep rows
-  // scannable, and stash the full URL/path in the tooltip for
-  // verification. The viewer's Location row carries the URL in full.
+  // scannable. The viewer's Location row carries the URL in full.
   a.textContent = inContainer
     ? scriptBasename(script.relativePath)
     : script.relativePath;
-  if (inContainer) a.title = script.relativePath;
+  // Hovering the filename surfaces the `@description`. Scoped to the
+  // anchor so the Size / Status cells (which carry their own meaning)
+  // don't inherit the description as a row-wide tooltip.
+  a.title = scriptDescription(script);
   a.href = viewerUrl(script.id).toString();
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
@@ -574,6 +577,14 @@ function renderScriptRow(
   }
 
   return tr;
+}
+
+// Tooltip text for a script row: the parsed `@description` value, or
+// "No description" when the script declares none (or hasn't parsed
+// far enough to have a header at all).
+function scriptDescription(script: StoredScript): string {
+  const desc = script.header ? getValue(script.header, 'description') : undefined;
+  return desc?.trim() || 'No description';
 }
 
 // Last path segment of a URL or absolute path; falls back to the
