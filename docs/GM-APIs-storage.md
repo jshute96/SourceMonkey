@@ -83,8 +83,9 @@ SW to get its initial cache contents.
 If `__smDecision.gmValues` is missing or falsy at prelude time,
 the script doesn't run. The prelude:
 
-1. Logs a clear `console.error` so the user can see why nothing
-   happened.
+1. Logs a clear `console.info` so the user can see why nothing
+   happened (`console.info`, not `.error` — injected `.error`/`.warn`
+   leak into chrome://extensions/?errors; see [logging.md](logging.md)).
 2. Sends `sm:error` to the SW so the failure surfaces on the
    per-script log and the badge.
 3. `return`s out of the main-body wrap function so the user body

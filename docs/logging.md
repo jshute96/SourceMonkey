@@ -100,20 +100,29 @@ non-GitHub sources stay quiet.
 
 Per-script `parser`-source rows (e.g. `unknown @grant entries dropped: <names>`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
 
-SW logs deliberately avoid `console.warn` / `console.error`: Chrome
-forwards both into chrome://extensions/?errors, which should be
-reserved for actual extension bugs (not userscript failures,
-fetch errors, or expected fallbacks). Diagnostic chatter uses
-`console.info` so it stays in the SW DevTools console only.
+**No `console.warn` / `console.error` anywhere in the extension** —
+not the SW, not extension pages, and not injected wrapper / prelude /
+GM-runtime code. Chrome forwards both into chrome://extensions/?errors,
+which should be reserved for actual extension bugs (not userscript
+failures, fetch errors, or expected fallbacks). Injected diagnostics
+matter here too: a `console.error`/`.warn` from a
+`chrome.userScripts`-registered script still surfaces in the Errors
+panel. All diagnostic chatter uses `console.info` so it stays in the
+relevant DevTools console only. Severity for the viewer's Log tab is a
+separate channel (the per-script log `level` + `sm:*` reports) and is
+unaffected.
 
 ## Page-console "startup logs"
 
 The SW console is hard for end users to find. For diagnostics the
-script author should actually see, the wrapper has a generic
-**startup-log channel**: `buildWrappedBody` accepts a `startupLogs:
-{level, message}[]` list and splices one
-`try { console.<level>("[SourceMonkey] " + __smName + ": " + msg) }
-catch {} ` per entry into the wrapper, right below the matcher block.
+script author should actually see, the prelude has a generic
+**startup-log channel**: each script's `startupLogs: {level, message}[]`
+list is fired once on activation by `emitStartupLogs` in
+`userscript-prelude.js`, which emits one
+`try { console.info("[SourceMonkey] " + cfg.name + ": " + msg) } catch {}`
+per entry. `console.info` (not `console.<level>`) so warn/error
+entries don't leak into chrome://extensions/?errors; the `level`
+still drives the Log-tab mirror.
 
 ### Where startup logs come from
 
@@ -121,10 +130,11 @@ catch {} ` per entry into the wrapper, right below the matcher block.
   `extractStartupLogs(header)` (`src/script-store.ts`). The resulting
   list is stored on `StoredScript.startupLogs` and persisted to
   `chrome.storage.local` alongside the rest of the script row.
-- `buildRegistrationSpec` reads `script.startupLogs` straight off the
-  stored row and passes it to `buildWrappedBody`. No rederivation at
-  sync time — SW restarts produce the same wrapper bytes for the same
-  script version, no log spam.
+- The injector reads `script.startupLogs` straight off the stored row
+  and bakes it into the per-script config blob (`buildConfigBlob`,
+  entry 0), which the prelude reads back as `cfg.startupLogs`. No
+  rederivation at sync time — SW restarts produce the same config-blob
+  bytes for the same script version, no log spam.
 - Today's only producer is the unknown-`@grant` check (emits `warn`).
   Future detectors (partial `@resource` failures, header validation
   warnings, deprecation notices, etc.) extend `extractStartupLogs`.
@@ -133,10 +143,10 @@ catch {} ` per entry into the wrapper, right below the matcher block.
 
 - Fires in the page DevTools console on every matching page load
   (whichever world the script runs in).
-- Levels: `log`, `info`, `warn`, `error`. Anything else is
-  whitelisted down to `warn` so a buggy caller (or a
-  forward-incompatible persisted entry) can't splice
-  `console.constructor(...)`.
+- Always emitted via `console.info`, regardless of the entry's
+  `level`. Escalating to `console.warn`/`.error` would leak the line
+  into chrome://extensions/?errors (see the policy note above). The
+  entry's real `level` still drives the Log-tab mirror.
 - On a `skip` decision (file vanished, script disabled mid-refresh)
   the logs still fire before the wrapper sends `sm:abandoned`. The
   next navigation has no registration and stays quiet.

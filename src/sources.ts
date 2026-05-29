@@ -317,7 +317,7 @@ async function seedDefaultSourcesViaUi(): Promise<void> {
       try {
         await onAddDirectory(path, { jump: false });
       } catch (err) {
-        console.error('[SourceMonkey] first-run add failed', path, err);
+        console.info('[SourceMonkey] first-run add failed', path, err);
       }
     }
   } finally {
@@ -685,7 +685,7 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
     // Surface the failure rather than swallowing it — if storage rejects
     // (quota, disk error), the row stays, the button comes back, and the
     // user gets at least a console line to investigate with.
-    console.error('[SourceMonkey] removeScript failed', err);
+    console.info('[SourceMonkey] removeScript failed', err);
     btn.disabled = false;
   }
 }

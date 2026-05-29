@@ -318,9 +318,10 @@ Granting any of these names logs an "unknown @grant entries dropped"
 warning. Detection happens at parse time; the diagnostic is persisted
 on the stored script and surfaces two ways:
 
-- a `console.warn` in the **page** DevTools console (via the wrapper's
+- a `console.info` in the **page** DevTools console (via the wrapper's
   startup-log channel — see [docs/logging.md][logging]) on every
-  matching page load, and
+  matching page load (`console.info`, not `.warn` — injected warn/error
+  leak into chrome://extensions/?errors), and
 - a `warning`-level row in the viewer's Log tab, emitted once per
   loaded content version right after the "loaded new content" line.
 

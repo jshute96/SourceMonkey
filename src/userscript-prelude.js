@@ -64,7 +64,7 @@
     self.__smCfgQueue = null;
     for (var i = 0; i < q.length; i++) {
       try { init(q[i]); } catch (e) {
-        try { console.error("[SourceMonkey] prelude init threw for", q[i] && q[i].id, e); } catch (_e) {}
+        try { console.info("[SourceMonkey] prelude init threw for", q[i] && q[i].id, e); } catch (_e) {}
       }
     }
   }
@@ -354,11 +354,13 @@
   function emitStartupLogs(cfg) {
     var logs = cfg.startupLogs;
     if (!logs || !logs.length) return;
-    var allowed = { log: 1, info: 1, warn: 1, error: 1 };
     for (var i = 0; i < logs.length; i++) {
       var l = logs[i];
-      var level = (l && l.level && allowed[l.level]) ? l.level : "warn";
-      try { console[level]("[SourceMonkey] " + cfg.name + ": " + l.message); } catch (_e) {}
+      /* Always console.info regardless of l.level: console.warn /
+         console.error from an injected script get forwarded into the
+         extensions Errors panel and make SourceMonkey look broken. The
+         Log tab still carries the real level via the parser mirror. */
+      try { console.info("[SourceMonkey] " + cfg.name + ": " + l.message); } catch (_e) {}
     }
   }
 
@@ -457,7 +459,7 @@
         if (evalErr) {
           var newMsg = (evalErr && evalErr.message) ? evalErr.message : String(evalErr);
           var newStack = (evalErr && typeof evalErr.stack === "string") ? evalErr.stack : "";
-          try { console.error("[SourceMonkey] swapped script", cfg.name, "threw:", evalErr); } catch (_e2) {}
+          try { console.info("[SourceMonkey] swapped script", cfg.name, "threw:", evalErr); } catch (_e2) {}
           send({
             type: "sm:error",
             id: cfg.id,
@@ -490,7 +492,7 @@
     } catch (err) {
       var emsg = (err && err.message) ? err.message : String(err);
       var estack = (err && typeof err.stack === "string") ? err.stack : "";
-      try { console.error("[SourceMonkey] script", cfg.name, "threw:", err); } catch (_e) {}
+      try { console.info("[SourceMonkey] script", cfg.name, "threw:", err); } catch (_e) {}
       send({
         type: "sm:error",
         id: cfg.id,
@@ -540,7 +542,7 @@
     if (!entry) return;
     var msg = (err && err.message) ? String(err.message) : String(err);
     var stack = (err && typeof err.stack === "string") ? err.stack : "";
-    try { console.error("[SourceMonkey] script", entry.cfg.name, "threw in @require:", err); } catch (_e) {}
+    try { console.info("[SourceMonkey] script", entry.cfg.name, "threw in @require:", err); } catch (_e) {}
     send({
       type: "sm:error",
       id: entry.cfg.id,

@@ -409,14 +409,15 @@ export function emitGmBindings(
     //
     // When the snapshot is missing (SW unreachable past the
     // wrapper's safety timeout, or handleCheckPending errored): log
-    // a console error, send sm:error so the failure surfaces on the
-    // per-script log + badge, and `return` from the @run-at
-    // callback so the user body never runs. The user can recover by
-    // reloading.
+    // via console.info (not .error — see userscript-prelude.js;
+    // injected .error/.warn leak into chrome://extensions/?errors),
+    // send sm:error so the failure surfaces on the per-script log +
+    // badge, and `return` from the @run-at callback so the user body
+    // never runs. The user can recover by reloading.
     preludeLines.push(
       `var __smGmSnap = (typeof __smDecision === "object" && __smDecision && __smDecision.gmValues);`,
       `if (!__smGmSnap) {`,
-      `  try { console.error("[SourceMonkey] " + __smName + ": GM storage snapshot unavailable (SW unreachable?); script body will not run. Reload to retry."); } catch (_smSE0) {}`,
+      `  try { console.info("[SourceMonkey] " + __smName + ": GM storage snapshot unavailable (SW unreachable?); script body will not run. Reload to retry."); } catch (_smSE0) {}`,
       `  __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, message: "GM storage snapshot unavailable (SW unreachable?)" });`,
       `  return;`,
       `}`,

@@ -136,7 +136,7 @@
       try {
         L.callback(key, oldValue, newValue, remote);
       } catch (e) {
-        try { console.error("[SourceMonkey] value-change listener threw:", e); } catch (_lE) {}
+        try { console.info("[SourceMonkey] value-change listener threw:", e); } catch (_lE) {}
       }
     }
   }
@@ -184,18 +184,18 @@
     if (!_sendMessage) {
       /* Defensive — should never happen in USER_SCRIPT world. Surface
          to console so the user can spot the lost writes. */
-      try { console.warn("[SourceMonkey] storage flush dropped: chrome.runtime unavailable", scriptId, reason, wireWrites.length); } catch (_e) {}
+      try { console.info("[SourceMonkey] storage flush dropped: chrome.runtime unavailable", scriptId, reason, wireWrites.length); } catch (_e) {}
       return;
     }
     try {
       var p = _sendMessage({ type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites });
       if (p && typeof p.catch === "function") {
         p.catch(function (err) {
-          try { console.warn("[SourceMonkey] storage flush rejected", scriptId, err && err.message); } catch (_e) {}
+          try { console.info("[SourceMonkey] storage flush rejected", scriptId, err && err.message); } catch (_e) {}
         });
       }
     } catch (e) {
-      try { console.warn("[SourceMonkey] storage flush threw", scriptId, e && e.message); } catch (_e2) {}
+      try { console.info("[SourceMonkey] storage flush threw", scriptId, e && e.message); } catch (_e2) {}
     }
   }
 
@@ -656,7 +656,7 @@
       else if (event.kind === "timeout") cb({});
       else if (event.kind === "abort") cb({});
     } catch (e) {
-      try { console.error("[SourceMonkey] XHR callback threw:", e); } catch (_e) {}
+      try { console.info("[SourceMonkey] XHR callback threw:", e); } catch (_e) {}
     }
   }
 
@@ -878,11 +878,11 @@
           /* SW couldn't create the tab — surface the error so a
              userscript debugging an unexpected fast-close has a
              signal, then synthesize the close so onclose fires. */
-          try { console.warn("[SourceMonkey] GM_openInTab failed:", reply.error); } catch (_e) {}
+          try { console.info("[SourceMonkey] GM_openInTab failed:", reply.error); } catch (_e) {}
           dispatchTabClose(requestId);
         }
       }, function (err) {
-        try { console.warn("[SourceMonkey] GM_openInTab send failed:", err && err.message || err); } catch (_e) {}
+        try { console.info("[SourceMonkey] GM_openInTab send failed:", err && err.message || err); } catch (_e) {}
         dispatchTabClose(requestId);
       });
       return control;
@@ -896,7 +896,7 @@
     var cb = entry.onclose;
     if (typeof cb === "function") {
       try { cb(); } catch (e) {
-        try { console.error("[SourceMonkey] GM_openInTab onclose threw:", e); } catch (_e) {}
+        try { console.info("[SourceMonkey] GM_openInTab onclose threw:", e); } catch (_e) {}
       }
     }
   }
@@ -985,7 +985,7 @@
       var cb = entry.onclick;
       if (typeof cb === "function") {
         try { cb(); } catch (e) {
-          try { console.error("[SourceMonkey] GM_notification onclick threw:", e); } catch (_e) {}
+          try { console.info("[SourceMonkey] GM_notification onclick threw:", e); } catch (_e) {}
         }
       }
     } else if (event === "closed") {
@@ -993,7 +993,7 @@
       var cb2 = entry.ondone;
       if (typeof cb2 === "function") {
         try { cb2(); } catch (e) {
-          try { console.error("[SourceMonkey] GM_notification ondone threw:", e); } catch (_e) {}
+          try { console.info("[SourceMonkey] GM_notification ondone threw:", e); } catch (_e) {}
         }
       }
     }
@@ -1067,7 +1067,7 @@
     try {
       cb();
     } catch (e) {
-      try { console.error("[SourceMonkey] GM_registerMenuCommand callback threw:", e); } catch (_e) {}
+      try { console.info("[SourceMonkey] GM_registerMenuCommand callback threw:", e); } catch (_e) {}
     }
   }
 

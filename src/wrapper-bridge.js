@@ -42,7 +42,7 @@
    is in place:
      - forge `sm:start` to flip a script's badge from MISSING to OK,
      - forge `sm:error` with an attacker-chosen `message`, which the
-       SW logs via console.error,
+       SW logs via console.info (kept out of chrome://extensions/?errors),
      - drive a small amount of chrome.storage.session write
        amplification per fake report,
      - forge a `sourcemonkey-bridge-reply` with a known requestId to

@@ -353,9 +353,11 @@ its own dispatch doesn't corrupt iteration.
 - **Storage quota errors are silent.** `chrome.storage.local` has
   per-row and per-extension byte ceilings. If `applyBatchValues`
   fails because of quota, the page-side cache stays inconsistent
-  (it has the value the SW doesn't). The SW logs a
-  `console.warn`; the userscript sees no error. Future phases can
-  surface this on the per-script log.
+  (it has the value the SW doesn't). The `applyBatchValues` rejection
+  propagates to the message handler with no SW console line (per the
+  no-warn/no-error policy — see [logging.md](logging.md)); the
+  userscript sees no error. Future phases can surface this on the
+  per-script log.
 - **`applyBatchValues` is not transactional.** A batch with both
   sets and removes runs them as two parallel `chrome.storage`
   operations; a failure of one leaves the other applied. Acceptable

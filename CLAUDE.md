@@ -26,6 +26,9 @@ repository. See `README.md` for setup instructions and available commands.
 
 ### Code Logic
 - **Documentation**: Where code has subtle or surprising logic, add comments to explain the "why" and intended behavior.
+- **Never use `console.warn` / `console.error` in any extension context** (service worker, extension pages, AND injected wrapper / prelude / GM-runtime code). Chrome forwards both into `chrome://extensions/?errors`, which makes SourceMonkey look broken even when the failure is in user-supplied script code or an expected fallback. Use `console.info` instead — it stays in the relevant DevTools console only.
+  - This applies to diagnostics emitted into the **page** console too (e.g. the startup-log channel and the injected error shims in `userscript-prelude.js`): injected `.error`/`.warn` from a `chrome.userScripts`-registered script still surface in the extensions Errors panel.
+  - Capturing error/warning *severity* for the viewer's Log tab is a separate path (the per-script log's `level` field + the `sm:*` reports) and is unaffected — keep logging the real level there; just don't escalate the `console` method.
 
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT
