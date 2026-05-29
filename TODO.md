@@ -325,3 +325,34 @@ during cumulative review of the GM_* phases:
 - Editing path: if we ever want in-app edits, we'll need either FSA
   handles (re-introduces per-session re-grant) or a Native Messaging
   helper. `file://` URLs are read-only from the extension side.
+
+## Missing script functionality
+
+- @grant window.onurlchange
+
+## Testing and example TOODs
+
+- API explorer page with forms to call any GM API with any args
+- examples for all supported GM APIs, all headers
+- examples for injection scenarios - main world vs userscript world, etc
+- examples with absolute (TM-compatible) vs relative paths
+- installer scripts for userscripts sources - greasyfork, etc.
+  - capture link back to the source page, link to .user.js won't open
+
+## Feature TOODs and ideas
+
+- nice UI for sources page
+- nice UI for script page and logging
+- status widget instead of context menu for running scripts
+- smoother add source/script flow, maybe a dialog box
+- relative paths for dev, absolute paths for release (for requires & resources)
+- capture .user.js links and go to install prompt (with option)
+- use updateURL for faster update checks
+- fix caveats with the new multi-file script injection model:
+  - reload fast-path doesn't work right?
+  - global vars don't go across scripts (except with exports)
+- download a script to local disk for editing / debugging
+- keep links between local and remote version of a script, select which to run
+- for local script, check and report if remote "release" version is older or newer
+
+
