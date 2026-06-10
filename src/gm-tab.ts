@@ -48,6 +48,22 @@ export interface GmTabOpenResult {
   error?: string;
 }
 
+// Only http(s) targets are allowed. The URL comes straight from
+// page-supplied message payload, so without this gate a script could
+// ask the privileged SW to open `file://`, `chrome://`, or
+// `chrome-extension://` tabs (local-file disclosure, settings pages,
+// other extensions' pages). TM/VM's GM_openInTab is web-oriented;
+// restricting to http/https matches the realistic use and closes the
+// scheme-smuggling hole.
+function isAllowedTabUrl(url: string): boolean {
+  try {
+    const scheme = new URL(url).protocol;
+    return scheme === 'http:' || scheme === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // Open a new tab on behalf of a script. Returns the assigned chrome
 // tab id (or an error) and stores the originator mapping so close
 // events can be routed back.
@@ -55,6 +71,9 @@ export async function openGmTab(
   payload: GmTabOpenPayload,
   originatorTabId: number,
 ): Promise<GmTabOpenResult> {
+  if (!isAllowedTabUrl(payload.url)) {
+    return { ok: false, error: `GM_openInTab: refusing non-http(s) URL ${payload.url}` };
+  }
   // Stash the entry first so a close event arriving between
   // chrome.tabs.create resolving and the page receiving the reply
   // can still find the request. The originator can't have called

@@ -164,6 +164,47 @@ test.describe('GM_xmlhttpRequest @connect gating (Phase 10)', () => {
     await page.close();
   });
 
+  test('redirect to a non-allowlisted host is blocked (no response leaked)', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // The initial host (127.0.0.1) is allowlisted, but it 302-redirects
+    // to `localhost` — a distinct hostname (also loopback, so it's
+    // reachable) that the policy does NOT allow. Without the
+    // post-redirect re-check, fetch would follow the redirect and hand
+    // the script the secret body. With it, the request is blocked.
+    const blockedHost = dataServer.baseUrl.replace('127.0.0.1', 'localhost');
+    dataServer.setRoute('/secret', 'leaked-via-redirect', { contentType: 'text/plain' });
+    dataServer.setRedirect('/redirect', `${blockedHost}/secret`);
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'RedirectConnect',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_xmlhttpRequest'],
+        connect: ['127.0.0.1'],
+      },
+      body: `
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: '${dataServer.baseUrl}/redirect',
+          onload: (res) => { document.body.dataset.smLeaked = res.responseText; },
+          onerror: (e) => { document.body.dataset.smErr = String(e && e.error || ''); },
+        });
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-err', /redirect to .* not allowed/);
+    expect(await page.locator('body').getAttribute('data-sm-leaked')).toBeNull();
+    await page.close();
+  });
+
   test('@connect exact host that does NOT match the URL is blocked', async ({
     extensionContext,
     fixtureServer,

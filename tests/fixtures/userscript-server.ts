@@ -21,6 +21,9 @@ interface Route {
   contentType: string;
   etag?: string;
   lastModified?: string;
+  // When set, the route answers with a 302 to this Location instead of
+  // serving `body`. Used to exercise the @connect redirect re-check.
+  redirectTo?: string;
 }
 
 // Per-route record of how each incoming GET was answered. Tests use
@@ -102,6 +105,17 @@ export class UserscriptServer {
     });
   }
 
+  // Register a 302 redirect route. `location` is the absolute URL the
+  // route redirects to. Used to test that GM_xmlhttpRequest's @connect
+  // re-check rejects a redirect whose final host isn't allowlisted.
+  setRedirect(path: string, location: string): void {
+    this.routes.set(this.normalize(path), {
+      body: '',
+      contentType: 'text/plain',
+      redirectTo: location,
+    });
+  }
+
   // Drop a route so its URL starts 404'ing. Used by tests that need to
   // model a vanished manifest entry.
   removeRoute(path: string): void {
@@ -129,6 +143,13 @@ export class UserscriptServer {
       if (!route) {
         entry.status = 404;
         res.statusCode = 404;
+        res.end();
+        return;
+      }
+      if (route.redirectTo) {
+        entry.status = 302;
+        res.statusCode = 302;
+        res.setHeader('Location', route.redirectTo);
         res.end();
         return;
       }

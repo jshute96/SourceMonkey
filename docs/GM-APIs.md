@@ -287,6 +287,14 @@ the script's stored header, calls `parseConnectRules` +
 ships an `error` event back to the page with the policy reason as
 the message, so the userscript's `onerror` catches it.
 
+The policy is resolved once into a reusable predicate
+(`loadConnectPolicy`) that is applied to **both** the initial URL and
+the post-redirect URL. `fetch` follows redirects by default, so an
+allowlisted host could otherwise 302 to a disallowed one; `runXhr`
+re-checks `res.url` whenever the response was redirected and drops the
+body (returning an `error`) if the final host fails the policy. See
+the redirect note under "Known limitations".
+
 The same trust caveat as the other async-envelope handlers applies:
 the message-supplied `scriptId` is wrapper-supplied, so a sibling
 userscript that knows another script's id can spoof an XHR under
@@ -304,6 +312,17 @@ Known limitations (post-Phase 10):
   let scripts override these — VM's `requests-core.js` is the
   reference shape. Tagging via a custom request header that the
   listener strips will be the wiring.
+- **Redirect re-check blocks reads, not the outbound hop.** The
+  post-redirect host check refuses to hand a script the response from
+  a non-allowlisted host, but `fetch` has already performed the
+  outbound request to the redirect target (it gives no per-hop hook,
+  and `redirect:'manual'` yields an opaque response with no readable
+  `Location`). So a redirect can still cause an outbound request to a
+  disallowed host; no disallowed-host data flows *back* to the script.
+- **Response size cap of 50 MB.** The body is streamed and the request
+  is aborted once it exceeds `MAX_RESPONSE_BYTES`, so a script can't
+  OOM the service worker with a huge fetch. The script sees an `error`
+  event. Raise the constant if a real payload needs more headroom.
 - **No `onprogress` events** — only the final `load`/`error`/
   `timeout`/`abort` event lands on the page. Adding progress
   would need a streaming wire format.
@@ -455,6 +474,10 @@ Returns `undefined` (matches TM/VM signature).
 ### SW handler
 
 - `src/gm-tab.ts` calls `chrome.tabs.create`.
+- **Only `http(s)` URLs are honored.** The URL is page-supplied, so a
+  scheme gate keeps a script from asking the privileged SW to open
+  `file://` / `chrome://` / `chrome-extension://` tabs. A rejected URL
+  returns `ok:false` and the control's `onclose` never fires.
 - `chrome.tabs.onRemoved` routes a `sm:gm-tab-close` back to the
   originating tab so the control's `onclose` fires.
 
@@ -498,6 +521,10 @@ Returns `undefined` (matches TM/VM signature).
   silently rejects without one.
 - When `details.image` is omitted, we fall back to the extension's
   own icon.
+- The page-supplied `image` is honored only for `http(s)` / `data:`
+  schemes (Chrome fetches `iconUrl` from the privileged extension
+  context, so `file://` / `chrome-extension://` images are rejected and
+  fall back to the default icon).
 
 ### Timeout
 

@@ -1317,20 +1317,24 @@ async function handleXhrStart(
   // matches VM policy. The error event we ship back is the
   // same shape as a network failure, so the userscript's onerror
   // catches it.
-  const denyReason = await checkConnectPolicy(payload.scriptId, payload.request.url);
-  if (denyReason) {
-    try {
-      await chrome.tabs.sendMessage(tabId, {
-        type: 'sm:gm-xhr-event',
-        id: payload.id,
-        event: { kind: 'error', message: `[SourceMonkey] blocked by @connect policy: ${denyReason}` },
-      });
-    } catch { /* tab gone */ }
+  const policy = await loadConnectPolicy(payload.scriptId);
+  if ('reason' in policy) {
+    await sendXhrError(tabId, payload.id, `[SourceMonkey] blocked by @connect policy: ${policy.reason}`);
+    return;
+  }
+  const initial = policy.check(payload.request.url);
+  if (!initial.allowed) {
+    await sendXhrError(tabId, payload.id, `[SourceMonkey] blocked by @connect policy: ${initial.reason}`);
     return;
   }
   // Run the fetch and ship the result back to the sender's tab. Other
-  // tabs do not get a copy — XHR is per-call, not broadcast.
-  const event = await runXhr(payload.id, payload.request);
+  // tabs do not get a copy — XHR is per-call, not broadcast. The same
+  // policy predicate re-checks the post-redirect URL inside runXhr.
+  const event = await runXhr(
+    payload.id,
+    payload.request,
+    (finalUrl) => policy.check(finalUrl).allowed,
+  );
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
@@ -1343,20 +1347,38 @@ async function handleXhrStart(
   }
 }
 
-// Returns null when allowed, or a human-readable reason when denied.
-async function checkConnectPolicy(scriptId: string, url: string): Promise<string | null> {
+// Ship a synthesized XHR error event back to the originating tab. Used
+// for @connect denials, which the userscript's onerror handles just
+// like a network failure.
+async function sendXhrError(tabId: number, id: string, message: string): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'sm:gm-xhr-event',
+      id,
+      event: { kind: 'error', message },
+    });
+  } catch { /* tab gone */ }
+}
+
+// Load a script's `@connect` policy once and return a reusable
+// predicate. The predicate is evaluated against both the initial URL
+// and (inside runXhr) the post-redirect URL, so a single header read
+// covers every hop. Returns `{reason}` when the policy can't be
+// resolved (script gone, no header, parse error) — that's a hard deny.
+async function loadConnectPolicy(scriptId: string): Promise<
+  | { reason: string }
+  | { check: (url: string) => { allowed: true } | { allowed: false; reason: string } }
+> {
   try {
     const script = await getScript(scriptId);
     if (!script || !script.header) {
-      return 'script not found or has no parsed header';
+      return { reason: 'script not found or has no parsed header' };
     }
     const rules = parseConnectRules(script.header);
     const selfHosts = extractSelfHosts(script.header);
-    const decision = isUrlConnectAllowed(url, rules, selfHosts);
-    if (decision.allowed) return null;
-    return decision.reason;
+    return { check: (url: string) => isUrlConnectAllowed(url, rules, selfHosts) };
   } catch (err) {
-    return `policy check failed: ${err instanceof Error ? err.message : String(err)}`;
+    return { reason: `policy check failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 

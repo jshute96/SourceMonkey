@@ -42,13 +42,26 @@ interface NotificationEntry {
 
 const byChromeId = new Map<string, NotificationEntry>();
 
+// Page-supplied notification image. Chrome fetches `iconUrl` from the
+// privileged extension context, so we only honor http(s) / data: URLs.
+// A `file://` or `chrome-extension://` image would let a script probe
+// local files / packaged resources through the extension; reject those
+// and fall back to the default icon.
+function isAllowedIconUrl(image: string): boolean {
+  try {
+    const scheme = new URL(image).protocol;
+    return scheme === 'http:' || scheme === 'https:' || scheme === 'data:';
+  } catch {
+    return false;
+  }
+}
+
 // Pick the icon URL chrome.notifications wants. The user-supplied
-// image is preferred; we fall back to the extension's own icon so
-// chrome.notifications doesn't reject the create call (iconUrl is
-// required by the API). Extension-relative URLs work via
-// chrome.runtime.getURL.
+// image is preferred when it's an allowed scheme; otherwise we fall
+// back to the extension's own icon so chrome.notifications doesn't
+// reject the create call (iconUrl is required by the API).
 function pickIconUrl(image: string): string {
-  if (image) return image;
+  if (image && isAllowedIconUrl(image)) return image;
   try { return chrome.runtime.getURL('icons/icon-128.png'); }
   catch { return ''; }
 }

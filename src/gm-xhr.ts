@@ -20,6 +20,21 @@
 // `id` is a per-request UUID-ish string the page generates. The SW
 // just round-trips it.
 //
+// Two safety limits live here:
+//   - Response size cap (MAX_RESPONSE_BYTES): the body is streamed and
+//     the request is aborted if it exceeds the cap, so a userscript
+//     fetching a multi-GB resource can't OOM the service worker.
+//   - `@connect` redirect re-validation: `fetch` follows redirects by
+//     default, so an allowlisted host could 302 to a disallowed one.
+//     The caller passes `isFinalUrlAllowed`; if the response came back
+//     from a redirected URL whose host fails the policy, we drop the
+//     body and return an error instead of handing it to the script.
+//     This blocks *reading* responses from non-allowlisted hosts; it
+//     can't prevent the request reaching the redirect target (fetch
+//     gives no per-hop hook and `redirect:'manual'` yields an opaque
+//     response with no readable Location), so the outbound hop still
+//     happens — but no disallowed-host data flows back to the script.
+//
 // AbortController per request. Stored in a Map keyed by id so an
 // aborted request can be cancelled mid-fetch.
 
@@ -85,13 +100,60 @@ export type GmXhrEvent =
 // Per-request abort handles. Key: request id.
 const activeXhrs = new Map<string, AbortController>();
 
+// Cap on the response body we'll buffer into the service worker. A
+// userscript that fetches a huge resource would otherwise OOM the SW
+// (we hold the whole body in memory, and base64 for binary adds ~33%).
+// 50 MB is comfortably above any realistic GM_xmlhttpRequest payload
+// (icons, JSON, small media) while bounding the blast radius.
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
+
+// Sentinel thrown by `readBodyCapped` when the body exceeds the cap, so
+// the catch in `runXhr` can map it to a clean error event.
+class ResponseTooLargeError extends Error {
+  constructor() {
+    super(`response exceeded ${MAX_RESPONSE_BYTES}-byte cap`);
+    this.name = 'ResponseTooLargeError';
+  }
+}
+
+// Stream the body into a single Uint8Array, aborting once the running
+// total exceeds the cap. Used for both the binary and text paths so the
+// cap applies uniformly. Reading the bytes ourselves (rather than
+// res.text() / res.arrayBuffer()) is what lets us bail mid-stream
+// instead of materializing an unbounded body first.
+async function readBodyCapped(res: Response, cap: number): Promise<Uint8Array> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    // No readable stream (e.g. empty body, 204, some HEADs). Fall back
+    // to arrayBuffer, still enforcing the cap after the fact.
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength > cap) throw new ResponseTooLargeError();
+    return buf;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > cap) {
+      try { await reader.cancel(); } catch { /* already torn down */ }
+      throw new ResponseTooLargeError();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.byteLength; }
+  return out;
+}
+
 // Base64 encoder for raw bytes. SW context has no btoa shortcut for
-// ArrayBuffer directly; do it in 3-byte chunks. Faster than the
-// String.fromCharCode(...new Uint8Array(buf)) shortcut on large
-// buffers (which spreads a million-element array onto the call
-// stack).
-function arrayBufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
+// raw bytes directly; do it in 32 KB chunks. Faster than the
+// String.fromCharCode(...bytes) shortcut on large buffers (which
+// spreads a million-element array onto the call stack).
+function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -118,9 +180,15 @@ function serializeHeaders(headers: Headers): string {
 // Run a fetch on behalf of the page. Returns the event to send back
 // (or null if the request was aborted before fetch resolved — the
 // abort handler dispatches its own event).
+//
+// `isFinalUrlAllowed`, when supplied, re-checks the response's URL
+// against the script's `@connect` policy after redirects. A response
+// that landed on a disallowed host (via a redirect the initial check
+// couldn't see) is dropped with an error event rather than returned.
 export async function runXhr(
   id: string,
   request: GmXhrRequestPayload,
+  isFinalUrlAllowed?: (url: string) => boolean,
 ): Promise<GmXhrEvent> {
   const controller = new AbortController();
   activeXhrs.set(id, controller);
@@ -145,9 +213,24 @@ export async function runXhr(
       init.body = typeof request.data === 'string' ? request.data : String(request.data);
     }
     const res = await fetch(request.url, init);
+    // @connect redirect re-validation: if fetch followed a redirect to
+    // a host the policy doesn't allow, refuse to read or return the
+    // body. (See the file header for why the outbound hop can't be
+    // prevented here.) We only check on actual redirects — an
+    // un-redirected response is on the host the initial check already
+    // approved.
+    if (res.redirected && isFinalUrlAllowed && !isFinalUrlAllowed(res.url)) {
+      let host = res.url;
+      try { host = new URL(res.url).hostname; } catch { /* keep full url */ }
+      return {
+        kind: 'error',
+        message: `[SourceMonkey] blocked by @connect policy: redirect to ${host} not allowed`,
+      };
+    }
     const rt = request.responseType ?? 'text';
     const isBinary = rt === 'blob' || rt === 'arraybuffer' || rt === 'document';
     const mimeType = res.headers.get('content-type') ?? '';
+    const bytes = await readBodyCapped(res, MAX_RESPONSE_BYTES);
     if (isBinary) {
       // Binary path: serialize the body as base64 + carry the MIME
       // type. The page-side reconstructs Blob / ArrayBuffer /
@@ -155,8 +238,7 @@ export async function runXhr(
       // raw bytes because chrome.tabs.sendMessage's structured-clone
       // path through the event listener doesn't always preserve
       // ArrayBuffer cleanly across worlds; base64 always works.
-      const buf = await res.arrayBuffer();
-      const base64 = arrayBufferToBase64(buf);
+      const base64 = bytesToBase64(bytes);
       return {
         kind: 'load',
         response: {
@@ -172,8 +254,11 @@ export async function runXhr(
         },
       };
     }
-    // Text path.
-    const responseText = await res.text();
+    // Text path. Response.text() decodes as UTF-8 (ignoring the
+    // Content-Type charset) and strips a leading BOM; TextDecoder's
+    // default does the same, so decoding the capped bytes here matches
+    // the prior res.text() behavior exactly.
+    const responseText = new TextDecoder().decode(bytes);
     let response: unknown = responseText;
     if (rt === 'json') {
       // Tolerate a malformed JSON body — return the raw text in
@@ -200,6 +285,9 @@ export async function runXhr(
     const isAbortError =
       err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message));
     if (timeoutFired) return { kind: 'timeout' };
+    if (err instanceof ResponseTooLargeError) {
+      return { kind: 'error', message: `[SourceMonkey] ${err.message}` };
+    }
     if (isAbortError) return { kind: 'abort' };
     const message = err instanceof Error ? err.message : String(err);
     return { kind: 'error', message };
