@@ -164,7 +164,11 @@ function applyStatusCellsToDom(): void {
     if (!id || !storedStatus) continue;
     const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
     if (!cell) continue;
-    paintStatusCell(cell, id, storedStatus, row.dataset.scriptError ?? undefined);
+    paintStatusCell(
+      cell, id, storedStatus,
+      row.dataset.scriptError ?? undefined,
+      row.dataset.scriptRefreshError ?? undefined,
+    );
   }
 }
 
@@ -177,11 +181,12 @@ function paintStatusCell(
   scriptId: string,
   storedStatus: StoredScript['status'],
   errorMessage: string | undefined,
+  refreshError: string | undefined,
 ): void {
   cell.textContent = '';
   cell.className = 'status-cell';
   const level = currentLogLevels.get(scriptId);
-  const effective = effectiveScriptStatus({ status: storedStatus }, level);
+  const effective = effectiveScriptStatus({ status: storedStatus, refreshError }, level);
   cell.classList.add(`status-${effective}`);
   // Anchor that takes the user straight to the script viewer's Log
   // tab — the same destination regardless of effective status, since
@@ -191,7 +196,10 @@ function paintStatusCell(
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = formatScriptStatusLabel(effective);
-  if (errorMessage) link.title = errorMessage;
+  // Prefer the refresh-failure reason as the hover when that's what the
+  // cell is showing; otherwise fall back to the load errorMessage.
+  const title = effective === 'refresh-failed' ? refreshError : errorMessage;
+  if (title) link.title = title;
   cell.appendChild(link);
   // Trash-can affordance only on persisted-missing rows (the file
   // genuinely vanished from its listing). A row that's merely flagged
@@ -556,6 +564,7 @@ function renderScriptRow(
   tr.dataset.sourceId = script.sourceId;
   if (inContainer) tr.dataset.inContainer = '1';
   if (script.errorMessage) tr.dataset.scriptError = script.errorMessage;
+  if (script.refreshError) tr.dataset.scriptRefreshError = script.refreshError;
   if (!sourceOn || !scriptOn) tr.classList.add('disabled');
 
   const toggleCell = document.createElement('td');
@@ -609,7 +618,7 @@ function renderScriptRow(
   tr.appendChild(sizeCell);
 
   const statusCell = document.createElement('td');
-  paintStatusCell(statusCell, script.id, script.status, script.errorMessage);
+  paintStatusCell(statusCell, script.id, script.status, script.errorMessage, script.refreshError);
   tr.appendChild(statusCell);
 
   // Container rows always offer a remove button (every script inside a
@@ -1038,6 +1047,11 @@ async function onRefreshAll(): Promise<void> {
 //   - re-read AND now ok  → row-updated
 //   - re-read AND errored → row-failed
 //   - status changed but no re-read (rare) → color by next.status
+//   - refresh just failed (refreshError newly set / changed, while the
+//     cached body keeps running) → row-failed, even though status stays
+//     `ok` and loadedAt is unchanged
+//   - refresh recovered (refreshError cleared) → row-updated, even when
+//     the body is unchanged (304 / size+mtime skip preserve loadedAt)
 //   - otherwise           → no flash (unchanged path: cheap-skip
 //                            optimization, OR genuine no-op)
 function applyChangeHighlights(
@@ -1065,6 +1079,15 @@ function classifyChange(
   }
   if (next.status === 'missing' && prior.status !== 'missing') return 'row-failed';
   if (next.status === 'missing') return null;             // was already missing
+  // A fresh refresh failure (the cached body keeps running, so status
+  // stays `ok` and loadedAt doesn't move) still deserves a red flash so
+  // the user notices the source went stale.
+  if (next.refreshError && next.refreshError !== prior.refreshError) return 'row-failed';
+  // Recovery: a row that WAS refresh-failed and now isn't gets a green
+  // flash even when the body is unchanged (HTTP 304 / size+mtime skip,
+  // which preserve loadedAt) — otherwise the row would silently drop its
+  // red highlight with no "it came back" confirmation.
+  if (prior.refreshError && !next.refreshError) return 'row-updated';
   const reread = next.loadedAt !== prior.loadedAt;
   const statusChanged = next.status !== prior.status;
   if (!reread && !statusChanged) return null;

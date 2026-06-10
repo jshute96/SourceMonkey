@@ -69,12 +69,14 @@ test('formatScriptSize: error with known size still renders the bytes', () => {
 // ---------- formatScriptStatusLabel ----------
 
 test('formatScriptStatusLabel: distinct labels per display status', () => {
-  // Five display labels: OK is the calm state; INVALID and MISSING
-  // are the persisted load failures; WARNING and ERROR come from the
-  // per-script Log carrying entries at that level.
+  // OK is the calm state; INVALID and MISSING are the persisted load
+  // failures; REFRESH FAILED means the script still runs from its cached
+  // copy but the last update attempt failed; WARNING and ERROR come from
+  // the per-script Log carrying entries at that level.
   assert.equal(formatScriptStatusLabel('ok'), 'OK');
   assert.equal(formatScriptStatusLabel('invalid'), 'INVALID');
   assert.equal(formatScriptStatusLabel('missing'), 'MISSING');
+  assert.equal(formatScriptStatusLabel('refresh-failed'), 'REFRESH FAILED');
   assert.equal(formatScriptStatusLabel('warning'), 'WARNING');
   assert.equal(formatScriptStatusLabel('error'), 'ERROR');
 });
@@ -103,4 +105,28 @@ test('effectiveScriptStatus: ok script reflects highest log level', () => {
   assert.equal(effectiveScriptStatus({ status: 'ok' }, 'info'), 'ok');
   assert.equal(effectiveScriptStatus({ status: 'ok' }, 'warning'), 'warning');
   assert.equal(effectiveScriptStatus({ status: 'ok' }, 'error'), 'error');
+});
+
+test('effectiveScriptStatus: refreshError surfaces as refresh-failed', () => {
+  // A row that's still `ok` (running from its cached copy) but carries a
+  // refreshError shows REFRESH FAILED. It ranks above the log-derived
+  // levels — the staleness is a distinct, specific signal — but below
+  // invalid/missing, which mean the script can't run at all.
+  assert.equal(
+    effectiveScriptStatus({ status: 'ok', refreshError: 'permission denied' }, undefined),
+    'refresh-failed',
+  );
+  assert.equal(
+    effectiveScriptStatus({ status: 'ok', refreshError: 'permission denied' }, 'error'),
+    'refresh-failed',
+  );
+  // invalid / missing still win — the script genuinely can't run.
+  assert.equal(
+    effectiveScriptStatus({ status: 'invalid', refreshError: 'x' }, undefined),
+    'invalid',
+  );
+  assert.equal(
+    effectiveScriptStatus({ status: 'missing', refreshError: 'x' }, undefined),
+    'missing',
+  );
 });

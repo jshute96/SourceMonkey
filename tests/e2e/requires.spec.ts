@@ -166,11 +166,12 @@ test.describe('@require', () => {
     }
   });
 
-  test('require fetch failure on a working script preserves the prior version', async ({ sm }) => {
+  test('require fetch failure on a working script keeps it running (refresh-failed)', async ({ sm }) => {
     // First refresh: require fetches cleanly, script is `ok`. Server
     // then 404s the dependency. The next manual refresh sees the
-    // require fail — but the script must NOT lose its prior body or
-    // its prior cached require source, just surface the error.
+    // require fail — but the script must keep running on its cached
+    // deps: a flaky dep host must not disable a working script. It stays
+    // `ok` (still injectable) and surfaces `refreshError` instead.
     const server = await UserscriptServer.start();
     try {
       const requireBody = '/* v1 */';
@@ -193,10 +194,11 @@ test.describe('@require', () => {
       server.removeRoute('/dep.js');
       await sm.updateSource(source!.id, 'manual');
       const after = await sm.getSourceWithScripts(source!.id);
-      // Status flipped to error, errorMessage names the URL.
-      expect(after!.scripts[0].status).toBe('invalid');
-      expect(after!.scripts[0].errorMessage).toMatch(/dep\.js/);
-      // But the prior require body is still there — we didn't clobber it.
+      // Still OK + injectable, but flagged: refreshError names the URL.
+      expect(after!.scripts[0].status).toBe('ok');
+      expect(after!.scripts[0].errorMessage).toBeUndefined();
+      expect(after!.scripts[0].refreshError).toMatch(/dep\.js/);
+      // And the prior require body is still there — we didn't clobber it.
       expect(after!.scripts[0].requires?.[0]?.source).toBe(requireBody);
     } finally {
       await server.stop();

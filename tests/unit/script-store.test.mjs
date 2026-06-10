@@ -243,31 +243,48 @@ test('buildScriptFromText reports a missing required field', async () => {
 
 // ---------- applyFetchError / applyMissing / buildInitialInvalidEntry ----------
 //
-// `applyFetchError` is named for the trigger (a failed fetch); the
-// resulting `status` is `'invalid'` since the rename. `applyMissing`
-// is keyed by vanished-listing-entry, not a fetch attempt.
+// `applyFetchError` is named for the trigger (a hard fetch failure). A
+// prior `ok` row keeps running (`status: 'ok'` + `refreshError`) so a
+// transient logout / network blip never silently disables a working
+// script; a prior non-ok row flips to `'invalid'`. `applyMissing` is
+// keyed by vanished-listing-entry, not a fetch attempt.
 
-test('applyFetchError preserves content and flips status', async () => {
+test('applyFetchError keeps a prior-ok row running with refreshError', async () => {
   const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
   const errored = applyFetchError(ok, 'permission denied');
-  assert.equal(errored.status, 'invalid');
-  assert.equal(errored.errorMessage, 'permission denied');
+  // Still OK and injectable — we have a last-known-good copy.
+  assert.equal(errored.status, 'ok');
+  assert.equal(errored.refreshError, 'permission denied');
+  assert.equal(errored.errorMessage, undefined);
   assert.equal(errored.headerText, ok.headerText);
   assert.equal(errored.bodyText, ok.bodyText);
   assert.equal(errored.size, ok.size);
   assert.equal(errored.loadedAt, ok.loadedAt);
 });
 
-test('applyMissing preserves size + content, clears errorMessage', async () => {
+test('applyFetchError flips a prior non-ok row to invalid', async () => {
+  // No good copy to protect (the row was already invalid) → the fetch
+  // failure is recorded as invalid with the message, as before.
+  const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
+  const alreadyInvalid = { ...ok, status: 'invalid', errorMessage: 'prior' };
+  const errored = applyFetchError(alreadyInvalid, 'EACCES');
+  assert.equal(errored.status, 'invalid');
+  assert.equal(errored.errorMessage, 'EACCES');
+  assert.equal(errored.refreshError, undefined);
+});
+
+test('applyMissing preserves size + content, clears errorMessage + refreshError', async () => {
   // The file is gone but we still hold its last-read bytes — keep the
   // cached size so the Size column reflects the preserved content,
-  // distinct from genuine "unknown size" rows.
+  // distinct from genuine "unknown size" rows. A confirmed-vanished file
+  // also subsumes any "refresh failed" annotation.
   const ok = await buildScriptFromText({ ...COMMON, source: VALID_SCRIPT });
-  const errored = applyFetchError(ok, 'read failed');
+  const errored = applyFetchError(ok, 'read failed'); // ok + refreshError
   const missing = applyMissing(errored);
   assert.equal(missing.status, 'missing');
   assert.equal(missing.size, ok.size);
   assert.equal(missing.errorMessage, undefined);
+  assert.equal(missing.refreshError, undefined);
   assert.equal(missing.headerText, ok.headerText);
   assert.equal(missing.bodyText, ok.bodyText);
 });
@@ -491,7 +508,7 @@ test('rebuildSource drops vanished entries for a local manifest source too', asy
   assert.equal(result.length, 0);
 });
 
-test('rebuildSource preserves prior content when a fetch fails on a known script', async () => {
+test('rebuildSource keeps a known script running when its fetch fails (refresh-failed)', async () => {
   const existing = [
     await buildScriptFromText({
       id: 'a-id',
@@ -513,10 +530,73 @@ test('rebuildSource preserves prior content when a fetch fails on a known script
     now: 100,
     newId: fakeIdSequence(),
   });
-  assert.equal(result[0].status, 'invalid');
-  assert.equal(result[0].errorMessage, 'EACCES');
+  // Hard fetch failure against a prior-ok row: keep the cached good copy
+  // running (still `ok`, still injectable) and annotate the failure.
+  assert.equal(result[0].status, 'ok');
+  assert.equal(result[0].refreshError, 'EACCES');
+  assert.equal(result[0].errorMessage, undefined);
   assert.equal(result[0].bodyText, existing[0].bodyText);
   assert.equal(result[0].loadedAt, existing[0].loadedAt); // unchanged
+});
+
+test('rebuildSource: http 200 that parses invalid keeps the prior good copy (soft failure)', async () => {
+  // The logged-out-HTTP case: the fetch "succeeds" (200) but returns a
+  // login / error page in place of the script. We must NOT clobber the
+  // working copy — keep it running and flag refreshError.
+  const existing = [
+    await buildScriptFromText({
+      id: 'h-id',
+      sourceId: 'src-http',
+      relativePath: 'h.user.js',
+      fileUrl: 'https://example.com/h.user.js',
+      source: VALID_SCRIPT,
+      now: 50,
+    }),
+  ];
+  const result = await rebuildSource({
+    sourceId: 'src-http',
+    sourcePath: 'https://example.com/script_manifest.json',
+    existing,
+    scan: [{ relativePath: 'h.user.js' }],
+    fetchResults: new Map([
+      ['h.user.js', { ok: true, source: '<!doctype html><title>Log in</title>' }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].status, 'ok');
+  assert.match(result[0].refreshError, /not a valid userscript/);
+  assert.equal(result[0].bodyText, existing[0].bodyText);
+  assert.equal(result[0].loadedAt, existing[0].loadedAt); // prior preserved
+});
+
+test('rebuildSource: file:// that parses invalid is treated as a real edit (INVALID)', async () => {
+  // A local read returns the file's real bytes — an invalid parse there
+  // is a genuine edit the user wants flagged immediately, NOT a soft
+  // failure. So the soft-failure preservation is http-only.
+  const existing = [
+    await buildScriptFromText({
+      id: 'f-id',
+      sourceId: 'src-file',
+      relativePath: 'f.user.js',
+      fileUrl: 'file:///dir/f.user.js',
+      source: VALID_SCRIPT,
+      now: 50,
+    }),
+  ];
+  const result = await rebuildSource({
+    sourceId: 'src-file',
+    sourcePath: '/dir',
+    existing,
+    scan: [{ relativePath: 'f.user.js' }],
+    fetchResults: new Map([
+      ['f.user.js', { ok: true, source: 'broken, no metadata block' }],
+    ]),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result[0].status, 'invalid');
+  assert.equal(result[0].refreshError, undefined);
 });
 
 test('rebuildSource preserves the prior `enabled` flag across a successful refresh', async () => {

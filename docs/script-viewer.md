@@ -60,8 +60,11 @@ reports.
 1. **Filename** (`<h1>`) — the script's `relativePath`.
 2. **Controls row** (`#meta-row`) — `Enabled` toggle + **Refresh**
    button → `refreshScript(scriptId)`.
-3. **Error message** (`<p class="message error">`) — visible only when
-   `errorMessage` is set.
+3. **Error message** (`<p class="message …">`) — visible when the
+   script is flagged. Shows `errorMessage` (red, `.error`) for an
+   `invalid` row, or `Refresh failed: <reason>` (amber,
+   `.refresh-failed`) for a still-running `refresh-failed` row
+   (`status: ok` + `refreshError`). Hidden when neither is set.
 4. **Details panel** (`#header-summary` → `<dl>`) — labeled rows in
    order:
    - Parsed-header fields (when a metadata block is present):
@@ -94,10 +97,12 @@ reports.
        parent source row has vanished. See the Link rendering section
        below for the linkify rules.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
-     - `Status` — `OK` / `INVALID` / `MISSING` / `WARNING` / `ERROR`
+     - `Status` — `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
+       `WARNING` / `ERROR`
        (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
-       color-coded; the row's `title` carries `errorMessage` when
-       present. Rendered as an `<a href="#Log">` so clicking switches
+       color-coded; the row's `title` carries the `refreshError` reason
+       for a `REFRESH FAILED` row, else `errorMessage` when present.
+       Rendered as an `<a href="#Log">` so clicking switches
        to the Log tab via the same hashchange listener as a manual
        tab click. The level promotes live as new log entries arrive
        — the `storage.session.onChanged` listener for

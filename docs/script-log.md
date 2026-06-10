@@ -95,6 +95,13 @@ Plumbing notes specific to logging:
     "no change" row to keep the log from filling with poll noise.
   - Refresh errors (error) — `errorMessage` from the script-store
     pipeline (covers `@require` resolve/fetch failures too).
+  - `refresh failed: <reason>` (warning) — a script that's still
+    running from its cached copy but whose latest refresh failed
+    (`status: ok` + `refreshError`; see
+    [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
+    Emitted only on the transition (or when the reason changes), so a
+    persistently-down source doesn't flood the log from background
+    polling.
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed

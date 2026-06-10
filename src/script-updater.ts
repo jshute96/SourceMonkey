@@ -274,6 +274,13 @@ function logScriptOutcome(
     console.info(`[SourceMonkey] update check: ${label}: invalid — ${next.errorMessage ?? 'unknown'}`);
     return;
   }
+  // Refresh failed but the cached good copy keeps running. Log once on
+  // the transition (or when the reason changes) so a source that stays
+  // down doesn't spam the console on every opportunistic check.
+  if (next.refreshError && prior?.refreshError !== next.refreshError) {
+    console.info(`[SourceMonkey] refresh failed: ${label}: ${next.refreshError}`);
+    return;
+  }
   if (!prior || prior.loadedAt !== next.loadedAt) {
     // loadedAt bumps iff the load pipeline actually built from fresh
     // content. Same loadedAt means the size+mtime skip caught it.
@@ -322,6 +329,18 @@ function emitScriptOutcomeLog(
       level: 'error',
       source: `refresh-${mode}`,
       message: next.errorMessage ?? 'source file is missing',
+    });
+    return;
+  }
+  if (next.refreshError && prior?.refreshError !== next.refreshError) {
+    // The refresh failed but the cached good copy keeps running. Record
+    // it at warning level (the script isn't broken, just stale). Only on
+    // the transition / reason change, so a persistently-down source
+    // doesn't flood the Log tab from background polling.
+    logScriptEvent(scriptId, {
+      level: 'warning',
+      source: `refresh-${mode}`,
+      message: `refresh failed: ${next.refreshError}`,
     });
     return;
   }
@@ -434,10 +453,15 @@ function summarizeSourceOutcome(
   let added = 0;
   let unchanged = 0;
   let errored = 0;
+  let refreshFailed = 0;
   for (const n of nextScripts) {
     const prior = priorBy.get(n.id);
     emitScriptOutcomeLog(n.id, prior, n, mode);
     if (n.status === 'invalid') { errored++; continue; }
+    // A still-running row whose latest refresh failed counts as its own
+    // bucket, not "unchanged" — the content is unchanged but the outcome
+    // wasn't a clean check.
+    if (n.refreshError) { refreshFailed++; continue; }
     if (!prior) { added++; continue; }
     if (prior.loadedAt !== n.loadedAt) changed++;
     else unchanged++;
@@ -446,6 +470,7 @@ function summarizeSourceOutcome(
   if (added) parts.push(`${added} new`);
   if (changed) parts.push(`${changed} updated`);
   if (unchanged) parts.push(`${unchanged} unchanged`);
+  if (refreshFailed) parts.push(`${refreshFailed} refresh-failed`);
   if (errored) parts.push(`${errored} error`);
   console.log(`[SourceMonkey] source refresh: ${label}: ${parts.join(', ')}`);
 }

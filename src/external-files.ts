@@ -343,8 +343,17 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
 // would reject those anyway, but failing earlier with a clearer
 // error is friendlier. Servers shipping JS as octet-stream are
 // vanishingly rare and the user can route around them via a proxy.
+//
+// We also reject `text/html` explicitly: a `@require` is always
+// JavaScript, never HTML, so an HTML response is the classic
+// soft-failure signature — a login / error page served at 200 in
+// place of the real library. Rejecting it turns that into a clean
+// fetch failure, which the refresh pipeline treats as a refresh
+// failure (keep the prior good copy running) rather than silently
+// swapping a working dependency for a page of markup.
 const requireAcceptContentType = (ct: string): boolean =>
-  ct.includes('javascript') || ct.startsWith('text/');
+  !ct.startsWith('text/html') &&
+  (ct.includes('javascript') || ct.startsWith('text/'));
 
 interface LoadResourceArgs {
   decl: ResourceDecl;

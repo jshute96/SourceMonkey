@@ -383,8 +383,22 @@ function render(script: StoredScript): void {
     ? 'Enable this script'
     : 'Source is disabled';
 
-  messageEl.textContent = script.errorMessage ?? '';
-  messageEl.className = script.errorMessage ? 'message error' : 'message';
+  // The banner shows the load error for `invalid` rows, and the
+  // refresh-failure reason for a still-running `refresh-failed` row
+  // (status `ok` + `refreshError`) — so opening a flagged script always
+  // explains why. `errorMessage` takes precedence (it means the script
+  // can't run at all); `refreshError` is the softer "running on a cached
+  // copy, last update failed" case.
+  if (script.errorMessage) {
+    messageEl.textContent = script.errorMessage;
+    messageEl.className = 'message error';
+  } else if (script.refreshError) {
+    messageEl.textContent = `Refresh failed: ${script.refreshError}`;
+    messageEl.className = 'message refresh-failed';
+  } else {
+    messageEl.textContent = '';
+    messageEl.className = 'message';
+  }
 
   renderDetails(script);
   renderTabsAndBody(script);
@@ -1035,14 +1049,17 @@ function renderDetails(script: StoredScript): void {
 // level.
 function buildStatusCell(script: StoredScript): Node {
   const effective = effectiveScriptStatus(
-    { status: script.status },
+    { status: script.status, refreshError: script.refreshError },
     currentLogLevel,
   );
   const link = document.createElement('a');
   link.href = '#Log';
   link.textContent = formatScriptStatusLabel(effective);
   link.className = `meta-status status-${effective}`;
-  if (script.errorMessage) link.title = script.errorMessage;
+  // Prefer the refresh-failure reason as the hover when REFRESH FAILED
+  // is what's showing; otherwise fall back to the load errorMessage.
+  const title = effective === 'refresh-failed' ? script.refreshError : script.errorMessage;
+  if (title) link.title = title;
   return link;
 }
 

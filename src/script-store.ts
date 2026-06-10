@@ -22,6 +22,18 @@
 // entry). In every error/missing case we preserve the previously
 // loaded content so the viewer (and the injector) keep working.
 //
+// Refresh failures get special, gentler handling so a transient
+// outage never disables a working script. When a prior `ok` row's
+// refresh fails — a hard fetch failure (network / 404 / unreadable
+// file / disconnected mount), an http(s) 200 that parses `invalid` (a
+// login / error page in place of the script), or a failed
+// `@require`/`@resource` fetch — we keep the last-known-good row
+// running (`status` stays `ok`, still injectable) and record the
+// reason in `refreshError`. The next clean refresh clears it. A
+// file:// body that parses `invalid` is the one exception: a local
+// read returns the file's real bytes, so that's a genuine edit and we
+// flag it `invalid` immediately. See [docs/storage.md].
+//
 // If the scan step itself fails (unreadable listing, unreadable
 // manifest, …), refreshSource records the error in `scanError` on the
 // source row and leaves every existing script untouched — see that
@@ -99,6 +111,18 @@ export interface StoredScript {
   fileUrl: string;
   status: ScriptStatus;
   errorMessage?: string;
+  // Set when the latest refresh attempt failed but we still hold a
+  // last-known-good copy that's running. Distinct from `errorMessage`
+  // (which pairs with `status: 'invalid'` and means "can't run"):
+  // a row with `refreshError` keeps `status: 'ok'` and stays injected
+  // from its cached body — only the *update* failed. Triggers:
+  //   - a hard fetch failure (network error, 404, unreadable file /
+  //     disconnected mount) against a prior `ok` row, and
+  //   - an http(s) refresh that fetched a 200 but parsed `invalid`
+  //     (a login / error page served in place of the script).
+  // Cleared automatically the next time a refresh lands valid content
+  // (or proves the cached content unchanged). See [docs/storage.md].
+  refreshError?: string;
   // UTF-8 byte length of the cached content. `0` is a valid value for
   // an empty file. `null` only on a never-loaded-successfully initial-
   // error row (no body to size); `missing` rows keep their last known
@@ -356,13 +380,25 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   return entry;
 }
 
-// Apply a fetch failure to an existing entry: preserve the prior
-// content and just flip status/errorMessage. Size stays at its last
-// known value (we know nothing fresh).
+// Apply a hard fetch failure (network error, 404, unreadable file,
+// disconnected mount) to an existing entry, preserving the prior
+// content either way.
+//
+//   - prior was `ok`: this is a *refresh* failure, not a content
+//     problem — we have a last-known-good copy. Keep it running
+//     (`status: 'ok'`) and record `refreshError` so the UI can flag
+//     REFRESH FAILED. A transient logout / network blip must never
+//     silently disable a working script.
+//   - prior was anything else (already invalid / a re-enabled missing
+//     row whose refetch failed): no good copy to protect, so flip to
+//     `invalid` with the message as before.
 export function applyFetchError(
   existing: StoredScript,
   errorMessage: string,
 ): StoredScript {
+  if (existing.status === 'ok') {
+    return { ...existing, refreshError: errorMessage };
+  }
   return { ...existing, status: 'invalid', errorMessage };
 }
 
@@ -417,6 +453,9 @@ export function applyMissing(existing: StoredScript): StoredScript {
   const next: StoredScript = { ...existing, status: 'missing' };
   if (existing.status === 'ok') next.enabled = false;
   delete next.errorMessage;
+  // A confirmed-vanished file subsumes any prior "refresh failed"
+  // annotation — the row is now MISSING, not "running but stale".
+  delete next.refreshError;
   return next;
 }
 
@@ -480,11 +519,19 @@ async function applyFiles(
     // Preserve the last-known-good script state when we have one.
     // This rolls the *entire* refresh back to the prior — the new
     // body isn't applied either, because injecting a fresh body
-    // against partial/stale dependencies would be unsafe. The user
-    // sees the error message and their script keeps running its
-    // prior version until they fix the bad reference.
+    // against partial/stale dependencies would be unsafe.
+    //
+    // A failed @require/@resource fetch against a prior `ok` row is a
+    // *refresh* failure, not a content problem: keep the script
+    // running on its cached deps (`status: 'ok'`) and record
+    // `refreshError` so the UI flags REFRESH FAILED. A flaky dep host
+    // (or a logged-out CDN) must never silently disable a working
+    // script. Note we can only catch dep *fetch* failures this way —
+    // a 200 returning a login page in place of a @require is caught by
+    // the require Content-Type gate (HTML rejected) in external-files;
+    // @resource bodies are arbitrary bytes and can't be validated.
     if (prior && prior.status === 'ok') {
-      return { ...prior, status: 'invalid', errorMessage: result.errorMessage };
+      return { ...prior, refreshError: result.errorMessage };
     }
     built.status = 'invalid';
     built.errorMessage = result.errorMessage;
@@ -589,7 +636,26 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         // Record the listing's mtime so the next refresh can decide to
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
-        return applyFiles(built, prior, recheckFiles, fileFetchCache, args.now);
+        const withFiles = await applyFiles(built, prior, recheckFiles, fileFetchCache, args.now);
+        // Soft-failure preservation: an http(s) fetch that returned 200
+        // but parsed `invalid`, when we have a prior `ok` copy, is a
+        // refresh failure — a login / error page served in place of the
+        // script — not a real content replacement. Keep the prior good
+        // body running and annotate `refreshError` instead of clobbering
+        // it with the garbage. Scoped to http(s): a file:// read returns
+        // the file's real bytes, so an `invalid` parse there is a genuine
+        // local edit the user wants to see flagged immediately.
+        if (
+          withFiles.status === 'invalid' &&
+          prior && prior.status === 'ok' &&
+          isHttpUrl(fileUrl)
+        ) {
+          return {
+            ...prior,
+            refreshError: `fetched copy is not a valid userscript (${withFiles.errorMessage ?? 'parse failed'})`,
+          };
+        }
+        return withFiles;
       })());
     } else if (fr && 'unchanged' in fr) {
       // Optimization path: the listing's size+mtime matched the prior
@@ -604,6 +670,11 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         const next = { ...prior, fileUrl };
         if (found.mtime !== undefined) next.fsMtime = found.mtime;
         if (found.size !== undefined) next.size = found.size;
+        // A proven-unchanged refetch (HTTP 304 or matching size+mtime)
+        // means the source is reachable and serving the same good bytes
+        // again — clear any stale "refresh failed" annotation. If a dep
+        // recheck below fails again, applyFiles re-sets refreshError.
+        delete next.refreshError;
         // Even when the body is unchanged, explicit Refresh still
         // rechecks @require + @resource bodies (the user may want to
         // pick up remote dep updates without touching the main

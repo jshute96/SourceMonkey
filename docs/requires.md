@@ -87,8 +87,7 @@ canonical URL in the same refresh pass share one fetch.
 
 ## Failure handling
 
-Any of these flips the parent script to `status: 'invalid'` with a
-message naming the offending URL:
+Any of these is a dependency failure, named by the offending URL:
 
 - Resolution rejection (traversal, disallowed scheme, etc.).
 - Non-`.js` suffix.
@@ -100,12 +99,32 @@ message naming the offending URL:
   rather than a confusing `SyntaxError` at eval.
 
 Accepted Content-Type for `@require`: anything with `javascript`
-or starting with `text/`. `application/octet-stream` is *not*
-accepted — it was a "give us anything binary" hole when combined
-with the `.js` suffix-only URL gate.
+or starting with `text/`, **except `text/html`**. `application/octet-
+stream` is *not* accepted — it was a "give us anything binary" hole
+when combined with the `.js` suffix-only URL gate. `text/html` is
+rejected because a `@require` is always JavaScript: an HTML response is
+the classic soft-failure signature (a login / error page served at 200
+in place of the library), and rejecting it turns that into a clean
+fetch failure rather than silently swapping the working dependency for
+markup.
 
-Running a userscript without its declared deps almost always breaks
-worse than not injecting; erroring out is safer than running headless.
+What the dependency failure does to the parent script depends on
+whether we already had a good copy:
+
+- **No prior good copy** (first load, or the script was already
+  `invalid`) → `status: 'invalid'` with the dependency message.
+  Running a userscript without its declared deps almost always breaks
+  worse than not injecting, so erroring out is safer than running
+  headless.
+- **Prior `ok` copy** → the script keeps running on its cached deps;
+  `status` stays `ok` and the reason is recorded in `refreshError`
+  (REFRESH FAILED). A flaky dep host must not disable a working
+  script. See [storage.md](storage.md#refresh-failures-keep-the-good-copy-running).
+
+`@resource` bodies are arbitrary bytes with no "is this valid" check,
+so a `@resource` soft failure (a 200 login page) can't be detected the
+way the `@require` Content-Type gate detects it — only a hard
+`@resource` fetch failure gets the keep-the-good-copy treatment.
 
 ## Reload fast-path interaction
 

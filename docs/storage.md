@@ -70,6 +70,12 @@ Key spaces in `chrome.storage.local`:
 - `errorMessage?` — set when `status === 'invalid'`. Cleared on the
   transition to `missing` (the row's body is preserved, but the prior
   error reason is dropped — the file is simply gone).
+- `refreshError?` — set when the latest refresh of a previously-good
+  script failed but we kept the cached good copy running. Distinct
+  from `errorMessage`: a row with `refreshError` keeps `status: 'ok'`
+  and stays injectable — only the *update* failed. Cleared on the next
+  clean refresh (or a proven-unchanged refetch). See
+  [Refresh failures](#refresh-failures-keep-the-good-copy-running).
 - `size` — UTF-8 byte length of the cached content. `0` is a valid
   value (an empty file is a real file). `null` only when the entry
   has never successfully loaded — i.e. its first fetch failed and
@@ -144,6 +150,40 @@ is `ok` or `missing` — `invalid` rows never inject (the current parse
 result is bad, so the cached body might mean something different from
 what the metadata claims).
 
+### Refresh failures: keep the good copy running
+
+A refresh must never downgrade a *working* script just because the
+latest fetch failed or returned junk. When a prior `ok` row's refresh
+fails, we keep the last-known-good row exactly as it was — `status`
+stays `ok`, so it keeps injecting — and only set `refreshError` to
+record the reason. Triggers:
+
+- **Hard fetch failure** (any scheme): network error, 404, unreadable
+  file, a disconnected network mount. Covers the case where a read
+  throws.
+- **Soft failure** (http(s) only): the fetch returned 200 but the body
+  parsed `invalid` — a login / error page served in place of the
+  script (e.g. a logged-out source). Scoped to http(s): a `file://`
+  read returns the file's real bytes, so an `invalid` parse there is a
+  genuine local edit and is flagged `invalid` immediately.
+- **Dependency failure**: a `@require` / `@resource` fetch failed, so
+  the script keeps running on its cached deps. (A `@require` returning
+  an HTML login page is caught earlier by the Content-Type gate in
+  `external-files.ts` and surfaces as a fetch failure; `@resource`
+  bodies are arbitrary bytes and can't be validated this way — see
+  [requires.md](requires.md).)
+
+**Recovery** is automatic: the next refresh that lands valid content
+(or a conditional-GET 304 / matching size+mtime that proves the cached
+content is current again) clears `refreshError`. If the file is later
+confirmed *vanished* from its listing, the row transitions to
+`missing` and the `refreshError` annotation is dropped.
+
+This mirrors the [scan-failure](#scan-failure-leave-scripts-untouched)
+policy one level down: scan failure protects every script in a source
+when the *listing* can't be read; `refreshError` protects a single
+script when its own *fetch* fails.
+
 ### Displayed status (UI-level)
 
 `src/script-display.ts` exports `effectiveScriptStatus(script,
@@ -152,8 +192,13 @@ order (highest wins):
 
 - `INVALID` — `status === 'invalid'`.
 - `MISSING` — `status === 'missing'`.
-- `ERROR` — `status === 'ok'` but the per-script log has an error
-  entry (max log level = `error`).
+- `REFRESH FAILED` — `status === 'ok'` but `refreshError` is set (the
+  script runs from its cached copy; the last update failed). Ranks
+  above the log-derived levels — staleness is a distinct, specific
+  signal — but below `INVALID`/`MISSING`, which mean it can't run at
+  all. Rendered in amber, distinct from red `INVALID`.
+- `ERROR` — `status === 'ok'`, no `refreshError`, but the per-script
+  log has an error entry (max log level = `error`).
 - `WARNING` — `status === 'ok'` and the per-script log has a warning
   entry (max log level = `warning`).
 - `OK` — everything else (no logs, or only info-level logs).
@@ -526,7 +571,12 @@ gets a persistent background color:
 - **light green** (`row-updated`) — script newly added OR re-read
   and now `'ok'`.
 - **light red** (`row-failed`) — script newly added with an error,
-  re-read with an error, or transitioned to `'missing'`.
+  re-read with an error, transitioned to `'missing'`, or whose refresh
+  just failed (`refreshError` newly set, even though the cached body
+  keeps running and `status` stays `'ok'`).
+  - A refresh-failed row that **recovers** (`refreshError` cleared)
+    flashes green even when the body is unchanged — otherwise the red
+    highlight would silently vanish with no "it came back" feedback.
 
 The color stays until the next refresh re-renders the section, so the
 user can leave the page and come back without losing the

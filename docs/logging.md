@@ -88,7 +88,8 @@ non-GitHub sources stay quiet.
 | `loaded new content: <logId> (<size>)` | no | log |
 | `update check failed: <logId>: <err>` | no | info |
 | `update check: <logId>: row vanished` | no | info |
-| `update check: <logId>: error — <msg>` | no | info |
+| `update check: <logId>: invalid — <msg>` | no | info |
+| `refresh failed: <logId>: <reason>` (transition / reason change only) | no | info |
 | `source refresh (mode): <path>` | no | log |
 | `source refresh: <path>: <summary>` | no | log |
 | `source refresh failed: <path>: <err>` | no | info |

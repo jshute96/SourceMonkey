@@ -480,6 +480,29 @@ test('attachFiles: @require rejects a non-text Content-Type from shared bytes', 
   assert.match(r.errorMessage, /not JavaScript or text/);
 });
 
+test('attachFiles: @require rejects a text/html Content-Type (soft-failure login page)', async () => {
+  // A @require is always JavaScript, never HTML. An HTML response at 200
+  // is the classic soft failure — a login / error page served in place
+  // of the real library. Rejecting it turns the soft failure into a
+  // clean fetch error, which the refresh pipeline then treats as a
+  // refresh failure (keep the prior good copy) rather than swapping the
+  // working dependency for a page of markup. `text/plain`-served JS is
+  // still accepted (only html is special-cased out).
+  const url = 'https://example.com/lib.js';
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['require', url]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(
+      fakeFetched('<!doctype html><title>Log in</title>', 'text/html; charset=utf-8'),
+    )]]),
+    now: 2000,
+  });
+  assert.match(r.errorMessage, /not JavaScript or text/);
+});
+
 test('attachFiles: @resource at same URL succeeds even when @require would reject the Content-Type', async () => {
   // The bug this prevents: previously the shared fetchCache stored
   // the result of the first caller's predicate. A @require rejecting
