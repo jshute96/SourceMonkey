@@ -46,6 +46,25 @@ test('buildSourceUrl: dedup `#N` suffix percent-encodes to %23N in the folder, d
   );
 });
 
+test('label sanitization: a newline in the filename can\'t break out of the //# sourceURL= comment', () => {
+  // The log label comes from the on-disk filename, which is
+  // attacker-controlled for an untrusted bundle. A literal LF/CR (or
+  // U+2028/U+2029) would terminate the single-line `//# sourceURL=`
+  // comment the injector emits, turning whatever follows into live
+  // code in the config blob. The builder must strip those before the
+  // URL is spliced. We assert the emitted URL contains no line
+  // terminator and the dangerous chars are replaced with `_`.
+  const evil = 'x\n;globalThis.pwned=1//.user.js';
+  for (const url of [buildSourceUrl(evil), buildConfigSourceUrl(evil)]) {
+    assert.ok(!/[\n\r\u2028\u2029]/.test(url), `url must not contain a line terminator: ${JSON.stringify(url)}`);
+  }
+  // Concretely: the folder collapses the control char to `_`.
+  assert.equal(
+    buildConfigSourceUrl('a\rb.user.js'),
+    'sourcemonkey://SourceMonkey/a_b/__config.js',
+  );
+});
+
 test('buildConfigSourceUrl: per-script config blob URL', () => {
   assert.equal(
     buildConfigSourceUrl('hello.user.js'),

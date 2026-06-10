@@ -37,6 +37,22 @@
 
 const ROOT = 'sourcemonkey://SourceMonkey';
 
+// Strip characters that would break out of the `//# sourceURL=<url>`
+// comment these URLs are spliced into. The log label is derived from
+// the on-disk filename (`script-log-id.ts`), which is attacker-
+// controlled for an untrusted script bundle. A JS line terminator
+// (LF/CR/U+2028/U+2029) ends the single-line `//` comment, so anything
+// after it on the line would become live code in the config blob —
+// which runs at document_start, before the script's own gating. Other
+// control chars can't break the comment but have no business in a
+// devtools tree path either; replace the lot with `_`. (The @require
+// URL builder already does per-segment whitelisting; this covers the
+// main/config/prelude labels that don't go through it.)
+function sanitizeLabel(label: string): string {
+  // eslint-disable-next-line no-control-regex
+  return label.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '_');
+}
+
 // Folder name for a script's artifacts. Strips the conventional
 // `.user.js` extension from the log label (the folder sits ABOVE the
 // main-body file, so the `.js` looks misleading on a folder), and
@@ -47,7 +63,7 @@ const ROOT = 'sourcemonkey://SourceMonkey';
 //   `foo.user.js#2`     → `foo%232`
 //   `foo`               → `foo`      (no .user.js to strip)
 function folderForLabel(label: string): string {
-  return label.replace(/\.user\.js(?=$|#)/, '').replace(/#/g, '%23');
+  return sanitizeLabel(label).replace(/\.user\.js(?=$|#)/, '').replace(/#/g, '%23');
 }
 
 // Main-body file basename for a script. Same as the folder but with
@@ -60,7 +76,7 @@ function folderForLabel(label: string): string {
 //   `foo.user.js#2`     → `foo.user.js`
 //   `foo`               → `foo.user.js`
 function mainBaseForLabel(label: string): string {
-  return label.replace(/\.user\.js(?=$|#)/, '').replace(/#\d+$/, '') + '.user.js';
+  return sanitizeLabel(label).replace(/\.user\.js(?=$|#)/, '').replace(/#\d+$/, '') + '.user.js';
 }
 
 // Per-script folder root.

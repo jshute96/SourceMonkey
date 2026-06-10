@@ -327,15 +327,28 @@
     if (scheme === "*") {
       if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     } else if (u.protocol !== scheme.toLowerCase() + ":") return false;
-    if (host === "*") {
+    /* Split off a trailing `:port` so a port-pinned pattern matches the
+       way Chrome's matcher (and src/url-match.ts) does — without this
+       the whole `host:port` was compared against u.hostname (no port)
+       and a script declaring both a port-pinned @match and a regex
+       @include/@exclude (the only case cfg.matching ships) was wrongly
+       rejected in-page even though Chrome injected it. A pattern host
+       with no port matches any port. Keep this in lockstep with
+       url-match.ts. */
+    var colon = host.lastIndexOf(":");
+    var hasPort = colon > 0 && /^\d+$/.test(host.slice(colon + 1));
+    var patternHost = hasPort ? host.slice(0, colon) : host;
+    var patternPort = hasPort ? host.slice(colon + 1) : "";
+    if (patternHost === "*") {
       /* any host */
-    } else if (host.indexOf("*.") === 0) {
-      var suffix = host.slice(2).toLowerCase();
+    } else if (patternHost.indexOf("*.") === 0) {
+      var suffix = patternHost.slice(2).toLowerCase();
       var h = u.hostname.toLowerCase();
       if (h !== suffix && h.slice(-(suffix.length + 1)) !== "." + suffix) return false;
-    } else if (host === "") {
+    } else if (patternHost === "") {
       if (u.hostname !== "") return false;
-    } else if (u.hostname.toLowerCase() !== host.toLowerCase()) return false;
+    } else if (u.hostname.toLowerCase() !== patternHost.toLowerCase()) return false;
+    if (patternPort !== "" && u.port !== patternPort) return false;
     var tail = u.pathname + u.search + u.hash;
     try { return globRx(path).test(tail); } catch (_e) { return false; }
   }
