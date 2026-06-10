@@ -13,6 +13,8 @@
 // stop receiving close notifications. That's the same boat as XHR
 // requests in flight; acceptable for v1.
 
+import { dropEntriesForOriginator } from './gm-originator-map.js';
+
 interface RequestEntry {
   originatorTabId: number;
   // Assigned once chrome.tabs.create resolves. Until then the
@@ -163,12 +165,7 @@ export function takeRequestForClosedTab(tabId: number): {
 // notifications anywhere useful, so we shed the mapping. Returns the
 // dropped requestIds for logging.
 export function dropOriginator(originatorTabId: number): string[] {
-  const dropped: string[] = [];
-  for (const [requestId, entry] of requestState) {
-    if (entry.originatorTabId !== originatorTabId) continue;
+  return dropEntriesForOriginator(requestState, originatorTabId, (entry) => {
     if (entry.tabId != null) tabIdToRequest.delete(entry.tabId);
-    requestState.delete(requestId);
-    dropped.push(requestId);
-  }
-  return dropped;
+  });
 }

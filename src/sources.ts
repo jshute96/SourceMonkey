@@ -676,14 +676,14 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
     // users read as "everything disappeared". The other rows are
     // unaffected by removing one script, so there's nothing to redraw.
     const row = directoriesEl.querySelector<HTMLTableRowElement>(
-      `section.directory[data-source-id="${sourceId}"] tr[data-script-id="${scriptId}"]`,
+      `section.directory[data-source-id="${cssEscape(sourceId)}"] tr[data-script-id="${cssEscape(scriptId)}"]`,
     );
     row?.remove();
     // If this was the last script under the source, swap the table
     // for the standard "No *.user.js files found." placeholder so the
     // section doesn't show a dangling empty table.
     const section = directoriesEl.querySelector<HTMLElement>(
-      `section.directory[data-source-id="${sourceId}"]`,
+      `section.directory[data-source-id="${cssEscape(sourceId)}"]`,
     );
     const table = section?.querySelector<HTMLTableElement>('.script-table');
     if (table && table.querySelectorAll('tbody tr').length === 0) {

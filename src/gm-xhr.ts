@@ -38,6 +38,8 @@
 // AbortController per request. Stored in a Map keyed by id so an
 // aborted request can be cancelled mid-fetch.
 
+import { bytesToBase64 } from './bytes.js';
+
 export interface GmXhrRequestPayload {
   // HTTP method. Default GET. Uppercased before sending.
   method?: string;
@@ -147,19 +149,6 @@ async function readBodyCapped(res: Response, cap: number): Promise<Uint8Array> {
   let offset = 0;
   for (const c of chunks) { out.set(c, offset); offset += c.byteLength; }
   return out;
-}
-
-// Base64 encoder for raw bytes. SW context has no btoa shortcut for
-// raw bytes directly; do it in 32 KB chunks. Faster than the
-// String.fromCharCode(...bytes) shortcut on large buffers (which
-// spreads a million-element array onto the call stack).
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
 }
 
 // Render the response headers as a single newline-joined string —

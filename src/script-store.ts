@@ -73,6 +73,7 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog } from './script-log.js';
+import { sha256Hex } from './bytes.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
 // metadata-block parse failure, header validation failure, fetch
@@ -233,12 +234,7 @@ export type FetchResult =
 // sync form on the web platform); buildScriptFromText and
 // rebuildSource are async in turn.
 export async function hashSource(text: string): Promise<string> {
-  const bytes = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  const arr = new Uint8Array(digest);
-  let out = '';
-  for (const b of arr) out += b.toString(16).padStart(2, '0');
-  return out;
+  return sha256Hex(text);
 }
 
 // Pull `@match` / `@exclude` / `@include` lists out of a parsed header.

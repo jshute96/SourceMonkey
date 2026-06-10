@@ -69,6 +69,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts` and wraps each body with an activation/error shim |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
+| `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) and chunked `bytesToBase64` (XHR + `@resource` transport) |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the sources/viewer UI |
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, plus a sibling `loglevel:` sentinel that tracks the highest level seen |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor; shared by site-icon and the viewer linkifier |
@@ -86,6 +87,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL |
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
+| `src/gm-originator-map.ts` | Shared shed-on-tab-close helper for the gm-tab / gm-notification per-request maps (drop entries by originator tab) |
 | `src/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, script) command registry feeding the action menu |
 | `src/action-menu.ts` | Action context-menu planner — packs script + command groups into Chrome's 6-item cap with a "More" overflow submenu |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
@@ -142,6 +144,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at normalization, spec build, active-spec collection) |
+| `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/require-exports.test.mjs` | Unit tests for the `/* exported */` directive parser and forwardable-name filter |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |

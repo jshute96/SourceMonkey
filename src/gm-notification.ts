@@ -10,6 +10,8 @@
 // We always let Chrome assign — keeps our requestId space cleanly
 // page-side and avoids collisions between userscripts.
 
+import { dropEntriesForOriginator } from './gm-originator-map.js';
+
 export interface GmNotificationDetails {
   text: string;
   title: string;
@@ -154,12 +156,7 @@ export function takeForClosed(chromeId: string): {
 // (they're per-extension, not per-tab) — but with the originator
 // gone we have nobody to route the eventual events to.
 export function dropOriginator(originatorTabId: number): string[] {
-  const dropped: string[] = [];
-  for (const [chromeId, entry] of byChromeId) {
-    if (entry.originatorTabId !== originatorTabId) continue;
+  return dropEntriesForOriginator(byChromeId, originatorTabId, (entry) => {
     if (entry.timeoutTimer != null) clearTimeout(entry.timeoutTimer);
-    byChromeId.delete(chromeId);
-    dropped.push(chromeId);
-  }
-  return dropped;
+  });
 }

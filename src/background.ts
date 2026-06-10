@@ -1634,6 +1634,28 @@ function broadcastValueUpdate(
   }
 }
 
+// Shared async-reply plumbing for the onUserScriptMessage handlers that
+// dispatch a promise and reply with its result. Sends the resolved
+// value, or an `{ok:false,error}` envelope on throw, swallowing the
+// "receiving end is gone" rejection that's normal when the sender's tab
+// navigated away mid-request. Returns `true` so the caller keeps the
+// message channel open for the async reply.
+function respondAsync(
+  label: string,
+  work: Promise<unknown>,
+  sendResponse: (reply: unknown) => void,
+): true {
+  work.then(
+    (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
+    (err) => {
+      console.info(`[SourceMonkey] ${label} handler threw:`, err);
+      try { sendResponse({ ok: false, error: String((err as { message?: unknown })?.message ?? err) }); }
+      catch { /* receiver gone */ }
+    },
+  );
+  return true;
+}
+
 // ---------- sm:start / sm:error from injected wrappers ----------
 //
 // Messages from the USER_SCRIPT world arrive on the dedicated
@@ -1702,21 +1724,15 @@ function installScriptMessageListener(): void {
     if (type === 'sm:gm-xhr-abort') {
       const payload = msg as { id?: string };
       if (typeof payload.id === 'string') abortXhr(payload.id);
+      // Synchronous ack — no async reply follows, so return false to
+      // let Chrome close the message channel immediately.
       try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return true;
+      return false;
     }
     if (type === 'sm:gm-tab-open') {
       // Async dispatch — page side awaits the reply (need the assigned
       // chrome tab id back to populate the control object).
-      handleTabOpen(sender, msg as GmTabOpenPayload).then(
-        (reply) => { try { sendResponse(reply); } catch { /* gone */ } },
-        (err) => {
-          console.info('[SourceMonkey] gm-tab-open handler threw:', err);
-          try { sendResponse({ ok: false, error: String(err?.message ?? err) }); }
-          catch { /* gone */ }
-        },
-      );
-      return true;
+      return respondAsync('gm-tab-open', handleTabOpen(sender, msg as GmTabOpenPayload), sendResponse);
     }
     if (type === 'sm:gm-tab-close') {
       const payload = msg as { requestId?: string };
@@ -1727,30 +1743,18 @@ function installScriptMessageListener(): void {
       return false;
     }
     if (type === 'sm:gm-notification-show') {
-      handleNotificationShow(sender, msg as GmNotificationShowPayload).then(
-        (reply) => { try { sendResponse(reply); } catch { /* gone */ } },
-        (err) => {
-          console.info('[SourceMonkey] gm-notification-show handler threw:', err);
-          try { sendResponse({ ok: false, error: String(err?.message ?? err) }); }
-          catch { /* gone */ }
-        },
+      return respondAsync(
+        'gm-notification-show',
+        handleNotificationShow(sender, msg as GmNotificationShowPayload),
+        sendResponse,
       );
-      return true;
     }
     if (type === 'sm:gm-batch-write') {
-      // Batched storage flush from the page-side cache. Same
-      // return-true keep-channel-open pattern as check-pending —
-      // the wrapper doesn't actually await the reply today
-      // (fire-and-forget), but returning a real {ok} keeps the
-      // channel honest for future error surfacing.
-      handleBatchWrite(msg as BatchWritePayload, sender).then(
-        (reply) => { try { sendResponse(reply); } catch { /* receiver gone */ } },
-        (err) => {
-          console.info('[SourceMonkey] gm-batch-write handler threw:', err);
-          try { sendResponse({ ok: false, error: String(err?.message ?? err) }); } catch { /* receiver gone */ }
-        },
-      );
-      return true;
+      // Batched storage flush from the page-side cache. The wrapper
+      // doesn't actually await the reply today (fire-and-forget), but
+      // returning a real {ok} keeps the channel honest for future error
+      // surfacing.
+      return respondAsync('gm-batch-write', handleBatchWrite(msg as BatchWritePayload, sender), sendResponse);
     }
     if (type === 'sm:gm-menu-register') {
       // Page side has stashed the callback locally; we just track the

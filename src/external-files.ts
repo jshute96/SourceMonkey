@@ -38,6 +38,7 @@ import {
   resolveScriptResource,
 } from './file-loader.js';
 import { splitResourceValue } from './script-links.js';
+import { sha256Hex, bytesToBase64 } from './bytes.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
 
 // Per-file limit. Big enough for jQuery (~90 KB) and most chunky
@@ -158,30 +159,6 @@ export function distillResources(header: ParsedHeader | null): ResourceDecl[] {
     out.push({ name, ref });
   }
   return out;
-}
-
-// ---------- Hashing + base64 ----------
-
-async function sha256HexOfBytes(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  const arr = new Uint8Array(digest);
-  let out = '';
-  for (const b of arr) out += b.toString(16).padStart(2, '0');
-  return out;
-}
-
-// Chunked binary→base64. `String.fromCharCode.apply(null, hugeArray)`
-// throws "Maximum call stack size exceeded" past ~125k args in V8,
-// so we walk the buffer in 32 KiB slices and concatenate. Linear and
-// bounded.
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    const sub = bytes.subarray(i, i + CHUNK);
-    binary += String.fromCharCode(...sub);
-  }
-  return btoa(binary);
 }
 
 // ---------- attachFiles orchestrator ----------
@@ -321,7 +298,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
     return { errorMessage: `@require ${args.ref}: response is not valid UTF-8 (binary or wrong-encoding file)` };
   }
   const u8 = new Uint8Array(got.bytes);
-  const contentHash = await sha256HexOfBytes(got.bytes);
+  const contentHash = await sha256Hex(got.bytes);
   const unchanged = prior?.contentHash === contentHash;
   const loadedAt = unchanged && prior ? prior.loadedAt : args.now;
   return {
@@ -394,7 +371,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
     return { errorMessage: `@resource ${args.decl.name}: ${got.errorMessage}` };
   }
   const u8 = new Uint8Array(got.bytes);
-  const contentHash = await sha256HexOfBytes(got.bytes);
+  const contentHash = await sha256Hex(got.bytes);
   const unchanged = prior && prior.contentHash === contentHash && prior.name === args.decl.name;
   const loadedAt = unchanged && prior ? prior.loadedAt : args.now;
   return {
