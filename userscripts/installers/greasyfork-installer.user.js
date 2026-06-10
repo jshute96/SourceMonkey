@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GreasyFork: Install in SourceMonkey
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      1.0.1
+// @version      1.0.2
 // @description  Add an "Install in SourceMonkey" button next to GreasyFork's install button.
 // @author       Jeff Shute <jshute@gmail.com>
 // @match        https://greasyfork.org/*
@@ -35,7 +35,13 @@
     if (document.getElementById(BTN_ID)) return;
     const installLink = document.querySelector('a.install-link');
     if (!installLink) return;
-    const userJsUrl = installLink.getAttribute('href');
+    // Use the resolved `.href` property, not the raw `getAttribute`
+    // string: if GreasyFork ever serves a root-relative href
+    // (`/scripts/123/code/foo.user.js`), the raw value would reach the
+    // sources page as `/...`, which its validator treats as an absolute
+    // *filesystem* path rather than a script URL. `.href` is always the
+    // fully-resolved absolute URL.
+    const userJsUrl = installLink.href;
     if (!userJsUrl) return;
 
     const btn = document.createElement('a');

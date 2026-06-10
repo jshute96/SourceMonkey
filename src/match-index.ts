@@ -43,6 +43,14 @@ let cache = new Map<string, CacheEntry>();
 let disabledSources = new Set<string>();
 let loaded: Promise<void> | null = null;
 
+// While loadAll() is awaiting its full `get(null)` snapshot, any
+// storage change that fires would mutate the about-to-be-replaced
+// `cache`, and the subsequent `cache = nextCache` assignment would
+// discard it — a lost update until the next change to that key. During
+// the load window we buffer raw changes here instead of applying them,
+// then replay them onto the freshly-built cache. Null when not loading.
+let pendingDuringLoad: { [key: string]: chrome.storage.StorageChange }[] | null = null;
+
 // First call kicks off a single full read; later callers await the same
 // promise. After it resolves, the cache is kept fresh by the onChanged
 // listener installed by installStorageListener().
@@ -52,6 +60,7 @@ export function ensureLoaded(): Promise<void> {
 }
 
 async function loadAll(): Promise<void> {
+  pendingDuringLoad = [];
   const all = await chrome.storage.local.get(null);
   const nextCache = new Map<string, CacheEntry>();
   const nextDisabled = new Set<string>();
@@ -66,6 +75,13 @@ async function loadAll(): Promise<void> {
   }
   cache = nextCache;
   disabledSources = nextDisabled;
+  // Replay any changes that landed during the await on top of the
+  // fresh snapshot, then stop buffering. A change for a key already in
+  // the snapshot just re-applies the same (or newer) value; one for a
+  // key the snapshot missed is now captured.
+  const buffered = pendingDuringLoad;
+  pendingDuringLoad = null;
+  for (const changes of buffered) applyStorageChanges(changes);
 }
 
 function toEntry(script: StoredScript): CacheEntry | null {
@@ -96,34 +112,47 @@ export function installStorageListener(): void {
   listenerInstalled = true;
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
-    let touched = false;
-    for (const [key, change] of Object.entries(changes)) {
-      if (key.startsWith(SCRIPT_PREFIX)) {
-        touched = true;
-        const id = key.slice(SCRIPT_PREFIX.length);
-        if (change.newValue === undefined) {
-          cache.delete(id);
-          continue;
-        }
-        const entry = toEntry(change.newValue as StoredScript);
-        if (entry) cache.set(id, entry);
-        else cache.delete(id);
-      } else if (key.startsWith(SOURCE_PREFIX)) {
-        const id = key.slice(SOURCE_PREFIX.length);
-        const next = change.newValue as StoredSource | undefined;
-        if (next === undefined) {
-          // Source was removed entirely — its scripts will be deleted
-          // via separate script:* changes; just drop our tracking row.
-          if (disabledSources.delete(id)) touched = true;
-        } else if (!isSourceEnabled(next)) {
-          if (!disabledSources.has(id)) { disabledSources.add(id); touched = true; }
-        } else {
-          if (disabledSources.delete(id)) touched = true;
-        }
+    // If a full load is mid-flight, buffer this change for replay after
+    // the snapshot lands rather than mutating the soon-to-be-replaced
+    // cache (which would lose this update). See loadAll().
+    if (pendingDuringLoad) {
+      pendingDuringLoad.push(changes);
+      return;
+    }
+    applyStorageChanges(changes);
+  });
+}
+
+// Apply one storage.onChanged delta to the in-memory cache. Shared by
+// the live listener and loadAll()'s post-snapshot replay.
+function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageChange }): void {
+  let touched = false;
+  for (const [key, change] of Object.entries(changes)) {
+    if (key.startsWith(SCRIPT_PREFIX)) {
+      touched = true;
+      const id = key.slice(SCRIPT_PREFIX.length);
+      if (change.newValue === undefined) {
+        cache.delete(id);
+        continue;
+      }
+      const entry = toEntry(change.newValue as StoredScript);
+      if (entry) cache.set(id, entry);
+      else cache.delete(id);
+    } else if (key.startsWith(SOURCE_PREFIX)) {
+      const id = key.slice(SOURCE_PREFIX.length);
+      const next = change.newValue as StoredSource | undefined;
+      if (next === undefined) {
+        // Source was removed entirely — its scripts will be deleted
+        // via separate script:* changes; just drop our tracking row.
+        if (disabledSources.delete(id)) touched = true;
+      } else if (!isSourceEnabled(next)) {
+        if (!disabledSources.has(id)) { disabledSources.add(id); touched = true; }
+      } else {
+        if (disabledSources.delete(id)) touched = true;
       }
     }
-    if (touched) notifyChange();
-  });
+  }
+  if (touched) notifyChange();
 }
 
 // Allow the background SW to refresh open-tab badges when the script

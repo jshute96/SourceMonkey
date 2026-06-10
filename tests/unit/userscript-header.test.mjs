@@ -85,6 +85,20 @@ test('parseHeader returns null when the end marker is missing', () => {
   assert.equal(parseHeader('// ==UserScript==\n// @name Foo\n'), null);
 });
 
+test('parseHeader tolerates a leading UTF-8 BOM before the start marker', () => {
+  // The page-context file:// XHR path can hand back the BOM intact. The
+  // `^//` boundary regex won't match past a U+FEFF, so without the
+  // strip the whole block reads as absent and the script is flagged
+  // INVALID. Both parseHeader and splitHeaderBody must tolerate it.
+  const src = '\uFEFF// ==UserScript==\n// @name Foo\n// ==/UserScript==\n';
+  const h = parseHeader(src);
+  assert.ok(h, 'BOM-prefixed header should still parse');
+  assert.equal(getValue(h, 'name'), 'Foo');
+  const split = splitHeaderBody(src);
+  assert.equal(split.error, undefined);
+  assert.match(split.headerText, /==UserScript==/);
+});
+
 test('parseHeader ignores non-tag lines inside the block', () => {
   const src = `// ==UserScript==
 // just a regular comment, no @tag

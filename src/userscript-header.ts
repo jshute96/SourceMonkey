@@ -26,6 +26,16 @@ export interface ParsedHeader {
 const BLOCK_START = /^[ \t]*\/\/[ \t]*==UserScript==[ \t]*$/m;
 const BLOCK_END = /^[ \t]*\/\/[ \t]*==\/UserScript==[ \t]*$/m;
 
+// Strip a single leading UTF-8 BOM. Most fetch paths (`response.text()`,
+// `TextDecoder`) drop it for us, but the page-context `file://` XHR path
+// (`directories.ts`) hands back `xhr.responseText` with the BOM intact.
+// Our `^//` boundary regexes won't match past a U+FEFF, so a BOM-prefixed
+// script would be misread as having no metadata block. The BOM only ever
+// appears at file position 0.
+function stripLeadingBom(source: string): string {
+  return source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
+}
+
 export type SplitError = 'no metadata block' | 'unterminated metadata block';
 
 export interface SplitResult {
@@ -45,6 +55,7 @@ export interface SplitResult {
 // bodyText = the whole source so callers always have something to
 // display.
 export function splitHeaderBody(source: string): SplitResult {
+  source = stripLeadingBom(source);
   const startMatch = BLOCK_START.exec(source);
   if (!startMatch) {
     return { leadingText: '', headerText: '', bodyText: source, error: 'no metadata block' };
@@ -100,6 +111,7 @@ export function joinFullSource(
 // Parse the metadata block. Returns null if there is no
 // `==UserScript==` / `==/UserScript==` pair.
 export function parseHeader(source: string): ParsedHeader | null {
+  source = stripLeadingBom(source);
   const startMatch = BLOCK_START.exec(source);
   if (!startMatch) return null;
   const afterStart = source.slice(startMatch.index + startMatch[0].length);
