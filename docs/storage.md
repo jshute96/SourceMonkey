@@ -405,6 +405,39 @@ Every load path goes through the same pipeline:
   `storage.onChanged` event (and therefore one background re-sync)
   instead of one per script.
 
+### Write serialization (`mutate`)
+
+`chrome.storage.local` has no compare-and-swap, so two operations that
+each *read* a row, derive a new value, and *write* it back can drop one
+another's change. The classic symptom: a user toggles a script's
+`enabled` flag while an opportunistic `refreshSource` is mid-fetch; the
+refresh captured the old flag before the toggle and writes it back,
+silently reverting the user's choice.
+
+- All structural read-modify-writes run inside a single non-reentrant
+  mutex (`mutate()` in `script-store.ts`): the enable setters, the
+  index mutators (`addSource`/`addScriptToContainer` seed, `moveSource`,
+  `removeSource`, `removeScript`), and the write halves of
+  `refreshSource` / `refreshScript`.
+- The mutex guards only the **short** critical sections. Slow fetches
+  stay *outside* it: a refresh fetches first, then re-reads the current
+  rows and writes **inside** the lock, taking the user-owned `enabled`
+  (and the source's `displayName`) from the freshly re-read row and
+  keeping the refresh-owned content. So an enable toggle that landed
+  during the fetch is preserved, and I/O isn't serialized.
+- Non-reentrant: a `mutate()` block must not call another mutator. The
+  orchestrators honor this — `addSource` runs its dedup+seed write in
+  the lock, then calls `refreshSource` (which takes the lock for its own
+  write) *outside* it; `refreshAllSources` fans out `refreshSource`
+  calls that each lock independently.
+- **Residual** (narrow, pre-existing): adding a child to a container
+  (`addScriptToContainer`) concurrently with a `refreshSource` on that
+  same container can still drop the new child from `scriptIds`, because
+  the refresh computes its child set from a snapshot taken before the
+  add. The byte-level writes are now atomic, but this logical
+  interleaving isn't reconciled. Both are user-driven from one page, so
+  it's rare in practice.
+
 ## First-run seeding
 
 So a freshly-installed extension isn't empty, SourceMonkey seeds the

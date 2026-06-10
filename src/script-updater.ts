@@ -16,10 +16,15 @@
 // In both modes a check that's currently in flight for a resource is
 // shared — a manual click that lands while an opportunistic check is
 // already running awaits that existing promise instead of starting a
-// second pass. This is the property that makes "one updater for
-// everything" actually work: there's never more than one fetch + write
-// for the same script/source at the same time, regardless of what
-// triggered it.
+// second pass. This holds PER gate key: the script gate
+// (`updateScript`), the source gate (`updateSource`), and the
+// all-sources gate (`updateAllSources`) are independent maps, so an
+// opportunistic `updateScript(X)` can still run alongside a manual
+// `updateSource(S⊇X)` or `updateAllSources` that also rebuilds X. They
+// fetch the same bytes, and their storage writes are serialized and
+// re-read user-owned state by `script-store.ts`'s `mutate()` lock (see
+// docs/storage.md "Write serialization"), so the overlap is idempotent
+// rather than corrupting — but it is NOT deduped to a single fetch.
 //
 // We deliberately don't try to mark tabs stale from here. The actual
 // stale propagation happens via chrome.storage.onChanged in

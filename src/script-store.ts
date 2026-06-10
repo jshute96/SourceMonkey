@@ -739,6 +739,32 @@ const SOURCES_INDEX_KEY = 'sources';
 const sourceKey = (id: string) => `source:${id}`;
 const scriptKey = (id: string) => `script:${id}`;
 
+// Serialize every read-modify-write of the structural rows (the source
+// index, source rows, script rows). chrome.storage.local has no
+// compare-and-swap, so two operations that each read a row, derive a
+// new value, and write it back would otherwise drop one another's
+// change — e.g. a user's enable toggle reverted by a refresh that
+// captured the old flag before the fetch, or an addSource racing a
+// removeSource on the shared index. Callers run their read AND write
+// inside one `mutate()` so the pair is atomic with respect to other
+// mutators.
+//
+// The critical sections here are short (no network) — slow fetches stay
+// OUTSIDE the lock (refresh fetches, then re-reads + writes inside it),
+// so this doesn't serialize I/O. IMPORTANT: a `mutate()` block must
+// never call another mutator (refreshSource / addSource / a set*),
+// since this mutex is non-reentrant — keep orchestrator calls outside.
+let mutateChain: Promise<unknown> = Promise.resolve();
+function mutate<T>(fn: () => Promise<T>): Promise<T> {
+  // Run after the prior section settles, regardless of its outcome.
+  const run = mutateChain.then(fn, fn);
+  // Advance the chain, swallowing the result so one section's rejection
+  // doesn't reject the next waiter's gate (the rejection still
+  // propagates to THIS caller via `run`).
+  mutateChain = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 // Set to `true` the first time the SW seeds the default sources, so the
 // seeding never runs again even after the user removes those sources.
 const FIRST_RUN_DONE_KEY = 'firstRunComplete';
@@ -851,26 +877,34 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
     return await addScriptToContainer(path);
   }
 
-  const sources = await getSources();
-  if (sources.some((s) => s.path === path)) return null;
-
-  const id = crypto.randomUUID();
-  const seed: StoredSource = {
-    id,
-    path,
-    lastRefreshedAt: 0,
-    scriptIds: [],
-    enabled: true,
-    // Seed an inferred displayName at add-time so a viewer opened
-    // mid-add (or any other reader) doesn't briefly see a row whose
-    // name only materialises on the next backfill pass.
-    displayName: inferDisplayName(path),
-  };
-  const nextIndex = [...sources.map((s) => s.id), id];
-  await chrome.storage.local.set({
-    [SOURCES_INDEX_KEY]: nextIndex,
-    [sourceKey(id)]: seed,
+  // Dedup-and-register atomically so two concurrent adds of the same
+  // path can't both create a source (and so this index write can't lose
+  // a race with another index mutator). The refresh runs OUTSIDE the
+  // lock (it acquires the lock itself for its own write).
+  const created = await mutate(async () => {
+    const sources = await getSources();
+    if (sources.some((s) => s.path === path)) return null;
+    const id = crypto.randomUUID();
+    const seed: StoredSource = {
+      id,
+      path,
+      lastRefreshedAt: 0,
+      scriptIds: [],
+      enabled: true,
+      // Seed an inferred displayName at add-time so a viewer opened
+      // mid-add (or any other reader) doesn't briefly see a row whose
+      // name only materialises on the next backfill pass.
+      displayName: inferDisplayName(path),
+    };
+    const nextIndex = [...sources.map((s) => s.id), id];
+    await chrome.storage.local.set({
+      [SOURCES_INDEX_KEY]: nextIndex,
+      [sourceKey(id)]: seed,
+    });
+    return { id, seed };
   });
+  if (!created) return null;
+  const { id, seed } = created;
   const refreshed = await refreshSource(id);
   // The updater-driven refresh paths already emit per-script Log
   // entries when a script transitions into invalid / missing. This
@@ -912,54 +946,63 @@ export async function markFirstRunComplete(): Promise<void> {
 async function addScriptToContainer(path: string): Promise<AddSourceResult> {
   const kind = containerKindForSingleFileInput(path);
   const cPath = containerPath(kind);
-  const sources = await getSources();
-  const existingContainer = sources.find((s) => s.path === cPath);
-  const isNew = !existingContainer;
-  if (existingContainer) {
-    // Each container script's `relativePath` is the full URL/path the
-    // user added; any prior row with the same value is a duplicate.
-    const existingScripts = await getMany(existingContainer.scriptIds.map(scriptKey));
-    for (const sid of existingContainer.scriptIds) {
-      const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
-      if (s?.relativePath === path) return null;
+
+  // Dedup-check and seed the container + script atomically so a
+  // concurrent add (or index mutator) can't lose this scriptIds/index
+  // write. The refresh runs OUTSIDE the lock. Returns null on duplicate.
+  const seeded = await mutate(async () => {
+    const sources = await getSources();
+    const existingContainer = sources.find((s) => s.path === cPath);
+    const isNew = !existingContainer;
+    if (existingContainer) {
+      // Each container script's `relativePath` is the full URL/path the
+      // user added; any prior row with the same value is a duplicate.
+      const existingScripts = await getMany(existingContainer.scriptIds.map(scriptKey));
+      for (const sid of existingContainer.scriptIds) {
+        const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
+        if (s?.relativePath === path) return null;
+      }
     }
-  }
 
-  const now = Date.now();
-  const containerId = existingContainer?.id ?? crypto.randomUUID();
-  const scriptId = crypto.randomUUID();
-  const priorScriptIds = existingContainer?.scriptIds ?? [];
-  const nextContainer: StoredSource = existingContainer
-    ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
-    : {
-        id: containerId,
-        path: cPath,
-        lastRefreshedAt: 0,
-        scriptIds: [scriptId],
-        enabled: true,
-        displayName: inferDisplayName(cPath),
-      };
-  const seedScript = buildInitialInvalidEntry({
-    id: scriptId,
-    sourceId: containerId,
-    relativePath: path,
-    fileUrl: scriptFileUrl(cPath, path),
-    errorMessage: 'not loaded',
-    now,
+    const now = Date.now();
+    const containerId = existingContainer?.id ?? crypto.randomUUID();
+    const scriptId = crypto.randomUUID();
+    const priorScriptIds = existingContainer?.scriptIds ?? [];
+    const nextContainer: StoredSource = existingContainer
+      ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
+      : {
+          id: containerId,
+          path: cPath,
+          lastRefreshedAt: 0,
+          scriptIds: [scriptId],
+          enabled: true,
+          displayName: inferDisplayName(cPath),
+        };
+    const seedScript = buildInitialInvalidEntry({
+      id: scriptId,
+      sourceId: containerId,
+      relativePath: path,
+      fileUrl: scriptFileUrl(cPath, path),
+      errorMessage: 'not loaded',
+      now,
+    });
+
+    // Single set call so a SW restart between writes can never leave a
+    // half-populated container — either the new script lands with its
+    // container's scriptIds pointing at it (and, for a new container,
+    // the sources index pointing at the container), or nothing does.
+    const toSet: Record<string, unknown> = {
+      [sourceKey(containerId)]: nextContainer,
+      [scriptKey(scriptId)]: seedScript,
+    };
+    if (isNew) {
+      toSet[SOURCES_INDEX_KEY] = [...sources.map((s) => s.id), containerId];
+    }
+    await chrome.storage.local.set(toSet);
+    return { isNew, containerId, scriptId, nextContainer };
   });
-
-  // Single set call so a SW restart between writes can never leave a
-  // half-populated container — either the new script lands with its
-  // container's scriptIds pointing at it (and, for a new container,
-  // the sources index pointing at the container), or nothing does.
-  const toSet: Record<string, unknown> = {
-    [sourceKey(containerId)]: nextContainer,
-    [scriptKey(scriptId)]: seedScript,
-  };
-  if (isNew) {
-    toSet[SOURCES_INDEX_KEY] = [...sources.map((s) => s.id), containerId];
-  }
-  await chrome.storage.local.set(toSet);
+  if (!seeded) return null;
+  const { isNew, containerId, scriptId, nextContainer } = seeded;
 
   const refreshed = await refreshSource(containerId);
   if (refreshed) {
@@ -1013,23 +1056,27 @@ export async function moveSource(
   id: string,
   direction: 'up' | 'down',
 ): Promise<void> {
-  const ids = await readSourceIndex();
-  const idx = ids.indexOf(id);
-  if (idx < 0) return;
-  const swapWith = direction === 'up' ? idx - 1 : idx + 1;
-  if (swapWith < 0 || swapWith >= ids.length) return;
-  const next = ids.slice();
-  [next[idx], next[swapWith]] = [next[swapWith]!, next[idx]!];
-  await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: next });
+  await mutate(async () => {
+    const ids = await readSourceIndex();
+    const idx = ids.indexOf(id);
+    if (idx < 0) return;
+    const swapWith = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapWith < 0 || swapWith >= ids.length) return;
+    const next = ids.slice();
+    [next[idx], next[swapWith]] = [next[swapWith]!, next[idx]!];
+    await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: next });
+  });
 }
 
 export async function removeSource(id: string): Promise<void> {
-  const source = await getRaw<StoredSource>(sourceKey(id));
-  const ids = await readSourceIndex();
-  const nextIndex = ids.filter((sid) => sid !== id);
-  const removeKeys = [sourceKey(id), ...(source?.scriptIds ?? []).map(scriptKey)];
-  await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: nextIndex });
-  await chrome.storage.local.remove(removeKeys);
+  await mutate(async () => {
+    const source = await getRaw<StoredSource>(sourceKey(id));
+    const ids = await readSourceIndex();
+    const nextIndex = ids.filter((sid) => sid !== id);
+    const removeKeys = [sourceKey(id), ...(source?.scriptIds ?? []).map(scriptKey)];
+    await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: nextIndex });
+    await chrome.storage.local.remove(removeKeys);
+  });
 }
 
 // Drop a single script row from storage and remove its ID from the
@@ -1038,18 +1085,20 @@ export async function removeSource(id: string): Promise<void> {
 // that are gone for good — refreshSource won't recreate the row because
 // it only adds entries the scan currently reports.
 export async function removeScript(id: string): Promise<void> {
-  const script = await getRaw<StoredScript>(scriptKey(id));
-  if (!script) return;
-  const source = await getRaw<StoredSource>(sourceKey(script.sourceId));
-  const toSet: Record<string, unknown> = {};
-  if (source) {
-    const nextIds = source.scriptIds.filter((sid) => sid !== id);
-    if (nextIds.length !== source.scriptIds.length) {
-      toSet[sourceKey(source.id)] = { ...source, scriptIds: nextIds };
+  await mutate(async () => {
+    const script = await getRaw<StoredScript>(scriptKey(id));
+    if (!script) return;
+    const source = await getRaw<StoredSource>(sourceKey(script.sourceId));
+    const toSet: Record<string, unknown> = {};
+    if (source) {
+      const nextIds = source.scriptIds.filter((sid) => sid !== id);
+      if (nextIds.length !== source.scriptIds.length) {
+        toSet[sourceKey(source.id)] = { ...source, scriptIds: nextIds };
+      }
     }
-  }
-  if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
-  await chrome.storage.local.remove(scriptKey(id));
+    if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
+    await chrome.storage.local.remove(scriptKey(id));
+  });
   // Drop the per-script Log + max-log-level sentinel along with the
   // row itself — otherwise an orphaned session-storage entry would
   // outlive the script it described and confuse any later renderer
@@ -1133,13 +1182,19 @@ export async function refreshSource(
   // etc.; the user wants the scripts to stay enabled until the source
   // is actually proven gone.
   if (scanError) {
-    const nextSource: StoredSource = {
-      ...source,
-      lastRefreshedAt: now,
-      scanError,
-    };
-    await chrome.storage.local.set({ [sourceKey(id)]: nextSource });
-    return { source: nextSource, scripts: existingScripts };
+    return await mutate(async () => {
+      // Re-read inside the lock so a concurrent setSourceEnabled (or
+      // displayName backfill) that landed during the scan isn't reverted
+      // — we only own lastRefreshedAt + scanError here.
+      const curSource = await getRaw<StoredSource>(sourceKey(id)) ?? source;
+      const nextSource: StoredSource = {
+        ...curSource,
+        lastRefreshedAt: now,
+        scanError,
+      };
+      await chrome.storage.local.set({ [sourceKey(id)]: nextSource });
+      return { source: nextSource, scripts: existingScripts };
+    });
   }
 
   // Fetch every scanned file in parallel except those whose size+mtime
@@ -1161,29 +1216,56 @@ export async function refreshSource(
     fileFetchCache: opts.fileFetchCache,
   });
 
-  const nextSource: StoredSource = {
-    ...source,
-    lastRefreshedAt: now,
-    scriptIds: scripts.map((s) => s.id),
-  };
-  // Clear any scanError left by a previous failed refresh — control
-  // only reaches here when the scan succeeded (the early-return above
-  // handles the failure case).
-  delete nextSource.scanError;
+  // Re-read the current rows INSIDE the lock and write atomically, so a
+  // concurrent enable toggle (setSourceEnabled / setScriptEnabled) that
+  // landed during the fetch isn't reverted by stale values captured
+  // before it. Content (and any deliberate refresh-owned `enabled`
+  // change, e.g. applyMissing flipping a vanished script to disabled) is
+  // kept; we only re-apply the user's toggle when the persisted
+  // `enabled` actually changed vs the snapshot this refresh started from
+  // — that's the signal a setScriptEnabled landed mid-fetch.
+  const priorById = new Map(existingScripts.map((s) => [s.id, s]));
+  return await mutate(async () => {
+    const curSource = await getRaw<StoredSource>(sourceKey(id));
+    if (!curSource) {
+      // Source was removed during the refresh — abandon the write rather
+      // than resurrect a deleted source row.
+      return null;
+    }
+    const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
+    const finalScripts = scripts.map((s) => {
+      const cur = curScripts[scriptKey(s.id)] as StoredScript | undefined;
+      const prior = priorById.get(s.id);
+      if (cur && prior && cur.enabled !== prior.enabled) {
+        return { ...s, enabled: cur.enabled };
+      }
+      return s;
+    });
 
-  // Drop rows whose IDs are no longer referenced. Hit by manifest
-  // sources whose user removed an entry; also defensive against any
-  // future per-script Remove.
-  const priorIds = new Set(existingScripts.map((s) => s.id));
-  const nextIds = new Set(scripts.map((s) => s.id));
-  const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
+    const nextSource: StoredSource = {
+      ...curSource,
+      lastRefreshedAt: now,
+      scriptIds: finalScripts.map((s) => s.id),
+    };
+    // Clear any scanError left by a previous failed refresh — control
+    // only reaches here when the scan succeeded (the early-return above
+    // handles the failure case).
+    delete nextSource.scanError;
 
-  const toSet: Record<string, unknown> = { [sourceKey(id)]: nextSource };
-  for (const s of scripts) toSet[scriptKey(s.id)] = s;
-  await chrome.storage.local.set(toSet);
-  if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
+    // Drop rows whose IDs are no longer referenced. Hit by manifest
+    // sources whose user removed an entry; also defensive against any
+    // future per-script Remove.
+    const priorIds = new Set(existingScripts.map((s) => s.id));
+    const nextIds = new Set(finalScripts.map((s) => s.id));
+    const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
 
-  return { source: nextSource, scripts };
+    const toSet: Record<string, unknown> = { [sourceKey(id)]: nextSource };
+    for (const s of finalScripts) toSet[scriptKey(s.id)] = s;
+    await chrome.storage.local.set(toSet);
+    if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
+
+    return { source: nextSource, scripts: finalScripts };
+  });
 }
 
 // Refetch a single script. Goes through the same per-file pipeline as
@@ -1252,8 +1334,20 @@ export async function refreshScript(
   });
   const next = result[0];
   if (!next) return null;
-  await chrome.storage.local.set({ [scriptKey(scriptId)]: next });
-  return next;
+  // Re-read inside the lock and write atomically so a concurrent
+  // setScriptEnabled toggle that landed during the fetch isn't reverted.
+  // Only re-apply the user's flag when the persisted `enabled` actually
+  // changed vs the snapshot this refresh started from (`prior`) — a
+  // deliberate refresh-owned change (e.g. applyMissing → disabled) must
+  // otherwise win.
+  return await mutate(async () => {
+    const cur = await getRaw<StoredScript>(scriptKey(scriptId));
+    const merged = (cur && cur.enabled !== prior.enabled)
+      ? { ...next, enabled: cur.enabled }
+      : next;
+    await chrome.storage.local.set({ [scriptKey(scriptId)]: merged });
+    return merged;
+  });
 }
 
 // Fetch each scanned file in parallel.
@@ -1361,22 +1455,26 @@ export async function setSourceEnabled(
   id: string,
   enabled: boolean,
 ): Promise<StoredSource | null> {
-  const source = await getRaw<StoredSource>(sourceKey(id));
-  if (!source) return null;
-  const next: StoredSource = { ...source, enabled };
-  await chrome.storage.local.set({ [sourceKey(id)]: next });
-  return next;
+  return mutate(async () => {
+    const source = await getRaw<StoredSource>(sourceKey(id));
+    if (!source) return null;
+    const next: StoredSource = { ...source, enabled };
+    await chrome.storage.local.set({ [sourceKey(id)]: next });
+    return next;
+  });
 }
 
 export async function setScriptEnabled(
   id: string,
   enabled: boolean,
 ): Promise<StoredScript | null> {
-  const script = await getRaw<StoredScript>(scriptKey(id));
-  if (!script) return null;
-  const next: StoredScript = { ...script, enabled };
-  await chrome.storage.local.set({ [scriptKey(id)]: next });
-  return next;
+  return mutate(async () => {
+    const script = await getRaw<StoredScript>(scriptKey(id));
+    if (!script) return null;
+    const next: StoredScript = { ...script, enabled };
+    await chrome.storage.local.set({ [scriptKey(id)]: next });
+    return next;
+  });
 }
 
 // Flip many scripts' enabled flags in a single storage write. This is
@@ -1388,15 +1486,17 @@ export async function setScriptsEnabled(
   updates: { id: string; enabled: boolean }[],
 ): Promise<void> {
   if (updates.length === 0) return;
-  const keys = updates.map((u) => scriptKey(u.id));
-  const got = await getMany(keys);
-  const toSet: Record<string, unknown> = {};
-  for (const u of updates) {
-    const script = got[scriptKey(u.id)] as StoredScript | undefined;
-    if (!script) continue;          // row vanished; skip silently
-    if (script.enabled === u.enabled) continue;  // already in target state
-    toSet[scriptKey(u.id)] = { ...script, enabled: u.enabled };
-  }
-  if (Object.keys(toSet).length === 0) return;
-  await chrome.storage.local.set(toSet);
+  await mutate(async () => {
+    const keys = updates.map((u) => scriptKey(u.id));
+    const got = await getMany(keys);
+    const toSet: Record<string, unknown> = {};
+    for (const u of updates) {
+      const script = got[scriptKey(u.id)] as StoredScript | undefined;
+      if (!script) continue;          // row vanished; skip silently
+      if (script.enabled === u.enabled) continue;  // already in target state
+      toSet[scriptKey(u.id)] = { ...script, enabled: u.enabled };
+    }
+    if (Object.keys(toSet).length === 0) return;
+    await chrome.storage.local.set(toSet);
+  });
 }
