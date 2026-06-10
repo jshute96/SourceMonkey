@@ -509,33 +509,90 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
     // any paint into an orphaned `inner` decorates a subtree the user
     // never sees.
     const img = slot.ownerDocument.createElement('img');
-    img.src = dataUrl;
+    img.src = iconImgSrc(dataUrl);
     img.alt = '';
     inner.replaceChildren(img);
   })();
 }
 
+// Per-document registry: one blob: URL per distinct large icon. With
+// dozens of scripts targeting the same site, every row otherwise
+// inlined its own copy of the favicon's base64 `data:` URL — a handful
+// of distinct icons re-inlined across ~every row, which ballooned the
+// sources page past half a megabyte. Pointing every row at a shared
+// ~55-char blob: handle instead drops all that duplication out of the
+// DOM; the bytes live once in the browser's blob table.
+//
+// Document-lifetime, never revoked: the set is bounded by the number of
+// DISTINCT icons on the page (tiny), and not revoking keeps it
+// bfcache-safe — a restored page's <img>s still resolve. This mirrors
+// the GM_getResourceURL policy (see wrapper-gm-runtime.js). Keyed by the
+// data: URL string, so a re-render reuses the existing blob for an
+// unchanged icon and only mints one for genuinely new icons.
+const iconObjectUrls = new Map<string, string>();
+
+// Icons whose `data:` URL is at or below this many chars stay inline —
+// below it a blob: URL (plus its table entry) doesn't beat the data URL
+// it would replace, and de-duping a handful of tiny bytes isn't worth
+// it. Sits well above the favicons used in tests and well below
+// real-world ones (smallest observed ≈ 1.2 KB).
+const ICON_INLINE_MAX_LEN = 512;
+
+// Map a cached icon `data:` URL to what we actually put in `<img src>`:
+// large icons become a shared blob: URL (deduped by the data URL
+// string); small ones pass through unchanged.
+function iconImgSrc(dataUrl: string): string {
+  if (dataUrl.length <= ICON_INLINE_MAX_LEN) return dataUrl;
+  const existing = iconObjectUrls.get(dataUrl);
+  if (existing) return existing;
+  const blob = dataUrlToBlob(dataUrl);
+  if (!blob) return dataUrl;       // unparseable → fall back to inline
+  const url = URL.createObjectURL(blob);
+  iconObjectUrls.set(dataUrl, url);
+  return url;
+}
+
+// Decode a `data:[<mime>][;base64],<payload>` URL into a Blob
+// synchronously (no fetch round-trip) so the caller can swap `src`
+// without an extra await. Handles base64 and plain (percent-encoded)
+// payloads; returns null on anything it can't parse. The non-base64
+// branch assumes a TEXT payload (it round-trips through a JS string, so
+// raw binary would be UTF-8-mangled) — fine here because real binary
+// icon data URLs are always `;base64`; the only non-base64 icons we
+// see are inline SVG/text.
+export function dataUrlToBlob(dataUrl: string): Blob | null {
+  const comma = dataUrl.indexOf(',');
+  if (!dataUrl.startsWith('data:') || comma < 0) return null;
+  const meta = dataUrl.slice(5, comma);          // e.g. "image/png;base64"
+  const payload = dataUrl.slice(comma + 1);
+  const isBase64 = /;base64$/i.test(meta);
+  const mime = (isBase64 ? meta.slice(0, -7) : meta).split(';')[0] || 'application/octet-stream';
+  try {
+    if (isBase64) {
+      const bin = atob(payload);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+    return new Blob([decodeURIComponent(payload)], { type: mime });
+  } catch {
+    return null;
+  }
+}
+
+// The globe placeholder shown until a favicon loads (and the permanent
+// icon for scripts with no resolvable origin). Rendered as a tiny
+// `<use>` of the shared `#sm-globe` <symbol> defined once per page, so
+// 100+ rows don't each inline the full circle+meridian path data. The
+// stroke/fill presentation lives in CSS on `.site-icon-globe`.
 function buildGlobeSvg(doc: Document): SVGSVGElement {
   const NS = 'http://www.w3.org/2000/svg';
   const svg = doc.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('class', 'site-icon-globe');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
   svg.setAttribute('aria-hidden', 'true');
-  const circle = doc.createElementNS(NS, 'circle');
-  circle.setAttribute('cx', '12');
-  circle.setAttribute('cy', '12');
-  circle.setAttribute('r', '10');
-  svg.appendChild(circle);
-  const equator = doc.createElementNS(NS, 'path');
-  equator.setAttribute('d', 'M2 12h20');
-  svg.appendChild(equator);
-  const meridian = doc.createElementNS(NS, 'path');
-  meridian.setAttribute('d', 'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z');
-  svg.appendChild(meridian);
+  const use = doc.createElementNS(NS, 'use');
+  use.setAttribute('href', '#sm-globe');
+  svg.appendChild(use);
   return svg;
 }

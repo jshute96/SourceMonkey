@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  dataUrlToBlob,
   iconRefFromHeader,
   isCacheFresh,
   parseIconLinks,
@@ -225,4 +226,43 @@ test('pickBestIconCandidate: falls back to apple-touch-icon when nothing else vi
     { href: '/apple.png', rel: 'apple-touch-icon',  sizes: '180x180', type: 'image/png' },
   ];
   assert.equal(pickBestIconCandidate(cands).href, '/apple.png');
+});
+
+// ---------- dataUrlToBlob ----------
+// Backs the per-page blob: URL dedup that keeps the sources page from
+// inlining a copy of every favicon's base64 into each row.
+
+test('dataUrlToBlob: decodes a base64 data URL to the right bytes + MIME', async () => {
+  // "Hi" → base64 "SGk=".
+  const blob = dataUrlToBlob('data:image/png;base64,SGk=');
+  assert.ok(blob, 'expected a Blob');
+  assert.equal(blob.type, 'image/png');
+  assert.equal(await blob.text(), 'Hi');
+});
+
+test('dataUrlToBlob: strips charset params from the MIME', async () => {
+  const blob = dataUrlToBlob('data:image/svg+xml;charset=utf-8;base64,SGk=');
+  assert.equal(blob.type, 'image/svg+xml');
+});
+
+test('dataUrlToBlob: handles a non-base64 (percent-encoded) payload', async () => {
+  const blob = dataUrlToBlob('data:image/svg+xml,%3Csvg%3E%3C%2Fsvg%3E');
+  assert.equal(blob.type, 'image/svg+xml');
+  assert.equal(await blob.text(), '<svg></svg>');
+});
+
+test('dataUrlToBlob: returns null for a non-data URL', () => {
+  assert.equal(dataUrlToBlob('https://example.com/x.png'), null);
+  assert.equal(dataUrlToBlob('not a url'), null);
+});
+
+test('dataUrlToBlob: returns null (never throws) on malformed base64', () => {
+  // `atob` throws on invalid base64; the function must catch it and
+  // fall back to null so a corrupt cache entry can't break rendering.
+  // '@@@' isn't valid base64.
+  assert.equal(dataUrlToBlob('data:image/png;base64,@@@'), null);
+});
+
+test('dataUrlToBlob: returns null for a data: URL with no comma', () => {
+  assert.equal(dataUrlToBlob('data:image/png;base64'), null);
 });

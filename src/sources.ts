@@ -1327,12 +1327,18 @@ function makeToggle(
   return label;
 }
 
-function viewerUrl(scriptId: string, tab?: 'log'): URL {
-  const url = new URL(chrome.runtime.getURL('userscript.html'));
-  url.searchParams.set('script', scriptId);
+// A page-relative viewer link (e.g. `userscript.html?script=<id>#Log`).
+// Relative — not the absolute `chrome.runtime.getURL(...)` form — because
+// both pages live at the extension root, so the browser resolves it
+// against the current page; this keeps the long `chrome-extension://<id>/`
+// prefix from being inlined twice per row (filename + status link) across
+// a table that can hold hundreds of scripts. Returns a string; the two
+// callers already `.toString()` it (a no-op on a string).
+function viewerUrl(scriptId: string, tab?: 'log'): string {
+  const params = new URLSearchParams({ script: scriptId });
   // The viewer parses #Log via parseHash and lands on the Log pane.
-  if (tab === 'log') url.hash = 'Log';
-  return url;
+  const hash = tab === 'log' ? '#Log' : '';
+  return `userscript.html?${params.toString()}${hash}`;
 }
 
 // CSS.escape isn't on every old runtime; fall back to a minimal escape

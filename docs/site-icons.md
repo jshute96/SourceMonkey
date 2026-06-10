@@ -168,12 +168,40 @@ just trigger a fresh fetch if the user re-adds the source.
 - `renderSiteIconInto` paints the slot synchronously:
   - When the script has a representative origin, the slot contains an `<a class="site-icon-inner" target="_blank">` pointing at `linkUrl`.
   - Otherwise it contains an inert `<span class="site-icon-inner">` — file:// scripts, `<all_urls>`, host-of-`*`, etc.
-- The inner element always starts with a muted globe SVG
-  (`.site-icon-globe`) so users see *something* immediately and
-  rows missing an origin still show a consistent placeholder.
+- The inner element always starts with a muted globe placeholder so
+  users see *something* immediately and rows missing an origin still
+  show a consistent placeholder.
 - The async swap picks its source by header priority: if the script
   declares an `@icon`, `ensureIconForUrl` runs; otherwise
   `ensureSiteIcon` runs the origin-discovery pipeline. The resolved
-  data URL is wrapped in an `<img>` that replaces the globe inside
+  icon is wrapped in an `<img>` that replaces the globe inside
   the inner element. No `isConnected` guard — orphan paints from
   re-renders are cheap and unobservable.
+
+### Keeping the rendered page small
+
+A big site can have dozens of scripts, and naive rendering inlined a
+full copy of each favicon — and the globe SVG — into *every* row,
+pushing the live sources-page DOM past half a megabyte (mostly
+duplicated bytes). Two measures keep it bounded:
+
+- **Shared globe glyph.** The globe is defined once per page as an SVG
+  `<symbol id="sm-globe">` (in `sources.html` / `userscript.html`);
+  each slot renders a tiny `<svg class="site-icon-globe"><use
+  href="#sm-globe">`. Stroke/fill styling lives in CSS on
+  `.site-icon-globe` so it still inherits `currentColor`.
+- **Deduped blob: URLs for large icons.** `iconImgSrc` converts a
+  cached icon `data:` URL above `ICON_INLINE_MAX_LEN` (512 chars) into
+  a `blob:` URL once — via `dataUrlToBlob` + `URL.createObjectURL` —
+  and caches it in a per-page `Map` keyed by the data URL. Every row
+  using that icon then shares the same ~55-char `blob:` handle instead
+  of inlining the base64. Small icons stay inline (a blob doesn't beat
+  them). The blob set is bounded by the number of *distinct* icons on
+  the page and lives for the document's lifetime (never revoked) —
+  matching the `GM_getResourceURL` policy and staying bfcache-safe.
+  Storage is unaffected: icons are still cached as base64 `data:` URLs
+  (one row per origin/URL); the blob is minted fresh at render time.
+
+Viewer/sources cross-links are page-relative (`userscript.html?...`,
+`sources.html#...`) rather than absolute `chrome.runtime.getURL(...)`,
+so the `chrome-extension://<id>/` prefix isn't repeated twice per row.

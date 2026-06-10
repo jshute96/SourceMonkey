@@ -176,6 +176,54 @@ test.describe('site-icon slot', () => {
     }
   });
 
+  test('large icons are de-duped into one shared blob: URL across rows', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The sources-page size fix: an icon whose data: URL exceeds the
+    // inline threshold is converted ONCE to a blob: URL and shared by
+    // every row that uses it, instead of each row inlining the full
+    // base64 (which, with dozens of scripts per site, ballooned the
+    // page). Two scripts declaring the same large @icon must end up with
+    // the identical blob: src, and it must decode back to the original
+    // bytes.
+    const payload = 'A'.repeat(800);                 // base64 → > inline threshold
+    const bigIcon = `data:image/png;base64,${payload}`;
+    scriptsDir.write({
+      relativePath: 'one.user.js',
+      meta: { name: 'One', match: ['https://example.com/*'], extra: [`// @icon ${bigIcon}`] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'two.user.js',
+      meta: { name: 'Two', match: ['https://example.com/*'], extra: [`// @icon ${bigIcon}`] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const imgs = page.locator(
+      `section.directory[data-source-id="${source!.id}"] .site-icon a.site-icon-inner img`,
+    );
+    await expect(imgs).toHaveCount(2);
+    const src0 = await imgs.nth(0).getAttribute('src');
+    const src1 = await imgs.nth(1).getAttribute('src');
+    // Both blob:, both the SAME handle → deduped, not inlined per row.
+    expect(src0).toMatch(/^blob:/);
+    expect(src1).toBe(src0);
+
+    // The shared blob decodes back to the original icon bytes.
+    const roundTripped = await page.evaluate(async (u) => {
+      const buf = await (await fetch(u)).arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
+    }, src0!);
+    expect(roundTripped).toBe(payload);
+    await page.close();
+  });
+
   test('two-tier cache: scripts on different deep paths get distinct icons', async ({
     extensionContext, extensionId, sm,
   }) => {

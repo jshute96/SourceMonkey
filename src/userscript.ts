@@ -1083,7 +1083,9 @@ function sourceCell(source: StoredSource): Node {
   const nameLink = document.createElement('a');
   nameLink.className = 'source-display-name';
   appendWithSlashBreaks(nameLink, effectiveDisplayName(source));
-  nameLink.href = chrome.runtime.getURL(`sources.html#${sourceAnchorId(source.id)}`);
+  // Page-relative (both pages sit at the extension root) so the href
+  // doesn't carry the `chrome-extension://<id>/` prefix.
+  nameLink.href = `sources.html#${sourceAnchorId(source.id)}`;
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
   // the section on the sources page. Container sources have a
   // synthetic `container:<kind>` path which would leak — skip then.

@@ -48,7 +48,7 @@
       a.site-icon-inner { text-decoration: none; }
       a.site-icon-inner:hover { color: #444; }
       h1 .site-icon img { width: 16px; height: 16px; display: block; }
-      .site-icon-globe { width: 16px; height: 16px; display: block; }
+      .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
       /* Controls row: per-script enable toggle + Refresh button. The
          filename, size, and status moved into the details panel below
          where the dl gives them aligned label/value columns. */
@@ -383,6 +383,9 @@
     </style>
   </head>
   <body>
+    <!-- Shared globe glyph referenced by the icon slot's <use href="#sm-globe">
+         (see sources.html for the rationale). -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
     <h1 id="filename"></h1>
     <div id="meta-row" class="meta-row" hidden>
       <label id="enable-label" class="toggle" title="Enable this script">
