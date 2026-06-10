@@ -51,10 +51,26 @@
        privilege gain — the cost is attribution (errors blamed on our
        script's sourceURL) and a one-navigation delay for the real
        update.
+     - forge `sm:check-pending` with `needsValues:true` and another
+       script's `id` to read that script's GM_setValue snapshot back
+       in the reply (the SW attaches `gmValues` keyed solely on the
+       requested id; see loadSnapshotForCheckPending in background.ts).
+       The page must know the victim's random scriptId (a v4 UUID that
+       isn't page-exposed), which is the practical barrier. For a
+       MAIN-world script the values live in the page's own world
+       already, so this is no new exposure; for a USER_SCRIPT-world
+       script it is a real read leak, bounded by UUID secrecy. We can't
+       close it cheaply: sm:start (which would let the SW check tab
+       ownership) is sent AFTER check-pending, and the page world IS
+       the MAIN wrapper's world, so a shared secret can't be hidden
+       from it. A real fix needs the per-document boundary below.
    None grant script execution or SW privilege beyond what the page
    already has. If we ever need a real boundary, inject a per-document
    nonce shared between the MAIN wrapper and the bridge spec and
-   require it on incoming messages. */
+   require it on incoming messages (USER_SCRIPT-world scripts, whose
+   values can't otherwise reach the page, would carry the nonce in
+   their direct chrome.runtime path; MAIN-world scripts can't hide a
+   nonce from the page but don't need to). */
 (function () {
   "use strict";
   var MARKER = "sourcemonkey-bridge";

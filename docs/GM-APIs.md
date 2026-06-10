@@ -409,6 +409,23 @@ its own dispatch doesn't corrupt iteration.
   user. A future phase can verify the scriptId against the active
   registration set in the sender's tab if a real compat report
   comes in.
+- **Cross-script storage *reads* via forged `sm:check-pending`.**
+  The same spoofable `scriptId` also leaks reads: a request with
+  `needsValues:true` and another script's id gets that script's full
+  `GM_setValue` snapshot back in the reply (`gmValues`, attached by
+  `loadSnapshotForCheckPending`). Unlike the write path, this one is
+  reachable from a hostile **page** (not just a sibling userscript),
+  because the MAIN-world bridge forwards `sm:check-pending`. The
+  practical barrier is that the page must know the victim's random
+  scriptId (a v4 UUID that isn't page-exposed). For a MAIN-world
+  victim the values already live in the page's world, so it's no new
+  exposure; for a USER_SCRIPT-world victim it is a real read leak,
+  bounded by UUID secrecy. It can't be closed cheaply: `sm:start`
+  (which would let the SW check tab ownership) is sent *after*
+  check-pending, and a MAIN wrapper can't hide a shared secret from
+  the page it shares a world with. The real fix is the per-document
+  nonce sketched in `src/wrapper-bridge.js`; deferred until it's
+  worth the cross-world plumbing.
 
 ## Clipboard (`GM_setClipboard`)
 

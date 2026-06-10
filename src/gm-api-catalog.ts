@@ -3,12 +3,17 @@
 //
 //   - The injector consults to decide which GM_* function definitions
 //     to compile into a given script's wrapper, based on its @grant
-//     lines.
-//   - The SW-side handlers consult to validate that an incoming
-//     async API call corresponds to an API the calling script actually
-//     declared @grant for.
+//     lines. This is where @grant is actually enforced: an ungranted
+//     API is simply never bound into the script's scope.
 //   - The permission-test e2e spec consults to assert that ungranted
 //     APIs are not bound in the script's scope.
+//
+// NOTE: the SW-side async handlers do NOT re-validate @grant against
+// this catalog. Enforcement is binding-time only (above). Re-checking
+// in the SW would add no security: the per-message `scriptId` is
+// wrapper-supplied and spoofable, so a script that wanted to bypass
+// the grant would just claim the id of a script that has it. See the
+// "trust caveat" notes in docs/GM-APIs.md.
 //
 // Each API entry says:
 //   - The canonical `GM_x` name and the GM4-style `GM.x` alias (if
