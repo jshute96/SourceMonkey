@@ -197,9 +197,13 @@ Trust model:
   on that document; a forged `sm:error` writes an attacker-controlled
   string into the SW console and per-tab session record. Neither
   grants script execution or SW privilege.
-- If a real boundary is needed later, inject a per-document nonce into
-  both the MAIN wrapper's head and the bridge spec and require it on
-  incoming messages.
+- Reading another script's GM values via a forged `sm:check-pending`
+  IS blocked: the bridge stamps `__viaBridge:true` on every message it
+  relays (set last, so the page can't pre-set it false), and the SW
+  refuses to attach a `gmValues` snapshot to any `__viaBridge` request.
+  Legitimate value reads ride a USER_SCRIPT-world script's own direct
+  `chrome.runtime` channel and carry no marker. See
+  `docs/GM-APIs.md` and `tests/e2e/gm-storage-read-leak.spec.ts`.
 
 `GM_*` is not supported anywhere yet (see Limitations); the
 `@grant`-keyed branch just future-proofs the resolver for when it is.

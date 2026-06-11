@@ -52,31 +52,42 @@
        script's sourceURL) and a one-navigation delay for the real
        update.
      - forge `sm:check-pending` with `needsValues:true` and another
-       script's `id` to read that script's GM_setValue snapshot back
-       in the reply (the SW attaches `gmValues` keyed solely on the
-       requested id; see loadSnapshotForCheckPending in background.ts).
-       The page must know the victim's random scriptId (a v4 UUID that
-       isn't page-exposed), which is the practical barrier. For a
-       MAIN-world script the values live in the page's own world
-       already, so this is no new exposure; for a USER_SCRIPT-world
-       script it is a real read leak, bounded by UUID secrecy. We can't
-       close it cheaply: sm:start (which would let the SW check tab
-       ownership) is sent AFTER check-pending, and the page world IS
-       the MAIN wrapper's world, so a shared secret can't be hidden
-       from it. A real fix needs the per-document boundary below.
+       script's `id`. The SW would otherwise attach that script's
+       GM_setValue snapshot (`gmValues`) to the reply, which the bridge
+       posts back where the page can read it. THIS read leak is closed:
+       every message the bridge forwards is stamped `__viaBridge:true`
+       (see `stamp` below), and the SW refuses to attach `gmValues` to
+       any `__viaBridge` request (see the check-pending handler in
+       background.ts). The stamp is trustworthy because the page CANNOT
+       call chrome.runtime.sendMessage itself (no chrome.runtime in
+       MAIN world), so the only way a page-influenced message reaches
+       the SW is through here — and we set the marker last, ignoring any
+       page-supplied copy. Legitimate value reads come from USER_SCRIPT-
+       world scripts over their own direct chrome.runtime path (never
+       this bridge), so they carry no `__viaBridge` and are unaffected.
    None grant script execution or SW privilege beyond what the page
-   already has. If we ever need a real boundary, inject a per-document
-   nonce shared between the MAIN wrapper and the bridge spec and
-   require it on incoming messages (USER_SCRIPT-world scripts, whose
-   values can't otherwise reach the page, would carry the nonce in
-   their direct chrome.runtime path; MAIN-world scripts can't hide a
-   nonce from the page but don't need to). */
+   already has. */
 (function () {
   "use strict";
   var MARKER = "sourcemonkey-bridge";
   var REPLY_MARKER = "sourcemonkey-bridge-reply";
   var ALLOWED = ["sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending"];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
+     the page can't pre-set it false. The SW treats __viaBridge as
+     "this request may be page-forged" and withholds another script's
+     gmValues snapshot from the reply. See the file header. We skip
+     __proto__ so a page-supplied key can't retarget fwd's prototype
+     during the copy. */
+  function stamp(payload) {
+    var fwd = {};
+    for (var k in payload) {
+      if (k === "__viaBridge" || k === "__proto__") continue;
+      if (Object.prototype.hasOwnProperty.call(payload, k)) fwd[k] = payload[k];
+    }
+    fwd.__viaBridge = true;
+    return fwd;
+  }
   window.addEventListener("message", function (ev) {
     try {
       if (!ev || ev.source !== window) return;
@@ -98,7 +109,7 @@
           } catch (_e1) {}
         };
         try {
-          var pr = chrome.runtime.sendMessage(payload);
+          var pr = chrome.runtime.sendMessage(stamp(payload));
           if (pr && typeof pr.then === "function") {
             pr.then(post, function () { post({ action: "run" }); });
           } else {
@@ -108,7 +119,7 @@
         return;
       }
       /* Fire-and-forget for the report types. */
-      var p = chrome.runtime.sendMessage(payload);
+      var p = chrome.runtime.sendMessage(stamp(payload));
       if (p && typeof p.catch === "function") p.catch(function () {});
     } catch (_e) {}
   }, true);

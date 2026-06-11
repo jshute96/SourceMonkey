@@ -1188,6 +1188,18 @@ interface CheckPendingPayload {
   // read for scripts that don't use GM_setValue, keeping check-pending
   // fast on multi-script pages. See `needsGmValues` in injector.ts.
   needsValues?: boolean;
+  // Set by wrapper-bridge.js (USER_SCRIPT world) on every message it
+  // relays for a MAIN-world wrapper's window.postMessage. A hostile
+  // page can post a forged sm:check-pending into the bridge, so a
+  // request carrying this flag is potentially page-forged. The page
+  // cannot call chrome.runtime.sendMessage itself, so the only way it
+  // reaches us is through the bridge — meaning a request WITHOUT this
+  // flag came over a USER_SCRIPT-world script's own direct channel and
+  // is trustworthy. We use it to refuse handing back another script's
+  // gmValues snapshot (the read-leak fix). storage-granting scripts
+  // are always USER_SCRIPT world and always use the direct path, so
+  // legitimate value reads never carry it.
+  __viaBridge?: boolean;
 }
 
 // `gmValues` is attached by the check-pending message handler (not
@@ -1690,8 +1702,19 @@ function installScriptMessageListener(): void {
       // above for the snapshot's role.
       const payload = msg as CheckPendingPayload;
       const decisionP = handleCheckPending(sender, payload);
+      // Only attach the GM_setValue snapshot for a DIRECT request — one
+      // that did NOT come through the page-facing bridge. A bridge-
+      // relayed request (`__viaBridge`) may be a hostile page forging
+      // another script's id to read its values back through the reply;
+      // refuse it. Legit storage scripts are USER_SCRIPT world and use
+      // the direct path, so this never withholds values they're owed.
+      // No log on the refused branch on purpose: a legit script never
+      // reaches it (it's only hit by forged/misused bridge requests),
+      // and a page can spam forged requests — logging each would be a
+      // page-triggerable console flood with no diagnostic value.
+      const valueReadAllowed = payload.needsValues && payload.__viaBridge !== true;
       const snapshotP: Promise<Record<string, unknown> | undefined> =
-        payload.needsValues
+        valueReadAllowed
           ? loadSnapshotForCheckPending(payload.id)
           : Promise.resolve(undefined);
       Promise.all([decisionP, snapshotP]).then(
