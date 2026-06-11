@@ -401,14 +401,32 @@ its own dispatch doesn't corrupt iteration.
   The `scriptId` in the `sm:gm-batch-write` envelope is supplied
   by the wrapper's compiled-in literal. A misbehaving userscript
   in the same USER_SCRIPT realm CAN send a `chrome.runtime.sendMessage`
-  with another script's scriptId and overwrite its values. Same
-  trust model as the async-envelope `scriptId` for
+  with another script's scriptId and overwrite (or read) its values.
+  Same trust model as the async-envelope `scriptId` for
   `GM_xmlhttpRequest`. All same-extension userscripts are within
   the user's trust boundary; this is "userscript A messes with
   userscript B's data", not a privilege escalation against the
-  user. A future phase can verify the scriptId against the active
-  registration set in the sender's tab if a real compat report
-  comes in.
+  user — and it matches what TM/VM actually provide (same-world
+  userscripts aren't isolated from each other).
+  - Why it has no cheap fix: every USER_SCRIPT-world script shares
+    ONE world per frame (one `configureWorld`, no per-script
+    `worldId`) and can read sibling ids straight from
+    `self.__smPrelude.scripts`. A sibling doesn't *forge* anything —
+    it just calls with an id it can see, and the SW can't tell the
+    co-world senders apart.
+  - Note this is **not** the same as the page-reachable read leak,
+    which crossed a real world boundary and IS closed (see the
+    forged-`sm:check-pending` entry below).
+  - Verifying the envelope's `scriptId` against the tab's active
+    registration set does NOT fix this: the victim is active on the
+    tab, so an impersonating sibling passes that check. It would only
+    reject ids that aren't installed/active — hygiene, not security.
+  - A real fix needs a per-script boundary the shared world doesn't
+    give us: per-script capability tokens baked into each script's
+    in-closure bindings (+ a frozen runtime + shared-builtin tamper
+    audit), or per-script isolated `worldId`s (a large redesign — the
+    single prelude/runtime/bridge per frame all assume one shared
+    world). Deferred until a real compat report justifies the cost.
 - **Cross-script storage *reads* via forged `sm:check-pending` — closed.**
   A request with `needsValues:true` and another script's id would
   otherwise get that script's full `GM_setValue` snapshot back in the

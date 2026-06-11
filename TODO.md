@@ -84,9 +84,16 @@ Adding any of these is a catalog entry + a body — nothing structural.
   match) and the race window is small.
 - **Cross-script storage spoofing inside the trust boundary.** The
   wrapper-supplied `scriptId` in the storage / XHR envelopes can
-  be impersonated by sibling userscripts. Documented limitation.
-  A future phase could verify the scriptId against the active
-  registration set in the sender's tab if compat reports come in.
+  be impersonated by sibling userscripts (they share one USER_SCRIPT
+  world per frame and can read each other's ids). Documented
+  limitation; within the user's trust boundary and matches TM/VM.
+  NOT the same as the page-reachable forged-`sm:check-pending` read
+  leak, which is now closed. No cheap fix: verifying the id against
+  the tab's active registration set does NOT stop impersonation (the
+  victim is active too) — it's hygiene, not security. A real fix
+  needs a per-script boundary the shared world lacks (in-closure
+  capability tokens + frozen runtime, or per-script `worldId`
+  isolation). See the rationale in `docs/GM-APIs.md`.
 - **Cross-tab broadcast start-race window.** A write that lands
   between a tab's wrapper registration and its `sm:start` arrival
   isn't broadcast to that tab. The compile-in cache covers the
