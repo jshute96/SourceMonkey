@@ -96,6 +96,7 @@ non-GitHub sources stay quiet.
 | `update check: <logId>: row vanished` | no | info |
 | `update check: <logId>: invalid — <msg>` | no | info |
 | `refresh failed: <logId>: <reason>` (transition / reason change only) | no | info |
+| `<logId>: newer version <v> at <kind> URL (running <v>) — <url>` (version change only) | no | info |
 | `source refresh (mode): <path>` | no | log |
 | `source refresh: <path>: <summary>` | no | log |
 | `source refresh failed: <path>: <err>` | no | info |

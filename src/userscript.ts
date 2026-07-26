@@ -64,7 +64,9 @@ import {
   formatScriptStatusLabel,
   leafName,
   scriptBasename,
+  scriptOutdatedProbe,
 } from './script-display.js';
+import { probeLabel } from './version-probe.js';
 import {
   getValue,
   joinFullSource,
@@ -328,7 +330,9 @@ async function onRefresh(): Promise<void> {
     // Routed through the shared updater: if a background opportunistic
     // check is already in flight for this script, we wait for it
     // instead of starting a second fetch.
-    const next = await updateScript(scriptId, 'manual');
+    // 'force': this is a real Refresh click, so check upstream now
+    // rather than waiting out the probe interval.
+    const next = await updateScript(scriptId, 'manual', 'force');
     if (next) {
       await refreshLogId();
       render(next);
@@ -427,6 +431,7 @@ function render(script: StoredScript): void {
       : undefined,
     size: formatScriptSize(script),
     status: buildStatusCell(script),
+    versionProbes: script.versionProbes,
   });
 
   tabsView.setTabs(storedTabs(script));
@@ -496,20 +501,26 @@ function requireBasename(url: string, ref: string): string {
 // Build the Status row content: an anchor whose href is `#Log` so
 // clicking switches the viewer to the Log tab via the regular
 // hashchange listener. Labeled with the effective status (INVALID /
-// MISSING / ERROR / WARNING / OK) computed against the current log
-// level.
+// MISSING / OUTDATED / ERROR / WARNING / OK) computed against the
+// current log level.
 function buildStatusCell(script: StoredScript): Node {
+  const outdated = scriptOutdatedProbe(script);
   const effective = effectiveScriptStatus(
     { status: script.status, refreshError: script.refreshError },
     currentLogLevel,
+    outdated !== null,
   );
   const link = document.createElement('a');
   link.href = '#Log';
   link.textContent = formatScriptStatusLabel(effective);
   link.className = `meta-status status-${effective}`;
-  // Prefer the refresh-failure reason as the hover when REFRESH FAILED
-  // is what's showing; otherwise fall back to the load errorMessage.
-  const title = effective === 'refresh-failed' ? script.refreshError : script.errorMessage;
+  // Hover text follows whatever the cell is showing: the refresh-failure
+  // reason, the newer version found upstream, or the load errorMessage.
+  const title = effective === 'refresh-failed'
+    ? script.refreshError
+    : effective === 'outdated' && outdated
+      ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
+      : script.errorMessage;
   if (title) link.title = title;
   return link;
 }
@@ -820,7 +831,7 @@ async function doInstall(): Promise<void> {
 async function doUpdate(id: string): Promise<void> {
   const spinner = startBusy(updateBtn);
   try {
-    await updateScript(id, 'manual');
+    await updateScript(id, 'manual', 'force');
     location.href = `userscript.html?script=${encodeURIComponent(id)}`;
   } catch (err) {
     setMessage(`Update failed: ${describeError(err)}`, 'error');

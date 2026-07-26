@@ -110,13 +110,20 @@ Key spaces in `chrome.storage.local`:
   loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
   deduped by canonical URL. Absent when the script declares no
   `@require`. See [requires.md](requires.md).
+- `versionProbes?` — what the script's `@updateURL` / `@downloadURL`
+  last claimed, as `{kinds, url, version?, error?, checkedAt}` rows.
+  Written only by `setVersionProbes`, never by the load pipeline —
+  both refresh entry points re-apply the persisted value over whatever
+  they built (`preserveConcurrentEdits`). Absent when the script names
+  no upstream we don't already fetch from. See
+  [updates.md](updates.md).
 
 ## Status model
 
 The persisted `status` field has three values; the sources page +
 viewer combine it with each script's **highest log level seen** (from
-`chrome.storage.session`, see [script-log.md](script-log.md)) to
-render a five-label Status column.
+`chrome.storage.session`, see [script-log.md](script-log.md)) and its
+update-probe verdict to render the Status column.
 
 ### Persisted statuses
 
@@ -187,8 +194,8 @@ script when its own *fetch* fails.
 ### Displayed status (UI-level)
 
 `src/script-display.ts` exports `effectiveScriptStatus(script,
-maxLogLevel)` which is what the sources page + viewer render. Priority
-order (highest wins):
+maxLogLevel, outdated)` which is what the sources page + viewer render.
+Priority order (highest wins):
 
 - `INVALID` — `status === 'invalid'`.
 - `MISSING` — `status === 'missing'`.
@@ -197,6 +204,11 @@ order (highest wins):
   above the log-derived levels — staleness is a distinct, specific
   signal — but below `INVALID`/`MISSING`, which mean it can't run at
   all. Rendered in amber, distinct from red `INVALID`.
+- `OUTDATED` — an update probe found a newer `@version` at a URL we
+  deliberately don't update from. Same rationale (and same amber) as
+  `REFRESH FAILED`, and ranks just under it: a source we can't reach at
+  all subsumes "some other copy is ahead". See
+  [updates.md](updates.md).
 - `ERROR` — `status === 'ok'`, no `refreshError`, but the per-script
   log has an error entry (max log level = `error`).
 - `WARNING` — `status === 'ok'` and the per-script log has a warning

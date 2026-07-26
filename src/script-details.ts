@@ -18,6 +18,8 @@ import {
   sourceAnchorId,
 } from './source-display.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
+import { versionRelation } from './version-compare.js';
+import { probeLabel, type VersionProbe } from './version-probe.js';
 
 export interface LocationRow {
   // What the row reads as — the decoded URL, or the bare fs path for
@@ -45,6 +47,12 @@ export interface DetailsModel {
   status?: Node;
   location?: LocationRow;
   size?: string;
+  // What the script's upstream `@updateURL` / `@downloadURL` last
+  // claimed, when those point somewhere we don't load from. Rendered
+  // directly under the Version row so "what we run" and "what's
+  // published" read together. A preview passes nothing — it hasn't been
+  // probed, and inventing a row would imply we had checked.
+  versionProbes?: readonly VersionProbe[];
 }
 
 export function renderDetails(container: HTMLElement, model: DetailsModel): void {
@@ -55,6 +63,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   if (h) {
     addText(dl, 'Name', getValue(h, 'name'));
     addText(dl, 'Version', getValue(h, 'version'));
+    addVersionProbes(dl, getValue(h, 'version'), model.versionProbes);
     addText(dl, 'Description', getValue(h, 'description'));
     addText(dl, 'Author', getValue(h, 'author'));
     addText(dl, 'Namespace', getValue(h, 'namespace'));
@@ -102,6 +111,47 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   }
 
   container.appendChild(dl);
+}
+
+// One row per probed upstream, labeled by the header that named it —
+// "Version at update URL", "Version at update/download URL". The value
+// says how that copy relates to ours ("same", "2.1 (Newer)") because
+// the relation is the part a user acts on; the bare number alone would
+// make them do the comparison themselves. The URL rides along as the
+// row's tooltip rather than a fourth column of text.
+function addVersionProbes(
+  dl: HTMLDListElement,
+  loadedVersion: string | undefined,
+  probes: readonly VersionProbe[] | undefined,
+): void {
+  for (const probe of probes ?? []) {
+    const dd = appendRow(
+      dl,
+      `Version at ${probeLabel(probe.kinds)}`,
+      document.createTextNode(probeValueText(loadedVersion, probe)),
+    );
+    // A probe can carry both a version (from an earlier success) and an
+    // error (the latest attempt failed). The value column shows the
+    // version, so the tooltip is where "…and we couldn't re-check it"
+    // goes rather than silently reading as current.
+    dd.title = probe.version !== undefined && probe.error
+      ? `${probe.url} — last check failed: ${probe.error}`
+      : probe.url;
+    const relation = versionRelation(loadedVersion, probe.version);
+    if (relation === 'newer') dd.className = 'version-newer';
+  }
+}
+
+function probeValueText(loadedVersion: string | undefined, probe: VersionProbe): string {
+  if (probe.version === undefined) return probe.error ?? 'unknown';
+  switch (versionRelation(loadedVersion, probe.version)) {
+    case 'same': return 'same';
+    case 'newer': return `${probe.version} (Newer)`;
+    case 'older': return `${probe.version} (Older)`;
+    // One side has no `@version`, so the number is all we can honestly
+    // report — no relation, no qualifier.
+    case 'unknown': return probe.version;
+  }
 }
 
 function addText(dl: HTMLDListElement, label: string, value: string | undefined): void {

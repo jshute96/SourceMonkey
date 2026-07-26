@@ -92,6 +92,12 @@ One page, one set of panels, two query strings:
    the panel doesn't reshuffle between modes:
    - Parsed-header fields (when a metadata block is present):
      - `Name`, `Version`, `Description`, `Author`, `Namespace`
+     - `Version at <update|download|update/download> URL` — one row per
+       stored update probe, immediately under `Version`. Value is
+       `same` / `2.1 (Newer)` / `1.0 (Older)` / the probe's error; the
+       probed URL is the row's tooltip; only `(Newer)` is highlighted.
+       Installed mode only — a preview hasn't been probed. See
+       [updates.md](updates.md).
      - `Homepage` (`@homepage` / `@homepageURL`) — an anchor when the
        value parses as an absolute http(s) URL, plain text otherwise.
    - `Log ID` — short file-derived handle used in every SW log line
@@ -138,10 +144,11 @@ One page, one set of panels, two query strings:
      - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
        preview, the byte length of the fetched text.
      - `Status` — installed mode only. `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
-       `WARNING` / `ERROR`
+       `OUTDATED` / `WARNING` / `ERROR`
        (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
        color-coded; the row's `title` carries the `refreshError` reason
-       for a `REFRESH FAILED` row, else `errorMessage` when present.
+       for a `REFRESH FAILED` row, the newer upstream version for an
+       `OUTDATED` one, else `errorMessage` when present.
        Rendered as an `<a href="#Log">` so clicking switches
        to the Log tab via the same hashchange listener as a manual
        tab click. The level promotes live as new log entries arrive

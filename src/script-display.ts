@@ -4,10 +4,13 @@
 // Two groups live here: the script-status row formatting (size +
 // status label) both pages render, and the name/path formatting that
 // turns a stored URL into something a human wants to read. Pure
-// functions — no DOM, no chrome.* calls.
+// functions — no DOM, no chrome.* calls. (`version-probe.js` is the
+// pure half of the probe module; its fetching half lives in
+// `version-probe-fetch.js` and is deliberately not reachable here.)
 
 import type { StoredScript } from './script-store.js';
 import { getValue } from './userscript-header.js';
+import { outdatedProbe, type VersionProbe } from './version-probe.js';
 
 // ---------- Names and paths ----------
 
@@ -116,45 +119,69 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 //   refresh-failed — running fine on its cached copy, but the latest
 //                    refresh failed (unreachable source, or a fetched
 //                    copy that wasn't a valid script)
+//   outdated       — running fine and up to date with its own source,
+//                    but an `@updateURL` / `@downloadURL` elsewhere
+//                    declares a newer `@version` (see version-probe.ts)
 //   error          — script loaded fine but its Log has an error entry
 //   warning        — script loaded fine but its Log has a warning entry
 //   ok             — no logs, or only info-level logs
 //
 // `invalid` / `missing` always win because "can't run" is the most
-// actionable surface. `refresh-failed` ranks above the Log-derived
-// levels: a stale script is a distinct, specific signal the user should
-// see, and the running script's own runtime errors still show up in the
-// Log tab regardless. The Log tab carries the per-event detail (errors
-// emitted at parse / refresh time land there too).
+// actionable surface. `refresh-failed` and `outdated` rank above the
+// Log-derived levels for the same reason: both are specific facts about
+// the update pipeline that have no other surface in the sources list,
+// whereas the running script's own runtime errors still show up in the
+// Log tab regardless. `refresh-failed` outranks `outdated` because a
+// source we can't reach at all subsumes "some other copy is ahead".
 export type DisplayStatus =
-  | 'ok' | 'invalid' | 'missing' | 'refresh-failed' | 'warning' | 'error';
+  | 'ok' | 'invalid' | 'missing' | 'refresh-failed' | 'outdated' | 'warning' | 'error';
 
 export type LogLevelForStatus = 'info' | 'warning' | 'error';
 
+// `outdated` comes in as a caller-computed boolean rather than being
+// derived here, because the sources page's repaint path rebuilds status
+// cells from DOM datasets and no longer has the script row in hand.
+// Both callers get the value from `scriptOutdatedProbe` below, so the
+// two surfaces can't drift on what counts as behind.
 export function effectiveScriptStatus(
   script: Pick<StoredScript, 'status' | 'refreshError'>,
   maxLogLevel: LogLevelForStatus | undefined,
+  outdated = false,
 ): DisplayStatus {
   if (script.status === 'invalid') return 'invalid';
   if (script.status === 'missing') return 'missing';
   if (script.refreshError) return 'refresh-failed';
+  if (outdated) return 'outdated';
   if (maxLogLevel === 'error') return 'error';
   if (maxLogLevel === 'warning') return 'warning';
   return 'ok';
+}
+
+// The probe (if any) saying an upstream copy is ahead of the version we
+// hold. Null whenever nothing is ahead, nothing was probed, or either
+// side has no `@version` to compare.
+export function scriptOutdatedProbe(
+  script: Pick<StoredScript, 'header' | 'versionProbes'>,
+): VersionProbe | null {
+  const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
+  return outdatedProbe(loadedVersion, script.versionProbes);
 }
 
 // Text shown in the "Status" cell. Distinguishes 'missing' from
 // 'invalid' so the label matches the size cell — previously a missing
 // script showed "MISSING" for size but "ERROR" for status. REFRESH
 // FAILED means the script still runs from its cached copy but the last
-// update attempt failed. WARNING / ERROR mean the script loaded fine
-// but its Log carries entries at that level (see `effectiveScriptStatus`).
+// update attempt failed. OUTDATED means a newer version exists at a URL
+// we deliberately don't update from. WARNING / ERROR mean the script
+// loaded fine but its Log carries entries at that level (see
+// `effectiveScriptStatus`).
 export function formatScriptStatusLabel(status: DisplayStatus): string {
   switch (status) {
     case 'ok': return 'OK';
     case 'missing': return 'MISSING';
     case 'invalid': return 'INVALID';
     case 'refresh-failed': return 'REFRESH FAILED';
+    case 'outdated': return 'OUTDATED';
     case 'warning': return 'WARNING';
     case 'error': return 'ERROR';
   }

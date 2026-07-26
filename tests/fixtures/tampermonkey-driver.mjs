@@ -92,23 +92,11 @@ export function listUserscriptsRecursive(dir) {
   return out.map(parseUserscriptHeader);
 }
 
-/**
- * Compare two `1.2.3`-style versions. Returns -1 / 0 / 1.
- * @param {string} a
- * @param {string} b
- * @returns {number}
- */
-export function compareVersions(a, b) {
-  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
-  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const x = pa[i] ?? 0;
-    const y = pb[i] ?? 0;
-    if (x !== y) return x < y ? -1 : 1;
-  }
-  return 0;
-}
+// `@version` ordering comes from the extension's own comparator so the
+// sync tooling and the shipped update-probe agree on which of two
+// versions is newer. Re-exported here because this module is the TM
+// tooling's single import surface.
+export { compareVersions } from '../../dist/version-compare.js';
 
 export class TampermonkeyDriver {
   /**

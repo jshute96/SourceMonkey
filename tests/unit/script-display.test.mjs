@@ -16,6 +16,7 @@ import {
   logIdDupeSuffix,
   scriptBasename,
   scriptDisplayName,
+  scriptOutdatedProbe,
 } from '../../dist/script-display.js';
 
 // ---------- formatBytes ----------
@@ -83,6 +84,9 @@ test('formatScriptStatusLabel: distinct labels per display status', () => {
   assert.equal(formatScriptStatusLabel('invalid'), 'INVALID');
   assert.equal(formatScriptStatusLabel('missing'), 'MISSING');
   assert.equal(formatScriptStatusLabel('refresh-failed'), 'REFRESH FAILED');
+  // OUTDATED: the script runs and is current with its own source, but a
+  // URL we deliberately don't update from declares a newer @version.
+  assert.equal(formatScriptStatusLabel('outdated'), 'OUTDATED');
   assert.equal(formatScriptStatusLabel('warning'), 'WARNING');
   assert.equal(formatScriptStatusLabel('error'), 'ERROR');
 });
@@ -135,6 +139,48 @@ test('effectiveScriptStatus: refreshError surfaces as refresh-failed', () => {
     effectiveScriptStatus({ status: 'missing', refreshError: 'x' }, undefined),
     'missing',
   );
+});
+
+test('effectiveScriptStatus: outdated ranks under refresh-failed, over log levels', () => {
+  // OUTDATED is an update-pipeline fact with no other surface in the
+  // sources list, so it outranks the log-derived levels — but a source
+  // we can't reach at all subsumes "some other copy is ahead".
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined, true), 'outdated');
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, 'error', true), 'outdated');
+  assert.equal(
+    effectiveScriptStatus({ status: 'ok', refreshError: 'x' }, undefined, true),
+    'refresh-failed',
+  );
+  assert.equal(effectiveScriptStatus({ status: 'invalid' }, undefined, true), 'invalid');
+  // Defaults to false, so every existing caller keeps its behavior.
+  assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined), 'ok');
+});
+
+// ---------- scriptOutdatedProbe ----------
+
+function headerWithVersion(version) {
+  return { tags: [{ tag: 'version', value: version }] };
+}
+
+const upstream = (version) => ({
+  kinds: ['update'], url: 'https://a.example/x.meta.js', version, checkedAt: 0,
+});
+
+test('scriptOutdatedProbe: reports the probe that is ahead of us', () => {
+  assert.equal(
+    scriptOutdatedProbe({ header: headerWithVersion('1.0'), versionProbes: [upstream('2.0')] })
+      ?.version,
+    '2.0',
+  );
+  assert.equal(
+    scriptOutdatedProbe({ header: headerWithVersion('2.0'), versionProbes: [upstream('1.0')] }),
+    null,
+  );
+});
+
+test('scriptOutdatedProbe: an unversioned or unprobed script is never outdated', () => {
+  assert.equal(scriptOutdatedProbe({ header: null, versionProbes: [upstream('2.0')] }), null);
+  assert.equal(scriptOutdatedProbe({ header: headerWithVersion('1.0') }), null);
 });
 
 // ---------- names and paths ----------

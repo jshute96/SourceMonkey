@@ -39,7 +39,7 @@ If you want to cross-check by hand, fetch those three pages.
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@name` | ✅ | ✓ | ✓ | ✓ | Required (validation rejects scripts with no `@name`). Used as the display label and in injection logs. Locale suffixes like `@name:de` are parsed but the non-localized form always wins. |
 | `@namespace` | ⚪ | ✓ | ✓ | ✓ | TM/VM/GM combine it with `@name` as a unique storage key. SourceMonkey keys scripts by their UUID, so this has no effect here. |
-| `@version` | ⚪ | ✓ | ✓ | ✓ | Other managers use this for update comparison. SourceMonkey reloads from disk by `size+mtime` and has no separate version check. |
+| `@version` | 👁 | ✓ | ✓ | ✓ | Shown in the viewer, and compared against whatever `@updateURL` / `@downloadURL` declare to flag an OUTDATED script — see [updates.md](updates.md). Not used to decide whether to *fetch*: that's driven by `size+mtime` / conditional GET against the install source. |
 | `@description` | 👁 | ✓ | ✓ | ✓ | Shown in the userscript viewer summary. |
 | `@author` | ⚪ | ✓ |   |   | Not part of VM's or GM4's documented tag set (GM explicitly notes it's "ignored but readable" — i.e. preserved in source, not honored as metadata). |
 | `@copyright` | ⚪ | ✓ |   |   | TM-only per docs. |
@@ -105,14 +105,16 @@ below can repeat; order doesn't matter.
 
 ## Updates
 
-SourceMonkey reloads scripts from a local `file://` directory, so the
-classic remote-update tags don't apply directly. They're harmless if
-present.
+SourceMonkey updates every script from the URL it was installed from —
+a `file://` path via size+mtime, an `http(s)` URL via conditional GET.
+The remote-update tags are read as *claims about an upstream copy*, not
+as fetch targets: we report what they say and never update from them.
+See [updates.md](updates.md).
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@updateURL` | ⚪ | ✓ |   | ✓ | TM and GM4 use this to fetch the latest metadata block. VM doesn't document a separate update URL — it uses `@downloadURL` for both download and update checks. |
-| `@downloadURL` | ⚪ | ✓ | ✓ | ✓ | URL to fetch the full script. |
+| `@updateURL` | ✅ | ✓ |   | ✓ | Probed for its `@version`, which the viewer shows beside our own and which flags the script OUTDATED when it's ahead. Never fetched as the script body. Absolute `http(s)` only. TM and GM4 use it to fetch the latest metadata block; VM doesn't document a separate update URL. |
+| `@downloadURL` | ✅ | ✓ | ✓ | ✓ | Same treatment as `@updateURL` — probed, never followed. Honoring it as a fetch target would let a script move its own update channel to an origin the user never approved. |
 | `@installURL` | ⚪ | ✓ |   |   | TM-specific. |
 
 ---

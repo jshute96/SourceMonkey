@@ -71,6 +71,7 @@ import {
   type StoredResource,
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import type { VersionProbe } from './version-probe.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog } from './script-log.js';
 import { sha256Hex } from './bytes.js';
@@ -184,6 +185,13 @@ export interface StoredScript {
   // them — and so the Log-tab emission at content-change time can read
   // them straight off the freshly built row.
   startupLogs?: readonly StartupLog[];
+  // What the script's `@updateURL` / `@downloadURL` last claimed, when
+  // those point somewhere other than where we load the script from.
+  // Purely an annotation: nothing here affects whether the script runs,
+  // what gets injected, or the row's `status`. Written only by the
+  // probe path (`setVersionProbes`), never by the load pipeline — see
+  // [docs/updates.md] and src/version-probe.ts.
+  versionProbes?: VersionProbe[];
 }
 
 export interface StoredSource {
@@ -628,6 +636,10 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
           httpLastModified: fr.httpLastModified,
         });
         // Preserve the user's per-script enabled choice across refreshes.
+        // `versionProbes` is deliberately NOT carried here — it's
+        // re-applied from the persisted row by preserveConcurrentEdits
+        // inside the write lock, which is strictly more current than
+        // this pre-fetch snapshot.
         if (prior) built.enabled = prior.enabled;
         // Record the listing's mtime so the next refresh can decide to
         // skip a refetch.
@@ -1229,14 +1241,11 @@ export async function refreshSource(
       return null;
     }
     const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
-    const finalScripts = scripts.map((s) => {
-      const cur = curScripts[scriptKey(s.id)] as StoredScript | undefined;
-      const prior = priorById.get(s.id);
-      if (cur && prior && cur.enabled !== prior.enabled) {
-        return { ...s, enabled: cur.enabled };
-      }
-      return s;
-    });
+    const finalScripts = scripts.map((s) => preserveConcurrentEdits(
+      s,
+      priorById.get(s.id),
+      curScripts[scriptKey(s.id)] as StoredScript | undefined,
+    ));
 
     const nextSource: StoredSource = {
       ...curSource,
@@ -1330,20 +1339,41 @@ export async function refreshScript(
   });
   const next = result[0];
   if (!next) return null;
-  // Re-read inside the lock and write atomically so a concurrent
-  // setScriptEnabled toggle that landed during the fetch isn't reverted.
-  // Only re-apply the user's flag when the persisted `enabled` actually
-  // changed vs the snapshot this refresh started from (`prior`) — a
-  // deliberate refresh-owned change (e.g. applyMissing → disabled) must
-  // otherwise win.
+  // Re-read inside the lock and write atomically so edits that landed
+  // during the fetch (an enable toggle, an update probe) aren't
+  // reverted by values captured before them.
   return await mutate(async () => {
     const cur = await getRaw<StoredScript>(scriptKey(scriptId));
-    const merged = (cur && cur.enabled !== prior.enabled)
-      ? { ...next, enabled: cur.enabled }
-      : next;
+    const merged = preserveConcurrentEdits(next, prior, cur);
     await chrome.storage.local.set({ [scriptKey(scriptId)]: merged });
     return merged;
   });
+}
+
+// Re-apply the parts of a script row that a refresh doesn't own, onto
+// the row it just built. Called inside the write lock by both refresh
+// entry points, against the row as it stands right now (`cur`) and the
+// snapshot the refresh started from (`prior`).
+//
+//   - `enabled` — only when it actually changed under us, which is the
+//     signal that a setScriptEnabled landed mid-fetch. Otherwise a
+//     deliberate refresh-owned change (applyMissing flipping a vanished
+//     script to disabled) has to win.
+//   - `versionProbes` — always, because no refresh path ever produces
+//     them. They arrive only from setVersionProbes, so whatever is
+//     persisted now is by definition newer than what the refresh
+//     started with.
+function preserveConcurrentEdits(
+  next: StoredScript,
+  prior: StoredScript | undefined,
+  cur: StoredScript | undefined,
+): StoredScript {
+  if (!cur) return next;
+  const out: StoredScript = { ...next };
+  if (prior && cur.enabled !== prior.enabled) out.enabled = cur.enabled;
+  if (cur.versionProbes) out.versionProbes = cur.versionProbes;
+  else delete out.versionProbes;
+  return out;
 }
 
 // Fetch each scanned file in parallel.
@@ -1456,6 +1486,37 @@ export async function setSourceEnabled(
     if (!source) return null;
     const next: StoredSource = { ...source, enabled };
     await chrome.storage.local.set({ [sourceKey(id)]: next });
+    return next;
+  });
+}
+
+// Record what a script's upstream `@updateURL` / `@downloadURL` last
+// claimed. Separate from every refresh entry point on purpose: a probe
+// annotates, it never changes what runs, so this touches exactly one
+// field and leaves `status`, `refreshError`, and the body alone.
+//
+// The caller is expected to have already decided a probe was due (see
+// `probesAreFresh` and `ProbePolicy`), so this always writes: the
+// refreshed `checkedAt` is what stops the next check from probing
+// again. Every write costs a storage.onChanged, and thus a userscript
+// re-registration pass in the background SW — so the only thing
+// keeping that off the per-navigation and per-reload paths is the
+// caller's staleness gate. Don't hand this a probe you didn't pace.
+//
+// Passing an empty list clears the field, which is how a script that
+// dropped its `@updateURL` sheds a stale annotation.
+export async function setVersionProbes(
+  id: string,
+  probes: VersionProbe[],
+): Promise<StoredScript | null> {
+  return mutate(async () => {
+    const script = await getRaw<StoredScript>(scriptKey(id));
+    if (!script) return null;
+    if (probes.length === 0 && !script.versionProbes) return script;
+    const next: StoredScript = { ...script };
+    if (probes.length > 0) next.versionProbes = probes;
+    else delete next.versionProbes;
+    await chrome.storage.local.set({ [scriptKey(id)]: next });
     return next;
   });
 }

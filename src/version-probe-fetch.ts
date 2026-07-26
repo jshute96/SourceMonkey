@@ -1,0 +1,83 @@
+// The fetching half of update probes. Split from `version-probe.ts` so
+// the pure half — target selection, the outdated verdict, the staleness
+// gate — can be imported by display code (`script-display.ts`,
+// `sources.ts`, `script-details.ts`) without dragging the whole fetch
+// stack into every extension page. Only `script-updater.ts` needs this
+// module. See [docs/updates.md].
+
+import { fetchResourceText } from './file-loader.js';
+import { getValue, parseHeader } from './userscript-header.js';
+import type { ProbeTarget, VersionProbe } from './version-probe.js';
+
+// A `.meta.js` is a couple of KB; a `@downloadURL` is a whole
+// userscript. 1 MB matches the `@require` body cap — past that we're
+// not reading a userscript header, we're downloading something else.
+const PROBE_MAX_BYTES = 1024 * 1024;
+const PROBE_TIMEOUT_MS = 5000;
+// Cap on simultaneous probe fetches within one pass. Refresh All can
+// hand us every script in every source at once; each probe is a
+// cross-origin request of up to PROBE_MAX_BYTES.
+const PROBE_CONCURRENCY = 4;
+
+// Fetch one target and read its `@version`. Never throws and never
+// reports anything but a `VersionProbe` — a probe failure is a display
+// annotation, not an error the refresh pipeline should react to.
+//
+// `prior` is this target's previous row, when there is one. A failed
+// attempt carries its `version` forward: retracting a verdict we
+// already established, because the host happened to 500 this
+// afternoon, would flap the OUTDATED badge and re-log the transition
+// every time the host recovered.
+export async function runProbe(
+  target: ProbeTarget,
+  now: number,
+  prior?: VersionProbe,
+): Promise<VersionProbe> {
+  const failed = (error: string): VersionProbe => ({
+    kinds: target.kinds,
+    url: target.url,
+    checkedAt: now,
+    error,
+    ...(prior?.version ? { version: prior.version } : {}),
+  });
+  // `fetchResourceText` reports every failure — network error, non-2xx,
+  // timeout, over-cap, empty body, bad decode — as a null return, with
+  // no way to tell them apart. Hence the one coarse message; the row's
+  // job is "we couldn't check", not diagnosis.
+  const text = await fetchResourceText(target.url, {
+    maxBytes: PROBE_MAX_BYTES,
+    timeoutMs: PROBE_TIMEOUT_MS,
+  });
+  if (text === null) return failed('could not fetch');
+  // Both `.meta.js` (header only) and a full `.user.js` parse the same
+  // way — parseHeader reads the metadata block wherever it sits and
+  // ignores everything after it. Managers accept either shape at an
+  // `@updateURL`, so we do too.
+  const header = parseHeader(text);
+  if (!header) return failed('no metadata block');
+  const version = getValue(header, 'version');
+  if (!version?.trim()) return failed('no @version');
+  return { kinds: target.kinds, url: target.url, checkedAt: now, version: version.trim() };
+}
+
+// Probe every target, at most PROBE_CONCURRENCY at a time. Takes the
+// targets rather than re-deriving them from the header, because the
+// caller already needed them for the staleness check and the two must
+// agree. Result order matches `targets`.
+export async function probeVersions(
+  targets: readonly ProbeTarget[],
+  now: number,
+  prior?: readonly VersionProbe[],
+): Promise<VersionProbe[]> {
+  const priorByUrl = new Map((prior ?? []).map((p) => [p.url, p]));
+  const out: VersionProbe[] = new Array<VersionProbe>(targets.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < targets.length; i = next++) {
+      out[i] = await runProbe(targets[i], now, priorByUrl.get(targets[i].url));
+    }
+  };
+  const workers = Math.min(PROBE_CONCURRENCY, targets.length);
+  await Promise.all(Array.from({ length: workers }, worker));
+  return out;
+}

@@ -24,7 +24,9 @@
 //
 // The TM driver (listing + install via the dashboard UI) lives in
 // tests/fixtures/tampermonkey-driver.mjs; this file is the CLI wrapper
-// around it.
+// around it. That driver re-exports the extension's own
+// `compareVersions` from `dist/`, so run `npm run build` first on a
+// fresh clone or after `npm run clean`.
 
 import fs from 'node:fs';
 import path from 'node:path';

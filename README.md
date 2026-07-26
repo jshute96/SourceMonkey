@@ -130,6 +130,11 @@ neither pre-fetch shortcut applies (manifest entries, HTTP servers
 that don't return validators), the fetched body's hash is compared
 against the prior so identical content still counts as "no change."
 
+Every script updates from the place you installed it. An `@updateURL`
+or `@downloadURL` pointing elsewhere is read for its `@version` and
+reported, never fetched from — so a script can't quietly move its own
+update channel to a site you didn't approve.
+
 ### Per-source UI
 
 - Each source section shows a table with a per-script enable toggle
@@ -139,8 +144,8 @@ against the prior so identical content still counts as "no change."
   losing each script's own choice. The table header has a small **+** /
   **−** button that bulk-enables or bulk-disables every script in
   that source.
-- Status is one of `OK | INVALID | MISSING | WARNING | ERROR` and is
-  a link to the script's Log tab in the viewer.
+- Status is one of `OK | INVALID | MISSING | OUTDATED | WARNING |
+  ERROR` and is a link to the script's Log tab in the viewer.
   - `INVALID` — metadata block missing/malformed, required fields
     (`@name` plus `@match`/`@include`) missing, or a `@require` /
     `@resource` dependency couldn't be loaded. Hover for the reason;
@@ -150,6 +155,9 @@ against the prior so identical content still counts as "no change."
     shows the cached body's byte count, and a small trash-can button
     next to the status lets you clear records you don't expect back.
     Refresh alone won't re-add a missing row.
+  - `OUTDATED` — the script runs fine and is current with its own
+    source, but its `@updateURL` / `@downloadURL` points at a copy
+    declaring a newer `@version`. Hover for the version and URL.
   - `ERROR` / `WARNING` — the script loaded fine, but at least one
     entry in its per-script Log carries that level (a refresh error,
     an injection failure, a parser warning, etc.). Click the badge
@@ -202,7 +210,9 @@ against the prior so identical content still counts as "no change."
   navigation) whether their source files on disk have changed. Any
   change is loaded into storage and the affected tabs flip purple
   with a "Reload to update" tooltip — same signal you'd see after a
-  manual Refresh.
+  manual Refresh. The same pass checks any declared `@updateURL` /
+  `@downloadURL` for a newer version, at most once every few hours per
+  script.
 - **Reload picks up edits on the same click.** When you explicitly
   reload a tab whose scripts you just edited, SourceMonkey races a
   filesystem re-check against the page load (≤500ms). If the new

@@ -104,6 +104,15 @@ Plumbing notes specific to logging:
     polling.
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
+- **Update probes** (`src/script-updater.ts`, source
+  `probe-manual` / `probe-opportunistic`):
+  - `newer version <v> at <update|download> URL (running <v>) — <url>`
+    (warning) — an `@updateURL` / `@downloadURL` declares a version
+    ahead of the copy we run. Emitted only when the newer version
+    *changes*, so an upstream that's been ahead for a month doesn't
+    add a row every check. Nothing is logged for a probe that fails,
+    finds nothing newer, or is skipped as still-fresh. See
+    [updates.md](updates.md).
 - **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
   by `emitScriptOutcomeLog` in `src/script-updater.ts`):
   - `unknown @grant entries dropped: <names>` (warning) — emitted

@@ -57,7 +57,9 @@ import {
   formatScriptStatusLabel,
   logIdDupeSuffix,
   scriptBasename,
+  scriptOutdatedProbe,
 } from './script-display.js';
+import { probeLabel, type VersionProbe } from './version-probe.js';
 import { computeLogIds } from './script-log-id.js';
 import {
   LOG_LEVEL_KEY_PREFIX,
@@ -146,6 +148,14 @@ let currentLogIds = new Map<string, string>();
 // `render()` so the first paint already reflects the current state.
 let currentLogLevels = new Map<string, LogLevel>();
 
+// Page-wide map of {scriptId → the probe that says an upstream copy is
+// ahead of ours}. Populated per row at render time; the repaint path
+// rebuilds status cells from DOM datasets and has no script row to
+// re-derive this from, so it reads the verdict back from here. Entries
+// only ever appear for scripts whose `@updateURL` / `@downloadURL`
+// points somewhere we don't fetch from — see src/version-probe.ts.
+const currentOutdated = new Map<string, VersionProbe>();
+
 async function refreshLogIds(): Promise<void> {
   const all = await getAllScripts();
   currentLogIds = computeLogIds(all);
@@ -189,7 +199,10 @@ function paintStatusCell(
   cell.textContent = '';
   cell.className = 'status-cell';
   const level = currentLogLevels.get(scriptId);
-  const effective = effectiveScriptStatus({ status: storedStatus, refreshError }, level);
+  const outdated = currentOutdated.get(scriptId);
+  const effective = effectiveScriptStatus(
+    { status: storedStatus, refreshError }, level, outdated !== undefined,
+  );
   cell.classList.add(`status-${effective}`);
   // Anchor that takes the user straight to the script viewer's Log
   // tab — the same destination regardless of effective status, since
@@ -199,9 +212,14 @@ function paintStatusCell(
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = formatScriptStatusLabel(effective);
-  // Prefer the refresh-failure reason as the hover when that's what the
-  // cell is showing; otherwise fall back to the load errorMessage.
-  const title = effective === 'refresh-failed' ? refreshError : errorMessage;
+  // Hover text follows whatever the cell is actually showing: the
+  // refresh-failure reason, the newer version we found upstream, or
+  // otherwise the load errorMessage.
+  const title = effective === 'refresh-failed'
+    ? refreshError
+    : effective === 'outdated' && outdated
+      ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
+      : errorMessage;
   if (title) link.title = title;
   cell.appendChild(link);
   // Trash-can affordance only on persisted-missing rows (the file
@@ -563,6 +581,12 @@ function renderScriptRow(
   if (inContainer) tr.dataset.inContainer = '1';
   if (script.errorMessage) tr.dataset.scriptError = script.errorMessage;
   if (script.refreshError) tr.dataset.scriptRefreshError = script.refreshError;
+  // The outdated verdict needs the parsed header and the stored probes,
+  // neither of which survives as a dataset attribute — record it here
+  // so the repaint path can look it up by id.
+  const outdated = scriptOutdatedProbe(script);
+  if (outdated) currentOutdated.set(script.id, outdated);
+  else currentOutdated.delete(script.id);
   if (!sourceOn || !scriptOn) tr.classList.add('disabled');
 
   const toggleCell = document.createElement('td');

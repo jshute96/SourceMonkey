@@ -40,10 +40,20 @@ import {
   refreshAllSources,
   refreshScript,
   refreshSource,
+  setVersionProbes,
   type StartupLog,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import {
+  outdatedProbe,
+  probeLabel,
+  probeTargets,
+  probesAreFresh,
+  type ProbePolicy,
+} from './version-probe.js';
+import { probeVersions } from './version-probe-fetch.js';
+import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
 import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
@@ -126,22 +136,33 @@ const ALL_SOURCES_KEY = '*';
 
 // Public API ---------------------------------------------------------
 
+// `probe` is separate from `mode` on purpose. `manual` means "not
+// rate-limited as a refresh", and the reload fast-path uses it for
+// every matched script on every explicit tab reload — so treating
+// `manual` as "the user asked, check upstream now" would fire a
+// third-party request per script per reload. Only a genuine Refresh
+// click passes `'force'`.
 export function updateScript(
   scriptId: string,
   mode: UpdateMode,
+  probe: ProbePolicy = 'if-stale',
 ): Promise<StoredScript | null> {
-  return gate(scriptState, scriptId, mode, () => runScriptCheck(scriptId, mode), null);
+  return gate(scriptState, scriptId, mode, () => runScriptCheck(scriptId, mode, probe), null);
 }
 
+// Only ever reached from a Refresh button, so probes force by default.
 export function updateSource(
   sourceId: string,
   mode: UpdateMode,
+  probe: ProbePolicy = 'force',
 ): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
-  return gate(sourceState, sourceId, mode, () => runSourceCheck(sourceId, mode), null);
+  return gate(sourceState, sourceId, mode, () => runSourceCheck(sourceId, mode, probe), null);
 }
 
+// Only ever reached from Refresh All, so probes force by default.
 export function updateAllSources(
   mode: UpdateMode,
+  probe: ProbePolicy = 'force',
 ): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
   // We have to do the cast dance because gate is generic over a single
   // result type and the skip result for "no work done" is just an empty
@@ -150,7 +171,7 @@ export function updateAllSources(
     allSourcesState,
     ALL_SOURCES_KEY,
     mode,
-    () => runAllSourcesCheck(mode) as Promise<unknown>,
+    () => runAllSourcesCheck(mode, probe) as Promise<unknown>,
     new Map(),
   ) as Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>>;
 }
@@ -178,6 +199,7 @@ function fileRecheckMode(mode: UpdateMode): 'all' | 'preserve' {
 async function runScriptCheck(
   scriptId: string,
   mode: UpdateMode,
+  probe: ProbePolicy,
 ): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
   const label = getScriptLogLabel(scriptId);
@@ -209,12 +231,20 @@ async function runScriptCheck(
   }
   logScriptOutcome(label, prior, next, mode);
   emitScriptOutcomeLog(scriptId, prior, next, mode);
+  // Deliberately NOT awaited. This promise is what the reload
+  // fast-path races against a 500 ms window (see
+  // docs/injection.md#reload-fast-path) — folding a third-party fetch
+  // into it would blow that budget and drop the reload back to running
+  // the old body. The probe's own storage write repaints any open
+  // viewer via storage.onChanged when it lands.
+  if (next) void runVersionProbes([next], mode, probe);
   return next;
 }
 
 async function runSourceCheck(
   sourceId: string,
   mode: UpdateMode,
+  probe: ProbePolicy,
 ): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
   const prior = await getSourceWithScripts(sourceId);
   const priorBy = new Map((prior?.scripts ?? []).map((s) => [s.id, s]));
@@ -233,12 +263,16 @@ async function runSourceCheck(
     console.info(`[SourceMonkey] source refresh failed: ${label}: ${describe(err)}`);
     throw err;
   }
-  if (result) summarizeSourceOutcome(label, priorBy, result.scripts, mode);
+  if (result) {
+    summarizeSourceOutcome(label, priorBy, result.scripts, mode);
+    await runVersionProbes(result.scripts, mode, probe);
+  }
   return result;
 }
 
 async function runAllSourcesCheck(
   mode: UpdateMode,
+  probe: ProbePolicy,
 ): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
   console.log(`[SourceMonkey] refreshing all sources (${mode})`);
   // Snapshot priors BEFORE the refresh; reading after would just give
@@ -250,7 +284,75 @@ async function runAllSourcesCheck(
     const priorBy = priorBySourceId.get(source.id) ?? new Map();
     summarizeSourceOutcome(source.path, priorBy, scripts, mode);
   }
+  await runVersionProbes([...result.values()].flatMap((r) => r.scripts), mode, probe);
   return result;
+}
+
+// ---------- Update probes ----------
+//
+// Runs after the refresh, against the rows it produced. Deliberately
+// downstream of everything above: a probe can't change a status, can't
+// set a refreshError, and a probe host that's down or slow must leave
+// the refresh's own outcome exactly as it was. See src/version-probe.ts
+// for what "probe" means here and [docs/updates.md] for why we don't
+// simply update from the probed URL.
+//
+// Awaited by the source-level entry points (a Refresh button click,
+// where the user is watching a spinner and expects the row to be
+// current when it stops) but not by the per-script one, which sits on
+// the navigation hot path — see runScriptCheck.
+async function runVersionProbes(
+  scripts: readonly StoredScript[],
+  mode: UpdateMode,
+  probe: ProbePolicy,
+): Promise<void> {
+  await Promise.all(scripts.map((s) => probeOneScript(s, mode, probe).catch(() => {
+    // A probe is an annotation. Nothing downstream depends on it, so a
+    // failure that escaped runProbe's own handling dies here rather
+    // than propagating into the refresh the user actually asked for.
+  })));
+}
+
+async function probeOneScript(
+  script: StoredScript,
+  mode: UpdateMode,
+  policy: ProbePolicy,
+): Promise<void> {
+  // Only rows that are actually running get probed. An `invalid` row's
+  // header may not have parsed at all, and a `missing` one has no
+  // upstream question worth asking — the local copy is the problem.
+  // Their stored probes are left alone rather than cleared: MISSING and
+  // INVALID both outrank OUTDATED so nothing stale is on screen, and a
+  // row that recovers gets its annotation back without a refetch.
+  if (script.status !== 'ok') return;
+  const targets = probeTargets(script.header, script.fileUrl);
+  if (targets.length === 0) {
+    // The script no longer names an upstream we don't already fetch
+    // from (or never did). Clear any annotation left from when it did,
+    // so a removed `@updateURL` doesn't strand an OUTDATED badge.
+    if (script.versionProbes) await setVersionProbes(script.id, []);
+    return;
+  }
+  const now = nowMsImpl();
+  // Everything but an explicit Refresh click respects the interval —
+  // including the reload fast-path, which runs in `manual` mode on
+  // every tab reload.
+  if (policy === 'if-stale' && probesAreFresh(script.versionProbes, targets, now)) return;
+
+  const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
+  const before = outdatedProbe(loadedVersion, script.versionProbes);
+  const probes = await probeVersions(targets, now, script.versionProbes);
+  await setVersionProbes(script.id, probes);
+
+  // Report the transition, not the state: an upstream that has been
+  // ahead of us for a month shouldn't add a Log entry every interval.
+  const after = outdatedProbe(loadedVersion, probes);
+  if (!after || after.version === before?.version) return;
+  const message =
+    `newer version ${after.version} at ${probeLabel(after.kinds)} ` +
+    `(running ${loadedVersion}) — ${after.url}`;
+  console.info(`[SourceMonkey] ${getScriptLogLabel(script.id)}: ${message}`);
+  logScriptEvent(script.id, { level: 'warning', source: `probe-${mode}`, message });
 }
 
 async function snapshotAllSourceScripts(): Promise<Map<string, Map<string, StoredScript>>> {

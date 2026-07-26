@@ -57,7 +57,13 @@ details live in the topic-specific docs linked below.
 - **Script updater** (`src/script-updater.ts`) — the single entry
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when
-  a tab uses some scripts. See [storage.md](storage.md#updater).
+  a tab uses some scripts. Also runs the post-refresh update probe.
+  See [storage.md](storage.md#updater) and [updates.md](updates.md).
+- **Update probes** (`src/version-probe.ts` + its `-fetch` half, with
+  `src/version-compare.ts`) — read the `@version` a script's
+  `@updateURL` / `@downloadURL` declares and compare it with the copy
+  we run. Reporting only: the install source stays the update channel.
+  See [updates.md](updates.md).
 - **Source I/O** (`src/directories.ts` + `src/github-source.ts`) —
   `file://` fetcher, directory-listing parser, recursive `*.user.js`
   scanner, `http(s)://` fetcher, JSON manifest parser, and the GitHub
@@ -181,6 +187,9 @@ details live in the topic-specific docs linked below.
 - [http-sources.md](http-sources.md) — `http(s)://` URL formats,
   scheme-agnostic manifest schema (works for local paths and
   file:// URLs too), conditional-GET update detection.
+- [updates.md](updates.md) — how a script updates from its install
+  source, `@updateURL` / `@downloadURL` probing, `@version` ordering,
+  the OUTDATED status.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
 - [matching.md](matching.md) — `@match`/`@include`/`@exclude`

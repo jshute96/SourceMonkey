@@ -65,6 +65,9 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-source dispatch in addSource, parse-time diagnostics, refreshAllSources, first-run flag + DEFAULT_SOURCES |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
 | `src/script-display.ts` | Pure display helpers: size/status formatting + the decode-for-display name/path helpers |
+| `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same verdict |
+| `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
+| `src/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, bounded size/timeout/concurrency |
 | `src/source-display.ts` | Source-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
@@ -139,6 +142,9 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
 | `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate |
 | `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) + the name/path decode helpers |
+| `tests/unit/version-compare.test.mjs` | Unit tests for `@version` ordering: numeric segments, missing tails, prereleases, empty input |
+| `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |
+| `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
 | `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
 | `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction across `sourcemonkey`/`http`/`https`/`file` schemes, query-string and port-number handling |
@@ -211,6 +217,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/file-index.md` | This file |
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
 | `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, sources-page render |
+| `docs/updates.md` | How scripts update from their install source, and why `@updateURL`/`@downloadURL` are probed but never followed |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
 | `docs/http-sources.md` | `http(s)://` script and manifest sources, container routing, GitHub handling, conditional GETs |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |

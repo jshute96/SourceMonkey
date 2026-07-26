@@ -325,8 +325,8 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 - **Compare against the installed copy.** When the URL is already
   installed the banner prints both `@version` strings if they differ,
-  and nothing else. It should say which is newer (dotted-numeric
-  compare, same rule `sync-tm-scripts.mjs` uses), and whether the
+  and nothing else. It should say which is newer (`compareVersions`
+  in `src/version-compare.ts`), and whether the
   bodies are identical at all — an unchanged body under a bumped
   version, or a changed body under the same version, are both worth
   saying out loud.
@@ -391,12 +391,19 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 - status widget instead of context menu for running scripts
 - smoother add source/script flow, maybe a dialog box
 - relative paths for dev, absolute paths for release (for requires & resources)
-- use updateURL for faster update checks
 - fix caveats with the new multi-file script injection model:
   - reload fast-path doesn't work right?
   - global vars don't go across scripts (except with exports)
 - download a script to local disk for editing / debugging
-- keep links between local and remote version of a script, select which to run
-- for local script, check and report if remote "release" version is older or newer
+- keep links between local and remote version of a script, select which
+  to run. (The *reporting* half shipped — see
+  [docs/updates.md](docs/updates.md); picking a different copy to run
+  is what's left.)
+- `@updateURL` as a bandwidth optimization: fetch the small `.meta.js`
+  first and skip the body fetch when the version hasn't moved. Probing
+  already fetches it for the OUTDATED status, but the two paths are
+  separate — the refresh still does its own conditional GET. Worth
+  little for hosts that return ETags; worth more for a large script on
+  a host that doesn't.
 
 
