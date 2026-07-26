@@ -1,11 +1,17 @@
 # Installing From the Web (`.user.js` Link Capture)
 
 Clicking a `.user.js` link on GreasyFork, GitHub, or anywhere else
-should open a SourceMonkey install prompt. Chrome never does that on
-its own, so the extension intercepts the navigation.
+should land on a SourceMonkey preview of the script, with an Install
+button. Chrome never does that on its own, so the extension intercepts
+the navigation.
 
-Implementation: [`src/install-capture.ts`](../src/install-capture.ts)
-(service worker) + `src/install.html` / `src/install.ts` (the prompt).
+Implementation:
+
+- [`src/install-capture.ts`](../src/install-capture.ts) (service
+  worker) hands the URL to the userscript viewer's **preview mode** —
+  the prompt is not a separate page.
+- See [script-viewer.md → Preview mode](script-viewer.md#preview-mode)
+  for what it renders and which buttons appear when.
 
 ## What Chrome does with a `.user.js` URL
 
@@ -31,7 +37,7 @@ outcome benign instead of alarming.
   `{ pathSuffix: '.user.js' }`, fires before the request goes out.
 - Top-level navigations only (`frameId === 0`).
 - The handler rewrites the tab with
-  `chrome.tabs.update(tabId, { url: install.html?url=<clicked URL> })`.
+  `chrome.tabs.update(tabId, { url: userscript.html?preview=<clicked URL> })`.
 - Scope is deliberately narrow — see `isUserJsUrl`:
   - http(s) only. `file://` scripts belong to the sources page, and
     capturing them would hijack a local dev file opened for reading.
@@ -47,7 +53,7 @@ between them is a bug, not a nuance:
 | Where | What it decides |
 |-------|-----------------|
 | `webNavigation` pre-filter `{ pathSuffix: '.user.js' }` | whether the SW is woken at all |
-| `isUserJsUrl` | whether the tab is redirected to the prompt |
+| `isUserJsUrl` | whether the tab is redirected to the preview |
 | DNR `regexFilter` | whether the response is rewritten |
 | `isSingleFileInput` (`directories.ts`) | post-install: one script, or a directory to scan |
 
@@ -92,47 +98,36 @@ between them is a bug, not a nuance:
 - That only happens when the capture loses the cold-start race, which
   is the case the rule exists to keep from being *worse* (a failed
   download plus an install error).
-- The install page's **View raw source** deliberately does not
-  navigate into a rewritten response on these versions whenever it has
-  a fetched copy to show instead — see below.
+- The preview's **View raw source** deliberately does not navigate
+  into a rewritten response on these versions whenever it has a fetched
+  copy to show instead — see below.
 - The whole rule disappears on its own once Chrome 152 is the floor.
 - Requires the `declarativeNetRequestWithHostAccess` permission. It
   adds no new install warning — the redirect-free variant rides on the
   `<all_urls>` host access the extension already holds.
 
-## The install prompt (`install.html`)
+## Where the capture lands
 
-- Fetches the script itself (`fetchHttpText`, so GitHub auth applies)
-  and never executes it — the body is rendered as text through Prism.
-- `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
-  URL is fetched and stored in its raw form.
-- Shows name, version, description, author, namespace, homepage, size,
-  and the source URL (percent-decoded for reading — see
-  [names-and-paths.md](names-and-paths.md) — while every link and
-  fetch keeps the encoded form), plus the headers that decide reach:
-  **Runs on** (`@match` / `@include`), **Except on** (`@exclude`),
-  **Permissions** (`@grant`), **Network access** (`@connect`),
-  **Loads libraries** (`@require`), **Loads resources** (`@resource`).
-- Actions:
-  - **Install** → `addSource(url)`, then jumps to the new script's
-    viewer. A web install is not a special kind of script: it lands in
-    the http / github container source and picks up normal refresh and
-    update behavior.
-  - **Open script** / **Update now** replace Install when the URL is
-    already installed (matched on the stored `relativePath`). The
-    banner names both versions when they differ.
-  - **View raw source** opens the unprocessed file in a **new tab**,
-    leaving the prompt open behind it.
-  - **Continue to page** appears instead of Install when the fetched
-    file has no usable metadata block — see below.
-  - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
-    since Chrome refuses `window.close()` for a tab it didn't open by
-    script) when the prompt was opened into a fresh one.
+- The tab ends up on `userscript.html?preview=<clicked URL>` — the
+  same viewer an installed script opens in, in preview mode.
+- What it renders, and which of Install / Update / Continue appears
+  when, is documented in
+  [script-viewer.md → Preview mode](script-viewer.md#preview-mode).
+
+Capture-specific points:
+
+- The **clicked** URL is what travels in `?preview=`, not the
+  normalized one — a bypass has to be keyed on the URL the browser
+  will actually navigate to.
+- **Cancel** goes back to the referring page. The captured navigation
+  never committed, so the previous history entry is still that page.
+- A tab opened straight into the preview (a site's `target=_blank`
+  install button) has no history to go back to, so Cancel closes it.
 
 ### When the URL isn't a script
 
 - A file with no (or an unterminated) metadata block can't be
-  installed: the prompt says so and hides Install, rather than letting
+  installed: the preview says so and hides Install, rather than letting
   `addSource` create an `invalid` row.
 - Usually that means the URL is an ordinary **web page** whose path
   happens to end in `.user.js` — a forge's blob view, say. The capture
@@ -143,7 +138,7 @@ between them is a bug, not a nuance:
   URL, so the capture doesn't pull the tab straight back. Without it
   the only escape would be turning the whole option off.
 - GitHub blob URLs never reach this state — `normalizeSourceInput`
-  rewrites them to their raw counterpart, so the prompt describes the
+  rewrites them to their raw counterpart, so the preview describes the
   real script. The flip side is that a captured GitHub blob URL can no
   longer be used to reach GitHub's own file page.
 
@@ -155,7 +150,7 @@ with the response:
 - **Chrome ≥ 152** — a real navigation to the URL, with a one-shot
   capture bypass. The browser renders it as source text and the
   address bar keeps the true URL.
-- **Chrome ≤ 151** — the copy the prompt already fetched, rendered on
+- **Chrome ≤ 151** — the copy the preview already fetched, rendered on
   `raw.html`. Navigating for real would land on a response the
   download workaround has rewritten to `text/html`, which HTML-parses
   the script into a single unreadable line.
@@ -181,7 +176,7 @@ with the response:
   param. `raw.html` reads it by `?key=`, and rejects any key that
   isn't one we minted, so a hand-edited URL can't dump an arbitrary
   session row into the page.
-- The row is dropped when the prompt page goes away. The raw tab has
+- The row is dropped when the preview page goes away. The raw tab has
   rendered its copy by then; only a reload of that tab would notice,
   and it says so rather than showing a blank page.
 - The tab is opened with `chrome.tabs.create`, **not** `window.open`:
@@ -192,7 +187,7 @@ with the response:
 - `chrome.storage.session` row `installBypass:<url>`, holding an
   expiry timestamp, TTL 30s. Used by the raw view whenever it
   navigates to the real URL.
-- Written by the install page (extension pages are trusted contexts),
+- Written by the preview page (extension pages are trusted contexts),
   read-and-cleared by the service worker — session storage rather than
   an in-memory set because the SW can restart in between.
 - One-shot: a later visit to the same URL is captured normally again.
@@ -231,7 +226,9 @@ with the response:
 ## Limitations / future work
 
 - **`file://` URLs aren't captured.** Opening a local `.user.js`
-  offers no install prompt; add it through the sources page.
+  in a tab still hands it to Chrome. Adding one through the sources
+  page *does* preview it — the Add Source field routes any single
+  script, `file://` included, to the same preview.
 - **Mixed-case suffixes are ignored** everywhere, by design — see
   "Every matcher has to agree" above.
 - **A script installed as part of a directory / repo source isn't
@@ -243,6 +240,8 @@ with the response:
   every Chrome version when the capture loses the startup race; the
   DNR rule only rewrites `Content-Type`.
 - **No `@version` comparison logic** beyond displaying both values on
-  the already-installed banner — "Update now" always refetches.
+  the already-installed banner — "Update now" always refetches, and
+  nothing says which copy is newer or whether they differ at all. A
+  comparison + diff view is planned; see TODO.md.
 - **Delete the DNR rule** once Chrome 152 is the supported floor
   (`needsDownloadWorkaround` and its unit tests go with it).

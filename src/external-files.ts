@@ -238,6 +238,38 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
   return { requires, resources };
 }
 
+// Fetch a single `@require` the way `attachFiles` would, for the
+// viewer's preview mode: the preview builds its `@require` tabs from
+// the header up front and loads each body only when its tab is opened,
+// so it can't use the batch orchestrator. Routing through the same
+// `loadRequire` keeps the validation and the error wording identical
+// to what installing the script would produce.
+//
+// Throws (rather than returning an error field) because the caller is
+// a lazy tab body, and a rejected promise is what the tab view renders
+// as a load failure.
+export async function fetchRequireForPreview(
+  ref: string,
+  scriptFileUrl: string,
+  fetchCache: FileFetchCache,
+  now: number,
+): Promise<StoredRequire> {
+  const res = await loadRequire({
+    ref,
+    scriptFileUrl,
+    prior: new Map(),
+    recheck: 'all',
+    fetchCache,
+    now,
+    // Fresh per call: dedup across refs is the batch loader's job, and
+    // the preview shows one tab per declared ref.
+    seenUrls: new Set(),
+  });
+  if (res.errorMessage) throw new Error(res.errorMessage);
+  if (!res.entry) throw new Error(`@require ${ref}: no content`);
+  return res.entry;
+}
+
 // ---------- Per-kind loaders ----------
 
 interface LoadResult<E> {

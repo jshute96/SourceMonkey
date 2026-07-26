@@ -32,7 +32,7 @@ globalThis.chrome = {
 };
 
 const {
-  buildInstallPageUrl,
+  buildPreviewPageUrl,
   consumeInstallBypass,
   isUserJsUrl,
   markInstallBypass,
@@ -86,11 +86,11 @@ test('garbage input returns false rather than throwing', () => {
   assert.equal(isUserJsUrl('/foo.user.js'), false);
 });
 
-test('install page URL carries the script URL encoded', () => {
+test('preview page URL carries the script URL encoded', () => {
   const src = 'https://example.com/a b.user.js?v=1&x=2';
-  const out = buildInstallPageUrl(src);
-  assert.ok(out.startsWith(`chrome-extension://${EXT_ID}/install.html?`));
-  assert.equal(new URL(out).searchParams.get('url'), src);
+  const out = buildPreviewPageUrl(src);
+  assert.ok(out.startsWith(`chrome-extension://${EXT_ID}/userscript.html?`));
+  assert.equal(new URL(out).searchParams.get('preview'), src);
 });
 
 test('parseChromeMajor reads the major version', () => {

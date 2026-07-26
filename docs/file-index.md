@@ -44,18 +44,20 @@ One-line descriptions of every source file, grouped by directory.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap, first-run sources-page open |
 | `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
-| `src/install-capture.ts` | Captures web navigations to `*.user.js` and redirects them to the install prompt |
-| `src/install.html` | Install-prompt markup: title, banner slot, details list, action buttons, source code box |
-| `src/install.ts` | Install-prompt controller — fetches the clicked `.user.js`, renders its metadata + source, installs via `addSource` on confirmation |
-| `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the install prompt to its raw-source tab |
+| `src/install-capture.ts` | Captures web navigations to `*.user.js` and redirects them to the viewer's preview mode |
+| `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the viewer's preview to its raw-source tab |
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
 | `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
 | `src/sources.ts` | Sources page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source`/`?first_run` triggers, per-source anchors |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle, GitHub auth token) plus a link back to the sources page |
 | `src/options.ts` | Options page controller — binds the boolean setting checkboxes (link capture, debug logging) + GitHub-token controls (save / clear / reveal) |
-| `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, tab strip, highlighted code box, log pane |
-| `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl + tabbed code view (main script + one tab per `@require` + Log tab) |
+| `src/userscript.html` | Userscript viewer markup: controls row, preview banner + actions, details panel, tab strip, code box, log pane |
+| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), and the log pane |
+| `src/script-details.ts` | Builds the viewer's details `<dl>` (header fields, permissions, source/location/size/status) for both viewer modes |
+| `src/code-tabs.ts` | Tabbed code view: tab strip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
+| `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
+| `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
 | `src/directories.ts` | Source I/O + classifiers (single-file / manifest / github-dir / container), file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
 | `src/github-source.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
@@ -127,7 +129,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (HTTP soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`; recovery clears it |
-| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the prompt, Install registers the source, already-installed + non-userscript cases, raw view, option off |
+| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the source, already-installed + non-userscript cases, raw view, option off |
+| `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add Source install, Update, invalid-header refusal, lazy `@require` tabs |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/github-source.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
@@ -141,6 +144,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction across `sourcemonkey`/`http`/`https`/`file` schemes, query-string and port-number handling |
 | `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — every URL shape, plus label encoding (dedup `#N`, spaces, emoji) |
 | `tests/unit/script-url-hash.test.mjs` | Unit tests for `parseHash` / `buildHash`: filename/line/col forms, percent encoding, round-trip, and invalid-input fallbacks |
+| `tests/unit/code-tabs.test.mjs` | Unit tests for `expandToVisualColumn`: tab-stop expansion of a V8 stack column, and out-of-range clamping |
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |

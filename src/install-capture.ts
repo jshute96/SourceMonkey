@@ -1,5 +1,5 @@
 // Captures web navigations to `*.user.js` URLs and routes them to the
-// extension's install page instead.
+// userscript viewer's preview mode instead.
 //
 // Why this is needed at all: Chrome never renders a `.user.js` URL as
 // a page you can click "install" on.
@@ -18,7 +18,8 @@
 // Two independent pieces, in order of importance:
 //
 //   1. The capture. `webNavigation.onBeforeNavigate` fires before the
-//      request goes out; we rewrite the tab to `install.html?url=…`.
+//      request goes out; we rewrite the tab to
+//      `userscript.html?preview=…`.
 //      This is what actually delivers the install, and it works on
 //      every Chrome version.
 //
@@ -46,16 +47,19 @@ import { dlog } from './debug-log.js';
 // (options page). Absent means enabled — capture is the default.
 export const INSTALL_CAPTURE_KEY = 'smCaptureUserJsLinks';
 
-const INSTALL_PAGE = 'install.html';
+// The viewer page, which renders a not-yet-installed script from
+// `?preview=<url>` and offers Install / Update. Same page an installed
+// script opens in — see [docs/script-viewer.md].
+const PREVIEW_PAGE = 'userscript.html';
 
 // The one spelling of the suffix every matcher here keys off.
 const USER_JS_SUFFIX = '.user.js';
 
-// Session-storage prefix for one-shot capture bypasses. The install
+// Session-storage prefix for one-shot capture bypasses. The preview
 // page writes one of these right before navigating to the raw URL so
-// its own navigation isn't captured straight back into the install
-// page. Session storage (not an in-memory set) because the writer is
-// an extension page and the reader is the SW, which may restart in
+// its own navigation isn't captured straight back into a preview.
+// Session storage (not an in-memory set) because the writer is an
+// extension page and the reader is the SW, which may restart in
 // between.
 const BYPASS_PREFIX = 'installBypass:';
 
@@ -102,12 +106,12 @@ export function isUserJsUrl(url: string): boolean {
   return u.pathname.endsWith(USER_JS_SUFFIX);
 }
 
-// Build the install-page URL for a captured script URL. The script URL
-// is carried as a normal query param — the install page is the only
-// consumer and it validates the value before fetching anything.
-export function buildInstallPageUrl(scriptUrl: string): string {
-  const qs = new URLSearchParams({ url: scriptUrl });
-  return `${chrome.runtime.getURL(INSTALL_PAGE)}?${qs.toString()}`;
+// Build the preview URL for a captured script URL. The script URL is
+// carried as a normal query param — the viewer is the only consumer and
+// it validates the value before fetching anything.
+export function buildPreviewPageUrl(scriptUrl: string): string {
+  const qs = new URLSearchParams({ preview: scriptUrl });
+  return `${chrome.runtime.getURL(PREVIEW_PAGE)}?${qs.toString()}`;
 }
 
 // Extract the Chrome major version from a user-agent string. Returns
@@ -132,7 +136,7 @@ function bypassKey(url: string): string {
 }
 
 // Record a one-shot "don't capture this URL" marker. Called from the
-// install page's View source action.
+// preview page's View source action.
 export async function markInstallBypass(url: string): Promise<void> {
   await chrome.storage.session.set({ [bypassKey(url)]: Date.now() + BYPASS_TTL_MS });
 }
@@ -208,7 +212,7 @@ async function syncDownloadWorkaroundRule(): Promise<void> {
   // actually reaches the renderer (only when the capture loses the
   // cold-start race): the browser HTML-parses the script — collapsed
   // whitespace, and an inline `<script>` in the file would run on its
-  // host's origin. That's why the install page's raw view never
+  // host's origin. That's why the preview page's raw view never
   // navigates to a rewritten response on these versions; it serves its
   // own fetched copy as text/plain. See [docs/install-capture.md]
   // before widening this rule.
@@ -314,5 +318,5 @@ async function captureNavigation(tabId: number, url: string): Promise<void> {
   console.log(`[SourceMonkey] capturing .user.js navigation: ${url}`);
   // The tab may have closed (or navigated on) between the event firing
   // and this update landing; ignore the resulting rejection.
-  await chrome.tabs.update(tabId, { url: buildInstallPageUrl(url) }).catch(() => {});
+  await chrome.tabs.update(tabId, { url: buildPreviewPageUrl(url) }).catch(() => {});
 }

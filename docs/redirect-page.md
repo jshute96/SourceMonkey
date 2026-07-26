@@ -24,7 +24,7 @@ extension page named in the `page` query parameter.
 |---------|----------|---------------|
 | `sources.html` | Sources page | `refresh`; `add_source=<url-or-path>` |
 | `options.html` | Options page | — |
-| `userscript.html` | Script viewer | `script=<id>` |
+| `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` |
 
 Anything else is ignored — the redirect simply does not fire, and the
 user sees this page.

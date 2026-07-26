@@ -45,8 +45,8 @@ details live in the topic-specific docs linked below.
   and GitHub auth token entry. Reached via the Options link at the top
   of the sources page.
 - **Install capture** (`src/install-capture.ts`) — turns a web
-  navigation to a `.user.js` URL into the extension's install prompt
-  (`src/install.html` + `src/install.ts`), which fetches, describes,
+  navigation to a `.user.js` URL into the userscript viewer's preview
+  mode (`userscript.html?preview=<url>`), which fetches, describes,
   and — on confirmation — `addSource`s the script. Its "View raw
   source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
   through `src/raw-view.ts`. See
@@ -105,7 +105,12 @@ details live in the topic-specific docs linked below.
   every body with an activation/error shim. See
   [injection.md](injection.md).
 - **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
-  — per-script viewer page rendering content from the store. See
+  — per-script page with two modes: an installed script rendered from
+  the store, and a preview of one that isn't installed yet (the landing
+  spot for install capture and single-script Add Source). Its details
+  panel (`src/script-details.ts`), tabbed code view
+  (`src/code-tabs.ts`), and code linkifier (`src/code-links.ts`) are
+  separate modules so both modes render identically. See
   [script-viewer.md](script-viewer.md).
 - **Log IDs** (`src/script-log-id.ts`) — assigns each script a short
   file-derived label (basename, with `#N` suffix on dupes) used in
@@ -206,8 +211,8 @@ details live in the topic-specific docs linked below.
   page, so web pages can link into the extension without knowing its
   ID.
 - [install-capture.md](install-capture.md) — capturing `.user.js` link
-  clicks into the install prompt, and the Chrome-version quirks that
-  make it necessary.
+  clicks into the viewer's preview mode, and the Chrome-version quirks
+  that make it necessary.
 
 ## Build pipeline
 

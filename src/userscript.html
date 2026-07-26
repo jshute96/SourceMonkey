@@ -78,6 +78,23 @@
       .message.error { color: #b00; }
       .message.refresh-failed { color: #c2410c; }
       .message:empty { display: none; }
+      /* Preview-mode action row + banner. The banner states what the
+         file is relative to what's installed; the row carries the
+         Install / Update / Cancel decision. */
+      .actions { display: flex; gap: 0.5em; align-items: center; margin: 0 0 0.7em; }
+      .actions[hidden] { display: none; }
+      .actions button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
+      .actions button:disabled { cursor: not-allowed; opacity: 0.5; }
+      .actions .primary { font-weight: 600; }
+      .actions .spacer { margin-left: auto; }
+      .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 0.7em; }
+      .banner.installed { border-color: #2563eb; background: #eff6ff; }
+      .banner.preview { border-color: #6b7280; background: #f3f4f6; }
+      .banner p { margin: 0.3em 0; }
+      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
+      /* @grant / @connect rows: API names and hosts, not prose. */
+      .grant-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       /* Details panel: parsed-header fields (when a metadata block is
          present) plus Filename / Size / Status. Cleared via :empty
          when there's no script. */
@@ -393,6 +410,23 @@
         <span>Enabled</span>
       </label>
       <button id="refresh-btn" type="button">Refresh</button>
+    </div>
+    <!-- Preview mode only (`?preview=<url>`): the banner says what this
+         file is relative to what's installed, and the action row asks
+         the install / update question. Both stay hidden for an
+         installed script, which uses the controls row above. -->
+    <div id="banner-slot"></div>
+    <div id="preview-actions" class="actions" hidden>
+      <!-- Install stays hidden until the fetch has landed and we know
+           whether this file is installable and not already installed,
+           so it is never clickable without a handler behind it. -->
+      <button id="install-btn" class="primary" type="button" hidden>Install</button>
+      <button id="open-btn" type="button" hidden>Open installed script</button>
+      <button id="update-btn" type="button" hidden>Update now</button>
+      <button id="continue-btn" class="primary" type="button" hidden
+              title="Load this URL in the browser, without previewing it">Continue to page</button>
+      <button id="cancel-btn" type="button">Cancel</button>
+      <button id="view-source-btn" class="spacer" type="button" title="Open the unprocessed file in a new tab">View raw source</button>
     </div>
     <p id="message" class="message"></p>
     <div id="header-summary"></div>

@@ -1,5 +1,5 @@
 // Plain-text view of a fetched userscript. Opened in a new tab by the
-// install prompt's "View raw source" button; the text arrives through
+// preview page's "View raw source" button; the text arrives through
 // a `chrome.storage.session` row named in `?key=` (see raw-view.ts).
 //
 // The file is rendered with `textContent` into a `<pre>`, so nothing in
@@ -16,10 +16,10 @@ async function hydrate(): Promise<void> {
   const key = new URLSearchParams(location.search).get('key') ?? '';
   const view = await getRawView(key);
   if (!view) {
-    // The row is dropped when the install prompt that wrote it goes
+    // The row is dropped when the preview page that wrote it goes
     // away, so a reload after closing the prompt lands here.
     pre.className = 'notice';
-    pre.textContent = 'Nothing to show — reopen this from the SourceMonkey install prompt.';
+    pre.textContent = 'Nothing to show — reopen this from the SourceMonkey script preview.';
     return;
   }
   if (view.title) document.title = view.title;

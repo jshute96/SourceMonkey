@@ -21,7 +21,7 @@ How a stored location becomes the text a user reads. Helpers live in
   console log IDs.
 - Not decoded: `href`s, the Location row's copy button, fetch URLs,
   stored `relativePath`, `@match` patterns, anything compared for
-  identity (e.g. the install prompt's already-installed check).
+  identity (e.g. the preview's already-installed check).
 - A row's tooltip carries the raw href, so the encoded form is always
   one hover away.
 

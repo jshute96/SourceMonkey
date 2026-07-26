@@ -27,7 +27,8 @@ or UI surface refers to it.
   whenever a script is part of a dupe group. No suffix for unique
   basenames.
 - Userscript viewer — a `Log ID` row in the details panel, always
-  visible.
+  visible for an installed script. Absent in preview mode, which is
+  showing a script that has never run.
 
 ### Implementation
 

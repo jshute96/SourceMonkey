@@ -1,24 +1,52 @@
-// Userscript viewer. Loaded as chrome-extension://…/userscript.html
-// with a single query param `script=<scriptId>`. Hydrates from the
-// persistent store (chrome.storage.local) rather than re-reading the
-// file, so the content always matches what the sources page shows.
+// Userscript viewer. Loaded as chrome-extension://…/userscript.html in
+// one of two modes, chosen by the query string:
 //
-// Layout: a thin controls row (Enable toggle + Refresh) on top, then
-// a details panel (parsed-header fields + Location / Size / Status),
-// then the highlighted code box.
+//   ?script=<scriptId>  — an installed script. Hydrates from the
+//                         persistent store (chrome.storage.local)
+//                         rather than re-reading the file, so the
+//                         content always matches what the sources page
+//                         shows.
+//   ?preview=<url>      — a script that is NOT installed (yet). Fetches
+//                         it, shows exactly the same panels, and offers
+//                         Install / Update. This is where a captured
+//                         `.user.js` navigation lands (see
+//                         `install-capture.ts`) and where the sources
+//                         page sends a single-file Add Source.
+//
+// Both modes render: a heading (favicon + location), a controls row,
+// the details panel (`script-details.ts`), and the tabbed code view
+// (`code-tabs.ts`). Preview swaps the Enable/Refresh controls for the
+// install actions and has no Log tab; installed scripts have no
+// install actions.
+//
+// The page never runs the code it shows. Bodies are rendered as text
+// through Prism; the grammar extension that tints the metadata block
+// lives in `prism-userscript.ts`, pulled in by `code-tabs.ts` — the
+// module that actually calls `Prism.highlightElement`.
+//
+// See [docs/script-viewer.md] and [docs/install-capture.md].
 
 import {
+  addSource,
+  describeError,
+  distillMatching,
   getAllScripts,
   getScript,
   getSource,
   isScriptEnabled,
   isSourceEnabled,
   setScriptEnabled,
+  validateHeader,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
 import { computeLogIds } from './script-log-id.js';
-import type { StoredRequire } from './external-files.js';
+import {
+  distillRequires,
+  fetchRequireForPreview,
+  type FileFetchCache,
+  type StoredRequire,
+} from './external-files.js';
 import {
   clearScriptLog,
   getMaxLogLevel,
@@ -31,6 +59,7 @@ import {
   decodeForDisplay,
   displayLocation,
   effectiveScriptStatus,
+  formatBytes,
   formatScriptSize,
   formatScriptStatusLabel,
   leafName,
@@ -38,112 +67,73 @@ import {
 } from './script-display.js';
 import {
   getValue,
-  getValues,
   joinFullSource,
+  parseHeader,
+  splitHeaderBody,
+  type ParsedHeader,
 } from './userscript-header.js';
-import { isContainerSource, isFileUrl, scriptAbsolutePath } from './directories.js';
 import {
-  appendWithSlashBreaks,
-  effectiveDisplayName,
-  makeSourceTypeBubble,
-  sourceAnchorId,
-} from './source-display.js';
-import { matchTargetInfo } from './match-targets.js';
+  fetchFileUrlText,
+  fetchHttpText,
+  isFileUrl,
+  isHttpUrl,
+  normalizeSourceInput,
+  scriptAbsolutePath,
+  sourceCanonicalUrl,
+} from './directories.js';
+import { appendWithSlashBreaks } from './source-display.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { resolveScriptResource } from './file-loader.js';
-import {
-  MATCH_HEADER_TAGS,
-  RESOLVABLE_HEADER_TAGS,
-  connectLinkUrl,
-  splitResourceValue,
-  splitTextByUrls,
-} from './script-links.js';
 import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from './github-auth.js';
+import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
+import { dropRawView, putRawView } from './raw-view.js';
 import { parseStackRefs } from './stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
-import { buildHash, parseHash } from './script-url-hash.js';
+import { CodeTabsView, type CodeTab } from './code-tabs.js';
+import { renderDetails } from './script-details.js';
 
-// The viewer's Refresh button runs fetchHttpText in the page context,
-// so the page needs its own copy of the cached GitHub token. The
-// Refresh handler awaits the initial load before issuing the fetch so
-// a click before hydration can't run unauthenticated.
+// Refresh (installed) and the preview fetch both run in the page
+// context, so the page needs its own copy of the cached GitHub token.
+// Both handlers await it before issuing a fetch so an early click
+// can't go out unauthenticated.
 installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
-declare const Prism: {
-  highlightElement(el: Element): void;
-  languages: {
-    insertBefore(lang: string, before: string, grammar: Record<string, unknown>): void;
-  };
-  plugins?: {
-    lineNumbers?: {
-      getLine(pre: Element, lineNumber: number): HTMLElement | undefined;
-    };
-  };
-};
-
-// Extend Prism's JavaScript syntax highlighting grammar to recognise the
-// `// ==UserScript== … // ==/UserScript==` block. The outer token
-// keeps the `comment` alias so any non-tag line inside the block
-// still reads as comment-grey. Inner tokens use existing Prism theme
-// classes via `alias`:
-//   - markers (`==UserScript==`, `==/UserScript==`, sans `//`) → `bold`
-//   - `@tag` names → `constant` (matches identifier color in the body)
-//   - values after the tag → `string` (matches string-literal color)
-// Order inside matters: `header-tag-value` must run before
-// `header-tag-name`, because the value's lookbehind needs the `@tag`
-// substring to still be present in the unconsumed text when it scans.
-Prism.languages.insertBefore('javascript', 'comment', {
-  'userscript-header': {
-    // Trailing `[ \t]*\r?\n?` swallows whitespace + the line-terminating
-    // newline after `==/UserScript==` (CRLF and LF). We need the
-    // newline inside the span because we render the span as
-    // `display: block` for the tinted band, and a newline left in
-    // the text node *after* the block would render as an extra blank
-    // line on top of the block break the browser already inserts.
-    pattern: /\/\/[ \t]*==UserScript==[\s\S]*?\/\/[ \t]*==\/UserScript==[ \t]*\r?\n?/,
-    alias: 'comment',
-    inside: {
-      'header-marker': {
-        pattern: /(\/\/[ \t]*)==\/?UserScript==/,
-        lookbehind: true,
-        alias: 'bold',
-      },
-      'header-tag-value': {
-        // `[^\r\n]*` (not `[^\n]*`) so a CRLF file doesn't sweep the
-        // line-terminating `\r` into the value span, which would
-        // leak a trailing `\r` into anchor hrefs / `matchTargetInfo`
-        // input downstream.
-        pattern: /(\/\/[ \t]*@[A-Za-z][\w-]*(?::[\w-]+)?[ \t]+)\S[^\r\n]*/,
-        lookbehind: true,
-        alias: 'string',
-      },
-      'header-tag-name': {
-        pattern: /(\/\/[ \t]*)@[A-Za-z][\w-]*(?::[\w-]+)?/,
-        lookbehind: true,
-        alias: 'constant',
-      },
-    },
-  },
-});
-
 const params = new URLSearchParams(location.search);
 const scriptId = params.get('script');
+// The location to preview, exactly as it arrived: the URL the user
+// clicked (for a captured navigation) or typed (for Add Source). See
+// the preview-mode section below for the normalized forms derived
+// from it.
+const previewInput = params.get('preview');
 
 const filenameEl = document.getElementById('filename')!;
 const controlsRowEl = document.getElementById('meta-row')!;
 const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElement;
 const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
+const bannerSlotEl = document.getElementById('banner-slot')!;
+const actionsEl = document.getElementById('preview-actions')!;
+const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
+const openBtn = document.getElementById('open-btn') as HTMLButtonElement;
+const updateBtn = document.getElementById('update-btn') as HTMLButtonElement;
+const continueBtn = document.getElementById('continue-btn') as HTMLButtonElement;
+const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
+const viewSourceBtn = document.getElementById('view-source-btn') as HTMLButtonElement;
 const messageEl = document.getElementById('message')!;
 const summaryEl = document.getElementById('header-summary')!;
 const tabsEl = document.getElementById('tabs')!;
 const contentEl = document.getElementById('content')!;
 const codePaneEl = document.getElementById('code-pane') as HTMLElement;
 const logPaneEl = document.getElementById('log-pane') as HTMLElement;
+
+const tabsView = new CodeTabsView(
+  { tabsEl, codePaneEl, contentEl, logPaneEl },
+  { onShowLog: () => void renderLogPane() },
+);
 
 refreshBtn.addEventListener('click', () => void onRefresh());
 enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
@@ -164,7 +154,7 @@ const CHECK_ICON_SVG =
   '</svg>';
 
 // One shared copy button: created once, appendChild'd into the dl on
-// each render() (appendChild moves it, so no duplication). Keeping it
+// each render (appendChild moves it, so no duplication). Keeping it
 // shared means we don't have to re-wire the click handler.
 const filenameCopyBtn = (() => {
   const btn = document.createElement('button');
@@ -179,11 +169,26 @@ const filenameCopyBtn = (() => {
 
 void load();
 
+async function load(): Promise<void> {
+  if (scriptId) {
+    await loadStored();
+    return;
+  }
+  if (previewInput) {
+    await loadPreview();
+    return;
+  }
+  showMissing('Missing `script` or `preview` query parameter.');
+}
+
+// ---------- Installed-script mode ----------
+
 // Keep the displayed Log ID in sync with the global dupe set: if
 // another tab (sources page, viewer of a sibling) adds or removes a
 // script that shares this basename, our `#N` would otherwise go
 // stale. Listen for any script:* mutation and re-derive.
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (!scriptId) return;
   if (areaName === 'local') {
     let touched = false;
     for (const key of Object.keys(changes)) {
@@ -192,7 +197,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (touched) void rehydrateAfterStorageChange();
     return;
   }
-  if (areaName === 'session' && scriptId) {
+  if (areaName === 'session') {
     // Track THIS script's max-log-level row so the Status cell ramps
     // to WARNING / ERROR (or back down to OK) as entries arrive or
     // the log is cleared. Independent of the log-pane repaint below
@@ -243,9 +248,9 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   await refreshLogId();
   render(script);
   // render() wipes the flash overlay via `textContent =` and may
-  // have clamped currentTabIndex to 0 if a require disappeared.
+  // have clamped the tab index to 0 if a require disappeared.
   // Re-anchor highlight + URL without scrolling the code pane.
-  applyHashToView(false);
+  tabsView.applyHash(false);
 }
 
 // Source-enabled state is needed for greying the toggle. We cache it so
@@ -257,7 +262,7 @@ let sourceEnabled = true;
 let sourcePath = '';
 let sourceRow: StoredSource | null = null;
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
-// Path currently shown in the Filename cell. onCopyFilename copies
+// Path currently shown in the Location cell. onCopyFilename copies
 // this rather than reading textContent, which would also break if the
 // dl ever wraps the path across multiple text nodes.
 let currentFilenamePath = '';
@@ -269,8 +274,8 @@ let currentFilenamePath = '';
 let currentLogId = '';
 // Most recently rendered script. The session-storage listener calls
 // paintLog without re-reading the script, so we capture the latest
-// here so log-pane linkification can build tabs (and their
-// `sourceUrl`s) without re-reading storage.
+// here so log-pane linkification can consult the tab list without
+// re-reading storage.
 let currentScript: StoredScript | null = null;
 // Highest level any log entry has carried so far for this script.
 // Used to promote the Status row to WARNING / ERROR. Refreshed on
@@ -278,11 +283,8 @@ let currentScript: StoredScript | null = null;
 // row tracks the Log pane without a full re-render.
 let currentLogLevel: LogLevel | undefined;
 
-async function load(): Promise<void> {
-  if (!scriptId) {
-    showMissing('Missing `script` query parameter.');
-    return;
-  }
+async function loadStored(): Promise<void> {
+  if (!scriptId) return;
   const script = await getScript(scriptId);
   if (!script) {
     showMissing('Script not found in storage. Open it from the sources page.');
@@ -299,15 +301,11 @@ async function load(): Promise<void> {
   // fires.
   currentLogLevel = await getMaxLogLevel(scriptId);
 
-  // Pre-select the tab from `location.hash` so render() paints the
-  // right one on the first pass — without this we'd flash main
-  // before applyHashToView re-rendered.
-  currentTabIndex = resolveHashTarget(location.hash, buildTabs(script)).tabIndex;
-
   render(script);
-  // applyHashToView handles the rest (highlight + URL normalize),
-  // and avoids re-rendering since currentTabIndex already matches.
-  applyHashToView(true);
+  // The tab view seeds its own selection from `location.hash` on the
+  // first setTabs(); this applies the line highlight and normalizes
+  // the URL.
+  tabsView.applyHash(true);
 }
 
 async function refreshLogId(): Promise<void> {
@@ -334,10 +332,9 @@ async function onRefresh(): Promise<void> {
     if (next) {
       await refreshLogId();
       render(next);
-      // Re-anchor highlight + URL after the repaint (see notes on
-      // applyHashToView). Scroll skipped so a Refresh doesn't yank
-      // the user's scroll position.
-      applyHashToView(false);
+      // Re-anchor highlight + URL after the repaint. Scroll skipped so
+      // a Refresh doesn't yank the user's scroll position.
+      tabsView.applyHash(false);
     }
   } finally {
     refreshBtn.disabled = false;
@@ -350,7 +347,7 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
   const next = await setScriptEnabled(scriptId, enabled);
   if (next) {
     render(next);
-    applyHashToView(false);
+    tabsView.applyHash(false);
   }
 }
 
@@ -380,7 +377,7 @@ async function onCopyFilename(): Promise<void> {
 function render(script: StoredScript): void {
   currentScript = script;
   controlsRowEl.hidden = false;
-  renderFilenameHeading(script);
+  renderHeading(displayLocation(script.relativePath), script);
   document.title = `${displayLocation(script.relativePath)} — SourceMonkey`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
@@ -397,57 +394,54 @@ function render(script: StoredScript): void {
   // can't run at all); `refreshError` is the softer "running on a cached
   // copy, last update failed" case.
   if (script.errorMessage) {
-    messageEl.textContent = script.errorMessage;
-    messageEl.className = 'message error';
+    setMessage(script.errorMessage, 'error');
   } else if (script.refreshError) {
-    messageEl.textContent = `Refresh failed: ${script.refreshError}`;
-    messageEl.className = 'message refresh-failed';
+    setMessage(`Refresh failed: ${script.refreshError}`, 'refresh-failed');
   } else {
-    messageEl.textContent = '';
-    messageEl.className = 'message';
+    setMessage('');
   }
 
-  renderDetails(script);
-  renderTabsAndBody(script);
+  // Resolved location for the script: an absolute filesystem path for
+  // file:// sources, the github page URL for github sources, or the
+  // resolved URL for non-github HTTP sources. Skip the row entirely if
+  // the source row is gone — a bare relative path under a "Location"
+  // label would be misleading.
+  currentFilenamePath = sourcePath
+    ? scriptAbsolutePath(sourcePath, script.relativePath)
+    : '';
+
+  renderDetails(summaryEl, {
+    header: script.header,
+    logId: currentLogId,
+    source: sourceRow,
+    location: currentFilenamePath
+      ? {
+          text: displayLocation(currentFilenamePath),
+          // Anchor href: for file:// sources we use the file:// URL (the
+          // display string is the bare fs path, not navigable). For
+          // everything else display = href, so the user clicks the same
+          // URL they'd copy from the row.
+          href: isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath,
+          trailing: filenameCopyBtn,
+        }
+      : undefined,
+    size: formatScriptSize(script),
+    status: buildStatusCell(script),
+  });
+
+  tabsView.setTabs(storedTabs(script));
 }
 
-// Tab strip entries. Code tabs paint into the code-pane (main script
-// first, then one per @require in declaration order); the trailing
-// Log tab swaps the code pane for the log table. `fileUrl` is the
-// tab body's canonical fetchable URL — main-script tabs use
-// `script.fileUrl`; require tabs use the require's resolved URL so
-// any relative ref inside the require resolves against the require,
-// not the host script (uncommon — require sources rarely have their
-// own metadata block — but cheap to get right).
-// `sourceUrl` is the `sourcemonkey://…` URL we expect stack frames
-// for code in this tab to carry. Stack-ref links in the Log tab are
-// linkified only when their URL matches one of the tabs' sourceUrls
-// (today only the main tab — the injector doesn't yet emit a
-// per-require `//# sourceURL=`, so frames inside `@require` code
-// share the main URL and currently aren't routed to require tabs).
-type Tab =
-  | { kind: 'code'; label: string; body: string; fileUrl: string; sourceUrl: string }
-  | { kind: 'log'; label: string };
-
-// Index of the currently selected tab. Preserved across re-renders
-// when the new tab list still has an entry at that index; otherwise
-// falls back to 0 (the main script).
-let currentTabIndex = 0;
-// Highlight state tracked alongside currentTabIndex so the URL hash
-// can be rebuilt from a single source of truth. `undefined` means
-// "no line highlighted". Cleared on tab switch (a new tab's content
-// has no highlight to start) and set by scrollToAndHighlightLine
-// after a successful paint.
-let currentHighlightLine: number | undefined;
-let currentHighlightCol: number | undefined;
-
-function buildTabs(script: StoredScript): Tab[] {
+// Tab strip for an installed script: main + one per `@require`, then
+// the Log tab (always last so the file order stays stable as
+// `@require`s come and go).
+function storedTabs(script: StoredScript): CodeTab[] {
   // currentLogId is the dedup-aware label the injector uses to build
   // sourceURLs (see script-source-url.ts). Falls back to the bare
   // basename if the log-id sweep hasn't run yet — same default the
   // injector uses, so the two stay in lockstep.
   const label = currentLogId || scriptBasename(script.relativePath);
-  const tabs: Tab[] = [{
+  const tabs: CodeTab[] = [{
     kind: 'code',
     label: scriptBasename(script.relativePath),
     body: buildMainTabBody(script),
@@ -457,7 +451,7 @@ function buildTabs(script: StoredScript): Tab[] {
   for (const r of script.requires ?? []) {
     tabs.push({
       kind: 'code',
-      label: requireBasename(r),
+      label: requireBasename(r.url, r.ref),
       body: r.source,
       // fileUrl is the original fetched URL (for display so the user
       // sees the real provenance); sourceUrl is the synthetic
@@ -467,8 +461,6 @@ function buildTabs(script: StoredScript): Tab[] {
       sourceUrl: buildRequireSourceUrl(label, r.url),
     });
   }
-  // Log tab always last so the file order stays stable as @requires
-  // come and go.
   tabs.push({ kind: 'log', label: 'Log' });
   return tabs;
 }
@@ -491,67 +483,518 @@ function buildMainTabBody(script: StoredScript): string {
 // the fallback keeps a future shape change from breaking the tab UI.
 // Not `scriptBasename`: that one falls back to the whole URL, and a
 // require tab labeled with a full CDN URL would wreck the tab strip.
-function requireBasename(r: StoredRequire): string {
+function requireBasename(url: string, ref: string): string {
   let name: string;
   try {
-    name = leafName(new URL(r.url).pathname);
+    name = leafName(new URL(url).pathname);
   } catch {
-    return r.ref;
+    return ref;
   }
-  return name ? decodeForDisplay(name) : r.ref;
+  return name ? decodeForDisplay(name) : ref;
 }
 
-function renderTabsAndBody(script: StoredScript): void {
-  const tabs = buildTabs(script);
-  if (currentTabIndex >= tabs.length) {
-    currentTabIndex = 0;
-    // The highlight pointed at a tab that no longer exists — drop
-    // it so the URL hash doesn't claim a line on the fallback tab
-    // the user never selected.
-    currentHighlightLine = undefined;
-    currentHighlightCol = undefined;
+// Build the Status row content: an anchor whose href is `#Log` so
+// clicking switches the viewer to the Log tab via the regular
+// hashchange listener. Labeled with the effective status (INVALID /
+// MISSING / ERROR / WARNING / OK) computed against the current log
+// level.
+function buildStatusCell(script: StoredScript): Node {
+  const effective = effectiveScriptStatus(
+    { status: script.status, refreshError: script.refreshError },
+    currentLogLevel,
+  );
+  const link = document.createElement('a');
+  link.href = '#Log';
+  link.textContent = formatScriptStatusLabel(effective);
+  link.className = `meta-status status-${effective}`;
+  // Prefer the refresh-failure reason as the hover when REFRESH FAILED
+  // is what's showing; otherwise fall back to the load errorMessage.
+  const title = effective === 'refresh-failed' ? script.refreshError : script.errorMessage;
+  if (title) link.title = title;
+  return link;
+}
+
+// ---------- Preview mode ----------
+
+// Three spellings of one location, all needed:
+//
+//   previewInput     — verbatim from the query string. What `addSource`
+//                      is handed, and what a capture bypass is keyed on
+//                      (it's the URL the browser would navigate to).
+//   previewLocation  — `normalizeSourceInput(previewInput)`: a
+//                      github.com blob URL rewritten to its raw form, a
+//                      local path left alone. Exactly what `addSource`
+//                      would store as `relativePath`, so it's what the
+//                      already-installed check compares, and what the
+//                      Location row displays.
+//   previewFileUrl   — the fetchable form of the above: a bare local
+//                      path becomes `file://…`. Used for the fetch, for
+//                      resolving `@require` refs, and as link hrefs.
+let previewLocation = '';
+let previewFileUrl = '';
+// The fetched body, kept so "View raw source" can hand it to a new tab
+// without a second round-trip. Empty until the fetch lands.
+let previewText = '';
+let previewHeader: ParsedHeader | null = null;
+// Per-page cache shared by every lazily-loaded `@require` tab, so
+// re-opening a tab (or two refs pointing at one URL) fetches once.
+// It memoizes failures too, so a require that failed once replays its
+// error for the life of the page rather than silently re-hitting the
+// host on every tab click; reload to retry.
+const previewFetchCache: FileFetchCache = new Map();
+// Session keys backing raw-view tabs, all dropped when this page goes
+// away. A set rather than a single key because each click opens its own
+// tab, and two clicks can be in flight at once.
+const rawViewKeys = new Set<string>();
+
+async function loadPreview(): Promise<void> {
+  const input = previewInput ?? '';
+  controlsRowEl.hidden = true;
+  actionsEl.hidden = false;
+  cancelBtn.addEventListener('click', leavePage);
+  viewSourceBtn.addEventListener('click', openRawSource);
+
+  setMessage('Loading…');
+  await githubTokenReady;
+
+  let text: string;
+  try {
+    // Check the shape before canonicalizing: `sourceCanonicalUrl`
+    // turns anything that isn't already http(s)/file:// into a
+    // file:// URL, so an `ftp://…` param would otherwise fail with a
+    // baffling `file:///ftp%3A//…` error instead of being named.
+    if (!isPreviewableInput(input)) {
+      throw new Error('not an http(s):// or file:// URL, or an absolute path');
+    }
+    previewLocation = await normalizeSourceInput(input);
+    previewFileUrl = sourceCanonicalUrl(previewLocation);
+    text = await fetchPreviewText(previewFileUrl);
+  } catch (err) {
+    // Keep the heading and the action row: the location is still worth
+    // showing, and "View raw source" is a real retry — that navigation
+    // carries cookies the extension's fetch doesn't.
+    renderHeading(displayLocation(previewLocation || input), {
+      matching: { matches: [] },
+      header: null,
+      fileUrl: previewFileUrl || input,
+    });
+    document.title = `${displayLocation(previewLocation || input)} — SourceMonkey`;
+    setMessage(`Could not fetch this script: ${describeError(err)}`, 'error');
+    summaryEl.replaceChildren();
+    tabsView.clear();
+    installBtn.hidden = true;
+    // A fetch that failed for a location we already hold a copy of is
+    // exactly when the user wants to reach the copy that works. Only
+    // meaningful once we know the normalized location — if
+    // normalizeSourceInput is what threw, there's nothing to match on.
+    if (previewLocation) void offerOpenExisting();
+    return;
   }
 
-  tabsEl.replaceChildren();
-  // Always render the strip — even a single main-script tab gives the
-  // page a consistent shape and tells the user the viewer is tabbed.
-  tabsEl.hidden = false;
+  setMessage('');
+  previewText = text;
+  renderPreview(text);
+}
 
-  tabs.forEach((tab, idx) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tab' + (idx === currentTabIndex ? ' active' : '');
-    btn.setAttribute('role', 'tab');
-    btn.setAttribute('aria-selected', idx === currentTabIndex ? 'true' : 'false');
-    btn.textContent = tab.label;
-    btn.addEventListener('click', () => {
-      if (currentTabIndex === idx) return;
-      currentTabIndex = idx;
-      currentHighlightLine = undefined;
-      currentHighlightCol = undefined;
-      renderTabsAndBody(script);
-      updateUrlHash();
-    });
-    tabsEl.appendChild(btn);
+// Shapes we know how to preview, checked against the raw input. Mirrors
+// what the sources page's Add field accepts for a single script: an
+// http(s) or file:// URL, or an absolute local path.
+function isPreviewableInput(input: string): boolean {
+  return isHttpUrl(input) || isFileUrl(input) || input.startsWith('/');
+}
+
+// Fetch the text to preview. By this point the location has been
+// canonicalized, so it is http(s) or file:// — the two shapes a
+// single-file source can take.
+async function fetchPreviewText(url: string): Promise<string> {
+  if (isFileUrl(url)) return fetchFileUrlText(url);
+  const result = await fetchHttpText(url);
+  // `unchanged` needs a conditional request to happen, and we send
+  // none — but the type includes it, so fail loudly rather than
+  // rendering an empty page if that ever changes.
+  if (result.kind !== 'ok') throw new Error('no content returned');
+  return result.text;
+}
+
+function renderPreview(text: string): void {
+  previewHeader = parseHeader(text);
+
+  renderHeading(displayLocation(previewLocation), {
+    matching: distillMatching(previewHeader),
+    header: previewHeader,
+    fileUrl: previewFileUrl,
+  });
+  document.title = `${displayLocation(previewLocation)} — SourceMonkey`;
+
+  // Same split as the installed viewer's Location row: the bare fs path
+  // reads better for a local file, but only the file:// URL is a usable
+  // href, and the copy button hands over the raw form either way.
+  currentFilenamePath = previewLocation;
+  renderDetails(summaryEl, {
+    header: previewHeader,
+    location: {
+      text: displayLocation(previewLocation),
+      href: previewFileUrl,
+      trailing: filenameCopyBtn,
+      // Navigating this href for real would be captured straight back
+      // into a second preview of the same script (or, on Chrome ≤ 151,
+      // land on the download-workaround's HTML-parsed render). Route
+      // it through the same path the View raw source button uses.
+      onActivate: openRawSource,
+    },
+    size: formatBytes(new TextEncoder().encode(text).length),
   });
 
-  const active = tabs[currentTabIndex];
-  if (active.kind === 'log') {
-    codePaneEl.hidden = true;
-    logPaneEl.hidden = false;
-    void renderLogPane();
-  } else {
-    logPaneEl.hidden = true;
-    codePaneEl.hidden = false;
-    // textContent escapes; Prism then walks the node and replaces text
-    // with highlighted spans. Doing it this way (rather than innerHTML)
-    // keeps untrusted file content from being interpreted as markup.
-    contentEl.textContent = active.body;
-    Prism.highlightElement(contentEl);
-    linkifyCodeBlock(contentEl, active.fileUrl);
-    installGutterClickHandlers();
+  tabsView.setTabs(previewTabs(text, previewHeader));
+  // Previews are shareable URLs too, so `#<file>:<line>:<col>` has to
+  // land the same way it does for an installed script.
+  tabsView.applyHash(true);
+
+  // Same validation the store runs when a script is added, so what the
+  // preview says about a file matches what installing it would produce.
+  const error = previewValidationError(text, previewHeader);
+  if (error) {
+    renderInvalidPreview(error);
+    return;
+  }
+  void wireInstallButtons().catch((err) => {
+    setMessage(`Could not check whether this is already installed: ${describeError(err)}`, 'error');
+  });
+}
+
+// The reason this file can't be installed, or null. Deliberately the
+// same pair of checks `buildScriptFromText` runs — a preview that
+// offers Install for something that would land as an `invalid` row
+// would be lying.
+function previewValidationError(text: string, header: ParsedHeader | null): string | null {
+  const split = splitHeaderBody(text);
+  if (split.error) {
+    return split.error === 'no metadata block'
+      ? 'This file has no // ==UserScript== metadata block, so it is not an installable userscript.'
+      : 'This file has an unterminated // ==UserScript== metadata block, so it is not an installable userscript.';
+  }
+  const invalid = validateHeader(header);
+  return invalid ? `This script cannot be installed: ${invalid}` : null;
+}
+
+function renderInvalidPreview(error: string): void {
+  renderBanner(error);
+  installBtn.hidden = true;
+  updateBtn.hidden = true;
+  // Nothing to install or update, but if we already hold a copy of
+  // this location the user still wants a way to reach it — a broken
+  // fetch of a script you have installed is exactly when you'd want to
+  // go look at the copy that works.
+  void offerOpenExisting().catch(() => {
+    // Only costs the user the Open button; the banner already says
+    // what's wrong with the file.
+  });
+  // Most likely this URL is a web page that merely ends in `.user.js` —
+  // a forge's blob view, say. The capture can't tell (it runs before
+  // any response headers exist), so give the user the way through that
+  // landing on nothing else offers: go to the page. Only meaningful for
+  // http(s); a local file has nothing to navigate to.
+  if (isHttpUrl(previewInput ?? '')) {
+    continueBtn.hidden = false;
+    continueBtn.addEventListener('click', () => {
+      const url = previewInput ?? '';
+      markInstallBypass(url)
+        .then(() => { location.href = url; })
+        // storage.session is quota-limited, so this can genuinely
+        // fail. Say so rather than leaving the button inert.
+        .catch((err) => setMessage(`Could not open the page: ${describeError(err)}`, 'error'));
+    });
   }
 }
+
+// Tab strip for a preview: the fetched text, then one tab per declared
+// `@require`. Bodies for the requires are thunks — nothing is fetched
+// from a third-party host until the user opens that tab, so merely
+// looking at a script we haven't installed doesn't pull down its
+// dependencies. No Log tab: nothing has run.
+function previewTabs(text: string, header: ParsedHeader | null): CodeTab[] {
+  const fileUrl = previewFileUrl;
+  const tabs: CodeTab[] = [{
+    kind: 'code',
+    label: scriptBasename(previewLocation),
+    body: text,
+    fileUrl,
+    // No stack frames without a run, so nothing to linkify against.
+    sourceUrl: '',
+  }];
+  for (const ref of distillRequires(header)) {
+    const resolved = resolveScriptResource(ref, fileUrl);
+    // An unresolvable ref still gets a tab: opening it surfaces the
+    // same rejection message installing would produce.
+    const url = resolved && resolved.kind !== 'data' ? resolved.url : '';
+    tabs.push({
+      kind: 'code',
+      label: url ? requireBasename(url, ref) : ref,
+      body: () => loadPreviewRequire(ref, fileUrl),
+      fileUrl: url || fileUrl,
+      sourceUrl: '',
+    });
+  }
+  return tabs;
+}
+
+async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string> {
+  const entry: StoredRequire = await fetchRequireForPreview(
+    ref,
+    fileUrl,
+    previewFetchCache,
+    Date.now(),
+  );
+  return entry.source;
+}
+
+// Look for an existing row for this URL and pick the button set. A
+// container script's `relativePath` holds the full URL the user added
+// (post-normalization), which is exactly what `addSource` would store
+// for this install — so it's the field to match on.
+async function wireInstallButtons(): Promise<void> {
+  const scripts = await getAllScripts();
+  const existing = scripts.find((s) => s.relativePath === previewLocation);
+
+  if (!existing) {
+    renderBanner('This script is not installed yet.', 'preview');
+    installBtn.hidden = false;
+    installBtn.disabled = false;
+    installBtn.onclick = () => void doInstall();
+    return;
+  }
+
+  renderInstalledBanner(existing, previewHeader);
+  installBtn.hidden = true;
+  showOpenButton(existing.id);
+  updateBtn.hidden = false;
+  updateBtn.onclick = () => void doUpdate(existing.id);
+}
+
+async function offerOpenExisting(): Promise<void> {
+  const scripts = await getAllScripts();
+  const existing = scripts.find((s) => s.relativePath === previewLocation);
+  if (existing) showOpenButton(existing.id);
+}
+
+function showOpenButton(id: string): void {
+  openBtn.hidden = false;
+  openBtn.onclick = () => {
+    location.href = `userscript.html?script=${encodeURIComponent(id)}`;
+  };
+}
+
+async function doInstall(): Promise<void> {
+  const spinner = startBusy(installBtn);
+  try {
+    // The normalized form, not the raw input: `addSource` normalizes
+    // again internally (a no-op on an already-canonical value), and
+    // for a github blob URL the raw input would cost a second
+    // Contents-API round trip that can fail after the user has
+    // already clicked Install.
+    const result = await addSource(previewLocation);
+    if (!result) {
+      // Raced another tab (or the same URL under a different spelling
+      // that normalizes to an already-installed one). Re-run the button
+      // wiring so the page converges on the Open / Update pair instead
+      // of offering an Install that can only repeat this message.
+      setMessage('This script is already installed.');
+      await wireInstallButtons();
+      return;
+    }
+    const scriptId =
+      result.kind === 'existingContainer'
+        ? result.scriptId
+        : result.source.scriptIds[0];
+    location.href = scriptId
+      ? `userscript.html?script=${encodeURIComponent(scriptId)}`
+      : 'sources.html';
+  } catch (err) {
+    setMessage(`Install failed: ${describeError(err)}`, 'error');
+  } finally {
+    spinner.remove();
+    installBtn.disabled = false;
+  }
+}
+
+async function doUpdate(id: string): Promise<void> {
+  const spinner = startBusy(updateBtn);
+  try {
+    await updateScript(id, 'manual');
+    location.href = `userscript.html?script=${encodeURIComponent(id)}`;
+  } catch (err) {
+    setMessage(`Update failed: ${describeError(err)}`, 'error');
+    spinner.remove();
+    updateBtn.disabled = false;
+  }
+}
+
+// Show the unprocessed file in a new tab, leaving the preview open
+// behind it.
+//
+// A local file has none of the complications below: nothing captures
+// `file://` navigations and no response header gets rewritten, so it
+// opens the fetched copy on `raw.html` (titled with the filename) or,
+// with no copy in hand, the file:// URL itself.
+//
+// For http(s) it depends on what the browser does with a `.user.js`
+// response (see install-capture.ts):
+//
+//   - Chrome ≥ 152 renders it as source text on its own, so navigate
+//     for real — the address bar keeps the true URL. Capture is stood
+//     down for that one navigation.
+//   - Chrome ≤ 151 renders it only if the download workaround has
+//     rewritten the response to `text/html`, which HTML-parses the
+//     script into one unreadable run-on line. Show the copy we already
+//     fetched on `raw.html` instead — a real page, so the tab gets a
+//     title naming the file.
+//
+// With no fetched copy to hand over — the fetch failed, or hasn't
+// landed yet — there is nothing to render locally, so it navigates on
+// any version. That doubles as the retry for a URL our fetch couldn't
+// read: the tab carries cookies the extension's fetch doesn't. On
+// Chrome ≤ 151 the result is whatever the browser makes of it (the
+// run-on-line render, or a download).
+function openRawSource(): void {
+  const target = previewInput ?? '';
+  const isHttp = isHttpUrl(target);
+  if (!previewText && !isHttp && !previewFileUrl) {
+    // Nothing fetched and nothing to navigate to — normalizeSourceInput
+    // threw before we ever resolved a URL.
+    setMessage('There is no source to open for this location.', 'error');
+    return;
+  }
+  if (!previewText) {
+    // Nothing fetched to render locally, so navigate. For http that
+    // doubles as the retry for an auth-gated URL — the tab carries
+    // cookies the extension's fetch doesn't — and needs the capture
+    // stood down for one navigation.
+    const nav = isHttp ? target : previewFileUrl;
+    (isHttp ? markInstallBypass(target) : Promise.resolve())
+      .then(() => openTab(nav))
+      .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+    return;
+  }
+  if (isHttp && !needsDownloadWorkaround(navigator.userAgent)) {
+    // Mark the bypass before opening so the capture listener can't see
+    // the navigation first.
+    markInstallBypass(target)
+      .then(() => openTab(target))
+      .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+    return;
+  }
+  putRawView({ title: scriptBasename(previewLocation), text: previewText })
+    .then((url) => {
+      const key = new URL(url).searchParams.get('key');
+      if (key) rawViewKeys.add(key);
+      openTab(url);
+    })
+    // `chrome.storage.session` is quota-limited and shared with the
+    // per-script logs, so a big script can genuinely fail here. Say so
+    // rather than having the button do nothing.
+    .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+}
+
+// Open a new tab beside this one. `chrome.tabs.create`, not
+// `window.open`: an extension page opened through `window.open` comes
+// up without the `chrome.*` APIs, so `raw.html` would have no way to
+// read the text handed to it.
+function openTab(url: string): void {
+  void chrome.tabs.create({ url });
+}
+
+// The handed-off text outlives this page unless dropped. The tabs that
+// opened it have already rendered their copies by the time this fires;
+// only a reload of one would notice.
+addEventListener('pagehide', () => {
+  for (const key of rawViewKeys) void dropRawView(key);
+  rawViewKeys.clear();
+});
+
+// Cancel: back to wherever the click came from. A captured navigation
+// never committed, so the previous entry is the referring page. A tab
+// opened straight into the preview (target=_blank from a site's install
+// button) has no history to go back to, so close it — via
+// `chrome.tabs.remove`, because Chrome refuses `window.close()` for a
+// tab that wasn't opened by script.
+function leavePage(): void {
+  if (history.length > 1) {
+    history.back();
+    return;
+  }
+  void chrome.tabs.getCurrent().then((tab) => {
+    if (tab?.id != null) void chrome.tabs.remove(tab.id);
+  });
+}
+
+function renderBanner(text: string, extraClass = ''): void {
+  bannerSlotEl.replaceChildren();
+  const div = document.createElement('div');
+  div.className = extraClass ? `banner ${extraClass}` : 'banner';
+  const p = document.createElement('p');
+  p.textContent = text;
+  div.append(p);
+  bannerSlotEl.append(div);
+}
+
+function renderInstalledBanner(existing: StoredScript, header: ParsedHeader | null): void {
+  const installedVersion = existing.header ? getValue(existing.header, 'version') : undefined;
+  const offeredVersion = header ? getValue(header, 'version') : undefined;
+  let text = 'This script is already installed';
+  if (installedVersion && offeredVersion && installedVersion !== offeredVersion) {
+    text += ` (version ${installedVersion}; this copy says ${offeredVersion})`;
+  } else if (installedVersion) {
+    text += ` (version ${installedVersion})`;
+  }
+  text += '.';
+  renderBanner(text, 'installed');
+}
+
+function startBusy(btn: HTMLButtonElement): HTMLElement {
+  btn.disabled = true;
+  const spinner = document.createElement('span');
+  spinner.className = 'busy-spinner';
+  btn.after(spinner);
+  return spinner;
+}
+
+// ---------- Shared rendering ----------
+
+// Favicon slot followed by the location, percent-decoded — for a
+// script installed from (or previewed at) a URL the encoded form is
+// unreadable. renderSiteIconInto paints a clickable globe placeholder
+// synchronously (when the script targets a usable origin) and swaps it
+// for the real favicon once the fetch resolves.
+function renderHeading(
+  text: string,
+  script: Parameters<typeof renderSiteIconInto>[1],
+): void {
+  filenameEl.replaceChildren();
+  const iconSlot = document.createElement('span');
+  iconSlot.className = 'site-icon';
+  filenameEl.appendChild(iconSlot);
+  appendWithSlashBreaks(filenameEl, text);
+  renderSiteIconInto(iconSlot, script);
+}
+
+function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {
+  messageEl.textContent = text;
+  messageEl.className = kind ? `message ${kind}` : 'message';
+}
+
+function showMissing(message: string): void {
+  currentScript = null;
+  controlsRowEl.hidden = true;
+  actionsEl.hidden = true;
+  bannerSlotEl.replaceChildren();
+  filenameEl.textContent = 'Not available';
+  setMessage(message, 'error');
+  summaryEl.replaceChildren();
+  logPaneEl.replaceChildren();
+  tabsView.clear();
+}
+
+// ---------- Log pane (installed scripts only) ----------
 
 // Bumped on every paint request (tab-switch initial paint AND storage-
 // change repaint). renderLogPane awaits a storage.get; a sm:* event
@@ -602,12 +1045,6 @@ function paintLog(entries: LogEntry[]): void {
   thead.appendChild(trHead);
   table.appendChild(thead);
 
-  // Compute the tab list once for the whole render; every row's
-  // message column needs the same set to look up stack refs by
-  // URL. Falls back to an empty list when the script isn't yet
-  // hydrated — appendLogMessageContent handles that case.
-  const tabs = currentScript ? buildTabs(currentScript) : [];
-
   const tbody = document.createElement('tbody');
   // Newest first so recent events are visible without scrolling.
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -636,7 +1073,7 @@ function paintLog(entries: LogEntry[]): void {
 
     const tdMsg = document.createElement('td');
     tdMsg.className = 'log-msg';
-    appendLogMessageContent(tdMsg, e.message, tabs);
+    appendLogMessageContent(tdMsg, e.message);
     tr.appendChild(tdMsg);
 
     tbody.appendChild(tr);
@@ -651,16 +1088,7 @@ function paintLog(entries: LogEntry[]): void {
 // URL doesn't match any tab render as plain text — they may point
 // at code outside this script (the page, another userscript, a
 // browser internal).
-function appendLogMessageContent(
-  td: HTMLElement,
-  message: string,
-  tabs: Tab[],
-): void {
-  const script = currentScript;
-  if (!script) {
-    td.textContent = message;
-    return;
-  }
+function appendLogMessageContent(td: HTMLElement, message: string): void {
   const runs = parseStackRefs(message);
   if (runs.length === 1 && runs[0].kind === 'text') {
     td.textContent = message;
@@ -672,9 +1100,7 @@ function appendLogMessageContent(
       td.appendChild(document.createTextNode(run.text));
       continue;
     }
-    const tabIndex = tabs.findIndex(
-      (t) => t.kind === 'code' && t.sourceUrl && t.sourceUrl === run.url,
-    );
+    const tabIndex = tabsView.findTabBySourceUrl(run.url);
     if (tabIndex < 0) {
       td.appendChild(document.createTextNode(run.text));
       continue;
@@ -685,266 +1111,10 @@ function appendLogMessageContent(
     a.textContent = run.text;
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
-      goToTabLine(tabIndex, run.line, run.col);
+      tabsView.goToTabLine(tabIndex, run.line, run.col);
     });
     td.appendChild(a);
   }
-}
-
-// Switch to the given tab (if not already active), then scroll the
-// code pane to bring the requested line into view and highlight it.
-// `col` (1-based) positions the vertical accent bar at the character
-// column from the stack ref. Pass `undefined` (e.g. line-number
-// gutter clicks) to place the bar at the start of the line.
-function goToTabLine(tabIndex: number, tabLine: number, col?: number): void {
-  if (!currentScript) return;
-  if (currentTabIndex !== tabIndex) {
-    currentTabIndex = tabIndex;
-    currentHighlightLine = undefined;
-    currentHighlightCol = undefined;
-    renderTabsAndBody(currentScript);
-  }
-  scrollToAndHighlightLine(tabLine, col);
-  updateUrlHash();
-}
-
-function scrollToAndHighlightLine(
-  tabLine: number,
-  col?: number,
-  // Gutter clicks pass `false`: the user is clicking on a row
-  // they're already looking at, so re-centering it is jarring.
-  // Stack-ref clicks (default `true`) need the scroll — the
-  // target line may be off-screen or in a different tab.
-  scroll = true,
-): void {
-  if (codePaneEl.hidden) return;
-  const api = Prism.plugins?.lineNumbers;
-  if (!api?.getLine) return;
-  const gutterSpan = api.getLine(codePaneEl, tabLine);
-  if (!gutterSpan) return;
-
-  // gutterSpan's offsetParent is `.line-numbers-rows`, which is
-  // positioned absolutely at top: 0 of <code>. So its offsetTop
-  // doubles as the y-coordinate of the matching code line within
-  // <code>, and inside the <pre> the same value lines up with the
-  // pre's scrollable content.
-  const top = gutterSpan.offsetTop;
-  const height = gutterSpan.offsetHeight || 0;
-
-  if (scroll) {
-    codePaneEl.scrollTop = top - codePaneEl.clientHeight / 2 + height / 2;
-  }
-
-  // Replace any leftover highlight so successive clicks land on the
-  // newest line only (we never stack overlays).
-  for (const prior of Array.from(contentEl.querySelectorAll('.line-flash'))) {
-    prior.remove();
-  }
-  const flash = document.createElement('div');
-  flash.className = 'line-flash';
-  flash.style.top = `${top}px`;
-  flash.style.height = `${height}px`;
-
-  // Accent bar at the column position, but only when the caller
-  // supplied one (stack-ref clicks carry `col`; line-number gutter
-  // clicks don't). Skip on line 1: the wrapper prefix shares that
-  // physical line, so a reported column points into the shim rather
-  // than user code.
-  if (col !== undefined && col > 0 && tabLine > 1) {
-    const cs = getComputedStyle(codePaneEl);
-    // Tabs in V8's column count are one character each, but the
-    // viewer renders them as `tab-size` columns wide (Prism's CSS
-    // sets 4). Walk the source line and expand each tab to the next
-    // tab stop so the bar lands on the actual rendered glyph.
-    const lineText = lineTextAt(tabLine);
-    const tabSize = parseInt(cs.tabSize, 10) || 8;
-    const visualCol = expandToVisualColumn(lineText, col, tabSize);
-    // `.line-flash` extends 0.8em left of <code>'s content area so
-    // the highlight can cover the header band's negative-margin
-    // extension. The bar's `left:` is measured from the flash's
-    // edge, so add that 0.8em back to anchor at code's column 0.
-    const fontSize = parseFloat(cs.fontSize) || 13;
-    const flashLeftEm = 0.8;
-    const bar = document.createElement('div');
-    bar.className = 'line-flash-col-bar';
-    bar.style.left = `${flashLeftEm * fontSize + visualCol * measureCodeCharWidth()}px`;
-    flash.appendChild(bar);
-  }
-
-  contentEl.appendChild(flash);
-
-  // Update the tracked highlight state so the URL-hash builder
-  // can read the currently-highlighted line/col. Callers that
-  // initiate a UI change (gutter click, stack-ref click) then call
-  // updateUrlHash() to push this to location.hash.
-  currentHighlightLine = tabLine;
-  currentHighlightCol = col;
-}
-
-// Wire up clicks on each line-number span in the gutter so the user
-// can highlight any line (clearing any prior highlight). The gutter
-// spans are populated by the Prism line-numbers plugin during
-// `Prism.highlightElement`, so this must run after that call.
-function installGutterClickHandlers(): void {
-  const rows = contentEl.querySelector('.line-numbers-rows');
-  if (!rows) return;
-  rows.classList.add('clickable');
-  const spans = rows.children;
-  for (let i = 0; i < spans.length; i++) {
-    const span = spans[i] as HTMLElement;
-    const lineNumber = i + 1;
-    span.addEventListener('click', () => {
-      scrollToAndHighlightLine(lineNumber, undefined, false);
-      updateUrlHash();
-    });
-  }
-}
-
-// ----- URL fragment navigation --------------------------------
-//
-// `location.hash` mirrors the current tab + highlight so the URL
-// is copyable and the page reopens in the same place.
-//   <empty>                   main script, no highlight
-//   #Log                      Log tab
-//   #<filename>               that code tab
-//   #<filename>:<line>        + highlighted line
-//   #<filename>:<line>:<col>  + column accent bar
-// See `src/script-url-hash.ts` for the grammar / parser.
-
-// Push the current viewer state to `location.hash` via
-// `history.replaceState` (no Back-button entries; no hashchange
-// event re-fires into our own listener). No-op when the fragment
-// is already correct.
-function updateUrlHash(): void {
-  if (!currentScript) return;
-  const tabs = buildTabs(currentScript);
-  const tab = tabs[currentTabIndex];
-  if (!tab) return;
-  const fragment = tab.kind === 'log'
-    ? buildHash({ tab: 'log' })
-    : buildHash({
-        tab: currentTabIndex === 0 ? 'main' : 'require',
-        filename: tab.label,
-        line: currentHighlightLine,
-        col: currentHighlightCol,
-      });
-  const desired = fragment ? '#' + fragment : '';
-  if (location.hash === desired) return;
-  // Empty fragment → drop the `#` from the URL entirely.
-  const next = desired || location.pathname + location.search;
-  history.replaceState(null, '', next);
-}
-
-interface HashTarget {
-  tabIndex: number;
-  line?: number;
-  col?: number;
-}
-
-// Resolve a raw hash string against the current tab list. Falls back
-// to the main tab when the filename doesn't match — in that case
-// `line` and `col` are dropped because the line number was relative
-// to the missing file, not main.
-function resolveHashTarget(rawHash: string, tabs: Tab[]): HashTarget {
-  const parsed = parseHash(rawHash);
-  if (parsed.kind === 'log') {
-    const idx = tabs.findIndex((t) => t.kind === 'log');
-    return { tabIndex: idx >= 0 ? idx : 0 };
-  }
-  if (parsed.kind === 'code') {
-    const idx = tabs.findIndex(
-      (t) => t.kind === 'code' && t.label === parsed.filename,
-    );
-    if (idx >= 0) return { tabIndex: idx, line: parsed.line, col: parsed.col };
-  }
-  return { tabIndex: 0 };
-}
-
-// Hydrate the view from `location.hash`. Called on initial load,
-// when the user manually edits the URL, on Back/Forward, and after
-// any re-render path that wipes the flash overlay (onRefresh /
-// onToggleEnabled / storage-change rehydrate). `scroll` defaults to
-// true so navigation jumps to the line; the re-render paths pass
-// false so a Refresh doesn't yank the user's scroll position.
-function applyHashToView(scroll = true): void {
-  if (!currentScript) return;
-  const tabs = buildTabs(currentScript);
-  const target = resolveHashTarget(location.hash, tabs);
-
-  if (currentTabIndex !== target.tabIndex) {
-    currentTabIndex = target.tabIndex;
-    currentHighlightLine = undefined;
-    currentHighlightCol = undefined;
-    renderTabsAndBody(currentScript);
-  }
-
-  if (target.line !== undefined && tabs[currentTabIndex].kind === 'code') {
-    scrollToAndHighlightLine(target.line, target.col, scroll);
-  } else {
-    clearLineHighlight();
-  }
-
-  // Normalize the URL so a partial / invalid hash collapses to the
-  // canonical form for whatever state we just landed in.
-  updateUrlHash();
-}
-
-function clearLineHighlight(): void {
-  for (const prior of Array.from(contentEl.querySelectorAll('.line-flash'))) {
-    prior.remove();
-  }
-  currentHighlightLine = undefined;
-  currentHighlightCol = undefined;
-}
-
-window.addEventListener('hashchange', () => {
-  applyHashToView();
-});
-
-// Read the Nth (1-based) line of the currently-displayed source
-// from <code>'s text content. The line-numbers gutter's children
-// are empty spans (line numbers are CSS counters, not text), so
-// textContent reconstructs the source faithfully.
-function lineTextAt(tabLine: number): string {
-  const text = contentEl.textContent ?? '';
-  const lines = text.split('\n');
-  return lines[tabLine - 1] ?? '';
-}
-
-// Convert a 1-based column from V8's stack trace into a 0-based
-// visual column count, expanding each tab character to the next
-// `tabSize` boundary. V8 counts every tab as one column; the
-// viewer renders it as enough spaces to reach the next tab stop.
-function expandToVisualColumn(lineText: string, col: number, tabSize: number): number {
-  let visualCol = 0;
-  const stop = Math.min(Math.max(col - 1, 0), lineText.length);
-  for (let i = 0; i < stop; i++) {
-    if (lineText.charCodeAt(i) === 9) {
-      visualCol += tabSize - (visualCol % tabSize);
-    } else {
-      visualCol++;
-    }
-  }
-  return visualCol;
-}
-
-// Cached monospace character width in CSS pixels for the code-pane
-// font. Computed lazily on first highlight; the viewer's font never
-// changes during a session, so a single measurement is enough.
-let cachedCharWidth = 0;
-function measureCodeCharWidth(): number {
-  if (cachedCharWidth > 0) return cachedCharWidth;
-  const probe = document.createElement('span');
-  // Measure across 20 'M's so sub-pixel rounding averages out.
-  probe.textContent = 'M'.repeat(20);
-  probe.style.visibility = 'hidden';
-  probe.style.position = 'absolute';
-  probe.style.whiteSpace = 'pre';
-  contentEl.appendChild(probe);
-  const w = probe.getBoundingClientRect().width / 20;
-  probe.remove();
-  cachedCharWidth = w;
-  return w;
 }
 
 async function onClearLog(): Promise<void> {
@@ -968,412 +1138,4 @@ function formatLogTimestamp(ms: number): string {
   const ss = String(d.getSeconds()).padStart(2, '0');
   const mmm = String(d.getMilliseconds()).padStart(3, '0');
   return `${yyyy}-${mo}-${dd} ${hh}:${mm}:${ss}.${mmm}`;
-}
-
-// Replace the H1 with a favicon slot followed by the relative path,
-// percent-decoded — for a script installed from the web that path is
-// its URL, and the encoded form is unreadable.
-// renderSiteIconInto paints a clickable globe placeholder
-// synchronously (when the script targets a usable origin) and swaps
-// it for the real favicon once the fetch resolves.
-function renderFilenameHeading(script: StoredScript): void {
-  filenameEl.replaceChildren();
-  const iconSlot = document.createElement('span');
-  iconSlot.className = 'site-icon';
-  filenameEl.appendChild(iconSlot);
-  appendWithSlashBreaks(filenameEl, displayLocation(script.relativePath));
-  renderSiteIconInto(iconSlot, script);
-}
-
-function renderDetails(script: StoredScript): void {
-  summaryEl.replaceChildren();
-
-  const dl = document.createElement('dl');
-
-  if (script.header) {
-    const name = getValue(script.header, 'name');
-    if (name) appendRow(dl, 'Name', textNode(name));
-    const description = getValue(script.header, 'description');
-    if (description) appendRow(dl, 'Description', textNode(description));
-  }
-  // Log ID always renders — it's how the user maps an entry in the SW
-  // console back to this script. Sits right under the header fields
-  // so it's visible without scrolling.
-  if (currentLogId) {
-    appendRow(dl, 'Log ID', logIdCell(currentLogId));
-  }
-  if (script.header) {
-    const matches = getValues(script.header, 'match');
-    if (matches.length) appendRow(dl, 'Match', patternList(matches));
-    const excludes = getValues(script.header, 'exclude');
-    if (excludes.length) appendRow(dl, 'Exclude', patternList(excludes));
-  }
-
-  // Source row: same colored bubble + display name combo the sources
-  // page uses, with the display name doubling as a back-link to the
-  // sources page (anchored to this source's section). Renders above
-  // the Location row so the viewer's "where did this come from"
-  // information is grouped.
-  if (sourceRow) {
-    appendRow(dl, 'Source', sourceCell(sourceRow));
-  }
-
-  // Resolved location for the script: an absolute filesystem path for
-  // file:// sources, the github page URL for github sources, or the
-  // resolved URL for non-github HTTP sources. Skip the row entirely if
-  // the source row is gone — a bare relative path under a "Location"
-  // label would be misleading.
-  if (sourcePath) {
-    currentFilenamePath = scriptAbsolutePath(sourcePath, script.relativePath);
-    // Anchor href: for file:// sources we use the file:// URL (the
-    // display string is the bare fs path, not navigable). For
-    // everything else display = href, so the user clicks the same URL
-    // they'd copy from the row.
-    const href = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
-    appendRow(dl, 'Location', filenameCell(displayLocation(currentFilenamePath), href));
-  } else {
-    currentFilenamePath = '';
-  }
-
-  appendRow(dl, 'Size', textNode(formatScriptSize(script)));
-
-  appendRow(dl, 'Status', buildStatusCell(script));
-
-  summaryEl.appendChild(dl);
-}
-
-// Build the Status row content: an anchor whose href is `#Log` so
-// clicking switches the viewer to the Log tab via the regular
-// hashchange listener. Labeled with the effective status (INVALID /
-// MISSING / ERROR / WARNING / OK) computed against the current log
-// level.
-function buildStatusCell(script: StoredScript): Node {
-  const effective = effectiveScriptStatus(
-    { status: script.status, refreshError: script.refreshError },
-    currentLogLevel,
-  );
-  const link = document.createElement('a');
-  link.href = '#Log';
-  link.textContent = formatScriptStatusLabel(effective);
-  link.className = `meta-status status-${effective}`;
-  // Prefer the refresh-failure reason as the hover when REFRESH FAILED
-  // is what's showing; otherwise fall back to the load errorMessage.
-  const title = effective === 'refresh-failed' ? script.refreshError : script.errorMessage;
-  if (title) link.title = title;
-  return link;
-}
-
-function logIdCell(logId: string): Node {
-  const span = document.createElement('span');
-  span.className = 'log-id-cell';
-  span.textContent = logId;
-  return span;
-}
-
-// Source-row cell: colored type bubble on the left (linking out to the
-// underlying file:// / http(s):// URL), followed by the source's
-// display name as a back-link to the sources page anchored at this
-// source's section.
-function sourceCell(source: StoredSource): Node {
-  const cell = document.createElement('span');
-  cell.className = 'source-cell';
-
-  cell.appendChild(makeSourceTypeBubble(source.path));
-
-  const nameLink = document.createElement('a');
-  nameLink.className = 'source-display-name';
-  appendWithSlashBreaks(nameLink, effectiveDisplayName(source));
-  // Page-relative (both pages sit at the extension root) so the href
-  // doesn't carry the `chrome-extension://<id>/` prefix.
-  nameLink.href = `sources.html#${sourceAnchorId(source.id)}`;
-  // Tooltip surfaces the raw stored path; the anchor itself jumps to
-  // the section on the sources page. Container sources have a
-  // synthetic `container:<kind>` path which would leak — skip then.
-  if (!isContainerSource(source.path)) nameLink.title = source.path;
-  cell.appendChild(nameLink);
-
-  return cell;
-}
-
-function filenameCell(path: string, hrefUrl: string): Node {
-  const cell = document.createElement('span');
-  cell.className = 'filename-cell';
-
-  // Wrap the path in an anchor so it doubles as an open-in-new-tab
-  // link. http(s) URLs navigate normally; file:// links are accepted
-  // by the anchor but Chromium typically refuses to navigate to them
-  // from a chrome-extension page — the path is still readable, still
-  // selectable, and the Copy button beside it is the reliable
-  // "send this to another app" affordance.
-  const pathEl = document.createElement('a') as HTMLAnchorElement;
-  pathEl.className = 'filename-text';
-  pathEl.href = hrefUrl;
-  pathEl.target = '_blank';
-  pathEl.rel = 'noopener noreferrer';
-  // Display text is the bare fs path for file:// scripts, and the
-  // percent-decoded URL for the rest; the tooltip surfaces the actual
-  // href, so the encoded form the browser will request is one hover
-  // away and the user can see what would open (file://... vs
-  // http://...) without clicking through. Slash-aware appender lets
-  // long paths wrap at `/` boundaries before breaking mid-segment.
-  pathEl.title = hrefUrl;
-  appendWithSlashBreaks(pathEl, path);
-  cell.appendChild(pathEl);
-
-  // Reuses the module-level button; appendChild moves it into the
-  // new cell. Any in-flight "Copied" flash carries across because the
-  // class lives on the button (not the cell) and the timer is still
-  // valid — the checkmark continues for the rest of its 1.2s window.
-  cell.appendChild(filenameCopyBtn);
-
-  return cell;
-}
-
-function appendRow(dl: HTMLDListElement, label: string, value: Node): void {
-  const dt = document.createElement('dt');
-  dt.textContent = label;
-  const dd = document.createElement('dd');
-  dd.appendChild(value);
-  dl.append(dt, dd);
-}
-
-function textNode(s: string): Text {
-  return document.createTextNode(s);
-}
-
-// `@match` / `@exclude` / `@include` row renderer: each pattern that
-// resolves to a usable linkUrl via the same wildcard-trim rule as the
-// site favicon becomes a clickable open-in-new-tab anchor. Patterns
-// we can't linkify (host wildcard, `<all_urls>`, regex literals,
-// file://) render as plain text so the row still shows every entry.
-function patternList(items: string[]): Node {
-  if (items.length === 1) return patternValueNode(items[0]);
-  const ul = document.createElement('ul');
-  for (const item of items) {
-    const li = document.createElement('li');
-    li.appendChild(patternValueNode(item));
-    ul.appendChild(li);
-  }
-  return ul;
-}
-
-function patternValueNode(pattern: string): Node {
-  const info = matchTargetInfo(pattern);
-  if (!info) {
-    // Non-linkable pattern (`<all_urls>`, regex literal, etc.); render
-    // as plain text but still allow slash-aware wrapping in case the
-    // pattern is long.
-    const span = document.createElement('span');
-    appendWithSlashBreaks(span, pattern);
-    return span;
-  }
-  return openInNewTabAnchor(info.linkUrl, pattern);
-}
-
-function openInNewTabAnchor(
-  href: string,
-  text: string,
-  // When true, insert `<wbr>` markers after each `/` so a long URL
-  // wraps at slash boundaries — desired in the details panel (Match
-  // patterns, Location row). The code box passes false: with
-  // `white-space: pre`, Chrome still honors `<wbr>` as a break
-  // opportunity, so a URL inside a single source line could wrap
-  // mid-line and misalign the line-numbers gutter.
-  slashBreaks = true,
-): HTMLAnchorElement {
-  const a = document.createElement('a') as HTMLAnchorElement;
-  a.className = 'code-link';
-  a.href = href;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  if (slashBreaks) {
-    appendWithSlashBreaks(a, text);
-  } else {
-    a.textContent = text;
-  }
-  return a;
-}
-
-// Post-Prism walk over the highlighted code: replace eligible text
-// runs with anchors. Two passes:
-//
-//   1. Metadata blocks are recognised as `.token.userscript-header`
-//      spans by the Prism grammar extension above; inside each, the
-//      `@tag` is a `.header-tag-name` span and its value is a
-//      `.header-tag-value` span. For tags we know how to linkify
-//      (@match → wildcard-trimmed link, @icon/@require/@updateURL/…
-//      → resolved against the script's fileUrl) the value span's
-//      contents become an anchor; non-linkable tags fall through to
-//      URL mode on the value text.
-//   2. Every other text node has its absolute http(s) / file:// URLs
-//      turned into anchors — covers comment URLs outside the header,
-//      URLs inside strings, and `@require` source bodies (no header).
-//
-// Driving the header detection off the Prism token class (rather
-// than line-shape matching) means a single-line string literal like
-// `"// ==UserScript=="` can't trick the linkifier — Prism tokenises
-// it as a string, not as our header block. A multi-line template
-// literal that contains BOTH markers can still be picked up because
-// our pattern is inserted before `string`/template tokens; in
-// practice no userscript embeds a fake metadata block that way, but
-// it's worth knowing.
-function linkifyCodeBlock(root: HTMLElement, fileUrl: string): void {
-  for (const headerEl of Array.from(root.querySelectorAll('.userscript-header'))) {
-    linkifyHeaderBlock(headerEl as HTMLElement, fileUrl);
-  }
-
-  // Walk text nodes AFTER the header pass so the tree mutations from
-  // linkifyHeaderBlock are reflected. Skip nodes inside marker /
-  // tag-name / tag-value spans — they were either handled by
-  // linkifyHeaderBlock or are anchor labels we just inserted and
-  // don't want to re-process.
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const nodes: Text[] = [];
-  let n: Node | null;
-  while ((n = walker.nextNode()) !== null) {
-    const tn = n as Text;
-    const parent = tn.parentElement;
-    if (parent && parent.closest('.header-marker, .header-tag-name, .header-tag-value')) {
-      continue;
-    }
-    nodes.push(tn);
-  }
-  for (const tn of nodes) linkifyTextNodeUrls(tn);
-}
-
-// Process one `.userscript-header` span: for each `.header-tag-value`
-// inside it, look back for the matching `.header-tag-name` and turn
-// the value into an anchor (or URL-linkified text for tags we don't
-// know how to resolve).
-function linkifyHeaderBlock(headerEl: HTMLElement, fileUrl: string): void {
-  const valueEls = headerEl.querySelectorAll<HTMLElement>('.header-tag-value');
-  for (const valueEl of Array.from(valueEls)) {
-    const tag = findPrecedingTagName(valueEl);
-    if (!tag) continue;
-    const value = valueEl.textContent ?? '';
-    const link = linkForHeaderTag(tag, value, fileUrl);
-    if (link) {
-      const doc = headerEl.ownerDocument;
-      valueEl.replaceChildren(
-        doc.createTextNode(link.prefix),
-        openInNewTabAnchor(link.href, link.linkText, false),
-        doc.createTextNode(link.suffix),
-      );
-    } else {
-      // Fall back to URL-only linkification (e.g. an http URL inside
-      // a `@description` value). Only touch the leaf text node so we
-      // don't disturb any nested tokens (shouldn't exist today, but
-      // safe if Prism's grammar evolves).
-      const tn = valueEl.firstChild;
-      if (tn && tn.nodeType === Node.TEXT_NODE) {
-        linkifyTextNodeUrls(tn as Text);
-      }
-    }
-  }
-}
-
-// Walk back from a tag-value span past whitespace text nodes to find
-// the immediately-preceding tag-name span; returns the lowercased
-// canonical tag (no `@`, no locale suffix), or null if the structure
-// doesn't match (defensive — Prism should always pair them).
-function findPrecedingTagName(valueEl: Element): string | null {
-  let prev: Node | null = valueEl.previousSibling;
-  while (prev) {
-    if (prev.nodeType === Node.ELEMENT_NODE) {
-      const el = prev as Element;
-      if (!el.classList.contains('header-tag-name')) return null;
-      const text = el.textContent ?? '';
-      const m = /^@([A-Za-z][\w-]*)(?::[\w-]+)?$/.exec(text);
-      return m ? m[1].toLowerCase() : null;
-    }
-    prev = prev.previousSibling;
-  }
-  return null;
-}
-
-function linkifyTextNodeUrls(tn: Text): void {
-  const runs = splitTextByUrls(tn.data);
-  if (runs.length === 1 && runs[0].kind === 'text') return;
-  const doc = tn.ownerDocument;
-  const replacement: Node[] = runs.map((r) =>
-    r.kind === 'url'
-      ? openInNewTabAnchor(r.value, r.value, false)
-      : doc.createTextNode(r.value),
-  );
-  tn.replaceWith(...replacement);
-}
-
-// One header-tag link spec. `prefix` + `linkText` + `suffix` together
-// reconstruct the parsed.value verbatim, so the line round-trips
-// without losing any characters. Most tags use the whole value as
-// the link text (prefix=suffix=''); `@resource` is the carve-out
-// where prefix is the `<name>` token + gap and only the URL portion
-// is wrapped.
-interface HeaderTagLink {
-  prefix: string;
-  linkText: string;
-  href: string;
-  suffix: string;
-}
-
-function linkForHeaderTag(
-  tag: string,
-  value: string,
-  fileUrl: string,
-): HeaderTagLink | null {
-  if (MATCH_HEADER_TAGS.has(tag)) {
-    const linkUrl = matchTargetInfo(value)?.linkUrl;
-    if (!linkUrl) return null;
-    return { prefix: '', linkText: value, href: linkUrl, suffix: '' };
-  }
-  if (RESOLVABLE_HEADER_TAGS.has(tag)) {
-    const resolved = resolveScriptResource(value, fileUrl);
-    if (!resolved) return null;
-    // A `data:` URL is technically navigable but its href would be
-    // many KB long inside the anchor, drowning the code box. Inline
-    // data URLs are already rendered via the favicon path; in the
-    // body we just show the value as plain text.
-    if (resolved.kind === 'data') return null;
-    return { prefix: '', linkText: value, href: resolved.url, suffix: '' };
-  }
-  if (tag === 'resource') {
-    // `@resource <name> <url>`: keep the name + gap as plain text;
-    // linkify only the URL portion. The pure splitter in
-    // script-links.ts owns the round-trip — see `splitResourceValue`.
-    const parts = splitResourceValue(value);
-    if (!parts) return null;
-    const resolved = resolveScriptResource(parts.url, fileUrl);
-    if (!resolved || resolved.kind === 'data') return null;
-    return {
-      prefix: parts.prefix,
-      linkText: parts.url,
-      href: resolved.url,
-      suffix: parts.suffix,
-    };
-  }
-  if (tag === 'connect') {
-    // `@connect` values are hosts (`example.com`, `*.example.com`)
-    // or full URLs, not match patterns. `connectLinkUrl` picks the
-    // click target; `*` and `self` return null and fall through to
-    // plain text since neither names a single site.
-    const href = connectLinkUrl(value);
-    if (!href) return null;
-    return { prefix: '', linkText: value, href, suffix: '' };
-  }
-  return null;
-}
-
-function showMissing(message: string): void {
-  currentScript = null;
-  controlsRowEl.hidden = true;
-  filenameEl.textContent = 'Not available';
-  messageEl.textContent = message;
-  messageEl.className = 'message error';
-  summaryEl.replaceChildren();
-  tabsEl.replaceChildren();
-  tabsEl.hidden = true;
-  contentEl.textContent = '';
-  logPaneEl.hidden = true;
-  logPaneEl.replaceChildren();
-  codePaneEl.hidden = false;
 }

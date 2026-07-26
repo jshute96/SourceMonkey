@@ -62,9 +62,9 @@
 
 | `page=` | Target | Recognised forwarded params |
 |---------|--------|-----------------------------|
-| `sources.html` | Sources page | `refresh`, `add_source=<path-or-url>` |
+| `sources.html` | Sources page | `refresh`, `add_source=<path-or-url>` (a single `.user.js` hands off to the viewer's preview — see [script-viewer.md](script-viewer.md#preview-mode)) |
 | `options.html` | Options page | — |
-| `userscript.html` | Script viewer | `script=<id>` |
+| `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` |
 
 - Adding a new entrypoint means:
   - Add the page filename to `ALLOWED_PAGES` in `src/deep-link.ts`.
@@ -94,6 +94,15 @@
   eventual `add_source` handler must not blindly trust the value).
 - The redirect only fires on top-level navigations (`frameId === 0`),
   so embedding the stub URL in an iframe will not trigger it.
+- **A deep link can name a URL for the viewer to fetch and display.**
+  `preview=<url>` makes the extension fetch that URL and render it —
+  including a `file://` path, and including a github URL, where
+  `fetchHttpText` attaches the user's stored PAT. Nothing is installed
+  and the linking page can't read what came back, but a crafted link
+  can put a private-repo file on screen. This is the same class of
+  reach `add_source=` has always had (which went further and *added*
+  the source); routing single scripts through the preview means the
+  user now sees and confirms what arrived.
 - **Privacy: passthrough params reach GitHub when the extension is
   not installed.** A user clicking
   `…/redirect-page.md?page=sources.html&add_source=https://corp/internal.user.js`

@@ -1,4 +1,4 @@
-// Hand-off for the install prompt's "View raw source" tab.
+// Hand-off for the script preview's "View raw source" tab.
 //
 // The prompt has already fetched the script; the raw view just needs
 // to show that text. It can't travel in the URL (scripts are far too

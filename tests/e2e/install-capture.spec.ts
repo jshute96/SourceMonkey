@@ -2,10 +2,10 @@
 //
 // Chrome never renders a `.user.js` URL as an installable page (see
 // src/install-capture.ts for the version-by-version detail), so the
-// extension intercepts the navigation and lands the tab on its own
-// install prompt. These tests drive that from a real navigation:
-// point a tab at a `.user.js` URL and assert where it ends up, what
-// the prompt says, and what Install actually registers.
+// extension intercepts the navigation and lands the tab on the
+// userscript viewer in preview mode. These tests drive that from a
+// real navigation: point a tab at a `.user.js` URL and assert where it
+// ends up, what the preview says, and what Install actually registers.
 //
 // Every test takes the `sm` fixture even when it never calls it: `sm`
 // is what runs `resetAllState()` around each test, and this file writes
@@ -30,12 +30,16 @@ function chromeMajor(page: Page): Promise<number> {
 // `page.waitForURL` rejects here: the captured navigation ends in
 // net::ERR_ABORTED (Chrome was mid-download when the tab was pointed
 // elsewhere), and Playwright surfaces that as the navigation's result
-// even though the tab goes on to load the install page. Poll the tab's
-// URL instead, then wait for the prompt itself to be interactive.
+// even though the tab goes on to load the preview. Poll the tab's URL
+// instead, then wait for the preview itself to be interactive.
 async function waitForInstallPrompt(page: Page): Promise<void> {
-  await expect.poll(() => page.url(), { timeout: 15_000 }).toContain('install.html');
-  await expect(page.locator('#title')).toBeVisible();
+  await expect.poll(() => page.url(), { timeout: 15_000 }).toContain('userscript.html?preview=');
+  await expect(page.locator('#preview-actions')).toBeVisible();
 }
+
+// The viewer URL an Install / Update lands on, as distinct from the
+// preview URL the tab is already sitting at.
+const INSTALLED_VIEWER_URL = /userscript\.html\?script=/;
 
 // Read back the download-workaround rule the SW registered, if any.
 interface SessionRule {
@@ -56,7 +60,7 @@ test.describe('.user.js link capture', () => {
   test.beforeEach(async () => { server = await UserscriptServer.start(); });
   test.afterEach(async () => { await server.stop(); });
 
-  test('navigating to a .user.js URL lands on the install prompt', async ({
+  test('navigating to a .user.js URL lands on the preview', async ({
     extensionContext, sm,
   }) => {
     server.setRoute('/hello.user.js', userscriptText('Hello From The Web'));
@@ -68,12 +72,17 @@ test.describe('.user.js link capture', () => {
     await page.goto(scriptUrl).catch(() => {});
     await waitForInstallPrompt(page);
 
-    // The prompt carries the clicked URL and describes the script.
-    expect(new URL(page.url()).searchParams.get('url')).toBe(scriptUrl);
-    await expect(page.locator('#title')).toHaveText('Hello From The Web');
-    await expect(page.locator('#details')).toContainText('https://example.com/*');
-    await expect(page.locator('#code')).toContainText('==UserScript==');
+    // The preview carries the clicked URL and describes the script,
+    // using the same panels an installed script gets.
+    expect(new URL(page.url()).searchParams.get('preview')).toBe(scriptUrl);
+    await expect(page.locator('h1#filename')).toContainText(scriptUrl);
+    await expect(page.locator('#header-summary')).toContainText('Hello From The Web');
+    await expect(page.locator('#header-summary')).toContainText('https://example.com/*');
+    await expect(page.locator('#content')).toContainText('==UserScript==');
+    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
     await expect(page.locator('#install-btn')).toBeEnabled();
+    // Nothing has run, so there is no Log tab to offer.
+    await expect(page.locator('#tabs')).not.toContainText('Log');
     await page.close();
   });
 
@@ -87,7 +96,7 @@ test.describe('.user.js link capture', () => {
     await page.goto(scriptUrl).catch(() => {});
     await waitForInstallPrompt(page);
     await page.locator('#install-btn').click();
-    await page.waitForURL(/userscript\.html/);
+    await page.waitForURL(INSTALLED_VIEWER_URL);
 
     // Installed as a normal http source, exactly as if the URL had
     // been typed into the sources page.
@@ -120,13 +129,13 @@ test.describe('.user.js link capture', () => {
     const page = await extensionContext.newPage();
     await page.goto(scriptUrl).catch(() => {});
     await waitForInstallPrompt(page);
-    // The prompt's "from <url>" line reads plainly, but its href is
-    // still the URL the browser would request.
-    await expect(page.locator('#subtitle')).toContainText(decodedName);
-    expect(await page.locator('#subtitle a').getAttribute('href')).toBe(scriptUrl);
+    // The preview's heading and Location row read plainly, but the
+    // href is still the URL the browser would request.
+    await expect(page.locator('h1#filename')).toContainText(decodedName);
+    expect(await page.locator('.filename-text').getAttribute('href')).toBe(scriptUrl);
 
     await page.locator('#install-btn').click();
-    await page.waitForURL(/userscript\.html/);
+    await page.waitForURL(INSTALLED_VIEWER_URL);
 
     // Heading, tab label, and Log ID all show the decoded name…
     await expect(page.locator('h1#filename')).toContainText(decodedName);
@@ -157,7 +166,7 @@ test.describe('.user.js link capture', () => {
     await page.goto(`${server.baseUrl}/second.user.js`).catch(() => {});
     await waitForInstallPrompt(page);
     await page.locator('#install-btn').click();
-    await page.waitForURL(/userscript\.html/);
+    await page.waitForURL(INSTALLED_VIEWER_URL);
 
     const sources = await sm.getSources();
     expect(sources).toHaveLength(1);
@@ -202,7 +211,7 @@ test.describe('.user.js link capture', () => {
     await expect(page.locator('#banner-slot')).toContainText('not an installable userscript');
     await expect(page.locator('#install-btn')).toBeHidden();
     // The source is still shown, so the user can see what they got.
-    await expect(page.locator('#code')).toContainText('no metadata block here');
+    await expect(page.locator('#content')).toContainText('no metadata block here');
     await page.close();
   });
 
@@ -211,8 +220,8 @@ test.describe('.user.js link capture', () => {
   }) => {
     // The forge-blob-view case: a path ending in `.user.js` that is
     // really an HTML page. The capture can't know that before the
-    // response arrives, so the prompt has to offer a way through to the
-    // page — and that way must not be re-captured back into the prompt.
+    // response arrives, so the preview has to offer a way through to
+    // the page — and that way must not be re-captured back into it.
     server.setRoute(
       '/page.user.js',
       '<!doctype html><title>Blob view</title><p id="page">a web page</p>',
@@ -264,8 +273,8 @@ test.describe('.user.js link capture', () => {
     }
     // Either way the file arrives line-for-line, not collapsed onto one.
     expect((await rawPage.locator('body').innerText()).split('\n').length).toBeGreaterThan(3);
-    // The prompt stays open behind it.
-    expect(page.url()).toContain('install.html');
+    // The preview stays open behind it.
+    expect(page.url()).toContain('userscript.html?preview=');
     await rawPage.close();
     await page.close();
   });
@@ -291,9 +300,9 @@ test.describe('.user.js link capture', () => {
     await page.goto(scriptUrl).catch(() => {});
     // With capture off Chrome does its own thing (download, or render
     // as text depending on version) — either way the tab must not end
-    // up on the install prompt.
+    // up on the preview.
     await page.waitForTimeout(500);
-    expect(page.url()).not.toContain('install.html');
+    expect(page.url()).not.toContain('userscript.html');
     await page.close();
   });
 

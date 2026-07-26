@@ -316,8 +316,27 @@ that need doing *here* rather than describing there:
   `parseChromeMajor`, and their tests go together, and the
   `declarativeNetRequestWithHostAccess` permission can come out of the
   manifest with them.
-- **Site icon on the prompt.** The sources page and viewer both show a
-  favicon for the script's `@match` origin; the install prompt doesn't.
+
+## Script preview — follow-ups
+
+The preview (`userscript.html?preview=<url>`) is where a captured
+`.user.js` click and a single-script Add Source both land. See
+[docs/script-viewer.md](docs/script-viewer.md#preview-mode).
+
+- **Compare against the installed copy.** When the URL is already
+  installed the banner prints both `@version` strings if they differ,
+  and nothing else. It should say which is newer (dotted-numeric
+  compare, same rule `sync-tm-scripts.mjs` uses), and whether the
+  bodies are identical at all — an unchanged body under a bumped
+  version, or a changed body under the same version, are both worth
+  saying out loud.
+- **Diff view.** Follow-on from the comparison: a two-pane
+  before/after per tab, so "what would Update actually change" is
+  answerable without leaving the page. Applies to `@require` tabs too.
+- **Preview a whole source.** Directory / manifest / github-dir adds
+  still go straight to `addSource`. Previewing a listing needs a
+  different UI — a table of the scripts that would be added, with
+  per-script drill-in — not the single-script layout.
 
 ## File loader — follow-ups
 

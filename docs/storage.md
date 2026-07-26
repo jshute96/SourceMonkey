@@ -589,6 +589,10 @@ Similarly, `?add_source=<path-or-url>`:
 
 - Runs the same flow as typing the value into Add Source and
   clicking Add (validation, dedup, scroll-to-section).
+- A single `.user.js` value (URL or path) hands off to the viewer's
+  preview rather than being added outright — see
+  [script-viewer.md](script-viewer.md#preview-mode). Directory /
+  manifest / github-dir values still add directly.
 - Scrubs the param from the URL only on success/duplicate; an
   invalid value stays in the URL so the user can edit and retry.
 - `?refresh` is also scrubbed once it's been consumed, so a reload

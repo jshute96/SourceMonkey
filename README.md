@@ -24,16 +24,20 @@ auth token).
 ### Installing scripts from the web
 
 Click a `.user.js` link anywhere — GreasyFork, GitHub, a colleague's
-gist — and SourceMonkey opens an install prompt instead of letting
-Chrome download the file. The prompt shows the script's name, version,
-description, what pages it runs on, and which `GM_*` permissions,
-`@connect` hosts, and external files it asks for, along with the full
-source. **Install** registers it exactly as if you'd typed the URL into
-the Add Source field, so it updates like any other web source.
+gist — and SourceMonkey previews it instead of letting Chrome download
+the file. The preview is the same page you get for an installed script:
+the script's name, version, description, what pages it runs on, which
+`GM_*` permissions, `@connect` hosts, and external files it asks for,
+and its full source in a tabbed view (one tab per `@require`, loaded
+when you open it). **Install** registers it exactly as if you'd typed
+the URL into the Add Source field, so it updates like any other web
+source.
 
-If the script is already installed you get **Open script** /
+If the script is already installed you get **Open installed script** /
 **Update now** instead. **View raw source** opens the unprocessed file
-in a new tab, and **Cancel** goes back where you came from.
+in a new tab, and **Cancel** goes back where you came from. A file that
+isn't a valid userscript can't be installed — the preview says why and
+shows you what actually came back.
 
 Turn the whole thing off with **Capture `.user.js` links** on the
 Options page if you'd rather have Chrome's stock behavior.
@@ -45,7 +49,10 @@ default sources so the page isn't empty out of the box — you'll see each
 one get added, with its scripts loaded. Remove them like any other
 source — they won't come back.
 
-Type a source into the Add Source field and click **Add source**.
+Type a source into the Add Source field and click **Add source**. A
+single `.user.js` (URL or local path) opens the same preview described
+above, so you see what you're getting before it's added; directories,
+manifests, and repo folders are added directly.
 What you can type:
 
 - An **absolute path to a directory** of userscripts. Scanned

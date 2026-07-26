@@ -1,5 +1,5 @@
 // Display helpers shared by the sources page, the userscript viewer,
-// the install prompt, and the service worker.
+// the script preview, and the service worker.
 //
 // Two groups live here: the script-status row formatting (size +
 // status label) both pages render, and the name/path formatting that

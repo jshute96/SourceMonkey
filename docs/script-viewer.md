@@ -7,7 +7,11 @@ Two related pieces:
   form. Used by the [script store](storage.md) for validation and by
   the viewer below for the summary.
 - **Viewer page** (`src/userscript.html` + `src/userscript.ts`) —
-  renders one stored script.
+  renders one script, installed or not. Its two reusable pieces live
+  next door: the details `<dl>` in
+  [`src/script-details.ts`](../src/script-details.ts), the tabbed code
+  view in [`src/code-tabs.ts`](../src/code-tabs.ts) (with the
+  linkifier in [`src/code-links.ts`](../src/code-links.ts)).
 
 ## Header parser
 
@@ -50,10 +54,23 @@ for the tag catalog.
 
 ## Viewer page
 
-Loaded as `userscript.html?script=<scriptId>`. Hydrates from the
-[script store](storage.md) — it does **not** re-fetch from disk on
-open, so what the user sees matches what the sources page table
-reports.
+### Two modes
+
+One page, one set of panels, two query strings:
+
+| URL | Mode | Where it comes from |
+|-----|------|---------------------|
+| `userscript.html?script=<scriptId>` | **Installed** | sources page, badge menu, Install / Update |
+| `userscript.html?preview=<url>` | **Preview** | [`.user.js` capture](install-capture.md), single-script Add Source |
+
+- **Installed** hydrates from the [script store](storage.md) — it does
+  **not** re-fetch from disk on open, so what the user sees matches
+  what the sources page table reports.
+- **Preview** fetches the URL itself and shows the same heading,
+  details panel, and code tabs for a script that isn't in the store.
+  Nothing is written until the user says Install.
+- The differences are listed per-section below and gathered in
+  [Preview mode](#preview-mode).
 
 ### Layout
 
@@ -61,32 +78,47 @@ reports.
    reading when it's a URL (also the page `<title>`). See
    [names-and-paths.md](names-and-paths.md).
 2. **Controls row** (`#meta-row`) — `Enabled` toggle + **Refresh**
-   button → `refreshScript(scriptId)`.
+   button → `refreshScript(scriptId)`. Installed mode only; preview
+   shows the banner + action row in its place (see
+   [Preview mode](#preview-mode)).
 3. **Error message** (`<p class="message …">`) — visible when the
    script is flagged. Shows `errorMessage` (red, `.error`) for an
    `invalid` row, or `Refresh failed: <reason>` (amber,
    `.refresh-failed`) for a still-running `refresh-failed` row
    (`status: ok` + `refreshError`). Hidden when neither is set.
-4. **Details panel** (`#header-summary` → `<dl>`) — labeled rows in
-   order:
+4. **Details panel** (`#header-summary` → `<dl>`) — built by
+   `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
+   Row order is fixed and a row is omitted when its value is absent, so
+   the panel doesn't reshuffle between modes:
    - Parsed-header fields (when a metadata block is present):
-     - `Name`
-     - `Description`
+     - `Name`, `Version`, `Description`, `Author`, `Namespace`
+     - `Homepage` (`@homepage` / `@homepageURL`) — an anchor when the
+       value parses as an absolute http(s) URL, plain text otherwise.
    - `Log ID` — short file-derived handle used in every SW log line
      (basename, or `basename#N` for dupes). See
      [logging.md](logging.md). A script added by URL shows its
      decoded filename — see
-     [names-and-paths.md](names-and-paths.md).
-   - Parsed-header fields, continued:
-     - `Match`
-     - `Exclude`
-   - Always present (per script):
+     [names-and-paths.md](names-and-paths.md). Installed mode only —
+     a script that has never run has no log.
+   - Parsed-header fields, continued — one row per tag, each pattern
+     linkified by the rule in Link rendering below:
+     - `Match`, `Include`, `Exclude`
+   - What the script is asking for. These are the rows an install
+     decision turns on, and they're worth re-reading on an installed
+     script too:
+     - `Permissions` (`@grant`) and `Network access` (`@connect`),
+       rendered monospace — they're API names and hosts, not prose.
+     - `Loads libraries` (`@require`)
+     - `Loads resources` — the whole `@resource <name> <url>` line;
+       the URL is the part that says what gets fetched.
+   - Location rows:
      - `Source` — colored type bubble (linking to the source's
        file:// / http(s) URL) + the source's display name (linking
        back to the parent section on the sources page via
        `sources.html#source-<id>`). Same bubble/name combo the sources
-       page renders. Row omitted if the parent source row has
-       vanished. See [`src/source-display.ts`](../src/source-display.ts).
+       page renders. Installed mode only; row omitted if the parent
+       source row has vanished. See
+       [`src/source-display.ts`](../src/source-display.ts).
      - `Location` — anchor wrapping the resolved location. Display
        form depends on source kind:
        - `file://` → bare fs path
@@ -100,10 +132,12 @@ reports.
        raw location (not the decoded display text) to the clipboard
        via `navigator.clipboard.writeText`; icon swaps to a checkmark
        for ~1.2 s on success. Row omitted if the
-       parent source row has vanished. See the Link rendering section
+       parent source row has vanished. In preview mode this is the
+       normalized URL being previewed. See the Link rendering section
        below for the linkify rules.
-     - `Size` — `formatScriptSize` output (bytes or `MISSING`).
-     - `Status` — `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
+     - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
+       preview, the byte length of the fetched text.
+     - `Status` — installed mode only. `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
        `WARNING` / `ERROR`
        (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
        color-coded; the row's `title` carries the `refreshError` reason
@@ -113,16 +147,16 @@ reports.
        tab click. The level promotes live as new log entries arrive
        — the `storage.session.onChanged` listener for
        `loglevel:<scriptId>` repaints just this row.
-5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab:
+5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
+   Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`
      (decoded when that path is a URL).
    - Then one tab per `@require` in declaration order, labeled with
      the basename of the require's resolved URL.
    - Trailing **Log** tab, always last so file-tab order is stable as
-     `@requires` come and go.
+     `@requires` come and go. Installed mode only.
    - Always rendered, even when there are no `@requires` — the lone
-     main-script tab plus the Log tab keep the viewer's shape
-     consistent.
+     main-script tab keeps the viewer's shape consistent.
    - The currently selected tab + highlight is mirrored into
      `location.hash` — see "URL fragment navigation" below.
 6. **Code pane / Log pane** — the active tab decides which is shown:
@@ -130,6 +164,11 @@ reports.
      tab shows `leadingText + headerText + '\n' + bodyText` (the
      `leadingText` covers anything in the source file above the
      `==UserScript==` line); require tabs show the prefetched `source`.
+   - A tab body may be a **thunk** instead of a string — preview mode
+     uses that for `@require`s, which aren't fetched until their tab is
+     opened. The pane shows "Loading…" meanwhile, caches the result in
+     place, and renders the fetch error in the pane if it fails. A
+     paint epoch discards a slow load whose tab the user already left.
    - Log tab swaps in a `<table>` view of the script's event log.
      Columns: Time / Level / Source / Message. See
      [script-log.md](script-log.md) for the data model and what gets
@@ -161,9 +200,9 @@ load.
 
 ### Not-found
 
-If the URL has no `script` param, or the ID doesn't resolve in the
-store, the viewer renders a "not available" message instead of
-crashing. The Refresh button is hidden.
+If the URL has neither a `script` nor a `preview` param, or the ID
+doesn't resolve in the store, the viewer renders a "not available"
+message instead of crashing. The Refresh button is hidden.
 
 ### URL fragment navigation
 
@@ -201,6 +240,111 @@ Behaviour:
   the flash overlay, so we re-paint (without scrolling) to keep
   the visible state matching the URL.
 
+## Preview mode
+
+`userscript.html?preview=<url>` renders a script that isn't installed.
+Same heading, details panel, and code tabs as an installed script —
+what differs is the controls and where the data comes from.
+
+### Getting the script
+
+- `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
+  URL is fetched (and later stored) in its raw form. The un-normalized
+  input is kept too: it's what `addSource` is handed and what a capture
+  bypass is keyed on.
+- http(s) → `fetchHttpText` (so GitHub auth applies); `file://` →
+  `fetchFileUrlText`. Anything else is a hand-edited URL and errors out.
+- The page never runs what it fetched — the body is rendered as text
+  through Prism, same as installed mode.
+
+### The action row
+
+Banner (`#banner-slot`) states what this file is; the action row
+(`#preview-actions`) carries the decision.
+
+| Situation | Banner | Buttons |
+|-----------|--------|---------|
+| Not installed | "not installed yet" | **Install**, Cancel, View raw source |
+| Already installed | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
+| Not installable | the parse / validation error | **Continue to page** (http only), Cancel, View raw source |
+
+- **Install** → `addSource(<input>)`, then jumps to the new script's
+  viewer. A web install is not a special kind of script: it lands in
+  the http / github container source and picks up normal refresh and
+  update behavior.
+- "Already installed" is matched on the stored `relativePath` equalling
+  the normalized URL — that's exactly what `addSource` would store. The
+  banner names both versions when `@version` differs.
+- **Update now** → `updateScript(id, 'manual')`, then the viewer.
+- **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
+  since Chrome refuses `window.close()` for a tab it didn't open by
+  script) when the preview was opened into a fresh one.
+- **View raw source** opens the unprocessed file in a **new tab**,
+  leaving the preview open behind it. See
+  [install-capture.md](install-capture.md#how-the-raw-view-stays-readable).
+
+### When the file can't be installed
+
+- The check is `splitHeaderBody(...).error`, then `validateHeader(...)`
+  — the same pair `buildScriptFromText` runs. A preview that offered
+  Install for something that would land as an `invalid` row would be
+  lying about what installing does.
+- Install and Update are both hidden; the banner carries the reason.
+- The source is still rendered. Seeing what actually came back is the
+  whole point when a URL returns a login page instead of a script.
+- **Continue to page** appears for http(s) URLs: a path ending in
+  `.user.js` that has no metadata block is usually an ordinary web
+  page. See
+  [install-capture.md](install-capture.md#when-the-url-isnt-a-script).
+
+### Tabs
+
+- Main tab is the fetched text.
+- One tab per `@require` **declared in the header** — the tabs exist
+  immediately, but nothing is fetched from a third-party host until the
+  user opens that tab. Looking at a script we haven't installed doesn't
+  pull down its dependencies.
+- Each lazy load goes through `fetchRequireForPreview`
+  (`external-files.ts`), which routes to the same `loadRequire` an
+  install uses — so a require that would be rejected at install time
+  (not `.js`, wrong content type, not UTF-8) fails in the tab with the
+  identical message.
+- Unresolvable refs still get a tab, labeled with the raw ref; opening
+  it surfaces the rejection.
+- The per-page fetch cache memoizes failures as well as successes, so
+  re-opening a tab that failed replays the same message without
+  re-hitting the host. Reload the page to retry a transient failure.
+- No Log tab, and no stack-ref linkification: nothing has run, so the
+  tabs carry no `sourcemonkey://` `sourceUrl`.
+- `@resource` entries are a details row only — they're bytes, not code.
+
+**URLs in a not-yet-installed file are clickable.** The old install
+prompt rendered `Homepage` and the source URL inert, on the grounds
+that the only navigation it offered should be View raw source. The
+merged page treats them like any other viewer content:
+
+- The `Homepage` row links only when the value parses as an absolute
+  http(s) URL; the code box linkifies header-tag values and bare URLs
+  the same way it does for an installed script.
+- Every anchor is `target="_blank" rel="noopener noreferrer"`, `data:`
+  refs are never linked, and following one is an explicit user action
+  that shows a page — the previewed file still never executes.
+- The **Location** row is the exception, and is intercepted: navigating
+  a `.user.js` URL for real would be captured straight back into a
+  second preview, so the click routes to View raw source instead
+  (which is what the old prompt's "from `<url>`" link did).
+
+### Future work
+
+- **Compare against the installed copy.** Today the banner reports both
+  `@version` strings when they differ but says nothing about which is
+  newer, or whether the bodies differ at all. A version comparison plus
+  a two-pane before/after diff per tab is the intended next step. See
+  TODO.md.
+- **Previewing a whole source.** Directory / manifest / github-dir
+  adds still go straight to `addSource`; previewing a listing needs a
+  different UI. See TODO.md.
+
 ## Syntax highlighting
 
 The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
@@ -230,10 +374,13 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
 
 ### Userscript-header syntax highlighting extension
 
-`src/userscript.ts` extends Prism's JavaScript grammar (via
+[`src/prism-userscript.ts`](../src/prism-userscript.ts) extends
+Prism's JavaScript grammar (via
 `Prism.languages.insertBefore('javascript', 'comment', …)`) with a
 `userscript-header` token that wraps the entire
-`// ==UserScript== … // ==/UserScript==` block.
+`// ==UserScript== … // ==/UserScript==` block. Importing the module is
+what installs it; `code-tabs.ts` does that, so the grammar travels with
+the view that highlights and the linkifier that reads its tokens.
 
 The outer token keeps the `comment` alias so non-tag lines inside
 the block still read as comment-grey. Inner tokens use existing

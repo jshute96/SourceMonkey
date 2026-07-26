@@ -1,6 +1,6 @@
 // Tests for src/raw-view.ts (compiled to dist/raw-view.js).
 //
-// The install prompt hands a fetched script to its raw-source tab
+// The script preview hands a fetched script to its raw-source tab
 // through a session-storage row. These cover the key shape, the
 // round-trip, and the rejection of keys we didn't mint.
 

@@ -222,8 +222,10 @@ files into TM/VM, hit the same URLs, compare outcomes).
 - The bridge code path for MAIN-world scripts.
 - `@resource` loading (depends on the deferred `GM_getResource*`
   surface; the `@require` pipeline is covered).
-- The viewer page's render path (covered by unit tests for the
-  helpers but not by an e2e click-through).
+- The viewer page's installed-script render path (covered by unit
+  tests for the helpers, plus incidental click-through in
+  `install-capture.spec.ts`; its preview mode has its own spec in
+  `script-preview.spec.ts`).
 - XHR header surgery — deferred along with the implementation.
 - `GM_notification` click / done callback dispatch in production
   Chrome — headless tests cover the SW round-trip and Promise

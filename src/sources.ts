@@ -321,7 +321,7 @@ async function seedDefaultSourcesViaUi(): Promise<void> {
       console.log('[SourceMonkey] first run: adding source', path);
       addInput.value = path;
       try {
-        await onAddDirectory(path, { jump: false });
+        await onAddDirectory(path, { jump: false, preview: false });
       } catch (err) {
         console.info('[SourceMonkey] first-run add failed', path, err);
       }
@@ -696,13 +696,17 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
 // and retry.
 async function onAddDirectory(
   rawPath: string,
-  opts: { jump?: boolean } = {},
+  opts: { jump?: boolean; preview?: boolean } = {},
 ): Promise<boolean> {
   // `jump` controls the post-add smooth-scroll. On by default for the
   // manual Add button + `?add_source` (the user wants to land on the new
   // section); off for first-run seeding, which adds several in a row and
   // would otherwise scroll-dance through them.
-  const { jump = true } = opts;
+  //
+  // `preview` routes a single-script input to the viewer's preview mode
+  // instead of adding it outright. Off for first-run seeding, which
+  // must not navigate away mid-loop.
+  const { jump = true, preview = true } = opts;
   const path = rawPath.trim();
   if (!path) return false;
 
@@ -713,6 +717,16 @@ async function onAddDirectory(
     return false;
   }
   showAddError(null);
+
+  // One script → preview it first. The viewer shows its metadata,
+  // what it asks permission to do, and its source, then installs on
+  // confirmation (or offers Update when we already have this URL).
+  // Directory / manifest / github-dir sources still add directly:
+  // previewing a whole listing needs a different UI (see TODO.md).
+  if (preview && isSingleFileInput(path)) {
+    location.href = `userscript.html?preview=${encodeURIComponent(path)}`;
+    return true;
+  }
 
   setAddFormBusy(true);
   try {
