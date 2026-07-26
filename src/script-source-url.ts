@@ -26,14 +26,15 @@
 //   same `__prelude.js` URL so devtools' Sources tree dedups them
 //   into a single visible entry.
 //
-// Why we encode `#`: the log label may carry a `#N` dedup suffix
-// (`bar.user.js#2`) when multiple scripts share a basename. A bare
-// `#` in a URL is the fragment separator, so URL parsers (including
-// devtools') would split there and put everything after the `#` in
-// the fragment. We percent-encode `#` to `%23` to keep the folder
-// name intact; devtools displays the encoded form, which a reader
-// can decode mentally (or we can swap encoding if it ever becomes
-// painful).
+// Why we percent-encode the label: it is a *display* string
+// (`script-log-id.ts` decodes URL-derived filenames so the user sees
+// `My Script.user.js`), and several of the characters that survive
+// that decode would break a URL. A bare `#` is the fragment
+// separator, so the `#N` dedup suffix would split the path; a space
+// or a paren ends the URL run that `stack-link.ts` matches, so a
+// stack-trace ref would stop linkifying to its tab. Everything
+// outside an unreserved-character whitelist is re-encoded — devtools
+// shows the encoded form, same as it always has.
 
 const ROOT = 'sourcemonkey://SourceMonkey';
 
@@ -53,17 +54,50 @@ function sanitizeLabel(label: string): string {
   return label.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, '_');
 }
 
+// Percent-encode everything outside the URL unreserved set, so the
+// segment is safe in a path AND carries nothing that would terminate
+// the stack-trace ref pattern in `stack-link.ts`. Applied last, after
+// the `.user.js` / `#N` surgery below has matched against the literal
+// characters.
+// The `u` flag matters: without it the character class matches single
+// UTF-16 code units, so an emoji (surrogate pair — GreasyFork names
+// are full of them) would be handed to encodeURIComponent half at a
+// time and throw URIError on the lone surrogate.
+function encodeSegment(segment: string): string {
+  return segment.replace(/[^A-Za-z0-9._~-]/gu, (c) => {
+    let enc: string;
+    try {
+      enc = encodeURIComponent(c);
+    } catch {
+      // An UNPAIRED surrogate — `u` makes the class match it as a
+      // single code point, but there's no UTF-8 encoding for it and
+      // encodeURIComponent throws. A manifest entry is user-authored
+      // JSON, so `"\ud800.user.js"` really can reach us. Letting the
+      // throw escape would reject the whole `Promise.all` in
+      // collectActiveSpecs and register NOTHING.
+      return '_';
+    }
+    // encodeURIComponent passes `!'()*` through untouched, and parens
+    // are exactly what would truncate a `at fn (URL:L:C)` frame — so
+    // hex-encode anything it declined to. All such characters are
+    // single-byte ASCII.
+    return enc === c ? `%${c.charCodeAt(0).toString(16).toUpperCase()}` : enc;
+  });
+}
+
 // Folder name for a script's artifacts. Strips the conventional
 // `.user.js` extension from the log label (the folder sits ABOVE the
-// main-body file, so the `.js` looks misleading on a folder), and
-// percent-encodes the `#N` dedup suffix.
+// main-body file, so the `.js` looks misleading on a folder), then
+// encodes what's left — which is where the `#N` dedup suffix becomes
+// `%23N`.
 //
 // Examples:
 //   `foo.user.js`       → `foo`
 //   `foo.user.js#2`     → `foo%232`
+//   `My foo.user.js`    → `My%20foo`
 //   `foo`               → `foo`      (no .user.js to strip)
 function folderForLabel(label: string): string {
-  return sanitizeLabel(label).replace(/\.user\.js(?=$|#)/, '').replace(/#/g, '%23');
+  return encodeSegment(sanitizeLabel(label).replace(/\.user\.js(?=$|#)/, ''));
 }
 
 // Main-body file basename for a script. Same as the folder but with
@@ -76,7 +110,11 @@ function folderForLabel(label: string): string {
 //   `foo.user.js#2`     → `foo.user.js`
 //   `foo`               → `foo.user.js`
 function mainBaseForLabel(label: string): string {
-  return sanitizeLabel(label).replace(/\.user\.js(?=$|#)/, '').replace(/#\d+$/, '') + '.user.js';
+  // Dedup suffix first, extension second. The other order would eat a
+  // `#2` that's part of the name itself (`Chapter #2.user.js`) — which
+  // a decoded `%23` now makes reachable.
+  const base = sanitizeLabel(label).replace(/#\d+$/, '').replace(/\.user\.js$/, '');
+  return encodeSegment(base) + '.user.js';
 }
 
 // Per-script folder root.

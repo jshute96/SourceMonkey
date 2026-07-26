@@ -102,6 +102,47 @@ test.describe('.user.js link capture', () => {
     await page.close();
   });
 
+  test('a percent-encoded script name reads as plain text everywhere it is shown', async ({
+    extensionContext, sm,
+  }) => {
+    // GreasyFork puts the script's human name in the URL path, so the
+    // stored location is a wall of escapes. Every surface that shows
+    // it to a human decodes; the stored value and the links do not.
+    // See docs/names-and-paths.md.
+    // Emoji on purpose: they're surrogate pairs, and a per-code-unit
+    // re-encoder blows up on them halfway through building the
+    // script's `sourcemonkey://` URL — which blanks the whole viewer.
+    const encodedPath = '/My%20Script%E2%84%A2%20%F0%9F%9A%80%20%7C%20Ad-Free%20%2B%20More.user.js';
+    const decodedName = 'My Script™ 🚀 | Ad-Free + More.user.js';
+    server.setRoute(encodedPath, userscriptText('Encoded Name'));
+    const scriptUrl = `${server.baseUrl}${encodedPath}`;
+
+    const page = await extensionContext.newPage();
+    await page.goto(scriptUrl).catch(() => {});
+    await waitForInstallPrompt(page);
+    // The prompt's "from <url>" line reads plainly, but its href is
+    // still the URL the browser would request.
+    await expect(page.locator('#subtitle')).toContainText(decodedName);
+    expect(await page.locator('#subtitle a').getAttribute('href')).toBe(scriptUrl);
+
+    await page.locator('#install-btn').click();
+    await page.waitForURL(/userscript\.html/);
+
+    // Heading, tab label, and Log ID all show the decoded name…
+    await expect(page.locator('h1#filename')).toContainText(decodedName);
+    await expect(page.locator('.log-id-cell')).toHaveText(decodedName);
+    await expect(page.locator('#tabs')).toContainText(decodedName);
+    // …and so does the Location row, while its href stays encoded.
+    const location = page.locator('.filename-text');
+    await expect(location).toHaveText(scriptUrl.replace(encodedPath, `/${decodedName}`));
+    expect(await location.getAttribute('href')).toBe(scriptUrl);
+    // What we stored — and would refetch — is the real URL.
+    const sources = await sm.getSources();
+    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    expect(withScripts!.scripts[0].relativePath).toBe(scriptUrl);
+    await page.close();
+  });
+
   test('a second install joins the existing container and opens the new script', async ({
     extensionContext, sm,
   }) => {

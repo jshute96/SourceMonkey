@@ -25,6 +25,7 @@ import {
   type ContainerKind,
 } from './directories.js';
 import { MANIFEST_FILENAME } from './source-scan.js';
+import { decodeForDisplay } from './script-display.js';
 import type { StoredSource } from './script-store.js';
 
 export type SourceTypeKey = 'file' | 'http' | 'github';
@@ -151,16 +152,10 @@ export function inferDisplayName(path: string): string {
   s = s.replace(/\/+$/, '');
 
   // Decode percent-encoded characters so e.g. a GreasyFork URL with
-  // `OnePelotoncom%20Cycle...` reads as `OnePelotoncom Cycle...`. Wrap
-  // in try/catch because a malformed `%` sequence would otherwise
-  // throw URIError and lose the whole inferred name; fall back to the
-  // raw (still mostly-readable) form in that case.
-  try {
-    s = decodeURIComponent(s);
-  } catch {
-    /* leave the percent-encoded form */
-  }
-  return s;
+  // `OnePelotoncom%20Cycle...` reads as `OnePelotoncom Cycle...`.
+  // Same decode-for-display rule the rest of the UI follows — see
+  // docs/names-and-paths.md.
+  return decodeForDisplay(s);
 }
 
 // Try each github URL-shape rewrite in turn and return on the first

@@ -200,4 +200,37 @@ test.describe('sources', () => {
     expect(afterByPath['b.user.js'].enabled).toBe(true);
     expect(after!.source.scanError).toBeDefined();
   });
+
+  test('an on-disk name containing %20 is shown literally, not decoded', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The mirror image of the URL case: names from a local directory
+    // are literal, so the file really called `a%20b.user.js` must read
+    // that way in the viewer and on the sources page. Decoding it here
+    // would show a name that matches nothing on disk. See
+    // docs/names-and-paths.md.
+    scriptsDir.write({
+      relativePath: 'a%20b.user.js',
+      meta: { name: 'Literal Percent', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const got = await sm.getSourceWithScripts(source!.id);
+    const script = got!.scripts[0];
+    expect(script.relativePath).toBe('a%20b.user.js');
+
+    const viewer = await extensionContext.newPage();
+    await viewer.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    await expect(viewer.locator('h1#filename')).toHaveText('a%20b.user.js');
+    await expect(viewer.locator('.log-id-cell')).toHaveText('a%20b.user.js');
+    await viewer.close();
+
+    const sources = await extensionContext.newPage();
+    await sources.goto(`chrome-extension://${extensionId}/sources.html`);
+    // `.name-cell a` also matches the favicon slot's link, so target
+    // the filename anchor by its viewer href.
+    await expect(sources.locator(`tr[data-script-id="${script.id}"] .name-cell a[href*="userscript.html"]`))
+      .toHaveText('a%20b.user.js');
+    await sources.close();
+  });
 });

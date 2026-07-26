@@ -181,17 +181,15 @@ import {
 } from './github-source.js';
 export { githubRawToBlobUrl } from './github-source.js';
 import { githubAuthHeaders } from './github-auth.js';
+import { decodeForDisplay, leafName } from './script-display.js';
 
-// Leaf name (last path segment) of an http(s) URL — used as the
-// FoundScript.name for HTTP manifest entries so the sources page
-// shows "foo.user.js" rather than the whole URL.
+// Leaf name (last path segment) of an http(s) URL, percent-decoded —
+// used as the FoundScript.name for HTTP manifest entries so the
+// sources page shows "foo.user.js" rather than the whole URL. Returns
+// '' for anything that doesn't parse as a URL, which callers use as
+// their "fall back to the raw entry" signal.
 export function urlBaseName(source: string): string {
-  const path = urlPathname(source);
-  const slash = path.lastIndexOf('/');
-  const last = slash < 0 ? path : path.slice(slash + 1);
-  // Decode percent-encoded segments so the user sees the filename
-  // they'd recognise; falls back to the raw segment if decoding fails.
-  try { return decodeURIComponent(last); } catch { return last; }
+  return decodeForDisplay(leafName(urlPathname(source)));
 }
 
 // ---------- URL / path helpers ----------

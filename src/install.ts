@@ -24,7 +24,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
-import { formatBytes } from './script-display.js';
+import { displayLocation, formatBytes } from './script-display.js';
 import {
   addSource,
   describeError,
@@ -109,7 +109,9 @@ async function bootstrap(): Promise<void> {
   // either captured straight back here or rendered unreadably (see
   // openRawSource).
   link.href = clickedUrl;
-  link.textContent = clickedUrl;
+  // Decoded for reading; the href keeps the real, encoded URL, so
+  // hover / copy-link-address still hand out something that works.
+  link.textContent = displayLocation(clickedUrl);
   // `auxclick` too: a middle-click would otherwise open a plain tab on
   // the `.user.js` URL, which the capture would turn into a second
   // install prompt.
@@ -340,7 +342,7 @@ function renderDetails(header: ParsedHeader | null, text: string): void {
     addListRow('Loads resources', getValues(header, 'resource'));
   }
   addTextRow('Size', formatBytes(new TextEncoder().encode(text).length));
-  addLinkRow('URL', fetchUrl);
+  addLinkRow('URL', displayLocation(fetchUrl));
 }
 
 function addTextRow(label: string, value: string | undefined): void {

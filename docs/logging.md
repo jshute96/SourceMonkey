@@ -10,6 +10,10 @@ or UI surface refers to it.
 
 - Default: the basename of the script's `relativePath` (e.g.
   `bold-on-hover.user.js`).
+- Scripts added by URL: the URL's filename, percent-decoded and
+  without the query string (`My Script.user.js`, not
+  `My%20Script.user.js?v=2`). See
+  [names-and-paths.md](names-and-paths.md).
 - Dupe basenames: each dupe gets a `#N` suffix
   (`foo.user.js#1`, `foo.user.js#2`, ...).
 - Dupe ordering: sorted by stable UUID `id` lexicographically.
@@ -29,8 +33,9 @@ or UI surface refers to it.
 
 `src/script-log-id.ts`:
 
-- Pure: `basenameOf(path)`, `computeLogIds(scripts)` — used by the
-  sources page + viewer at render time and unit-tested directly.
+- Pure: `computeLogIds(scripts)` (over `scriptBasename` from
+  `script-display.ts`) — used by the sources page + viewer at render
+  time and unit-tested directly.
 - SW runtime: a `Map<id, {id, relativePath}>` populated by one
   `chrome.storage.local.get(null)` scan at SW startup
   (`ensureLogIdsLoaded`) and kept fresh by `storage.onChanged`

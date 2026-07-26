@@ -8,6 +8,11 @@
 // (`bold-on-hover.user.js#1`, `bold-on-hover.user.js#2`, …) so they
 // stay distinguishable.
 //
+// The basename comes from `scriptBasename`, so a script added by URL
+// contributes its decoded filename (`My Script.user.js`), not the
+// percent-encoded URL tail. `script-source-url.ts` re-encodes the
+// label on its way into a `//# sourceURL=` directive.
+//
 // Dupe ordering: scripts sharing a basename are sorted by their stable
 // UUID `id`. UUIDs are random, so the assignment isn't time-ordered,
 // but it IS deterministic and stable for the lifetime of each script
@@ -16,6 +21,7 @@
 // page renders the same `#N` next to each filename so the user can
 // correlate.
 
+import { scriptBasename } from './script-display.js';
 import type { StoredScript } from './script-store.js';
 
 export interface LogIdInput {
@@ -27,15 +33,10 @@ const SCRIPT_PREFIX = 'script:';
 
 // ---------- Pure helpers ----------
 
-export function basenameOf(relativePath: string): string {
-  const slash = relativePath.lastIndexOf('/');
-  return slash < 0 ? relativePath : relativePath.slice(slash + 1);
-}
-
 export function computeLogIds(scripts: LogIdInput[]): Map<string, string> {
   const groups = new Map<string, LogIdInput[]>();
   for (const s of scripts) {
-    const base = basenameOf(s.relativePath);
+    const base = scriptBasename(s.relativePath);
     const arr = groups.get(base);
     if (arr) arr.push(s);
     else groups.set(base, [s]);

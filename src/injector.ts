@@ -88,7 +88,8 @@ import {
   buildRequireSourceUrl,
   buildSourceUrl,
 } from './script-source-url.js';
-import { basenameOf, computeLogIds, type LogIdInput } from './script-log-id.js';
+import { computeLogIds, type LogIdInput } from './script-log-id.js';
+import { scriptBasename, scriptDisplayName } from './script-display.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -515,6 +516,11 @@ function buildGmInfoInput(
   grantedNames: readonly string[],
 ): GmInfoInput {
   const header = script.header!;
+  // Deliberately NOT `scriptDisplayName`: this is script-visible API
+  // surface (`GM_info.script.name`), so it stays byte-identical to
+  // what's stored — no decode-for-display pass — and keeps `??`, so a
+  // script that declares an empty `@name` sees an empty name rather
+  // than silently getting its URL.
   const name = getValue(header, 'name') ?? script.relativePath;
   const resources: Record<string, { b64: string; ct: string }> = {};
   for (const r of script.resources ?? []) {
@@ -624,7 +630,7 @@ export async function buildSwapEvalBody(
 export async function buildRegistrationSpec(
   script: StoredScript,
   scriptHandlerVersion: string = '0.0.0',
-  logLabel: string = basenameOf(script.relativePath),
+  logLabel: string = scriptBasename(script.relativePath),
 ): Promise<RegistrationSpec | null> {
   const matches = script.matching.matches.slice();
   const includeGlobs: string[] = [];
@@ -652,7 +658,7 @@ export async function buildRegistrationSpec(
   const declaredRunAt = normalizeDeclaredRunAt(
     script.header ? getValue(script.header, 'run-at') : undefined,
   );
-  const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
+  const name = scriptDisplayName(script);
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude;
   const sourceUrl = buildSourceUrl(logLabel);
 
@@ -789,7 +795,7 @@ export async function collectActiveSpecs(
     if (!isScriptEnabled(s)) continue;
     const src = sources.get(s.sourceId);
     if (!src || !isSourceEnabled(src)) continue;
-    const label = logIds.get(s.id) ?? basenameOf(s.relativePath);
+    const label = logIds.get(s.id) ?? scriptBasename(s.relativePath);
     promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label));
   }
   const results = await Promise.all(promises);

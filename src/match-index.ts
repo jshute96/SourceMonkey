@@ -15,7 +15,7 @@
 // separately track the set of disabled sources, so toggling a source
 // flips every script under it in O(1) without rewalking storage.
 
-import { getValue } from './userscript-header.js';
+import { scriptDisplayName } from './script-display.js';
 import {
   isScriptEnabled,
   isSourceEnabled,
@@ -27,7 +27,7 @@ import { urlMatchesScript } from './url-match.js';
 
 export interface MatchedScript {
   id: string;
-  name: string;       // @name, or relativePath as a fallback
+  name: string;       // @name, or the readable relativePath as a fallback
   matching: ScriptMatching;
   sourceId: string;
 }
@@ -95,7 +95,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
   // `error` rows never participate — their header may be unparsed or
   // the file failed validation.
   if (script.status !== 'ok' && script.status !== 'missing') return null;
-  const name = (script.header && getValue(script.header, 'name')) || script.relativePath;
+  const name = scriptDisplayName(script);
   return {
     id: script.id,
     name,

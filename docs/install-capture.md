@@ -107,7 +107,9 @@ between them is a bug, not a nuance:
 - `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
   URL is fetched and stored in its raw form.
 - Shows name, version, description, author, namespace, homepage, size,
-  and the source URL, plus the headers that decide reach:
+  and the source URL (percent-decoded for reading — see
+  [names-and-paths.md](names-and-paths.md) — while every link and
+  fetch keeps the encoded form), plus the headers that decide reach:
   **Runs on** (`@match` / `@include`), **Except on** (`@exclude`),
   **Permissions** (`@grant`), **Network access** (`@connect`),
   **Loads libraries** (`@require`), **Loads resources** (`@resource`).

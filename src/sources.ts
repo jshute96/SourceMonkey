@@ -51,9 +51,12 @@ import {
   updateSource,
 } from './script-updater.js';
 import {
+  displayLocation,
   effectiveScriptStatus,
   formatScriptSize,
   formatScriptStatusLabel,
+  logIdDupeSuffix,
+  scriptBasename,
 } from './script-display.js';
 import { computeLogIds } from './script-log-id.js';
 import {
@@ -240,13 +243,8 @@ function applyLogIdSuffixesToDom(): void {
     if (!id) continue;
     const span = row.querySelector<HTMLSpanElement>('.log-id-suffix');
     if (!span) continue;
-    span.textContent = suffixFromLogId(currentLogIds.get(id) ?? '');
+    span.textContent = logIdDupeSuffix(currentLogIds.get(id) ?? '');
   }
-}
-
-function suffixFromLogId(logId: string): string {
-  const hash = logId.indexOf('#');
-  return hash < 0 ? '' : logId.slice(hash);
 }
 
 // `?refresh` in the URL triggers a refresh-all as soon as the initial
@@ -592,9 +590,13 @@ function renderScriptRow(
   // For container scripts the `relativePath` is the full URL/path —
   // show just the basename in the filename column to keep rows
   // scannable. The viewer's Location row carries the URL in full.
+  // A manifest entry may itself be an absolute URL, so the non-
+  // container branch goes through displayLocation too — otherwise the
+  // same script reads encoded here and decoded in the viewer. Local
+  // directory entries have no scheme and pass through untouched.
   a.textContent = inContainer
     ? scriptBasename(script.relativePath)
-    : script.relativePath;
+    : displayLocation(script.relativePath);
   // Hovering the filename surfaces the `@description`. Scoped to the
   // anchor so the Size / Status cells (which carry their own meaning)
   // don't inherit the description as a row-wide tooltip.
@@ -608,7 +610,7 @@ function renderScriptRow(
   // when another script shares this basename.
   const suffix = document.createElement('span');
   suffix.className = 'log-id-suffix';
-  suffix.textContent = suffixFromLogId(currentLogIds.get(script.id) ?? '');
+  suffix.textContent = logIdDupeSuffix(currentLogIds.get(script.id) ?? '');
   nameCell.appendChild(suffix);
   tr.appendChild(nameCell);
 
@@ -650,21 +652,6 @@ function renderScriptRow(
 function scriptDescription(script: StoredScript): string {
   const desc = script.header ? getValue(script.header, 'description') : undefined;
   return desc?.trim() || 'No description';
-}
-
-// Last path segment of a URL or absolute path; falls back to the
-// whole string when nothing parses. Used to render container-script
-// rows without burying the page in URLs.
-function scriptBasename(urlOrPath: string): string {
-  try {
-    const u = new URL(urlOrPath);
-    const slash = u.pathname.lastIndexOf('/');
-    const last = slash < 0 ? u.pathname : u.pathname.slice(slash + 1);
-    try { return decodeURIComponent(last) || urlOrPath; } catch { return last || urlOrPath; }
-  } catch {
-    const slash = urlOrPath.lastIndexOf('/');
-    return slash < 0 ? urlOrPath : urlOrPath.slice(slash + 1);
-  }
 }
 
 async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButtonElement): Promise<void> {

@@ -17,7 +17,7 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
-import { basenameOf, computeLogIds } from './script-log-id.js';
+import { computeLogIds } from './script-log-id.js';
 import type { StoredRequire } from './external-files.js';
 import {
   clearScriptLog,
@@ -28,9 +28,13 @@ import {
 } from './script-log.js';
 import { updateScript } from './script-updater.js';
 import {
+  decodeForDisplay,
+  displayLocation,
   effectiveScriptStatus,
   formatScriptSize,
   formatScriptStatusLabel,
+  leafName,
+  scriptBasename,
 } from './script-display.js';
 import {
   getValue,
@@ -353,6 +357,9 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
 async function onCopyFilename(): Promise<void> {
   if (!currentFilenamePath) return;
   try {
+    // Copies the raw location, not the decoded form the row displays:
+    // a pasted URL has to still work when it goes into a terminal, an
+    // address bar, or the Add Source field.
     await navigator.clipboard.writeText(currentFilenamePath);
     // .copied swaps the visible icon to a checkmark via CSS. A fresh
     // timer per click keeps rapid double-clicks from leaving the
@@ -374,7 +381,7 @@ function render(script: StoredScript): void {
   currentScript = script;
   controlsRowEl.hidden = false;
   renderFilenameHeading(script);
-  document.title = `${script.relativePath} — SourceMonkey`;
+  document.title = `${displayLocation(script.relativePath)} — SourceMonkey`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
   enableCheckboxEl.disabled = !sourceEnabled;
@@ -439,10 +446,10 @@ function buildTabs(script: StoredScript): Tab[] {
   // sourceURLs (see script-source-url.ts). Falls back to the bare
   // basename if the log-id sweep hasn't run yet — same default the
   // injector uses, so the two stay in lockstep.
-  const label = currentLogId || basenameOf(script.relativePath);
+  const label = currentLogId || scriptBasename(script.relativePath);
   const tabs: Tab[] = [{
     kind: 'code',
-    label: basenameOf(script.relativePath),
+    label: scriptBasename(script.relativePath),
     body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
     sourceUrl: buildSourceUrl(label),
@@ -482,25 +489,16 @@ function buildMainTabBody(script: StoredScript): string {
 // the verbatim ref if URL parsing fails — won't happen for entries we
 // stored (the resolver wouldn't have accepted the URL otherwise), but
 // the fallback keeps a future shape change from breaking the tab UI.
-// decodeURIComponent throws URIError on malformed `%` sequences, so it
-// gets its own try/catch with a raw-name fallback rather than wrapping
-// it inside the URL-parse try (where a decode failure would leak the
-// entire basename for the ref-fallback path).
+// Not `scriptBasename`: that one falls back to the whole URL, and a
+// require tab labeled with a full CDN URL would wreck the tab strip.
 function requireBasename(r: StoredRequire): string {
   let name: string;
   try {
-    const path = new URL(r.url).pathname;
-    const slash = path.lastIndexOf('/');
-    name = slash < 0 ? path : path.slice(slash + 1);
+    name = leafName(new URL(r.url).pathname);
   } catch {
     return r.ref;
   }
-  if (!name) return r.ref;
-  try {
-    return decodeURIComponent(name);
-  } catch {
-    return name;
-  }
+  return name ? decodeForDisplay(name) : r.ref;
 }
 
 function renderTabsAndBody(script: StoredScript): void {
@@ -972,7 +970,9 @@ function formatLogTimestamp(ms: number): string {
   return `${yyyy}-${mo}-${dd} ${hh}:${mm}:${ss}.${mmm}`;
 }
 
-// Replace the H1 with a favicon slot followed by the relative path.
+// Replace the H1 with a favicon slot followed by the relative path,
+// percent-decoded — for a script installed from the web that path is
+// its URL, and the encoded form is unreadable.
 // renderSiteIconInto paints a clickable globe placeholder
 // synchronously (when the script targets a usable origin) and swaps
 // it for the real favicon once the fetch resolves.
@@ -981,7 +981,7 @@ function renderFilenameHeading(script: StoredScript): void {
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   filenameEl.appendChild(iconSlot);
-  appendWithSlashBreaks(filenameEl, script.relativePath);
+  appendWithSlashBreaks(filenameEl, displayLocation(script.relativePath));
   renderSiteIconInto(iconSlot, script);
 }
 
@@ -1030,7 +1030,7 @@ function renderDetails(script: StoredScript): void {
     // everything else display = href, so the user clicks the same URL
     // they'd copy from the row.
     const href = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
-    appendRow(dl, 'Location', filenameCell(currentFilenamePath, href));
+    appendRow(dl, 'Location', filenameCell(displayLocation(currentFilenamePath), href));
   } else {
     currentFilenamePath = '';
   }
@@ -1110,11 +1110,12 @@ function filenameCell(path: string, hrefUrl: string): Node {
   pathEl.href = hrefUrl;
   pathEl.target = '_blank';
   pathEl.rel = 'noopener noreferrer';
-  // Display text is the bare fs path for file:// scripts; tooltip
-  // surfaces the actual href so the user can see what would open
-  // (file://... vs http://...) without clicking through. Slash-aware
-  // appender lets long paths wrap at `/` boundaries before breaking
-  // mid-segment.
+  // Display text is the bare fs path for file:// scripts, and the
+  // percent-decoded URL for the rest; the tooltip surfaces the actual
+  // href, so the encoded form the browser will request is one hover
+  // away and the user can see what would open (file://... vs
+  // http://...) without clicking through. Slash-aware appender lets
+  // long paths wrap at `/` boundaries before breaking mid-segment.
   pathEl.title = hrefUrl;
   appendWithSlashBreaks(pathEl, path);
   cell.appendChild(pathEl);

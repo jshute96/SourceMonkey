@@ -62,7 +62,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-source dispatch in addSource, parse-time diagnostics, refreshAllSources, first-run flag + DEFAULT_SOURCES |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits and de-dupes opportunistic background checks while letting manual clicks pass through |
-| `src/script-display.ts` | Pure size + status display helpers (`formatBytes`, `formatScriptSize`, `effectiveScriptStatus`, `formatScriptStatusLabel`) shared by the sources page + viewer |
+| `src/script-display.ts` | Pure display helpers: size/status formatting + the decode-for-display name/path helpers |
 | `src/source-display.ts` | Source-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
@@ -135,14 +135,14 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
 | `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate |
-| `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) |
+| `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) + the name/path decode helpers |
 | `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
 | `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction across `sourcemonkey`/`http`/`https`/`file` schemes, query-string and port-number handling |
-| `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — main/config/prelude/require/bridge/runtime URLs and dedup `#N` encoding |
+| `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — every URL shape, plus label encoding (dedup `#N`, spaces, emoji) |
 | `tests/unit/script-url-hash.test.mjs` | Unit tests for `parseHash` / `buildHash`: filename/line/col forms, percent encoding, round-trip, and invalid-input fallbacks |
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
-| `tests/unit/script-log-id.test.mjs` | Unit tests for `basenameOf` + `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
+| `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
 | `tests/unit/match-targets.test.mjs` | Unit tests for `@match` pattern parsing: origin / linkUrl extraction and the wildcard-trim path rule |
@@ -215,6 +215,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/injection-modes.md` | Three possible per-script `js[]` arrangements (separate entries vs concat vs eval-per-require); why we ship separate entries |
 | `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones SourceMonkey honors, which are parsed-only, and which are ignored |
 | `docs/logging.md` | SW console-message catalog: log IDs (basename + `#N` dupes), the debug-logging gate, and which lines it gates |
+| `docs/names-and-paths.md` | Decode-for-display rule for names/URLs: what gets percent-decoded, what stays encoded, and why |
 | `docs/script-log.md` | Per-script event log: schema, storage layout, what gets logged, viewer Log tab behavior |
 | `docs/site-icons.md` | Favicon fetch+cache + the icon slot rendered beside each script filename; URL extraction lives in `match-targets.ts` |
 | `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |

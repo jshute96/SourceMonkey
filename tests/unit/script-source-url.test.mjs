@@ -152,3 +152,76 @@ test('buildRequireSourceUrl: dedup folder via percent-encoded `#`', () => {
     'sourcemonkey://SourceMonkey/shared%232/cdn/x.js',
   );
 });
+
+test('label encoding: a decoded filename is re-encoded for the URL', () => {
+  // Log labels are display strings (script-log-id decodes URL-derived
+  // filenames), so spaces and non-ASCII reach the builder. Both would
+  // break a URL — and a space would end the ref run that stack-link.ts
+  // matches, silently un-linkifying every stack frame for the script.
+  assert.equal(
+    buildSourceUrl('My Script.user.js'),
+    'sourcemonkey://SourceMonkey/My%20Script/My%20Script.user.js',
+  );
+  assert.equal(
+    buildSourceUrl('YouTube™.user.js'),
+    'sourcemonkey://SourceMonkey/YouTube%E2%84%A2/YouTube%E2%84%A2.user.js',
+  );
+});
+
+test('label encoding: parens are encoded too', () => {
+  // `parseStackRefs` stops a ref at `(` / `)` so V8's `at fn (URL:L:C)`
+  // frames parse — a literal paren in the URL would truncate it.
+  assert.equal(
+    buildConfigSourceUrl('Foo (Beta).user.js'),
+    'sourcemonkey://SourceMonkey/Foo%20%28Beta%29/__config.js',
+  );
+});
+
+test('label encoding: emitted URLs contain nothing the ref parser drops', () => {
+  const label = 'Ünïcode Script (v2) — 100% ✓.user.js#3';
+  for (const url of [
+    buildSourceUrl(label),
+    buildConfigSourceUrl(label),
+    buildRequireSourceUrl(label, 'https://cdn/x.js'),
+  ]) {
+    assert.equal(/[\s()#]/.test(url), false, `unsafe char in ${url}`);
+  }
+});
+
+test('label encoding: an emoji in the name encodes as a whole code point', () => {
+  // Regression: a per-code-unit encoder hands encodeURIComponent half
+  // a surrogate pair, which throws URIError — and the throw escapes
+  // into the viewer's render, blanking the page. GreasyFork names are
+  // full of emoji, so this is the common case, not the exotic one.
+  assert.equal(
+    buildSourceUrl('Downloader 🚀.user.js'),
+    'sourcemonkey://SourceMonkey/Downloader%20%F0%9F%9A%80/Downloader%20%F0%9F%9A%80.user.js',
+  );
+  assert.doesNotThrow(() => buildSourceUrl('🌍🎥🎵 | Ad-Free + SponsorBlock 🛡.user.js'));
+});
+
+test('label encoding: an unpaired surrogate degrades instead of throwing', () => {
+  // A manifest entry is user-authored JSON, so `"\ud800.user.js"` can
+  // reach us as a relativePath. encodeURIComponent has no encoding for
+  // a lone surrogate and throws — and the throw would reject the whole
+  // Promise.all in collectActiveSpecs, registering NO scripts at all.
+  assert.equal(
+    buildSourceUrl('a\uD800b.user.js'),
+    'sourcemonkey://SourceMonkey/a_b/a_b.user.js',
+  );
+  assert.doesNotThrow(() => buildConfigSourceUrl('\uDFFF'));
+});
+
+test('mainBaseForLabel: a `#N` that is part of the name survives', () => {
+  // `%23` decodes for display, so a log label can legitimately end in
+  // `#2` without being a dupe. Only the trailing dedup suffix — which
+  // sits AFTER the `.user.js` — may be stripped.
+  assert.equal(
+    buildSourceUrl('Chapter #2.user.js'),
+    'sourcemonkey://SourceMonkey/Chapter%20%232/Chapter%20%232.user.js',
+  );
+  assert.equal(
+    buildSourceUrl('Chapter #2.user.js#3'),
+    'sourcemonkey://SourceMonkey/Chapter%20%232%233/Chapter%20%232.user.js',
+  );
+});

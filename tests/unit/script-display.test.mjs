@@ -6,10 +6,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  decodeForDisplay,
+  displayLocation,
   effectiveScriptStatus,
   formatBytes,
   formatScriptSize,
   formatScriptStatusLabel,
+  leafName,
+  logIdDupeSuffix,
+  scriptBasename,
+  scriptDisplayName,
 } from '../../dist/script-display.js';
 
 // ---------- formatBytes ----------
@@ -129,4 +135,86 @@ test('effectiveScriptStatus: refreshError surfaces as refresh-failed', () => {
     effectiveScriptStatus({ status: 'missing', refreshError: 'x' }, undefined),
     'missing',
   );
+});
+
+// ---------- names and paths ----------
+
+test('decodeForDisplay: percent escapes become the characters they encode', () => {
+  assert.equal(decodeForDisplay('My%20Script.user.js'), 'My Script.user.js');
+  assert.equal(decodeForDisplay('YouTube%E2%84%A2'), 'YouTube™');
+});
+
+test('decodeForDisplay: a malformed escape leaves the string intact', () => {
+  // A literal `%` in a name makes decodeURIComponent throw. Showing
+  // `100% free.user.js` with one stray escape beats showing nothing.
+  assert.equal(decodeForDisplay('100% free.user.js'), '100% free.user.js');
+  assert.equal(decodeForDisplay('%'), '%');
+});
+
+test('leafName: last slash-separated segment', () => {
+  assert.equal(leafName('sites/example.com/foo.user.js'), 'foo.user.js');
+  assert.equal(leafName('foo.user.js'), 'foo.user.js');
+  assert.equal(leafName('a/b/.foo.user.js'), '.foo.user.js');
+});
+
+test('displayLocation: decodes URLs', () => {
+  assert.equal(
+    displayLocation('https://update.greasyfork.org/scripts/1/My%20Script.user.js'),
+    'https://update.greasyfork.org/scripts/1/My Script.user.js',
+  );
+  assert.equal(displayLocation('file:///home/me/a%20b.user.js'), 'file:///home/me/a b.user.js');
+});
+
+test('displayLocation: leaves non-URL paths alone', () => {
+  // An on-disk name is literal — a directory really called `a%20b`
+  // must not be shown (or later searched for) as `a b`.
+  assert.equal(displayLocation('a%20b/foo.user.js'), 'a%20b/foo.user.js');
+  assert.equal(displayLocation('/home/me/100%25.user.js'), '/home/me/100%25.user.js');
+});
+
+test('scriptBasename: URL filename, decoded, without the query string', () => {
+  assert.equal(
+    scriptBasename('https://update.greasyfork.org/scripts/1/My%20Script.user.js?version=9'),
+    'My Script.user.js',
+  );
+});
+
+test('scriptBasename: on-disk relative path keeps its literal segment', () => {
+  assert.equal(scriptBasename('sites/example.com/foo.user.js'), 'foo.user.js');
+  assert.equal(scriptBasename('a%20b.user.js'), 'a%20b.user.js');
+});
+
+test('scriptBasename: falls back to the whole input when there is no filename', () => {
+  assert.equal(scriptBasename('https://example.com/'), 'https://example.com/');
+  assert.equal(scriptBasename('https://example.com'), 'https://example.com');
+});
+
+test('scriptDisplayName: prefers @name, falls back to the readable location', () => {
+  const header = { tags: [{ tag: 'name', value: 'Nice Name' }] };
+  assert.equal(
+    scriptDisplayName({ header, relativePath: 'https://x/y%20z.user.js' }),
+    'Nice Name',
+  );
+  assert.equal(
+    scriptDisplayName({ relativePath: 'https://x/y%20z.user.js' }),
+    'https://x/y z.user.js',
+  );
+});
+
+test('scriptBasename: an escaped slash cannot smuggle a path separator in', () => {
+  // `%2F` decodes to a real `/`. This value becomes a log ID, so a
+  // "basename" carrying a separator would read as a directory in every
+  // log line.
+  assert.equal(scriptBasename('https://x.com/a%2Fb.user.js'), 'b.user.js');
+});
+
+test('logIdDupeSuffix: only a trailing #<digits> counts', () => {
+  assert.equal(logIdDupeSuffix('foo.user.js#2'), '#2');
+  assert.equal(logIdDupeSuffix('foo.user.js#12'), '#12');
+  assert.equal(logIdDupeSuffix('foo.user.js'), '');
+  assert.equal(logIdDupeSuffix(''), '');
+  // A literal `#` in the name (a decoded `%23`) is not a dupe suffix —
+  // splitting on the first `#` would render half the name as one.
+  assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js'), '');
+  assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js#3'), '#3');
 });

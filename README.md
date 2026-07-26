@@ -172,7 +172,10 @@ against the prior so identical content still counts as "no change."
   display name as the sources page; the display name doubles as a
   back-link to the parent source's section. The **Location** row
   shows the absolute filesystem path for local sources and the
-  resolved URL for URL-backed ones.
+  resolved URL for URL-backed ones. Names and URLs are shown the way
+  a browser shows them — a script installed from the web reads as
+  `My Script 🚀.user.js`, not `My%20Script%20%F0%9F%9A%80.user.js`,
+  while links and the copy button still hand out the real URL.
 - As you browse, the SourceMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The
@@ -217,11 +220,11 @@ against the prior so identical content still counts as "no change."
   enough; the Options page has the step-by-step.
 - **Log IDs.** Every script gets a short, file-derived label used in
   every SW log line and shown on the script viewer page (as **Log
-  ID**). The label is the script's basename (`foo.user.js`); if two
-  scripts share a basename they're disambiguated as `foo.user.js#1`,
-  `foo.user.js#2`, etc., and the same suffix is rendered next to the
-  filename link on the sources page so you can map a log entry back
-  to its row.
+  ID**). The label is the script's basename (`foo.user.js`, decoded
+  for scripts added by URL); if two scripts share a basename they're
+  disambiguated as `foo.user.js#1`, `foo.user.js#2`, etc., and the
+  same suffix is rendered next to the filename link on the sources
+  page so you can map a log entry back to its row.
 
 **One-time setup:** on `chrome://extensions`, for SourceMonkey enable:
 

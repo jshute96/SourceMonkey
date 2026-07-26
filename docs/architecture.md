@@ -112,6 +112,10 @@ details live in the topic-specific docs linked below.
   every SW log line and shown in the sources/viewer UI so users can
   correlate console output with the rows on the sources page. See
   [logging.md](logging.md).
+- **Display names** (`src/script-display.ts`) — one place decides how
+  a stored URL or path is rendered for humans: percent-decoded for
+  display, left encoded for anything functional. See
+  [names-and-paths.md](names-and-paths.md).
 - **Debug logging** (`src/debug-log.ts`) — gates the noisier
   navigation/refresh log lines behind a storage-backed flag
   (`smDebugLogging`), toggled via a checkbox on the Options page
@@ -185,6 +189,8 @@ details live in the topic-specific docs linked below.
   the alternatives would buy.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
+- [names-and-paths.md](names-and-paths.md) — the decode-for-display
+  rule for names and URLs, and where it must not be applied.
 - [script-log.md](script-log.md) — per-script structured event log
   shown in the viewer's Log tab.
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,

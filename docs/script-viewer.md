@@ -57,7 +57,9 @@ reports.
 
 ### Layout
 
-1. **Filename** (`<h1>`) — the script's `relativePath`.
+1. **Filename** (`<h1>`) — the script's `relativePath`, decoded for
+   reading when it's a URL (also the page `<title>`). See
+   [names-and-paths.md](names-and-paths.md).
 2. **Controls row** (`#meta-row`) — `Enabled` toggle + **Refresh**
    button → `refreshScript(scriptId)`.
 3. **Error message** (`<p class="message …">`) — visible when the
@@ -72,7 +74,9 @@ reports.
      - `Description`
    - `Log ID` — short file-derived handle used in every SW log line
      (basename, or `basename#N` for dupes). See
-     [logging.md](logging.md).
+     [logging.md](logging.md). A script added by URL shows its
+     decoded filename — see
+     [names-and-paths.md](names-and-paths.md).
    - Parsed-header fields, continued:
      - `Match`
      - `Exclude`
@@ -88,12 +92,14 @@ reports.
        - `file://` → bare fs path
        - `github` (any flavour) → `github.com/<o>/<r>/blob/<ref>/<path>`
          page URL (raw URL is internal-only)
-       - non-github `http(s)://` → URL verbatim
+       - non-github `http(s)://` → URL, percent-decoded for reading
        Anchor href matches the display URL for everything except
        `file://`, where the href is the file:// URL (the bare fs path
-       isn't navigable). Adjacent square button copies the displayed
-       text to the clipboard via `navigator.clipboard.writeText`; icon
-       swaps to a checkmark for ~1.2 s on success. Row omitted if the
+       isn't navigable) — and the href always keeps the *encoded* URL,
+       with the tooltip showing it. Adjacent square button copies that
+       raw location (not the decoded display text) to the clipboard
+       via `navigator.clipboard.writeText`; icon swaps to a checkmark
+       for ~1.2 s on success. Row omitted if the
        parent source row has vanished. See the Link rendering section
        below for the linkify rules.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`).
@@ -108,7 +114,8 @@ reports.
        — the `storage.session.onChanged` listener for
        `loglevel:<scriptId>` repaints just this row.
 5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab:
-   - Main script first, labeled with the basename of `relativePath`.
+   - Main script first, labeled with the basename of `relativePath`
+     (decoded when that path is a URL).
    - Then one tab per `@require` in declaration order, labeled with
      the basename of the require's resolved URL.
    - Trailing **Log** tab, always last so file-tab order is stable as
@@ -284,11 +291,13 @@ so the body header and the details panel agree.
   formal grammar is a free-form glob, but values are almost always
   written as match patterns in practice and a click target is more
   useful than plain text.
-- `Location` — anchor wrapping the path text. Href is
-  `script.fileUrl` (http(s) or file://). Display text stays the bare
-  fs path for file:// scripts. Chromium typically refuses to navigate
-  to a `file://` link from a chrome-extension page; the path is still
-  readable, selectable, and copyable via the adjacent button.
+- `Location` — anchor wrapping the path text. Href is the resolved
+  location, except for `file://` scripts where it's `script.fileUrl`
+  (the bare fs path isn't navigable). Display text stays that bare fs
+  path for `file://` scripts, and is percent-decoded for URLs.
+  Chromium typically refuses to navigate to a `file://` link from a
+  chrome-extension page; the path is still readable, selectable, and
+  copyable via the adjacent button.
 
 ### Code box (post-Prism walk)
 
