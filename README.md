@@ -18,7 +18,25 @@ A userscript manager Chrome extension that treats userscripts like source code, 
 Open the sources page by clicking the SourceMonkey toolbar icon, or via
 `chrome://extensions` → SourceMonkey → "Details" → "Extension options".
 The sources page has an **Options** link at the top-left for the
-configurable settings (currently just the debug-logging toggle).
+configurable settings (`.user.js` link capture, debug logging, GitHub
+auth token).
+
+### Installing scripts from the web
+
+Click a `.user.js` link anywhere — GreasyFork, GitHub, a colleague's
+gist — and SourceMonkey opens an install prompt instead of letting
+Chrome download the file. The prompt shows the script's name, version,
+description, what pages it runs on, and which `GM_*` permissions,
+`@connect` hosts, and external files it asks for, along with the full
+source. **Install** registers it exactly as if you'd typed the URL into
+the Add Source field, so it updates like any other web source.
+
+If the script is already installed you get **Open script** /
+**Update now** instead. **View raw source** opens the unprocessed file
+in a new tab, and **Cancel** goes back where you came from.
+
+Turn the whole thing off with **Capture `.user.js` links** on the
+Options page if you'd rather have Chrome's stock behavior.
 
 ### Registering sources
 

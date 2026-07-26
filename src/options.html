@@ -12,6 +12,8 @@
       .settings { margin-top: 1em; }
       .settings-heading { font-size: 1em; margin: 0 0 0.5em; }
       .settings-row { display: inline-flex; align-items: center; gap: 0.5em; cursor: pointer; }
+      /* Space each toggle from the hint text of the one above it. */
+      .settings-hint + .settings-row { margin-top: 0.8em; }
       .settings-row input[type="checkbox"] { cursor: pointer; margin: 0; }
       .settings-hint { margin: 0.3em 0 0; font-size: 0.85em; color: #666; }
       .settings-section { margin-top: 2em; padding-top: 1em; border-top: 1px solid #eee; }
@@ -40,6 +42,16 @@
 
     <div id="settings" class="settings">
       <h2 class="settings-heading">Settings</h2>
+      <label class="settings-row">
+        <input id="capture-userjs" type="checkbox" />
+        <span>Capture <code>.user.js</code> links</span>
+      </label>
+      <p class="settings-hint">
+        Clicking a <code>.user.js</code> link opens SourceMonkey's install
+        prompt instead of leaving it to Chrome, which downloads the file
+        rather than offering to install it. On by default. Turn this off
+        to get Chrome's stock behavior back.
+      </p>
       <label class="settings-row">
         <input id="debug-logging" type="checkbox" />
         <span>Enable debug logging</span>

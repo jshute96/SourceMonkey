@@ -44,10 +44,16 @@ One-line descriptions of every source file, grouped by directory.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap, first-run sources-page open |
 | `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
+| `src/install-capture.ts` | Captures web navigations to `*.user.js` and redirects them to the install prompt |
+| `src/install.html` | Install-prompt markup: title, banner slot, details list, action buttons, source code box |
+| `src/install.ts` | Install-prompt controller — fetches the clicked `.user.js`, renders its metadata + source, installs via `addSource` on confirmation |
+| `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the install prompt to its raw-source tab |
+| `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
+| `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
 | `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
 | `src/sources.ts` | Sources page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source`/`?first_run` triggers, per-source anchors |
-| `src/options.html` | Options page markup: settings list (debug-logging toggle, GitHub auth token) plus a link back to the sources page |
-| `src/options.ts` | Options page controller — hydrates the debug-logging checkbox + GitHub-token controls (save / clear / reveal) and mirrors writes to `chrome.storage.local` |
+| `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle, GitHub auth token) plus a link back to the sources page |
+| `src/options.ts` | Options page controller — binds the boolean setting checkboxes (link capture, debug logging) + GitHub-token controls (save / clear / reveal) |
 | `src/userscript.html` | Userscript viewer markup: title, controls row, details panel, tab strip, highlighted code box, log pane |
 | `src/userscript.ts` | Userscript viewer controller — hydrates from the store, renders controls + details dl + tabbed code view (main script + one tab per `@require` + Log tab) |
 | `src/directories.ts` | Source I/O + classifiers (single-file / manifest / github-dir / container), file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
@@ -121,6 +127,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (HTTP soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`; recovery clears it |
+| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the prompt, Install registers the source, already-installed + non-userscript cases, raw view, option off |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/github-source.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
@@ -163,6 +170,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
+| `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, install-page URL, Chrome-version gate, one-shot bypass |
+| `tests/unit/raw-view.test.mjs` | Unit tests for the raw-view hand-off: key shape, round-trip, drop, and rejection of keys we didn't mint |
 | `tests/unit/action-menu.test.mjs` | Unit tests for the action context-menu planner: 6-item cap, More-submenu overflow, group cohesion, order preservation |
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |
 | `tests/e2e/gm-log.spec.ts` | E2E tests for `GM_log` (per-script prefix, GM4 alias, gating) |
@@ -220,6 +229,7 @@ One-line descriptions of every source file, grouped by directory.
 | `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey today, with triage notes for each divergence |
 | `docs/redirect-page.md` | Canonical GitHub-hosted "front door" the extension watches for; deep-link target that rewrites to `chrome-extension://...` |
 | `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
+| `docs/install-capture.md` | How `.user.js` link clicks become installs: Chrome's version-dependent handling, the capture, the prompt, the bypass |
 
 ## Companion Userscripts (`userscripts/`)
 

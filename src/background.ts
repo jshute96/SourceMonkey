@@ -35,6 +35,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { installDeepLinkRedirect } from './deep-link.js';
+import { installUserJsCapture } from './install-capture.js';
 import {
   ensureLogIdsLoaded,
   getScriptLogLabel,
@@ -2048,6 +2049,7 @@ installStorageListener();
 installStaleScriptListener();
 installNavigationListeners();
 installDeepLinkRedirect();
+installUserJsCapture();
 installScriptMessageListener();
 installDebugLoggingListener();
 installGithubAuthListener();

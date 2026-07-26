@@ -10,6 +10,14 @@
   pages — "open the sources page", "add this source", "view this
   script".
 
+## Not to be confused with `.user.js` link capture
+
+- This doc covers pages that *cooperate* — they link at our redirect
+  stub with the params we define.
+- Clicking a plain `.user.js` link needs no cooperation and is handled
+  separately, by intercepting the navigation. See
+  [install-capture.md](install-capture.md).
+
 ## Approach
 
 - Publish a stub markdown file in this repo:

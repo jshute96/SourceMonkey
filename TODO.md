@@ -303,6 +303,22 @@ during cumulative review of the GM_* phases:
   would unblock requiring a file in a sibling directory or under a
   user-supplied absolute path.
 
+## Install capture — follow-ups
+
+The shipped design and its known gaps live in
+[docs/install-capture.md](docs/install-capture.md) (see its
+**Limitations / future work** section — `file://` capture,
+`Content-Disposition` downloads, `@version` awareness). Only the items
+that need doing *here* rather than describing there:
+
+- **Drop the Chrome < 152 download workaround** once 152 is the
+  supported floor. The DNR session rule, `needsDownloadWorkaround`,
+  `parseChromeMajor`, and their tests go together, and the
+  `declarativeNetRequestWithHostAccess` permission can come out of the
+  manifest with them.
+- **Site icon on the prompt.** The sources page and viewer both show a
+  favicon for the script's `@match` origin; the install prompt doesn't.
+
 ## File loader — follow-ups
 
 - Manifest query-string propagation. `resolveManifestEntryUrl`
@@ -344,7 +360,10 @@ during cumulative review of the GM_* phases:
 - examples for injection scenarios - main world vs userscript world, etc
 - examples with absolute (TM-compatible) vs relative paths
 - installer scripts for userscripts sources - greasyfork, etc.
-  - capture link back to the source page, link to .user.js won't open
+  - the `.user.js` link click itself is handled now (see
+    [docs/install-capture.md](docs/install-capture.md)); what's left is
+    capturing a link back to the *listing* page, which the URL alone
+    doesn't give us
 
 ## Feature TOODs and ideas
 
@@ -353,7 +372,6 @@ during cumulative review of the GM_* phases:
 - status widget instead of context menu for running scripts
 - smoother add source/script flow, maybe a dialog box
 - relative paths for dev, absolute paths for release (for requires & resources)
-- capture .user.js links and go to install prompt (with option)
 - use updateURL for faster update checks
 - fix caveats with the new multi-file script injection model:
   - reload fast-path doesn't work right?

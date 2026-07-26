@@ -5,13 +5,19 @@
 
 import { DEBUG_LOGGING_KEY } from './debug-log.js';
 import { GITHUB_AUTH_TOKEN_KEY } from './github-auth.js';
+import { INSTALL_CAPTURE_KEY } from './install-capture.js';
 
 const openSourcesBtn = document.getElementById('open-sources') as HTMLButtonElement;
 openSourcesBtn.addEventListener('click', () => {
   location.href = 'sources.html';
 });
 
-initDebugLoggingToggle();
+// Both boolean settings differ only in their storage key and what an
+// absent value means, so they share one binder. `defaultValue` is what
+// an unset key reads back as — capture is opt-out, debug logging is
+// opt-in.
+initBooleanSetting('capture-userjs', INSTALL_CAPTURE_KEY, true);
+initBooleanSetting('debug-logging', DEBUG_LOGGING_KEY, false);
 initGithubTokenControls();
 initVersionFooter();
 
@@ -21,23 +27,24 @@ function initVersionFooter(): void {
   el.textContent = `Version ${chrome.runtime.getManifest().version}`;
 }
 
-function initDebugLoggingToggle(): void {
-  const cb = document.getElementById('debug-logging') as HTMLInputElement | null;
+function initBooleanSetting(elementId: string, key: string, defaultValue: boolean): void {
+  const cb = document.getElementById(elementId) as HTMLInputElement | null;
   if (!cb) return;
+  const read = (raw: unknown): boolean => (typeof raw === 'boolean' ? raw : defaultValue);
   // Hydrate from storage so the box reflects the persisted state, then
   // mirror future writes (from anywhere — DevTools, another options
   // tab) so the two never drift out of sync.
-  void chrome.storage.local.get(DEBUG_LOGGING_KEY).then((got) => {
-    cb.checked = got[DEBUG_LOGGING_KEY] === true;
+  void chrome.storage.local.get(key).then((got) => {
+    cb.checked = read(got[key]);
   });
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
-    const change = changes[DEBUG_LOGGING_KEY];
+    const change = changes[key];
     if (!change) return;
-    cb.checked = change.newValue === true;
+    cb.checked = read(change.newValue);
   });
   cb.addEventListener('change', () => {
-    void chrome.storage.local.set({ [DEBUG_LOGGING_KEY]: cb.checked });
+    void chrome.storage.local.set({ [key]: cb.checked });
   });
 }
 

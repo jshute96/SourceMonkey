@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey — Install userscript</title>
+    <link rel="stylesheet" href="vendor/prism/prism.css" />
+    <link rel="stylesheet" href="vendor/prism/prism-line-numbers.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      body { font: 14px system-ui, sans-serif; max-width: 860px; margin: 2em auto; padding: 0 1em; color: #222; }
+      h1 { font-size: 1.3em; margin: 0 0 0.2em; overflow-wrap: anywhere; }
+      .subtitle { margin: 0 0 1em; color: #555; overflow-wrap: anywhere; }
+      .subtitle a { color: inherit; }
+      button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: 0.5; }
+      .actions { display: flex; gap: 0.5em; align-items: center; margin: 1em 0; }
+      .actions .primary { font-weight: 600; }
+      .actions .spacer { margin-left: auto; }
+      .message { margin: 0 0 1em; }
+      .message:empty { display: none; }
+      .message.error { color: #b00; }
+      .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 1em; }
+      .banner.installed { border-color: #2563eb; background: #eff6ff; }
+      .banner p { margin: 0.3em 0; }
+      /* Detail rows: fixed label column, value column wraps. Mirrors the
+         viewer's details panel shape without pulling in its tab strip. */
+      dl.details { display: grid; grid-template-columns: max-content 1fr; column-gap: 1em; row-gap: 0.3em; margin: 0 0 1em; }
+      dl.details dt { font-weight: 600; color: #555; }
+      dl.details dd { margin: 0; overflow-wrap: anywhere; }
+      dl.details dd ul { margin: 0; padding-left: 1.1em; }
+      dl.details code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .grant-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .code-box { max-height: 60vh; overflow: auto; border: 1px solid #ddd; border-radius: 6px; margin: 0; }
+      .code-box[hidden] { display: none; }
+      .code-heading { font-size: 1em; margin: 1.5em 0 0.4em; }
+      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Install userscript</h1>
+    <p id="subtitle" class="subtitle"></p>
+
+    <div id="banner-slot"></div>
+    <p id="message" class="message"></p>
+
+    <dl id="details" class="details"></dl>
+
+    <div class="actions">
+      <button id="install-btn" class="primary" type="button" disabled>Install</button>
+      <button id="open-btn" type="button" hidden>Open script</button>
+      <button id="update-btn" type="button" hidden>Update now</button>
+      <button id="continue-btn" class="primary" type="button" hidden
+              title="Load this URL in the browser, without the install prompt">Continue to page</button>
+      <button id="cancel-btn" type="button">Cancel</button>
+      <button id="view-source-btn" class="spacer" type="button" title="Open the unprocessed file in a new tab">View raw source</button>
+    </div>
+
+    <h2 id="code-heading" class="code-heading" hidden>Source</h2>
+    <pre id="code-box" class="code-box line-numbers" tabindex="0" hidden><code id="code" class="language-javascript"></code></pre>
+
+    <script src="vendor/prism/prism.js"></script>
+    <script src="vendor/prism/prism-line-numbers.js"></script>
+    <script src="install.js" type="module"></script>
+  </body>
+</html>

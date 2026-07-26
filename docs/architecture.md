@@ -41,8 +41,16 @@ details live in the topic-specific docs linked below.
   per-kind containers that hold individually added `.user.js` URLs /
   paths) and inspect per-script status. See [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
-  settings page: debug-logging toggle and GitHub auth token entry.
-  Reached via the Options link at the top of the sources page.
+  settings page: `.user.js` link-capture toggle, debug-logging toggle,
+  and GitHub auth token entry. Reached via the Options link at the top
+  of the sources page.
+- **Install capture** (`src/install-capture.ts`) — turns a web
+  navigation to a `.user.js` URL into the extension's install prompt
+  (`src/install.html` + `src/install.ts`), which fetches, describes,
+  and — on confirmation — `addSource`s the script. Its "View raw
+  source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
+  through `src/raw-view.ts`. See
+  [install-capture.md](install-capture.md).
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
   [storage.md](storage.md).
@@ -191,6 +199,9 @@ details live in the topic-specific docs linked below.
   GitHub-hosted markdown URL to the matching `chrome-extension://...`
   page, so web pages can link into the extension without knowing its
   ID.
+- [install-capture.md](install-capture.md) — capturing `.user.js` link
+  clicks into the install prompt, and the Chrome-version quirks that
+  make it necessary.
 
 ## Build pipeline
 

@@ -185,7 +185,7 @@ import { githubAuthHeaders } from './github-auth.js';
 // Leaf name (last path segment) of an http(s) URL — used as the
 // FoundScript.name for HTTP manifest entries so the sources page
 // shows "foo.user.js" rather than the whole URL.
-function urlBaseName(source: string): string {
+export function urlBaseName(source: string): string {
   const path = urlPathname(source);
   const slash = path.lastIndexOf('/');
   const last = slash < 0 ? path : path.slice(slash + 1);

@@ -1,5 +1,11 @@
 # GreasyFork: Install in SourceMonkey
 
+> **Note:** SourceMonkey now captures `.user.js` link clicks directly
+> (see [docs/install-capture.md](../../docs/install-capture.md)), so
+> GreasyFork's own install button already lands on the install prompt.
+> This userscript remains useful for starting from the script's listing
+> page — the button is on the page, not on the `.user.js` URL.
+
 ## Summary
 
 Adds an "Install in SourceMonkey" button next to GreasyFork's normal

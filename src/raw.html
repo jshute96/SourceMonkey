@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Replaced with the script's filename once the content loads;
+         this is what the tab shows until then (and if it fails). -->
+    <title>SourceMonkey — Raw source</title>
+    <style>
+      body { margin: 0; color: #222; background: #fff; }
+      /* Deliberately unstyled beyond monospace + preserved whitespace:
+         this view exists to show the file exactly as fetched. */
+      pre {
+        margin: 0;
+        padding: 1em;
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre;
+        tab-size: 4;
+      }
+      pre.notice { color: #666; font-style: italic; }
+    </style>
+  </head>
+  <body>
+    <pre id="raw"></pre>
+    <script src="raw.js" type="module"></script>
+  </body>
+</html>
