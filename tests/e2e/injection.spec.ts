@@ -204,23 +204,26 @@ test.describe('injection', () => {
     fixtureServer,
     sm,
   }) => {
-    // Only document-start defers to DCL (the body element may not
-    // exist yet when start injects). document-end and document-idle
-    // append synchronously on inject, so `#log` order reflects real
-    // injection order rather than the order DCL listeners happened
-    // to fire. tag is one of start/end/idle — safe to interpolate
-    // raw into a JS string body.
+    // Each script records the readyState it observed *at injection*,
+    // which is the property @run-at actually controls. document-start
+    // has to defer its DOM append to DCL (the `#log` element doesn't
+    // exist yet when it injects), so it captures readyState first and
+    // appends later — reading readyState inside the deferred callback
+    // would report `interactive` and prove nothing.
+    // tag is one of start/end/idle — safe to interpolate raw into a JS
+    // string body.
     for (const runAt of ['document-start', 'document-end', 'document-idle'] as const) {
       const tag = runAt.split('-')[1]!;
       const body =
         tag === 'start'
           ? `
+            const injectedAt = document.readyState;
             function record() {
               const log = document.getElementById('log');
               if (!log) return;
               const li = document.createElement('li');
               li.dataset.script = '${tag}';
-              li.textContent = '${tag} readyState=' + document.readyState;
+              li.textContent = '${tag} readyState=' + injectedAt;
               log.appendChild(li);
             }
             if (document.readyState === 'loading') {
@@ -255,10 +258,14 @@ test.describe('injection', () => {
     await page.goto(`${fixtureServer.baseUrl}/run-at.html`);
     await expect(page.locator('#log li')).toHaveCount(3);
 
-    const order = await page.locator('#log li').evaluateAll((els) =>
-      els.map((el) => (el as HTMLElement).dataset.script),
-    );
-    expect(order).toEqual(['start', 'end', 'idle']);
+    // The readyState each script saw when it injected is the real
+    // proof of ordering, and unlike DOM-append order it's fully
+    // determined by the 250ms blocker.
+
+    // document-start runs before the parser has even finished the
+    // head, so it sees `loading`.
+    await expect(page.locator('#log li[data-script="start"]'))
+      .toContainText('readyState=loading');
 
     // document-end fires at DCL, when the slow blocker has resolved
     // and parsing has finished but `load` hasn't fired yet —
@@ -272,6 +279,21 @@ test.describe('injection', () => {
     // document-idle waits for load, so it observes complete.
     await expect(page.locator('#log li[data-script="idle"]'))
       .toContainText('readyState=complete');
+
+    const order = await page.locator('#log li').evaluateAll((els) =>
+      els.map((el) => (el as HTMLElement).dataset.script),
+    );
+    // `idle` waits for `load`, strictly after the other two, so its
+    // position is guaranteed. `start` and `end` both *append* on
+    // DOMContentLoaded — start's body defers there because `#log`
+    // doesn't exist at document_start, and end's wrapper gates on that
+    // same event — so which of the two DCL listeners runs first is
+    // whichever userscript entry Chrome happened to execute first at
+    // document_start. Chrome doesn't promise a stable order across
+    // separately-registered scripts, so asserting one here tests
+    // something we don't implement.
+    expect(order[2]).toBe('idle');
+    expect([...order.slice(0, 2)].sort()).toEqual(['end', 'start']);
 
     await page.close();
   });

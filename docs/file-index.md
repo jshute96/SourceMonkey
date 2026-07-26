@@ -119,7 +119,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
-| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at ordering test |
+| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, sources page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |

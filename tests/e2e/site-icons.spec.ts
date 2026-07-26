@@ -307,6 +307,14 @@ test.describe('site-icon slot', () => {
     // PNG into the parent directory so a successful traversal would
     // produce a visible img swap; the assertion is that none of them
     // do — the slot stays on its globe placeholder.
+    // Pin the origin-discovery path. This test asserts that NO <img>
+    // appears, and that must not depend on whether the test machine can
+    // reach example.com — which serves `<link rel="icon" href="data:,">`
+    // and would otherwise decide the outcome. Both legs that leave the
+    // machine are cut: the @match origin and the Google S2 fallback.
+    await extensionContext.route('https://example.com/**', (route) => route.abort());
+    await extensionContext.route('https://www.google.com/**', (route) => route.abort());
+
     const parent = fs.mkdtempSync(path.join(scriptsDir.path, '..', 'sm-parent-'));
     try {
       fs.writeFileSync(path.join(parent, 'secret.png'), PNG_BYTES);
@@ -341,9 +349,9 @@ test.describe('site-icon slot', () => {
         const slot = slots.nth(i);
         await expect(slot.locator('svg.site-icon-globe')).toBeVisible();
         // No img element should ever appear in the slot for these
-        // rejected refs. (Origin discovery is the other code path that
-        // could paint an img, but example.com isn't reachable in CI so
-        // that fetch fails into a null cache entry and never paints.)
+        // rejected refs. Origin discovery is the other code path that
+        // could paint one, and the routes above make it fail into a
+        // null cache entry rather than leaving it up to the network.
         await expect(slot.locator('img')).toHaveCount(0);
       }
       await page.close();

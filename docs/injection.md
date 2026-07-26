@@ -133,6 +133,14 @@ Why not just pass `runAt` through to `chrome.userScripts.register`:
   batching: `DOMContentLoaded` listeners fire when the parser hits
   DCL, not when Chrome's injection scheduler gets around to it.
 
+**Not guaranteed: relative order of two scripts that resolve on the
+same event.** Every script registers at `document_start`, so two
+scripts whose gates both settle at `DOMContentLoaded` run in whatever
+order Chrome executed their entries — it doesn't promise a stable
+order across separately-registered userscripts. `@run-at` places a
+script in a lifecycle *window*; it isn't a sequencing primitive
+between scripts.
+
 The gating is implemented in `waitForRunAt` inside
 `src/userscript-prelude.js`. The declared `@run-at` is delivered
 via the per-script config blob (`buildConfigBlob` in

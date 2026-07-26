@@ -29,6 +29,13 @@
   host-absolute `/` paths are all rejected uniformly.
 - `data:` URLs are length-capped to the same ~170 KB ceiling we apply
   to inline `<link rel="icon">` hrefs.
+- An *empty* `data:` URL (`data:,`, or a `;base64,` with no payload) is
+  treated as "no icon", not as an icon. It's the standard "this site
+  has no favicon, stop asking" marker — example.com's `<link rel=icon>`
+  is literally `data:,` — and painting it puts a blank broken `<img>`
+  where the globe placeholder belongs. One helper (`usableDataUrl`)
+  applies the cap and the emptiness check to both inline entry points:
+  discovered `<link href="data:…">` and a script's own `@icon data:…`.
 - Fetched URLs (http(s) or file://) go through the same bounded-fetch
   + storage cache the origin-discovery path uses, keyed by the
   resolved URL itself so multiple scripts pointing at the same icon

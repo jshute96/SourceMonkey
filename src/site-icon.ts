@@ -59,6 +59,20 @@ const MAX_HTML_BYTES = 1024 * 1024;
 // a few dozen chars; round up and add slack rather than guess.
 const MAX_INLINE_DATA_URL_LEN = Math.ceil((MAX_ICON_BYTES * 4) / 3) + 64;
 
+// A `data:` URL is usable as an icon only when it's within the inline
+// cap AND actually carries a payload. `data:,` (empty) is the standard
+// "this site has no favicon, stop asking" marker — example.com serves
+// exactly that — and painting it yields a blank broken `<img>` where
+// the globe placeholder belongs. Shared by both entry points for an
+// inline icon: the `<link href="data:...">` discovery path and a
+// script's own `@icon data:...`.
+function usableDataUrl(url: string): string | null {
+  if (url.length > MAX_INLINE_DATA_URL_LEN) return null;
+  const comma = url.indexOf(',');
+  if (comma < 0 || !url.slice(comma + 1).trim()) return null;
+  return url;
+}
+
 // ---------- Header-icon extraction ----------
 
 // Tag priority for a script-declared icon. `@icon` is the only form
@@ -203,9 +217,7 @@ async function tryDiscoverIconViaHtml(pageUrl: string): Promise<string | null> {
   } catch {
     return null;
   }
-  if (absUrl.startsWith('data:')) {
-    return absUrl.length <= MAX_INLINE_DATA_URL_LEN ? absUrl : null;
-  }
+  if (absUrl.startsWith('data:')) return usableDataUrl(absUrl);
   return await fetchIconAt(absUrl);
 }
 
@@ -415,9 +427,7 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
 // cache the origin-discovery path uses, keyed by the URL itself so
 // multiple scripts sharing a URL share one fetch.
 export async function ensureIconForUrl(url: string): Promise<string | null> {
-  if (url.startsWith('data:')) {
-    return url.length <= MAX_INLINE_DATA_URL_LEN ? url : null;
-  }
+  if (url.startsWith('data:')) return usableDataUrl(url);
   const key = urlIconKey(url);
   const pending = inflight.get(key);
   if (pending) return pending;

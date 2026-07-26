@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   dataUrlToBlob,
+  ensureIconForUrl,
   iconRefFromHeader,
   isCacheFresh,
   parseIconLinks,
@@ -226,6 +227,26 @@ test('pickBestIconCandidate: falls back to apple-touch-icon when nothing else vi
     { href: '/apple.png', rel: 'apple-touch-icon',  sizes: '180x180', type: 'image/png' },
   ];
   assert.equal(pickBestIconCandidate(cands).href, '/apple.png');
+});
+
+// ---------- inline data: icons ----------
+
+test('ensureIconForUrl: an empty data: URL is not an icon', async () => {
+  // `data:,` is the standard "this site has no favicon, stop asking"
+  // marker — example.com serves exactly that in its <link rel=icon>.
+  // Treating it as an icon paints a blank broken <img> over the globe
+  // placeholder. The data: branch returns before touching chrome.*, so
+  // this is safe to exercise as a unit test.
+  assert.equal(await ensureIconForUrl('data:,'), null);
+  assert.equal(await ensureIconForUrl('data:image/png;base64,'), null);
+  assert.equal(await ensureIconForUrl('data:image/png;base64,   '), null);
+  // Malformed (no comma at all) is likewise not an icon.
+  assert.equal(await ensureIconForUrl('data:image/png'), null);
+});
+
+test('ensureIconForUrl: a data: URL with a payload passes through', async () => {
+  const url = 'data:image/png;base64,SGk=';
+  assert.equal(await ensureIconForUrl(url), url);
 });
 
 // ---------- dataUrlToBlob ----------
