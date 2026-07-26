@@ -116,8 +116,11 @@ export interface FetchBytesOptions {
   maxBytes: number;
   timeoutMs?: number;
   // Optional content-type predicate; the fetch is rejected when this
-  // returns false. Callers like the icon fetcher use this to require
-  // `image/*`, while @require would require text/JavaScript.
+  // returns false. Used by the icon fetcher to require `image/*`.
+  // Note @require deliberately does *not* use this: its predicate runs
+  // after the shared FileFetchCache hit (see external-files.ts) so a
+  // @resource pointing at the same URL isn't rejected by the require's
+  // rule. An empty content-type skips the predicate entirely.
   acceptContentType?: (contentType: string) => boolean;
 }
 

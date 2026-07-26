@@ -91,25 +91,41 @@ Any of these is a dependency failure, named by the offending URL:
 
 - Resolution rejection (traversal, disallowed scheme, etc.).
 - Non-`.js` suffix.
-- Fetch failure (404, oversize, content-type rejected, timeout).
+- Fetch failure (404, oversize, timeout).
+- HTML `Content-Type` — see [below](#content-type-gate). Checked after
+  the fetch, not as part of it.
 - `data:` URLs (resolution accepts them; the require gate rejects).
 - **Non-UTF-8 response body** (strict decode fails). A `.js` URL that
   serves binary slips past the suffix gate and the content-type
   predicate but gets caught here, so the user sees "not valid UTF-8"
   rather than a confusing `SyntaxError` at eval.
 
-Accepted Content-Type for `@require`: anything with `javascript`
-or starting with `text/`, **except `text/html`**. `application/octet-
-stream` is *not* accepted — it was a "give us anything binary" hole
-when combined with the `.js` suffix-only URL gate. `text/html` is
-rejected because a `@require` is always JavaScript: an HTML response is
-the classic soft-failure signature (a login / error page served at 200
-in place of the library), and rejecting it turns that into a clean
-fetch failure rather than silently swapping the working dependency for
-markup.
+### Content-Type gate
 
-What the dependency failure does to the parent script depends on
-whether we already had a good copy:
+- **Markup is the only rejected family** — `text/html*` (which covers
+  `text/html-sandboxed`) and `application/xhtml*`. A `@require` is
+  always JavaScript, so an HTML 200 is the classic soft-failure
+  signature: a login / error page served in place of the library.
+  Rejecting it turns that into a clean fetch failure rather than
+  silently swapping the working dependency for markup.
+- **Everything else is accepted**, `application/octet-stream` included.
+  Binary is the UTF-8 decode's job, not the type's. An absent
+  Content-Type (the `file://` XHR case) is accepted too.
+- `application/json` is *not* rejected, though a JSON error envelope is
+  another soft-failure shape. A mislabelling host serving real JS is at
+  least as likely, and the per-require `try`/`catch` at eval contains
+  the damage either way.
+- Octet-stream used to be rejected as a "give us anything binary" hole
+  next to the suffix-only `.js` URL gate. It isn't exotic in practice:
+  GitHub serves *every* release asset as octet-stream regardless of
+  extension, and pinning a library to a release URL is normal. It broke
+  real scripts — Greasy Fork Enhance `@require`s `GM_config` from a
+  GitHub release, and installing it failed outright.
+- Tampermonkey does no content-type gating on `@require` at all.
+
+### Effect on the parent script
+
+Depends on whether we already had a good copy:
 
 - **No prior good copy** (first load, or the script was already
   `invalid`) → `status: 'invalid'` with the dependency message.
@@ -121,10 +137,10 @@ whether we already had a good copy:
   (REFRESH FAILED). A flaky dep host must not disable a working
   script. See [storage.md](storage.md#refresh-failures-keep-the-good-copy-running).
 
-`@resource` bodies are arbitrary bytes with no "is this valid" check,
-so a `@resource` soft failure (a 200 login page) can't be detected the
-way the `@require` Content-Type gate detects it — only a hard
-`@resource` fetch failure gets the keep-the-good-copy treatment.
+- `@resource` bodies are arbitrary bytes with no "is this valid"
+  check, so a `@resource` soft failure (a 200 login page) can't be
+  detected the way the `@require` Content-Type gate detects it. Only a
+  hard `@resource` fetch failure gets the keep-the-good-copy treatment.
 
 ## Reload fast-path interaction
 

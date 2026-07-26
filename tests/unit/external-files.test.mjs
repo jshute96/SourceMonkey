@@ -30,6 +30,13 @@ function fakeFetched(text, contentType = 'application/javascript') {
   return { bytes: bytesOf(text), contentType };
 }
 
+// 0xC3 0x28 is an invalid UTF-8 sequence (0xC3 opens a 2-byte pair but
+// 0x28 isn't a valid continuation). Shared by the strict-decode tests
+// so they stay aligned when the fixture shape changes.
+function fakeFetchedBinary(contentType = 'application/javascript') {
+  return { bytes: new Uint8Array([0xC3, 0x28]).buffer, contentType };
+}
+
 function fakeFailure(errorMessage = 'fetch failed') {
   return { failed: true, errorMessage };
 }
@@ -296,17 +303,15 @@ test('attachFiles: @require case-mixed .JS suffix accepted', async () => {
 });
 
 test('attachFiles: @require rejects non-UTF-8 binary response', async () => {
-  // Bytes 0xC3 0x28 is an invalid UTF-8 sequence (0xC3 starts a 2-byte
-  // pair but 0x28 isn't a valid continuation). Strict decode must fail.
+  // Strict decode must fail even when the server claimed a JS type.
   const url = 'https://cdn.example.com/binary.js';
-  const bad = new Uint8Array([0xC3, 0x28]).buffer;
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
     header: header(['require', url]),
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
-    fetchCache: new Map([[url, Promise.resolve({ bytes: bad, contentType: 'text/javascript' })]]),
+    fetchCache: new Map([[url, Promise.resolve(fakeFetchedBinary('text/javascript'))]]),
     now: 2000,
   });
   assert.match(r.errorMessage, /not valid UTF-8/);
@@ -462,12 +467,12 @@ test('attachFiles: @require and @resource at the same URL share the fetch cache'
   assert.equal(r.resources[0].name, 'helper');
 });
 
-test('attachFiles: @require rejects a non-text Content-Type from shared bytes', async () => {
-  // Cache returns octet-stream bytes (e.g. a resource that an earlier
-  // resource caller accepted). @require still rejects via its own
-  // typed-side Content-Type check — the shared cache isn't biased by
-  // the require's stricter rule, but the require still applies it.
-  const url = 'https://example.com/shared.bin.js';
+test('attachFiles: @require accepts application/octet-stream', async () => {
+  // The generic type is what GitHub serves for *every* release asset,
+  // and release URLs are a normal place to pin a library — rejecting it
+  // broke real scripts. Binary is caught by the strict UTF-8 decode
+  // (see the non-UTF-8 test above), not by the Content-Type gate.
+  const url = 'https://github.com/o/r/releases/download/v1/lib.min.js';
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
     header: header(['require', url]),
@@ -477,7 +482,49 @@ test('attachFiles: @require rejects a non-text Content-Type from shared bytes', 
     fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', 'application/octet-stream'))]]),
     now: 2000,
   });
-  assert.match(r.errorMessage, /not JavaScript or text/);
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(r.requires[0].source, '// js source');
+});
+
+test('attachFiles: @require rejects octet-stream that is actually binary', async () => {
+  // The pair to the test above: the generic Content-Type buys no
+  // trust, it just stops being the thing that decides. Same invalid
+  // UTF-8 sequence, now with nothing in the type to object to.
+  const url = 'https://github.com/o/r/releases/download/v1/lib.min.js';
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['require', url]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(fakeFetchedBinary('application/octet-stream'))]]),
+    now: 2000,
+  });
+  assert.match(r.errorMessage, /not valid UTF-8/);
+});
+
+test('attachFiles: @require accepts text/plain and rejects xhtml', async () => {
+  // Pins the denylist shape against an accidental re-tightening: the
+  // gate rejects the markup family and nothing else.
+  const check = async (contentType) => {
+    const url = 'https://cdn.example.com/lib.js';
+    const r = await attachFiles({
+      scriptFileUrl: SCRIPT_URL,
+      header: header(['require', url]),
+      priorRequires: new Map(),
+      priorResources: new Map(),
+      recheck: 'all',
+      fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', contentType))]]),
+      now: 2000,
+    });
+    return r.errorMessage;
+  };
+  assert.equal(await check('text/plain; charset=utf-8'), undefined);
+  assert.equal(await check('application/json'), undefined);
+  // XHTML is markup under a non-`text/html` spelling — same soft-failure
+  // signature, so the gate has a second clause for it.
+  assert.match(await check('application/xhtml+xml'), /is an HTML page/);
+  assert.match(await check('text/html-sandboxed'), /is an HTML page/);
 });
 
 test('attachFiles: @require rejects a text/html Content-Type (soft-failure login page)', async () => {
@@ -486,8 +533,9 @@ test('attachFiles: @require rejects a text/html Content-Type (soft-failure login
   // of the real library. Rejecting it turns the soft failure into a
   // clean fetch error, which the refresh pipeline then treats as a
   // refresh failure (keep the prior good copy) rather than swapping the
-  // working dependency for a page of markup. `text/plain`-served JS is
-  // still accepted (only html is special-cased out).
+  // working dependency for a page of markup. It's the only type the
+  // gate rejects — everything else, `text/plain` and generic binary
+  // types included, is left to the UTF-8 decode.
   const url = 'https://example.com/lib.js';
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
@@ -500,16 +548,16 @@ test('attachFiles: @require rejects a text/html Content-Type (soft-failure login
     )]]),
     now: 2000,
   });
-  assert.match(r.errorMessage, /not JavaScript or text/);
+  assert.match(r.errorMessage, /is an HTML page/);
 });
 
 test('attachFiles: @resource at same URL succeeds even when @require would reject the Content-Type', async () => {
   // The bug this prevents: previously the shared fetchCache stored
   // the result of the first caller's predicate. A @require rejecting
-  // octet-stream would write a FileFailure that the resource caller
-  // would see. Now the predicate moved off the shared cache, so the
-  // resource succeeds.
-  const url = 'https://example.com/shared.bin.js';
+  // the type would write a FileFailure that the resource caller would
+  // see. Now the predicate moved off the shared cache, so the resource
+  // succeeds — an HTML @resource is a legitimate GM_getResourceText.
+  const url = 'https://example.com/shared.js';
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
     header: header(
@@ -519,11 +567,28 @@ test('attachFiles: @resource at same URL succeeds even when @require would rejec
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
-    fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', 'application/octet-stream'))]]),
+    fetchCache: new Map([[url, Promise.resolve(fakeFetched('<!doctype html>', 'text/html'))]]),
     now: 2000,
   });
   // @require still errors out the whole script (preserve-on-failure),
   // but the failure mentions the require, not the resource.
   assert.match(r.errorMessage, /@require/);
   assert.doesNotMatch(r.errorMessage, /@resource/);
+
+  // The assertions above can't prove the resource itself survived: the
+  // require loop runs first and returns on its first error, so
+  // loadResource was never reached. Re-run the same seeded cache with
+  // only the @resource to show the entry loads — an HTML @resource is
+  // a legitimate GM_getResourceText payload.
+  const r2 = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['resource', `blob ${url}`]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(fakeFetched('<!doctype html>', 'text/html'))]]),
+    now: 2000,
+  });
+  assert.equal(r2.errorMessage, undefined);
+  assert.equal(r2.resources[0].contentType, 'text/html');
 });

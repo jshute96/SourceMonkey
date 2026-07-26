@@ -315,12 +315,16 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // the shared fetch) so a @require + @resource pair pointing at the
   // same URL share one fetch without the require's stricter rule
   // poisoning the resource's cache entry.
-  if (got.contentType && !requireAcceptContentType(got.contentType)) {
-    return { errorMessage: `@require ${args.ref}: response Content-Type "${got.contentType}" is not JavaScript or text` };
+  // No empty-string guard needed: an absent Content-Type (the file://
+  // XHR case) is accepted by the predicate like any other non-markup
+  // type.
+  if (!requireAcceptContentType(got.contentType)) {
+    return { errorMessage: `@require ${args.ref}: response is an HTML page (Content-Type "${got.contentType}"), not JavaScript` };
   }
-  // Strict UTF-8 decode: catches binary smuggled past the `.js` URL
-  // gate (e.g. a misconfigured CDN serving a PNG with the right
-  // content-type). Previously we used fatal:false and the bytes were
+  // Strict UTF-8 decode: catches binary regardless of what the server
+  // claimed the type was (a misconfigured CDN serving a PNG, or the
+  // generic octet-stream the content-type gate deliberately lets
+  // through). Previously we used fatal:false and the bytes were
   // mojibake'd into JS source, where they'd produce a confusing
   // SyntaxError at eval. This is the gate that closes that hole.
   let source: string;
@@ -346,23 +350,38 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   };
 }
 
-// Tightened from the prior accept list: dropped
-// `application/octet-stream`. Combined with the `.js` URL gate it was
-// a "give us anything binary" hole — and now the strict-UTF-8 decode
-// would reject those anyway, but failing earlier with a clearer
-// error is friendlier. Servers shipping JS as octet-stream are
-// vanishingly rare and the user can route around them via a proxy.
+// A denylist of markup types, not an allowlist. HTML is the only
+// family worth rejecting: a `@require` is always JavaScript, never
+// markup, so an HTML response is the classic soft-failure signature —
+// a login / error page served at 200 in place of the real library.
+// Rejecting it turns that into a clean fetch failure, which the
+// refresh pipeline treats as a refresh failure (keep the prior good
+// copy running) rather than silently swapping a working dependency for
+// a page of markup. `text/html-sandboxed` is caught by the prefix and
+// deserves to be; XHTML is spelled `application/xhtml+xml`, so it
+// needs its own clause to match the same intent.
 //
-// We also reject `text/html` explicitly: a `@require` is always
-// JavaScript, never HTML, so an HTML response is the classic
-// soft-failure signature — a login / error page served at 200 in
-// place of the real library. Rejecting it turns that into a clean
-// fetch failure, which the refresh pipeline treats as a refresh
-// failure (keep the prior good copy running) rather than silently
-// swapping a working dependency for a page of markup.
-const requireAcceptContentType = (ct: string): boolean =>
-  !ct.startsWith('text/html') &&
-  (ct.includes('javascript') || ct.startsWith('text/'));
+// `application/json` is deliberately *not* rejected: a JSON error
+// envelope at 200 is a real soft-failure shape, but so is a legitimate
+// JS module served by a mislabelling host, and the eval-side try/catch
+// already contains the damage.
+//
+// Everything else is accepted, including `application/octet-stream`.
+// That used to be rejected as a "give us anything binary" hole next to
+// the suffix-only `.js` URL gate, but the strict-UTF-8 decode below is
+// what actually closes that hole — and the generic type is common in
+// practice, not exotic: GitHub serves *every* release asset as
+// octet-stream regardless of extension, and release URLs are a normal
+// place for a userscript to pin a library. Tampermonkey does no
+// content-type gating on `@require` at all.
+//
+// Trims defensively so the rule holds for a caller that hands over a
+// raw header rather than the lowercased/trimmed one every producer in
+// file-loader.ts currently passes.
+const requireAcceptContentType = (ct: string): boolean => {
+  const type = ct.trim();
+  return !type.startsWith('text/html') && !type.startsWith('application/xhtml');
+};
 
 interface LoadResourceArgs {
   decl: ResourceDecl;

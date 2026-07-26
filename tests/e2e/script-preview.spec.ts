@@ -214,7 +214,7 @@ test.describe('script preview', () => {
         `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
       );
       await page.locator('#tabs button', { hasText: 'login.js' }).click();
-      await expect(page.locator('#content')).toContainText('is not JavaScript or text');
+      await expect(page.locator('#content')).toContainText('is an HTML page');
       await page.close();
     } finally {
       await server.stop();
