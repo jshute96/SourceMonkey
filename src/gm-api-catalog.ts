@@ -60,10 +60,10 @@ export interface GmApiSpec {
   // `sync` resolves in USER_SCRIPT world without an SW round-trip
   // (storage reads, addStyle, etc.). `async` always goes to the SW.
   //
-  // Note: `kind` is informational for the two entries that aren't
+  // Note: `kind` is informational for the entries that aren't
   // callables — `unsafeWindow` (a passthrough binding) and
   // `window.onurlchange` (an event surface installed on the world's
-  // `window`). The emitter dispatches on `subsystem` for both.
+  // `window`). The emitter dispatches on `subsystem` for those.
   kind: ApiKind;
   // Used by the GM4 `GM.` alias: when truthy, the dot form returns a
   // Promise even if the legacy `GM_x` form returns synchronously. (GM4

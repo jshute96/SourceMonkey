@@ -60,9 +60,15 @@ export interface UrlChangeDetails {
 //
 // Chrome reports events for pre-render / devtools targets with a
 // negative `tabId`, which `chrome.tabs.sendMessage` can't address. A
-// URL-less event has nothing worth reporting. Everything else — every
-// scheme, every frame depth — is forwarded; SourceMonkey injects into
-// `file://` pages too, and iframes get their own runtime instance.
+// URL-less event has nothing worth reporting. Everything else is
+// forwarded, including `file://` (SourceMonkey injects there too).
+//
+// Sub-frames pass the filter, but the `frameId` targeting below is
+// what actually matters for them: a sub-frame's navigation must never
+// be delivered to the top frame's listeners as if the document had
+// moved. No userscript runs in a sub-frame today anyway — we never set
+// `allFrames` (see docs/injection.md "No frame control") — so the
+// sub-frame send simply finds no receiver.
 export function shouldNotifyUrlChange(details: UrlChangeDetails): boolean {
   if (typeof details.tabId !== 'number' || details.tabId < 0) return false;
   if (typeof details.frameId !== 'number' || details.frameId < 0) return false;

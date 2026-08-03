@@ -36,7 +36,7 @@ test('shouldNotifyUrlChange accepts a normal main-frame history update', () => {
   );
 });
 
-test('shouldNotifyUrlChange accepts sub-frames — an iframe SPA counts too', () => {
+test('shouldNotifyUrlChange accepts sub-frames (targeting keeps them off the top frame)', () => {
   assert.equal(
     shouldNotifyUrlChange({ tabId: 7, frameId: 3, url: 'https://example.com/a' }),
     true,

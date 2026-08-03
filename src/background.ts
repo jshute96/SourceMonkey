@@ -936,6 +936,14 @@ async function dispatchActionMenuCommand(
 // We only care about the main frame (frameId === 0). Sub-frame events
 // would add noise we don't currently render.
 function installNavigationListeners(): void {
+  // `@grant window.onurlchange` feeds off the same-document navigation
+  // events too, but needs `onReferenceFragmentUpdated` as well and
+  // targets the exact frame that changed rather than filtering to the
+  // main one — so it owns its own subscriptions rather than sharing
+  // the tab-status listener below. Called before the no-webNavigation
+  // early return so it reports its own unavailability. See
+  // src/gm-url-change.ts.
+  installUrlChangeWatch();
   const wn = chrome.webNavigation;
   if (!wn) {
     console.info('[SourceMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
@@ -966,11 +974,6 @@ function installNavigationListeners(): void {
     if (d.frameId !== 0) return;
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
-  // `@grant window.onurlchange` feeds off the same-document navigation
-  // events; it registers its own (all-frame) listeners because a
-  // userscript inside an iframe wants its own frame's navigations,
-  // which the main-frame filter above drops. See src/gm-url-change.ts.
-  installUrlChangeWatch();
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {

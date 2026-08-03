@@ -292,7 +292,9 @@ fetch via the SW). Highlights:
   `replaceState` don't; an ungranted script sees `undefined` and no
   events; the assignment form and `removeEventListener` work.
   History is driven from `page.evaluate` (MAIN world) so the calls
-  really are the page's, not the isolated world's.
+  really are the page's, not the isolated world's. Also pins the
+  handler-slot / `addEventListener` non-aliasing contract and the
+  known per-document (rather than per-script) grant leak.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

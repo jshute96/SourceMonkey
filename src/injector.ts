@@ -1103,12 +1103,15 @@ async function runSync(): Promise<void> {
     // a MAIN-world wrapper's postMessage queues to the message task
     // queue, so the bridge's listener — installed during its IIFE
     // at document_start — is in place by the time delivery
-    // happens. For GM_*: the per-script bindings emitted by
-    // gm-bindings.ts only dereference `window.__SM_GM__` from inside
-    // their function bodies, which means the lookup is deferred to
-    // the user's first GM_* call; that fires no earlier than the
-    // prelude's awaitDecision + run-at gate resolves, by which time
-    // the runtime spec has had a microtask or more to install.)
+    // happens. For GM_*: everything gm-bindings.ts emits — both the
+    // `const GM_x` declarations and the eager calls (`storage.init`,
+    // `urlchange.enable`) — is spliced INSIDE the main-body wrap
+    // function, which the prelude only invokes after its
+    // awaitDecision + run-at gates resolve. By then the runtime spec
+    // has had a microtask or more to install. The declarations are
+    // additionally lazy — they touch `window.__SM_GM__` only from
+    // inside their own bodies — but that's belt-and-braces, not what
+    // the ordering argument rests on.)
     const specs: RegistrationSpec[] = [];
     if (gmRuntime) specs.push(gmRuntime);
     if (bridge) specs.push(bridge);

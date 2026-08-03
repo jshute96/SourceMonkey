@@ -21,8 +21,9 @@
         &mdash; the handler receives an object whose <code>url</code>
         is the document&rsquo;s new URL.</li>
       <li><code>window.onurlchange = fn</code> &mdash; the
-        handler-slot form. SourceMonkey wires it up; it fires after any
-        <code>addEventListener</code> handlers.</li>
+        handler-slot form. It takes its place in registration order
+        alongside the <code>addEventListener</code> handlers, so
+        assigning it first means it fires first.</li>
     </ul>
 
     <h2>Details</h2>

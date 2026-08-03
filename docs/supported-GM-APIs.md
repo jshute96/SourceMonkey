@@ -91,9 +91,10 @@ What a script gets:
   receives a bare `{ url }` object — a null-prototype object whose
   only own property is the new absolute URL. Not a DOM `Event`; this
   matches TM exactly.
-- `window.onurlchange = fn` as a handler slot. It registers into the
+- `window.onurlchange = fn` as a handler slot. It takes a slot in the
   same list as `addEventListener`, so dispatch follows registration
-  order across both forms, and `= null` unregisters.
+  order across both forms; `= null` clears it without disturbing
+  anything registered via `addEventListener`.
 - `removeEventListener('urlchange', handler)` unregisters.
 
 What fires it — matched against Tampermonkey 5.5.0:
@@ -107,7 +108,7 @@ What fires it — matched against Tampermonkey 5.5.0:
 | `history.replaceState` to the *same* URL | ✅ (no de-duplication — TM doesn't suppress these either) |
 | initial document load | ❌ (handle the starting URL directly, then listen — matches TM's own examples) |
 | full cross-document navigation / reload | ❌ (a new document runs the script again) |
-| a *sub-frame's* navigation, seen from the top frame | ❌ (events are frame-scoped, as in TM) |
+| a *sub-frame's* navigation, seen from the top frame | ❌ (events are frame-scoped, as in TM — and SourceMonkey doesn't run scripts in sub-frames at all today) |
 
 Differences from TM, detailed in
 [GM-APIs.md](GM-APIs.md#windowonurlchange):

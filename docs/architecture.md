@@ -184,6 +184,11 @@ details live in the topic-specific docs linked below.
   notification id back to the originating tab + request id so
   `onClicked` / `onClosed` events route to the userscript's
   `onclick` / `ondone` callbacks.
+- **window.onurlchange driver** (`src/gm-url-change.ts`) — forwards
+  `chrome.webNavigation`'s same-document navigation events to the
+  frame that changed, which is the only way an isolated-world script
+  can observe the page's own `pushState`. See the
+  `window.onurlchange` section of [GM-APIs.md](GM-APIs.md).
 
 ## Cross-cutting docs
 

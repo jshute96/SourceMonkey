@@ -229,6 +229,141 @@ test.describe('window.onurlchange', () => {
     await page.close();
   });
 
+  test('the slot and addEventListener do not alias each other', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The slot and `addEventListener` share one registration list, so
+    // the naive implementation (put the user's function in the list
+    // directly) lets one form silently unregister the other's entry
+    // for the same function. Three ways that shows up, all asserted
+    // here after a single navigation.
+    scriptsDir.write({
+      relativePath: 'alias.user.js',
+      meta: {
+        name: 'URL Watcher (aliasing)',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['window.onurlchange'],
+      },
+      body: `
+        let hits = 0;
+        function shared() { hits += 1; document.body.dataset.hits = String(hits); }
+
+        // (a) The same function registered BOTH ways, then the slot
+        // cleared. The addEventListener registration must survive.
+        window.addEventListener('urlchange', shared);
+        window.onurlchange = shared;
+        window.onurlchange = null;
+
+        // (b) removeEventListener naming a function that was only ever
+        // installed via the slot must not stop it, nor desync the
+        // getter from what actually fires.
+        let slotHits = 0;
+        function slotOnly() { slotHits += 1; document.body.dataset.slotHits = String(slotHits); }
+        window.onurlchange = slotOnly;
+        window.removeEventListener('urlchange', slotOnly);
+        document.body.dataset.getter = (window.onurlchange === slotOnly) ? 'same' : 'lost';
+
+        // (c) A non-function assignment round-trips through the getter
+        // (TM stores it too) and registers nothing. Restore the real
+        // handler afterwards so (b)'s assertion still means something.
+        window.onurlchange = 42;
+        document.body.dataset.stored = String(window.onurlchange);
+        window.onurlchange = slotOnly;
+
+        document.body.dataset.hits = '0';
+        document.body.dataset.slotHits = '0';
+        document.body.dataset.ready = 'yes';
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-ready', 'yes');
+    // (b) the getter still names the handler that will actually run.
+    await expect(page.locator('body')).toHaveAttribute('data-getter', 'same');
+    // (c) the non-function assignment round-tripped.
+    await expect(page.locator('body')).toHaveAttribute('data-stored', '42');
+
+    await page.evaluate(() => history.pushState({}, '', '/target.html?alias=1'));
+
+    // (a) the addEventListener registration survived the slot churn,
+    // and fires exactly once (not twice — it's one entry, not two).
+    await expect(page.locator('body')).toHaveAttribute('data-hits', '1');
+    // (b) the slot's handler fires despite the stray removeEventListener.
+    await expect(page.locator('body')).toHaveAttribute('data-slot-hits', '1');
+
+    await page.evaluate(() => history.pushState({}, '', '/target.html?alias=2'));
+    await expect(page.locator('body')).toHaveAttribute('data-hits', '2');
+    await expect(page.locator('body')).toHaveAttribute('data-slot-hits', '2');
+
+    await page.close();
+  });
+
+  test('the grant leaks to sibling scripts in the same document (known deviation)', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Pins the documented per-document (not per-script) enforcement
+    // gap: USER_SCRIPT world is one realm per document, so once ANY
+    // script grants the API the surface exists for every SourceMonkey
+    // script on the page. TM sandboxes each script's window and gates
+    // exactly. If per-script worlds ever land, this test should flip —
+    // it exists so that change can't happen silently.
+    scriptsDir.write({
+      relativePath: 'granting.user.js',
+      meta: {
+        name: 'Granting',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['window.onurlchange'],
+      },
+      body: `document.body.dataset.granting = 'ran';`,
+    });
+    scriptsDir.write({
+      relativePath: 'sibling.user.js',
+      meta: {
+        name: 'Sibling without the grant',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-idle',
+        grant: ['GM_addStyle'],
+      },
+      body: `
+        // Probe on demand rather than at script start. Injection order
+        // BETWEEN two chrome.userScripts registrations isn't
+        // guaranteed, so "did the granting script install the surface
+        // before this line ran" is a coin flip; the test drives the
+        // probe once it has seen both scripts run.
+        window.addEventListener('sm-probe-leak', function () {
+          document.body.dataset.siblingSupported = String(window.onurlchange === null);
+          window.addEventListener('urlchange', function () {
+            document.body.dataset.siblingFired = 'yes';
+          });
+        });
+        document.body.dataset.sibling = 'ran';
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-granting', 'ran');
+    await expect(page.locator('body')).toHaveAttribute('data-sibling', 'ran');
+
+    // Both have run, so the surface is installed if it's going to be.
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('sm-probe-leak')));
+    // The ungranted sibling sees it, because the granting script
+    // installed it on the shared isolated-world window.
+    await expect(page.locator('body')).toHaveAttribute('data-sibling-supported', 'true');
+
+    await page.evaluate(() => history.pushState({}, '', '/target.html?leak=1'));
+    await expect(page.locator('body')).toHaveAttribute('data-sibling-fired', 'yes');
+
+    await page.close();
+  });
+
   test('removeEventListener stops delivery, and other event types still work', async ({
     extensionContext, fixtureServer, sm,
   }) => {

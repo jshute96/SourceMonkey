@@ -267,6 +267,12 @@ Adding any of these is a catalog entry + a body — nothing structural.
   each script's `window` and gets exact per-script gating. Same
   shared-realm root cause as the storage-spoofing entry below; a
   real fix needs per-script worlds.
+- **`window.onurlchange` reload-fast-path coverage.** The stated
+  reason the `urlchange.enable` call lives in the emitter's `js`
+  (rather than `prelude`) is that a hot-swapped body still needs the
+  surface. Only the emitted string's position is asserted today; an
+  e2e driving the run-new swap with this grant would make the
+  rationale load-bearing.
 - **`window.onurlchange` in MAIN world.** `@inject-into page` +
   `@grant window.onurlchange` gets nothing, since MAIN-world scripts
   get no bindings at all. Folded into the general "GM_* in MAIN

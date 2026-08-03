@@ -142,15 +142,22 @@ Scope notes:
   the local isolated `window` — no cross-world reach into page
   globals. A future phase can bridge to MAIN via postMessage if
   needed.
-- **Runtime ordering safety has two layers.** The lazy `const GM_X =
-  ...` declarations read `window.__SM_GM__` only inside their own
-  bodies — first GM call wins, by which point the runtime is
-  installed. The one eager call (`storage.init`) does NOT live with
-  the consts; it's emitted into the main-body wrap function and
-  runs only after the prelude's `awaitDecision` + `waitForRunAt`
-  gates resolve (both `sm:check-pending` and the declared `@run-at`
-  event). So `chrome.userScripts`'s document_start registration
-  order doesn't have to be a guarantee.
+- **Runtime ordering safety rests on the wrap function, not on
+  laziness.** Everything the emitter produces — the `const GM_X = ...`
+  declarations, the eager `urlchange.enable` at the end of `js`, and
+  the eager `prelude` calls (`storage.init`, `resource.init`) — is
+  spliced into the main-body wrap function, which the prelude invokes
+  only after its `awaitDecision` + `waitForRunAt` gates resolve (both
+  `sm:check-pending` and the declared `@run-at` event). So
+  `chrome.userScripts`'s document_start registration order doesn't
+  have to be a guarantee.
+  - The declarations are additionally lazy (they read
+    `window.__SM_GM__` only from inside their own bodies), which is
+    belt-and-braces rather than the load-bearing argument.
+  - The two eager forms differ deliberately on failure: a missing
+    runtime makes `urlchange.enable` a no-op (the script runs without
+    the feature), while a missing storage snapshot aborts the body
+    (running with stale values would corrupt the user's data).
 
 - **Prelude throws bypass the body's try/catch.** The GM prelude
   is spliced into the same main-body wrap function as the body,
@@ -710,6 +717,12 @@ Both are forwarded to the exact `(tabId, frameId)` that changed as an
 `sm:url-change` message carrying the reported URL, which the page-side
 runtime replays verbatim to its listeners.
 
+The `frameId` targeting is load-bearing even though no userscript runs
+in a sub-frame today (we never set `allFrames` — see
+[injection.md](injection.md)): without it, an ad iframe's navigation
+would arrive at the top frame's listeners as if the document had
+moved.
+
 **These are the same two events Tampermonkey uses.** Verified in TM
 5.5.0's `background.js`, which logs "webNavigation
 onReferenceFragmentUpdated or onHistoryStateUpdated not supported,
@@ -763,8 +776,12 @@ world's `window`:
   so a sibling userscript's legitimate wrapper stays in the chain.
 
 TM lands in the same place from the other direction: it dispatches no
-real event either, so `unsafeWindow.addEventListener('urlchange', …)`
-and `document.addEventListener('urlchange', …)` are dead under TM too.
+real event either, so nothing outside its own sandbox `window` — not
+`unsafeWindow`, not `document` — can subscribe. Ours is a superset in
+one narrow way: `unsafeWindow` is a passthrough to the isolated
+`window`, which is the object we patch, so
+`unsafeWindow.addEventListener('urlchange', …)` does work here.
+`document.addEventListener('urlchange', …)` is dead in both.
 
 ### Payload and handler slot
 
@@ -773,11 +790,19 @@ and `document.addEventListener('urlchange', …)` are dead under TM too.
   `type`, no `oldURL`. (TM declined a request to add `oldURL` in
   Tampermonkey#2601.)
 - Handlers are invoked with no `this`, as TM does.
-- `window.onurlchange = fn` registers into the **same** list as
+- `window.onurlchange = fn` takes a slot in the **same** list as
   `addEventListener`, because TM's setter literally calls its sandbox
   `add`/`removeEventListener`. So dispatch order is true registration
-  order across both forms, `= null` unregisters, and re-assigning
-  swaps the handler.
+  order across both forms; `= null` makes the slot idle; re-assigning
+  swaps the handler without moving its position.
+- What the list actually holds for the slot is a fixed trampoline, not
+  the user's function. Registering the user's function directly would
+  make the two forms alias: with `addEventListener('urlchange', f)`
+  already live, `onurlchange = f; onurlchange = null` would revoke the
+  `addEventListener` registration the script never touched, and
+  `removeEventListener('urlchange', f)` would silence a slot handler
+  the getter still reported. Covered by
+  `tests/e2e/gm-url-change.spec.ts`.
 - Assigning a non-function stores the value (so the getter
   round-trips) but registers nothing, and logs a `console.info`. TM
   warns in the same situation.

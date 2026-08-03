@@ -1111,24 +1111,37 @@
         dispatched event on the shared window is visible to — and
         forgeable by — the page's own MAIN-world code, which would let
         a hostile page feed userscripts fabricated URLs. TM likewise
-        dispatches no real event: `unsafeWindow.addEventListener
-        ("urlchange", …)` never fires under TM either.
+        dispatches no real event, so `document.addEventListener
+        ("urlchange", …)` is dead in both.
 
-     3. The `window.onurlchange = fn` slot registers into the SAME
+     3. The `window.onurlchange = fn` slot takes a slot in the SAME
         list as addEventListener (TM's setter literally calls its
         sandbox add/removeEventListener), so dispatch order is true
         registration order across both forms.
 
      No de-duplication anywhere: every reported history update
      dispatches, matching TM. */
-  var urlChangeInstalled = false;
+  var urlChangeEnabled = false;   /* some script here granted the API */
+  var urlChangePatched = false;   /* the addEventListener patch is in */
   /* Registration-ordered listener list, shared by addEventListener and
      the onurlchange slot. */
   var urlChangeHandlers = [];
   /* The raw value last assigned to window.onurlchange, so the getter
      round-trips what was set (TM stores it unconditionally too). Only
-     a function ever reaches urlChangeHandlers. */
+     a function is ever CALLED. */
   var urlChangeOnProp = null;
+  /* The slot's entry in urlChangeHandlers. Registered once, on first
+     assignment, and never removed.
+     Why a trampoline instead of adding the user's function directly:
+     the two registration forms would otherwise alias each other. With
+     `addEventListener('urlchange', f)` already in the list,
+     `onurlchange = f; onurlchange = null` would splice out the
+     addEventListener registration the script never revoked; and
+     `removeEventListener('urlchange', f)` would stop a slot handler
+     while the getter kept returning it. The indirection also pins the
+     slot's dispatch position at first assignment, the way a DOM `onx`
+     attribute keeps its position across re-assignment. */
+  var urlChangeSlotTrampoline = null;
   var _origAddEventListener = null;
   var _origRemoveEventListener = null;
 
@@ -1177,37 +1190,47 @@
      rather than reading location.href, so a burst of history updates
      produces one event each with its own URL (TM's behavior). */
   function noteUrlChanged(url) {
-    if (!urlChangeInstalled) return;
+    if (!urlChangeEnabled) return;
     if (typeof url !== "string" || url === "") return;
     dispatchUrlChange(url);
   }
 
+  /* Exact string match only. This runs on EVERY addEventListener call
+     in the world once installed, so it must not coerce: `String(type)`
+     throws on a Symbol and would invoke a caller-supplied `toString`
+     an extra time. A `new String("urlchange")` object therefore falls
+     through to the native method, which registers it for a DOM type we
+     never dispatch — inert, and the caller was already off-contract. */
   function isUrlChangeType(type) {
-    return String(type) === "urlchange";
+    return type === "urlchange";
   }
 
-  /* Installed lazily, on the first granted script's enable() call.
-     Doing it unconditionally would break the feature test for
-     UNGRANTED scripts: `window.onurlchange` has to stay undefined on
-     documents where nothing asked for it. Idempotent — a second
-     script granting the API (or a re-registration inside the same
-     document) reuses the already-installed surface. */
-  function installUrlChange() {
-    if (urlChangeInstalled) return;
-    urlChangeInstalled = true;
-    /* The property starts as `null` — that IS the documented feature
-       test (`window.onurlchange === null`). Assigning unregisters the
-       previous handler and registers the new one, so `= null` clears
-       it; a non-function is stored but never called (TM warns instead
-       of throwing, and so do we). */
+  /* Define the `window.onurlchange` accessor. Starts as `null` — that
+     IS the documented feature test (`window.onurlchange === null`).
+     The setter records the raw value and makes sure the slot's
+     trampoline is in the handler list; `= null` leaves the trampoline
+     in place but idle, so clearing the slot never disturbs anyone
+     else's registration. A non-function is stored (the getter
+     round-trips it) but never called; TM warns in the same situation.
+
+     Re-checked rather than one-shot: `configurable: true` means a
+     sibling userscript can `delete window.onurlchange`, and the next
+     script to grant the API should restore it rather than leaving the
+     feature test lying for the rest of the document. */
+  function ensureUrlChangeProperty() {
+    if (_hasOwn.call(window, "onurlchange")) return;
     try {
       _ObjectDefineProperty(window, "onurlchange", {
         get: function () { return urlChangeOnProp; },
         set: function (v) {
-          if (typeof urlChangeOnProp === "function") removeUrlChangeHandler(urlChangeOnProp);
           urlChangeOnProp = (v === undefined) ? null : v;
           if (typeof v === "function") {
-            addUrlChangeHandler(v);
+            if (!urlChangeSlotTrampoline) {
+              urlChangeSlotTrampoline = function (info) {
+                if (typeof urlChangeOnProp === "function") urlChangeOnProp(info);
+              };
+            }
+            addUrlChangeHandler(urlChangeSlotTrampoline);
           } else if (v !== null && v !== undefined) {
             try { console.info("[SourceMonkey] window.onurlchange must be a function; ignoring", typeof v); } catch (_we) {}
           }
@@ -1216,18 +1239,24 @@
         enumerable: true,
       });
     } catch (_pe) {}
-    /* Intercept the synthetic "urlchange" type; everything else is
-       forwarded to the captured originals unchanged. `this` is
-       normalized because a userscript can detach the method
-       (`var add = window.addEventListener; add(...)`), and the real
-       EventTarget method throws on an undefined receiver.
+  }
 
-       Capture happens HERE rather than at runtime-init time on
-       purpose: a sibling userscript that legitimately wrapped
-       addEventListener before us stays in the chain, instead of being
-       silently bypassed. The other shim-cache entries capture early
-       because their job is to resist tampering; this one's job is to
-       be a well-behaved link in a chain. */
+  /* Intercept the synthetic "urlchange" type; everything else is
+     forwarded to the captured originals unchanged. `this` is
+     normalized because a userscript can detach the method
+     (`var add = window.addEventListener; add(...)`), and the real
+     EventTarget method throws on an undefined receiver.
+
+     Capture happens HERE rather than at runtime-init time on purpose:
+     a sibling userscript that legitimately wrapped addEventListener
+     before us stays in the chain, instead of being silently bypassed.
+     The other shim-cache entries capture early because their job is to
+     resist tampering; this one's job is to be a well-behaved link in a
+     chain. Applied at most once per document — re-running it would
+     capture our own patch as the "original" and recurse forever. */
+  function ensureUrlChangePatch() {
+    if (urlChangePatched) return;
+    urlChangePatched = true;
     try {
       _origAddEventListener = window.addEventListener;
       _origRemoveEventListener = window.removeEventListener;
@@ -1248,10 +1277,30 @@
     } catch (_ae) {}
   }
 
+  /* Installed lazily, on the first granted script's enable() call.
+     Doing it unconditionally would break the feature test for
+     UNGRANTED scripts: `window.onurlchange` has to stay undefined on
+     documents where nothing asked for it. Idempotent — a second script
+     granting the API (or a re-registration inside the same document)
+     reuses the surface that's already there. */
+  function installUrlChange() {
+    urlChangeEnabled = true;
+    ensureUrlChangeProperty();
+    ensureUrlChangePatch();
+  }
+
   var urlchange = {
     /* Called from the compile-in bindings of every script that granted
-       `window.onurlchange`, ahead of the script body. */
-    enable: function (/* scriptId */) {
+       `window.onurlchange`, ahead of the script body.
+
+       The scriptId is accepted and ignored. It's passed for the same
+       reason every other subsystem entry point takes one — uniform
+       call shape, and a readable call site in the emitted wrapper —
+       but there is nothing per-script to key: the surface it installs
+       lives on the world's single shared `window`. Per-script gating
+       would need per-script worlds; see the caveat in
+       docs/GM-APIs.md#windowonurlchange. */
+    enable: function (_scriptId) {
       installUrlChange();
     },
   };
