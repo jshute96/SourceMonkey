@@ -67,7 +67,7 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
-import { getValue, getValues, joinFullSource, type ParsedHeader } from './userscript-header.js';
+import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -81,6 +81,7 @@ import {
 } from './source-map.js';
 import {
   USER_SOURCE_START_LINE,
+  composeRequiredBody,
   composeSource,
 } from './composed-source.js';
 import {
@@ -328,19 +329,19 @@ export function wrapCombinedEntry(args: {
 
   if ((args.script.requires ?? []).length === 0) {
     // Nothing to concatenate, so nothing shifts and no map is needed.
-    const body = joinFullSource(
-      args.script.leadingText ?? '',
-      args.script.headerText ?? '',
-      args.script.bodyText,
-    );
-    return head + body + `\n});\n//# sourceURL=${args.sourceUrl}\n`;
+    // No newline after `head`: the body's first line SHARES generated
+    // line 0 with the wrap, which is what makes generated line N equal
+    // original line N and lets the viewer pass refs through unmapped.
+    // `buildSwapEvalBody` mirrors this exactly — see NO_REQUIRE_LAYOUT
+    // in composed-source.ts.
+    return head + composeRequiredBody(args.script) + `\n});\n//# sourceURL=${args.sourceUrl}\n`;
   }
 
-  // Head occupies generated line 0; user source starts at line 1.
+  // Head occupies generated line 0; user source starts below it.
   const composed = composeSource(args.script, {
     requireUrls: args.requireUrls,
     mainUrl: args.sourceUrl,
-    startLine: 1,
+    startLine: USER_SOURCE_START_LINE,
   });
   const code = head + '\n' + composed.text + `\n});\n`;
   const map = buildSourceMap({
@@ -513,9 +514,8 @@ function buildMainWorldGmInfoOnly(
 }
 
 // Build the body string for the reload-fast-path swap eval. Prepends
-// the script's GM bindings to the composed (requires + body) source
-// so the
-// indirect eval — which runs at runMain's function scope, NOT inside
+// the script's GM bindings to the composed (requires + body) source so
+// the indirect eval — which runs at runMain's function scope, NOT inside
 // the main-body wrap function's closure — still sees `GM_info` /
 // `GM_addStyle` / etc. The whole prepended string is evaluated in a
 // single `(0,eval)(...)` call so `const`-declared bindings at the
@@ -545,11 +545,19 @@ export async function buildSwapEvalBody(
     : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
   const sourceUrl = buildSourceUrl(logLabel);
   const requires = script.requires ?? [];
-  // gmEmit.js is single-line and ends with a space, so the newline
-  // after it is what puts the user source on line 1.
+  // gmEmit.js is single-line and ends with a space (or is empty), so
+  // it occupies generated line 0 exactly as `wrapCombinedEntry`'s wrap
+  // head does.
   const head = gmEmit.js;
   if (requires.length === 0) {
-    return head + '\n' + composeSource(script).text;
+    // No newline, matching the registered path's no-require branch:
+    // the body's first line shares line 0 with the preamble, so
+    // generated line N is original line N and the viewer's
+    // pass-through is correct. Adding one here would silently shift
+    // every logged stack line for the majority of scripts, which have
+    // no `@require` — and with no segments to map by, the viewer
+    // could not detect it, let alone correct it.
+    return head + composeRequiredBody(script);
   }
   const composed = composeSource(script, {
     requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),

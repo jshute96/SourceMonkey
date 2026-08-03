@@ -168,11 +168,15 @@ export const GM_RUNTIME_SOURCE_URL = `${ROOT}/__gm-runtime.js`;
 // see the provenance in the Sources tree. Query strings and fragments
 // are dropped (the cached bytes don't depend on them). Two requires
 // on the same script with the same host+path but different `?…`
-// query strings would land at the same synthetic URL — stack-trace
-// attribution would point at whichever require tab the viewer
-// matched first. Rare in practice; the file-loader already dedups
-// by canonical URL with query, so it'd take two legitimately
-// different `@require` lines pointing at distinct stored copies.
+// query strings would land at the same synthetic URL. The viewer's
+// tab lookup takes the FIRST match, so a mapped stack frame from the
+// second require opens the first require's tab — the source map picks
+// the right segment, only the tab lookup is ambiguous. Rare in
+// practice; the file-loader already dedups by canonical URL with
+// query, so it'd take two legitimately different `@require` lines
+// pointing at distinct stored copies. Worth revisiting if it ever
+// shows up: including a hash of the query in the path would fix it at
+// the cost of an uglier devtools tree.
 //
 // `file://` requires (resolved local files) use the synthetic host
 // `file` so they land under `<folder>/file/<path>` rather than

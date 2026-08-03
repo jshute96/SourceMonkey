@@ -78,7 +78,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns |
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local` |
 | `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts` and wraps each body with an activation/error shim |
-| `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body and reports where each original file's lines landed |
+| `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) and chunked `bytesToBase64` (XHR + `@resource` transport) |

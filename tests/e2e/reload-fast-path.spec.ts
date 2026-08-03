@@ -248,7 +248,7 @@ test.describe('reload fast-path', () => {
     // `const` and `class` are script-scoped and don't. They only reach
     // the body because the swap payload concatenates requires into it
     // — the same arrangement a fresh registration uses, now that both
-    // paths share composeRequiredBody. This is what would break if the
+    // paths share composeSource. This is what would break if the
     // swap path ever diverged again.
     fs.writeFileSync(
       path.join(scriptsDir.path, 'lib.js'),

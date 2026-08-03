@@ -192,6 +192,10 @@ update channel to a site you didn't approve.
   a browser shows them — a script installed from the web reads as
   `My Script 🚀.user.js`, not `My%20Script%20%F0%9F%9A%80.user.js`,
   while links and the copy button still hand out the real URL.
+- The viewer's **Log** tab lists what the script did and anything it
+  threw. Stack traces are clickable and land on the exact line — in
+  the `@require`'d library file when that's where the error came
+  from, not in the script that pulled it in.
 - As you browse, the SourceMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The

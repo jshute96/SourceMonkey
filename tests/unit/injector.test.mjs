@@ -455,6 +455,14 @@ test('composeRequiredBody: separator prevents ASI hazards between segments', () 
   assert.match(out, /\(function\(\)\{return 1\}\)\(\)\n;/);
 });
 
+// 1-based physical line of the (unique) marker in `code`.
+function generatedLineOf(code, marker) {
+  const lines = code.split('\n');
+  const idx = lines.findIndex((l) => l.includes(marker));
+  assert.ok(idx >= 0, `marker ${marker} not found in generated code`);
+  return idx + 1;
+}
+
 // ---------- buildSwapEvalBody ----------
 
 test('buildSwapEvalBody: prepends GM bindings ahead of the composed body', async () => {
@@ -499,21 +507,41 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
   assert.match(body, /sourceMappingURL=data:application\/json/);
 });
 
-test('buildSwapEvalBody: user source starts on generated line 1, matching wrapCombinedEntry', async () => {
+test('buildSwapEvalBody: puts user code on the same generated line as the registered entry', async () => {
   // The viewer's Log tab maps a stack line back to its original file
-  // without knowing whether the script was registered or hot-swapped
-  // (src/composed-source.ts, USER_SOURCE_START_LINE). That only works
-  // if BOTH paths keep their whole preamble on generated line 0 — so
-  // the swap body carries a leading blank line even when there are no
-  // GM bindings to prepend.
-  const withGrant = makeScript({
-    header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_setValue' }] },
-    bodyText: 'FIRST_BODY_LINE;',
-  });
-  const withoutGrant = { ...makeScript({ bodyText: 'FIRST_BODY_LINE;' }), header: null };
-  for (const script of [withGrant, withoutGrant]) {
-    const lines = (await buildSwapEvalBody(script, '0.0.0')).split('\n');
-    assert.equal(lines[1], 'FIRST_BODY_LINE;');
+  // without knowing whether the script was registered or hot-swapped,
+  // so the two paths must lay their lines out identically. There are
+  // TWO layouts to keep in step, and the no-require one is the trap:
+  // the registered path deliberately puts the body's first line on the
+  // SAME physical line as the wrap head (so generated line N ==
+  // original line N and no map is needed), and a swap body that adds a
+  // newline there shifts every logged stack line by one — invisibly,
+  // because a script with no requires has no segments to map by.
+  //
+  // Compare the real outputs rather than a hardcoded index: an
+  // assertion that doesn't call wrapCombinedEntry can't notice drift.
+  const cases = [
+    ['no requires, with GM bindings', makeScript({
+      header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_setValue' }] },
+      bodyText: 'FIRST_BODY_LINE;',
+    })],
+    ['no requires, no bindings', { ...makeScript({ bodyText: 'FIRST_BODY_LINE;' }), header: null }],
+    ['with requires', makeScript({
+      bodyText: 'FIRST_BODY_LINE;',
+      requires: [{
+        url: 'https://cdn/x.js', source: 'R1;\nR2;',
+        ref: 'x', size: 0, contentHash: '', loadedAt: 0,
+      }],
+    })],
+  ];
+  for (const [label, script] of cases) {
+    const spec = await buildRegistrationSpec(script, '0.0.0', 'a.user.js');
+    const swap = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
+    assert.equal(
+      generatedLineOf(swap, 'FIRST_BODY_LINE;'),
+      generatedLineOf(spec.js[2].code, 'FIRST_BODY_LINE;'),
+      `${label}: swap and registered disagree on where user code lands`,
+    );
   }
 });
 
@@ -535,11 +563,12 @@ test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async 
 test('buildSwapEvalBody: passes through plain body when no header (defensive)', async () => {
   // Headerless scripts aren't a production case (validateHeader
   // rejects them), but the helper should still return something
-  // eval-able rather than throwing. The leading newline is the
-  // deliberate empty preamble line — see the line-1 test above.
+  // eval-able rather than throwing. No preamble and no requires means
+  // the body passes through untouched — same shape the registered
+  // path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const body = await buildSwapEvalBody(script, '0.0.0');
-  assert.equal(body, '\nconsole.log("hi");');
+  assert.equal(body, 'console.log("hi");');
 });
 
 // ---------- buildRegistrationSpec ----------
@@ -1372,14 +1401,6 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
 // These do. They locate a marker's REAL physical line in the generated
 // code, then assert the mapping sends that line back to the file and
 // line the marker was written on.
-
-// 1-based physical line of the (unique) marker in `code`.
-function generatedLineOf(code, marker) {
-  const lines = code.split('\n');
-  const idx = lines.findIndex((l) => l.includes(marker));
-  assert.ok(idx >= 0, `marker ${marker} not found in generated code`);
-  return idx + 1;
-}
 
 function markerScript() {
   return makeScript({

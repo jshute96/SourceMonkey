@@ -29,7 +29,7 @@
 //
 // ---------- Why this lives in its own module ----------
 //
-// Three callers need to agree on the layout, and two of them are in
+// Several callers need to agree on the layout, and they live in
 // different extension contexts:
 //
 //   - `src/injector.ts` (service worker) emits the registered entry
@@ -69,13 +69,31 @@ export interface ComposeOptions {
   startLine?: number;
 }
 
-// The generated line the concatenated user source starts on, for every
-// path that wraps it. Both `wrapCombinedEntry` and `buildSwapEvalBody`
-// put their whole preamble (GM bindings, prelude, wrap head) on
-// generated line 0 and start the user source on line 1, so the viewer
-// can assume this offset without knowing which path ran. Keeping the
-// swap path's preamble on one line — even when it is empty — is what
-// makes that assumption safe; see `buildSwapEvalBody`.
+// ---------- The two layouts, and why the viewer can tell them apart ----------
+//
+// **With `@require`s.** The preamble (GM bindings, prelude, wrap head)
+// occupies generated line 0 on its own and the concatenated user
+// source starts at `USER_SOURCE_START_LINE`. Line numbers shift, so
+// the entry carries a source map and the viewer remaps stack refs
+// through the segment list.
+//
+// **Without `@require`s.** Nothing is concatenated, so nothing may
+// shift: the body's first line SHARES generated line 0 with the
+// preamble, making generated line N equal original line N. No map is
+// emitted and the viewer passes refs through untouched.
+//
+// The viewer distinguishes the two by whether there are segments at
+// all — `composeSource` returns none for a script without requires —
+// so it never has to know which run path produced the code. That only
+// holds while `wrapCombinedEntry` and `buildSwapEvalBody` agree on
+// BOTH layouts. They are the only two producers; keep them in step.
+//
+// The no-require layout costs one thing, deliberately: the body's
+// first line shares a physical line with the preamble, so a frame
+// reported at line 1 carries a column offset by the preamble's length.
+// Line 1 of a userscript is its `// ==UserScript==` marker, so this
+// has never been observed; the code view suppresses the column accent
+// there rather than showing a wrong one.
 export const USER_SOURCE_START_LINE = 1;
 
 export function composeSource(
@@ -146,8 +164,8 @@ export function composeSource(
 }
 
 // Count lines the way V8 does, which is what the source map has to
-// agree with. Counting only `\n` is wrong in three ways that all
-// silently shift every mapping after the offending character:
+// agree with. Counting only `\n` silently shifts every mapping after
+// the offending character:
 //
 //   - a lone `\r` is a line terminator (files with mangled endings);
 //   - so are U+2028 / U+2029, and V8 counts a RAW U+2028 as a break
@@ -157,7 +175,7 @@ export function composeSource(
 // `\r\n` must count as one, hence the alternation order.
 const LINE_TERMINATORS = /\r\n|[\n\r\u2028\u2029]/g;
 
-export function countLines(text: string): number {
+function countLines(text: string): number {
   if (text === '') return 1;
   const matches = text.match(LINE_TERMINATORS);
   return matches ? matches.length + 1 : 1;

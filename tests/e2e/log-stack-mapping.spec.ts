@@ -166,6 +166,67 @@ test.describe('log stack mapping', () => {
     await page.close();
   });
 
+  test('a ref on a line that belongs to our wrap is not a link', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // Not every generated line is user code. Line 1 is the wrap head;
+    // the `// @require` markers and the `;` ASI guards between
+    // concatenated files are ours too. Those have no honest original
+    // line, and the generated number indexes the concatenated program
+    // — so following it would land on unrelated code, or past EOF
+    // where the click does nothing at all. They must render as plain
+    // text instead.
+    const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
+    const label = 'main.user.js';
+    const entryUrl = `sourcemonkey://SourceMonkey/main/${label}`;
+    await sm.appendScriptLog(scriptId, {
+      level: 'error',
+      source: 'wrapper',
+      // Generated line 1 is the wrap head — before any require's text.
+      message: `Error: synthetic\n    at wrapHead (${entryUrl}:1:5)`,
+    });
+
+    const page = await openLogTab(extensionContext, extensionId, scriptId);
+    const row = page.locator('#log-pane td.log-msg', { hasText: 'synthetic' });
+    await expect(row).toContainText(`${entryUrl}:1:5`);
+    // Present as text, absent as a link.
+    await expect(row.locator('.log-stack-link')).toHaveCount(0);
+
+    await page.close();
+  });
+
+  test('entries older than the current body are left unmapped', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // The log outlives refreshes — nothing clears it but the user's
+    // Clear button. An entry recorded against an older arrangement of
+    // requires would map to a confidently wrong file and line if we
+    // applied today's segments to it, which is worse than the
+    // obviously-generated number it already carries.
+    const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
+    const sources = await sm.getSources();
+    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const loadedAt = withScripts!.scripts.find((s) => s.id === scriptId)!.loadedAt;
+    const label = 'main.user.js';
+    const entryUrl = `sourcemonkey://SourceMonkey/main/${label}`;
+    // Same generated line the real throw maps to lib.js from, but
+    // stamped before this body loaded.
+    await sm.appendScriptLog(scriptId, {
+      level: 'error',
+      source: 'wrapper',
+      message: `Error: stale-entry\n    at old (${entryUrl}:5:9)`,
+      timestamp: loadedAt - 1000,
+    });
+
+    const page = await openLogTab(extensionContext, extensionId, scriptId);
+    const row = page.locator('#log-pane td.log-msg', { hasText: 'stale-entry' });
+    // Untouched: still the entry URL at the generated line, not lib.js.
+    await expect(row).toContainText(`${entryUrl}:5:9`);
+    await expect(row).not.toContainText('lib.js');
+
+    await page.close();
+  });
+
   test('a script with no @require is left alone', async ({
     extensionContext, extensionId, fixtureServer, sm,
   }) => {

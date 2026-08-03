@@ -113,9 +113,9 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
     `composeSource` produces — so a logged frame names the file the
     code was written in. See
     [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
-  - Both run paths keep their preamble on generated line 0, so the
-    viewer maps a hot-swapped script the same way as a registered
-    one.
+  - The registered path and the reload-swap path produce the same
+    layout, so the viewer maps a hot-swapped script the same way as a
+    registered one.
 - **The map costs ~1.6× the source size, so the entry runs ~2.6×.**
   Measured: one 90 KB require → 104 KB of code + 167 KB of map; four
   of them → ~1 MB in one script's `js[]`. `sourcesContent` has to be

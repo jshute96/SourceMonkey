@@ -40,6 +40,17 @@ What is still unmapped:
   length. Line 1 of a userscript is its `// ==UserScript==` marker, so
   this has never been observed in practice; the code view already
   suppresses the column accent there.
+- **The code pane counts lines differently from the mapper.** Mapped
+  line numbers are counted the way V8 counts them (`\r`, `\r\n`,
+  U+2028, U+2029), but Prism's gutter splits on `\n` only — so a
+  `@require` with CR-only endings maps to a line the gutter numbers
+  differently. Fixing it means teaching the code view V8's rule, which
+  also affects gutter clicks and the `#file:line` deep link.
+- **A stale log entry can't be mapped at all.** Entries older than the
+  current `loadedAt` are left unmapped, because the layout they were
+  generated against is gone. A tab still running the previous body
+  slips through with a fresh timestamp. Stamping wrapper reports with
+  the `loadedAt` they ran under would close both.
 
 ## Injection payload
 

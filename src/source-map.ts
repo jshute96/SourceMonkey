@@ -39,7 +39,7 @@
 // viewer's Log tab (src/stack-link.ts). `remapStackRef` below is the
 // other half — the Log tab applies the same segment list itself, so a
 // logged frame names the same file and line devtools shows. See
-// docs/script-log.md#stack-refs.
+// docs/script-log.md#stack-refs-are-source-mapped-first.
 
 // Base64 VLQ, per the Source Map v3 spec.
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -168,10 +168,11 @@ export interface OriginalPosition {
 }
 
 // Look up the original file + line for a 1-based generated line.
-// Returns null for lines no segment covers: the wrap head on line 0,
-// the `;` ASI guards between requires, and the closing `});`. Those
-// are ours, not the user's, so leaving them unmapped is correct —
-// callers render them as-is rather than guessing at a neighbor.
+// Returns null for lines no segment covers. In 1-based terms those are
+// line 1 (the wrap head), each `// @require` marker line, each `;` ASI
+// guard between requires, and the closing `});`. They are ours, not
+// the user's, so leaving them unmapped is correct — the caller drops
+// the link rather than pointing at a neighbouring line.
 export function lookupGeneratedLine(
   segments: readonly MappedSegment[],
   generatedLine: number,
@@ -206,10 +207,9 @@ export interface StackRef {
 //
 // Columns pass through unchanged, and that is exact rather than
 // approximate: composition only ever moves whole lines, never code
-// within a line. The one exception is a script with NO requires, where
-// the body's first line shares generated line 1 with the wrap head —
-// but that case has no segments at all, so it returns early and never
-// reaches the column question.
+// within a line. A script with NO requires has no segments at all, so
+// it returns early — see the layout notes in composed-source.ts for
+// the column caveat that applies to that case.
 export function remapStackRef(
   ref: StackRef,
   entryUrl: string,

@@ -226,12 +226,27 @@ Plumbing notes specific to logging:
 
 - The inputs (require sources, body text, log label) are already on
   the `StoredScript` row the viewer loaded.
-- A persisted map would be one more thing to invalidate on refresh.
-- Both run paths share one layout, so there is one answer to
-  "which file is generated line N?": `wrapCombinedEntry` and
-  `buildSwapEvalBody` both put their whole preamble on generated
-  line 0 and start user source at `USER_SOURCE_START_LINE`. The
-  viewer never has to know which one ran.
+- Recomputing is memoised on the script's `loadedAt`, so an unrelated
+  storage change doesn't re-concatenate megabytes of libraries.
+- Both run paths agree on the layout, so there is one answer to "which
+  file is generated line N?" — `wrapCombinedEntry` and
+  `buildSwapEvalBody` produce the same arrangement for both the
+  with-requires and the no-requires case. The viewer never has to know
+  which one ran. See `src/composed-source.ts` for the two layouts.
+
+### The log outlives the layout
+
+- Nothing clears a script's log on refresh — only the user's **Clear
+  log** button, or browser shutdown.
+- So a refresh that changes a `@require`'s line count leaves older
+  entries whose generated line numbers were produced by the *previous*
+  arrangement. Mapping those with today's segments would turn an
+  obviously-generated number into a confidently wrong file and line.
+- Entries recorded before the current body's `loadedAt` are therefore
+  left unmapped.
+- Not airtight: a tab still running the previous body can log an entry
+  with a fresh timestamp. Closing that would need the wrapper to stamp
+  each report with the `loadedAt` it actually ran under.
 
 ### What is left unmapped, deliberately
 
@@ -245,6 +260,11 @@ Plumbing notes specific to logging:
   moved, and the reported lines are already original.
 - Columns are passed through rather than mapped, and that is exact:
   composition moves whole lines and never code within a line.
+- Line numbers are counted the way V8 counts them (`\r`, `\r\n`,
+  U+2028, U+2029 all end a line), but the code pane's gutter comes from
+  Prism, which splits on `\n` only. A `@require` with CR-only endings
+  or a raw U+2028 will map to a line the gutter numbers differently.
+  Devtools is unaffected — it counts like V8.
 
 ## Lifecycle and reset
 

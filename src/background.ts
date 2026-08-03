@@ -1304,9 +1304,25 @@ async function handleCheckPending(
     action: 'run-new',
     // Same dedup-aware label the registration path uses, so the
     // swapped body's source map names the same devtools files.
-    body: await buildSwapEvalBody(refreshed, handlerVersion, getScriptLogLabel(refreshed.id)),
+    // Awaited, not assumed: `getScriptLogLabel` falls back to a UUID
+    // prefix before the id table has loaded, and a cold SW is woken BY
+    // this very navigation — so an un-awaited read would stash the
+    // swapped sources under a stray `SourceMonkey/<uuid8>/` folder.
+    // The table is loaded once and memoised, so this resolves
+    // immediately on every call but the first.
+    body: await buildSwapEvalBody(refreshed, handlerVersion, await scriptLogLabel(refreshed.id)),
     loadedAt: refreshed.loadedAt,
   };
+}
+
+// Dedup-aware log label, waiting for the id table if it hasn't loaded
+// yet. `getScriptLogLabel` is the sync accessor and answers with a
+// UUID prefix until `ensureLogIdsLoaded` resolves; callers that bake
+// the label into something durable (devtools URLs, source maps) need
+// the real one.
+async function scriptLogLabel(id: string): Promise<string> {
+  await ensureLogIdsLoaded();
+  return getScriptLogLabel(id);
 }
 
 // ---------- GM_xmlhttpRequest dispatch ----------

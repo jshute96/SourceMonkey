@@ -285,6 +285,9 @@ let currentLogId = '';
 // `@require`s, or we're in preview mode with nothing injected at all.
 let stackSegments: readonly MappedSegment[] = [];
 let stackEntryUrl = '';
+// Identity of the script state `stackSegments` was computed from, so a
+// re-render for an unrelated reason doesn't redo the concatenation.
+let stackLayoutKey = '';
 // Most recently rendered script. The session-storage listener calls
 // paintLog without re-reading the script, so we capture the latest
 // here so log-pane linkification can consult the tab list without
@@ -462,14 +465,25 @@ function storedTabs(script: StoredScript): CodeTab[] {
     (r) => buildRequireSourceUrl(label, r.url),
   );
   // Re-derive the injected entry's line layout so the Log tab can undo
-  // it — see `remapLogRef`. Same shared `composeSource` the injector
+  // it — see `resolveLogRef`. Same shared `composeSource` the injector
   // runs, given the same URLs and the same start line, so the segments
   // are the ones the registered entry's source map was built from.
-  stackSegments = composeSource(script, {
-    requireUrls: requireSourceUrls,
-    mainUrl: mainSourceUrl,
-    startLine: USER_SOURCE_START_LINE,
-  }).segments;
+  //
+  // Memoised: this concatenates every `@require` body with the script
+  // to find the offsets, then discards the text. Renders fire on any
+  // `script:*` storage mutation, and a script with a couple of MB of
+  // libraries would redo that work behind unrelated events. The
+  // layout only changes when the body does, which is exactly what
+  // `loadedAt` tracks.
+  const layoutKey = `${script.id}@${script.loadedAt}:${label}`;
+  if (layoutKey !== stackLayoutKey) {
+    stackLayoutKey = layoutKey;
+    stackSegments = composeSource(script, {
+      requireUrls: requireSourceUrls,
+      mainUrl: mainSourceUrl,
+      startLine: USER_SOURCE_START_LINE,
+    }).segments;
+  }
   stackEntryUrl = mainSourceUrl;
   const tabs: CodeTab[] = [{
     kind: 'code',
@@ -1118,7 +1132,7 @@ function paintLog(entries: LogEntry[]): void {
 
     const tdMsg = document.createElement('td');
     tdMsg.className = 'log-msg';
-    appendLogMessageContent(tdMsg, e.message);
+    appendLogMessageContent(tdMsg, e.message, e.timestamp);
     tr.appendChild(tdMsg);
 
     tbody.appendChild(tr);
@@ -1127,7 +1141,8 @@ function paintLog(entries: LogEntry[]): void {
   logPaneEl.appendChild(table);
 }
 
-// Undo the injected entry's concatenation for one stack ref.
+// How a stack ref should be rendered, once the injected entry's
+// concatenation has been undone.
 //
 // Errors reach the log as `err.stack` strings, and V8 does not source-
 // map those — every frame from the combined entry names the script's
@@ -1136,12 +1151,37 @@ function paintLog(entries: LogEntry[]): void {
 // somewhere in its metadata header. Chrome's own console gets this
 // right because devtools applies the entry's source map to the
 // display; this is us doing the same thing for our own view.
-//
-// Returns the ref unchanged when there is nothing to undo: no
-// `@require`s (nothing moved), a frame from another file, or a
-// generated line that belongs to our wrap rather than to user code.
-function remapLogRef(ref: StackRef): StackRef {
-  return remapStackRef(ref, stackEntryUrl, stackSegments) ?? ref;
+type ResolvedRef =
+  // Use it as it stands: a frame from another file, or from a script
+  // with no `@require`s where nothing moved in the first place.
+  | { kind: 'asIs' }
+  // Rewritten to the original file and line.
+  | { kind: 'mapped'; ref: StackRef }
+  // Ours, but the generated line belongs to our wrap rather than to
+  // user code — the head, a `// @require` marker, a `;` ASI guard, the
+  // closing brace. There is no honest line to point at, so it must not
+  // stay clickable at the generated one: that number indexes the
+  // concatenated program, and following it would land the user on
+  // unrelated code (or past EOF, where the click does nothing at all).
+  | { kind: 'unmappable' };
+
+function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
+  if (stackSegments.length === 0 || ref.url !== stackEntryUrl) return { kind: 'asIs' };
+  // The layout is recomputed from the CURRENT stored script, but the
+  // log outlives refreshes — nothing clears it but the user's Clear
+  // button. An entry recorded before this body loaded was generated
+  // against a different arrangement of requires, so mapping it with
+  // today's segments would turn an obviously-generated line number
+  // into a confidently wrong file and line. Leave those alone.
+  //
+  // Not airtight: an already-open tab still running the previous body
+  // can log an entry with a fresh timestamp. Documented in
+  // docs/script-log.md; closing it would need the wrapper to stamp
+  // reports with the loadedAt they ran under.
+  const loadedAt = currentScript?.loadedAt;
+  if (loadedAt !== undefined && timestamp < loadedAt) return { kind: 'asIs' };
+  const mapped = remapStackRef(ref, stackEntryUrl, stackSegments);
+  return mapped ? { kind: 'mapped', ref: mapped } : { kind: 'unmappable' };
 }
 
 // Paint a log entry's message into a <td>. Each URL:line:col stack
@@ -1156,7 +1196,7 @@ function remapLogRef(ref: StackRef): StackRef {
 // the user reads names the real file. That is the whole point: the
 // generated line number is an artifact of our injection and means
 // nothing to someone reading their own script.
-function appendLogMessageContent(td: HTMLElement, message: string): void {
+function appendLogMessageContent(td: HTMLElement, message: string, timestamp: number): void {
   const runs = parseStackRefs(message);
   if (runs.length === 1 && runs[0].kind === 'text') {
     td.textContent = message;
@@ -1168,9 +1208,16 @@ function appendLogMessageContent(td: HTMLElement, message: string): void {
       td.appendChild(document.createTextNode(run.text));
       continue;
     }
-    const mapped = remapLogRef(run);
-    const text = mapped === run ? run.text : `${mapped.url}:${mapped.line}:${mapped.col}`;
-    const tabIndex = tabsView.findTabBySourceUrl(mapped.url);
+    const resolved = resolveLogRef(run, timestamp);
+    if (resolved.kind === 'unmappable') {
+      td.appendChild(document.createTextNode(run.text));
+      continue;
+    }
+    const ref = resolved.kind === 'mapped' ? resolved.ref : run;
+    const text = resolved.kind === 'mapped'
+      ? `${ref.url}:${ref.line}:${ref.col}`
+      : run.text;
+    const tabIndex = tabsView.findTabBySourceUrl(ref.url);
     if (tabIndex < 0) {
       td.appendChild(document.createTextNode(text));
       continue;
@@ -1181,7 +1228,7 @@ function appendLogMessageContent(td: HTMLElement, message: string): void {
     a.textContent = text;
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
-      tabsView.goToTabLine(tabIndex, mapped.line, mapped.col);
+      tabsView.goToTabLine(tabIndex, ref.line, ref.col);
     });
     td.appendChild(a);
   }
