@@ -378,11 +378,6 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 - examples for all supported GM APIs, all headers
 - examples for injection scenarios - main world vs userscript world, etc
 - examples with absolute (TM-compatible) vs relative paths
-- installer scripts for userscripts sources - greasyfork, etc.
-  - the `.user.js` link click itself is handled now (see
-    [docs/install-capture.md](docs/install-capture.md)); what's left is
-    capturing a link back to the *listing* page, which the URL alone
-    doesn't give us
 
 ## Feature TOODs and ideas
 

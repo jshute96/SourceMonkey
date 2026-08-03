@@ -217,11 +217,9 @@ with the response:
 - [`docs/deep-link.md`](deep-link.md) covers the other direction: a
   page that *wants* to hand SourceMonkey a URL links to the GitHub
   redirect stub with `?page=sources.html&add_source=…`.
-- Capture needs no cooperation from the page at all, so the
-  [GreasyFork installer userscript](../userscripts/installers/greasyfork-installer.md)
-  is no longer required to install from GreasyFork. It remains useful
-  for what capture can't do — starting from the script's *listing*
-  page rather than its `.user.js` URL.
+- Capture needs no cooperation from the page at all, but only works
+  from a `.user.js` URL. Starting from a script's *listing* page needs
+  the deep link, which the page has to opt into.
 
 ## Limitations / future work
 
