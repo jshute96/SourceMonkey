@@ -78,12 +78,21 @@ in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
 
 #### One file, one installed row
 
-- The sources page's path field stores a bare `/home/me/foo.user.js`;
-  a capture arrives as `file:///home/me/foo.user.js`.
-- The preview collapses the `file://` form to the bare path
-  (`sourceFsPath`) before the already-installed check and before
-  `addSource`, so both routes converge on one row instead of two copies
-  of one file.
+- The same file on disk has two spellings: the bare
+  `/home/me/foo.user.js` the sources page's path field takes, and the
+  `file:///home/me/foo.user.js` a capture arrives as. Left alone they
+  would produce two installed rows.
+- `canonicalSourceInput` (`directories.ts`) picks the bare path as the
+  one true spelling. It runs inside **`addSource`**, so every entry
+  point converges — the capture, the preview's Install, the sources
+  page's field, and the `?add_source=` deep link.
+- Reads canonicalize the *stored* value too (the preview's
+  already-installed check, the container's duplicate check), so rows
+  written before this existed still match.
+- **Not applied** to Windows drive-letter (`file:///C:/…`) or UNC
+  (`file://server/…`) URLs: the bare-path conversion drops the host and
+  turns the drive letter into a path segment. Those keep the URL
+  spelling. The rest of the path handling is POSIX-only anyway.
 - The captured URL still travels verbatim in `?preview=` — a bypass has
   to be keyed on the URL the browser will actually navigate to.
 
@@ -196,13 +205,16 @@ Capture-specific points:
 The right way to show the file depends on what the browser would do
 with the response:
 
-- **Chrome ≥ 152** — a real navigation to the URL, with a one-shot
-  capture bypass. The browser renders it as source text and the
-  address bar keeps the true URL.
-- **Chrome ≤ 151** — the copy the preview already fetched, rendered on
-  `raw.html`. Navigating for real would land on a response the
-  download workaround has rewritten to `text/html` (http), or on the
-  legacy download path (`file://`).
+- **http(s) on Chrome ≥ 152** — a real navigation to the URL, with a
+  one-shot capture bypass. The browser renders it as source text and
+  the address bar keeps the true URL.
+- **Everything else** — the copy the preview already fetched, rendered
+  on `raw.html`. Navigating for real would land on a response the
+  download workaround has rewritten to `text/html` (http ≤ 151), or on
+  the legacy download path (`file://` ≤ 151).
+- `file://` takes the `raw.html` branch on **every** version:
+  a titled, guaranteed-readable tab is already the better answer, and
+  it costs no navigation to get wrong.
 - **Fetch failed / still in flight** — navigate regardless of
   version. There's no copy to render locally, and a real navigation
   carries the cookies the extension's own fetch doesn't, so it doubles

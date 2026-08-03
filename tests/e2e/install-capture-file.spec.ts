@@ -213,6 +213,96 @@ test.describe('.user.js capture for local files', () => {
     await page.close();
   });
 
+  test('a row stored under the file:// spelling is still recognised', async ({
+    extensionContext, getServiceWorker, sm,
+  }) => {
+    // Rows added before `addSource` canonicalized `file://` inputs (and
+    // any added by pasting a `file://` URL into the Add field) carry the
+    // URL spelling. The already-installed check has to canonicalize the
+    // STORED value too, or those users get offered a duplicate install.
+    const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
+    await sm.addSource(path);
+    await sm.syncNow();
+    const sources = await sm.getSources();
+    const before = await sm.getSourceWithScripts(sources[0].id);
+    // Rewrite the stored row to the old spelling. No test-surface call
+    // for this on purpose — it's a shape production code no longer
+    // writes, only reads.
+    const sw = await getServiceWorker();
+    await sw.evaluate(async ([id, oldSpelling]) => {
+      const key = `script:${id}`;
+      const got = await chrome.storage.local.get(key);
+      got[key].relativePath = oldSpelling;
+      await chrome.storage.local.set({ [key]: got[key] });
+    }, [before!.scripts[0].id, url]);
+
+    const page = await extensionContext.newPage();
+    await page.goto(url).catch(() => {});
+    await waitForInstallPrompt(page);
+
+    await expect(page.locator('#banner-slot')).toContainText('already installed');
+    await expect(page.locator('#install-btn')).toBeHidden();
+    await page.close();
+  });
+
+  test('View raw source falls back to the file itself when the fetch failed', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Nothing to render locally, so the raw view navigates for real —
+    // the one path that reaches `navigateRaw` with a `file://` URL. It
+    // must carry a bypass, or the new tab is captured straight back
+    // into another preview.
+    const missing = `file://${dir.path}/gone.user.js`;
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(missing)}`,
+    );
+    await expect(page.locator('#message')).toContainText('Could not fetch this script');
+
+    const [rawPage] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.locator('#view-source-btn').click(),
+    ]);
+    // Chrome can't render the missing file either, but the tab must be
+    // pointed at it rather than yanked back to a preview.
+    // Give a lost bypass time to pull the tab back — without the
+    // bypass this URL becomes `userscript.html?preview=…` within a
+    // second (checked against a deliberately broken build). With it,
+    // the tab is left wherever the browser lands on a missing file
+    // (`chrome-error://chromewebdata/` today) — the point is only that
+    // it was not yanked into a second preview.
+    await page.waitForTimeout(1500);
+    expect(rawPage.url()).not.toContain('userscript.html');
+    await rawPage.close();
+    await page.close();
+  });
+
+  test('the installed viewer\'s Location link opens the file, not a preview', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The installed row's Location href IS a `.user.js` URL, so a plain
+    // navigation would be captured and land the user on a preview of
+    // the script they are already looking at.
+    const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
+    await sm.addSource(path);
+    await sm.syncNow();
+    const sources = await sm.getSources();
+    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?script=${withScripts!.scripts[0].id}`,
+    );
+    const [opened] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.locator('.filename-text').click(),
+    ]);
+    await page.waitForTimeout(1000);
+    expect(opened.url()).not.toContain('userscript.html');
+    await opened.close();
+    await page.close();
+  });
+
   test('capture off leaves local files to the browser', async ({
     extensionContext, getServiceWorker, sm,
   }) => {

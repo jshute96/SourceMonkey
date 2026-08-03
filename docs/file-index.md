@@ -58,7 +58,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/code-tabs.ts` | Tabbed code view: tab strip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
-| `src/directories.ts` | Source I/O + classifiers (single-file / manifest / github-dir / container), file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
+| `src/directories.ts` | Source I/O + classifiers (single-file / manifest / github-dir / container), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
 | `src/github-source.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
@@ -134,7 +134,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (HTTP soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`; recovery clears it |
 | `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the source, already-installed + non-userscript cases, raw view, option off |
-| `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, Continue-to-file bypass |
+| `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add Source install, Update, invalid-header refusal, lazy `@require` tabs |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |

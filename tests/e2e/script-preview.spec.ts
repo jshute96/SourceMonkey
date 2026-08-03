@@ -99,6 +99,7 @@ test.describe('script preview', () => {
     // Local `.user.js` navigations are captured too, so this file needs
     // the same way out an http one gets — pointed at the `file://` form,
     // since the bare path the preview was opened with isn't navigable.
+    await expect(page.locator('#continue-btn')).toBeVisible();
     await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
     // The source is still on screen — seeing what you actually got is
     // the point when a file isn't what you expected.

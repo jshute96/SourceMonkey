@@ -256,7 +256,8 @@ update channel to a site you didn't approve.
 **One-time setup:** on `chrome://extensions`, for SourceMonkey enable:
 
 - **"Allow access to file URLs"** — without it the extension can't
-  read your local directories.
+  read your local directories, and opening a local `.user.js` won't
+  offer to install it.
 - **"Allow User Scripts"** (or, on Chrome 120–137, the page-wide
   Developer mode toggle) — without it Chrome will refuse to inject
   anything, though the badge will still count matches. The sources

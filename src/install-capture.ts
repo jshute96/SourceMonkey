@@ -40,14 +40,16 @@
 //      cold-start race just gets Chrome's own handling of the file.
 //
 // `file://` capture additionally depends on the user's per-extension
-// "Allow access to file URLs" toggle. `webNavigation` delivery is
-// gated on host access, so with the toggle off the event is expected
-// never to arrive — and if one somehow did, the preview couldn't read
-// the file anyway and would show its fetch error. Either way the
-// feature is absent rather than broken, so nothing here tests for the
-// toggle. NOT verified automatically: Chrome grants file access
-// unconditionally to `--load-extension` builds, so the e2e suite can
-// only reach the toggle-on case. See TODO.md.
+// "Allow access to file URLs" toggle:
+//   - `webNavigation` delivery is gated on host access, so with the
+//     toggle off the event is expected never to arrive.
+//   - If one somehow did, the preview couldn't read the file anyway
+//     and would show its fetch error.
+//   - Either way the feature is absent rather than broken, so nothing
+//     here tests for the toggle.
+//   - Not verified automatically: Chrome grants file access
+//     unconditionally to `--load-extension` builds, so the e2e suite
+//     only reaches the toggle-on case. See TODO.md.
 //
 // Redirecting via `chrome.tabs.update` (rather than a DNR `redirect`
 // action) is deliberate: DNR redirects to an extension page require
@@ -97,15 +99,11 @@ const CHROME_USERJS_FIX_VERSION = 152;
 
 // Schemes the capture acts on. `file:` is here so that opening a
 // local `.user.js` offers the same install prompt a downloaded one
-// does — a userscript on disk is the shape SourceMonkey is built
-// around, and it was the one way in that still dead-ended in a
-// browser download.
+// does — it was the one way in that still dead-ended in a browser
+// download. The cost (a local file opened *to read* gets hijacked) is
+// accepted and mitigated rather than avoided; see
+// [docs/install-capture.md] "The cost, and what pays for it".
 //
-// The cost is real and accepted: a local `.user.js` opened *to read*
-// is hijacked into a preview. It is mitigated, not eliminated:
-//   - the preview's View source / Location link goes to the file
-//     itself, through the same one-shot bypass the http path uses;
-//   - the whole capture is behind the `smCaptureUserJsLinks` option.
 // Anything else (`chrome-extension:`, `ftp:`, `data:`, …) stays out:
 // those aren't source shapes `addSource` can register.
 const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);

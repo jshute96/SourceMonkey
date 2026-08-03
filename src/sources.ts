@@ -68,6 +68,7 @@ import {
 } from './script-log.js';
 import { renderSiteIconInto } from './site-icon.js';
 import {
+  canonicalSourceInput,
   containerKindForSingleFileInput,
   containerPath,
   isContainerSource,
@@ -767,7 +768,9 @@ async function onAddDirectory(
     // and for already-resolved github `/tree/<ref>/...` URLs).
     let stored;
     try {
-      stored = await normalizeSourceInput(path);
+      // Both canonicalizations `addSource` will run, so the duplicate
+      // lookup below compares the same spelling the store holds.
+      stored = canonicalSourceInput(await normalizeSourceInput(path));
     } catch (err) {
       showAddError(err instanceof Error ? err.message : String(err));
       return false;

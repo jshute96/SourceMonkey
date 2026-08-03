@@ -35,6 +35,11 @@ When the toggle is off, `chrome.extension.isAllowedFileSchemeAccess()`
 returns false and the sources page renders a banner with the
 extension's settings URL and instructions.
 
+The toggle also gates the `file://` half of the `.user.js` install
+capture — see
+[install-capture.md → Local files](install-capture.md#local-files).
+Nothing surfaces a banner there: the capture just doesn't happen.
+
 ## Reading a file
 
 `fetchFileUrlText(url)` uses **`XMLHttpRequest`**, not `fetch`:

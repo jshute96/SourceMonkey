@@ -139,8 +139,9 @@ One page, one set of panels, two query strings:
        via `navigator.clipboard.writeText`; icon swaps to a checkmark
        for ~1.2 s on success. Row omitted if the
        parent source row has vanished. In preview mode this is the
-       normalized URL being previewed. See the Link rendering section
-       below for the linkify rules.
+       normalized URL being previewed. Activating the anchor is
+       intercepted in both modes — a plain navigation to a `.user.js`
+       URL gets captured — see the Link rendering section below.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
        preview, the byte length of the fetched text.
      - `Status` — installed mode only. `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
@@ -257,10 +258,11 @@ what differs is the controls and where the data comes from.
 
 - `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
   URL is fetched (and later stored) in its raw form.
-- A `file://` input then collapses to its bare filesystem path
-  (`sourceFsPath`), which is the spelling the sources page's path field
-  stores — so a captured local script and one added by path are the
-  same installed row, not two.
+- `canonicalSourceInput` then collapses a `file://` URL to its bare
+  filesystem path, the same spelling `addSource` stores — so a captured
+  local script and one added by path are the same installed row, not
+  two. See
+  [install-capture.md](install-capture.md#one-file-one-installed-row).
 - The un-normalized input is kept too: it's what a capture bypass is
   keyed on.
 - http(s) → `fetchHttpText` (so GitHub auth applies); `file://` →
@@ -347,6 +349,9 @@ merged page treats them like any other viewer content:
   a `.user.js` URL for real would be captured straight back into a
   second preview, so the click routes to View raw source instead
   (which is what the old prompt's "from `<url>`" link did).
+- Installed mode intercepts it too, for the same reason, but stands the
+  capture down and opens the real location in a new tab — there is no
+  fetched copy to show there, and the row should open what it says.
 
 ### Future work
 

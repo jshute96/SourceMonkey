@@ -40,6 +40,7 @@
 // function's docstring for the rationale.
 
 import {
+  canonicalSourceInput,
   containerKindForSingleFileInput,
   containerPath,
   fetchFileUrlText,
@@ -879,7 +880,12 @@ export type AddSourceResult =
 // serves HTML, not raw bytes, so storing it verbatim would silently
 // load the page chrome instead of the script — see [docs/http-sources.md].
 export async function addSource(rawPath: string): Promise<AddSourceResult> {
-  const path = await normalizeSourceInput(rawPath);
+  // Two canonicalizations, in order: provider rewriting (github blob →
+  // raw), then the one-spelling-per-location rule. The second is what
+  // keeps `/x/a.user.js` typed into the sources page and
+  // `file:///x/a.user.js` arriving from a captured navigation from
+  // becoming two rows for one file — see `canonicalSourceInput`.
+  const path = canonicalSourceInput(await normalizeSourceInput(rawPath));
 
   if (isSingleFileInput(path)) {
     return await addScriptToContainer(path);
@@ -891,7 +897,10 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
   // lock (it acquires the lock itself for its own write).
   const created = await mutate(async () => {
     const sources = await getSources();
-    if (sources.some((s) => s.path === path)) return null;
+    // Canonicalize the stored side too, for the same reason the
+    // container check does: a source row written before `addSource`
+    // collapsed `file://` inputs still carries the URL spelling.
+    if (sources.some((s) => canonicalSourceInput(s.path) === path)) return null;
     const id = crypto.randomUUID();
     const seed: StoredSource = {
       id,
@@ -968,7 +977,12 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
       const existingScripts = await getMany(existingContainer.scriptIds.map(scriptKey));
       for (const sid of existingContainer.scriptIds) {
         const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
-        if (s?.relativePath === path) return null;
+        if (s === undefined) continue;
+        // Canonicalize the STORED value too: rows written before
+        // `addSource` started collapsing `file://` inputs still carry
+        // the URL spelling, and comparing raw would offer to install a
+        // second copy of a file we already have.
+        if (canonicalSourceInput(s.relativePath) === path) return null;
       }
     }
 
