@@ -22,24 +22,24 @@ test.describe('parse check', () => {
       'const ok = () => 42;',
     ]);
     expect(verdicts).not.toBeNull();
-    expect(verdicts!.map((v) => v.ok)).toEqual([true, false, true]);
+    expect(verdicts!.map((v) => v.status)).toEqual(['ok', 'syntax-error', 'ok']);
     // The message is what we surface to the user, so it has to say
     // something. V8 gives no line or column for a `new Function`
-    // SyntaxError — attribution comes from checking pieces separately.
+    // SyntaxError, and no file — so the message is all we have.
     expect(verdicts![1].message).toBeTruthy();
   });
 
   test('compiles without executing', async ({ sm }) => {
     // The guarantee the whole design rests on. If `new Function` ever
-    // became a call site, this source would throw — and a throw is not
-    // a SyntaxError, so it would come back `ok: false` and this fails
-    // loudly rather than silently running untrusted code.
+    // became a call site, this source would throw — and a throw that
+    // isn't a SyntaxError comes back `unknown`, so this fails loudly
+    // rather than silently running untrusted code.
     const verdicts = await sm.checkParses([
       'throw new Error("this must never run");',
       'while (true) {}',
     ]);
     expect(verdicts).not.toBeNull();
-    expect(verdicts!.map((v) => v.ok)).toEqual([true, true]);
+    expect(verdicts!.map((v) => v.status)).toEqual(['ok', 'ok']);
   });
 
   test('judges source as a function body, not as a program', async ({ sm }) => {
@@ -48,7 +48,7 @@ test.describe('parse check', () => {
     // checker that got this wrong would reject working scripts — the
     // exact failure that ruled out bundling a standalone JS parser.
     const verdicts = await sm.checkParses(['return 1;']);
-    expect(verdicts![0].ok).toBe(true);
+    expect(verdicts![0].status).toBe('ok');
   });
 
   test('catches a conflict that only exists once files are concatenated', async ({ sm }) => {
@@ -59,7 +59,7 @@ test.describe('parse check', () => {
     const lib1 = 'const shared = 1;';
     const lib2 = 'const shared = 2;';
     const verdicts = await sm.checkParses([lib1, lib2, `${lib1}\n;\n${lib2}`]);
-    expect(verdicts!.map((v) => v.ok)).toEqual([true, true, false]);
+    expect(verdicts!.map((v) => v.status)).toEqual(['ok', 'ok', 'syntax-error']);
     expect(verdicts![2].message).toMatch(/already been declared/i);
   });
 
@@ -72,7 +72,7 @@ test.describe('parse check', () => {
       'const 名前 = "🎉"; // 増強\nconst ok = 名前.length;',
       'const bad = "🎉',
     ]);
-    expect(verdicts!.map((v) => v.ok)).toEqual([true, false]);
+    expect(verdicts!.map((v) => v.status)).toEqual(['ok', 'syntax-error']);
   });
 
   test('an empty batch needs no offscreen document', async ({ sm }) => {
@@ -85,13 +85,36 @@ test.describe('parse check', () => {
     // racing the first is a real failure mode. Serial and concurrent
     // both have to work.
     const first = await sm.checkParses(['const a = 1;']);
-    expect(first![0].ok).toBe(true);
+    expect(first![0].status).toBe('ok');
 
     const batches = await Promise.all([
       sm.checkParses(['const b = 1;']),
       sm.checkParses(['const c = (']),
       sm.checkParses(['const d = 1;']),
     ]);
-    expect(batches.map((b) => b!.map((v) => v.ok))).toEqual([[true], [false], [true]]);
+    expect(batches.map((b) => b!.map((v) => v.status)))
+      .toEqual([['ok'], ['syntax-error'], ['ok']]);
   });
+});
+
+test.describe('parse check / non-syntax failures', () => {
+  test('a parser resource limit is reported as unknown, not as a syntax error', async ({ sm }) => {
+    // The invariant the whole feature rests on: only V8 saying
+    // "SyntaxError" may disable a script. This source is perfectly
+    // valid JavaScript that happens to exhaust the parser's recursion
+    // budget HERE — inside a message handler inside a promise chain —
+    // which is not the budget `chrome.userScripts` compiles the real
+    // entry with. Reporting it as a syntax error would disable a
+    // script V8 is willing to run.
+    //
+    // The same guard covers the case that can't be tested for: if the
+    // sandbox CSP ever stopped applying, `new Function` would throw
+    // EvalError and every script in the profile would be branded
+    // broken at once.
+    const nested = '('.repeat(100_000) + '1' + ')'.repeat(100_000);
+    const verdicts = await sm.checkParses([nested]);
+    expect(verdicts).not.toBeNull();
+    expect(verdicts![0].status).toBe('unknown');
+  });
+
 });

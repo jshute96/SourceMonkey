@@ -80,6 +80,13 @@ What is still unmapped:
 The compile-only check is in (see
 [docs/parse-check.md](docs/parse-check.md)). What it doesn't do yet:
 
+- **Compile with the wrap's own declarations.** The check omits the
+  wrap head's `var` preamble, the `__smE` parameter and the GM
+  prelude, so a script declaring `const __smE`, `let __smDecision` or
+  `const __smGmSnap` passes and then fails at injection. Every such
+  name is `__sm`-prefixed so the risk is small, and it errs toward
+  false-accept. Compiling with `new Function('__smE', preamble + src)`
+  would close it.
 - **Say WHICH file failed.** Today the message is V8's, against the
   whole composed program: "the script's source has a syntax error".
   Compiling the pieces separately would name the `@require` (or the
@@ -152,8 +159,9 @@ Adding any of these is a catalog entry + a body — nothing structural.
   scripts work badly without it. Could be page-side via
   `MutationObserver` on `location.href` + `pushState` / `popstate`
   listeners.
-- `GM_download` — TM/VM download-to-disk helper. Needs an offscreen
-  document for `URL.createObjectURL`.
+- `GM_download` — TM/VM download-to-disk helper. Needs `BLOBS` added
+  to the existing offscreen document's `reasons` (see the clipboard
+  entry — there is only one such document).
 - `window.close` / `window.focus` — TM-only surface.
 
 ### GM_* implementation follow-ups
@@ -166,9 +174,13 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **Offscreen-doc fallback for clipboard.** `navigator.clipboard.
   writeText` may reject without focus / transient activation. TM/VM
   use an offscreen `execCommand('copy')` to avoid the requirement.
-  Add `offscreen` + `clipboardWrite` manifest permissions, build
-  `src/offscreen.html` + `src/offscreen.ts`, route the fallback
-  through it.
+  The offscreen document already exists (`src/offscreen.html` +
+  `src/offscreen.ts`, built for the parse check) and the `offscreen`
+  permission is declared — MV3 allows only ONE per extension, so
+  EXTEND that host rather than adding a second. Needs
+  `clipboardWrite` in the manifest and `CLIPBOARD` added to the
+  `reasons` array in `parse-check.ts`, which is fixed at creation
+  time.
 - **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
   USER_SCRIPT world's own `window`, not the page's. A real bridge
   would need a MAIN-world helper + postMessage protocol, or a

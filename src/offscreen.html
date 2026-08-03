@@ -26,7 +26,14 @@
   would inherit this document's CSP and lose the `'unsafe-eval'` that
   is the entire point.
 -->
-<iframe id="parse-sandbox" src="parse-sandbox.html"></iframe>
+<!--
+  The `sandbox` attribute is belt-and-braces. The page is already
+  sandboxed by the manifest's `sandbox.pages` key; if that key were
+  ever dropped in an edit, this attribute keeps the frame from
+  silently becoming a fully privileged extension page with `chrome.*`
+  available to whatever it compiles.
+-->
+<iframe id="parse-sandbox" src="parse-sandbox.html" sandbox="allow-scripts"></iframe>
 <script type="module" src="offscreen.js"></script>
 </body>
 </html>

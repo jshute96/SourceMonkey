@@ -527,11 +527,19 @@ function buildMainWorldGmInfoOnly(
 // let it fail at injection time, which is the whole thing we are
 // trying to stop doing.
 //
-// NOT included: the wrap head itself (`self.__smRun(id,function(__smE){`)
-// and its `var` preamble. The head is ours and always valid, and it
-// leaves an unbalanced brace that `new Function` would reject on its
-// own. `var` redeclaration is legal, so the preamble cannot collide
-// with anything the user wrote.
+// NOT included: the wrap head itself (`self.__smRun(id,function(__smE){`),
+// its `var` preamble, and the GM prelude. The head is ours and always
+// valid, and on its own it leaves an unbalanced brace that
+// `new Function` would reject.
+//
+// That leaves a small gap, in the safe direction. `var x` beside
+// another `var x` is legal, but `var x` beside `let`/`const`/`class x`
+// is a SyntaxError — and so is redeclaring the `__smE` parameter. So a
+// script writing `const __smE`, `let __smDecision` or `const __smGmSnap`
+// passes this check and fails at injection. Every such name is `__sm`-
+// prefixed, so the practical risk is negligible; the run-time seal
+// entry still reports it. Closing it properly means compiling with the
+// parameter name and the preamble included — see TODO.md.
 export async function buildParseCheckSource(
   script: StoredScript,
   scriptHandlerVersion: string,

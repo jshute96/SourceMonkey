@@ -218,6 +218,9 @@ interface SourceMonkeyApi {
   // script that fails to parse all the way to injection and exercise
   // the run-time sentinel backstop. Reset by `resetAllState`.
   setParseCheckEnabled: (enabled: boolean) => void;
+  // How many source compiles have run this session. Lets a test tell
+  // a cached verdict from a fresh one.
+  getParseCheckRuns: () => number;
   clearScriptLog: (scriptId: string) => Promise<void>;
   // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
   // script in a dupe group gets which `#N` is decided by UUID sort, so
@@ -290,6 +293,7 @@ const api: SourceMonkeyApi = {
   setParseCheckEnabled: (enabled: boolean) => {
     setParseChecker(enabled ? compileParseChecker : null);
   },
+  getParseCheckRuns: () => parseCheckRuns,
   getActionContextMenu: async (tabId: number) => {
     const cmdsByScript = getMenuCommandsForTab(tabId);
     const out: { scriptId: string; commands: MenuCommandEntry[] }[] = [];
@@ -340,6 +344,7 @@ const api: SourceMonkeyApi = {
     // Restore the parse check in case a prior test disabled it to
     // exercise the run-time backstop.
     setParseChecker(compileParseChecker);
+    parseCheckRuns = 0;
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -2092,7 +2097,13 @@ installScriptLogIdListener();
 // storing it. Installed here rather than imported by the store, so the
 // store keeps no runtime dependency on the injector — see
 // `setParseChecker` in script-store.ts.
+// Count of compiles actually performed, so a test can tell a cache hit
+// from a re-check. Asserting only that the row carries a fingerprint
+// can't: both paths leave one.
+let parseCheckRuns = 0;
+
 const compileParseChecker: ParseChecker = async (script) => {
+  parseCheckRuns++;
   const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
   const verdicts = await checkParses([source]);
   return verdicts ? verdicts[0] : null;

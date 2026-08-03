@@ -5,23 +5,50 @@
 // over postMessage and hand the verdicts back. See `offscreen.html`
 // for why the work is split across two contexts, and
 // `parse-sandbox.html` for why the compile has to happen in a sandbox.
+//
+// This document is the extension's ONE offscreen document — MV3 allows
+// no more — so anything else that needs a DOM without a tab (the
+// clipboard fallback, `GM_download`) must be added here rather than
+// creating its own. Adding a consumer means extending the `reasons`
+// array in `parse-check.ts`, which is fixed at creation time.
 
-import { PARSE_CHECK_MSG, PARSE_CHECK_RESULT_MSG, type ParseVerdict } from './parse-check-protocol.js';
+import {
+  PARSE_CHECK_MSG,
+  PARSE_CHECK_RESULT_MSG,
+  PARSE_SANDBOX_READY_MSG,
+  type ParseVerdict,
+} from './parse-check-protocol.js';
 
 const frame = document.getElementById('parse-sandbox') as HTMLIFrameElement;
 
 // Requests waiting on the sandbox, by correlation id.
-const pending = new Map<string, (verdicts: ParseVerdict[]) => void>();
+const pending = new Map<string, (verdicts: ParseVerdict[] | null) => void>();
 
-// The iframe may still be loading when the first request arrives — the
-// service worker creates this document and messages it immediately.
-// Resolve once, then reuse.
+// Readiness cannot be observed from out here. A sandboxed frame is
+// opaque-origin, so `frame.contentDocument` is ALWAYS null and its
+// `readyState` is unreadable — an "is it loaded?" fast path looks reasonable
+// and can never fire. That leaves two signals, and we take whichever
+// arrives first:
+//
+//   - the sandbox's own ready ping, sent as the last thing it does;
+//   - the iframe's `load` event, in case the ping was posted before
+//     this listener existed.
+//
+// The timeout is the third leg, and the important one: without it, a
+// missed signal wedges `frameReady` forever and every check silently
+// times out for the rest of the browser session. Resolving anyway lets
+// the request through — the sandbox is almost certainly up, and if it
+// isn't the per-request timeout reports "unknown" rather than lying.
+const FRAME_READY_TIMEOUT_MS = 2_000;
+
 const frameReady: Promise<void> = new Promise((resolve) => {
-  if (frame.contentWindow && frame.contentDocument?.readyState === 'complete') {
-    resolve();
-    return;
-  }
-  frame.addEventListener('load', () => resolve(), { once: true });
+  const done = () => resolve();
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (event.source !== frame.contentWindow) return;
+    if ((event.data as { type?: string } | null)?.type === PARSE_SANDBOX_READY_MSG) done();
+  });
+  frame.addEventListener('load', done, { once: true });
+  setTimeout(done, FRAME_READY_TIMEOUT_MS);
 });
 
 window.addEventListener('message', (event: MessageEvent) => {
@@ -38,10 +65,18 @@ window.addEventListener('message', (event: MessageEvent) => {
   resolve(data.verdicts);
 });
 
+// Per-request ceiling. Distinct from the service worker's own timeout:
+// this one exists so `pending` can't grow a dead resolver per abandoned
+// request. The offscreen document outlives service-worker restarts, so
+// "leaks slowly, forever" is a real shape here rather than a
+// theoretical one.
+const REQUEST_TIMEOUT_MS = 8_000;
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const msg = message as { type?: string; id?: string; sources?: string[] } | null;
   if (!msg || msg.type !== PARSE_CHECK_MSG) return undefined;
-  if (typeof msg.id !== 'string' || !Array.isArray(msg.sources)) return undefined;
+  const id = msg.id;
+  if (typeof id !== 'string' || !Array.isArray(msg.sources)) return undefined;
   void (async () => {
     await frameReady;
     const win = frame.contentWindow;
@@ -53,11 +88,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ error: 'parse sandbox unavailable' });
       return;
     }
-    const verdicts = await new Promise<ParseVerdict[]>((resolve) => {
-      pending.set(msg.id!, resolve);
-      win.postMessage({ type: PARSE_CHECK_MSG, id: msg.id, sources: msg.sources }, '*');
+    const verdicts = await new Promise<ParseVerdict[] | null>((resolve) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        resolve(null);
+      }, REQUEST_TIMEOUT_MS);
+      pending.set(id, (v) => { clearTimeout(timer); resolve(v); });
+      win.postMessage({ type: PARSE_CHECK_MSG, id, sources: msg.sources }, '*');
     });
-    sendResponse({ verdicts });
+    sendResponse(verdicts ? { verdicts } : { error: 'parse sandbox timed out' });
   })();
   // Keep the message channel open for the async reply.
   return true;

@@ -10,10 +10,13 @@
 // gate) made the whole concatenated entry fail to parse. The seal
 // entry caught it and logged "script source failed to parse (a
 // @require or the script body has a syntax error); nothing was run" —
-// but only on a page the script matched, and without saying which file
-// was at fault. Checking up front turns that into an `invalid` status
-// on the sources page, next to the script, with the offending file
-// named.
+// but only on a page the script matched. Checking up front turns that
+// into an `invalid` status on the sources page, next to the script,
+// the moment it is added or refreshed.
+//
+// It still does not say WHICH file was at fault — the message is V8's,
+// about the whole composed program. Naming the file means compiling
+// the pieces separately as well; see TODO.md.
 //
 // ---------- Why it takes three contexts ----------
 //
@@ -56,17 +59,27 @@ import { PARSE_CHECK_MSG, type ParseVerdict } from './parse-check-protocol.js';
 const OFFSCREEN_URL = 'offscreen.html';
 
 // How long to wait for the sandbox before giving up on a batch. The
-// compile itself is fast (V8 parsing a few hundred KB), so this is
-// really a guard against the offscreen document being torn down
-// mid-flight rather than a realistic budget.
-const PARSE_TIMEOUT_MS = 10_000;
+// compile itself is fast (V8 parsing a few hundred KB), so this is a
+// guard against the offscreen document being torn down mid-flight
+// rather than a realistic budget. Kept short because opportunistic
+// refresh runs on the navigation path: a wedged check should cost a
+// moment, not ten seconds per pass.
+const PARSE_TIMEOUT_MS = 3_000;
+
+// After this many consecutive failures, stop trying for the rest of
+// the service-worker's life. Without it, a permanently broken sandbox
+// costs every refresh a full timeout per script forever — a
+// degraded-capability path that gets slower the more scripts you have
+// is worse than one that turns itself off.
+const FAILURE_LIMIT = 3;
+let consecutiveFailures = 0;
 
 // `chrome.offscreen.createDocument` rejects if one already exists, and
 // there is no "create if absent" call. Serializing through one promise
 // keeps two concurrent refreshes from racing into that rejection.
 let creating: Promise<void> | null = null;
 
-let nextRequestId = 0;
+
 
 // True when this browser can run the check at all. Chrome gained
 // `chrome.offscreen` in 109; we don't support anything near that old,
@@ -74,6 +87,12 @@ let nextRequestId = 0;
 // where the API is absent.
 export function parseCheckAvailable(): boolean {
   return typeof chrome !== 'undefined' && !!chrome.offscreen;
+}
+
+// Reset the circuit breaker. Exposed for tests, which need a clean
+// slate between cases that deliberately break the machinery.
+export function resetParseCheckFailures(): void {
+  consecutiveFailures = 0;
 }
 
 async function ensureOffscreenDocument(): Promise<void> {
@@ -115,9 +134,15 @@ async function hasOffscreenDocument(): Promise<boolean> {
 export async function checkParses(sources: readonly string[]): Promise<ParseVerdict[] | null> {
   if (sources.length === 0) return [];
   if (!parseCheckAvailable()) return null;
+  if (consecutiveFailures >= FAILURE_LIMIT) return null;
   try {
     await ensureOffscreenDocument();
-    const id = `parse-${nextRequestId++}`;
+    // Random rather than a counter: the offscreen document outlives
+    // service-worker restarts, and a counter restarts at zero with it.
+    // A reused id can resolve a NEW request with an OLD request's
+    // verdicts, which is the one way this machinery could mark a good
+    // script invalid.
+    const id = crypto.randomUUID();
     const reply = await withTimeout(
       chrome.runtime.sendMessage({ type: PARSE_CHECK_MSG, id, sources }),
       PARSE_TIMEOUT_MS,
@@ -125,14 +150,17 @@ export async function checkParses(sources: readonly string[]): Promise<ParseVerd
     const verdicts = (reply as { verdicts?: ParseVerdict[] } | undefined)?.verdicts;
     if (!Array.isArray(verdicts) || verdicts.length !== sources.length) {
       dlog('[SourceMonkey] parse check returned no usable verdicts');
+      consecutiveFailures++;
       return null;
     }
+    consecutiveFailures = 0;
     return verdicts;
   } catch (err) {
     // console.info, not .warn/.error: this is a degraded-capability
     // path, not an extension bug, and Chrome forwards warn/error into
     // chrome://extensions/?errors.
     console.info('[SourceMonkey] parse check unavailable', err);
+    consecutiveFailures++;
     return null;
   }
 }

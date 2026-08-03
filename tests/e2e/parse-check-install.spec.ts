@@ -157,6 +157,134 @@ test.describe('parse check at install time', () => {
     expect(scripts[0].errorMessage).toBeUndefined();
   });
 
+  test('an unchanged refresh reuses the verdict instead of re-compiling', async ({ sm }) => {
+    // Re-compiling every script on every refresh would cost a round
+    // trip each, so a passing verdict is cached against the content it
+    // was made about. Counting actual compiles is the only assertion
+    // that distinguishes a cache hit from a re-check — the row carries
+    // a fingerprint either way.
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = 1;');
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'Cached', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'void greet;',
+    });
+    await sm.addSource(scriptsDir.path);
+    const sources = await sm.getSources();
+    const afterInstall = await sm.getParseCheckRuns();
+    expect(afterInstall, 'installing should compile once').toBeGreaterThan(0);
+
+    // Nothing changed on disk, so neither refresh should compile.
+    for (const mode of ['opportunistic', 'manual'] as const) {
+      await sm.updateSource(sources[0].id, mode);
+      expect(await sm.getParseCheckRuns(), `${mode} refresh re-compiled unchanged content`)
+        .toBe(afterInstall);
+      const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+      expect(after.status).toBe('ok');
+      expect(after.parseCheckedHash, `${mode} refresh should keep the fingerprint`).toBeTruthy();
+    }
+
+    // ...but a real edit must be re-checked, or the cache would hide
+    // a newly-introduced syntax error forever.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'Cached', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'void greet; const added = 2; void added;',
+    });
+    await sm.updateSource(sources[0].id, 'manual');
+    expect(await sm.getParseCheckRuns(), 'a changed body must be re-compiled')
+      .toBeGreaterThan(afterInstall);
+  });
+
+  test('an opportunistic refresh checks a newly-broken body', async ({ sm }) => {
+    // The opportunistic path short-circuits the dependency work when
+    // the `@require` list is unchanged — which is the common case, and
+    // says nothing about the BODY. If the check sits after that
+    // short-circuit, a background refresh silently stores a body with
+    // a syntax error and reports the script healthy until someone
+    // visits a page it matches.
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = 1;');
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'OppEdit', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'void greet;',
+    });
+    await sm.addSource(scriptsDir.path);
+    const sources = await sm.getSources();
+    expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('ok');
+
+    // Body edited, `@require` list untouched.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'OppEdit', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'void greet; const broken = (;',
+    });
+    await sm.updateSource(sources[0].id, 'opportunistic');
+    const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    expect(after.status).toBe('invalid');
+    expect(after.errorMessage).toMatch(/syntax error/i);
+  });
+
+  test('a @require edit alone invalidates the cached verdict', async ({ sm }) => {
+    // The fingerprint covers each require's content hash, not just the
+    // body's. A cache keyed on the body alone would keep calling this
+    // script healthy after its library broke.
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = 1;');
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'ReqEdit', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'void greet;',
+    });
+    await sm.addSource(scriptsDir.path);
+    const sources = await sm.getSources();
+    expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('ok');
+
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = (;');
+    await sm.updateSource(sources[0].id, 'manual');
+    const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    expect(after.status).toBe('invalid');
+    expect(after.errorMessage).toMatch(/syntax error/i);
+  });
+
+  test('an invalid row records no fingerprint, so a fix is always re-checked', async ({ sm }) => {
+    // A cached pass on a broken row would be a script that stays
+    // broken after being fixed; a cached FAIL would be worse still.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'NoStaleCache', match: ['https://example.com/*'] },
+      body: 'const x = (;',
+    });
+    await sm.addSource(scriptsDir.path);
+    const sources = await sm.getSources();
+    const broken = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    expect(broken.status).toBe('invalid');
+    expect(broken.parseCheckedHash).toBeUndefined();
+  });
+
+  test('an inconclusive check leaves the script alone', async ({ sm }) => {
+    // The invariant, at the level that matters: only V8 saying
+    // "SyntaxError" may disable a script. This body is valid
+    // JavaScript that exhausts the parser's recursion budget in the
+    // sandbox — a budget the real injection doesn't share — so the
+    // check comes back `unknown` and the row must stay `ok`.
+    //
+    // The same path covers the failure that can't be tested for: a
+    // sandbox that lost its CSP would throw EvalError on EVERY script,
+    // and treating that as a syntax error would disable all of them at
+    // once.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'DeeplyNested', match: ['https://example.com/*'] },
+      body: `void ${'('.repeat(100_000)}1${')'.repeat(100_000)};`,
+    });
+    const scripts = await installAndRead(sm);
+    expect(scripts[0].status).toBe('ok');
+    expect(scripts[0].errorMessage).toBeUndefined();
+    // ...and an inconclusive verdict must not be cached as a pass, or
+    // the script would never be re-checked once the cause cleared.
+    expect(scripts[0].parseCheckedHash).toBeUndefined();
+  });
+
   test('an http refresh that returns a broken body keeps the prior good copy running', async ({ sm }) => {
     // Existing soft-failure policy, which the parse check now feeds:
     // an http 200 that doesn't parse is usually a login or error page

@@ -57,9 +57,16 @@ the same scope as the user program, so a library doing
 `const unsafeWindow = window.wrappedJSObject || window;` — a real idiom
 — is a duplicate declaration and a genuine parse failure.
 
-Not included: the wrap head and its `var` preamble. The head is ours
-and always valid, and on its own it leaves an unbalanced brace. `var`
-redeclaration is legal, so the preamble cannot collide.
+Not included: the wrap head, its `var` preamble, the `__smE` parameter,
+and the GM prelude. The head is ours and always valid, and on its own
+it leaves an unbalanced brace.
+
+That leaves a gap, in the safe direction. `var x` beside `var x` is
+legal, but `var x` beside `let`/`const`/`class x` is a `SyntaxError`,
+and so is redeclaring a parameter. A script writing `const __smE`,
+`let __smDecision` or `const __smGmSnap` therefore passes and fails at
+injection. All such names are `__sm`-prefixed, and the run-time seal
+entry still reports it. Tracked in `TODO.md`.
 
 ## Why the composed program, not each file
 
@@ -69,17 +76,34 @@ together. Checking files separately would call that script healthy.
 
 ## Failing open
 
-Every failure of the machinery itself resolves to "don't know", never
-to "didn't parse":
+A verdict has three states, not two, and the third is what makes the
+guarantee real. **Only V8 answering `SyntaxError` may disable a
+script.** Anything else is `unknown`: not stored, not cached, not
+surfaced.
 
-- no `chrome.offscreen`;
-- the offscreen document won't open;
+Machinery failures that resolve to "don't know":
+
+- no `chrome.offscreen`, or the document won't open;
 - the sandbox doesn't answer inside the timeout;
-- no checker installed for this context (see below).
+- no checker installed for this context (see below);
+- **any throw that isn't a `SyntaxError`.**
 
-A working script must never be disabled because our plumbing broke. The
-seal entry stays in place as the run-time backstop, so anything missed
-here is still reported exactly as it was before.
+That last one carries the weight:
+
+- A `RangeError: Maximum call stack size exceeded` on deeply nested but
+  valid source is the parser running out of budget *in the sandbox* —
+  not the budget `chrome.userScripts` compiles the real entry with.
+- If the sandbox CSP ever stopped applying, `new Function` would throw
+  `EvalError` and **every script in the profile** would be branded
+  broken at once. Distinguishing the states turns that into "the
+  feature is off" rather than "every userscript is disabled".
+
+A circuit breaker stops trying after a few consecutive failures, so a
+permanently wedged sandbox costs a few timeouts rather than one per
+script forever.
+
+The seal entry stays in place as the run-time backstop, so anything
+missed here is still reported exactly as it was before.
 
 ## Where the checker is installed
 
@@ -98,11 +122,19 @@ Consequences:
 ## Caching
 
 Re-checking every script on every refresh would cost a round trip each.
-`parseCheckedHash` on the stored row fingerprints the body's
-`contentHash` plus each `@require`'s, so a refresh whose content didn't
-move reuses the prior verdict. An `invalid` row deliberately records
-nothing, so a later refresh re-derives the verdict rather than
-inheriting a stale pass.
+`parseCheckedHash` on the stored row fingerprints the extension
+version, the body's `contentHash`, and each `@require`'s — so a refresh
+whose content didn't move reuses the prior verdict.
+
+- The body's hash covers the whole file including the header, so
+  `@grant` / `@require` / `@inject-into` edits all move the key.
+- The **version** leg matters because the checked text contains code
+  *we* emit. Add a `GM_*` binding in a future release and a script that
+  already declares that name becomes a parse failure, with nothing
+  about the script having changed.
+- An `invalid` or `unknown` row deliberately records nothing, so a
+  later refresh re-derives the verdict rather than inheriting a stale
+  pass.
 
 ## Interaction with refresh policy
 
@@ -114,6 +146,17 @@ soft-failure rule then applies on top:
   usually a login or error page served in place of the script.
 - **`file://` source** — flag immediately. That is a real local edit,
   and a developer wants to see it now.
+
+## The offscreen document is shared
+
+MV3 allows exactly **one** offscreen document per extension.
+`src/offscreen.html` is it. Anything else needing a DOM without a tab —
+the clipboard fallback, `GM_download` — must extend this host and its
+`reasons` array (fixed at creation time in `parse-check.ts`), not
+create a second one.
+
+The document is created lazily on the first check and never closed, so
+it holds a renderer process for the session.
 
 ## Limits
 

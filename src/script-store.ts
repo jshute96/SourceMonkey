@@ -555,7 +555,13 @@ async function applyFiles(
       else delete built.requires;
       if (prior.resources) built.resources = prior.resources;
       else delete built.resources;
-      return built;
+      // Still route through the parse check. `built` is a fresh row,
+      // so returning here directly would drop `parseCheckedHash` and
+      // make every later refresh re-compile content that never moved.
+      // The check itself is usually free on this path: the deps are
+      // the prior's by construction, so the fingerprint matches unless
+      // the BODY changed — which is exactly when a re-check is right.
+      return applyParseCheck(built, prior);
     }
   }
   const result = await attachFiles({
@@ -622,11 +628,35 @@ export function setParseChecker(fn: ParseChecker | null): void {
 }
 
 // Fingerprint of everything that can affect whether the injected entry
-// parses: the body, and each `@require` body in order. Both are
-// content hashes we already compute, so this costs a join.
+// parses: the body, each `@require` body in order, and our own
+// extension version.
+//
+// The body's `contentHash` covers the WHOLE file including the header,
+// so `@grant` / `@require` / `@inject-into` edits all move the key.
+//
+// The version leg is there because the checked text also contains code
+// WE emit — the `GM_*` bindings, whose set of `const` names comes from
+// `gm-api-catalog.ts`. Add a binding in a future release and a script
+// that already declares that name becomes a parse failure, with
+// nothing about the script itself having changed. Without the version
+// in the key, the cached pass would survive the upgrade.
+//
+// Future hazard: `buildGmBindingsForScript` is async against the day it
+// bakes persisted `GM_*` values into the bindings. If that lands, those
+// values become part of the checked text and belong in this key.
 function parseCheckKey(script: StoredScript): string {
   const reqs = (script.requires ?? []).map((r) => r.contentHash).join(',');
-  return `${script.contentHash ?? ''}|${reqs}`;
+  return `${extensionVersion()}|${script.contentHash ?? ''}|${reqs}`;
+}
+
+// Guarded because this module is also loaded by the unit suite, which
+// runs the compiled output under plain Node with no `chrome` global.
+// An empty version there just means the version leg contributes
+// nothing to the key, which is correct for a context that never runs
+// the check anyway.
+function extensionVersion(): string {
+  if (typeof chrome === 'undefined' || !chrome.runtime?.getManifest) return '';
+  return chrome.runtime.getManifest().version;
 }
 
 // Compile the script's user program without running it, and flip the
@@ -678,7 +708,14 @@ async function applyParseCheck(
     return built;
   }
   if (!verdict) return built;
-  if (verdict.ok) {
+  // `unknown` is the machinery saying it couldn't decide — a stack
+  // overflow in the parser, a sandbox that lost its CSP. It must not
+  // become `invalid`, and it must not be cached as a pass either.
+  if (verdict.status === 'unknown') {
+    dlog(`[SourceMonkey] parse check inconclusive for ${built.relativePath}: ${verdict.message ?? ''}`);
+    return built;
+  }
+  if (verdict.status === 'ok') {
     built.parseCheckedHash = key;
     return built;
   }
