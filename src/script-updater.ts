@@ -37,6 +37,7 @@ import {
   getScript,
   getSources,
   getSourceWithScripts,
+  loadStateLogEntry,
   refreshAllSources,
   refreshScript,
   refreshSource,
@@ -57,7 +58,7 @@ import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
 import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
-import { getScriptLog, logScriptEvent } from './script-log.js';
+import { appendScriptLogIfAbsent, logScriptEvent } from './script-log.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -260,11 +261,24 @@ async function runSourceCheck(
   try {
     result = await refreshSource(sourceId, { recheckFiles: fileRecheckMode(mode) });
   } catch (err) {
-    console.info(`[SourceMonkey] source refresh failed: ${label}: ${describe(err)}`);
+    const msg = describe(err);
+    console.info(`[SourceMonkey] source refresh failed: ${label}: ${msg}`);
+    // A throw out of refreshSource (storage failure, and nothing else
+    // today — scan failures are caught inside and surface as scanError)
+    // leaves every script under this source unrefreshed. Say so in each
+    // one's Log rather than letting the failure live only in the SW
+    // console.
+    for (const s of prior?.scripts ?? []) {
+      logScriptEvent(s.id, {
+        level: 'warning',
+        source: `refresh-${mode}`,
+        message: `source refresh threw: ${msg}`,
+      });
+    }
     throw err;
   }
   if (result) {
-    summarizeSourceOutcome(label, priorBy, result.scripts, mode);
+    summarizeSourceOutcome(label, prior?.source, priorBy, result, mode);
     await runVersionProbes(result.scripts, mode, probe);
   }
   return result;
@@ -280,9 +294,15 @@ async function runAllSourcesCheck(
   // updated / 0 added.
   const priorBySourceId = await snapshotAllSourceScripts();
   const result = await refreshAllSources({ recheckFiles: fileRecheckMode(mode) });
-  for (const [, { source, scripts }] of result) {
-    const priorBy = priorBySourceId.get(source.id) ?? new Map();
-    summarizeSourceOutcome(source.path, priorBy, scripts, mode);
+  for (const [, refreshed] of result) {
+    const priorSnapshot = priorBySourceId.get(refreshed.source.id);
+    summarizeSourceOutcome(
+      refreshed.source.path,
+      priorSnapshot?.source,
+      priorSnapshot?.scripts ?? new Map(),
+      refreshed,
+      mode,
+    );
   }
   await runVersionProbes([...result.values()].flatMap((r) => r.scripts), mode, probe);
   return result;
@@ -355,12 +375,19 @@ async function probeOneScript(
   logScriptEvent(script.id, { level: 'warning', source: `probe-${mode}`, message });
 }
 
-async function snapshotAllSourceScripts(): Promise<Map<string, Map<string, StoredScript>>> {
+interface SourceSnapshot {
+  source: StoredSource;
+  scripts: Map<string, StoredScript>;
+}
+
+// Pre-refresh state per source: the source row (for its `scanError`, so
+// a still-down source doesn't re-log) plus its scripts by ID.
+async function snapshotAllSourceScripts(): Promise<Map<string, SourceSnapshot>> {
   const sources = await getSources();
   const entries = await Promise.all(sources.map(async (s) => {
     const data = await getSourceWithScripts(s.id);
-    const byId = new Map((data?.scripts ?? []).map((sc) => [sc.id, sc]));
-    return [s.id, byId] as const;
+    const scripts = new Map((data?.scripts ?? []).map((sc) => [sc.id, sc]));
+    return [s.id, { source: s, scripts }] as const;
   }));
   return new Map(entries);
 }
@@ -406,56 +433,70 @@ function logScriptOutcome(
 // outcome line. Skipped for unchanged-state opportunistic checks so the
 // log doesn't fill with thousands of "no change" rows from background
 // polling — those still get debug-gated console output via dlog.
-function emitScriptOutcomeLog(
+//
+// Every failure the UI surfaces on a script row also lands here, so
+// clicking a red/amber badge always leads to an explanation:
+// `invalid` and `missing` (error), and `refreshError` (warning) — see
+// `loadStateLogEntry` for the phrasing and the level rationale.
+//
+// **Repeat suppression.** A source whose server is down fails on every
+// single pass, and the reload fast-path re-checks each matched script
+// on *every* tab reload. Appending the same line each time would fill
+// the 500-entry cap and evict the entries that actually explain
+// something. So we compare the state we're about to log against the
+// state the row already had: an unchanged failure logs nothing, a
+// changed reason logs the new one.
+//
+// The comparison is against the stored row rather than against the log
+// contents on purpose. The row lives in `chrome.storage.local`, so a
+// script that has been broken for days doesn't re-log on every SW
+// restart; the log lives in session storage, which is wiped on Chrome
+// shutdown — refilling it is `replayScriptLogsAtBoot`'s job, once.
+//
+// **Opportunistic checks log too.** They report the same facts a manual
+// check would, and the whole point of a background check is to notice a
+// failure the user hasn't gone looking for yet — a badge that turns
+// amber on its own should have a matching Log line. It's the
+// suppression above, not the trigger mode, that keeps the volume sane.
+// (Trigger mode still gates the *non*-events: "no change" is
+// manual-only.)
+//
+// Exported for unit tests — the public entry points would need the
+// whole chrome.storage pipeline stubbed to reach it.
+export function emitScriptOutcomeLog(
   scriptId: string,
   prior: StoredScript | undefined,
   next: StoredScript | null,
   mode: UpdateMode,
 ): void {
+  const source = `refresh-${mode}`;
   if (!next) {
     logScriptEvent(scriptId, {
       level: 'warning',
-      source: `refresh-${mode}`,
+      source,
       message: 'row vanished during refresh',
     });
     return;
   }
-  if (next.status === 'invalid') {
-    logScriptEvent(scriptId, {
-      level: 'error',
-      source: `refresh-${mode}`,
-      message: next.errorMessage ?? 'unknown error',
-    });
+  const nextState = loadStateLogEntry(next);
+  const priorState = prior ? loadStateLogEntry(prior) : null;
+  if (nextState) {
+    if (!priorState || priorState.message !== nextState.message) {
+      logScriptEvent(scriptId, { ...nextState, source });
+    }
     return;
   }
-  if (next.status === 'missing' && prior?.status !== 'missing') {
-    // Surface the vanished-file transition once into the Log tab so
-    // users opening a MISSING row's logs see why it's flagged. Repeat
-    // refreshes against an already-missing row stay quiet.
-    logScriptEvent(scriptId, {
-      level: 'error',
-      source: `refresh-${mode}`,
-      message: next.errorMessage ?? 'source file is missing',
-    });
-    return;
-  }
-  if (next.refreshError && prior?.refreshError !== next.refreshError) {
-    // The refresh failed but the cached good copy keeps running. Record
-    // it at warning level (the script isn't broken, just stale). Only on
-    // the transition / reason change, so a persistently-down source
-    // doesn't flood the Log tab from background polling.
-    logScriptEvent(scriptId, {
-      level: 'warning',
-      source: `refresh-${mode}`,
-      message: `refresh failed: ${next.refreshError}`,
-    });
-    return;
+  if (prior && priorState) {
+    // The row is healthy again. Log the recovery so the Log explains
+    // why the badge went back to OK — without this the last word on the
+    // script would be a failure that is no longer true.
+    logScriptEvent(scriptId, { level: 'info', source, message: recoveryMessage(prior) });
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
     const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
     logScriptEvent(scriptId, {
       level: 'info',
-      source: `refresh-${mode}`,
+      source,
       message: `loaded new content${size}`,
     });
     // Replay parse-time diagnostics whenever a new version lands. They
@@ -474,10 +515,20 @@ function emitScriptOutcomeLog(
   if (mode === 'manual') {
     logScriptEvent(scriptId, {
       level: 'info',
-      source: `refresh-${mode}`,
+      source,
       message: 'no change',
     });
   }
+}
+
+// How to phrase "the failure we last logged for this row is over".
+// Keyed off the prior row's state so the line names what recovered —
+// a bare "ok again" wouldn't tell the user whether the file came back,
+// the parse started succeeding, or the server did.
+function recoveryMessage(prior: StoredScript): string {
+  if (prior.status === 'invalid') return 'loads cleanly again (was invalid)';
+  if (prior.status === 'missing') return 'source file is back';
+  return 'refresh succeeded again (source is reachable)';
 }
 
 // Map a StartupLog level (page-console-flavored: log/info/warn/error)
@@ -491,58 +542,69 @@ function startupLogLevelToLogLevel(level: StartupLog['level']): 'info' | 'warnin
 }
 
 // Sentinel key in chrome.storage.session that records "we've already
-// replayed startup logs for THIS Chrome session." session storage is
-// cleared on Chrome shutdown, so a fresh Chrome session always misses
-// the sentinel; SW restarts within a session always hit it.
+// replayed the persisted per-script state for THIS Chrome session."
+// session storage is cleared on Chrome shutdown, so a fresh Chrome
+// session always misses the sentinel; SW restarts within a session
+// always hit it.
 const BOOT_REPLAY_SENTINEL_KEY = 'sm:startup-logs-replayed-at';
 
-// Surface parse-time diagnostics into the Log tab once per Chrome
-// session, at SW startup. Without this, a fresh Chrome session sees
-// an empty Log tab even when storage.local already has scripts whose
-// `startupLogs` were computed in a prior session — the user would
-// have to manually refresh each script to see the warnings again.
+// Refill the Log tab from persisted state, once per Chrome session, at
+// SW startup. Two things get replayed, both for the same reason: the
+// facts live in `chrome.storage.local` and outlive the Chrome shutdown
+// that wipes the session-scoped log, so without this a fresh session
+// shows a red or amber badge over an empty Log until the user manually
+// refreshes.
 //
-// The sentinel makes it idempotent: SW restarts within the same
-// Chrome session bail out immediately. The replay itself reuses the
-// same `parser`-source log line format as the refresh path so the
-// Log tab is visually uniform.
-export async function replayStartupLogsAtBoot(): Promise<void> {
+//   - **Load state** — a row that is currently `invalid` / `missing` /
+//     carrying a `refreshError`. The refresh paths only log on a state
+//     *change* (see `emitScriptOutcomeLog`), so a script that has been
+//     broken since before the restart would otherwise never re-log.
+//   - **Parse-time diagnostics** — `script.startupLogs`.
+//
+// The sentinel makes it idempotent: SW restarts within the same Chrome
+// session bail out immediately. Both replays reuse the exact message
+// text the refresh paths use, so the Log tab is visually uniform and
+// the `appendScriptLogIfAbsent` de-dupe below can recognise a row a
+// concurrent refresh already wrote.
+export async function replayScriptLogsAtBoot(): Promise<void> {
   const got = await chrome.storage.session.get(BOOT_REPLAY_SENTINEL_KEY);
   if (got[BOOT_REPLAY_SENTINEL_KEY]) return;
   await chrome.storage.session.set({ [BOOT_REPLAY_SENTINEL_KEY]: Date.now() });
 
   // Single chrome.storage.local.get(null) scan via getAllScripts —
   // cheaper than per-source reads when most scripts won't have
-  // diagnostics anyway.
+  // anything to replay anyway.
   for (const script of await getAllScripts()) {
+    await ensureLoadStateInLogTab(script);
     await ensureStartupLogsInLogTab(script);
   }
 }
 
+// Restate a script's current load failure, if it has one. `source:
+// 'boot'` rather than `refresh-*` so the Log reads honestly: nothing
+// was re-checked, we're just carrying the last known verdict forward.
+async function ensureLoadStateInLogTab(script: StoredScript): Promise<void> {
+  const entry = loadStateLogEntry(script);
+  if (!entry) return;
+  await appendScriptLogIfAbsent(script.id, { ...entry, source: 'boot' });
+}
+
 // Append any of `script.startupLogs` that aren't already present in
-// the per-script Log tab as a `parser`-source row. The existence
-// check protects against the cold-boot race where an opportunistic
-// refresh fires concurrently with `replayStartupLogsAtBoot` — if the
-// refresh path already wrote the same parser row this turn, replay
-// sees it and skips.
+// the per-script Log tab as a `parser`-source row.
 //
-// Residual race: if replay emits first and then a refresh for the
-// same content version fires, the refresh path will still write a
-// duplicate row (it doesn't consult existing entries). Bounded to at
-// most one extra row per script per Chrome session and only triggers
-// when content actually changed on disk between Chrome shutdown and
-// the user's first navigation after restart.
+// `appendScriptLogIfAbsent` does the existence check inside the log's
+// own append queue, so a refresh that raced this replay and already
+// wrote the row can't be double-counted.
+//
+// Residual race, unchanged from before: if replay wins and a refresh
+// for the same content version then lands, the refresh writes a
+// duplicate — it appends unconditionally because "one row per content
+// version" is its contract. Bounded to one extra row per script per
+// Chrome session, and only when content changed on disk between
+// shutdown and the user's first navigation after restart.
 async function ensureStartupLogsInLogTab(script: StoredScript): Promise<void> {
-  const logs = script.startupLogs ?? [];
-  if (logs.length === 0) return;
-  const existing = await getScriptLog(script.id);
-  const seenParserMessages = new Set<string>();
-  for (const entry of existing) {
-    if (entry.source === 'parser') seenParserMessages.add(entry.message);
-  }
-  for (const sl of logs) {
-    if (seenParserMessages.has(sl.message)) continue;
-    logScriptEvent(script.id, {
+  for (const sl of script.startupLogs ?? []) {
+    await appendScriptLogIfAbsent(script.id, {
       level: startupLogLevelToLogLevel(sl.level),
       source: 'parser',
       message: sl.message,
@@ -550,12 +612,53 @@ async function ensureStartupLogsInLogTab(script: StoredScript): Promise<void> {
   }
 }
 
-function summarizeSourceOutcome(
+// Roll a source-level refresh up into one SW-console line, and fan the
+// per-script outcomes out into the Log tab.
+//
+// The scan-failure case is handled separately from the per-script loop.
+// `refreshSource` deliberately leaves every script row untouched when
+// the listing can't be read (see [docs/storage.md]) — so the per-script
+// loop would report "no change" for every one of them, which is a lie:
+// nothing was checked. Instead every script under the source gets one
+// warning naming the scan failure. Warning, not error, for the same
+// reason a `refreshError` is a warning — the scripts are still running
+// from their cached copies, only the update didn't happen.
+//
+// Exported for unit tests.
+export function summarizeSourceOutcome(
   label: string,
+  priorSource: StoredSource | undefined,
   priorBy: Map<string, StoredScript>,
-  nextScripts: StoredScript[],
+  next: { source: StoredSource; scripts: StoredScript[] },
   mode: UpdateMode = 'manual',
 ): void {
+  const nextScripts = next.scripts;
+  const scanError = next.source.scanError;
+  if (scanError) {
+    // Only on the transition / reason change: a source that stays
+    // unreadable is re-scanned on every Refresh All and must not add a
+    // row each time.
+    if (priorSource?.scanError !== scanError) {
+      for (const s of nextScripts) {
+        logScriptEvent(s.id, {
+          level: 'warning',
+          source: `refresh-${mode}`,
+          message: `source scan failed: ${scanError} — still running the cached copy`,
+        });
+      }
+    }
+    console.log(`[SourceMonkey] source refresh: ${label}: scan failed: ${scanError}`);
+    return;
+  }
+  if (priorSource?.scanError) {
+    for (const s of nextScripts) {
+      logScriptEvent(s.id, {
+        level: 'info',
+        source: `refresh-${mode}`,
+        message: 'source scan succeeded again (source is readable)',
+      });
+    }
+  }
   let changed = 0;
   let added = 0;
   let unchanged = 0;

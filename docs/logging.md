@@ -176,11 +176,18 @@ regardless of how many times the SW restarts in between.
 
 `chrome.storage.session` (where the Log tab lives) is cleared on
 Chrome shutdown, so a fresh Chrome session starts with an empty Log
-tab even though every script's `startupLogs` are still persisted in
+tab even though the state that explains it is still persisted in
 `chrome.storage.local`. To repopulate without forcing a manual
-refresh, `replayStartupLogsAtBoot()` (in `src/script-updater.ts`)
-runs once at SW startup and emits one `parser` row per diagnostic
-for every stored script.
+refresh, `replayScriptLogsAtBoot()` (in `src/script-updater.ts`) runs
+once at SW startup and walks every stored script, emitting:
+
+- one `parser` row per `startupLogs` diagnostic, and
+- one `boot` row for a script whose row is *currently* broken
+  (`invalid` / `missing` / carrying a `refreshError`). The refresh
+  paths only log on a state *change*, so without this a script that
+  was already broken before the restart would show a red or amber
+  badge over an empty Log. See
+  [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 - Gated by a sentinel key in `chrome.storage.session`. The sentinel
   is missing on first SW boot of a Chrome session and present on
@@ -196,14 +203,15 @@ for every stored script.
   same session the sentinel is set and the replay bails. (Top-level
   rather than `chrome.runtime.onStartup` because that event isn't
   guaranteed to land before the SW's own first wake-up.)
-- Also defensive against a cold-boot + concurrent-refresh race: the
-  per-script append checks the existing log for a matching parser row
-  before writing, so a refresh path that wrote the same diagnostic
-  first won't get duplicated by replay. The inverse ordering (replay
-  first, refresh second) is still possible and would produce one
-  duplicate row per affected script per Chrome session — bounded and
-  rare (requires the script's content to have changed between Chrome
-  shutdown and the user's first navigation after restart).
+- Also defensive against a cold-boot + concurrent-refresh race: replay
+  writes through `appendScriptLogIfAbsent`, which checks the existing
+  log inside the append queue, so a refresh path that got there first
+  won't get duplicated. The inverse ordering (replay first, refresh
+  second) is still possible for `parser` rows — the refresh path
+  appends those unconditionally, because "one row per content version"
+  is its contract. Bounded to one duplicate per affected script per
+  Chrome session, and only when the content changed on disk between
+  shutdown and the user's first navigation after restart.
 
 See [script-log.md].
 

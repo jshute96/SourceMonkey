@@ -74,7 +74,7 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import type { VersionProbe } from './version-probe.js';
 import { inferDisplayName } from './source-display.js';
-import { appendScriptLog } from './script-log.js';
+import { appendScriptLogIfAbsent, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
@@ -462,6 +462,42 @@ export function applyMissing(existing: StoredScript): StoredScript {
   // annotation — the row is now MISSING, not "running but stale".
   delete next.refreshError;
   return next;
+}
+
+// The per-script Log entry a row's *persisted load state* warrants, or
+// null when the row is healthy (`ok` with no `refreshError`).
+//
+// Single source of truth for "how do we phrase this failure in the
+// Log tab", shared by every path that can surface one: the add-source
+// path (script-store), the refresh outcome path and the boot replay
+// (script-updater). Because all three produce byte-identical messages,
+// the repeat-suppression rules in those callers actually work.
+//
+// Levels:
+//   - `invalid` / `missing` → **error**. The script cannot run: the
+//     injector skips `invalid` rows outright, and a `missing` row is
+//     auto-disabled on the transition. That is the same severity the
+//     status badge already claims.
+//   - `refreshError` → **warning**. The script IS still running, from
+//     its last-known-good copy; only the *update* failed. Calling that
+//     an error would overstate it, and would also poison the
+//     monotonic `loglevel:` sentinel so the row still read ERROR long
+//     after the source came back. (The badge is unaffected either way:
+//     `effectiveScriptStatus` returns REFRESH FAILED before it ever
+//     consults the max log level — see src/script-display.ts.)
+export function loadStateLogEntry(
+  script: Pick<StoredScript, 'status' | 'errorMessage' | 'refreshError'>,
+): { level: LogLevel; message: string } | null {
+  if (script.status === 'invalid') {
+    return { level: 'error', message: script.errorMessage ?? 'unknown error' };
+  }
+  if (script.status === 'missing') {
+    return { level: 'error', message: script.errorMessage ?? 'source file is missing' };
+  }
+  if (script.refreshError) {
+    return { level: 'warning', message: `refresh failed: ${script.refreshError}` };
+  }
+  return null;
 }
 
 // Resolve + fetch a script's `@require` bodies AND `@resource` blobs,
@@ -924,11 +960,11 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
   const { id, seed } = created;
   const refreshed = await refreshSource(id);
   // The updater-driven refresh paths already emit per-script Log
-  // entries when a script transitions into invalid / missing. This
-  // initial-add path bypasses the updater, so anything that lands
-  // already broken would otherwise have an empty Log tab. Emit once
-  // per non-OK script here so the user can always click the row's
-  // INVALID badge and read what went wrong. Awaited so the loglevel
+  // entries when a script's load state goes bad. This initial-add path
+  // bypasses the updater, so anything that lands already broken would
+  // otherwise have an empty Log tab. Emit once per non-OK script here
+  // so the user can always click the row's badge and read what went
+  // wrong. Awaited so the loglevel
   // sentinel write lands before the caller's `getAllMaxLogLevels`
   // read — otherwise the first paint of the row would briefly show
   // OK and only flip on the storage-change listener.
@@ -1035,19 +1071,21 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
   return { kind: 'existingContainer', source: finalSource, scriptId };
 }
 
+// Copy a freshly-added script's load failure into its Log tab.
+//
+// The updater-driven refresh paths do this themselves; the add path
+// bypasses the updater, so without this a script that lands broken on
+// its very first load would show a red badge over an empty Log.
+//
+// `appendScriptLogIfAbsent` rather than a plain append because adding a
+// single file to an *existing* container refreshes every sibling in
+// that container, and we run over all of them — a sibling that has been
+// broken since the last add shouldn't collect one more identical row
+// per add.
 async function emitInitialLoadLogIfBroken(script: StoredScript): Promise<void> {
-  // `applyMissing` is unreachable from the initial-add path (a brand-
-  // new source has nothing existing to mark missing), so this branch
-  // is effectively dead today; keep it so a future caller routing
-  // through this helper from another entry point gets the same
-  // treatment.
-  if (script.status !== 'invalid' && script.status !== 'missing') return;
-  await appendScriptLog(script.id, {
-    level: 'error',
-    source: 'add-source',
-    message: script.errorMessage
-      ?? (script.status === 'missing' ? 'source file is missing' : 'unknown error'),
-  });
+  const entry = loadStateLogEntry(script);
+  if (!entry) return;
+  await appendScriptLogIfAbsent(script.id, { ...entry, source: 'add-source' });
 }
 
 // Fill in `displayName` on any source row that doesn't have one yet.

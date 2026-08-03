@@ -98,26 +98,57 @@ export async function appendScriptLog(
   scriptId: string,
   input: AppendLogInput,
 ): Promise<void> {
-  return enqueue(scriptId, async () => {
-    const lk = logKey(scriptId);
-    const mk = levelKey(scriptId);
-    const got = await chrome.storage.session.get([lk, mk]);
-    const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
-    const priorLevel = got[mk] as LogLevel | undefined;
-    const entry: LogEntry = {
-      timestamp: input.timestamp ?? Date.now(),
-      level: input.level,
-      source: input.source,
-      message: input.message,
-    };
-    if (input.tabId !== undefined) entry.tabId = input.tabId;
-    const next = prior.length >= LOG_CAP
-      ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
-      : [...prior, entry];
-    const toSet: Record<string, unknown> = { [lk]: next };
-    if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
-    await chrome.storage.session.set(toSet);
-  });
+  return enqueue(scriptId, () => writeEntry(scriptId, input, false));
+}
+
+// Append `input` only if the script's log doesn't already carry an
+// entry with the same `message`. Runs inside the same per-script queue
+// as `appendScriptLog`, so the read and the write are atomic with
+// respect to other appends for this script.
+//
+// Deliberately matches on the message alone, ignoring `source` and
+// `level`: the Log tab is a human-readable narrative, and two
+// subsystems stating the identical sentence reads as a duplicate no
+// matter which one got there first. That's exactly what the callers
+// want — the boot replay and the add-source path both re-state facts a
+// refresh may already have logged.
+//
+// Only for low-frequency paths (boot replay, initial add). The refresh
+// hot path suppresses repeats from the *stored script state* instead
+// (see `emitScriptOutcomeLog`), which is cheaper and survives the
+// session-storage wipe that clears this log.
+export async function appendScriptLogIfAbsent(
+  scriptId: string,
+  input: AppendLogInput,
+): Promise<void> {
+  return enqueue(scriptId, () => writeEntry(scriptId, input, true));
+}
+
+// Shared read-modify-write body. Always called from inside `enqueue`.
+async function writeEntry(
+  scriptId: string,
+  input: AppendLogInput,
+  skipIfMessagePresent: boolean,
+): Promise<void> {
+  const lk = logKey(scriptId);
+  const mk = levelKey(scriptId);
+  const got = await chrome.storage.session.get([lk, mk]);
+  const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
+  if (skipIfMessagePresent && prior.some((e) => e.message === input.message)) return;
+  const priorLevel = got[mk] as LogLevel | undefined;
+  const entry: LogEntry = {
+    timestamp: input.timestamp ?? Date.now(),
+    level: input.level,
+    source: input.source,
+    message: input.message,
+  };
+  if (input.tabId !== undefined) entry.tabId = input.tabId;
+  const next = prior.length >= LOG_CAP
+    ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
+    : [...prior, entry];
+  const toSet: Record<string, unknown> = { [lk]: next };
+  if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+  await chrome.storage.session.set(toSet);
 }
 
 export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {

@@ -15,6 +15,7 @@ import {
   buildInitialInvalidEntry,
   fetchOrSkipInParallel,
   hashSource,
+  loadStateLogEntry,
   rebuildSource,
 } from '../../dist/script-store.js';
 import { parseHeader } from '../../dist/userscript-header.js';
@@ -957,4 +958,74 @@ test('applyMissing keeps HTTP validators dormant for later recovery', async () =
   assert.equal(missing.status, 'missing');
   assert.equal(missing.httpEtag, 'W/"abc"');
   assert.equal(missing.httpLastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
+});
+
+// ---------- loadStateLogEntry ----------
+//
+// The one place that decides how a failed load is phrased and at what
+// level in the per-script Log. Every surface that can report one (the
+// add path, the refresh outcome path, the boot replay) goes through
+// this, and the repeat-suppression in those callers compares the
+// resulting messages — so identical state MUST produce identical text.
+
+test('loadStateLogEntry returns null for a healthy row', async () => {
+  const ok = await buildScriptFromText({
+    id: 'a', sourceId: 's', relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js', source: VALID_SCRIPT, now: 1,
+  });
+  assert.equal(loadStateLogEntry(ok), null);
+});
+
+test('loadStateLogEntry reports an invalid row as an error carrying errorMessage', async () => {
+  const bad = await buildScriptFromText({
+    id: 'a', sourceId: 's', relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js', source: MISSING_NAME, now: 1,
+  });
+  assert.equal(bad.status, 'invalid');
+  assert.deepEqual(loadStateLogEntry(bad), { level: 'error', message: 'missing @name' });
+});
+
+test('loadStateLogEntry falls back to a generic message when an invalid row has none', () => {
+  assert.deepEqual(
+    loadStateLogEntry({ status: 'invalid' }),
+    { level: 'error', message: 'unknown error' },
+  );
+});
+
+test('loadStateLogEntry reports a missing row as an error', async () => {
+  const ok = await buildScriptFromText({
+    id: 'a', sourceId: 's', relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js', source: VALID_SCRIPT, now: 1,
+  });
+  assert.deepEqual(
+    loadStateLogEntry(applyMissing(ok)),
+    { level: 'error', message: 'source file is missing' },
+  );
+});
+
+test('loadStateLogEntry reports a refreshError as a warning: the script still runs', async () => {
+  // status stays 'ok' — the cached copy is still injected — so this is
+  // a warning, not an error. It also must not poison the monotonic
+  // loglevel sentinel with ERROR for a source that later comes back.
+  const ok = await buildScriptFromText({
+    id: 'a', sourceId: 's', relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js', source: VALID_SCRIPT, now: 1,
+  });
+  const stale = applyFetchError(ok, 'HTTP 404');
+  assert.equal(stale.status, 'ok');
+  assert.deepEqual(
+    loadStateLogEntry(stale),
+    { level: 'warning', message: 'refresh failed: HTTP 404' },
+  );
+});
+
+test('loadStateLogEntry ranks a broken load above a stale refresh', () => {
+  // Defensive: if a row ever carried both, "can't run" is the more
+  // actionable fact and has to be the one reported.
+  assert.deepEqual(
+    loadStateLogEntry({
+      status: 'invalid', errorMessage: 'no metadata block', refreshError: 'HTTP 404',
+    }),
+    { level: 'error', message: 'no metadata block' },
+  );
 });

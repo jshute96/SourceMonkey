@@ -454,6 +454,24 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 - @grant window.onurlchange
 
+## Per-script log follow-ups
+
+Every failure the UI surfaces now lands in the script's Log (see
+[docs/script-log.md](docs/script-log.md#every-surfaced-failure-lands-in-the-log)).
+Two rough edges are left:
+
+- **The `loglevel:` sentinel is monotonic.** A script that hit
+  WARNING/ERROR keeps that badge for the rest of the Chrome session
+  even after the Log's newest entry says it recovered. Now that
+  recoveries are logged, the badge is the only thing still lying.
+  Recomputing the max on every append is too expensive; a cheaper
+  option is to let a recovery entry reset the sentinel explicitly.
+- **`update check started` is appended on every check**, including
+  opportunistic ones on every navigation. That's the remaining source
+  of poll noise in the 500-entry cap — the failure rows themselves are
+  now suppressed on repeat, but these aren't. Either drop it for
+  opportunistic mode or fold it into the outcome row.
+
 ## Testing and example TOODs
 
 - API explorer page with forms to call any GM API with any args

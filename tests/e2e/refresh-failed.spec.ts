@@ -10,6 +10,12 @@
 //   - set `refreshError` so the UI can flag REFRESH FAILED,
 //   - and clear `refreshError` again once a good refresh lands.
 //
+// Every one of those states must also be readable in the script's own
+// Log tab — a badge the user can't explain is worse than no badge — so
+// the same sequence is asserted against the log, including the
+// repeat-suppression that keeps a permanently-down source from filling
+// the 500-entry cap.
+//
 // The store-level unit tests cover the pure transitions; this drives
 // the real fetch pipeline (fetchHttpText + rebuildSource) end to end.
 
@@ -90,5 +96,82 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(after.refreshError).toBeUndefined();
     expect(after.bodyText).toContain('v2');
     expect(after.loadedAt).toBeGreaterThan(priorLoadedAt);
+  });
+
+  test('the Log tab explains the failure, stays quiet on repeats, and records the recovery', async ({ sm }) => {
+    server.setRoute('/app.user.js', userscriptText('App'));
+    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
+    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    await sm.clearScriptLog(scriptId);
+
+    // 1. Source goes down → one warning naming the reason. The script
+    //    keeps running from its cached copy, so warning (not error) is
+    //    the honest level.
+    server.removeRoute('/app.user.js');
+    await sm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+    const afterFirst = await sm.getScriptLog(scriptId);
+    const failures = afterFirst.filter((e) => /refresh failed/.test(e.message));
+    expect(failures.length).toBe(1);
+    expect(failures[0].level).toBe('warning');
+
+    // 2. Still down two refreshes later → still exactly one entry. A
+    //    source that stays down must not evict the rest of the log.
+    await sm.updateSource(source!.id, 'manual');
+    await sm.updateSource(source!.id, 'manual');
+    const afterRepeats = await sm.getScriptLog(scriptId);
+    expect(afterRepeats.filter((e) => /refresh failed/.test(e.message)).length).toBe(1);
+
+    // 3. Source comes back → an info entry says so, and the log's
+    //    highest level stops being the last word on the script.
+    await new Promise((r) => setTimeout(r, 10));
+    server.setRoute('/app.user.js', userscriptText('App', ' /* v2 */'));
+    await sm.updateSource(source!.id, 'manual');
+    const afterRecovery = await sm.getScriptLog(scriptId);
+    const recovery = afterRecovery.filter((e) => /refresh succeeded again/.test(e.message));
+    expect(recovery.length).toBe(1);
+    expect(recovery[0].level).toBe('info');
+    expect(afterRecovery.some((e) => /loaded new content/.test(e.message))).toBe(true);
+  });
+
+  test('a soft failure (200 login page) is explained in the Log too', async ({ sm }) => {
+    server.setRoute('/app.user.js', userscriptText('App'));
+    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
+    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    await sm.clearScriptLog(scriptId);
+
+    server.setRoute('/app.user.js', '<!doctype html><title>Please log in</title>', {
+      contentType: 'text/html; charset=utf-8',
+    });
+    await sm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+
+    const log = await sm.getScriptLog(scriptId);
+    const failures = log.filter((e) => /refresh failed/.test(e.message));
+    expect(failures.length).toBe(1);
+    expect(failures[0].level).toBe('warning');
+    expect(failures[0].message).toMatch(/not a valid userscript/);
+  });
+
+  test('a script that cannot load at all logs an error, once', async ({ sm }) => {
+    // No prior good copy to protect: the row lands `invalid`, which
+    // means "can't run" — error level, and the Log has to carry the
+    // parse reason behind the INVALID badge.
+    server.setRoute('/broken.user.js', 'just some text, no metadata block\n');
+    const source = await sm.addSource(`${server.baseUrl}/broken.user.js`);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(script.status).toBe('invalid');
+
+    const afterAdd = await sm.getScriptLog(script.id);
+    const errors = afterAdd.filter((e) => e.level === 'error');
+    expect(errors.length).toBe(1);
+    expect(errors[0].message).toBe(script.errorMessage);
+
+    // Refreshing an unchanged broken script must not stack up copies.
+    await sm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+    await sm.updateSource(source!.id, 'manual');
+    const afterRefreshes = await sm.getScriptLog(script.id);
+    expect(afterRefreshes.filter((e) => e.level === 'error').length).toBe(1);
   });
 });
