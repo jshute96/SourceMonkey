@@ -1302,7 +1302,9 @@ async function handleCheckPending(
   const handlerVersion = chrome.runtime.getManifest().version;
   return {
     action: 'run-new',
-    body: await buildSwapEvalBody(refreshed, handlerVersion),
+    // Same dedup-aware label the registration path uses, so the
+    // swapped body's source map names the same devtools files.
+    body: await buildSwapEvalBody(refreshed, handlerVersion, getScriptLogLabel(refreshed.id)),
     loadedAt: refreshed.loadedAt,
   };
 }

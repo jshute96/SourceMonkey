@@ -93,6 +93,8 @@ import {
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { dropRawView, putRawView } from './raw-view.js';
 import { parseStackRefs } from './stack-link.js';
+import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
+import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { renderDetails } from './script-details.js';
@@ -274,6 +276,15 @@ let currentFilenamePath = '';
 // adding/removing a sibling with the same basename would otherwise
 // leave a stale `#N` on screen).
 let currentLogId = '';
+
+// The injected entry's line layout, recomputed whenever the tab strip
+// is rebuilt, plus the sourceURL every frame from that entry carries.
+// Together they let the Log tab map a generated stack line back to the
+// `@require` (or body) it was written in — see `remapLogRef`. Empty
+// segments mean "nothing to undo": either the script has no
+// `@require`s, or we're in preview mode with nothing injected at all.
+let stackSegments: readonly MappedSegment[] = [];
+let stackEntryUrl = '';
 // Most recently rendered script. The session-storage listener calls
 // paintLog without re-reading the script, so we capture the latest
 // here so log-pane linkification can consult the tab list without
@@ -446,14 +457,28 @@ function storedTabs(script: StoredScript): CodeTab[] {
   // basename if the log-id sweep hasn't run yet — same default the
   // injector uses, so the two stay in lockstep.
   const label = currentLogId || scriptBasename(script.relativePath);
+  const mainSourceUrl = buildSourceUrl(label);
+  const requireSourceUrls = (script.requires ?? []).map(
+    (r) => buildRequireSourceUrl(label, r.url),
+  );
+  // Re-derive the injected entry's line layout so the Log tab can undo
+  // it — see `remapLogRef`. Same shared `composeSource` the injector
+  // runs, given the same URLs and the same start line, so the segments
+  // are the ones the registered entry's source map was built from.
+  stackSegments = composeSource(script, {
+    requireUrls: requireSourceUrls,
+    mainUrl: mainSourceUrl,
+    startLine: USER_SOURCE_START_LINE,
+  }).segments;
+  stackEntryUrl = mainSourceUrl;
   const tabs: CodeTab[] = [{
     kind: 'code',
     label: scriptBasename(script.relativePath),
     body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
-    sourceUrl: buildSourceUrl(label),
+    sourceUrl: mainSourceUrl,
   }];
-  for (const r of script.requires ?? []) {
+  for (const [i, r] of (script.requires ?? []).entries()) {
     tabs.push({
       kind: 'code',
       label: requireBasename(r.url, r.ref),
@@ -464,13 +489,15 @@ function storedTabs(script: StoredScript): CodeTab[] {
       //
       // The injector builds the same URL (`buildRequireSourceUrl` with
       // the same label) for the require's entry in the combined
-      // entry's source map, so devtools' file and this tab agree. It
-      // is NOT what stack frames carry any more: under Mode A every
-      // frame is tagged with the script's own sourceURL, so log-pane
-      // refs can't linkify to a require tab until the Log tab learns
-      // to apply that source map. See TODO.md.
+      // entry's source map, so devtools' file and this tab agree.
+      //
+      // Raw stack frames never carry this URL — under Mode A V8 tags
+      // every frame in the combined entry with the script's own
+      // sourceURL. `stackSegments` below is what turns such a frame
+      // back into a ref at this URL, which is what lets the Log tab
+      // linkify to this tab.
       fileUrl: r.url,
-      sourceUrl: buildRequireSourceUrl(label, r.url),
+      sourceUrl: requireSourceUrls[i],
     });
   }
   tabs.push({ kind: 'log', label: 'Log' });
@@ -1100,12 +1127,35 @@ function paintLog(entries: LogEntry[]): void {
   logPaneEl.appendChild(table);
 }
 
+// Undo the injected entry's concatenation for one stack ref.
+//
+// Errors reach the log as `err.stack` strings, and V8 does not source-
+// map those — every frame from the combined entry names the script's
+// own sourceURL at a GENERATED line, so a throw inside a `@require`
+// arrives claiming to be in the `.user.js` at a line that is usually
+// somewhere in its metadata header. Chrome's own console gets this
+// right because devtools applies the entry's source map to the
+// display; this is us doing the same thing for our own view.
+//
+// Returns the ref unchanged when there is nothing to undo: no
+// `@require`s (nothing moved), a frame from another file, or a
+// generated line that belongs to our wrap rather than to user code.
+function remapLogRef(ref: StackRef): StackRef {
+  return remapStackRef(ref, stackEntryUrl, stackSegments) ?? ref;
+}
+
 // Paint a log entry's message into a <td>. Each URL:line:col stack
-// ref whose URL matches a code tab's `sourceUrl` becomes a clickable
-// link that switches to that tab and jumps to line/col. Refs whose
-// URL doesn't match any tab render as plain text — they may point
-// at code outside this script (the page, another userscript, a
-// browser internal).
+// ref is first mapped back to the file it was written in
+// (`remapLogRef`); if the result matches a code tab's `sourceUrl` it
+// becomes a clickable link that switches to that tab and jumps to
+// line/col. Refs that don't match any tab render as plain text — they
+// may point at code outside this script (the page, another userscript,
+// a browser internal).
+//
+// A remapped ref is re-rendered with its new URL and line, so the text
+// the user reads names the real file. That is the whole point: the
+// generated line number is an artifact of our injection and means
+// nothing to someone reading their own script.
 function appendLogMessageContent(td: HTMLElement, message: string): void {
   const runs = parseStackRefs(message);
   if (runs.length === 1 && runs[0].kind === 'text') {
@@ -1118,18 +1168,20 @@ function appendLogMessageContent(td: HTMLElement, message: string): void {
       td.appendChild(document.createTextNode(run.text));
       continue;
     }
-    const tabIndex = tabsView.findTabBySourceUrl(run.url);
+    const mapped = remapLogRef(run);
+    const text = mapped === run ? run.text : `${mapped.url}:${mapped.line}:${mapped.col}`;
+    const tabIndex = tabsView.findTabBySourceUrl(mapped.url);
     if (tabIndex < 0) {
-      td.appendChild(document.createTextNode(run.text));
+      td.appendChild(document.createTextNode(text));
       continue;
     }
     const a = document.createElement('a');
     a.className = 'log-stack-link';
     a.href = '#';
-    a.textContent = run.text;
+    a.textContent = text;
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
-      tabsView.goToTabLine(tabIndex, run.line, run.col);
+      tabsView.goToTabLine(tabIndex, mapped.line, mapped.col);
     });
     td.appendChild(a);
   }

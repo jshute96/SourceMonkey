@@ -33,11 +33,13 @@
 //     our `chrome.storage.local` quota — it's generated at
 //     registration time from sources already stored.
 //
-// What this does NOT fix: `Error.stack` *strings*. V8 maps source
-// positions for the devtools UI but leaves `err.stack` in generated
-// coordinates, and SourceMonkey parses those strings for the viewer's
-// Log tab (src/stack-link.ts). Teaching the Log tab to apply the same
-// mapping is a separate change — see TODO.md.
+// What V8 does NOT do for us: map `Error.stack` *strings*. It maps
+// source positions for the devtools UI, but `err.stack` keeps
+// generated coordinates, and SourceMonkey parses those strings for the
+// viewer's Log tab (src/stack-link.ts). `remapStackRef` below is the
+// other half — the Log tab applies the same segment list itself, so a
+// logged frame names the same file and line devtools shows. See
+// docs/script-log.md#stack-refs.
 
 // Base64 VLQ, per the Source Map v3 spec.
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -145,6 +147,79 @@ export function buildSourceMap(args: {
     names: [],
     mappings: groups.join(';'),
   };
+}
+
+// ---------- Reverse direction: generated position → original ----------
+//
+// The same segment list that builds the map also answers "which file
+// was generated line N?", which is what the viewer's Log tab needs.
+// Both live here so the two directions can't disagree about the
+// coordinate conventions:
+//
+//   - `MappedSegment.generatedLine` and the per-file offsets inside a
+//     segment are 0-BASED (the source-map wire format's convention).
+//   - Everything a *user* sees — stack-trace refs, the code view's
+//     gutter — is 1-BASED. The conversion happens here, once.
+
+// Which original file a generated line came from, 1-based.
+export interface OriginalPosition {
+  url: string;
+  line: number;
+}
+
+// Look up the original file + line for a 1-based generated line.
+// Returns null for lines no segment covers: the wrap head on line 0,
+// the `;` ASI guards between requires, and the closing `});`. Those
+// are ours, not the user's, so leaving them unmapped is correct —
+// callers render them as-is rather than guessing at a neighbor.
+export function lookupGeneratedLine(
+  segments: readonly MappedSegment[],
+  generatedLine: number,
+): OriginalPosition | null {
+  const gen0 = generatedLine - 1;
+  for (const seg of segments) {
+    if (gen0 >= seg.generatedLine && gen0 < seg.generatedLine + seg.lineCount) {
+      return { url: seg.url, line: gen0 - seg.generatedLine + 1 };
+    }
+  }
+  return null;
+}
+
+// One `<url>:<line>:<col>` stack reference, as `parseStackRefs`
+// produces them. Declared structurally rather than imported from
+// stack-link.ts so this module stays a leaf.
+export interface StackRef {
+  url: string;
+  line: number;
+  col: number;
+}
+
+// Rewrite a stack ref that points into the concatenated entry so it
+// names the original `@require` (or the body) at its own line.
+//
+// Every frame from the combined entry carries `entryUrl` — the
+// script's own `//# sourceURL=`, which V8 stamps on the whole entry
+// regardless of which concatenated file the code came from. So the
+// URL match is the test for "is this frame ours to remap"; refs to
+// anything else (the page, another userscript, `__prelude.js`) pass
+// through untouched.
+//
+// Columns pass through unchanged, and that is exact rather than
+// approximate: composition only ever moves whole lines, never code
+// within a line. The one exception is a script with NO requires, where
+// the body's first line shares generated line 1 with the wrap head —
+// but that case has no segments at all, so it returns early and never
+// reaches the column question.
+export function remapStackRef(
+  ref: StackRef,
+  entryUrl: string,
+  segments: readonly MappedSegment[],
+): StackRef | null {
+  if (segments.length === 0) return null;
+  if (ref.url !== entryUrl) return null;
+  const orig = lookupGeneratedLine(segments, ref.line);
+  if (!orig) return null;
+  return { url: orig.url, line: orig.line, col: ref.col };
 }
 
 // UTF-8 → base64. `btoa` alone throws on any code point above U+00FF,

@@ -187,16 +187,64 @@ Plumbing notes specific to logging:
   - Each `@require` tab carries `sourceUrl = buildRequireSourceUrl(logLabel, r.url)`
     (a synthetic `sourcemonkey://SourceMonkey/<folder>/<host>/<path>`
     URL) — the same string the injector puts in the entry's source
-    map for that require. It is NOT what stack frames carry: requires
-    are concatenated into the script's own entry, so every frame
-    reports the main URL, and stack refs can't route to a require tab
-    until the Log tab applies that map (see TODO.md). The require
-    tab's `fileUrl` keeps the original fetched URL for display.
+    map for that require. The require tab's `fileUrl` keeps the
+    original fetched URL for display.
+  - Raw frames never carry that require URL; see **Stack refs are
+    source-mapped first** below.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
     the wrap prefix (the `self.__smRun(id, function(__smE){…`
     + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.
+
+## Stack refs are source-mapped first
+
+### The problem
+
+- `@require` bodies and the script body are concatenated into one
+  injected entry (Mode A — see [injection-modes.md](injection-modes.md)).
+- V8 stamps every frame from that entry with the script's own
+  `//# sourceURL=`, at a **generated** line.
+- It source-maps that for the devtools UI, but **not** for
+  `err.stack` — and `err.stack` is the string the wrapper sends us.
+- So an unmapped log line blames the `.user.js` at a line that
+  typically falls inside its own metadata header.
+
+### What the Log tab does
+
+- Recomputes the entry's segment layout from the stored script, via
+  the shared `composeSource` in `src/composed-source.ts`.
+- Applies it with `remapStackRef` (`src/source-map.ts`) to each ref
+  `parseStackRefs` found.
+- Re-renders the ref text with the mapped URL and line, so the string
+  the user reads names the real file. The generated number is an
+  artifact of our injection and means nothing to the script's author.
+- Routes the click to the tab that owns the mapped URL — which is how
+  a stack ref reaches a `@require` tab at all.
+
+### Why recompute rather than persist
+
+- The inputs (require sources, body text, log label) are already on
+  the `StoredScript` row the viewer loaded.
+- A persisted map would be one more thing to invalidate on refresh.
+- Both run paths share one layout, so there is one answer to
+  "which file is generated line N?": `wrapCombinedEntry` and
+  `buildSwapEvalBody` both put their whole preamble on generated
+  line 0 and start user source at `USER_SOURCE_START_LINE`. The
+  viewer never has to know which one ran.
+
+### What is left unmapped, deliberately
+
+- Frames from another file — the page, a sibling userscript,
+  `__prelude.js`. They pass through untouched.
+- Generated lines that belong to our wrap rather than to user code:
+  the head, the `// @require` marker lines, the `;` ASI guards, the
+  closing `});`. Guessing at a neighbouring line would point the user
+  at unrelated code.
+- Scripts with no `@require`. Nothing was concatenated, so nothing
+  moved, and the reported lines are already original.
+- Columns are passed through rather than mapped, and that is exact:
+  composition moves whole lines and never code within a line.
 
 ## Lifecycle and reset
 

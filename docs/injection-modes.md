@@ -101,18 +101,21 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
 
 ### Cons / caveats
 
-- **Line numbers shift, and `Error.stack` strings don't recover.**
+- **Line numbers shift; both views have to undo it.**
   - Devtools applies the inline source map. Verified in Chrome: the
     Sources tree shows one virtual file per require alongside the
     `.user.js`, console stack traces cite the original files and line
     numbers, and clicking a frame navigates to the right line in the
     right virtual file.
-  - V8 does **not** map `err.stack` *strings*, and SourceMonkey parses
-    those for the viewer's Log tab
-    ([stack-link.ts](../src/stack-link.ts)). Measured: a throw on line
-    5 of a require is logged as `main.user.js:7`. Wrong file, wrong
-    line. Applying our own map on that path is a planned follow-up —
-    see [TODO.md](../TODO.md).
+  - V8 does **not** map `err.stack` *strings*, and those are what
+    reach our own Log tab. The viewer therefore applies the same
+    layout itself — `remapStackRef` over the segments
+    `composeSource` produces — so a logged frame names the file the
+    code was written in. See
+    [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
+  - Both run paths keep their preamble on generated line 0, so the
+    viewer maps a hot-swapped script the same way as a registered
+    one.
 - **The map costs ~1.6× the source size, so the entry runs ~2.6×.**
   Measured: one 90 KB require → 104 KB of code + 167 KB of map; four
   of them → ~1 MB in one script's `js[]`. `sourcesContent` has to be
@@ -326,8 +329,10 @@ the issue tracker links below.
 - **Real filenames AND pristine line numbers per piece**, with no
   source map. V8 honors the per-eval `//# sourceURL=` directive, so
   stack traces point at the right URL with the right line — including
-  in `err.stack` strings, which is the one thing Mode A's source map
-  can't give us.
+  inside `err.stack` strings, which Mode A's source map cannot fix at
+  the source. (Mode A instead maps those strings on the way into the
+  Log tab, which covers our own views but not a script that reads its
+  own `err.stack`.)
 - **Exact closure-scope semantics (with direct eval).** Same
   compatibility as Mode A.
 - **GM_\* bindings visible to requires.**
@@ -366,11 +371,12 @@ the issue tracker links below.
 As an **opt-in per-script compatibility mode**:
 
 - Only worth it for scripts whose target sites don't enforce strict
-  CSP, and where `err.stack` fidelity matters enough to pay for it.
-- Mode A already covers the scope semantics, so the sole remaining
-  draw is unmapped stack strings.
-- Teaching the Log tab to apply Mode A's source map gets most of that
-  without touching CSP at all.
+  CSP, and where raw `err.stack` fidelity matters enough to pay for it.
+- Mode A already covers the scope semantics, and the Log tab now maps
+  stack refs itself, so there is no remaining draw for our own views.
+- What is left is third-party code that reads `err.stack` and expects
+  original coordinates — a script that ships its own error reporter,
+  say. That reads the raw string, which we don't rewrite.
 
 ## Why we picked Mode A
 
@@ -385,7 +391,8 @@ The decision turned on which failure the user has to live with:
    is page CSP blocking `eval`: a silent no-op on a large chunk of
    the modern web, with no actionable error. Mode A's failure is a
    line number in a log string pointing at the concatenated file —
-   visible, and recoverable by applying the map we already generate.
+   visible, and recovered by applying the map we already generate —
+   which the Log tab now does.
 3. **How much machinery does it need?** Mode A needs a source map
    generator. Mode B needed a JS-parsing bridge that kept being
    wrong in new ways. Being unable to answer "what does this source

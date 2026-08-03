@@ -21,40 +21,25 @@
 
 Requires and the body are concatenated into one injected entry (Mode
 A — see [docs/injection-modes.md](docs/injection-modes.md)), and an
-inline source map already restores per-require devtools files and
-original line numbers. Two follow-ups:
+inline source map restores per-require devtools files and original
+line numbers. The viewer's Log tab applies the same layout to
+`err.stack` strings, which V8 leaves in generated coordinates — see
+[docs/script-log.md](docs/script-log.md#stack-refs-are-source-mapped-first).
 
-- **Map `Error.stack` strings ourselves.** V8 maps source positions
-  for the devtools UI but leaves `err.stack` in generated
-  coordinates, and the viewer's Log tab parses those strings
-  (`src/stack-link.ts`, `src/userscript.ts`). We generate the map, so
-  we can decode it: apply it when rendering log entries and when
-  resolving a clicked stack link, so both name the original require
-  or body file at its original line. This is the piece that makes
-  Mode A's line-number cost invisible to users.
+What is still unmapped:
 
-  Measured, so the fix has a target. A script whose `@require` throws
-  from line 5 of a 6-line `lib.js` puts this in the log:
-
-  ```
-  Error: probe-boom
-      at boom (sourcemonkey://SourceMonkey/main/main.user.js:7:9)
-  ```
-
-  Wrong file and wrong line: generated line 7 is where `lib.js` line 5
-  landed. Clicking the ref routes to the main tab at line 7 — inside
-  the metadata header. Chrome's own console gets this right (it
-  applies the entry's source map, and click-through navigates to the
-  correct line in the correct virtual file), which is the behavior to
-  match.
-- **Reuse the map for the viewer's require tabs.** The tab strip
-  already builds per-require URLs; sharing the segment list would
-  keep the two views' idea of "which file is this line in"
-  identical.
-- **Map the swap-eval path too.** The reload fast-path's `(0,eval)`
-  appends only a `//# sourceURL=`, so a hot-swapped script with
-  `@require`s reports concatenated line numbers where a fresh
-  registration reports original ones.
+- **`err.stack` as a script itself sees it.** We rewrite the string on
+  the way into our Log tab; the value the userscript reads is
+  untouched. A script that ships its own error reporter (Sentry and
+  friends) will report generated line numbers. Fixing that would mean
+  rewriting stacks inside the injected scope — a much bigger surface,
+  and not obviously ours to do.
+- **Columns on a no-`@require` script's first line.** With nothing to
+  concatenate the body starts on the same physical line as the wrap
+  head, so a frame at line 1 reports a column offset by the head's
+  length. Line 1 of a userscript is its `// ==UserScript==` marker, so
+  this has never been observed in practice; the code view already
+  suppresses the column accent there.
 
 ## Injection payload
 

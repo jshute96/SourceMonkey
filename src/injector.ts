@@ -78,8 +78,11 @@ import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindi
 import {
   buildSourceMap,
   inlineSourceMapComment,
-  type MappedSegment,
 } from './source-map.js';
+import {
+  USER_SOURCE_START_LINE,
+  composeSource,
+} from './composed-source.js';
 import {
   BRIDGE_SOURCE_URL,
   GM_RUNTIME_SOURCE_URL,
@@ -174,139 +177,6 @@ export function resolveWorld(header: ParsedHeader | null | undefined): Injection
 
 function isRegexLiteral(s: string): boolean {
   return s.length >= 2 && s.startsWith('/') && s.endsWith('/');
-}
-
-// ---------- Concatenated user source (requires + body) ----------
-//
-// Every prefetched `@require` body, in declaration order, in front of
-// the **full on-disk script source** (leadingText + headerText +
-// bodyText). This is the single arrangement both run paths use:
-//
-//   - the default registration (`wrapCombinedEntry` → one js[] entry);
-//   - the reload-fast-path swap eval, where `handleCheckPending` in
-//     background.ts sends the same text as the run-new body.
-//
-// Concatenation IS the feature, not an implementation detail: one
-// script means one lexical scope, so a library's top-level
-// `const`/`let`/`class` is simply visible to the main body — the same
-// thing TM/VM get by concatenating into one IIFE. See
-// docs/injection-modes.md for what the separate-entries arrangement
-// cost us instead.
-//
-// A `;\n` separator between segments guards the seam against ASI
-// (Automatic Semicolon Insertion). ASI won't fire when the next line
-// could continue the previous statement, so a library ending in an
-// expression followed by a body opening with `(`, `[`, `` ` ``, `+`,
-// `-` or `/` would parse as a single statement. Each file was fine on
-// its own; concatenation is what creates the hazard.
-//
-// The leading `// @require <url>` per require makes the
-// concatenated code easier to scan when no source map is applied.
-// Line comment (not block) so URLs with `*/` in their path don't
-// prematurely close it.
-
-// Where each original file's text lands in the concatenated output.
-// `opts.requireUrls[i]` is the synthetic devtools URL for
-// `requires[i]` and `opts.mainUrl` the one for the body; callers that
-// don't need a source map (the swap-eval path) omit both.
-interface ComposedSource {
-  text: string;
-  // Line-level provenance, ready for src/source-map.ts. Empty when
-  // there are no requires, and also whenever the caller omitted the
-  // URLs (nothing to attribute lines to).
-  segments: MappedSegment[];
-  lineCount: number;
-}
-
-function composeSource(
-  script: StoredScript,
-  opts: { requireUrls?: readonly string[]; mainUrl?: string; startLine?: number } = {},
-): ComposedSource {
-  const mainSource = joinFullSource(
-    script.leadingText ?? '',
-    script.headerText ?? '',
-    script.bodyText,
-  );
-  const requires = script.requires ?? [];
-  const startLine = opts.startLine ?? 0;
-  if (requires.length === 0) {
-    return {
-      text: mainSource,
-      segments: [],
-      lineCount: countLines(mainSource),
-    };
-  }
-
-  // Build the text incrementally and derive every line number from
-  // what has ACTUALLY been emitted, rather than adding up expected
-  // line counts alongside a `join()`. The two drift: a require whose
-  // source ends in a lone `\r` fuses with a joining `\n` into a single
-  // CRLF, so one terminator appears where the arithmetic assumed two
-  // and every mapping from that seam onward — including the whole user
-  // body — shifts by a line. CR-only line endings are exactly the
-  // population `\r` is in `LINE_TERMINATORS` for, and nothing
-  // normalizes newlines on the way in (file-loader stores the decoded
-  // bytes verbatim).
-  const segments: MappedSegment[] = [];
-  let text = '';
-  // 0-based generated line that the NEXT character appended will land
-  // on. `countLines('')` is 1, so an empty buffer is line 0.
-  const nextLine = (): number => startLine + countLines(text) - 1;
-
-  for (const [i, r] of requires.entries()) {
-    text += `// @require ${r.url}\n`;
-    const url = opts.requireUrls?.[i];
-    if (url) {
-      segments.push({
-        url,
-        content: r.source,
-        generatedLine: nextLine(),
-        lineCount: countLines(r.source),
-      });
-    }
-    // The trailing-`\r` guard: append the extra `\n` here so the
-    // source's own last line stays a line of its own, instead of being
-    // swallowed by the separator that follows.
-    text += r.source.endsWith('\r') ? `${r.source}\n` : r.source;
-    // Terminate the source's last line, then the `;` seam guard on a
-    // line of its own.
-    text += '\n;\n';
-  }
-  if (opts.mainUrl) {
-    segments.push({
-      url: opts.mainUrl,
-      content: mainSource,
-      generatedLine: nextLine(),
-      lineCount: countLines(mainSource),
-    });
-  }
-  text += mainSource;
-
-  return { text, segments, lineCount: countLines(text) };
-}
-
-
-// Count lines the way V8 does, which is what the source map has to
-// agree with. Counting only `\n` is wrong in three ways that all
-// silently shift every mapping after the offending character:
-//
-//   - a lone `\r` is a line terminator (files with mangled endings);
-//   - so are U+2028 / U+2029, and V8 counts a RAW U+2028 as a break
-//     even inside a string literal (legal since ES2019, and minified
-//     CDN bundles do embed them).
-//
-// `\r\n` must count as one, hence the alternation order.
-const LINE_TERMINATORS = /\r\n|[\n\r\u2028\u2029]/g;
-
-function countLines(text: string): number {
-  if (text === '') return 1;
-  const matches = text.match(LINE_TERMINATORS);
-  return matches ? matches.length + 1 : 1;
-}
-
-// Public entry point for the swap-eval path, which needs the text only.
-export function composeRequiredBody(script: StoredScript): string {
-  return composeSource(script).text;
 }
 
 // JSON-encode for embedding in a JS source context. Same `</script>`
@@ -643,7 +513,8 @@ function buildMainWorldGmInfoOnly(
 }
 
 // Build the body string for the reload-fast-path swap eval. Prepends
-// the script's GM bindings to `composeRequiredBody(script)` so the
+// the script's GM bindings to the composed (requires + body) source
+// so the
 // indirect eval — which runs at runMain's function scope, NOT inside
 // the main-body wrap function's closure — still sees `GM_info` /
 // `GM_addStyle` / etc. The whole prepended string is evaluated in a
@@ -655,25 +526,47 @@ function buildMainWorldGmInfoOnly(
 // doesn't have. Storage-granting scripts (`needsValues: true`) are
 // excluded from run-new upstream in `handleCheckPending` for the
 // same reason.
+//
+// Line layout matches `wrapCombinedEntry` exactly: preamble on
+// generated line 0, user source from `USER_SOURCE_START_LINE`. That
+// costs a leading blank line when there are no bindings to prepend,
+// and buys a single answer to "which file is generated line N?" for
+// both run paths — the viewer's Log tab maps stack refs without
+// knowing whether the script was registered or hot-swapped. See
+// src/composed-source.ts.
 export async function buildSwapEvalBody(
   script: StoredScript,
   scriptHandlerVersion: string,
+  logLabel: string = scriptBasename(script.relativePath),
 ): Promise<string> {
   const world = resolveWorld(script.header);
   const gmEmit = world === 'USER_SCRIPT'
     ? await buildGmBindingsForScript(script, scriptHandlerVersion)
     : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
-  const composed = composeRequiredBody(script);
-  // gmEmit.js is single-line and ends with a space; safe to prepend
-  // directly, with a newline so the composed source starts at line 2.
-  //
-  // NOTE: the swap path emits no source map — the prelude's
-  // `(0,eval)` only appends `//# sourceURL=`. So a hot-swapped script
-  // with `@require`s reports concatenated line numbers where a fresh
-  // registration would report original ones. Folded into the Log-tab
-  // mapping follow-up in TODO.md.
-  if (!gmEmit.js) return composed;
-  return gmEmit.js + '\n' + composed;
+  const sourceUrl = buildSourceUrl(logLabel);
+  const requires = script.requires ?? [];
+  // gmEmit.js is single-line and ends with a space, so the newline
+  // after it is what puts the user source on line 1.
+  const head = gmEmit.js;
+  if (requires.length === 0) {
+    return head + '\n' + composeSource(script).text;
+  }
+  const composed = composeSource(script, {
+    requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),
+    mainUrl: sourceUrl,
+    startLine: USER_SOURCE_START_LINE,
+  });
+  // The map goes on the body the prelude evals; the prelude appends
+  // its own `//# sourceURL=` line after this one. Both are trailing
+  // single-line comments, so the order between them doesn't matter to
+  // V8 — and devtools needs the map to show the swapped-in requires as
+  // their own files, exactly as a fresh registration does.
+  const map = buildSourceMap({
+    file: sourceUrl,
+    segments: composed.segments,
+    totalLines: 1 + composed.lineCount,
+  });
+  return head + '\n' + composed.text + '\n' + inlineSourceMapComment(map);
 }
 
 // Pure: build the spec we'll hand to chrome.userScripts.register for
