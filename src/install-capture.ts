@@ -1,5 +1,6 @@
-// Captures web navigations to `*.user.js` URLs and routes them to the
-// userscript viewer's preview mode instead.
+// Captures navigations to `*.user.js` URLs — http(s):// and file://
+// alike — and routes them to the userscript viewer's preview mode
+// instead.
 //
 // Why this is needed at all: Chrome never renders a `.user.js` URL as
 // a page you can click "install" on.
@@ -23,15 +24,30 @@
 //      This is what actually delivers the install, and it works on
 //      every Chrome version.
 //
-//   2. The download workaround (Chrome < 152 only). The SW may be
-//      cold-starting when the navigation begins, so the response can
-//      win the race against our `tabs.update`. A DNR session rule
-//      rewrites the response `Content-Type` to `text/html`, which is
-//      the one MIME the legacy check exempted — so Chrome renders the
-//      response instead of running it through the failing installer.
+//   2. The download workaround (Chrome < 152 only, http(s) only). The
+//      SW may be cold-starting when the navigation begins, so the
+//      response can win the race against our `tabs.update`. A DNR
+//      session rule rewrites the response `Content-Type` to
+//      `text/html`, which is the one MIME the legacy check exempted —
+//      so Chrome renders the response instead of running it through
+//      the failing installer.
 //      On Chrome ≥ 152 the rule is NOT registered: without it a
 //      not-captured `.user.js` renders as readable source text, and
 //      with it the same page would render as garbled HTML.
+//      It does nothing for `file://` and is deliberately left alone:
+//      DNR only sees network requests, and a local file has no
+//      response headers to rewrite. A `file://` capture that loses the
+//      cold-start race just gets Chrome's own handling of the file.
+//
+// `file://` capture additionally depends on the user's per-extension
+// "Allow access to file URLs" toggle. `webNavigation` delivery is
+// gated on host access, so with the toggle off the event is expected
+// never to arrive — and if one somehow did, the preview couldn't read
+// the file anyway and would show its fetch error. Either way the
+// feature is absent rather than broken, so nothing here tests for the
+// toggle. NOT verified automatically: Chrome grants file access
+// unconditionally to `--load-extension` builds, so the e2e suite can
+// only reach the toggle-on case. See TODO.md.
 //
 // Redirecting via `chrome.tabs.update` (rather than a DNR `redirect`
 // action) is deliberate: DNR redirects to an extension page require
@@ -79,22 +95,34 @@ const DNR_DOWNLOAD_FIX_RULE_ID = 1;
 // it's harmful — see the file header.
 const CHROME_USERJS_FIX_VERSION = 152;
 
-// True for URLs the capture should act on: an http(s) URL whose path
-// ends in `.user.js`. Query strings and fragments are ignored (they
-// live outside `pathname`), so `…/foo.user.js?v=3#top` matches.
+// Schemes the capture acts on. `file:` is here so that opening a
+// local `.user.js` offers the same install prompt a downloaded one
+// does — a userscript on disk is the shape SourceMonkey is built
+// around, and it was the one way in that still dead-ended in a
+// browser download.
 //
-// Deliberately narrower than "any URL ending in .user.js":
-//   - non-http(s) schemes are excluded. `file://` scripts are added
-//     through the sources page, and capturing them would hijack a
-//     local dev file the user meant to read.
-//   - the suffix match is case-SENSITIVE, matching both the
-//     `webNavigation` pre-filter below and `isSingleFileInput` in
-//     directories.ts (which decides, post-install, whether the URL is
-//     a single script or a directory to scan). Chrome's own legacy
-//     check is case-insensitive, so the three ways SourceMonkey can
-//     see one URL have to agree or a `FOO.USER.JS` ends up captured
-//     but registered as a directory source. Lowercase is the universal
-//     convention; a mixed-case suffix is simply not ours to handle.
+// The cost is real and accepted: a local `.user.js` opened *to read*
+// is hijacked into a preview. It is mitigated, not eliminated:
+//   - the preview's View source / Location link goes to the file
+//     itself, through the same one-shot bypass the http path uses;
+//   - the whole capture is behind the `smCaptureUserJsLinks` option.
+// Anything else (`chrome-extension:`, `ftp:`, `data:`, …) stays out:
+// those aren't source shapes `addSource` can register.
+const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
+
+// True for URLs the capture should act on: an http(s) or file:// URL
+// whose path ends in `.user.js`. Query strings and fragments are
+// ignored (they live outside `pathname`), so `…/foo.user.js?v=3#top`
+// matches.
+//
+// The suffix match is case-SENSITIVE, matching both the
+// `webNavigation` pre-filter below and `isSingleFileInput` in
+// directories.ts (which decides, post-install, whether the URL is a
+// single script or a directory to scan). Chrome's own legacy check is
+// case-insensitive, so the three ways SourceMonkey can see one URL
+// have to agree or a `FOO.USER.JS` ends up captured but registered as
+// a directory source. Lowercase is the universal convention; a
+// mixed-case suffix is simply not ours to handle.
 export function isUserJsUrl(url: string): boolean {
   let u: URL;
   try {
@@ -102,7 +130,7 @@ export function isUserJsUrl(url: string): boolean {
   } catch {
     return false;
   }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (!CAPTURED_PROTOCOLS.has(u.protocol)) return false;
   return u.pathname.endsWith(USER_JS_SUFFIX);
 }
 
@@ -298,9 +326,11 @@ export function installUserJsCapture(): void {
     },
     // Cheap pre-filter so the listener isn't woken for every
     // navigation. `pathSuffix` matches the path only, so query strings
-    // don't defeat it. It IS case-sensitive while `isUserJsUrl` is
-    // not — a `FOO.USER.JS` URL is simply not captured, which is fine
-    // for a suffix that is lowercase by universal convention.
+    // don't defeat it, and it is case-sensitive — the same rule
+    // `isUserJsUrl` applies, so the two agree on `FOO.USER.JS` (not
+    // captured). No scheme condition: the filter is scheme-agnostic,
+    // so `file://` navigations arrive here too and `isUserJsUrl` is
+    // the only thing deciding which schemes are in scope.
     { url: [{ pathSuffix: '.user.js' }] },
   );
 }

@@ -256,9 +256,13 @@ what differs is the controls and where the data comes from.
 ### Getting the script
 
 - `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
-  URL is fetched (and later stored) in its raw form. The un-normalized
-  input is kept too: it's what `addSource` is handed and what a capture
-  bypass is keyed on.
+  URL is fetched (and later stored) in its raw form.
+- A `file://` input then collapses to its bare filesystem path
+  (`sourceFsPath`), which is the spelling the sources page's path field
+  stores — so a captured local script and one added by path are the
+  same installed row, not two.
+- The un-normalized input is kept too: it's what a capture bypass is
+  keyed on.
 - http(s) → `fetchHttpText` (so GitHub auth applies); `file://` →
   `fetchFileUrlText`. Anything else is a hand-edited URL and errors out.
 - The page never runs what it fetched — the body is rendered as text
@@ -273,7 +277,7 @@ Banner (`#banner-slot`) states what this file is; the action row
 |-----------|--------|---------|
 | Not installed | "not installed yet" | **Install**, Cancel, View raw source |
 | Already installed | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
-| Not installable | the parse / validation error | **Continue to page** (http only), Cancel, View raw source |
+| Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
 - **Install** → `addSource(<input>)`, then jumps to the new script's
   viewer. A web install is not a special kind of script: it lands in
@@ -299,10 +303,13 @@ Banner (`#banner-slot`) states what this file is; the action row
 - Install and Update are both hidden; the banner carries the reason.
 - The source is still rendered. Seeing what actually came back is the
   whole point when a URL returns a login page instead of a script.
-- **Continue to page** appears for http(s) URLs: a path ending in
-  `.user.js` that has no metadata block is usually an ordinary web
-  page. See
+- **Continue to page** loads the location itself, with the capture
+  stood down: a path ending in `.user.js` and carrying no metadata
+  block is usually an ordinary web page. See
   [install-capture.md](install-capture.md#when-the-url-isnt-a-script).
+- For a local file the button reads **Continue to file** and targets
+  the `file://` form — a bare path would resolve against the
+  extension's own origin.
 
 ### Tabs
 

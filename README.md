@@ -22,11 +22,14 @@ The sources page has an **Options** link at the top-left for the
 configurable settings (`.user.js` link capture, debug logging, GitHub
 auth token).
 
-### Installing scripts from the web
+### Installing scripts from a `.user.js` link
 
 Click a `.user.js` link anywhere — GreasyFork, GitHub, a colleague's
 gist — and SourceMonkey previews it instead of letting Chrome download
-the file. The preview is the same page you get for an installed script:
+the file. Opening a `.user.js` file from your own disk does the same
+thing, as long as SourceMonkey has "Allow access to file URLs".
+
+The preview is the same page you get for an installed script:
 the script's name, version, description, what pages it runs on, which
 `GM_*` permissions, `@connect` hosts, and external files it asks for,
 and its full source in a tabbed view (one tab per `@require`, loaded
@@ -40,7 +43,9 @@ in a new tab, and **Cancel** goes back where you came from. A file that
 isn't a valid userscript can't be installed — the preview says why and
 shows you what actually came back.
 
-Turn the whole thing off with **Capture `.user.js` links** on the
+If you opened a local `.user.js` to read rather than install it,
+**View raw source** shows it, and **Continue to file** loads it in the
+tab. Turn the whole thing off with **Capture `.user.js` links** on the
 Options page if you'd rather have Chrome's stock behavior.
 
 ### Registering sources

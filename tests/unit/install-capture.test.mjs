@@ -53,6 +53,19 @@ test('query strings and fragments do not defeat the suffix check', () => {
   assert.equal(isUserJsUrl('https://example.com/foo.user.js?a=1#top'), true);
 });
 
+test('captures file:// URLs whose path ends in .user.js', () => {
+  // Opening a local script in a tab offers the same install prompt a
+  // downloaded one does; without this it dead-ends in a browser
+  // download on Chrome ≤ 151.
+  assert.equal(isUserJsUrl('file:///home/me/foo.user.js'), true);
+  assert.equal(isUserJsUrl('file:///home/me/my%20scripts/foo.user.js'), true);
+  assert.equal(isUserJsUrl('file:///C:/Users/me/foo.user.js'), true);
+  // Same path-anchored, case-sensitive rules as the http(s) side.
+  assert.equal(isUserJsUrl('file:///home/me/notes.md'), false);
+  assert.equal(isUserJsUrl('file:///home/me/FOO.USER.JS'), false);
+  assert.equal(isUserJsUrl('file:///home/me/scripts/'), false);
+});
+
 test('suffix matching is case-sensitive', () => {
   // The `webNavigation` pre-filter and `isSingleFileInput` (which
   // decides single-script vs directory at install time) are both
@@ -72,12 +85,13 @@ test('non-.user.js URLs are left alone', () => {
   assert.equal(isUserJsUrl('https://greasyfork.org/scripts/1-name'), false);
 });
 
-test('non-http(s) schemes are never captured', () => {
-  // file:// scripts go through the sources page; capturing them would
-  // hijack a local file the user opened to read.
-  assert.equal(isUserJsUrl('file:///home/me/foo.user.js'), false);
+test('schemes outside http(s) / file are never captured', () => {
+  // Not source shapes `addSource` can register, so a preview would have
+  // nothing to offer.
   assert.equal(isUserJsUrl(`chrome-extension://${EXT_ID}/foo.user.js`), false);
   assert.equal(isUserJsUrl('ftp://example.com/foo.user.js'), false);
+  assert.equal(isUserJsUrl('data:text/javascript,//foo.user.js'), false);
+  assert.equal(isUserJsUrl('blob:https://example.com/foo.user.js'), false);
 });
 
 test('garbage input returns false rather than throwing', () => {

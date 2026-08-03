@@ -1,9 +1,9 @@
-# Installing From the Web (`.user.js` Link Capture)
+# Installing From a `.user.js` URL (Link Capture)
 
-Clicking a `.user.js` link on GreasyFork, GitHub, or anywhere else
-should land on a SourceMonkey preview of the script, with an Install
-button. Chrome never does that on its own, so the extension intercepts
-the navigation.
+Opening a `.user.js` URL should land on a SourceMonkey preview of the
+script, with an Install button — whether it came from GreasyFork,
+GitHub, or a file on the user's own disk. Chrome never does that on its
+own, so the extension intercepts the navigation.
 
 Implementation:
 
@@ -31,6 +31,9 @@ Neither version offers to install anything, so capture is needed
 permanently — the Chrome 152 change only makes the *non-captured*
 outcome benign instead of alarming.
 
+Both behaviors are scheme-independent: a `file://…/foo.user.js` opened
+in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
+
 ## The capture
 
 - `webNavigation.onBeforeNavigate`, filtered with
@@ -39,11 +42,50 @@ outcome benign instead of alarming.
 - The handler rewrites the tab with
   `chrome.tabs.update(tabId, { url: userscript.html?preview=<clicked URL> })`.
 - Scope is deliberately narrow — see `isUserJsUrl`:
-  - http(s) only. `file://` scripts belong to the sources page, and
-    capturing them would hijack a local dev file opened for reading.
+  - `http:`, `https:`, and `file:` only. Other schemes aren't source
+    shapes `addSource` can register, so a preview would have nothing to
+    offer.
   - the suffix must be on the *path*, so a page whose query string
     mentions a `.user.js` URL isn't captured.
   - the match is case-sensitive.
+
+### Local files
+
+- A `file://…/foo.user.js` navigation is captured exactly like a web
+  one: same preview, same Install button.
+- Adding one through the sources page previews it too — the Add Source
+  field routes any single script to the same page.
+- It depends on the per-extension **Allow access to file URLs** toggle.
+  `webNavigation` delivery is gated on host access, so with the toggle
+  off the event is expected never to arrive; if one somehow did, the
+  preview's fetch would fail and say so. Either way the feature is
+  absent rather than broken, and nothing tests for the toggle.
+- The toggle-off case is **not** covered automatically: Chrome grants
+  file access unconditionally to `--load-extension` builds (writing
+  `allow_file_access: false` into Preferences does not override it), so
+  the e2e suite only ever reaches the toggle-on case.
+
+#### The cost, and what pays for it
+
+- A local `.user.js` opened *to read* gets hijacked into a preview.
+  That is a real regression for a script author editing their own file,
+  and it is accepted rather than avoided.
+- **Continue to file** (on the not-a-userscript banner) and **View raw
+  source** both reach the file itself, through the same one-shot bypass
+  the http path uses.
+- The whole capture — local files included — is behind the
+  `smCaptureUserJsLinks` option.
+
+#### One file, one installed row
+
+- The sources page's path field stores a bare `/home/me/foo.user.js`;
+  a capture arrives as `file:///home/me/foo.user.js`.
+- The preview collapses the `file://` form to the bare path
+  (`sourceFsPath`) before the already-installed check and before
+  `addSource`, so both routes converge on one row instead of two copies
+  of one file.
+- The captured URL still travels verbatim in `?preview=` — a bypass has
+  to be keyed on the URL the browser will actually navigate to.
 
 ### Every matcher has to agree
 
@@ -86,6 +128,10 @@ between them is a bug, not a nuance:
   renders the response instead of downloading it.
 - **Not registered on Chrome ≥ 152**: there the rule would turn a
   clean plain-text source view into garbled HTML.
+- **Nothing to do for `file://`**: DNR only sees network requests, and
+  a local file has no response headers to rewrite. A `file://` capture
+  that loses the cold-start race just gets Chrome's own handling (a
+  download, below 152).
 - The rule is a safety net, never the mechanism. The capture works
   with the rule absent.
 
@@ -137,6 +183,9 @@ Capture-specific points:
 - **Continue to page** is the way out: it sets a bypass and loads the
   URL, so the capture doesn't pull the tab straight back. Without it
   the only escape would be turning the whole option off.
+- For a local file the same button reads **Continue to file** and
+  targets the `file://` form — the bare path the preview may have been
+  opened with would resolve against the extension's own origin.
 - GitHub blob URLs never reach this state — `normalizeSourceInput`
   rewrites them to their raw counterpart, so the preview describes the
   real script. The flip side is that a captured GitHub blob URL can no
@@ -152,14 +201,20 @@ with the response:
   address bar keeps the true URL.
 - **Chrome ≤ 151** — the copy the preview already fetched, rendered on
   `raw.html`. Navigating for real would land on a response the
-  download workaround has rewritten to `text/html`, which HTML-parses
-  the script into a single unreadable line.
+  download workaround has rewritten to `text/html` (http), or on the
+  legacy download path (`file://`).
 - **Fetch failed / still in flight** — navigate regardless of
   version. There's no copy to render locally, and a real navigation
   carries the cookies the extension's own fetch doesn't, so it doubles
   as the retry for an auth-gated URL. On Chrome ≤ 151 the browser then
   does whatever it does with the (possibly rewritten) response — the
   one case where the raw view can't promise a readable result.
+
+Every real navigation out of the preview sets a bypass first, `file://`
+included — otherwise the raw view would be captured straight back into
+the preview it was opened from. The bypass is keyed on the URL the
+browser will request, not on `?preview=`: for a local file opened by
+path those differ.
 
 ### `raw.html` and the hand-off
 
@@ -191,7 +246,9 @@ with the response:
   read-and-cleared by the service worker — session storage rather than
   an in-memory set because the SW can restart in between.
 - One-shot: a later visit to the same URL is captured normally again.
-- Also used by **Continue to page**.
+- Also used by **Continue to page** / **Continue to file**.
+- Scheme-agnostic: the key is whatever URL the tab is about to load,
+  `file://` included.
 - A row written for a navigation that never happens (tab closed first)
   is only cleaned up by the next read of that same URL, so it can sit
   in session storage until the browser closes. It's one small row and
@@ -203,6 +260,8 @@ with the response:
   (`smCaptureUserJsLinks` in `chrome.storage.local`; absent means on).
 - Turning it off removes the DNR rule too — the user asked for stock
   browser behavior, and on Chrome ≤ 151 that includes the download.
+- It is the one switch that also turns off `file://` capture, for
+  anyone who would rather their local scripts just open.
 - The service worker keeps an in-memory mirror of the flag, refreshed
   by a `storage.onChanged` listener, so the navigation handler never
   awaits storage on its sync fast path.
@@ -223,10 +282,10 @@ with the response:
 
 ## Limitations / future work
 
-- **`file://` URLs aren't captured.** Opening a local `.user.js`
-  in a tab still hands it to Chrome. Adding one through the sources
-  page *does* preview it — the Add Source field routes any single
-  script, `file://` included, to the same preview.
+- **`file://` capture needs the file-access toggle**, and there is no
+  way to tell the user so: with the toggle off nothing fires, which is
+  indistinguishable from the option being off. A hint on the options
+  page (`chrome.extension.isAllowedFileSchemeAccess`) would fix it.
 - **Mixed-case suffixes are ignored** everywhere, by design — see
   "Every matcher has to agree" above.
 - **A script installed as part of a directory / repo source isn't
