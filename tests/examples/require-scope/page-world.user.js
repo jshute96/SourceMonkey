@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: @require in the page (MAIN) world
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
+// @version     1.1.1
 // @description A @require'd library's top-level class/const/function reach a MAIN-world script.
 // @match       *://*/require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
@@ -48,7 +48,7 @@
     log.appendChild(li);
   }
 
-  // Shared helper from lib.js — counts the rows both scripts append,
-  // since the two run in different worlds and can't share a counter.
+  // Shared helper from lib.js — counts the rows every script appends,
+  // since they run in different worlds and can't share a counter.
   requireScopeUpdateStatus();
 })();

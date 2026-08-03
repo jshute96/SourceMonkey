@@ -48,26 +48,30 @@
       <li>Scope is per script, not per world: the MAIN-world script
         and the isolated-world script each get their own copy of the
         library in their own wrap function.</li>
-      <li>Two of the three scripts are portable, one is not, and the
-        status line is how you tell them apart. SourceMonkey resolves
-        both <code>@require</code> spellings and reaches
-        <code>3 of 3</code>; a manager that only understands absolute
-        URLs runs the portable pair and stops at
+      <li>The status line counts the rows the scripts append, and is
+        how you tell the portable pair from the third script. Each
+        script runs in its own world and they can&rsquo;t share a
+        counter, so the shared DOM is what they agree on &mdash;
+        <code>0 of 3</code> stays on the page if the manager injected
+        none.</li>
+      <li>So the expected reading is manager-dependent: SourceMonkey
+        resolves both <code>@require</code> spellings and reaches
+        <code>3 of 3</code>, while a manager that understands only
+        absolute URLs runs the portable pair and stops at
         <code>2 of 3</code>.</li>
       <li><code>relative-require</code> requires <em>both</em>
         libraries &mdash; <code>./lib.js</code> for the shared helper
-        and <code>./relative-lib.js</code> for its own bindings. So it
-        also pins that requires are concatenated in header order and
-        land in one scope with each other and the body.</li>
-      <li>The status line counts the rows the scripts append. Each runs
-        in its own world and they can&rsquo;t share a counter, so the
-        shared DOM is what they agree on &mdash; and <code>0 of 3</code>
-        stays on the page if the manager injected none.</li>
+        and <code>./relative-lib.js</code> for its own bindings &mdash;
+        so it also pins require <em>order</em>.
+        <code>relative-lib.js</code> reads a <code>lib.js</code>
+        binding in its own top-level initializer, so listing the two
+        the other way round is a TDZ
+        <code>ReferenceError</code>, not a silent no-op.</li>
       <li>The library must <strong>not</strong> reach the page. Even in
         the MAIN world, its top-level bindings are locals of the wrap
         function, so <code>window.REQUIRE_SCOPE_CONST</code> stays
-        <code>undefined</code>. Each script reports this as
-        <code>leakedToWindow</code>.</li>
+        <code>undefined</code>. The MAIN-world script is the one that
+        can tell, and reports it as <code>leakedToWindow</code>.</li>
     </ul>
 
     <p id="runStatus" class="status" data-expected="3">0 of 3 userscripts ran. See log below.</p>

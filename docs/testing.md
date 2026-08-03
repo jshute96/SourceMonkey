@@ -87,6 +87,34 @@ trace, not to make a run green.
   easy to lose to a `tail` or a `grep`.
 - "Expected X" without the received value is rarely enough to act on.
 
+## Network access
+
+The suite is hermetic apart from one example. `tests/fixtures/` runs a
+local server for every fixture page and asset; nothing else should
+reach the internet.
+
+- **`tests/examples/require-scope/`** is the exception. Its two
+  portable userscripts `@require` `lib.js` by absolute
+  `https://raw.githubusercontent.com/...` URL, since that is the only
+  `@require` form Tampermonkey/Violentmonkey accept.
+- This affects `npm run test:e2e`, not just the TM project — SourceMonkey
+  fetches the same URL. Offline, it fails slowly (a 5s `file-loader`
+  timeout per fetch).
+- An unfetchable `@require` is fatal: the script is marked `invalid`
+  and never registered, so the symptom is a missing script rather than
+  a partial one.
+- The spec is `test.fixme`-d while the repo is private, because
+  raw.githubusercontent.com 404s without a token. See the
+  "Cross-manager coverage" entry in `TODO.md`.
+- Asymmetry worth knowing: SourceMonkey *does* attach a configured
+  GitHub token to raw.githubusercontent.com fetches
+  (`githubAuthHeaders`), so a real SM user with a token can read a
+  private library. The e2e fixture has no token, and TM never sends
+  one.
+
+Details of the cross-manager side live in
+[`cross-manager-testing.md`](cross-manager-testing.md).
+
 ## Unit tests
 
 - Plain `node:test`. No mocks, no fakes — modules under test are

@@ -49,6 +49,7 @@ outcome, rather than skipping.
   - This is what closed the "no example exercises `@require` under TM
     at all" gap. See the "Cross-manager coverage" entry in
     [TODO.md](../TODO.md) for what remains.
+  - **Currently `test.fixme`-d** — see "Repo must be public" below.
 
 ### Caveats on the require-scope split
 
@@ -61,12 +62,42 @@ outcome, rather than skipping.
 - **`main`, not the working tree.** A foreign manager fetches whatever
   `lib.js` is on `main`. Behavioral edits to `lib.js` are invisible to
   TM until they merge, so a pre-merge TM run exercises the old copy.
-- **UNVERIFIED under TM.** What TM does with `relative-require.user.js`
-  hasn't been observed. It may install and then throw at runtime
-  (giving the expected `2 of 3`), or it may fail/stall at the install
-  prompt while prefetching the unresolvable ref — which would make
-  `installFromFile` throw and fail the spec outright rather than
-  produce `2 of 3`. Confirm on the first real TM run.
+### UNVERIFIED: what TM does with `relative-require.user.js`
+
+Nobody has watched a real TM run of this yet. Two outcomes are
+plausible:
+
+- **Installs, then throws at runtime.** The assertion holds and the
+  status reads `2 of 3`. This is what the spec assumes.
+- **Fails or stalls at the install prompt** while prefetching the
+  unresolvable ref. TM prefetches `@require` URLs before offering the
+  Install button.
+
+The second outcome is not graceful:
+
+- `syncTampermonkeyScripts` has no try/catch around
+  `driver.installFromFile`, unlike the standalone CLI.
+- `clickInstallButton` throws when no Install/Reinstall/Update button
+  is found — so the spec errors in the fixture, before navigation,
+  instead of asserting `2 of 3`.
+- `recordInstalled` only runs on success, so every later test in the
+  worker retries the same failing install (~5s each).
+
+If that's what happens, the fixture needs a tolerated-failure path, or
+the spec needs to install only the portable pair under TM.
+
+### Manual `sync-tm-scripts.mjs` runs
+
+`scripts/sync-tm-scripts.mjs` walks `tests/examples/` recursively, so a
+manual sync now attempts all three scripts in this directory:
+
+- The two portable ones point at a URL that 404s while the repo is
+  private.
+- The third has refs TM cannot resolve at all.
+
+Expect slow or failed installs for all three until the repo is public.
+The CLI wraps each install in try/catch and logs `FAILED`, so it
+degrades gracefully — unlike the Playwright fixture above.
 
 ## Failing specs (untriaged divergences)
 

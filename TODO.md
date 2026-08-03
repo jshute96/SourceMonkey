@@ -257,24 +257,41 @@ gates, or the emitted wrap — the rate is the regression signal.
 
 ## Cross-manager coverage
 
-- **`@require` under Tampermonkey — addressed, pending a real TM
-  run.** `require-scope/` no longer skips under
-  `--project=tampermonkey`. Its two portable scripts `@require`
-  `lib.js` by absolute raw.githubusercontent.com URL; a third script
-  keeps a relative ref. The spec asserts `3 of 3` under SM and
-  `2 of 3` under TM.
-  - **Blocked: the repo is private.** raw.githubusercontent.com 404s
-    without a token, and an unfetchable `@require` is fatal in
-    SourceMonkey, so the spec currently fails under both managers.
-    Making the repo public unblocks it; otherwise the absolute URL has
-    to move to a public host.
-  - **Unverified: TM's actual behavior.** Whether TM installs
-    `relative-require.user.js` and merely fails at runtime (the
-    expected `2 of 3`) or chokes at the install prompt while
-    prefetching the unresolvable ref has not been observed.
-- **`@resource` under Tampermonkey** is still uncovered — `gm-resource/`
-  still skips for the original relative-ref reason. The same split
-  treatment would close it.
+### `@require` under Tampermonkey — implemented, blocked
+
+`require-scope/` no longer skips under `--project=tampermonkey`. It is
+split into a portable pair (absolute raw.githubusercontent.com URL) and
+one script that keeps a relative ref. The spec asserts `3 of 3` under
+SM and `2 of 3` under TM.
+
+- **Blocked: the repo is private.** raw.githubusercontent.com 404s
+  without a token.
+- An unfetchable `@require` is fatal in SourceMonkey, so this takes the
+  portable pair down under *both* managers, not just TM.
+- The spec is `test.fixme`-d for that reason. Dropping the fixme is
+  step one once it's unblocked.
+- **Unblock by** making the repo public, or moving the absolute URL to
+  a public host.
+
+Two hermetic alternatives, if the network dependency turns out to be
+unwanted:
+
+- A fixed-port fixture server for the TM project, so an absolute
+  `http://localhost:<port>/...` URL can be baked into the file.
+- A rewrite step that stamps the live server URL into a generated copy
+  of the script before TM installs it.
+
+**Unverified: TM's actual behavior.** Whether TM installs
+`relative-require.user.js` and merely fails at runtime (the expected
+`2 of 3`), or chokes at the install prompt while prefetching the
+unresolvable ref, has not been observed. The latter would error out of
+`syncTampermonkeyScripts` instead of asserting. See
+[docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
+
+### `@resource` under Tampermonkey — still uncovered
+
+`gm-resource/` still skips for the original relative-ref reason. The
+same split treatment would close it.
 
 ## `GM_*` — deferred surface
 

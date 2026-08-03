@@ -198,31 +198,38 @@ by relative ref — `gm-resource/` has `resource.css` / `resource.json` /
   URLs only, and TM installs these examples from a local file, so it
   has no base URL to resolve against.
 
-### Making an example portable
-
-A spec that depends on a relative ref has two options:
-
-- **Skip under TM** — `test.skip(setup.manager === 'tampermonkey',
-  ...)` with the reason stated. Simple, but the example then proves
-  nothing about cross-manager behavior. `gm-resource/` still does this.
-- **Split the example** — give the portable scripts an absolute
-  `@require` / `@resource` URL and keep the relative ref in a separate
-  script, then assert a different expected count per manager.
-  `require-scope/` does this: two scripts fetch `lib.js` from
-  raw.githubusercontent.com, one uses `./relative-lib.js`, and the
-  status line reads `3 of 3` under SM and `2 of 3` under TM.
-
-The split form is preferred — the divergence becomes an assertion
-instead of a blind spot. Its cost is a **network dependency** (the
-absolute URL must be publicly fetchable, and the copy a foreign
-manager gets is whatever is on `main`, not the working tree).
-
 For a **multi-script directory** (see above): replace step 1 with
 a single `<dir>.html` + single `<dir>.spec.ts` + one
 `<variant>.user.js` per variant. Every variant userscript should
 share the same `@match` patterns, write its outcome into a shared
 `<ul id="log">` with a `data-script="<variant>"` attribute, and
 the spec targets each row through that attribute.
+
+## Making an example portable to other managers
+
+A spec that depends on a relative `@require` / `@resource` ref has two
+options:
+
+- **Skip under TM** — `test.skip(setup.manager === 'tampermonkey',
+  ...)` with the reason stated. Simple, but the example then proves
+  nothing about cross-manager behavior. `gm-resource/` still does this.
+- **Split the example** — give the portable scripts an absolute URL,
+  keep the relative ref in a separate script, and assert a different
+  expected count per manager. `require-scope/` does this.
+
+The split form is preferred: the divergence becomes an assertion
+instead of a blind spot. Its costs, using `require-scope/` as the
+worked example:
+
+- **Network dependency.** The absolute URL must be publicly fetchable.
+  `npm run test:e2e` reaches the internet for it, and fails offline.
+- **`main`, not the working tree.** A foreign manager fetches whatever
+  the URL serves, so behavioral edits to the shared library aren't
+  visible to it until they merge. Put anything that must change in
+  lockstep in a relative-only file.
+- **An unresolvable ref is fatal in SourceMonkey**, so a broken URL
+  takes the portable scripts down under every manager, not just the
+  foreign one.
 
 ## Editing an existing example
 
