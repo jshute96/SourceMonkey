@@ -6,12 +6,12 @@
 // cache changes we re-sync (cheap full wipe + re-register at our
 // scale).
 //
-// ---------- Injection shape (separate-entries mode) ----------
+// ---------- Injection shape (concatenated user program) ----------
 //
-// Each registered userscript ships with a js[] array of separate
-// entries that share an execution world (USER_SCRIPT or MAIN). All
-// entries run in the same realm; they communicate via globals on
-// `self.__smPrelude.*`. The layout per script is:
+// Each registered userscript ships with a js[] array whose entries
+// share an execution world (USER_SCRIPT or MAIN). All entries run in
+// the same realm; they communicate via globals on
+// `self.__smPrelude.*`. The layout per script:
 //
 //   js[0]  — per-script config {code}. Tiny JSON-literal call into
 //            the prelude (queues it if the prelude hasn't run yet on
@@ -25,28 +25,24 @@
 //            inside is idempotent — runs once per execution world,
 //            drains any queued configs on each entry so subsequent
 //            scripts in the same world also get initialized.
-//   js[2..N-1] — one {code} per @require, wrapped in a thin
-//                `if(__smActive(id)){try{<body>}catch(e){__smErr(...)}}`
-//                with a trailing `//# sourceURL=<require URL>`. Each
-//                require shows up as its own file in devtools with
-//                pristine line numbers — the prefix sits on physical
-//                line 1 so the require body's line N stays at
-//                physical line N (column offset on line 1 only).
-//   js[N]  — main body {code} wrapped in
-//                `self.__smRun(id,function(__smE){<gm bindings>...<body>})`
-//                with the GM bindings + GM prelude minified onto the
-//                opening line so the body's line N stays at physical
-//                line N. Trailing `//# sourceURL=sourcemonkey://<id>/<name>.user.js`.
-//                Runs only after the prelude's matcher + check-pending
-//                + @run-at gates resolve.
+//   js[2]  — the whole user program: every `@require` concatenated
+//            ahead of the script's own body, wrapped in
+//            `self.__smRun(id,function(__smE){<gm bindings>…<source>})`
+//            so it runs only after the prelude's matcher +
+//            check-pending + @run-at gates resolve. Trailing
+//            `//# sourceURL=sourcemonkey://<id>/<name>.user.js`, plus
+//            an inline source map when the script has requires.
+//   js[3]  — parse-failure sentinel (`wrapSealEntry`). Its own script,
+//            so it still runs when js[2] failed to parse.
 //
-// Why split: stack traces for the main body no longer carry a
-// require-source offset, and each `@require` shows up in devtools
-// as its own file with the original URL. See docs/injection-modes.md
-// for the design tradeoffs and the two alternative modes (concat,
-// eval-per-require) that the wrap helpers are structured to allow.
+// Why ONE entry for the user program: separate js[] entries are
+// separate V8 scripts with separate top-level scopes, so a library's
+// `const`/`let`/`class` never reached the body. Concatenating gives
+// them one scope, which is what TM/VM do. The cost is line numbers,
+// which the source map pays back. See docs/injection-modes.md for the
+// arrangement this replaced and the one never built.
 //
-// Caveats kept consistent with the old design:
+// Caveats:
 //   - Wrapper-side regex matcher rechecks /regex/ @includes / @excludes
 //     that the userScripts API can't express. (Lives in the prelude.)
 //   - We register every script at document_start; the prelude in-page
@@ -79,13 +75,18 @@ import {
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
-import { filterForwardableNames, parseExportedNames } from './require-exports.js';
+import {
+  buildSourceMap,
+  inlineSourceMapComment,
+  type MappedSegment,
+} from './source-map.js';
 import {
   BRIDGE_SOURCE_URL,
   GM_RUNTIME_SOURCE_URL,
   PRELUDE_SOURCE_URL,
   buildConfigSourceUrl,
   buildRequireSourceUrl,
+  buildSealSourceUrl,
   buildSourceUrl,
 } from './script-source-url.js';
 import { computeLogIds, type LogIdInput } from './script-log-id.js';
@@ -175,40 +176,137 @@ function isRegexLiteral(s: string): boolean {
   return s.length >= 2 && s.startsWith('/') && s.endsWith('/');
 }
 
-// Concatenate every prefetched `@require` body, in declaration order,
-// in front of the **full on-disk script source** (leadingText +
-// headerText + bodyText). Used by the reload-fast-path swap eval —
-// `handleCheckPending` in background.ts sends this as the run-new
-// body so the swap eval can pick up newly-changed requires too.
+// ---------- Concatenated user source (requires + body) ----------
 //
-// The default-run path does NOT call this — it injects each require
-// as its own js[] entry with its own `//# sourceURL=` (see
-// `wrapRequireEntry` and `buildRegistrationSpec`'s use of
-// `joinFullSource` for the main body). The concatenated form here
-// only exists for the swap-eval scenario, where the eval runs at
-// the prelude's function scope and can't peek into per-script js[]
-// entries the way Chrome's userScripts injector can.
+// Every prefetched `@require` body, in declaration order, in front of
+// the **full on-disk script source** (leadingText + headerText +
+// bodyText). This is the single arrangement both run paths use:
 //
-// A `;\n` separator between segments breaks any ASI hazard at the
-// seam. The leading `// @require <url>` per require makes the
-// concatenated code easier to scan in devtools. Line comment (not
-// block) so URLs with `*/` in their path don't prematurely close it.
-export function composeRequiredBody(script: StoredScript): string {
+//   - the default registration (`wrapCombinedEntry` → one js[] entry);
+//   - the reload-fast-path swap eval, where `handleCheckPending` in
+//     background.ts sends the same text as the run-new body.
+//
+// Concatenation IS the feature, not an implementation detail: one
+// script means one lexical scope, so a library's top-level
+// `const`/`let`/`class` is simply visible to the main body — the same
+// thing TM/VM get by concatenating into one IIFE. See
+// docs/injection-modes.md for what the separate-entries arrangement
+// cost us instead.
+//
+// A `;\n` separator between segments guards the seam against ASI
+// (Automatic Semicolon Insertion). ASI won't fire when the next line
+// could continue the previous statement, so a library ending in an
+// expression followed by a body opening with `(`, `[`, `` ` ``, `+`,
+// `-` or `/` would parse as a single statement. Each file was fine on
+// its own; concatenation is what creates the hazard.
+//
+// The leading `// @require <url>` per require makes the
+// concatenated code easier to scan when no source map is applied.
+// Line comment (not block) so URLs with `*/` in their path don't
+// prematurely close it.
+
+// Where each original file's text lands in the concatenated output.
+// `opts.requireUrls[i]` is the synthetic devtools URL for
+// `requires[i]` and `opts.mainUrl` the one for the body; callers that
+// don't need a source map (the swap-eval path) omit both.
+interface ComposedSource {
+  text: string;
+  // Line-level provenance, ready for src/source-map.ts. Empty when
+  // there are no requires, and also whenever the caller omitted the
+  // URLs (nothing to attribute lines to).
+  segments: MappedSegment[];
+  lineCount: number;
+}
+
+function composeSource(
+  script: StoredScript,
+  opts: { requireUrls?: readonly string[]; mainUrl?: string; startLine?: number } = {},
+): ComposedSource {
   const mainSource = joinFullSource(
     script.leadingText ?? '',
     script.headerText ?? '',
     script.bodyText,
   );
   const requires = script.requires ?? [];
-  if (requires.length === 0) return mainSource;
-  const parts: string[] = [];
-  for (const r of requires) {
-    parts.push(`// @require ${r.url}`);
-    parts.push(r.source);
-    parts.push(';');
+  const startLine = opts.startLine ?? 0;
+  if (requires.length === 0) {
+    return {
+      text: mainSource,
+      segments: [],
+      lineCount: countLines(mainSource),
+    };
   }
-  parts.push(mainSource);
-  return parts.join('\n');
+
+  // Build the text incrementally and derive every line number from
+  // what has ACTUALLY been emitted, rather than adding up expected
+  // line counts alongside a `join()`. The two drift: a require whose
+  // source ends in a lone `\r` fuses with a joining `\n` into a single
+  // CRLF, so one terminator appears where the arithmetic assumed two
+  // and every mapping from that seam onward — including the whole user
+  // body — shifts by a line. CR-only line endings are exactly the
+  // population `\r` is in `LINE_TERMINATORS` for, and nothing
+  // normalizes newlines on the way in (file-loader stores the decoded
+  // bytes verbatim).
+  const segments: MappedSegment[] = [];
+  let text = '';
+  // 0-based generated line that the NEXT character appended will land
+  // on. `countLines('')` is 1, so an empty buffer is line 0.
+  const nextLine = (): number => startLine + countLines(text) - 1;
+
+  for (const [i, r] of requires.entries()) {
+    text += `// @require ${r.url}\n`;
+    const url = opts.requireUrls?.[i];
+    if (url) {
+      segments.push({
+        url,
+        content: r.source,
+        generatedLine: nextLine(),
+        lineCount: countLines(r.source),
+      });
+    }
+    // The trailing-`\r` guard: append the extra `\n` here so the
+    // source's own last line stays a line of its own, instead of being
+    // swallowed by the separator that follows.
+    text += r.source.endsWith('\r') ? `${r.source}\n` : r.source;
+    // Terminate the source's last line, then the `;` seam guard on a
+    // line of its own.
+    text += '\n;\n';
+  }
+  if (opts.mainUrl) {
+    segments.push({
+      url: opts.mainUrl,
+      content: mainSource,
+      generatedLine: nextLine(),
+      lineCount: countLines(mainSource),
+    });
+  }
+  text += mainSource;
+
+  return { text, segments, lineCount: countLines(text) };
+}
+
+
+// Count lines the way V8 does, which is what the source map has to
+// agree with. Counting only `\n` is wrong in three ways that all
+// silently shift every mapping after the offending character:
+//
+//   - a lone `\r` is a line terminator (files with mangled endings);
+//   - so are U+2028 / U+2029, and V8 counts a RAW U+2028 as a break
+//     even inside a string literal (legal since ES2019, and minified
+//     CDN bundles do embed them).
+//
+// `\r\n` must count as one, hence the alternation order.
+const LINE_TERMINATORS = /\r\n|[\n\r\u2028\u2029]/g;
+
+function countLines(text: string): number {
+  if (text === '') return 1;
+  const matches = text.match(LINE_TERMINATORS);
+  return matches ? matches.length + 1 : 1;
+}
+
+// Public entry point for the swap-eval path, which needs the text only.
+export function composeRequiredBody(script: StoredScript): string {
+  return composeSource(script).text;
 }
 
 // JSON-encode for embedding in a JS source context. Same `</script>`
@@ -218,14 +316,12 @@ function jsLit(value: unknown): string {
   return JSON.stringify(value).replace(/<\/script>/gi, '<\\/script>');
 }
 
-// ---------- Mode-neutral wrap helpers ----------
+// ---------- Wrap helpers ----------
 //
-// Each helper returns the wrapped source for ONE conceptual unit
-// (config blob, one @require, main body). They are pure string
-// functions and don't know how they'll be assembled. The default
-// assembler places each as its own js[] entry (Mode B); alternative
-// assemblers could concatenate (Mode A) or eval-wrap (Mode C). See
-// docs/injection-modes.md.
+// Each helper returns the wrapped source for one js[] entry. They are
+// pure string functions that don't know how they'll be assembled, so
+// an alternative assembler (e.g. the eval-per-require arrangement in
+// docs/injection-modes.md) could consume the same pieces.
 
 interface ScriptCfgLiteral {
   id: string;
@@ -240,9 +336,6 @@ interface ScriptCfgLiteral {
   needsGmValues: boolean;
   matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
   startupLogs: ReadonlyArray<StartupLog>;
-  // Synthetic `sourcemonkey://` URLs for each @require — what the
-  // prelude's async-error filter substring-matches against.
-  requireUrls: readonly string[];
 }
 
 // Build the per-script config blob. Calls
@@ -265,16 +358,8 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
   };
   if (cfg.matching) wire.matching = cfg.matching;
   if (cfg.startupLogs && cfg.startupLogs.length > 0) wire.startupLogs = cfg.startupLogs;
-  if (cfg.requireUrls.length > 0) wire.requireUrls = cfg.requireUrls;
-  // (Re)create the per-script require-scope object before any of this
-  // script's require entries run. Per registration (incl. refresh) we
-  // want a fresh empty object — the requires re-execute and re-fill
-  // it. Lives on `self` (the realm global of whatever world we're
-  // injected into); ID-keyed so two scripts in the same world don't
-  // step on each other. See wrapRequireEntry / wrapMainBodyEntry for
-  // the producer + consumer sides.
   const call =
-    `(function(c){(self.__smReqScope=self.__smReqScope||{})[c.id]={};` +
+    `(function(c){` +
     `if(self.__smPrelude){self.__smPrelude.init(c);}else{(self.__smCfgQueue=self.__smCfgQueue||[]).push(c);}})(${jsLit(wire)});`;
   return call + `\n//# sourceURL=${buildConfigSourceUrl(cfg.logLabel)}\n`;
 }
@@ -299,147 +384,108 @@ export function wrapPreludeEntry(): string {
   return WRAPPER_PRELUDE + `\n//# sourceURL=${PRELUDE_SOURCE_URL}\n`;
 }
 
-// Wrap one @require body. Output shape:
+// Wrap the whole user program — every `@require` plus the script's own
+// body — as ONE js[] entry. Output shape:
 //
-//   if(self.__smActive("<id>")){try{<GM BINDINGS><BODY LINE 1>
-//   <BODY LINE 2>
+//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>
+//   // @require <url 1>
+//   <require 1 line 1>
 //   ...
-//   ;Object.assign(self.__smReqScope["<id>"],{X,Y,Z});
-//   }catch(__smE){self.__smErr("<id>",__smE);}}
-//   //# sourceURL=<synthetic sourcemonkey:// URL>
-//
-// Line preservation: the `if(...)` prefix, the inline GM bindings,
-// and the body's first line all share physical line 1; subsequent
-// body lines stay at their original numbers. Column offset on line
-// 1 only. The trailing `//# sourceURL=` is on its own line at the
-// bottom — JS engines honor it for the entire entry (each js[]
-// entry is its own "script").
-//
-// `exportedNames` is the list of identifiers the require declared at
-// its own top level (`const`/`let`/`class`) that the main body needs
-// to see. Each `js[]` entry is its own V8 script, so those bindings
-// don't cross the boundary — we lift them by writing them into a
-// per-script `self.__smReqScope[<id>]` object that the main body's
-// wrap destructures back out. See docs/requires.md for the protocol
-// and src/require-exports.ts for how the names are sourced (from a
-// `/* exported X, Y */` JSHint directive in the require body). When
-// the list is empty the tail is byte-identical to the pre-feature
-// shape — no perf or layout impact on requires that don't need it.
-//
-// `sourceUrl` is the synthetic `sourcemonkey://SourceMonkey/<folder>/...`
-// URL the caller computed via `buildRequireSourceUrl`. We don't ship
-// the require's real fetch URL because (a) we're not actually
-// re-fetching at runtime (the bytes live in storage), and (b) the
-// synthetic URL clusters the require with its owning script in
-// devtools instead of scattering it under cdn.example.com.
-//
-// `gmBindings` is the SAME single-line `const GM_* = ...` block the
-// main body gets (from `buildGmBindingsForScript` / `emitGmBindings`).
-// Each js[] entry is its own V8 script with its own lexical scope, so
-// we have to declare the bindings in every entry that wants them —
-// the main body's `const`s are NOT visible here. TM/VM concatenate
-// everything into one IIFE and so don't need to repeat. The cost can
-// be non-trivial — the block bakes in the full GM_info JSON literal
-// (`scriptMetaStr` plus matches/includes/excludes) and a const per
-// granted API — so a script with a verbose header, many grants, and
-// many requires ships tens of KB of duplicated prefix. Not visible
-// to the user (minified onto physical line 1, body line N → physical
-// line N) and within chrome.userScripts' limits in practice.
-//
-// We do NOT splice the gm `prelude` (storage.init etc.) into requires
-// — that block reads `__smDecision` / `__smName` / `__smE`, which
-// only exist inside the main-body wrap function (passed by
-// `self.__smRun`). Require entries fire at document_start as part of
-// Chrome's userScripts injection burst; the storage cache is
-// initialized later, by the main-body wrap's `__SM_GM__.storage.init`
-// call, before the body runs. So require *top-level* code that calls
-// `GM_setValue` will see an uninitialized cache (rare in practice —
-// requires are libraries that DEFINE functions for the main body to
-// call later, and by then the cache is live).
-export function wrapRequireEntry(args: {
-  scriptId: string;
-  source: string;
-  sourceUrl: string;
-  gmBindings?: string;
-  exportedNames?: readonly string[];
-}): string {
-  const idLit = jsLit(args.scriptId);
-  const head = `if(self.__smActive(${idLit})){try{${args.gmBindings ?? ''}`;
-  // The forwarding statement goes AFTER the body, inside the try, on
-  // its own line (leading `;` defeats any ASI hazard at the seam, in
-  // case the body's last line doesn't terminate). Body line numbers
-  // are unaffected — we only append.
-  //
-  // Splicing exportedNames verbatim into a `{X,Y,Z}` shorthand relies
-  // on every name being a valid JS identifier AND not a reserved word
-  // / wrap-emitted const. `parseExportedNames` + `filterForwardableNames`
-  // in src/require-exports.ts enforce both; if either ever loosens, the
-  // wrap shape is the thing that breaks.
-  const exportStmt = args.exportedNames && args.exportedNames.length > 0
-    ? `\n;Object.assign(self.__smReqScope[${idLit}],{${args.exportedNames.join(',')}});`
-    : '';
-  const tail = `${exportStmt}\n}catch(__smE){self.__smErr(${idLit},__smE);}}\n//# sourceURL=${args.sourceUrl}\n`;
-  return head + args.source + tail;
-}
-
-// Wrap the main body. Output shape:
-//
-//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE><REQ SCOPE><BODY LINE 1>
-//   <BODY LINE 2>
+//   ;
+//   <main body line 1>
 //   ...
 //   });
 //   //# sourceURL=<main url>
+//   //# sourceMappingURL=data:application/json;…   (only when requires exist)
 //
-// __smE is the per-script entry the prelude passes in. The DECL
-// PREAMBLE pulls __smDecision / __smName / __smId / __smLoadedAt /
-// __smSend out of it so the GM bindings + GM prelude (generated by
-// gm-bindings.ts, which references those identifiers) work unchanged.
-// REQ SCOPE destructures any cross-entry names from `@require`s'
-// `/* exported */` lists out of `self.__smReqScope[<id>]` — see
-// `wrapRequireEntry` for the other half of the protocol and
-// docs/requires.md for the design.
-// All of the preamble + bindings + prelude + req scope is minified
-// onto the opening line so body line N → physical line N.
-export function wrapMainBodyEntry(args: {
+// `__smE` is the per-script entry the prelude passes in. The DECL
+// PREAMBLE pulls `__smDecision` / `__smName` / `__smId` /
+// `__smLoadedAt` / `__smSend` out of it so the GM bindings + GM
+// prelude (generated by gm-bindings.ts, which references those
+// identifiers) work unchanged.
+//
+// Why ONE entry: separate js[] entries are separate V8 scripts with
+// separate top-level scopes, so a require's `const`/`let`/`class` was
+// invisible to the main body and had to be bridged across. One entry
+// means one scope, and the question stops existing — the same
+// arrangement TM/VM get by concatenating into a single IIFE. See
+// docs/injection-modes.md for what that bridge cost.
+//
+// Fidelity wins that fall out of the same change:
+//
+//   - `@require` code now runs inside the `@run-at` gate along with
+//     the body, instead of firing early in Chrome's document_start
+//     injection burst.
+//   - It therefore sees the GM prelude (`storage.init`), so a
+//     require's top-level `GM_setValue` reads a live cache.
+//   - The GM binding block ships once per script instead of once per
+//     require.
+//
+// Line numbers:
+//
+//   - **No requires** (the overwhelmingly common case) — head,
+//     bindings and prelude are minified onto the opening line, so body
+//     line N is still physical line N and no map is emitted. Byte for
+//     byte the same entry as before Mode A.
+//   - **With requires** — the body necessarily moves down by however
+//     many lines the requires occupy. An inline source map restores
+//     the original file and line in devtools. `Error.stack` strings
+//     stay in generated coordinates because V8 doesn't map those; see
+//     src/source-map.ts and TODO.md.
+export function wrapCombinedEntry(args: {
   scriptId: string;
   sourceUrl: string;
-  body: string;
+  script: StoredScript;
+  requireUrls: readonly string[];
   gmBindings: string;
   gmPrelude: string;
-  requireExports?: readonly string[];
 }): string {
   const idLit = jsLit(args.scriptId);
   // Declaration preamble — pulls per-script values out of the entry
   // the prelude passes in. The names match what gm-bindings.ts's
   // prelude expects (`__smDecision`, `__smName`, `__smId`,
   // `__smLoadedAt`, `__smSend`) so we don't have to rewrite that
-  // module for the new wrapper shape.
+  // module for the wrapper shape.
   const declPreamble =
     `var __smDecision=__smE.decision;` +
     `var __smName=__smE.cfg.name;` +
     `var __smId=__smE.cfg.id;` +
     `var __smLoadedAt=__smE.cfg.loadedAt;` +
     `var __smSend=self.__smPrelude.send;`;
-  // Require-scope destructure — empty when no require exported
-  // anything, so a script without /* exported */ requires emits the
-  // pre-feature byte sequence. Stays on the same physical line as
-  // declPreamble + gmBindings + gmPrelude.
-  const reqScope = args.requireExports && args.requireExports.length > 0
-    ? `var{${args.requireExports.join(',')}}=self.__smReqScope[${idLit}];`
-    : '';
   // gmBindings and gmPrelude are already single-line strings (or
-  // empty). Concatenate without newlines so the body's line N lands
-  // at physical line N.
-  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}${reqScope}`;
-  const tail = `\n});\n//# sourceURL=${args.sourceUrl}\n`;
-  return head + args.body + tail;
+  // empty), so the head stays on one physical line.
+  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}`;
+
+  if ((args.script.requires ?? []).length === 0) {
+    // Nothing to concatenate, so nothing shifts and no map is needed.
+    const body = joinFullSource(
+      args.script.leadingText ?? '',
+      args.script.headerText ?? '',
+      args.script.bodyText,
+    );
+    return head + body + `\n});\n//# sourceURL=${args.sourceUrl}\n`;
+  }
+
+  // Head occupies generated line 0; user source starts at line 1.
+  const composed = composeSource(args.script, {
+    requireUrls: args.requireUrls,
+    mainUrl: args.sourceUrl,
+    startLine: 1,
+  });
+  const code = head + '\n' + composed.text + `\n});\n`;
+  const map = buildSourceMap({
+    file: args.sourceUrl,
+    segments: composed.segments,
+    // head + user source + the closing `});`
+    totalLines: 1 + composed.lineCount + 1,
+  });
+  return code + `//# sourceURL=${args.sourceUrl}\n` + inlineSourceMapComment(map) + '\n';
 }
 
-// Assembler: Mode B (separate entries). Default and only implemented
-// mode today. See docs/injection-modes.md for the design of Modes A
-// (concatenated single blob) and C (eval-per-require) — the wrap
-// helpers above are structured so either could be slotted in by
-// writing a different assembler.
+// Assembler: Mode A (concatenated user program). See
+// docs/injection-modes.md for the arrangements tried or considered
+// instead (separate entries per require, eval-per-require) and why
+// this one won.
 //
 // The prelude is inlined as the second js[] entry — NOT
 // registered separately. We tried the separate-singleton approach
@@ -487,18 +533,32 @@ export function wrapMainBodyEntry(args: {
 // — we're injecting our stored copy, not re-fetching from the CDN.
 // The original host + path become subfolders so provenance is still
 // visible in the tree.
-function assembleSeparateEntries(parts: {
+function assembleEntries(parts: {
   configBlob: string;
   preludeCode: string;
-  requireEntries: Array<{ code: string; url: string }>;
-  mainCode: string;
+  combinedCode: string;
+  sealCode: string;
 }): RegistrationSpec['js'] {
-  const js: Array<{ code: string }> = [];
-  js.push({ code: parts.configBlob });
-  js.push({ code: parts.preludeCode });
-  for (const r of parts.requireEntries) js.push({ code: r.code });
-  js.push({ code: parts.mainCode });
-  return js;
+  return [
+    { code: parts.configBlob },
+    { code: parts.preludeCode },
+    { code: parts.combinedCode },
+    { code: parts.sealCode },
+  ];
+}
+
+// Trailing sentinel entry. Everything the user wrote lives in ONE
+// script now, so a syntax error anywhere in any `@require` — a
+// truncated CDN response, an HTML fragment that squeaked past the
+// content-type gate — makes the whole entry fail to parse. `__smRun`
+// is then never reached, and without this the script would simply
+// never run: no error, no log entry, no badge.
+//
+// This is a separate js[] entry, so it parses and runs even when the
+// one before it didn't; the prelude reports the failure when it sees
+// that `__smRun` never fired.
+export function wrapSealEntry(scriptId: string, logLabel: string): string {
+  return `self.__smSealed(${jsLit(scriptId)});\n//# sourceURL=${buildSealSourceUrl(logLabel)}\n`;
 }
 
 // Pure: assemble the GmInfoInput literal we'll bake into GM_info.
@@ -605,9 +665,13 @@ export async function buildSwapEvalBody(
     : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
   const composed = composeRequiredBody(script);
   // gmEmit.js is single-line and ends with a space; safe to prepend
-  // directly. Add a newline so the composed body's own line numbers
-  // line up the same way they would in a fresh registration's main
-  // body entry (binding prefix on line 1, body content from line 2).
+  // directly, with a newline so the composed source starts at line 2.
+  //
+  // NOTE: the swap path emits no source map — the prelude's
+  // `(0,eval)` only appends `//# sourceURL=`. So a hot-swapped script
+  // with `@require`s reports concatenated line numbers where a fresh
+  // registration would report original ones. Folded into the Log-tab
+  // mapping follow-up in TODO.md.
   if (!gmEmit.js) return composed;
   return gmEmit.js + '\n' + composed;
 }
@@ -692,60 +756,18 @@ export async function buildRegistrationSpec(
     needsGmValues: gmEmit.needsValues,
     matching: needsWrapperFilter ? script.matching : null,
     startupLogs: script.startupLogs ?? [],
-    requireUrls: requireSourceUrls,
   });
 
-  // One {code} per @require (entries 2..N-1). Each gets the same
-  // single-line GM-binding prefix the main body gets so library code
-  // sees `GM_info` / `GM_setValue` / etc. — the polyfill-style
-  // helper requires (e.g. greasemonkey-polyfill) need this to load
-  // without ReferenceErrors.
-  //
-  // Per-require exported names come from a `/* exported X, Y */`
-  // JSHint directive in the require source. Each entry forwards its
-  // own list onto `self.__smReqScope[<id>]`; the union (last-write-
-  // wins on collision) gets destructured back out at the top of the
-  // main body. See src/require-exports.ts + docs/requires.md.
-  const requireExportLists: string[][] = requires.map(
-    (r) => filterForwardableNames(parseExportedNames(r.source)),
-  );
-  const requireExportsUnion: string[] = [];
-  const seenExport = new Set<string>();
-  for (const list of requireExportLists) {
-    for (const name of list) {
-      if (seenExport.has(name)) continue;
-      seenExport.add(name);
-      requireExportsUnion.push(name);
-    }
-  }
-  const requireEntries = requires.map((r, i) => ({
-    code: wrapRequireEntry({
-      scriptId: script.id,
-      source: r.source,
-      sourceUrl: requireSourceUrls[i],
-      gmBindings: gmEmit.js,
-      exportedNames: requireExportLists[i],
-    }),
-    url: r.url,
-  }));
-
-  // Main body (entry N). Inject the FULL on-disk source (leadingText
-  // + headerText + bodyText) — not just bodyText — so the line
-  // numbers V8 reports in stack traces line up with the original
-  // file. The header block is comment-only JS and parses as inert
-  // noise; same trick `composeRequiredBody` uses for the swap path.
-  const mainSource = joinFullSource(
-    script.leadingText ?? '',
-    script.headerText ?? '',
-    script.bodyText,
-  );
-  const mainCode = wrapMainBodyEntry({
+  // The whole user program — requires then body — as ONE entry
+  // (js[2]). Sharing a scope is what makes a library's top-level
+  // `const`/`class` visible to the body; see wrapCombinedEntry.
+  const combinedCode = wrapCombinedEntry({
     scriptId: script.id,
     sourceUrl,
-    body: mainSource,
+    script,
+    requireUrls: requireSourceUrls,
     gmBindings: gmEmit.js,
     gmPrelude: gmEmit.prelude,
-    requireExports: requireExportsUnion,
   });
 
   // Register at document_start regardless of the declared @run-at. The
@@ -754,11 +776,11 @@ export async function buildRegistrationSpec(
   // the user body. See docs/injection.md.
   const spec: RegistrationSpec = {
     id: script.id,
-    js: assembleSeparateEntries({
+    js: assembleEntries({
       configBlob: cfgBlob,
       preludeCode: wrapPreludeEntry(),
-      requireEntries,
-      mainCode,
+      combinedCode,
+      sealCode: wrapSealEntry(script.id, logLabel),
     }),
     runAt: 'document_start',
     world,

@@ -38,9 +38,9 @@ SourceMonkey actually does today.
 ## Bindings layout in the wrapper
 
 `emitGmBindings` returns `{js, prelude}` — both strings are
-spliced into the main-body wrap function (`wrapMainBodyEntry` in
-`src/injector.ts`), so they're locals of that function and visible
-to the user body via closure:
+spliced into the combined user-program wrap function
+(`wrapCombinedEntry` in `src/injector.ts`), so they're locals of that
+function and visible to the user body via closure:
 
 - `js` — lazy `const GM_X = ...` declarations plus the GM4 alias
   object. Each declaration only dereferences `window.__SM_GM__`
@@ -59,26 +59,31 @@ to the user body via closure:
   and `__smDecision` (pulled out of the entry the prelude passes
   in) is in scope.
 
-Both `js` and `prelude` sit on the same physical line as the body's
-first line so the body's line N stays at physical line N of the
-main entry.
+Both `js` and `prelude` are single-line strings occupying the entry's
+opening physical line:
+
+- With no `@require`s the user body starts on that same line, so body
+  line N is physical line N.
+- With requires the body moves down past them, and an inline source
+  map restores the original positions — see
+  [injection-modes.md](injection-modes.md).
 
 Scope notes:
 
-- The same `js` block is also spliced into every `@require` entry
-  (see `wrapRequireEntry` in `src/injector.ts`). Each js[] entry is
-  its own V8 script with its own lexical scope, so the main-body's
-  `const GM_X = ...` declarations would otherwise be invisible to
-  requires. TM/VM concatenate everything into one IIFE; we repeat
-  the (single-line) prefix per entry, baking in the same `scriptId`
-  literal so every entry's bindings target the same storage bucket.
-- The `prelude` block is NOT spliced into requires — it references
-  `__smDecision` / `__smE`, which only exist inside the main-body
-  wrap function passed to `self.__smRun`. Storage gets initialized
-  by the main-body wrap before the user body runs, so a require's
-  top-level `GM_setValue` call would hit an uninitialized cache
-  (rare — requires are libraries that define functions for the main
-  body to call later).
+- `@require` bodies are concatenated into the SAME wrap function,
+  after the bindings and before the script's own body, so library
+  top-level code sees the `GM_*` surface it expects (e.g.
+  `gm4-polyfill.js`) with one copy of the block rather than one per
+  require. Under the previous separate-entries arrangement each entry
+  was its own V8 script and the prefix had to be repeated — tens of KB
+  of duplication for a verbose header with several requires. See
+  [injection-modes.md](injection-modes.md).
+- The `prelude` block (`storage.init` etc.) is emitted once, ahead of
+  the requires, so a require's top-level `GM_setValue` reads a live
+  cache. Under separate entries the prelude couldn't be repeated (it
+  references `__smDecision` / `__smE`, which existed only in the
+  main-body wrap) and require entries fired before it ran — so that
+  same call hit an uninitialized cache.
 - The reload-fast-path's `eval` swap runs at the prelude's function
   scope, not inside the wrap function's closure, so the
   swap-evaluated body doesn't see the bindings; the SW refuses

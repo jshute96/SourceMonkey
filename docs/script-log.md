@@ -186,13 +186,15 @@ Plumbing notes specific to logging:
     hands to `//# sourceURL=` on the main-body entry.
   - Each `@require` tab carries `sourceUrl = buildRequireSourceUrl(logLabel, r.url)`
     (a synthetic `sourcemonkey://SourceMonkey/<folder>/<host>/<path>`
-    URL) — matching the per-require `//# sourceURL=` the injector
-    emits. Stack refs into require code linkify to the right
-    require tab. The require tab's `fileUrl` keeps the original
-    fetched URL for display.
+    URL) — the same string the injector puts in the entry's source
+    map for that require. It is NOT what stack frames carry: requires
+    are concatenated into the script's own entry, so every frame
+    reports the main URL, and stack refs can't route to a require tab
+    until the Log tab applies that map (see TODO.md). The require
+    tab's `fileUrl` keeps the original fetched URL for display.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
-    the main-body wrap prefix (the `self.__smRun(id, function(__smE){…`
-    + GM bindings + declaration preamble emitted by `wrapMainBodyEntry`)
+    the wrap prefix (the `self.__smRun(id, function(__smE){…`
+    + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.
 

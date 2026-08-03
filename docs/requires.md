@@ -146,118 +146,110 @@ Depends on whether we already had a good copy:
 
 The reload fast-path (see [injection.md](injection.md#reload-fast-path))
 ships the script's freshly-updated body to the in-page prelude for
-in-place `eval`. The shipped payload concatenates every `@require`
-body before the main body via `composeRequiredBody` in
-`src/injector.ts`, so the eval'd swap can see require-set-up
-globals. Without that, the swapped body's references to a require
-that was added between the registered version and the refreshed
-version would throw `ReferenceError` on the swap and only resolve
-on the *next* reload (because by then `chrome.userScripts` has
-re-registered the script with the new requires as separate entries).
+in-place `eval`.
 
-`handleCheckPending` in `src/background.ts` therefore returns
-`composeRequiredBody(refreshed)` rather than the raw body text.
+- The payload concatenates every `@require` body before the main body
+  via `composeRequiredBody` in `src/injector.ts`, so the eval'd swap
+  sees whatever the requires set up.
+- Without that, a body referencing a require added between the
+  registered version and the refreshed one would throw
+  `ReferenceError` on the swap, resolving only on the *next* reload.
+- `handleCheckPending` in `src/background.ts` therefore returns
+  `composeRequiredBody(refreshed)` rather than the raw body text.
 
-The eval-based swap path is the only place we still concatenate;
-the default-run path injects each require as its own `js[]` entry
-for clean stack traces — see
-[injection-modes.md](injection-modes.md).
+Both paths now share that one concatenation, so the swap and the
+registration agree on scope by construction. Previously the swap was
+the only place requires and the body shared a scope, and the two
+arrangements had to be reasoned about separately.
 
 ## Injection
 
-In the default-run path, each `@require` becomes its own `{code}`
-entry in the script's `js[]` array, wrapped in
-`if(self.__smActive("<id>")){try{<body>}catch(e){...}}` with a
-trailing `//# sourceURL=<require URL>` directive. Devtools shows
-each require as its own file with original line numbers; a stack
-trace from inside a require points at that require's URL, not at
-the host userscript.
+Every `@require` is concatenated ahead of the script's own body into
+ONE `{code}` entry in the `js[]` array:
 
-Cross-entry visibility rules:
+- Declaration order, deduplicated by canonical URL.
+- Each preceded by a `// @require <url>` line, and followed by a `;`
+  that guards the seam against ASI (Automatic Semicolon Insertion) —
+  see [injection-modes.md](injection-modes.md#mode-a--concatenated-user-program-current)
+  for why concatenation needs it.
+- See [injection-modes.md](injection-modes.md) for the full entry
+  shape and the two arrangements considered instead.
 
-- **`var` / `function`** — still attach to `globalThis` at script
-  top level (classic-script legacy semantics), so libraries that
-  hang things off `window` work unchanged.
-- **`let` / `const` / `class`** — script-scoped, invisible to sibling
-  entries by default. SourceMonkey bridges the gap when a require
-  lists the binding in a JSHint `/* exported */` directive (see
-  [below](#cross-entry-exports-via--exported-)).
-- Libraries without the directive get the pre-feature fallback —
-  assign to `globalThis` / `window` to share across entries.
+### Scope
 
-See [injection-modes.md](injection-modes.md) for the alternative
-arrangements considered (concatenated single blob, eval-per-require)
-and why we picked separate entries.
+Requires and the body share one lexical scope, exactly as in TM/VM:
 
-## Cross-entry exports via `/* exported */`
+- **`let` / `const` / `class`** at a require's top level are visible
+  to later requires and to the body. Nothing is analysed or
+  forwarded — they're in scope because they're in the same script.
+- **`var` / `function`** are function-scoped locals of the wrap, NOT
+  properties of `globalThis`. This matches TM/VM (they wrap in an IIFE
+  too), but it is a change from the previous separate-entries
+  arrangement, where a require's top-level `var` did become a global.
+  A library that expects page code to see `window.MyLib` must assign
+  it explicitly.
+- **GM bindings** are emitted once, ahead of the first require, so
+  library top-level code sees `GM_info` / `GM_setValue` / etc. too.
+- **The GM prelude runs first**, so a require's top-level
+  `GM_setValue` reads a live storage cache.
 
-Userscript libraries commonly declare cross-piece helpers as
-top-level `const`/`let`/`class` and list them in a JSHint
-[`/* exported */`](https://jshint.com/docs/#exported) directive:
+Consequences of the shared scope, all matching TM/VM:
 
-```js
-/* exported $ $$ on */
-const $  = (s, el) => (el || document).querySelector(s);
-const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
-const on = (el, ev, cb) => el.addEventListener(ev, cb);
-```
+- Two top-level `const x` declarations — one in a require, one in the
+  body — are a `SyntaxError` and the script does not run. Wrap the
+  body in an IIFE (as nearly every real userscript does) and the
+  shadowing is ordinary.
+- A require that throws at top level aborts the whole script,
+  including the body.
+- A require declaring any identifier the wrap itself declares — `GM`,
+  `GM_info` (both emitted even under `@grant none`), any granted
+  `GM_*`, `unsafeWindow`, `__sm*` — is a redeclaration `SyntaxError`.
+  `const unsafeWindow = window.wrappedJSObject || window;` is a real
+  userscript-library idiom that this now rejects.
+- A require declaring top-level `self` or `window` also breaks the
+  wrap, whose own preamble dereferences both. See
+  [injection-modes.md](injection-modes.md#cons--caveats).
+- Any of the above is a parse failure, which means the script does not
+  run at all. A trailing sentinel entry detects that and reports it to
+  the Log tab and the badge, so it fails loudly rather than silently.
 
-- In TM/VM, the require is concatenated with the main body so those
-  bindings are reachable by lexical scope.
-- In SourceMonkey's separate-entries mode they're trapped in the
-  require's own top-level scope.
+### Timing
 
-SourceMonkey closes the gap by reading the directive at registration
-time and emitting explicit forwarders on both sides of the wall:
+`@require` code runs inside the `@run-at` gate along with the body.
+Under the previous separate-entries arrangement requires fired early,
+in Chrome's `document_start` injection burst, regardless of the
+script's declared `@run-at`.
 
-- **Producer**: each require's wrap appends
-  `;Object.assign(self.__smReqScope[<id>], {X, Y, Z});`
-  at the end of its `try` block (after the body, so body line
-  numbers are unaffected).
-- **Consumer**: the main body's wrap destructures the union of every
-  require's exported names from the same per-script object, alongside
-  the GM bindings on the head one-liner.
+### Devtools and stack traces
 
-`self.__smReqScope[<id>]` is (re)initialized as an empty object in the
-config blob (entry 0 in `js[]`) on every registration so a refresh
-doesn't bleed stale bindings into a new run. The init is
-unconditional and adds a fixed ~50 bytes to entry 0; the
-producer/consumer wraps are emit-only-when-needed so a require
-without `/* exported */` adds zero bytes to its own entry and to the
-main body.
+Concatenation costs line-number fidelity, and an inline source map
+buys most of it back:
 
-### Supported directive forms
-
-The keyword match is case-insensitive (matching JSHint's tolerance);
-names can be whitespace- or comma-separated, on one line or many. The
-multi-line JSDoc-decorated form (utilsjs.js, mutations.js) is
-recognized — leading `*` per line is stripped before tokenizing.
-
-### Filtered names
-
-Names matching `GM_*` or `__sm*` are silently dropped from the
-forwarder list:
-
-- A `var{GM_setValue} = …` destructure would redeclare the `const
-  GM_setValue` that the GM bindings emit (SyntaxError).
-- `__sm*` is SourceMonkey's internal namespace.
-
-In practice no real userscript library exports a name in these
-namespaces — the filter exists for safety, not for known cases.
-
-### Limitations
-
-- Only `/* exported */` directives are parsed; libraries that omit
-  the directive get the pre-feature behavior (`let`/`const`/`class`
-  invisible cross-entry).
-- Name collisions across multiple requires are resolved
-  last-write-wins at runtime (each require's `Object.assign`
-  overwrites the prior). The destructure mentions each name once.
-- The directive is parsed with a forgiving regex — it doesn't track
-  string / comment / regex literal state. The `/* exported */`
-  pattern is distinctive enough that false positives are vanishingly
-  rare in practice (no real userscript library would put the
-  sequence inside a string literal at top level).
+- The entry carries a `//# sourceMappingURL=data:…` map with one
+  mapping per generated line, plus `sourcesContent` for each require
+  and for the body (synthetic `sourcemonkey://` URLs aren't fetchable,
+  so the text has to be embedded). Devtools splits the single
+  generated script back into the original files at the original line
+  numbers.
+- What that looks like in the Sources panel, verified in Chrome: a
+  script with one `@require` shows two entries under its folder — the
+  `.user.js` itself, and the require nested under a `<host>/<path>`
+  subtree named for where it was fetched from — each showing its own
+  original text. The map's `file` is the same URL as the entry's
+  `//# sourceURL=` and as the body's entry in `sources`; the mapped
+  source shadows the generated script rather than duplicating it.
+- The map is emitted **only** when the script has requires. Without
+  them nothing shifts and no map is paid for.
+- `Error.stack` *strings* are not mapped — V8 maps positions for the
+  devtools UI but leaves the string in generated coordinates. The
+  viewer's Log tab parses those strings, so log entries currently show
+  concatenated line numbers. Applying the same map there is a planned
+  follow-up; see [TODO.md](../TODO.md).
+- `sourcesContent` is embedded without a size cap: `sourcemonkey://`
+  URLs aren't fetchable, so dropping the text would leave a map with
+  nothing to show. The real limit is whatever
+  `chrome.userScripts.register()` accepts, and that already surfaces
+  as a named per-script error rather than silently.
 
 ## Limits
 

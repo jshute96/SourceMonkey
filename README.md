@@ -6,8 +6,9 @@ A userscript manager Chrome extension that treats userscripts like source code, 
 > page can register local directories or HTTP manifests, every
 > `*.user.js` it finds is persistently loaded, matching scripts are
 > injected via `chrome.userScripts`, and the most-used `GM_*` /
-> `GM.*` APIs are wired up. `@require` prefetches and prepends
-> required bodies; `@resource` prefetches arbitrary blobs surfaced via
+> `GM.*` APIs are wired up. `@require` prefetches required libraries
+> and runs them in the script's own scope, as Tampermonkey does;
+> `@resource` prefetches arbitrary blobs surfaced via
 > `GM_getResourceText` / `GM_getResourceURL`. Deferred: XHR header
 > surgery and `GM_cookie`. See
 > [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) for the

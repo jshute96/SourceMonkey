@@ -81,6 +81,13 @@
         of the page&rsquo;s globals.
       </li>
       <li>
+        <a href="require-scope/require-scope.html">@require scope</a>
+        &mdash; a shared <code>lib.js</code> whose top-level
+        <code>class</code> / <code>const</code> / <code>function</code>
+        reach the script body, in both the MAIN and isolated worlds,
+        without leaking onto the page&rsquo;s globals.
+      </li>
+      <li>
         <a href="xmlhttp-denied/xmlhttp-denied.html">@connect denial (negative cases)</a>
         &mdash; scripts with no <code>@connect</code>, a mismatched host, and an
         explicit allow all firing <code>GM_xmlhttpRequest</code> at the same

@@ -91,18 +91,20 @@ source's `enabled` flag are both true, we build a
   match-pattern grammar).
 - `includeGlobs` — `@include` glob patterns.
 - `excludeGlobs` — `@exclude` glob patterns.
-- `js` — a sequence of separate entries: the per-script config
-  blob, the inlined prelude, one entry per `@require`, and the
-  main body. Each `@require` and the main body carry their own
-  `//# sourceURL=…` directive so stack traces report the right
-  file and line number; the prelude shares one page-wide
-  `__prelude.js` URL across all N inclusions so devtools
-  tree-dedups them into a single visible entry. See
+- `js` — the per-script config blob, the inlined prelude, the user
+  program (every `@require` concatenated ahead of the script's own
+  body, so they share one lexical scope), and a trailing
+  parse-failure sentinel. The combined entry carries a
+  `//# sourceURL=…` directive,
+  plus an inline source map when requires are present so devtools
+  still reports the original file and line per frame; the prelude
+  shares one page-wide `__prelude.js` URL across all N inclusions
+  so devtools tree-dedups them into a single visible entry. See
   [injection-modes.md](injection-modes.md) for the full per-entry
   layout, why we inline the prelude rather than registering it
-  once, and the alternative arrangements considered (concatenated
-  single blob, eval-per-require); see [requires.md](requires.md)
-  for the `@require`-specific details.
+  once, and the alternative arrangements tried or considered
+  (separate entries per require, eval-per-require); see
+  [requires.md](requires.md) for the `@require`-specific details.
 - `runAt` — always `document_start`, regardless of the script's
   declared `@run-at`. See [`@run-at` gating](#run-at-gating) below.
 - `world` — `'MAIN'` (the page's own world) or `'USER_SCRIPT'`
@@ -247,7 +249,7 @@ into `dist/`). The pieces:
 
 - `src/userscript-prelude.js` → `WRAPPER_PRELUDE` — static, byte-
   identical across every script. Contains the IIFE, helpers
-  (`__smActive`, `__smRun`, `__smErr`), the check-pending round-trip,
+  (`__smRun`, `__smSealed`), the check-pending round-trip,
   the matcher recheck, the async-error listeners, and the
   `@run-at` gate. Per-script identity comes via a tiny config
   blob `{code}` entry that the injector emits ahead of this in the
@@ -270,29 +272,28 @@ attribution lines up with line 7 of the `.user.js` file. Column
 offsets on physical line 1 are still shifted by the prefix's
 character count; line numbers are not.
 
-Per-`@require` entries get their own `{code}` blob with a
-`//# sourceURL=<require URL>` directive, so a stack frame from
-inside `@require` code attributes to that require's URL with its
-original line numbers — not to the main script's sourceURL with
-a require-shifted offset.
+With `@require`s present the body no longer starts on physical
+line 1 — the requires are concatenated ahead of it in the same entry.
+An inline source map restores the original file and line in devtools;
+`Error.stack` strings keep the generated coordinates. See
+[injection-modes.md](injection-modes.md) and [TODO.md](../TODO.md).
 
 The per-script config blob carries every value that varies between
 scripts — `id`, `name`, `sourceUrl`, `runAt`, `loadedAt`,
-`needsGmValues`, the optional matcher block, the optional startup
-logs, and the URL list for each `@require` (used by the prelude's
-async-error filter). The prelude reads it once and stashes a
+`needsGmValues`, the optional matcher block, and the optional startup
+logs. The prelude reads it once and stashes a
 per-script entry on `self.__smPrelude.scripts[id]`.
 
-Every main body is wrapped (in `wrapMainBodyEntry`) to:
+The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
 
 - Defer execution until the prelude's matcher + check-pending +
   `@run-at` gates resolve (via `self.__smRun(id, fn)`).
 - Splice the GM bindings (`const GM_info = ...`, `const GM_setValue
   = ...`, etc.) and the GM prelude (`storage.init` etc.) into the
-  function so they're locals visible to the body. Each `@require`
-  entry gets the SAME bindings block (but not the prelude) for the
-  same reason — see [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper)
-  for the per-entry scope rationale.
+  function so they're locals visible to the body — and, because the
+  requires are concatenated into the same function, to library
+  top-level code too. One copy serves both; see
+  [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper).
 - Carry a `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
   directive so devtools labels the script and the prelude's
   async-error listeners can attribute errors by stack inspection.
@@ -326,17 +327,18 @@ To catch those without falsely attributing the page's own errors to
 this script, the prelude:
 
 - Appends `# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js` to
-  the main body's wrap entry (and `# sourceURL=<require URL>` to
-  each `@require` entry). The JS engine tags stack frames from each
-  entry with its sourceURL, and devtools labels each script
-  accordingly.
-- Stores the main `sourceUrl` plus the list of `requireUrls` on the
-  per-script entry (`entry.cfg.sourceUrl`, `entry.cfg.requireUrls`).
+  the combined entry, plus an inline source map when the script has
+  `@require`s. The JS engine tags stack frames with the entry's
+  sourceURL; devtools applies the map to split them back into the
+  original per-require files.
+- Stores the `sourceUrl` on the per-script entry
+  (`entry.cfg.sourceUrl`). One entry means one marker, so attribution
+  is a single substring test.
 - Installs `window.addEventListener("error", …)` and
   `…("unhandledrejection", …)` once per script (in
   `installAsyncListeners`), both with the capture flag set.
 - Each listener checks the event's `filename` (for `error`) and
-  `error.stack` / `reason.stack` for ANY of this script's
+  `error.stack` / `reason.stack` for this script's
   sourceURL markers via `indexOf`. Only hits are reported via
   `send({ type: 'sm:error', … })`; the default page-side error
   logging is left in place (no `preventDefault`).
@@ -352,13 +354,12 @@ Trade-offs:
 - MAIN-world scripts share `window` with the page; the sourceURL
   filter is what keeps attribution honest.
 - Multiple userscripts in the same world each install their own
-  listeners; only the listener whose `sourceUrl` / `requireUrls`
-  show up in the stack reports. **Edge case:** two scripts that
-  share an `@require` URL (e.g. both use jQuery from the same CDN)
-  could both match a throw from inside that require body; the
-  WeakSet ensures it's only reported once but attribution to one
-  specific script is non-deterministic. Worth knowing if you see
-  flaky cross-script attribution for shared library errors.
+  listeners; only the listener whose `sourceUrl` shows up in the
+  stack reports. Every frame from a script's code — its requires
+  included — carries that one URL, so attribution is unambiguous.
+  (Under the previous separate-entries arrangement two scripts
+  sharing an `@require` URL could both match a throw from inside
+  that library, and attribution was non-deterministic.)
 - Stack-trace-free rejections (e.g. `Promise.reject("string")`) can't
   be attributed and are silently dropped — better than guessing.
 

@@ -381,7 +381,7 @@ export function emitGmBindings(
   // splices `prelude` inside the main-body wrap function passed to
   // self.__smRun, which only fires after both the GM runtime spec has
   // registered AND the @run-at lifecycle event resolves. See
-  // wrapMainBodyEntry in src/injector.ts.
+  // wrapCombinedEntry in src/injector.ts.
   //
   // - storage.init: emitted whenever a storage grant is present;
   //   the prelude reads the snapshot off `__smDecision.gmValues`
@@ -434,7 +434,7 @@ export function emitGmBindings(
   // the main-body wrap function ahead of the user body, and any
   // newline here would push the body's line 1 onto physical line 2+
   // — breaking the stack-trace line-number contract that
-  // `wrapMainBodyEntry` in src/injector.ts depends on. Each part is
+  // `wrapCombinedEntry` in src/injector.ts depends on. Each part is
   // a complete `const … = …;` statement so `;` + ` ` is enough.
   return {
     js: parts.join(' ') + ' ',

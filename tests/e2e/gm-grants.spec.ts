@@ -224,13 +224,12 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
     fixtureServer,
     sm,
   }) => {
-    // Mode B injects each @require as its own js[] entry with its
-    // own lexical scope, so the main body's `const GM_X = ...`
-    // declarations are NOT visible to requires unless we splice the
-    // same bindings into each require's wrap. This test exercises
-    // the polyfill-style use case (a shared library that depends on
-    // GM_info / GM_setValue being in scope when the require's
-    // top-level code runs).
+    // The injector concatenates each @require into the script's own
+    // entry, ahead of the body but AFTER the GM binding block, so
+    // library top-level code sees `GM_info` / `GM_setValue` in scope.
+    // This test exercises the polyfill-style use case (a shared
+    // library that depends on those bindings being live when the
+    // require's top-level code runs).
     const requireBody = `
       // Probe GM_info / GM_setValue from inside the require's own
       // top-level scope (NOT from a function defined here and

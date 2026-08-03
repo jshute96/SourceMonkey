@@ -2,8 +2,10 @@
 // tests/bad-examples/. Two angles:
 //
 //   1. Source-addition: every bad script either reports the expected
-//      ERROR status (with the right errorMessage), or — for the two
-//      cases SM tolerates (two-headers, leading-text) — loads OK.
+//      ERROR status (with the right errorMessage), or — for the cases
+//      SM tolerates (two-headers, leading-text) or can't detect at
+//      load time (the `@require`s that only fail once injected) —
+//      loads OK.
 //   2. Viewer round-trip: opening each script in the viewer renders
 //      a code block whose textContent equals the file on disk
 //      verbatim. Catches the "leading text dropped" regression
@@ -57,6 +59,12 @@ const BAD_CASES: BadCase[] = [
   { file: 'invalid-header-fields.user.js', expectedStatus: 'ok' },
   { file: 'blank-lines.user.js',           expectedStatus: 'ok' },
   { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js:.*fetch/ },
+  // The two require cases below load CLEANLY — status `ok`, no
+  // errorMessage. Their `@require`s fetch fine; they fail later, at
+  // injection time, which the addSource path can't see. Runtime
+  // behavior for both is covered in tests/e2e/requires.spec.ts.
+  { file: 'unparsable-require.user.js',    expectedStatus: 'ok' },
+  { file: 'throwing-require.user.js',      expectedStatus: 'ok' },
 ];
 
 async function openViewer(extensionContext: BrowserContext, extensionId: string, scriptId: string): Promise<Page> {

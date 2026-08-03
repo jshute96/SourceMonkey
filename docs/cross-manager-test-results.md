@@ -31,6 +31,23 @@ Specs that opt out under TM via
   URLs only, so it can't install the example cleanly. Skipped under
   TM until we ship an absolute-URL variant. SM coverage:
   `tests/examples/gm-resource/gm-resource.spec.ts`.
+- **`require-scope/`** — same shape, for `@require ./lib.js`. TM
+  installs these examples from a local file, so it has no base URL to
+  resolve a relative ref against even in principle, and the fixture
+  server's port is assigned per run so an absolute URL can't be baked
+  into the file. SM coverage:
+  `tests/examples/require-scope/require-scope.spec.ts`.
+  - Consequence worth stating plainly: **no example exercises
+    `@require` under TM at all**, so the TM-compatibility claim for
+    the concatenated injection arrangement rests on unit and SM-only
+    e2e coverage. See the "Cross-manager coverage" entry in
+    [TODO.md](../TODO.md) for the two ways to close it.
+  - `test:e2e:tm` is unaffected — the skip fires before the install
+    step, and that npm script never invokes
+    `scripts/sync-tm-scripts.mjs`. A manual `sync-tm-scripts.mjs` run
+    *will* try to install both variants; TM prefetches `@require`
+    URLs at the install prompt, so expect that install to error or
+    stall rather than complete.
 
 ## Failing specs (untriaged divergences)
 

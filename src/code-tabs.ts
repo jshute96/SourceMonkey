@@ -47,9 +47,10 @@ export type TabBody = string | (() => Promise<string>);
 // `sourceUrl` is the `sourcemonkey://…` URL we expect stack frames for
 // code in this tab to carry. Stack-ref links in the Log tab are
 // linkified only when their URL matches one of the tabs' sourceUrls
-// (today only the main tab — the injector doesn't yet emit a
-// per-require `//# sourceURL=`, so frames inside `@require` code share
-// the main URL and currently aren't routed to require tabs).
+// (today only the main tab — requires are concatenated into the
+// script's own entry, so every frame carries the main URL. Require
+// tabs get routed frames again once the Log tab learns to apply the
+// entry's source map; see TODO.md).
 export type CodeTab =
   | { kind: 'code'; label: string; body: TabBody; fileUrl: string; sourceUrl: string }
   | { kind: 'log'; label: string };

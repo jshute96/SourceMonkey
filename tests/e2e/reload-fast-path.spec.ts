@@ -237,6 +237,55 @@ test.describe('reload fast-path', () => {
     await page.close();
   });
 
+  test('reload swap keeps a @require\'s top-level const/class in scope', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // The sibling test above uses `function __SM_REQ_FN`, which is the
+    // easy case: a top-level `function` in a standalone script becomes
+    // a property of globalThis, so it survived even when requires were
+    // injected as separate scripts.
+    //
+    // `const` and `class` are script-scoped and don't. They only reach
+    // the body because the swap payload concatenates requires into it
+    // — the same arrangement a fresh registration uses, now that both
+    // paths share composeRequiredBody. This is what would break if the
+    // swap path ever diverged again.
+    fs.writeFileSync(
+      path.join(scriptsDir.path, 'lib.js'),
+      [
+        'const REQ_CONST = "const-ok";',
+        'class ReqClass { tag() { return "class-ok"; } }',
+      ].join('\n'),
+    );
+    scriptsDir.write({
+      relativePath: 'lexswap.user.js',
+      meta: {
+        name: 'LexSwap',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        injectInto: 'content',
+        extra: ['// @require     lib.js'],
+      },
+      body: `document.title = 'v1-' + REQ_CONST + '-' + new ReqClass().tag();`,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1-const-ok-class-ok');
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+
+    scriptsDir.rewriteBody('lexswap.user.js', `document.title = 'v2-' + REQ_CONST + '-' + new ReqClass().tag();`);
+
+    await page.reload();
+    // A swap that dropped the require prelude would ReferenceError on
+    // REQ_CONST and leave the v1 title in place.
+    await expect(page).toHaveTitle('v2-const-ok-class-ok');
+    await page.close();
+  });
+
   test('storage-granting script does NOT take run-new (would ReferenceError on GM bindings)', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {

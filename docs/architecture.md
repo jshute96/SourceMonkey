@@ -198,9 +198,9 @@ details live in the topic-specific docs linked below.
   lifecycle, the activation/error wrapper, opt-in requirements,
   unsupported pattern forms.
 - [injection-modes.md](injection-modes.md) — the three possible
-  arrangements of a script's `js[]` entries (separate entries vs
-  concat vs eval-per-require); why we ship separate entries and what
-  the alternatives would buy.
+  arrangements of a script's `js[]` entries (concat vs separate
+  entries vs eval-per-require); why we ship the concatenated user
+  program, and what the alternatives bought or would cost.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display

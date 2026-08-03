@@ -133,6 +133,16 @@ export function buildConfigSourceUrl(logLabel: string): string {
   return `${scriptRoot(logLabel)}/__config.js`;
 }
 
+// Canonical URL for the per-script parse-failure sentinel — the last
+// js[] entry. Distinct from the config blob's URL on purpose: devtools
+// dedups Sources-tree nodes by URL, which is safe for the prelude only
+// because every copy of it is byte-identical. The sentinel and the
+// config blob are different code, so sharing a URL would show one node
+// whose text matches just one of them.
+export function buildSealSourceUrl(logLabel: string): string {
+  return `${scriptRoot(logLabel)}/__seal.js`;
+}
+
 // Canonical URL for the prelude. Bytes (WRAPPER_PRELUDE) are
 // byte-identical for every script, so every per-script inclusion
 // tags itself with this same URL — devtools' Sources tree groups

@@ -460,8 +460,15 @@ function storedTabs(script: StoredScript): CodeTab[] {
       body: r.source,
       // fileUrl is the original fetched URL (for display so the user
       // sees the real provenance); sourceUrl is the synthetic
-      // sourcemonkey:// URL the injector tags stack frames with —
-      // the latter is what makes log-pane refs linkify to this tab.
+      // sourcemonkey:// URL for this require.
+      //
+      // The injector builds the same URL (`buildRequireSourceUrl` with
+      // the same label) for the require's entry in the combined
+      // entry's source map, so devtools' file and this tab agree. It
+      // is NOT what stack frames carry any more: under Mode A every
+      // frame is tagged with the script's own sourceURL, so log-pane
+      // refs can't linkify to a require tab until the Log tab learns
+      // to apply that source map. See TODO.md.
       fileUrl: r.url,
       sourceUrl: buildRequireSourceUrl(label, r.url),
     });

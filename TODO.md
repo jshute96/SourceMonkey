@@ -17,6 +17,81 @@
   single-phase semantics.
 - Make an icon that works
 
+## Source maps for stack traces
+
+Requires and the body are concatenated into one injected entry (Mode
+A — see [docs/injection-modes.md](docs/injection-modes.md)), and an
+inline source map already restores per-require devtools files and
+original line numbers. Two follow-ups:
+
+- **Map `Error.stack` strings ourselves.** V8 maps source positions
+  for the devtools UI but leaves `err.stack` in generated
+  coordinates, and the viewer's Log tab parses those strings
+  (`src/stack-link.ts`, `src/userscript.ts`). We generate the map, so
+  we can decode it: apply it when rendering log entries and when
+  resolving a clicked stack link, so both name the original require
+  or body file at its original line. This is the piece that makes
+  Mode A's line-number cost invisible to users.
+
+  Measured, so the fix has a target. A script whose `@require` throws
+  from line 5 of a 6-line `lib.js` puts this in the log:
+
+  ```
+  Error: probe-boom
+      at boom (sourcemonkey://SourceMonkey/main/main.user.js:7:9)
+  ```
+
+  Wrong file and wrong line: generated line 7 is where `lib.js` line 5
+  landed. Clicking the ref routes to the main tab at line 7 — inside
+  the metadata header. Chrome's own console gets this right (it
+  applies the entry's source map, and click-through navigates to the
+  correct line in the correct virtual file), which is the behavior to
+  match.
+- **Reuse the map for the viewer's require tabs.** The tab strip
+  already builds per-require URLs; sharing the segment list would
+  keep the two views' idea of "which file is this line in"
+  identical.
+- **Map the swap-eval path too.** The reload fast-path's `(0,eval)`
+  appends only a `//# sourceURL=`, so a hot-swapped script with
+  `@require`s reports concatenated line numbers where a fresh
+  registration reports original ones.
+
+## Injection payload
+
+- **Find the real `chrome.userScripts.register()` size limit.** One
+  script with four 90 KB requires measures ~1 MB of `js[]` (the source
+  map runs ~1.6x the code it maps). Nothing caps require count × size,
+  and no documented limit was found. An earlier 512 KB cap on the
+  map's embedded sources was removed as an invented number guarding a
+  failure that already reports itself (`registerWithFallback` names
+  the offending script). Worth an e2e smoke test that registers
+  progressively larger scripts until it rejects, so the ceiling is a
+  measured fact — and a check that the failure really is as visible as
+  the fallback path suggests.
+- **Wrap identifiers a `@require` can collide with.** The wrap
+  declares `GM`, `GM_info`, every granted `GM_*`, `unsafeWindow` and
+  `__sm*` in the same scope as the user program, so a library doing
+  `const unsafeWindow = window.wrappedJSObject || window;` — a real
+  idiom — is a parse failure. The sentinel entry reports it, but
+  renaming our internals (or moving the preamble reads onto `__smE`,
+  which would also fix the `self` / `window` TDZ case) would avoid
+  it.
+
+## Cross-manager coverage
+
+- **No `tests/examples/` script exercises `@require` under
+  Tampermonkey.** `require-scope/` covers both injection worlds, but
+  skips under `--project=tampermonkey`: it uses a relative `@require`,
+  which is a SourceMonkey extension, and TM installs these examples
+  from a local file so there's no base URL to resolve against. Baking
+  in an absolute URL doesn't work either — the fixture server's port
+  is assigned per run.
+- Closing this needs either a fixed-port fixture server for the TM
+  project, or a rewrite step that stamps the server URL into a
+  generated copy of the script before TM installs it. Until then the
+  TM-compatibility claim for `@require` — the whole premise of the
+  concatenated arrangement — rests on unit and SM-only e2e coverage.
+
 ## `GM_*` — deferred surface
 
 The Phase 1–10 work shipped the priority APIs; everything below is

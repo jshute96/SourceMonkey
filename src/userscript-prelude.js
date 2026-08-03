@@ -8,7 +8,7 @@
  * via <script src=> under the hood), so subsequent entries would see
  * `self.__smRun` undefined. See docs/injection-modes.md.
  *
- * Per-script layout (separate-entries mode):
+ * Per-script layout:
  *
  *   js[0]  — config call {code}. Calls
  *            `(self.__smPrelude||(self.__smCfgQueue=self.__smCfgQueue||[]).push)(cfg)`
@@ -21,17 +21,21 @@
  *            helpers are already in place — but they still see and
  *            pick up any config that the preceding js[0] just pushed
  *            onto the queue, because the queue lives on globalThis.
- *   js[2..N-1] — one entry per @require, wrapped in
- *                `if(__smActive("id")){try{<body>}catch(e){__smErr("id",e)}}`
- *                with a trailing `//# sourceURL=<require URL>` so each
- *                require shows up as its own file in devtools with
- *                original line numbers.
- *   js[N]  — main body, wrapped in
+ *   js[2]  — the whole user program: every @require concatenated ahead
+ *                of the script's own body, all wrapped in
  *                `__smRun("id",function(){<gm bindings on same line>
- *                 <body line 1>\n<body line 2>...\n})`
- *                so the body runs only after the matcher + check-pending
- *                + @run-at gates resolve. Trailing
- *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`.
+ *                 <user source>\n})`, so it runs only after the
+ *                matcher + check-pending + @run-at gates resolve.
+ *                Concatenation is what gives requires and the body one
+ *                shared scope. Trailing
+ *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`,
+ *                plus an inline source map when requires are present so
+ *                devtools still splits them into separate files.
+ *   js[3]  — parse-failure sentinel: `self.__smSealed("<id>")`. Its own
+ *                script, so it parses and runs even when js[2] didn't.
+ *                Everything the user wrote is one script now, so a
+ *                syntax error anywhere in it would otherwise be
+ *                completely silent — __smRun is never reached.
  *
  * Cross-entry coordination. Every js[] entry runs in the same
  * execution world and shares `self` / `globalThis`. Helpers live on
@@ -86,15 +90,17 @@
    *
    * For each script we maintain:
    *   cfg          : the {id, name, sourceUrl, runAt, loadedAt,
-   *                  matching?, needsGmValues, startupLogs?, requireUrls?}
+   *                  matching?, needsGmValues, startupLogs?}
    *                  passed in by the per-script config blob.
    *   matched      : did the in-page matcher accept this URL? Sync;
-   *                  set during initScript. require entries gate on
-   *                  this via __smActive.
+   *                  set during initScript.
    *   decision     : null|run|run-new|skip — settled by check-pending.
    *   runAtFired   : true once the @run-at lifecycle event happened.
    *   pendingRun   : the main-body fn passed to __smRun, queued until
    *                  (matched && decision !== 'skip' && runAtFired).
+   *   runRegistered: did the combined user-program entry parse and
+   *                  call __smRun at all? The trailing sentinel entry
+   *                  reports a syntax error when it didn't.
    *   loadedAtRun  : loadedAt to attribute sm:start / sm:error to;
    *                  bumps when decision === 'run-new'.
    */
@@ -105,6 +111,7 @@
       decision: null,
       runAtFired: false,
       pendingRun: null,
+      runRegistered: false,
       loadedAtRun: cfg.loadedAt,
       asyncListenersInstalled: false,
     };
@@ -194,23 +201,18 @@
     } catch (_e3) { seal({ action: "run" }); }
   }
 
-  /* Async-error attribution. Each script has its own sourceUrl marker
-     (sourcemonkey://<id>/<name>.user.js) AND a list of require URLs.
-     The injector appends `//# sourceURL=...` to every per-entry blob,
-     so stack frames from this script's code reference one of those
-     markers. The listener filters by ANY marker for THIS script. */
+  /* Async-error attribution. Every piece of a script's code — its
+     `@require`s and its own body — ships in one js[] entry carrying a
+     single `//# sourceURL=sourcemonkey://<id>/<name>.user.js` marker,
+     so one substring test attributes any frame from this script.
+     (Before Mode A each require was its own entry with its own URL and
+     this had to check a list; see docs/injection-modes.md.) */
   var __smReported = (typeof WeakSet === "function") ? new WeakSet() : null;
   function stackHitsScript(err, entry) {
     try {
       var stack = err && typeof err === "object" && err.stack;
       if (typeof stack !== "string") return false;
       if (stack.indexOf(entry.cfg.sourceUrl) !== -1) return true;
-      var reqs = entry.cfg.requireUrls;
-      if (reqs) {
-        for (var i = 0; i < reqs.length; i++) {
-          if (stack.indexOf(reqs[i]) !== -1) return true;
-        }
-      }
     } catch (_e) {}
     return false;
   }
@@ -218,12 +220,6 @@
     try {
       if (typeof filename !== "string") return false;
       if (filename.indexOf(entry.cfg.sourceUrl) !== -1) return true;
-      var reqs = entry.cfg.requireUrls;
-      if (reqs) {
-        for (var i = 0; i < reqs.length; i++) {
-          if (filename.indexOf(reqs[i]) !== -1) return true;
-        }
-      }
     } catch (_e) {}
     return false;
   }
@@ -384,10 +380,9 @@
     if (scripts[cfg.id]) return scripts[cfg.id];
     var entry = makeEntry(cfg);
     scripts[cfg.id] = entry;
-    /* Matcher check first — if we don't match, mark inactive so
-       __smActive returns false (and queued require entries skip) and
-       drop any __smRun call as a no-op. Async listeners aren't
-       installed either: this URL isn't ours. */
+    /* Matcher check first — if we don't match, mark inactive so the
+       combined entry's __smRun call is a no-op. Async listeners
+       aren't installed either: this URL isn't ours. */
     if (cfg.matching) {
       entry.matched = matchScript(location.href, cfg.matching);
       if (!entry.matched) return entry;
@@ -497,7 +492,7 @@
     });
     try {
       /* Pass the entry to the wrap function — the injector's
-         wrapMainBodyEntry emits `function(__smE){...}` and pulls
+         wrapCombinedEntry emits `function(__smE){...}` and pulls
          __smDecision / __smName / __smId / __smLoadedAt / __smSend out
          of __smE so gm-bindings.ts's prelude (which references those
          names) works unchanged. */
@@ -524,46 +519,57 @@
    * world coexist. They live on `self` so per-script entries (which
    * run as their own scripts) can find them. */
 
-  /* Synchronous "is this script's matcher live for this URL?" check.
-     require entries gate on this so non-matching scripts skip the
-     require's body. Returns false BEFORE the script's config blob
-     has been processed (defensive — shouldn't happen because the
-     config blob is in js[0] before any require entry). */
-  self.__smActive = function (scriptId) {
-    var entry = scripts[scriptId];
-    if (!entry) return false;
-    return entry.matched;
-  };
-
   /* Queue the main body for execution. Called once per script by the
-     final per-script {code} entry. The body is wrapped in a function
-     so the prelude can defer it until decision + @run-at resolve. */
+     combined user-program {code} entry. The body is wrapped in a
+     function so the prelude can defer it until decision + @run-at
+     resolve. */
   self.__smRun = function (scriptId, fn) {
     var entry = scripts[scriptId];
-    if (!entry || !entry.matched) return;
+    if (!entry) return;
+    /* Set BEFORE the matched check: the flag records "the entry
+       parsed and ran", which is true regardless of whether this URL
+       matched. __smSealed reads it. */
+    entry.runRegistered = true;
+    if (!entry.matched) return;
     entry.pendingRun = fn;
     flushPending(entry);
   };
 
-  /* Synchronous error reporter for require entries. A SyntaxError or
-     top-level throw inside a require body propagates through the
-     `try/catch` the injector emits around the require, and __smErr
-     surfaces it through the usual sm:error channel so the badge and
-     log reflect it. */
-  self.__smErr = function (scriptId, err) {
+  /* Parse-failure sentinel. Emitted as the LAST js[] entry, after the
+     combined user-program entry.
+
+     Everything the user wrote — every @require plus the body — is one
+     V8 script now, so an unterminated string / comment / template
+     anywhere in any require makes the whole entry fail to parse. That
+     failure is invisible: __smRun is never reached, so without this
+     the script would simply never run, with no error, no log entry
+     and no badge. (Under the old separate-entries arrangement the
+     broken require died alone and the body still ran.)
+
+     This entry is its own script, so it parses and runs even when the
+     one before it didn't. */
+  self.__smSealed = function (scriptId) {
     var entry = scripts[scriptId];
-    if (!entry) return;
-    var msg = (err && err.message) ? String(err.message) : String(err);
-    var stack = (err && typeof err.stack === "string") ? err.stack : "";
-    try { console.info("[SourceMonkey] script", entry.cfg.name, "threw in @require:", err); } catch (_e) {}
+    if (!entry || entry.runRegistered) return;
+    /* `matched` matters HERE but deliberately not in __smRun. There,
+       the flag records "the entry parsed and called us", which is
+       true regardless of the URL. Here we're inferring the opposite
+       from its absence — and initScript stores the entry BEFORE
+       running the matcher, so on a page the script doesn't match the
+       entry exists with runRegistered false and nothing wrong. Without
+       this check a script with a regex @include (registered at
+       <all_urls>, filtered in-page) would log an error and turn the
+       badge red on every page the user visits. */
+    if (!entry.matched) return;
+    var msg = "script source failed to parse (a @require or the script body has a syntax error); nothing was run";
+    try { console.info("[SourceMonkey]", entry.cfg.name + ":", msg); } catch (_e) {}
     send({
       type: "sm:error",
       id: entry.cfg.id,
       name: entry.cfg.name,
       loadedAt: entry.loadedAtRun,
       url: location.href,
-      message: msg,
-      stack: stack
+      message: msg
     });
   };
 

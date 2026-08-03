@@ -1,54 +1,156 @@
 # Injection modes
 
 How SourceMonkey arranges a userscript's code into the `js[]` array
-it hands to `chrome.userScripts.register`. Three structurally distinct
-choices exist; only the first is implemented today, but the wrap
-helpers in `src/injector.ts` are pure-string functions that an
-alternative assembler could consume to build either of the others.
+it hands to `chrome.userScripts.register`. Mode A is what ships; Mode B
+shipped previously and was replaced; Mode C was never built.
 
 For the lifecycle, world, and matcher pieces of injection that don't
 depend on the choice of mode, see [injection.md](injection.md).
 
 ## TL;DR
 
-- **Mode B — separate entries (default; implemented).** Each
-  `@require`, the main body, the per-script config blob, and the
-  inlined prelude source are separate `{code}` entries in the
-  per-script `js[]` array. Stack traces show the real filename and
-  pristine line numbers for every piece of user code. No `eval`.
-- **Mode A — concatenated single blob (not implemented).** Requires
-  and main body concatenated into a single `{code}` entry inside one
-  IIFE. Exact closure-scope semantics; line numbers are off in the
-  main body by however many lines the requires take up. No `eval`.
+- **Mode A — concatenated user program (current).** Every `@require`
+  is concatenated ahead of the script's own body into a single
+  `{code}` entry, alongside the per-script config blob and the inlined
+  prelude. One entry means one lexical scope, so a library's top-level
+  `const`/`let`/`class` is simply visible to the body — the same thing
+  TM/VM get by concatenating into one IIFE. Line numbers shift; an
+  inline source map puts them back. No `eval`.
+- **Mode B — separate entries (previously shipped; replaced).** Each
+  `@require` and the main body were their own `{code}` entries.
+  Pristine line numbers and a real devtools file per require — but
+  separate entries are separate V8 scripts with separate top-level
+  scopes, so `const`/`let`/`class` didn't cross, and recovering them
+  meant statically analysing library source. See
+  [Why Mode B was replaced](#why-mode-b-was-replaced).
 - **Mode C — eval-per-require (not implemented).** One `{code}` entry,
-  but inside the IIFE the wrapper `eval`s each require and the main
-  body separately with a per-piece `//# sourceURL=`. Exact closure
+  but inside it the wrapper `eval`s each require and the main body
+  separately with a per-piece `//# sourceURL=`. Exact closure
   semantics AND correct stack traces — but `eval()` runs subject to
   page CSP in MAIN world, so MAIN-world scripts silently break on
   any site that omits `'unsafe-eval'` (GitHub, Google, X, Reddit, …).
 
-## Mode B — separate entries (default)
+## Mode A — concatenated user program (current)
 
 The shape of `js[]` for one script registration:
 
 ```
 js: [
-  { code: <config blob>      },   // pushes onto self.__smCfgQueue, or
-                                  // calls self.__smPrelude.init directly
-  { code: <prelude>          },   // WRAPPER_PRELUDE + page-wide sourceURL
-  { code: <require 1 wrap>   },   // for each @require, in order
-  { code: <require 2 wrap>   },
-  ...
-  { code: <main body wrap>   },
+  { code: <config blob> },   // pushes onto self.__smCfgQueue, or
+                             // calls self.__smPrelude.init directly
+  { code: <prelude>     },   // WRAPPER_PRELUDE + page-wide sourceURL
+  { code: <combined>    },   // requires + body, in one __smRun wrap
+  { code: <seal>        },   // parse-failure sentinel; own script
 ]
 ```
 
-All entries share `globalThis` because they run as separate scripts
-in the same execution world. Per-script state lives on
-`self.__smPrelude.scripts[scriptId]`; helpers (`self.__smActive`,
-`self.__smRun`, `self.__smErr`) are installed once per world by
-the first prelude run — the IIFE's idempotency guard short-circuits
-subsequent runs but still drains any newly-queued configs.
+The combined entry:
+
+```
+self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
+// @require https://cdn.example.com/lib.js
+<lib.js line 1>
+...
+;
+<body line 1>
+...
+});
+//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,…
+```
+
+- The config blob and prelude stay separate — see
+  [Why inline the prelude](#why-inline-the-prelude-not-register-once-per-page).
+- A `;` on its own line between segments defeats any hazard from
+  **ASI** (Automatic Semicolon Insertion — JS's rule for supplying
+  semicolons the author omitted at certain line breaks). ASI does
+  *not* fire when the next line can continue the previous statement,
+  so a library ending in an expression followed by a body starting
+  with `(`, `[`, `` ` ``, `+`, `-` or `/` would parse as one
+  statement: `foo()` then `(function(){…})()` becomes a call of
+  `foo()`'s return value. Concatenation creates seams the original
+  authors never had to think about, so we insert the semicolon rather
+  than trust each file to be terminated.
+- The source map is emitted only when the script has `@require`s.
+  Without them nothing shifts, and the entry is byte-for-byte what
+  Mode B produced.
+
+### Pros
+
+- **Exact lexical semantics.** Requires and body share one scope, so
+  top-level `let`/`const`/`class` in a library is visible to later
+  requires and to the body. This is what TM/VM do, so scripts written
+  against them behave the same here.
+- **Nothing has to guess.** No parsing, no name analysis, no
+  forwarding protocol. The question Mode B kept getting wrong stops
+  existing.
+- **`@require` code runs inside the `@run-at` gate** with the body,
+  rather than firing early in Chrome's `document_start` injection
+  burst.
+- **Requires see the GM prelude.** Because they run inside the wrap
+  function, a library's top-level `GM_setValue` reads a live storage
+  cache — under Mode B it hit an uninitialized one.
+- **One GM binding block per script** instead of one per require. The
+  block bakes in the full `GM_info` JSON literal, so Mode B's
+  duplication ran to tens of KB for a verbose header with several
+  requires.
+- **The reload fast-path swap gets simpler.** `composeRequiredBody`
+  is now the same concatenation the registration uses, rather than a
+  parallel arrangement that existed only for the swap.
+- **No `eval`.** `chrome.userScripts` injection bypasses page CSP.
+
+### Cons / caveats
+
+- **Line numbers shift, and `Error.stack` strings don't recover.**
+  - Devtools applies the inline source map. Verified in Chrome: the
+    Sources tree shows one virtual file per require alongside the
+    `.user.js`, console stack traces cite the original files and line
+    numbers, and clicking a frame navigates to the right line in the
+    right virtual file.
+  - V8 does **not** map `err.stack` *strings*, and SourceMonkey parses
+    those for the viewer's Log tab
+    ([stack-link.ts](../src/stack-link.ts)). Measured: a throw on line
+    5 of a require is logged as `main.user.js:7`. Wrong file, wrong
+    line. Applying our own map on that path is a planned follow-up —
+    see [TODO.md](../TODO.md).
+- **The map costs ~1.6× the source size, so the entry runs ~2.6×.**
+  Measured: one 90 KB require → 104 KB of code + 167 KB of map; four
+  of them → ~1 MB in one script's `js[]`. `sourcesContent` has to be
+  embedded because `sourcemonkey://` URLs aren't fetchable by
+  devtools, and base64 adds ~33% on top.
+  - Deliberately uncapped. The binding constraint is whether
+    `chrome.userScripts.register()` accepts the payload, and that
+    already fails loudly: `registerWithFallback` drops to per-script
+    registration on rejection and names the offender in
+    `perScriptErrors`.
+  - It does not touch our `chrome.storage.local` quota — the map is
+    generated at registration time from sources already stored. It
+    does land in Chrome's own persisted registration store, which
+    `syncRegistrations` rewrites on every service-worker startup.
+  - Partly offset by shipping the GM bindings once per script instead
+    of once per require.
+- **A require and the body can now collide.** Two top-level `const x`
+  declarations in one scope is a `SyntaxError` that stops the script
+  from running. Under Mode B they never met. This is TM/VM behavior —
+  compatibility, not a regression — but it is a real behavior change.
+  The collision set is every identifier the wrap declares in that
+  scope: `GM`, `GM_info` (both emitted even under `@grant none`),
+  every granted `GM_*`, `unsafeWindow`, and `__sm*`.
+- **A throwing require aborts the whole script.** Mode B's per-require
+  `try`/`catch` let the body run anyway. TM/VM abort; so do we now.
+- **A *malformed* require takes the whole entry down at parse time**,
+  before `__smRun` is ever reached. That would be completely silent,
+  so a trailing sentinel entry (`wrapSealEntry`, js[3]) — its own
+  script, so it still parses — reports the failure to the Log tab and
+  the badge.
+- **Require top-level `var` / `function` no longer become globals.**
+  They're locals of the wrap function. Matches TM/VM; differs from
+  Mode B, where each require was its own top-level script.
+- **A require declaring top-level `self` / `window` breaks the wrap.**
+  The wrap's own preamble reads `self.__smPrelude.send`, and the GM
+  prelude reads `window.__SM_GM__`, in the same scope — a library
+  `const self = this` puts those in TDZ. Narrow, and fixable by
+  threading both through `__smE` instead; not done.
 
 ### Why inline the prelude (not register once per page)
 
@@ -58,180 +160,148 @@ registration be cleaner? It would, but it doesn't work:
 
 - Within ONE `chrome.userScripts.register` entry's `js[]`, Chrome
   runs the entries in array order. The prelude (`js[1]`) is
-  guaranteed to install `self.__smActive` / `__smRun` / `__smErr`
-  before the require entries (`js[2..]`) and main body call them.
+  guaranteed to install `self.__smRun` / `__smSealed` before the
+  combined entry (`js[2]`) and the sentinel (`js[3]`) call them.
 - BETWEEN separate `register` calls, the userScripts API gives no
   ordering guarantee. A separately-registered prelude could run
-  AFTER a per-script's main body, which would synchronously throw
-  `TypeError: self.__smRun is not a function` and prevent the body
-  from running. We hit this in testing.
+  AFTER a per-script's combined entry, which would synchronously
+  throw `TypeError: self.__smRun is not a function` and prevent the
+  body from running. We hit this in testing.
 - The config blob has a queue-or-init pattern that DOES tolerate
-  the prelude running later. But the main body and require entries
-  don't — they call the helpers immediately. Wrapping each call
-  in a defensive `if (self.__smRun) {...}` would silently skip the
-  body on a race instead of throwing, which is arguably worse.
+  the prelude running later. The combined entry doesn't — it calls
+  the helper immediately. Wrapping that in a defensive
+  `if (self.__smRun) {...}` would silently skip the body on a race
+  instead of throwing, which is arguably worse.
 
 So we inline, accept the ~12KB × N duplication, and use the page-
 wide `sourcemonkey://SourceMonkey/__prelude.js` sourceURL on every
 inclusion so devtools' Sources tree groups them into a single
 visible entry (V8 dedups script entries by URL in the tree).
 
-### Pros
+## Mode B — separate entries (previously shipped)
 
-- **Real filenames in stack traces.** Each `@require` is its own
-  `{code}` entry with a synthetic
-  `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<host>/<path>`
-  directive appended; devtools shows it as its own file under the
-  owning script's folder. The main body's
-  `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
-  is no longer shared with require code. See
-  [script-source-url.ts](../src/script-source-url.ts) for the URL
-  layout.
-- **Pristine line numbers for the main body.** The body's line N
-  lands at physical line N of the main body entry because the
-  declaration preamble (GM bindings, GM prelude, per-script var
-  pulls) sits on the same physical line as body line 1. No more
-  "subtract the total length of all requires" math when reading a
-  stack trace.
-- **The prelude has its own devtools entry.** Each per-script
-  inclusion carries the page-wide `sourcemonkey://SourceMonkey/__prelude.js`
-  sourceURL; devtools' Sources tree dedups by URL so all N
-  inclusions show as a single entry. A debugger break there is
-  unambiguously a wrapper bug rather than user code.
-- **No `eval`.** `chrome.userScripts` injection bypasses page CSP for
-  every entry kind — works on GitHub, Google, X, Reddit, etc.
-
-### Cons / caveats
-
-- **Cross-entry scope is reduced to `globalThis`.** Each `{code}`
-  entry is its own top-level script, so:
-  - `var x = 1` at the top of a require still becomes a global
-    (top-level `var` writes a property on `globalThis`); main-body
-    references to `x` see it via the global scope chain. Most
-    real-world libraries (jQuery, lodash, anything UMD) attach to
-    `window`/`globalThis` explicitly and work as before.
-  - `let x = 1` / `const x = 1` / `class X {}` at the top of a
-    require is normally script-scoped (invisible to other entries).
-    SourceMonkey bridges that gap when the require lists the
-    binding in a JSHint `/* exported */` directive — the injector
-    forwards listed names through `self.__smReqScope[<id>]` to the
-    main body. Libraries without the directive fall back to the
-    pre-feature behavior; the workaround there is to assign to
-    `globalThis` / `window`. See [requires.md](requires.md#cross-entry-exports-via--exported-).
-- **GM_\* bindings are repeated in every require entry.**
-  - Each js[] entry is its own V8 script with its own lexical
-    scope, so a `const GM_setValue = ...` declared in the main-body
-    wrap is invisible to the require entries.
-  - The injector splices the same single-line bindings prefix into
-    every require's wrap so library code (e.g. `gm4-polyfill.js`)
-    sees the GM_* surface it expects.
-  - Cost: the prefix includes the full GM_info JSON literal
-    (`scriptMetaStr` — the raw `==UserScript==` block — plus
-    `matches` / `includes` / `excludes`) and a `const GM_x = ...`
-    per granted API. For a verbose header with many grants and
-    many requires this can be tens of KB of duplication. Visually
-    invisible — the prefix is minified onto physical line 1 and
-    the body's line N stays at line N — and well under any limit
-    we've hit with `chrome.userScripts.register`, but worth
-    knowing.
-  - `@resource` blobs are NOT in the prefix; they live in the
-    non-duplicated `prelude` block. Keep it that way.
-  - The `prelude` block (storage.init etc.) is NOT repeated; it
-    references `__smE` / `__smDecision`, which only exist in the
-    main-body wrap function.
-  - Edge case: a require that calls `GM_setValue` at top-level
-    (before the main body's `storage.init` runs) will hit an
-    uninitialized storage cache. In practice requires define
-    functions for the main body to call later, so the cache is
-    live by then.
-  - TM/VM avoid the duplication by concatenating everything into a
-    single IIFE.
-- **The reload-fast-path swap eval needs the GM bindings prepended.**
-  - The prelude's swap path is
-    `(0,eval)(decision.body + "\n//# sourceURL=" + sourceUrl)`,
-    which evaluates at the prelude's function scope, NOT inside the
-    main-body wrap function's closure. The `const GM_*` bindings
-    spliced into the wrap function are invisible at that scope.
-  - Workaround: `handleCheckPending` in `src/background.ts` calls
-    `buildSwapEvalBody`, which prepends the script's full GM-binding
-    block to the composed body. The single `(0,eval)` runs the
-    whole thing in one environment, so the body's references to
-    `GM_info` / `GM_addStyle` / etc. see the prepended `const`s.
-  - Storage-granting scripts (`needsValues: true`) still defer to
-    the next syncRegistrations because the gm `prelude`
-    (`storage.init(__smDecision.gmValues)`) reads `__smE`, which the
-    eval scope doesn't have. Wiring storage through swap is possible
-    but not implemented.
-- **The matcher and async-error attribution lists live in the
-  prelude.** The prelude file is byte-identical across every script
-  registered; per-script identity is delivered via the config blob.
-  This is a feature, not a cost, but it does mean the prelude
-  iterates over a small per-script table every time a window error
-  fires (filtering by `sourceUrl` + `requireUrls`). At our script
-  counts this is irrelevant; just worth noting.
-
-## Mode A — concatenated single blob (not implemented)
-
-This is what SourceMonkey did before the split-out described above.
-Sketch (the `WRAPPER_HEAD` / `WRAPPER_TAIL` constants are
-hypothetical — Mode B doesn't ship them; an implementation of A
-would need to introduce them or splice equivalent fragments out
-of the current `WRAPPER_PRELUDE`):
+The arrangement Mode A replaced:
 
 ```
 js: [
-  { code:
-      WRAPPER_HEAD                       // IIFE open + matcher + helpers
-      + (requires.flatMap(r => `// @require ${r.url}\n${r.source}\n;`).join("\n"))
-      + bodyText
-      + WRAPPER_TAIL                     // try/catch + IIFE close
-      + "\n//# sourceURL=" + sourceUrl
-  },
+  { code: <config blob>    },
+  { code: <prelude>        },
+  { code: <require 1 wrap> },   // for each @require, in order
+  { code: <require 2 wrap> },
+  ...
+  { code: <main body wrap> },
 ]
 ```
 
-### Pros
+Each entry was its own V8 script sharing only `globalThis`. Per-script
+state lived on `self.__smPrelude.scripts[scriptId]`; helpers
+(`self.__smActive`, `self.__smRun`, `self.__smErr`) were installed
+once per world by the first prelude run.
 
-- **Exact closure-scope semantics.** Requires and main body share
-  function scope, so `let`/`const` declarations at the top of a
-  require are visible to subsequent requires AND to the main body —
-  same as Tampermonkey / Violentmonkey.
-- **GM_* bindings visible everywhere.** The bindings sit inside the
-  IIFE before any require body, so requires can call `GM_*` too.
-- **Reload fast-path swap is trivial.** Send `composeRequiredBody`
-  (requires + body); the prelude evals it inside the same IIFE
-  scope; GM bindings, requires globals, everything is in place.
+### What it bought
 
-### Cons
+- **Real filenames in stack traces**, with no source map. Each
+  `@require` was its own entry with a synthetic
+  `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<host>/<path>`,
+  so devtools showed it as its own file under the owning script's
+  folder.
+- **Pristine line numbers** for the main body — line N landed at
+  physical line N, because the declaration preamble sat on the same
+  physical line as body line 1.
+- **No `eval`**, same as Mode A.
 
-- **Stack traces and line numbers point at the wrong place.** Only
-  the last `//# sourceURL=` directive in a script is honored by V8
-  for stack frames. So every line in any require or in the main
-  body attributes to the SAME source URL, with line numbers offset
-  by however many lines of requires were prepended. A bug in line
-  50 of the main body shows up as line 1042 of "sourcemonkey://..."
-  with no way for the user to map it back. **This is the problem
-  that motivated the split.**
-- **Per-script payload is bigger.** Each registered script's
-  `{code}` blob carries one inlined copy of the wrapper head/tail
-  (~5KB minified). With Mode B the prelude lives once per world
-  as a separate registration.
+Mode A keeps the first two via the source map, at the cost of payload
+and of `Error.stack` strings.
 
-### When you might want this
+### Why Mode B was replaced
 
-If you discover a real-world script whose requires use bare
-top-level `let`/`const` for cross-piece sharing AND the library
-omits the JSHint `/* exported */` directive that Mode B reads (see
-[requires.md](requires.md#cross-entry-exports-via--exported-)),
-Mode A would restore the all-in-one-scope behavior automatically.
-We don't expect this — but the wrap helpers in `src/injector.ts`
-are mode-neutral, so plugging in a "concatenate all wraps into one
-entry" assembler is straightforward.
+Separate entries are separate top-level scopes:
+
+- `var` and `function` at a require's top level landed on
+  `globalThis`, so UMD-style libraries (jQuery, lodash, virtually
+  anything bundled) worked fine — which is why the tradeoff looked
+  narrow at the time. (Mode A scopes them to the wrap function
+  instead, as TM/VM do.)
+- `let` / `const` / `class` are script-scoped, and simply never
+  reached the main body.
+
+The trigger was a real script:
+
+- [Greasy Fork Enhance](https://greasyfork.org/scripts/467078)
+  `@require`s [PRO-2684/GM_config](https://github.com/PRO-2684/GM_config).
+- That library is minified, ships no linter directive, and exposes
+  its entire API as one top-level `class GM_config`.
+- Result: `ReferenceError: GM_config is not defined`.
+
+**The fixes we tried, in order.** Each worked; each also revealed the
+next problem. The sequence is the argument against the whole approach:
+
+1. **Forward names listed in a JSHint `/* exported X, Y */`
+   directive.** Emit `Object.assign(scope, {X, Y})` at the end of the
+   require entry, destructure it back out at the top of the main body.
+   Works for well-linted libraries (utilsjs.js and friends).
+   *Doesn't help a minified library, which has no directive.*
+2. **Stop dropping every `GM_`-prefixed name.** The name filter
+   existed to avoid redeclaring the wrap's own `const GM_setValue`,
+   but it was matching on the prefix, so `GM_config` — an ordinary
+   third-party library that merely shares it — was discarded too.
+   Narrowed to the names actually emitted.
+3. **Infer top-level declarations when there's no directive.** A
+   hand-rolled lexer scanning for `class`/`const`/`let` at brace depth
+   0. Line anchoring was useless (minified libraries are one physical
+   line), so it needed real brace tracking, which needed string,
+   comment, template, and regex-vs-division handling.
+4. **Absorb wrong guesses.** Inference produces false positives —
+   `window.lib = class lib {}` looks like a top-level declaration.
+   So: per-name `try{}catch{}` on the producer side, and a
+   `"X" in scope ? scope.X : self.X` global fallback on the consumer
+   side, so a bad guess couldn't shadow a real `window.X`.
+5. **Don't collide with the body's own declarations.** The forwarded
+   `var X` shares the body's function scope, so a body declaring
+   `const X` was a `SyntaxError` — the script never ran. That needed
+   a *second* scan, of the main body, in a "greedy" mode with the
+   opposite risk profile: over-reporting costs one un-bridged name,
+   under-reporting kills the script.
+6. **Fix what the greedy scan missed.** Comma declarator lists
+   (`const a = 1, b = 2` found only `a`). Destructuring patterns.
+   Top-level `function` declarations, which the bridge silently
+   overwrote. Identifiers the wrap *dereferences* rather than
+   declares — a library `const self = this` made the wrap's own
+   `self.__smPrelude.send` throw.
+7. **Stop the lexer eating the file.** `if(a)/re/.test(b)` reads as an
+   unterminated regex literal, swallowing everything after it — and a
+   declaration the greedy scan never sees is the fatal case. Bounded
+   the scan and rewound. Same for nested template substitutions
+   containing a literal brace.
+8. **Bound the output.** Inference is uncapped where a curated
+   directive isn't; a 1 MB require with top-level declarations yielded
+   ~21,000 names, which would have put hundreds of KB on the body's
+   physical line 1.
+
+At that point the bridge was ~250 lines of lexer plus two scans with
+inverted risk profiles, and each round of review found another shape
+that broke it. Two ways out were considered:
+
+- **Bundle a real JS parser** (acorn: 57 KB gzipped, SW-only, ~10–16 ms
+  on realistic inputs, cacheable against the existing `contentHash`).
+  Spiked, and it answered every case correctly — including two the
+  heuristic got wrong in opposite directions. But it makes the inputs
+  exact while keeping all the machinery, and adds a dependency.
+- **Lazy runtime forwarding** — `with` + a Proxy `has` trap to
+  intercept unresolved identifiers, and a direct `eval` inside the
+  require entry to read its lexical scope. Both verified to work. But
+  `eval` is CSP-gated (dead in MAIN world, per Mode C below), `with`
+  is a `SyntaxError` in strict mode and silently neutralizes a body's
+  own `"use strict"`, and it deoptimizes every identifier lookup in
+  the body forever. All three costs are paid *to avoid concatenating*.
+
+Concatenation removes the machinery instead of feeding it. See
+[requires.md](requires.md) for what `@require` does today.
 
 ## Mode C — eval-per-require (TM-style; not implemented)
 
-Sketch (`WRAPPER_HEAD` / `WRAPPER_TAIL` again hypothetical, same
-as in Mode A above):
+Sketch (`WRAPPER_HEAD` / `WRAPPER_TAIL` are hypothetical — no mode
+ships them):
 
 ```
 js: [
@@ -253,14 +323,14 @@ the issue tracker links below.
 
 ### Pros
 
-- **Real filenames AND pristine line numbers per piece.** V8 honors
-  the per-eval `//# sourceURL=` directive, so stack traces point at
-  the right URL with the right line.
-- **Exact closure-scope semantics (with direct eval).** `var`/`let`/
-  `const` at the top of a require become locals of the IIFE,
-  visible to subsequent requires and to the main body. Matches
-  Mode A's compatibility.
-- **GM_* bindings visible to requires.**
+- **Real filenames AND pristine line numbers per piece**, with no
+  source map. V8 honors the per-eval `//# sourceURL=` directive, so
+  stack traces point at the right URL with the right line — including
+  in `err.stack` strings, which is the one thing Mode A's source map
+  can't give us.
+- **Exact closure-scope semantics (with direct eval).** Same
+  compatibility as Mode A.
+- **GM_\* bindings visible to requires.**
 
 ### Cons
 
@@ -287,42 +357,37 @@ the issue tracker links below.
   [#1024](https://github.com/Tampermonkey/tampermonkey/issues/1024),
   [#1984](https://github.com/Tampermonkey/tampermonkey/issues/1984).
 - **Devtools sources tree shows eval'd scripts under a synthetic
-  parent.** A real `{code}` or `{file}` entry shows up as its own
-  top-level source; eval'd code shows up nested under a "(VM:N)"
+  parent.** A real `{code}` entry shows up as its own top-level
+  source; eval'd code shows up nested under a "(VM:N)"
   pseudo-source. Less clean for breakpoint workflows.
 
 ### When you might want this
 
-As an **opt-in compatibility mode** for individual scripts that
-need exact closure-scope semantics AND don't care about CSP
-strictness (because their target site doesn't enforce strict CSP).
-The wrap helpers in `src/injector.ts` are designed so a
-per-script "use eval mode" flag could be honored by a different
-assembler — `wrapRequireEntry` and `wrapMainBodyEntry` produce
-strings that can be concatenated with `(0,eval)(JSON.stringify(...))`
-around them.
+As an **opt-in per-script compatibility mode**:
 
-We don't expect to need this in practice — Mode B's tradeoffs are
-narrow, and a script that needs the eval semantics can probably be
-rewritten to assign its globals explicitly.
+- Only worth it for scripts whose target sites don't enforce strict
+  CSP, and where `err.stack` fidelity matters enough to pay for it.
+- Mode A already covers the scope semantics, so the sole remaining
+  draw is unmapped stack strings.
+- Teaching the Log tab to apply Mode A's source map gets most of that
+  without touching CSP at all.
 
-## Why we picked Mode B
+## Why we picked Mode A
 
-The choice came down to two questions:
+The decision turned on which failure the user has to live with:
 
-1. **Whose user code does the choice impact?** Mode A and C have
-   the right answer for require-side `let`/`const` and for require
-   GM-API access. Mode B has the right answer for everyone using a
-   library that already attaches to `window`/`globalThis` — which
-   is virtually every real-world library (UMD, jQuery, lodash, all
-   of them).
-2. **What does the choice break, and how silently?** Mode B's
-   compatibility surface (top-level `let`/`const` in a require)
-   produces a `ReferenceError` at the call site — loud and easy
-   to fix. Mode C's compatibility surface (page CSP blocks `eval`)
-   produces a silent no-op on a meaningful chunk of the modern web,
-   with no actionable error pointing the user at a workaround.
-
-Mode B's compromise is the smaller, louder one — easier for users
-to discover and easier to write a workaround for in their own
-script.
+1. **What does each mode get wrong about user code?** Mode A and C
+   have exact scope semantics — a script that works in TM works here.
+   Mode B was right only for libraries that attach to
+   `window`/`globalThis`, and needed increasingly elaborate static
+   analysis for the rest.
+2. **What does the mode break, and how silently?** Mode C's failure
+   is page CSP blocking `eval`: a silent no-op on a large chunk of
+   the modern web, with no actionable error. Mode A's failure is a
+   line number in a log string pointing at the concatenated file —
+   visible, and recoverable by applying the map we already generate.
+3. **How much machinery does it need?** Mode A needs a source map
+   generator. Mode B needed a JS-parsing bridge that kept being
+   wrong in new ways. Being unable to answer "what does this source
+   declare?" is not a problem worth having when the alternative is
+   not needing to ask.

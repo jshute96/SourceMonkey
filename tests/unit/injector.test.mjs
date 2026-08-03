@@ -36,9 +36,8 @@ import {
   composeRequiredBody,
   normalizeDeclaredRunAt,
   resolveWorld,
-  wrapMainBodyEntry,
+  wrapCombinedEntry,
   wrapPreludeEntry,
-  wrapRequireEntry,
 } from '../../dist/injector.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 
@@ -76,7 +75,6 @@ test('buildConfigBlob: emits a queue-or-init call with the cfg object', () => {
     needsGmValues: false,
     matching: null,
     startupLogs: [],
-    requireUrls: [],
   });
   // Both transport branches are present — direct init() when prelude
   // is already loaded, queue-push otherwise.
@@ -96,188 +94,296 @@ test('buildConfigBlob: omits matching when null and startupLogs when empty', () 
     id: 'x', logLabel: 'x.user.js', name: 'X',
     sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
     loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
-    matching: null, startupLogs: [], requireUrls: [],
+    matching: null, startupLogs: [],
   });
   assert.doesNotMatch(blob, /"matching"/);
   assert.doesNotMatch(blob, /"startupLogs"/);
+  // Regression guard: `requireUrls` was dropped from the blob when
+  // requires stopped being separate entries. Nothing can pass it in
+  // any more, so this only fires if the field comes back.
   assert.doesNotMatch(blob, /"requireUrls"/);
 });
 
-test('buildConfigBlob: serializes matching, startupLogs, requireUrls when present', () => {
+test('buildConfigBlob: serializes matching and startupLogs when present', () => {
   const blob = buildConfigBlob({
     id: 'x', logLabel: 'x.user.js', name: 'X',
     sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
     loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
     matching: { matches: ['https://e/*'], includes: ['/r/'], excludes: [] },
     startupLogs: [{ level: 'warn', message: 'hi' }],
-    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/a.js'],
   });
   assert.match(blob, /"matching":\{"matches":\["https:\/\/e\/\*"\],"includes":\["\/r\/"\],"excludes":\[\]\}/);
   assert.match(blob, /"startupLogs":\[\{"level":"warn","message":"hi"\}\]/);
-  assert.match(blob, /"requireUrls":\["sourcemonkey:\/\/SourceMonkey\/x\/cdn\/a\.js"\]/);
 });
 
-// ---------- wrapRequireEntry ----------
+// ---------- wrapCombinedEntry ----------
 
-test('wrapRequireEntry: prefix on physical line 1; body lines preserved; sourceURL at end', () => {
-  // The require body's line N must land at physical line N of the
-  // wrapped entry so devtools shows the right line in stack traces.
-  const wrapped = wrapRequireEntry({
-    scriptId: 'abc',
-    source: 'LINE1\nLINE2\nLINE3',
-    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
+const COMBINED_ARGS = {
+  scriptId: 'abc',
+  sourceUrl: 'sourcemonkey://SourceMonkey/x/Foo.user.js',
+  gmBindings: '',
+  gmPrelude: '',
+};
+const scriptWith = (over) => ({
+  id: 'abc', sourceId: 's', relativePath: 'Foo.user.js',
+  fileUrl: 'file:///Foo.user.js', status: 'ok', size: 1,
+  leadingText: '', headerText: '', bodyText: '',
+  header: { tags: [{ tag: 'name', value: 'Foo' }] },
+  matching: { matches: ['https://e/*'], includes: [], excludes: [] },
+  loadedAt: 0, enabled: true, ...over,
+});
+const req = (source, url = 'https://cdn/x.js') =>
+  ({ url, source, ref: 'x', size: 0, contentHash: '', loadedAt: 0 });
+
+test('wrapCombinedEntry: no requires → head on line 1, body lines preserved, no map', () => {
+  // The overwhelmingly common case must be byte-for-byte what it was
+  // before Mode A: nothing to concatenate means nothing to shift, so
+  // body line N stays at physical line N and no source map is paid for.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: 'LINE1\nLINE2\nLINE3' }),
   });
   const lines = wrapped.split('\n');
-  assert.match(lines[0], /LINE1$/);
+  assert.match(lines[0], /^self\.__smRun\("abc",function\(__smE\)\{.*LINE1$/);
   assert.equal(lines[1], 'LINE2');
   assert.equal(lines[2], 'LINE3');
-  // The trailing sourceURL comment lives at the very bottom so the
-  // engine attributes the whole entry to it.
-  assert.ok(wrapped.endsWith('//# sourceURL=sourcemonkey://SourceMonkey/foo/cdn/x.js\n'));
+  assert.doesNotMatch(wrapped, /sourceMappingURL/);
+  assert.match(wrapped, /\/\/# sourceURL=sourcemonkey:\/\/SourceMonkey\/x\/Foo\.user\.js/);
 });
 
-test('wrapRequireEntry: gates body on __smActive and routes throws to __smErr', () => {
-  const wrapped = wrapRequireEntry({
-    scriptId: 'abc',
-    source: 'doStuff();',
-    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
+test('wrapCombinedEntry: defers execution via self.__smRun and exposes per-script vars', () => {
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: 'BODY' }),
   });
-  assert.match(wrapped, /if\(self\.__smActive\("abc"\)\)\{try\{/);
-  assert.match(wrapped, /catch\(__smE\)\{self\.__smErr\("abc",__smE\);\}\}/);
+  assert.match(wrapped, /^self\.__smRun\("abc",function\(__smE\)\{/);
+  assert.match(wrapped, /var __smDecision=__smE\.decision;/);
+  assert.match(wrapped, /var __smName=__smE\.cfg\.name;/);
+  assert.match(wrapped, /var __smId=__smE\.cfg\.id;/);
+  assert.match(wrapped, /var __smLoadedAt=__smE\.cfg\.loadedAt;/);
+  assert.match(wrapped, /var __smSend=self\.__smPrelude\.send;/);
 });
 
-test('wrapRequireEntry: no exportedNames → no Object.assign tail', () => {
-  // Byte-identical to the pre-feature shape so requires without
-  // `/* exported */` directives carry no per-require overhead.
-  const wrapped = wrapRequireEntry({
-    scriptId: 'abc',
-    source: 'doStuff();',
-    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
+test('wrapCombinedEntry: splices gmBindings + gmPrelude before the user source', () => {
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: 'BODYTOP' }),
+    gmBindings: 'const GM_info = 1; ',
+    gmPrelude: 'PRELUDE();',
   });
-  assert.doesNotMatch(wrapped, /__smReqScope/);
-  assert.doesNotMatch(wrapped, /Object\.assign/);
+  const head = wrapped.split('\n')[0];
+  assert.ok(head.indexOf('const GM_info = 1;') < head.indexOf('PRELUDE();'));
+  assert.ok(head.indexOf('PRELUDE();') < head.indexOf('BODYTOP'));
 });
 
-test('wrapRequireEntry: exportedNames → trailing Object.assign onto __smReqScope[id]', () => {
-  // The forwarding goes AFTER the body, inside the try, so the body's
-  // line N still lands at physical line N — what stack traces need.
-  const wrapped = wrapRequireEntry({
-    scriptId: 'abc',
-    source: 'const on = () => {};\nconst $ = () => {};',
-    sourceUrl: 'sourcemonkey://SourceMonkey/foo/cdn/x.js',
-    exportedNames: ['on', '$'],
+test('wrapCombinedEntry: requires and body land in ONE shared scope', () => {
+  // The whole point of Mode A. A library's top-level `const` is simply
+  // in scope for the body — no forwarding, no bridge, no name analysis.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({
+      bodyText: 'return tag("ok");',
+      requires: [req('const tag = (s) => "from-require:" + s;')],
+    }),
   });
-  assert.match(
-    wrapped,
-    /;Object\.assign\(self\.__smReqScope\["abc"\],\{on,\$\}\);/,
-  );
-  // Body line numbers unaffected: the body's two lines still land on
-  // physical lines 1 and 2 of the wrapped output (the forwarder
-  // arrives on line 3, AFTER the body).
-  const lines = wrapped.split('\n');
-  assert.match(lines[0], /const on = \(\) => \{\};$/);
-  assert.match(lines[1], /^const \$ = \(\) => \{\};$/);
+  // Strip the wrap and run it: the body sees the require's binding.
+  let got;
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  assert.equal(got, 'from-require:ok');
 });
 
-// ---------- wrapMainBodyEntry ----------
-
-test('wrapMainBodyEntry: head on physical line 1; body lines preserved; sourceURL at end', () => {
-  const wrapped = wrapMainBodyEntry({
-    scriptId: 'abc',
-    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
-    body: 'LINE1\nLINE2\nLINE3',
-    gmBindings: '',
-    gmPrelude: '',
+test('wrapCombinedEntry: a `;` separator defeats ASI hazards at the seam', () => {
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'BODY', requires: [req('const a = 1')] }),
   });
   const lines = wrapped.split('\n');
-  // The first physical line ends with the body's first line of code.
-  assert.match(lines[0], /LINE1$/);
-  assert.equal(lines[1], 'LINE2');
-  assert.equal(lines[2], 'LINE3');
-  // Closing brace + sourceURL trail.
-  assert.ok(wrapped.endsWith('//# sourceURL=sourcemonkey://abc/Foo.user.js\n'));
+  assert.equal(lines[1], '// @require https://cdn/x.js');
+  assert.equal(lines[2], 'const a = 1');
+  assert.equal(lines[3], ';');
+  assert.equal(lines[4], 'BODY');
 });
 
-test('wrapMainBodyEntry: defers execution via self.__smRun and exposes per-script vars', () => {
-  const wrapped = wrapMainBodyEntry({
-    scriptId: 'abc',
-    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
-    body: '',
-    gmBindings: '',
-    gmPrelude: '',
+test('wrapCombinedEntry: requires → an inline source map is appended', () => {
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'B1\nB2', requires: [req('R1\nR2\nR3')] }),
   });
-  assert.match(wrapped, /self\.__smRun\("abc",function\(__smE\)/);
-  // The declaration preamble pulls per-script identity out of the
-  // entry the prelude passes in — gm-bindings.ts's emit relies on
-  // these names being in scope.
-  assert.match(wrapped, /var __smDecision=__smE\.decision/);
-  assert.match(wrapped, /var __smName=__smE\.cfg\.name/);
-  assert.match(wrapped, /var __smId=__smE\.cfg\.id/);
-  assert.match(wrapped, /var __smLoadedAt=__smE\.cfg\.loadedAt/);
-  assert.match(wrapped, /var __smSend=self\.__smPrelude\.send/);
+  const map = decodeInlineMap(wrapped);
+  assert.deepEqual(map.sources, [
+    'sourcemonkey://SourceMonkey/x/cdn/lib.js',
+    'sourcemonkey://SourceMonkey/x/Foo.user.js',
+  ]);
+  assert.deepEqual(map.sourcesContent, ['R1\nR2\nR3', 'B1\nB2']);
+  // Every generated line maps back to its original file and line.
+  const resolved = resolveMap(map, wrapped);
+  const gen = wrapped.split('\n');
+  assert.equal(gen[2], 'R1');
+  assert.deepEqual(resolved[2], { source: map.sources[0], line: 1 });
+  assert.equal(gen[4], 'R3');
+  assert.deepEqual(resolved[4], { source: map.sources[0], line: 3 });
+  assert.equal(gen[6], 'B1');
+  assert.deepEqual(resolved[6], { source: map.sources[1], line: 1 });
+  assert.equal(gen[7], 'B2');
+  assert.deepEqual(resolved[7], { source: map.sources[1], line: 2 });
+  // The head, the `// @require` comment, the `;` and the tail are
+  // deliberately unmapped — they aren't the user's code.
+  assert.equal(resolved[0], null);
+  assert.equal(resolved[1], null);
+  assert.equal(resolved[5], null);
 });
 
-test('wrapMainBodyEntry: splices gmBindings + gmPrelude before body', () => {
-  const wrapped = wrapMainBodyEntry({
-    scriptId: 'abc',
-    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
-    body: 'BODYTOP',
-    gmBindings: '/*BIND*/',
-    gmPrelude: '/*PRE*/',
+test('wrapCombinedEntry: line counting matches V8 on every line terminator', () => {
+  // The map is only as good as the line arithmetic behind it. V8
+  // treats lone \r, U+2028 and U+2029 as line breaks — U+2028 even
+  // inside a string literal (legal since ES2019, and minified CDN
+  // bundles do embed them). Counting only \n silently shifts every
+  // mapping after the offending character, including the user's body.
+  const cases = [
+    ['LF',              'A\nB'],
+    ['CRLF',            'A\r\nB'],
+    ['lone CR',         'A\rB'],
+    ['U+2028',          'A\u2028B'],
+    ['U+2029',          'A\u2029B'],
+    ['U+2028 in string', 'var s="A\u2028B";\nC'],
+    ['trailing CR', 'A\rB\r'],
+    ['CR-only file', 'A\rB\rC\r'],
+  ];
+  for (const [label, requireSrc] of cases) {
+    const wrapped = wrapCombinedEntry({
+      ...COMBINED_ARGS,
+      requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+      script: scriptWith({ bodyText: 'BODYLINE', requires: [req(requireSrc)] }),
+    });
+    // Where the body actually lands, per V8's own line splitting.
+    const actual = wrapped.split(V8_LINE_TERMINATORS).findIndex((l) => l === 'BODYLINE');
+    const map = decodeInlineMap(wrapped);
+    const resolved = resolveMap(map, wrapped);
+    assert.deepEqual(
+      resolved[actual],
+      { source: 'sourcemonkey://SourceMonkey/x/Foo.user.js', line: 1 },
+      `${label}: body line is mis-mapped`,
+    );
+  }
+});
+
+test('wrapCombinedEntry: a require ending in a lone CR still owns exactly its own lines', () => {
+  // The seam guard. `\r` + the separator's `\n` is a single CRLF, so
+  // without an extra `\n` the require's last line and the `;` seam
+  // collapse onto one physical line — and the map hands that line to
+  // the require, pointing a breakpoint or stack frame at code the
+  // user never wrote. (The body itself stays correctly mapped either
+  // way, because line numbers are derived from the emitted text
+  // rather than from a running total — so asserting on the body's
+  // position would NOT catch this.)
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'BODY1', requires: [req('A\rB\r')] }),
   });
-  // The order is fixed: declarations → bindings → prelude → body.
-  // Everything before the body lives on physical line 1 with the
-  // body's first line to preserve line-number alignment.
-  const bindPos = wrapped.indexOf('/*BIND*/');
-  const prePos = wrapped.indexOf('/*PRE*/');
-  const bodyPos = wrapped.indexOf('BODYTOP');
-  assert.ok(bindPos > 0 && prePos > bindPos && bodyPos > prePos);
+  const map = decodeInlineMap(wrapped);
+  const resolved = resolveMap(map, wrapped);
+  const gen = wrapped.split(V8_LINE_TERMINATORS);
+
+  // The require's three lines — 'A', 'B', and the empty one its
+  // trailing CR creates — each map to themselves.
+  assert.deepEqual(gen.slice(2, 5), ['A', 'B', '']);
+  assert.deepEqual(resolved[2], { source: map.sources[0], line: 1 });
+  assert.deepEqual(resolved[3], { source: map.sources[0], line: 2 });
+  assert.deepEqual(resolved[4], { source: map.sources[0], line: 3 });
+  // The seam is ours, not the require's.
+  assert.equal(gen[5], ';');
+  assert.equal(resolved[5], null);
+  // And the body still lands where the map says.
+  assert.equal(gen[6], 'BODY1');
+  assert.deepEqual(resolved[6], { source: map.sources[1], line: 1 });
 });
 
-test('wrapMainBodyEntry: no requireExports → no destructure emitted', () => {
-  const wrapped = wrapMainBodyEntry({
-    scriptId: 'abc',
-    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
-    body: 'BODYTOP',
-    gmBindings: '',
-    gmPrelude: '',
+test('wrapCombinedEntry: map.file is the entry\'s own sourceURL, which is also a source', () => {
+  // The generated script and its own body claim the same URL. That
+  // collision is what bundlers avoid with `webpack://`-style prefixes,
+  // because devtools keys files by URL — so this is pinned rather than
+  // left implicit.
+  //
+  // Verified in Chrome's Sources panel: the mapped source shadows the
+  // generated script, and a one-require script shows exactly two
+  // entries (the `.user.js`, and the require nested under a
+  // `<host>/<path>` subtree), both with their original text. Keeping
+  // the URLs identical is also what lets the Log tab's stack-ref
+  // linkification match on a single string.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'B', requires: [req('R')] }),
   });
-  assert.doesNotMatch(wrapped, /__smReqScope/);
+  const map = decodeInlineMap(wrapped);
+  assert.equal(map.file, 'sourcemonkey://SourceMonkey/x/Foo.user.js');
+  assert.equal(map.sources[map.sources.length - 1], map.file);
+  assert.match(wrapped, /\/\/# sourceURL=sourcemonkey:\/\/SourceMonkey\/x\/Foo\.user\.js/);
 });
 
-test('wrapMainBodyEntry: requireExports → destructure from __smReqScope[id] on the head line', () => {
-  // Destructure must land on physical line 1 (alongside declPreamble +
-  // gmBindings + gmPrelude) so the body's line 1 stays at physical
-  // line 1. Anything else breaks the stack-trace line contract.
-  const wrapped = wrapMainBodyEntry({
-    scriptId: 'abc',
-    sourceUrl: 'sourcemonkey://abc/Foo.user.js',
-    body: 'BODYTOP',
-    gmBindings: '',
-    gmPrelude: '',
-    requireExports: ['on', '$', '$$'],
+test('wrapCombinedEntry: source map survives non-Latin1 source', () => {
+  // btoa alone throws on anything above U+00FF, and the script that
+  // prompted Mode A is half Chinese.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({
+      bodyText: 'const 名前 = "增强";',
+      requires: [req('// 配置\nconst z = 1;')],
+    }),
   });
-  assert.match(wrapped, /var\{on,\$,\$\$\}=self\.__smReqScope\["abc"\];/);
-  const lines = wrapped.split('\n');
-  // The body's first line still arrives at physical line 1.
-  assert.match(lines[0], /BODYTOP$/);
+  const map = decodeInlineMap(wrapped);
+  assert.deepEqual(map.sourcesContent, ['// 配置\nconst z = 1;', 'const 名前 = "增强";']);
 });
 
-// ---------- buildConfigBlob: __smReqScope init ----------
+// V8's line terminators, which the source map has to agree with:
+// CRLF as one, plus lone CR and the two Unicode separators.
+const V8_LINE_TERMINATORS = /\r\n|[\n\r\u2028\u2029]/;
 
-test('buildConfigBlob: initializes self.__smReqScope[id] = {} before init/queue', () => {
-  // Entry 0 in the js[] array. Runs before any @require entry so the
-  // require's Object.assign has a target object. Re-runs per
-  // registration (incl. refresh) so a stale scope from a prior load
-  // doesn't bleed into the new one.
-  const blob = buildConfigBlob({
-    id: 'abc', logLabel: 'x.user.js', name: 'X',
-    sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
-    loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
-    matching: null, startupLogs: [], requireUrls: [],
+// Pull the inline source map back out of a generated entry.
+function decodeInlineMap(code) {
+  const m = code.match(/\/\/# sourceMappingURL=data:application\/json;charset=utf-8;base64,(.+)/);
+  assert.ok(m, 'no inline source map found');
+  return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8'));
+}
+
+// Decode `mappings` into one {source, line} (1-based) per generated
+// line, or null where the line is unmapped.
+function resolveMap(map, code) {
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const decodeGroup = (group) => {
+    const out = [];
+    let shift = 0;
+    let value = 0;
+    for (const ch of group) {
+      const digit = B64.indexOf(ch);
+      value += (digit & 31) << shift;
+      if (digit & 32) { shift += 5; continue; }
+      out.push((value & 1) ? -(value >> 1) : (value >> 1));
+      shift = 0;
+      value = 0;
+    }
+    return out;
+  };
+  let srcIdx = 0;
+  let origLine = 0;
+  return map.mappings.split(';').map((group) => {
+    if (!group) return null;
+    const [, dSrc, dLine] = decodeGroup(group);
+    srcIdx += dSrc;
+    origLine += dLine;
+    return { source: map.sources[srcIdx], line: origLine + 1 };
   });
-  assert.match(blob, /\(self\.__smReqScope=self\.__smReqScope\|\|\{\}\)\[c\.id\]=\{\};/);
-});
+}
+
 
 // ---------- composeRequiredBody (kept for reload-fast-path) ----------
 
@@ -364,6 +470,26 @@ test('buildSwapEvalBody: prepends GM bindings ahead of the composed body', async
   // GM_info is also prepended (implicit, TM/VM compat) so a swapped
   // body that touches GM_info doesn't ReferenceError.
   assert.match(body, /const GM_info = /);
+});
+
+test('buildSwapEvalBody: a swapped body with @requires shares their scope', async () => {
+  // `composeRequiredBody` is now the same concatenation the
+  // registration uses, so the swap path gets shared scope for free —
+  // but nothing exercised it end-to-end with a require present.
+  const script = makeScript({
+    bodyText: 'return tag("ok");',
+    requires: [{
+      url: 'https://cdn/x.js', source: 'const tag = (s) => "from-require:" + s;',
+      ref: 'x', size: 0, contentHash: '', loadedAt: 0,
+    }],
+  });
+  const body = await buildSwapEvalBody(script, '0.0.0');
+  // The swap eval is a single (0,eval) of this string, so evaluating
+  // it in one scope is exactly what the prelude does.
+  assert.equal(new Function(`${body}`)(), 'from-require:ok');
+  // And it carries no source map — the prelude only appends a
+  // sourceURL, so a swapped script reports concatenated line numbers.
+  assert.doesNotMatch(body, /sourceMappingURL/);
 });
 
 test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async () => {
@@ -477,7 +603,7 @@ test('buildRegistrationSpec: defaults the wrapper @run-at to document-idle when 
   assert.match(cfg.code, /"runAt":"document-idle"/);
 });
 
-test('buildRegistrationSpec: js[] shape is [config, prelude, ...requires, main]', async () => {
+test('buildRegistrationSpec: js[] shape is [config, prelude, combined, seal]', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     requires: [
       { url: 'https://cdn.example.com/a.js', source: 'A();', ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
@@ -486,11 +612,13 @@ test('buildRegistrationSpec: js[] shape is [config, prelude, ...requires, main]'
   }));
   // makeScript()'s relativePath is `a.user.js` → default logLabel
   // (basename, no dedup) → folder `a` under SourceMonkey/.
-  // 1 config + 1 prelude + 2 requires + 1 main = 5.
-  // The prelude is inline (not a separate singleton registration) —
+  // Requires no longer get their own entries — they're concatenated
+  // into js[2] so they share the body's scope, and the source map
+  // gives them back their devtools identity.
+  // The prelude stays inline (not a separate singleton registration):
   // cross-registration order isn't guaranteed by chrome.userScripts,
-  // and the main body's self.__smRun() call has no safety net.
-  assert.equal(spec.js.length, 5);
+  // and the combined entry's self.__smRun() call has no safety net.
+  assert.equal(spec.js.length, 4);
   assert.ok('code' in spec.js[0]);
   // Config blob carries a per-script `__config.js` sourceURL.
   assert.match(spec.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/__config\.js/);
@@ -500,23 +628,23 @@ test('buildRegistrationSpec: js[] shape is [config, prelude, ...requires, main]'
   assert.ok('code' in spec.js[1]);
   assert.ok(spec.js[1].code.startsWith(WRAPPER_PRELUDE));
   assert.match(spec.js[1].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__prelude\.js/);
-  // Require entries get synthetic sourcemonkey:// URLs that nest
-  // them under the script's folder, with the require's real host +
-  // path as subfolders so provenance is still visible in the tree.
-  assert.ok('code' in spec.js[2]);
-  assert.match(spec.js[2].code, /A\(\);/);
-  assert.match(spec.js[2].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/cdn\.example\.com\/a\.js/);
+  // One entry carrying both requires and the body, in order.
+  const combined = spec.js[2];
+  assert.ok('code' in combined);
+  assert.ok(combined.code.indexOf('A();') < combined.code.indexOf('B();'));
+  assert.ok(combined.code.indexOf('B();') < combined.code.indexOf('console.log("hi");'));
+  assert.match(combined.code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/a\.user\.js/);
+  // Require provenance moves from per-entry sourceURLs into the map.
+  assert.match(combined.code, /sourceMappingURL=data:application\/json/);
+  // Trailing sentinel: its own script, so it still runs when the
+  // combined entry fails to parse.
   assert.ok('code' in spec.js[3]);
-  assert.match(spec.js[3].code, /B\(\);/);
-  assert.match(spec.js[3].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/cdn\.example\.com\/b\.js/);
-  assert.ok('code' in spec.js[4]);
-  assert.match(spec.js[4].code, /console\.log\("hi"\);/);
-  assert.match(spec.js[4].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/a\.user\.js/);
+  assert.match(spec.js[3].code, /^self\.__smSealed\("script-1"\);/);
 });
 
-test('buildRegistrationSpec: js[] shape with no requires is [config, prelude, main]', async () => {
+test('buildRegistrationSpec: js[] shape with no requires is [config, prelude, combined, seal]', async () => {
   const spec = await buildRegistrationSpec(makeScript());
-  assert.equal(spec.js.length, 3);
+  assert.equal(spec.js.length, 4);
   assert.ok('code' in spec.js[0]);
   assert.match(spec.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/a\/__config\.js/);
   assert.ok('code' in spec.js[1]);
@@ -539,7 +667,8 @@ test('buildRegistrationSpec: logLabel arg picks the devtools folder name', async
   // (including devtools') don't treat `#` as a fragment separator.
   assert.match(cfg.code, /"sourceUrl":"sourcemonkey:\/\/SourceMonkey\/shared%232\/shared\.user\.js"/);
   // The main body's trailing sourceURL marker uses the same value.
-  const main = spec.js[spec.js.length - 1];
+  // js[2] is the user program; js[3] is the parse-failure sentinel.
+  const main = spec.js[2];
   assert.ok('code' in main);
   assert.match(main.code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/shared%232\/shared\.user\.js/);
 });
@@ -598,27 +727,22 @@ test('buildRegistrationSpec: storage grant flips needsGmValues in the config blo
   assert.match(cfg.code, /"needsGmValues":true/);
 });
 
-test('buildRegistrationSpec: GM bindings spliced into BOTH main body and @require entries', async () => {
-  // Each js[] entry is its own V8 script with its own lexical scope,
-  // so a `const GM_setValue` declared in the main-body wrap is
-  // invisible to require entries. TM/VM concatenate everything into
-  // one IIFE; we repeat the binding prefix per entry to match
-  // semantics. See wrapRequireEntry in src/injector.ts.
+test('buildRegistrationSpec: ONE GM binding block serves the requires and the body', async () => {
+  // Separate entries meant separate lexical scopes, so the binding
+  // prefix had to be repeated per require — "tens of KB of duplicated
+  // prefix" for a script with a verbose header and several requires.
+  // One scope means one copy, which is also what TM/VM do.
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
     requires: [{ url: 'https://cdn/a.js', source: 'A();', ref: 'a', size: 0, contentHash: '', loadedAt: 0 }],
   }));
-  // Shape: [config, prelude, require, main].
-  const requireEntry = spec.js[2];
-  const mainEntry = spec.js[3];
-  assert.ok('code' in requireEntry);
-  assert.ok('code' in mainEntry);
-  assert.match(mainEntry.code, /const GM_setValue/);
-  assert.match(requireEntry.code, /const GM_setValue/);
-  // Both wraps bake in the SAME scriptId so they target the same
-  // storage bucket.
-  assert.match(mainEntry.code, /__SM_GM__\.storage\.set\("script-1"/);
-  assert.match(requireEntry.code, /__SM_GM__\.storage\.set\("script-1"/);
+  const combined = spec.js[2].code;
+  assert.ok('code' in spec.js[2]);
+  assert.equal(combined.match(/const GM_setValue/g).length, 1);
+  // Emitted ahead of the first require, so library top-level code
+  // sees it too.
+  assert.ok(combined.indexOf('const GM_setValue') < combined.indexOf('A();'));
+  assert.match(combined, /__SM_GM__\.storage\.set\("script-1"/);
 });
 
 test('buildRegistrationSpec: @require entries get GM_info even without any other @grant', async () => {
@@ -629,161 +753,180 @@ test('buildRegistrationSpec: @require entries get GM_info even without any other
     header: { tags: [{ tag: 'name', value: 'Hello' }] },
     requires: [{ url: 'https://cdn/p.js', source: 'P();', ref: 'p', size: 0, contentHash: '', loadedAt: 0 }],
   }));
-  // [config, prelude, require, main]
-  const requireEntry = spec.js[2];
-  assert.ok('code' in requireEntry);
-  assert.match(requireEntry.code, /const GM_info = Object\.freeze/);
+  const combined = spec.js[2];
+  assert.ok('code' in combined);
+  assert.match(combined.code, /const GM_info = Object\.freeze/);
+  assert.ok(combined.code.indexOf('const GM_info') < combined.code.indexOf('P();'));
 });
 
-test('buildRegistrationSpec: /* exported */ in a @require forwards names to the main body', async () => {
-  // The github-html-preview style: utilsjs.js declares `const on/$/$$`
-  // with a `/* exported */` directive at the top. Without forwarding,
-  // the main body's `on(...)` call throws ReferenceError because each
-  // js[] entry is its own V8 top-level scope.
-  const utilsSrc = `/* exported $ $$ on */
-"use strict";
-const $ = (s, el) => (el || document).querySelector(s);
-const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
-const on = (el, ev, cb) => el.addEventListener(ev, cb);`;
+// Every emitted entry must PARSE. The combined entry splices the
+// user's requires and body into one function, so any seam bug shows
+// up here as a SyntaxError — which at runtime means the script
+// silently never runs at all.
+function assertAllEntriesParse(spec, label) {
+  spec.js.forEach((entry, idx) => {
+    if (!('code' in entry)) return;
+    assert.doesNotThrow(
+      () => new Function('self', entry.code),
+      `${label}: js[${idx}] does not parse`,
+    );
+  });
+}
+
+// Run a built spec's combined entry (js[2]) with a stubbed `self` and
+// return whatever the user body returned.
+function runCombined(spec, extraSelf = {}) {
+  let out;
+  const stub = {
+    __smPrelude: { send: () => {} },
+    // A storage grant makes the GM prelude call storage.init off a
+    // snapshot the SW attaches to the check-pending reply; without one
+    // it bails before the body runs.
+    __SM_GM__: { storage: { init: () => {} } },
+    __smRun: (_id, fn) => {
+      out = fn({
+        decision: { gmValues: {} },
+        cfg: { name: 'n', id: 'script-1', loadedAt: 0 },
+      });
+    },
+    ...extraSelf,
+  };
+  stub.window = stub.window ?? stub;
+  // The GM bindings reference `window` as a bare identifier, so it has
+  // to be a real binding in the evaluated scope, not just `self.window`.
+  new Function('self', 'window', spec.js[2].code)(stub, stub.window);
+  return out;
+}
+
+test('buildRegistrationSpec: a @require top-level const is visible to the body', async () => {
+  // The github-html-preview shape: a library declares its helpers as
+  // top-level `const`s. Under separate entries these were trapped in
+  // the require's own V8 scope and needed a name-forwarding bridge.
+  // Concatenated, they are simply in scope.
+  const utilsSrc = [
+    '"use strict";',
+    'const $ = (s) => s;',
+    'const on = (a, b) => a + b;',
+  ].join('\n');
   const spec = await buildRegistrationSpec(makeScript({
-    header: { tags: [{ tag: 'name', value: 'Hello' }] },
-    bodyText: 'on(document, "x", () => {});',
+    bodyText: 'return on($("a"), "b");',
     requires: [{
       url: 'https://cdn/utils.js', source: utilsSrc, ref: 'u',
       size: 0, contentHash: '', loadedAt: 0,
     }],
   }));
-  // [config, prelude, require, main]
-  const requireEntry = spec.js[2];
-  const mainEntry = spec.js[3];
-  assert.ok('code' in requireEntry);
-  assert.ok('code' in mainEntry);
-  // Producer side: the require entry's tail Object.assigns all three
-  // names onto its per-script scope object.
-  assert.match(
-    requireEntry.code,
-    /Object\.assign\(self\.__smReqScope\["script-1"\],\{\$,\$\$,on\}\);/,
-  );
-  // Consumer side: the main body destructures them back out at the
-  // top of its head one-liner.
-  assert.match(
-    mainEntry.code,
-    /var\{\$,\$\$,on\}=self\.__smReqScope\["script-1"\];/,
-  );
+  assert.equal(runCombined(spec), 'ab');
+  assertAllEntriesParse(spec, 'top-level const');
 });
 
-test('buildRegistrationSpec: multiple @requires union their exported names', async () => {
-  // Two libraries each export distinct names → main body's destructure
-  // pulls from both. Declaration order is preserved across the union.
-  const a = `/* exported foo */\nconst foo = 1;`;
-  const b = `/* exported bar baz */\nconst bar = 2; const baz = 3;`;
-  const spec = await buildRegistrationSpec(makeScript({
-    header: { tags: [{ tag: 'name', value: 'X' }] },
-    bodyText: 'foo;bar;baz;',
-    requires: [
-      { url: 'https://cdn/a.js', source: a, ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
-      { url: 'https://cdn/b.js', source: b, ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
-    ],
-  }));
-  // [config, prelude, a, b, main]
-  const mainEntry = spec.js[4];
-  assert.ok('code' in mainEntry);
-  assert.match(
-    mainEntry.code,
-    /var\{foo,bar,baz\}=self\.__smReqScope\["script-1"\];/,
-  );
-});
-
-test('buildRegistrationSpec: name collisions across @requires dedup (last-write-wins at runtime)', async () => {
-  // Both requires export `helper`. The destructure mentions it once.
-  // Each require's own Object.assign overwrites the prior — last
-  // require's value wins, matching TM/VM concat semantics.
-  const a = `/* exported helper */\nconst helper = "A";`;
-  const b = `/* exported helper */\nconst helper = "B";`;
-  const spec = await buildRegistrationSpec(makeScript({
-    requires: [
-      { url: 'https://cdn/a.js', source: a, ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
-      { url: 'https://cdn/b.js', source: b, ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
-    ],
-  }));
-  const mainEntry = spec.js[4];
-  assert.ok('code' in mainEntry);
-  // Single occurrence in the destructure list.
-  const matches = mainEntry.code.match(/var\{([^}]+)\}=self\.__smReqScope/);
-  assert.ok(matches);
-  assert.deepEqual(matches[1].split(','), ['helper']);
-});
-
-test('buildRegistrationSpec: /* exported */ names colliding with GM (bare) or unsafeWindow are filtered', async () => {
-  // gm-bindings.ts emits `const GM = ...` and `const unsafeWindow = window;`
-  // unconditionally on the main-body head line. A `var{GM}=...` /
-  // `var{unsafeWindow}=...` destructure on the same line would
-  // redeclare them — hard SyntaxError that kills the whole main body.
-  const src = `/* exported GM unsafeWindow ok */\nconst ok = 1;`;
+test('buildRegistrationSpec: a @require top-level class is visible to the body', async () => {
+  // The GM_config case that started this: a minified library whose
+  // whole API is one top-level `class`, with no `/* exported */`
+  // directive to read and a `GM_`-prefixed name.
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+    bodyText: 'return GM_config.label("ok");',
     requires: [{
-      url: 'https://cdn/x.js', source: src, ref: 'x',
-      size: 0, contentHash: '', loadedAt: 0,
+      url: 'https://cdn/config.min.js',
+      source: '// ==UserScript==\n// @name C\n// ==/UserScript==\nclass GM_config{static label(s){return "from-class:"+s}}',
+      ref: 'c', size: 0, contentHash: '', loadedAt: 0,
     }],
   }));
-  // [config, prelude, require, main]
-  const requireEntry = spec.js[2];
-  const mainEntry = spec.js[3];
-  assert.ok('code' in requireEntry);
-  assert.ok('code' in mainEntry);
-  const assignMatch = requireEntry.code.match(/Object\.assign\(self\.__smReqScope\["script-1"\],\{([^}]*)\}\)/);
-  assert.ok(assignMatch);
-  assert.deepEqual(assignMatch[1].split(',').filter(Boolean), ['ok']);
-  const destructureMatch = mainEntry.code.match(/var\{([^}]*)\}=self\.__smReqScope\["script-1"\]/);
-  assert.ok(destructureMatch);
-  assert.deepEqual(destructureMatch[1].split(',').filter(Boolean), ['ok']);
+  assert.equal(runCombined(spec), 'from-class:ok');
+  // The GM binding block still emits its own `const GM_setValue`, in
+  // the same scope, without colliding.
+  assert.match(spec.js[2].code, /const GM_setValue = /);
+  assertAllEntriesParse(spec, 'top-level class');
 });
 
-test('buildRegistrationSpec: /* exported */ names colliding with GM_*/__sm* are filtered', async () => {
-  // Forwarding `GM_foo` would redeclare a `const` we emit (SyntaxError);
-  // `__sm*` is SourceMonkey's internal namespace. Both classes are
-  // dropped from the forwarder on safety grounds.
-  const src = `/* exported GM_bad __smHack ok */\nconst ok = 1;`;
+test('buildRegistrationSpec: a body IIFE shadows a @require name normally', async () => {
+  // Ordinary lexical shadowing now that there is one scope, and the
+  // shape nearly every real userscript uses.
   const spec = await buildRegistrationSpec(makeScript({
+    bodyText: 'return (function () { const label = "from-body"; return label; })();',
     requires: [{
-      url: 'https://cdn/x.js', source: src, ref: 'x',
-      size: 0, contentHash: '', loadedAt: 0,
+      url: 'https://cdn/x.js', source: 'const label = "from-require";',
+      ref: 'x', size: 0, contentHash: '', loadedAt: 0,
     }],
   }));
-  // [config, prelude, require, main]
-  const requireEntry = spec.js[2];
-  const mainEntry = spec.js[3];
-  assert.ok('code' in requireEntry);
-  assert.ok('code' in mainEntry);
-  // The filter applies to the forwarder list, not to the require's
-  // own source — the original `/* exported */` comment passes through
-  // verbatim (it's just a comment).
-  const assignMatch = requireEntry.code.match(/Object\.assign\(self\.__smReqScope\["script-1"\],\{([^}]*)\}\)/);
-  assert.ok(assignMatch);
-  assert.deepEqual(assignMatch[1].split(',').filter(Boolean), ['ok']);
-  const destructureMatch = mainEntry.code.match(/var\{([^}]*)\}=self\.__smReqScope\["script-1"\]/);
-  assert.ok(destructureMatch);
-  assert.deepEqual(destructureMatch[1].split(',').filter(Boolean), ['ok']);
+  assertAllEntriesParse(spec, 'body IIFE shadows require');
+  // Parsing isn't the claim — which binding wins is. Run it.
+  assert.equal(runCombined(spec), 'from-body');
 });
 
-test('buildRegistrationSpec: @require with no /* exported */ directive emits no forwarder', async () => {
-  // No regression for libraries that don't include the directive. The
-  // require still runs; only `var`/`function` top-level declarations
-  // leak through globalThis (the legacy behavior).
+test('buildRegistrationSpec: a body top-level redeclaration collides, exactly as in TM', async () => {
+  // One scope means real JS rules: the body's top-level `const label`
+  // beside the require's `const label` is a redeclaration. TM/VM
+  // concatenate the same way and fail the same way, so this is
+  // compatibility, not a regression — but it IS a behavior change from
+  // the separate-entries arrangement, where the two never met. See
+  // docs/injection-modes.md.
   const spec = await buildRegistrationSpec(makeScript({
+    bodyText: 'const label = "from-body";',
     requires: [{
-      url: 'https://cdn/x.js', source: 'window.lib = {};', ref: 'x',
+      url: 'https://cdn/x.js', source: 'const label = "from-require";',
+      ref: 'x', size: 0, contentHash: '', loadedAt: 0,
+    }],
+  }));
+  assert.throws(() => new Function('self', spec.js[2].code), /already been declared/);
+});
+
+test('buildRegistrationSpec: shapes that used to break the name bridge now just work', async () => {
+  // Each of these defeated a heuristic in the separate-entries name
+  // bridge — comma declarator lists hid a declarator, destructuring
+  // patterns had no single name to read, a named class EXPRESSION
+  // looked like a top-level declaration. None of them are special
+  // cases any more, because nothing analyses the source at all.
+  const cases = [
+    ['comma list',   'const helper = 3;', 'const a = 9, other = 1;\nreturn helper + a + other;', 13],
+    ['destructure',  'const helper = 7;', 'const {x} = {x: 1};\nreturn helper + x;', 8],
+    ['class expr',   'window.lib = class lib { static t(){ return "L" } };', 'return window.lib.t();', 'L'],
+    ['minified one-liner', 'class A{static t(){return "A"}}const b=A.t();', 'return b;', 'A'],
+  ];
+  for (const [label, libSrc, body, expected] of cases) {
+    const spec = await buildRegistrationSpec(makeScript({
+      bodyText: body,
+      requires: [{
+        url: 'https://cdn/x.js', source: libSrc, ref: 'x',
+        size: 0, contentHash: '', loadedAt: 0,
+      }],
+    }));
+    assertAllEntriesParse(spec, label);
+    assert.equal(runCombined(spec, { window: { lib: undefined } }), expected, label);
+  }
+});
+
+test('buildRegistrationSpec: multiple @requires share the scope in declaration order', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    bodyText: 'return first + second;',
+    requires: [
+      { url: 'https://cdn/a.js', source: 'const first = "A";', ref: 'a', size: 0, contentHash: '', loadedAt: 0 },
+      // The 2nd require can see the 1st — same scope, in order.
+      { url: 'https://cdn/b.js', source: 'const second = first + "B";', ref: 'b', size: 0, contentHash: '', loadedAt: 0 },
+    ],
+  }));
+  assert.equal(runCombined(spec), 'AAB');
+});
+
+test('buildRegistrationSpec: a require lands in the source map, not its own entry', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    bodyText: 'B1\nB2',
+    requires: [{
+      url: 'https://cdn/x.js', source: 'R1\nR2', ref: 'x',
       size: 0, contentHash: '', loadedAt: 0,
     }],
   }));
-  const requireEntry = spec.js[2];
-  const mainEntry = spec.js[3];
-  assert.ok('code' in requireEntry);
-  assert.ok('code' in mainEntry);
-  assert.doesNotMatch(requireEntry.code, /Object\.assign\(self\.__smReqScope/);
-  assert.doesNotMatch(mainEntry.code, /__smReqScope\["script-1"\]/);
+  assert.equal(spec.js.length, 4);
+  const m = spec.js[2].code.match(/\/\/# sourceMappingURL=data:application\/json;charset=utf-8;base64,(.+)/);
+  assert.ok(m);
+  const map = JSON.parse(Buffer.from(m[1], 'base64').toString('utf8'));
+  assert.deepEqual(map.sources, [
+    'sourcemonkey://SourceMonkey/a/cdn/x.js',
+    'sourcemonkey://SourceMonkey/a/a.user.js',
+  ]);
+  assert.deepEqual(map.sourcesContent, ['R1\nR2', 'B1\nB2']);
 });
+
 
 test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN scriptId into the require wrap', async () => {
   // Each script's registration is built independently — the require
@@ -825,8 +968,8 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
     header: { tags: [{ tag: 'name', value: 'M' }] },
   }));
   assert.equal(spec.world, 'MAIN');
-  // Shape: [config, prelude, main]
-  const mainEntry = spec.js[spec.js.length - 1];
+  // Shape: [config, prelude, combined, seal]
+  const mainEntry = spec.js[2];
   assert.ok('code' in mainEntry);
   assert.match(mainEntry.code, /const GM_info = Object\.freeze/);
   assert.doesNotMatch(mainEntry.code, /__SM_GM__/);

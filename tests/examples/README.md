@@ -119,6 +119,7 @@ events.
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
+| `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 
 ## Page conventions
@@ -167,6 +168,20 @@ prose paragraphs. Mirrors the project-wide doc convention.
    `await setup.installScriptsFrom(__dirname)` — that registers the
    dir's userscripts with whichever manager the run is targeting.
    See the existing specs for the template.
+
+An example may also carry **auxiliary files** the userscript pulls in
+by relative ref — `gm-resource/` has `resource.css` / `resource.json` /
+`logo.svg` for `@resource`, `require-scope/` has `lib.js` for
+`@require`. Two things follow:
+
+- The TM sync only walks `*.user.js`, so these files are never
+  installed on their own. They're fetched by the manager when it
+  resolves the ref.
+- Relative refs are a SourceMonkey extension — TM/VM/GM take absolute
+  URLs only, and TM installs these examples from a local file, so it
+  has no base URL to resolve against. A spec relying on one must
+  `test.skip(setup.manager === 'tampermonkey', ...)` with the reason
+  stated. The `*.user.js` still syncs to TM harmlessly.
 
 For a **multi-script directory** (see above): replace step 1 with
 a single `<dir>.html` + single `<dir>.spec.ts` + one
