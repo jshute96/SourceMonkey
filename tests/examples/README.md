@@ -136,7 +136,7 @@ events.
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
-| `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
+| `require-scope/`           | `@require` scope in both worlds, plus an SM-only relative ref      | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 
 ## Page conventions
@@ -188,17 +188,34 @@ prose paragraphs. Mirrors the project-wide doc convention.
 
 An example may also carry **auxiliary files** the userscript pulls in
 by relative ref — `gm-resource/` has `resource.css` / `resource.json` /
-`logo.svg` for `@resource`, `require-scope/` has `lib.js` for
-`@require`. Two things follow:
+`logo.svg` for `@resource`, `require-scope/` has `lib.js` and
+`relative-lib.js` for `@require`. Two things follow:
 
 - The TM sync only walks `*.user.js`, so these files are never
   installed on their own. They're fetched by the manager when it
   resolves the ref.
 - Relative refs are a SourceMonkey extension — TM/VM/GM take absolute
   URLs only, and TM installs these examples from a local file, so it
-  has no base URL to resolve against. A spec relying on one must
-  `test.skip(setup.manager === 'tampermonkey', ...)` with the reason
-  stated. The `*.user.js` still syncs to TM harmlessly.
+  has no base URL to resolve against.
+
+### Making an example portable
+
+A spec that depends on a relative ref has two options:
+
+- **Skip under TM** — `test.skip(setup.manager === 'tampermonkey',
+  ...)` with the reason stated. Simple, but the example then proves
+  nothing about cross-manager behavior. `gm-resource/` still does this.
+- **Split the example** — give the portable scripts an absolute
+  `@require` / `@resource` URL and keep the relative ref in a separate
+  script, then assert a different expected count per manager.
+  `require-scope/` does this: two scripts fetch `lib.js` from
+  raw.githubusercontent.com, one uses `./relative-lib.js`, and the
+  status line reads `3 of 3` under SM and `2 of 3` under TM.
+
+The split form is preferred — the divergence becomes an assertion
+instead of a blind spot. Its cost is a **network dependency** (the
+absolute URL must be publicly fetchable, and the copy a foreign
+manager gets is whatever is on `main`, not the working tree).
 
 For a **multi-script directory** (see above): replace step 1 with
 a single `<dir>.html` + single `<dir>.spec.ts` + one

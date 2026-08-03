@@ -1,19 +1,25 @@
 // ==UserScript==
 // @name        SourceMonkey example: @require in the page (MAIN) world
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.1.0
 // @description A @require'd library's top-level class/const/function reach a MAIN-world script.
 // @match       *://*/require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
 // @run-at      document-end
 // @inject-into page
 // @grant       none
-// @require     ./lib.js
+// @require     https://raw.githubusercontent.com/jshute96/SourceMonkey/main/tests/examples/require-scope/lib.js
 // ==/UserScript==
 
 (function () {
   'use strict';
 
+  // The `@require` above is an ABSOLUTE URL so this script is portable
+  // to TM/VM/GM, which don't implement relative refs. It points at
+  // this repo's `main` branch, so a foreign manager fetches whatever
+  // `main` has — edit `lib.js` and the fetched copy only catches up
+  // once the change merges.
+  //
   // MAIN world: we share `window` with the page and get no GM_*
   // bindings beyond GM_info. The require still has to reach us — the
   // concatenation happens per script, independently of which world

@@ -257,18 +257,24 @@ gates, or the emitted wrap — the rate is the regression signal.
 
 ## Cross-manager coverage
 
-- **No `tests/examples/` script exercises `@require` under
-  Tampermonkey.** `require-scope/` covers both injection worlds, but
-  skips under `--project=tampermonkey`: it uses a relative `@require`,
-  which is a SourceMonkey extension, and TM installs these examples
-  from a local file so there's no base URL to resolve against. Baking
-  in an absolute URL doesn't work either — the fixture server's port
-  is assigned per run.
-- Closing this needs either a fixed-port fixture server for the TM
-  project, or a rewrite step that stamps the server URL into a
-  generated copy of the script before TM installs it. Until then the
-  TM-compatibility claim for `@require` — the whole premise of the
-  concatenated arrangement — rests on unit and SM-only e2e coverage.
+- **`@require` under Tampermonkey — addressed, pending a real TM
+  run.** `require-scope/` no longer skips under
+  `--project=tampermonkey`. Its two portable scripts `@require`
+  `lib.js` by absolute raw.githubusercontent.com URL; a third script
+  keeps a relative ref. The spec asserts `3 of 3` under SM and
+  `2 of 3` under TM.
+  - **Blocked: the repo is private.** raw.githubusercontent.com 404s
+    without a token, and an unfetchable `@require` is fatal in
+    SourceMonkey, so the spec currently fails under both managers.
+    Making the repo public unblocks it; otherwise the absolute URL has
+    to move to a public host.
+  - **Unverified: TM's actual behavior.** Whether TM installs
+    `relative-require.user.js` and merely fails at runtime (the
+    expected `2 of 3`) or chokes at the install prompt while
+    prefetching the unresolvable ref has not been observed.
+- **`@resource` under Tampermonkey** is still uncovered — `gm-resource/`
+  still skips for the original relative-ref reason. The same split
+  treatment would close it.
 
 ## `GM_*` — deferred surface
 

@@ -103,7 +103,9 @@
         &mdash; a shared <code>lib.js</code> whose top-level
         <code>class</code> / <code>const</code> / <code>function</code>
         reach the script body, in both the MAIN and isolated worlds,
-        without leaking onto the page&rsquo;s globals.
+        without leaking onto the page&rsquo;s globals. Pulled in by
+        absolute URL from two portable scripts and by relative path
+        from a SourceMonkey-only third.
       </li>
       <li>
         <a href="xmlhttp-denied/xmlhttp-denied.html">@connect denial (negative cases)</a>

@@ -1,5 +1,11 @@
-// Shared library pulled in by both scripts in this example via
-// `@require ./lib.js`.
+// Shared library every script in this example pulls in: the two
+// portable scripts by absolute raw.githubusercontent.com URL, the
+// SourceMonkey-only script by relative `@require ./lib.js`.
+//
+// COMMENTS ONLY below this point may be edited freely; the executable
+// declarations must not change without care. Foreign managers fetch
+// this file from `main`, so a working-tree edit isn't visible to them
+// until it merges.
 //
 // The declaration forms here are the point. Requires are concatenated
 // ahead of the script body into a single injected entry, so all three
@@ -20,8 +26,8 @@
 // "everything broke".
 //
 // `requireScopeUpdateStatus` is here for a second reason: it gives the
-// library a real job rather than only assertion targets, and both
-// scripts need it. They run in DIFFERENT worlds and can't share a JS
+// library a real job rather than only assertion targets, and every
+// script needs it. They run in DIFFERENT worlds and can't share a JS
 // counter, so the count has to come from the DOM — which they do
 // share. Each script appends exactly one `#log` row, so counting rows
 // is the source of truth.

@@ -15,6 +15,21 @@
 // Plus the negative: even in MAIN world, where the script shares
 // `window` with the page, the library must stay a local of the wrap
 // function and not leak onto the page's global object.
+//
+// Runs under BOTH managers, with a deliberately different expected
+// count each:
+//
+//   - `page-world` / `content-world` `@require` lib.js by absolute
+//     raw.githubusercontent.com URL, the only form TM/VM/GM accept.
+//   - `relative-require` uses a relative ref, a SourceMonkey
+//     extension. SM resolves it (3 of 3); TM cannot (2 of 3).
+//
+// NETWORK DEPENDENCY: because the portable pair name an absolute URL,
+// both managers now fetch lib.js from raw.githubusercontent.com at
+// install time. This spec fails offline, and it fails while the repo
+// is private — the raw URL 404s without a token. SourceMonkey treats
+// an unfetchable @require as fatal (the script is marked invalid and
+// never registered), so the symptom is a low count, not a partial run.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,28 +41,29 @@ test.describe('examples / require-scope', () => {
   test('a @require\'d class/const/function reaches both the page and content worlds', async ({
     extensionContext, fixtureServer, setup,
   }) => {
-    // Relative `@require` paths resolve against the script's own URL,
-    // which is a SourceMonkey extension — TM/VM/GM take absolute URLs
-    // only. TM also installs these examples from a local file, so
-    // there's no base URL for it to resolve against even in principle,
-    // and the fixture server's port is random so an absolute URL can't
-    // be baked into the file. Same reason gm-resource skips.
-    test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @require URLs; this example uses a relative ref');
+    const isSourceMonkey = setup.manager === 'sourcemonkey';
 
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/require-scope/require-scope.html`);
 
-    // Both scripts ran.
+    // The two portable scripts ran under every manager.
     await expect(page.locator('#log li[data-script="page"]')).toHaveCount(1);
     await expect(page.locator('#log li[data-script="content"]')).toHaveCount(1);
 
-    // The status line counts them. It's driven by a helper in lib.js,
-    // so it doubles as proof the require reached BOTH scripts — the
-    // page's own initial text reads "0 of 2", and only a script that
-    // successfully called into the library can change it.
-    await expect(page.locator('#runStatus')).toHaveText('2 of 2 userscripts ran. See log below.');
+    // The relative-require script is the manager-dependent one: it's
+    // the whole reason the counts differ.
+    await expect(page.locator('#log li[data-script="relative"]'))
+      .toHaveCount(isSourceMonkey ? 1 : 0);
+
+    // The status line counts the rows. It's driven by a helper in
+    // lib.js, so it doubles as proof the require reached each script —
+    // the page's own initial text reads "0 of 3", and only a script
+    // that successfully called into the library can change it.
+    const expectedRan = isSourceMonkey ? 3 : 2;
+    await expect(page.locator('#runStatus'))
+      .toHaveText(`${expectedRan} of 3 userscripts ran. See log below.`);
     await expect(page.locator('#runStatus')).toHaveClass(/\bran\b/);
 
     // MAIN world: the require's bindings are all in scope, and the
@@ -74,6 +90,18 @@ test.describe('examples / require-scope', () => {
     await expect(contentRow).toContainText('@require in the content (USER_SCRIPT) world');
     // Isolated world — the page's global is not visible from here.
     await expect(contentRow).toContainText('"seesPageGlobal":"(not visible)"');
+
+    // SourceMonkey only: the relative-require script resolved BOTH of
+    // its refs — `./lib.js` (the same library the portable pair reach
+    // by absolute URL) and `./relative-lib.js` (reachable no other
+    // way) — and both landed in one scope with the body.
+    if (isSourceMonkey) {
+      const relativeRow = page.locator('#log li[data-script="relative"]');
+      await expect(relativeRow).toContainText('const from lib.js');
+      await expect(relativeRow).toContainText('class RequireScopeGreeter reached the relative-require world');
+      await expect(relativeRow).toContainText('const from relative-lib.js');
+      await expect(relativeRow).toContainText('function from relative-lib.js, called in the relative-require world');
+    }
 
     await page.close();
   });

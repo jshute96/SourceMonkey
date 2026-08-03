@@ -31,23 +31,42 @@ Specs that opt out under TM via
   URLs only, so it can't install the example cleanly. Skipped under
   TM until we ship an absolute-URL variant. SM coverage:
   `tests/examples/gm-resource/gm-resource.spec.ts`.
-- **`require-scope/`** — same shape, for `@require ./lib.js`. TM
-  installs these examples from a local file, so it has no base URL to
-  resolve a relative ref against even in principle, and the fixture
-  server's port is assigned per run so an absolute URL can't be baked
-  into the file. SM coverage:
-  `tests/examples/require-scope/require-scope.spec.ts`.
-  - Consequence worth stating plainly: **no example exercises
-    `@require` under TM at all**, so the TM-compatibility claim for
-    the concatenated injection arrangement rests on unit and SM-only
-    e2e coverage. See the "Cross-manager coverage" entry in
-    [TODO.md](../TODO.md) for the two ways to close it.
-  - `test:e2e:tm` is unaffected — the skip fires before the install
-    step, and that package script never invokes
-    `scripts/sync-tm-scripts.mjs`. A manual `sync-tm-scripts.mjs` run
-    *will* try to install both variants; TM prefetches `@require`
-    URLs at the install prompt, so expect that install to error or
-    stall rather than complete.
+  - `require-scope/` used to be skipped for the same reason; see
+    "Split expectations" below for the shape that replaced it.
+
+## Split expectations (runs under TM, asserts a different result)
+
+Specs that run under both managers but expect a manager-dependent
+outcome, rather than skipping.
+
+- **`require-scope/`** — the example is split into a portable pair and
+  a SourceMonkey-only script.
+  - `page-world` / `content-world` `@require` `lib.js` by its absolute
+    raw.githubusercontent.com URL, the only form TM accepts.
+  - `relative-require` uses `./relative-lib.js`, a SourceMonkey
+    extension TM can't resolve.
+  - Assertion: status reads `3 of 3` under SM, `2 of 3` under TM.
+  - This is what closed the "no example exercises `@require` under TM
+    at all" gap. See the "Cross-manager coverage" entry in
+    [TODO.md](../TODO.md) for what remains.
+
+### Caveats on the require-scope split
+
+- **Network dependency.** Both managers now fetch `lib.js` over the
+  network at install time. The spec fails offline.
+- **Repo must be public.** raw.githubusercontent.com 404s for a
+  private repo without a token, and an unfetchable `@require` is fatal
+  in SourceMonkey (script marked `invalid`, never registered). While
+  the repo is private this spec fails under *both* managers.
+- **`main`, not the working tree.** A foreign manager fetches whatever
+  `lib.js` is on `main`. Behavioral edits to `lib.js` are invisible to
+  TM until they merge, so a pre-merge TM run exercises the old copy.
+- **UNVERIFIED under TM.** What TM does with `relative-require.user.js`
+  hasn't been observed. It may install and then throw at runtime
+  (giving the expected `2 of 3`), or it may fail/stall at the install
+  prompt while prefetching the unresolvable ref — which would make
+  `installFromFile` throw and fail the spec outright rather than
+  produce `2 of 3`. Confirm on the first real TM run.
 
 ## Failing specs (untriaged divergences)
 

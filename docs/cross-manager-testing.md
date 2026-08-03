@@ -161,6 +161,21 @@ button click stops working:
   button-like element. Set `SCRIPT=<path>` to inspect with a
   different file.
 
+## Network dependency
+
+Most of the suite is self-contained (the fixture server serves every
+example page and asset locally). One exception:
+
+- **`require-scope/`** — its two portable scripts `@require` `lib.js`
+  by absolute `https://raw.githubusercontent.com/...` URL, because
+  that's the only `@require` form TM/VM/GM accept. Both managers fetch
+  it at install time.
+- Consequences: the spec **fails offline**, and it **fails while the
+  repo is private** (raw.githubusercontent.com 404s without a token).
+- Managers fetch from `main`, so an unmerged edit to `lib.js` is not
+  what TM runs. Keep behavioral changes out of `lib.js` — put them in
+  `relative-lib.js`, which only SourceMonkey fetches.
+
 ## Script-list state across tests
 
 Under TM, the installed scripts persist *across* tests AND across runs.

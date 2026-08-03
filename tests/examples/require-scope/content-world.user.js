@@ -1,19 +1,24 @@
 // ==UserScript==
 // @name        SourceMonkey example: @require in the content (USER_SCRIPT) world
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.1.0
 // @description The same @require'd library reaches an isolated-world script, alongside its GM_* bindings.
 // @match       *://*/require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
 // @run-at      document-end
 // @inject-into content
 // @grant       GM_info
-// @require     ./lib.js
+// @require     https://raw.githubusercontent.com/jshute96/SourceMonkey/main/tests/examples/require-scope/lib.js
 // ==/UserScript==
 
 (function () {
   'use strict';
 
+  // Absolute `@require` URL, same as the page-world sibling and for
+  // the same reason: TM/VM/GM take absolute URLs only, so this script
+  // is portable. See `relative-require.user.js` for the other half of
+  // the example.
+  //
   // USER_SCRIPT world: isolated `window`, and the GM_* bindings the
   // script granted are emitted into the same scope as the require.
   // That ordering matters — the bindings come first, so library

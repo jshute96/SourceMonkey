@@ -17,11 +17,17 @@
   <main>
     <h2>Header</h2>
     <ul>
-      <li><code>@require ./lib.js</code> &mdash; both scripts pull in
-        the same library. A relative path is a SourceMonkey extension;
-        TM/VM/GM accept absolute URLs only.</li>
+      <li><code>@require &lt;absolute URL&gt;</code> &mdash;
+        <code>page-world</code> and <code>content-world</code> pull
+        <code>lib.js</code> in by its raw.githubusercontent.com URL.
+        Absolute URLs are the only form TM/VM/GM accept, so those two
+        scripts are portable to any manager.</li>
+      <li><code>@require ./relative-lib.js</code> &mdash;
+        <code>relative-require</code> uses a relative path instead,
+        resolved against the script&rsquo;s own URL. That is a
+        SourceMonkey extension, so this script runs only here.</li>
       <li><code>@inject-into page</code> vs
-        <code>@inject-into content</code> &mdash; the two scripts run
+        <code>@inject-into content</code> &mdash; the portable pair run
         in different worlds, using the same library.</li>
     </ul>
 
@@ -42,11 +48,21 @@
       <li>Scope is per script, not per world: the MAIN-world script
         and the isolated-world script each get their own copy of the
         library in their own wrap function.</li>
-      <li>The status line counts how many of the two scripts ran, from
-        the rows they append. Each runs in its own world and they can&rsquo;t
-        share a counter, so the shared DOM is what they agree on
-        &mdash; and <code>0 of 2</code> stays on the page if the manager
-        injected neither.</li>
+      <li>Two of the three scripts are portable, one is not, and the
+        status line is how you tell them apart. SourceMonkey resolves
+        both <code>@require</code> spellings and reaches
+        <code>3 of 3</code>; a manager that only understands absolute
+        URLs runs the portable pair and stops at
+        <code>2 of 3</code>.</li>
+      <li><code>relative-require</code> requires <em>both</em>
+        libraries &mdash; <code>./lib.js</code> for the shared helper
+        and <code>./relative-lib.js</code> for its own bindings. So it
+        also pins that requires are concatenated in header order and
+        land in one scope with each other and the body.</li>
+      <li>The status line counts the rows the scripts append. Each runs
+        in its own world and they can&rsquo;t share a counter, so the
+        shared DOM is what they agree on &mdash; and <code>0 of 3</code>
+        stays on the page if the manager injected none.</li>
       <li>The library must <strong>not</strong> reach the page. Even in
         the MAIN world, its top-level bindings are locals of the wrap
         function, so <code>window.REQUIRE_SCOPE_CONST</code> stays
@@ -54,7 +70,7 @@
         <code>leakedToWindow</code>.</li>
     </ul>
 
-    <p id="runStatus" class="status" data-expected="2">0 of 2 userscripts ran. See log below.</p>
+    <p id="runStatus" class="status" data-expected="3">0 of 3 userscripts ran. See log below.</p>
 
     <h2>Log</h2>
     <ul id="log"></ul>
@@ -66,7 +82,11 @@
     &nbsp;|&nbsp;
     <a href="content-world.user.js">content-world.user.js</a>
     &nbsp;|&nbsp;
+    <a href="relative-require.user.js">relative-require.user.js</a>
+    &nbsp;|&nbsp;
     <a href="lib.js">lib.js</a>
+    &nbsp;|&nbsp;
+    <a href="relative-lib.js">relative-lib.js</a>
   </footer>
 </body>
 </html>
