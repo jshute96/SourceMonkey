@@ -11,7 +11,7 @@
 
 .source-display-name {
   /* Prefer space / slash boundaries when wrapping. `<wbr>` markers
-     inserted after each `/` (see appendDisplayNameContent in
+     inserted after each `/` (see appendWithSlashBreaks in
      src/source-display.ts) give the browser preferred break points
      before it has to break inside a word. */
   overflow-wrap: anywhere;

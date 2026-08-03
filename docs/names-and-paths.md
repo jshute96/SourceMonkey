@@ -34,6 +34,7 @@ How a stored location becomes the text a user reads. Helpers live in
 | `displayLocation(s)` | readable form of a whole URL or path |
 | `scriptBasename(s)` | short name: URL filename (decoded, no query) or path leaf |
 | `scriptDisplayName(script)` | `@name`, else `displayLocation(relativePath)` |
+| `appendWithSlashBreaks(el, s)` | append text with a `<wbr>` after each `/` so long values wrap at slashes |
 
 ### Only URLs get decoded
 
@@ -49,6 +50,33 @@ How a stored location becomes the text a user reads. Helpers live in
   `decodeURIComponent` raise `URIError`.
 - `decodeForDisplay` returns the input in that case — one undecoded
   escape beats losing the whole string.
+
+## Long names wrap, they never widen the page
+
+- Names are attacker-length: an on-disk file or a web-installed script
+  can carry a whole marketing title, emoji and all.
+- Any element showing one must wrap. A `white-space: nowrap` name cell
+  pushes its table wider than the card around it and the trailing
+  columns render outside the border.
+- The wrap recipe, used by the sources page's `td.name-cell`, the
+  source heading (`.source-display-name`), the viewer's `h1` and its
+  Location row (`.filename-text`):
+  - CSS `overflow-wrap: anywhere; word-break: normal;`
+  - text appended via `appendWithSlashBreaks`.
+- Break order that gives: spaces first, then `/`, then mid-word only
+  when nothing else fits.
+- `anywhere` (not `break-word`) is load-bearing: only `anywhere` lowers
+  the element's min-content width, which is what lets the sources
+  table's name column actually shrink.
+- Where a fixed-width favicon slot precedes the text, add a hanging
+  indent (`padding-left` past the icon + a matching negative
+  `text-indent`) so continuation lines align with the text, not the
+  icon. The `td` version also absorbs the cell's own padding, so the
+  two constants differ — don't copy one to the other.
+- `<wbr>` adds no characters, so `textContent` reads, copy/paste, and
+  test assertions still see the original string.
+- Exception: the viewer's code box passes `slashBreaks=false` — see
+  [script-viewer.md](script-viewer.md#anchor-styling).
 
 ## Log IDs and `sourcemonkey://` URLs
 

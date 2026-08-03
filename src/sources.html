@@ -68,7 +68,10 @@
       /* Dupe-basename suffix (e.g. " #2") shown after the script's
          filename link. Empty for unique basenames so the column stays
          clean. */
-      .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+      /* `white-space: nowrap` keeps the suffix itself intact now that
+         the name cell wraps — it may land on its own continuation
+         line, but never splits into `#` + `2`. */
+      .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; white-space: nowrap; }
       .log-id-suffix:not(:empty)::before { content: ' '; }
       /* Fixed-width slot for the site favicon to the left of the
          filename link. Always present so the filename column has a
@@ -83,6 +86,11 @@
         margin-right: 0.4em;
         vertical-align: text-bottom;
         flex: 0 0 auto;
+        /* text-indent inherits, and this is a block container: reset it
+           so the name cell's negative hanging indent can't shift the
+           icon if a future inner is ever inline rather than
+           display:block. */
+        text-indent: 0;
       }
       .site-icon-inner {
         display: block;
@@ -94,7 +102,20 @@
       a.site-icon-inner:hover { color: #444; }
       .site-icon img { width: 16px; height: 16px; display: block; }
       .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-      .script-table td.name-cell { white-space: nowrap; }
+      /* Script names come from the file/URL and can be arbitrarily long
+         (web-installed scripts often carry a whole marketing title).
+         Let them wrap rather than force the table wider than its
+         `.directory` card, which pushed Size / Status outside the box.
+         `<wbr>` markers after each `/` (appendWithSlashBreaks) give
+         preferred break points before a mid-word break is needed.
+         The hanging indent keeps continuation lines aligned with the
+         first line's text instead of tucking under the favicon. */
+      .script-table td.name-cell {
+        overflow-wrap: anywhere;
+        word-break: normal;
+        padding-left: calc(0.6em + 16px + 0.4em);
+        text-indent: calc(-16px - 0.4em);
+      }
       .status-ok { color: #166534; }
       .status-invalid, .status-missing, .status-error { color: #b00; }
       .status-warning, .status-outdated { color: #b67200; }

@@ -233,4 +233,44 @@ test.describe('sources', () => {
       .toHaveText('a%20b.user.js');
     await sources.close();
   });
+
+  test('a very long script name wraps inside its card instead of widening the table', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Web-installed scripts routinely carry a whole marketing title as
+    // their filename. A `nowrap` name cell made the table wider than
+    // its `.directory` card, pushing Size / Status outside the border.
+    // See docs/names-and-paths.md.
+    const longName =
+      'YouTube Ultimate Downloader v132 - All-in-One Media Suite - Ad-Free + SponsorBlock.user.js';
+    scriptsDir.write({
+      relativePath: longName,
+      meta: { name: 'Long', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.setViewportSize({ width: 900, height: 600 });
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+
+    const card = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    const row = card.locator(`tr[data-script-id="${script.id}"]`);
+    const cardBox = (await card.boundingBox())!;
+    const statusBox = (await row.locator('td.status-cell').boundingBox())!;
+    // The last column has to stay inside the card. Sub-pixel layout
+    // rounding makes an exact compare flaky, hence the 1px slack.
+    expect(statusBox.x + statusBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+
+    // The name really did wrap (>1 line box), and the hanging indent
+    // put every line at the same left edge — i.e. continuation lines
+    // align with the first line's text rather than under the favicon.
+    const rects = await row.locator('.name-cell a[href*="userscript.html"]').evaluate(
+      (el) => [...el.getClientRects()].map((r) => r.left),
+    );
+    expect(rects.length).toBeGreaterThan(1);
+    for (const left of rects) expect(Math.abs(left - rects[0])).toBeLessThan(1);
+    await page.close();
+  });
 });

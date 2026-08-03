@@ -618,9 +618,13 @@ function renderScriptRow(
   // container branch goes through displayLocation too — otherwise the
   // same script reads encoded here and decoded in the viewer. Local
   // directory entries have no scheme and pass through untouched.
-  a.textContent = inContainer
+  const nameText = inContainer
     ? scriptBasename(script.relativePath)
     : displayLocation(script.relativePath);
+  // Slash-aware appender (not textContent) so a long name wraps at `/`
+  // boundaries before breaking mid-segment, matching the source heading
+  // and the viewer's Location row.
+  appendWithSlashBreaks(a, nameText);
   // Hovering the filename surfaces the `@description`. Scoped to the
   // anchor so the Size / Status cells (which carry their own meaning)
   // don't inherit the description as a row-wide tooltip.
