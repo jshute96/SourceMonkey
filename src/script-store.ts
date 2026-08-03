@@ -73,9 +73,11 @@ import {
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import type { VersionProbe } from './version-probe.js';
+import type { ParseVerdict } from './parse-check-protocol.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
+import { dlog } from './debug-log.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
 // metadata-block parse failure, header validation failure, fetch
@@ -142,6 +144,14 @@ export interface StoredScript {
   // entry inside a manifest where the scan has no per-file stat).
   // Absent only on never-loaded rows.
   contentHash?: string;
+  // Fingerprint of the exact source last handed to the compile-only
+  // parse check (src/parse-check.ts): the body's `contentHash` plus
+  // each `@require`'s. Lets a refresh skip a re-check when nothing
+  // that could affect parsing changed, which is the common case on the
+  // opportunistic path. Absent means "never checked" — including on
+  // rows written before this existed, and on rows whose check could
+  // not run.
+  parseCheckedHash?: string;
   // Modification time as reported by Chrome's directory listing on the
   // last successful scan. Opaque integer used only for equality —
   // combined with `size`, it lets refresh skip refetching a file whose
@@ -585,6 +595,100 @@ async function applyFiles(
   else delete built.requires;
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
+  return applyParseCheck(built, prior);
+}
+
+// ---------- Parse check hook ----------
+//
+// The check needs the exact text the *injector* would compile, so the
+// natural call would be `injector.buildParseCheckSource`. But
+// `injector.ts` imports runtime helpers from this module, and a real
+// (not type-only) cycle between them is something this codebase
+// deliberately avoids — see the note on `source-display.ts`.
+//
+// So the dependency is inverted: whoever owns both modules installs
+// the checker. `background.ts` does that at startup. Contexts that
+// don't install one simply skip the check, which is the correct
+// degradation — an extension *page* that calls `addSource` (the
+// viewer's Install button) can't necessarily drive an offscreen
+// document, and a row left unchecked carries no `parseCheckedHash`,
+// so the next service-worker refresh performs it.
+export type ParseChecker = (script: StoredScript) => Promise<ParseVerdict | null>;
+
+let parseChecker: ParseChecker | null = null;
+
+export function setParseChecker(fn: ParseChecker | null): void {
+  parseChecker = fn;
+}
+
+// Fingerprint of everything that can affect whether the injected entry
+// parses: the body, and each `@require` body in order. Both are
+// content hashes we already compute, so this costs a join.
+function parseCheckKey(script: StoredScript): string {
+  const reqs = (script.requires ?? []).map((r) => r.contentHash).join(',');
+  return `${script.contentHash ?? ''}|${reqs}`;
+}
+
+// Compile the script's user program without running it, and flip the
+// row to `invalid` if V8 refuses it.
+//
+// Why here: this is the last point in the load pipeline where the body
+// and every `@require` are both present and final. Before this
+// existed, a syntax error anywhere in the concatenated program was
+// only discovered at injection time — on a page the script matched,
+// reported by the seal entry, and only as "a @require or the script
+// body has a syntax error". See [docs/parse-check.md].
+//
+// `invalid` is deliberate rather than `refreshError`: unlike a failed
+// dependency fetch, this is not transient and re-running won't help —
+// the content we hold genuinely cannot run. Callers upstream still
+// apply their own preservation policy on top; `rebuildSource` keeps a
+// prior good copy running when an *http* refresh comes back invalid
+// (a login page served in place of the script), while a file:// edit
+// flags immediately, which is what a local dev wants.
+//
+// Fails open. `checkParses` returns null when the machinery is
+// unavailable, and null must never become `invalid` — a working script
+// must not break because our offscreen document didn't open. The seal
+// entry remains the backstop for anything missed here.
+async function applyParseCheck(
+  built: StoredScript,
+  prior: StoredScript | undefined,
+): Promise<StoredScript> {
+  // Nothing to check on a row that already failed for another reason
+  // (missing file, bad header) — there may be no body at all.
+  if (built.status !== 'ok') return built;
+  const key = parseCheckKey(built);
+  // Unchanged since the last check, so the previous verdict still
+  // holds. This is what keeps opportunistic refreshes from paying a
+  // round trip per script for content that didn't move.
+  if (prior?.parseCheckedHash === key && prior.status === 'ok') {
+    built.parseCheckedHash = key;
+    return built;
+  }
+  if (!parseChecker) return built;
+  let verdict: ParseVerdict | null;
+  try {
+    verdict = await parseChecker(built);
+  } catch (err) {
+    // The checker itself failed (a storage read for a storage-granting
+    // script's baked-in values, the offscreen document refusing to
+    // open). Not the script's fault; skip rather than accuse it.
+    dlog(`[SourceMonkey] parse check skipped for ${built.relativePath}: ${describeError(err)}`);
+    return built;
+  }
+  if (!verdict) return built;
+  if (verdict.ok) {
+    built.parseCheckedHash = key;
+    return built;
+  }
+  built.status = 'invalid';
+  built.errorMessage = `script source has a syntax error: ${verdict.message ?? 'unknown'}`;
+  // Don't record the fingerprint: the row is invalid, and a future
+  // refresh that produces the same bytes should re-derive that rather
+  // than inherit a stale pass. (`prior` above only short-circuits on a
+  // prior `ok`.)
+  delete built.parseCheckedHash;
   return built;
 }
 

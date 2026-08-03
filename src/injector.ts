@@ -514,6 +514,35 @@ function buildMainWorldGmInfoOnly(
   return emitGmBindings([], buildGmInfoInput(script, scriptHandlerVersion, []));
 }
 
+// The exact text the registered entry compiles as a function body,
+// minus our own wrap head — i.e. everything a syntax error in
+// user-supplied code could come from, in the scope it actually lands
+// in. This is what `src/parse-check.ts` hands to `new Function`.
+//
+// Includes the GM bindings deliberately. They are `const` declarations
+// in the same scope as the user program, so a library doing
+// `const unsafeWindow = window.wrappedJSObject || window;` — a real
+// idiom — is a duplicate declaration and a genuine parse failure.
+// Checking the user source alone would call that script healthy and
+// let it fail at injection time, which is the whole thing we are
+// trying to stop doing.
+//
+// NOT included: the wrap head itself (`self.__smRun(id,function(__smE){`)
+// and its `var` preamble. The head is ours and always valid, and it
+// leaves an unbalanced brace that `new Function` would reject on its
+// own. `var` redeclaration is legal, so the preamble cannot collide
+// with anything the user wrote.
+export async function buildParseCheckSource(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+): Promise<string> {
+  const world = resolveWorld(script.header);
+  const gmEmit = world === 'USER_SCRIPT'
+    ? await buildGmBindingsForScript(script, scriptHandlerVersion)
+    : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
+  return gmEmit.js + '\n' + composeRequiredBody(script);
+}
+
 // Build the body string for the reload-fast-path swap eval. Prepends
 // the script's GM bindings to the composed (requires + body) source so
 // the indirect eval — which runs at runMain's function scope, NOT inside

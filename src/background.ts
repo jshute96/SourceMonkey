@@ -36,6 +36,10 @@ import {
 } from './github-auth.js';
 import { installDeepLinkRedirect } from './deep-link.js';
 import { installUserJsCapture } from './install-capture.js';
+import { checkParses } from './parse-check.js';
+import { buildParseCheckSource } from './injector.js';
+import type { ParseVerdict } from './parse-check-protocol.js';
+import type { ParseChecker } from './script-store.js';
 import {
   ensureLogIdsLoaded,
   getScriptLogLabel,
@@ -87,6 +91,7 @@ import {
   type AddSourceResult,
   type StoredScript,
   type StoredSource,
+  setParseChecker,
 } from './script-store.js';
 import {
   appendScriptLog,
@@ -206,6 +211,13 @@ interface SourceMonkeyApi {
   // failures and wrapper errors are surfaced through the log pane.
   getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
   appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
+  // Compile-only parse check (src/parse-check.ts). Null means the
+  // check could not run, which callers must not read as failure.
+  checkParses: (sources: string[]) => Promise<ParseVerdict[] | null>;
+  // Turn the install-time parse check off, so a test can drive a
+  // script that fails to parse all the way to injection and exercise
+  // the run-time sentinel backstop. Reset by `resetAllState`.
+  setParseCheckEnabled: (enabled: boolean) => void;
   clearScriptLog: (scriptId: string) => Promise<void>;
   // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
   // script in a dupe group gets which `#N` is decided by UUID sort, so
@@ -274,6 +286,10 @@ const api: SourceMonkeyApi = {
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
+  checkParses,
+  setParseCheckEnabled: (enabled: boolean) => {
+    setParseChecker(enabled ? compileParseChecker : null);
+  },
   getActionContextMenu: async (tabId: number) => {
     const cmdsByScript = getMenuCommandsForTab(tabId);
     const out: { scriptId: string; commands: MenuCommandEntry[] }[] = [];
@@ -321,6 +337,9 @@ const api: SourceMonkeyApi = {
   },
   replayScriptLogsAtBoot,
   resetAllState: async () => {
+    // Restore the parse check in case a prior test disabled it to
+    // exercise the run-time backstop.
+    setParseChecker(compileParseChecker);
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -2069,6 +2088,17 @@ async function recordScriptReport(
 // fallback in getScriptLogLabel makes this best-effort, not required
 // for correctness.
 installScriptLogIdListener();
+// Give the store a way to compile-check a script's source before
+// storing it. Installed here rather than imported by the store, so the
+// store keeps no runtime dependency on the injector — see
+// `setParseChecker` in script-store.ts.
+const compileParseChecker: ParseChecker = async (script) => {
+  const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
+  const verdicts = await checkParses([source]);
+  return verdicts ? verdicts[0] : null;
+};
+setParseChecker(compileParseChecker);
+
 void ensureLogIdsLoaded();
 installStorageListener();
 installStaleScriptListener();

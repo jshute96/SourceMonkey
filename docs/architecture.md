@@ -206,6 +206,10 @@ details live in the topic-specific docs linked below.
   arrangements of a script's `js[]` entries (concat vs separate
   entries vs eval-per-require); why we ship the concatenated user
   program, and what the alternatives bought or would cost.
+- [parse-check.md](parse-check.md) — compiling a script's source
+  without running it, at install time, so a syntax error shows up next
+  to the script instead of at injection time; why it needs a sandboxed
+  page, and why it fails open.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display

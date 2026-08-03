@@ -68,10 +68,38 @@ What is still unmapped:
   declares `GM`, `GM_info`, every granted `GM_*`, `unsafeWindow` and
   `__sm*` in the same scope as the user program, so a library doing
   `const unsafeWindow = window.wrappedJSObject || window;` — a real
-  idiom — is a parse failure. The sentinel entry reports it, but
-  renaming our internals (or moving the preamble reads onto `__smE`,
-  which would also fix the `self` / `window` TDZ case) would avoid
-  it.
+  idiom — is a parse failure. The install-time parse check now catches
+  it and names the script (see [docs/parse-check.md](docs/parse-check.md)),
+  so it fails visibly rather than silently — but the script still can't
+  run. Renaming our internals (or moving the preamble reads onto
+  `__smE`, which would also fix the `self` / `window` TDZ case) would
+  make it work instead.
+
+## Parse check — follow-ups
+
+The compile-only check is in (see
+[docs/parse-check.md](docs/parse-check.md)). What it doesn't do yet:
+
+- **Say WHICH file failed.** Today the message is V8's, against the
+  whole composed program: "the script's source has a syntax error".
+  Compiling the pieces separately would name the `@require` (or the
+  body) at fault, and the case where every piece parses alone but the
+  join doesn't — two libraries declaring the same `const` — is
+  distinguishable from both.
+- **Report a line and column.** V8 gives neither for a `new Function`
+  SyntaxError. A `<script>` element whose text is
+  `window.__probe = function(){ …src… }` would fire `window.onerror`
+  with a real `lineno`/`colno` while still never running the body;
+  worth measuring against the segment layout, which could then map it
+  to the original file and line.
+- **Check from extension pages.** The viewer's Install button calls
+  `addSource` in the page context, which installs no checker, so that
+  path is checked only on the next service-worker refresh. Either
+  route page-side installs through the SW, or confirm an extension
+  page can drive an offscreen document.
+- **Batch per refresh pass.** The check is one round trip per changed
+  script. `parseCheckedHash` keeps unchanged content free, so this only
+  bites on a first-add of many scripts at once.
 
 ## Cross-manager coverage
 
