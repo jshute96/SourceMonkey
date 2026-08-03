@@ -95,6 +95,7 @@ import {
 } from './script-source-url.js';
 import { computeLogIds, type LogIdInput } from './script-log-id.js';
 import { scriptBasename, scriptDisplayName } from './script-display.js';
+import { logScriptEventIfAbsent } from './script-log.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -899,6 +900,17 @@ async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> 
       const msg = describeError(err);
       perScriptErrors.set(spec.id, msg);
       console.info(`[SourceMonkey] script ${spec.id} rejected: ${msg}`);
+      // A rejected registration means the script silently never runs —
+      // its row still reads OK because nothing about its *load* failed.
+      // The Log is the only place that can say so, so put it there.
+      //
+      // IfAbsent because a sync runs on every storage change: a spec
+      // Chrome keeps rejecting must not add a row each time.
+      logScriptEventIfAbsent(spec.id, {
+        level: 'error',
+        source: 'injector',
+        message: `Chrome rejected this script's registration: ${msg}`,
+      });
     }
   }
   return ok;

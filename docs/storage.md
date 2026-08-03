@@ -378,9 +378,10 @@ Every load path goes through the same pipeline:
   reconciliation and clears `scanError`.
 - **Logging**: because no script row is touched, the per-script
   outcome pass would report "no change" for rows that were never
-  checked. Instead every script under the source gets one warning
-  naming the scan failure, and one info entry when it clears — see
-  [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
+  checked. Instead the reason is fanned out to every script's Log at
+  info level (the badge for a source-level problem stays on the source
+  row), plus one entry when it clears — see
+  [script-log.md](script-log.md#source-level-failures).
 
 ### Entry points
 

@@ -168,10 +168,35 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(errors[0].message).toBe(script.errorMessage);
 
     // Refreshing an unchanged broken script must not stack up copies.
+    // This also pins the load-bearing invariant behind the whole
+    // design: the add path and the refresh path phrase the identical
+    // failure identically, so each recognises the other's row.
     await sm.syncNow();
     await sm.updateSource(source!.id, 'manual');
     await sm.updateSource(source!.id, 'manual');
     const afterRefreshes = await sm.getScriptLog(script.id);
     expect(afterRefreshes.filter((e) => e.level === 'error').length).toBe(1);
+    expect(afterRefreshes[0].source).toBe('add-source');
+  });
+
+  test('a cleared log gets its explanation back on the next refresh', async ({ sm }) => {
+    // Suppression must never be able to strand a red badge with an
+    // empty Log. Clearing is the sharpest version of that: the stored
+    // row is unchanged, so a naive "skip when unchanged" rule would
+    // stay silent forever.
+    server.setRoute('/broken.user.js', 'just some text, no metadata block\n');
+    const source = await sm.addSource(`${server.baseUrl}/broken.user.js`);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(script.status).toBe('invalid');
+
+    await sm.clearScriptLog(script.id);
+    expect((await sm.getScriptLog(script.id)).length).toBe(0);
+
+    await sm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+    const log = await sm.getScriptLog(script.id);
+    const errors = log.filter((e) => e.level === 'error');
+    expect(errors.length).toBe(1);
+    expect(errors[0].message).toBe(script.errorMessage);
   });
 });

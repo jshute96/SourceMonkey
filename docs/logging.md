@@ -197,6 +197,15 @@ once at SW startup and walks every stored script, emitting:
   bail. The sentinel auto-clears on Chrome shutdown (same lifecycle
   as the Log tab itself), so the next Chrome session always replays
   exactly once.
+- The sentinel is written **after** the walk finishes, not before.
+  MV3 can evict the worker mid-replay, and claiming it up front would
+  mark the session replayed while most scripts still had empty logs —
+  the exact state the replay exists to prevent. A torn-down pass just
+  runs again on the next wake-up, and every append is
+  `appendScriptLogIfAbsent`, so a redundant pass can't duplicate rows.
+- The key name (`sm:startup-logs-replayed-at`) predates the
+  load-state leg. Kept as-is: renaming it would make one session miss
+  its sentinel and replay twice, for no benefit.
 - Wired into `background.ts`'s top-level startup block — fires on
   every SW boot. On the cold-boot of a fresh Chrome session the
   sentinel is missing, so the replay runs; on SW restarts within the

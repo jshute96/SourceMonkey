@@ -189,6 +189,8 @@ const {
 } = await import('../../dist/script-updater.js');
 const {
   appendScriptLog,
+  clearScriptLog,
+  getMaxLogLevel,
   getScriptLog,
   _flushScriptLogQueueForTests,
 } = await import('../../dist/script-log.js');
@@ -435,13 +437,49 @@ test('emitScriptOutcomeLog: a recovered refresh logs an info entry', async () =>
 test('emitScriptOutcomeLog: recovery from invalid is logged even when the bytes are unchanged', async () => {
   // A dependency-fetch failure can clear without the script body
   // changing, so loadedAt doesn't move and there is no "loaded new
-  // content" row to explain the badge going back to OK.
+  // content" row to explain the badge going back to OK. The recovery
+  // IS the outcome here, so no contradictory "no change" follows it.
   const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'require fetch failed' };
   const log = await emitAll([[OK_ROW, bad], [bad, OK_ROW]]);
-  assert.equal(log.length, 3);
+  assert.equal(log.length, 2);
   assert.equal(log[1].level, 'info');
   assert.match(log[1].message, /loads cleanly again/);
-  assert.equal(log[2].message, 'no change');
+});
+
+test('emitScriptOutcomeLog: a broken row with no prior still logs', async () => {
+  // A file that first appears already broken during a source refresh
+  // has no prior row to diff against.
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'missing @name' };
+  const log = await emitAll([[undefined, bad]]);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].message, 'missing @name');
+});
+
+test('emitScriptOutcomeLog: a row that vanished mid-refresh is reported', async () => {
+  const log = await emitAll([[OK_ROW, null]]);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].level, 'warning');
+  assert.equal(log[0].message, 'row vanished during refresh');
+});
+
+test('emitScriptOutcomeLog: an unchanged failure is restated when the log lost it', async () => {
+  // Suppression must not be able to permanently strand a badge with no
+  // explanation. LOG_CAP rotation and the Log tab's Clear button both
+  // remove the entry while the stored row is unchanged, so the
+  // unchanged-state path re-appends rather than skipping outright.
+  const id = 'oc-cleared';
+  sessionStore.clear();
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  emitScriptOutcomeLog(id, OK_ROW, bad, 'manual');
+  await _flushScriptLogQueueForTests(id);
+  assert.equal((await getScriptLog(id)).length, 1);
+
+  await clearScriptLog(id);
+  emitScriptOutcomeLog(id, bad, bad, 'manual');
+  await _flushScriptLogQueueForTests(id);
+  const after = await getScriptLog(id);
+  assert.equal(after.length, 1, 'the reason must come back after the log lost it');
+  assert.equal(after[0].message, 'no metadata block');
 });
 
 test('emitScriptOutcomeLog: fail → recover → fail again tells the whole story', async () => {
@@ -467,10 +505,13 @@ const SOURCE_OK = { id: 's', path: '/tmp/x', lastRefreshedAt: 0, scriptIds: ['a'
 
 async function summarize(priorSource, priorScripts, next, mode = 'manual') {
   sessionStore.clear();
+  const prior = priorSource
+    ? { source: priorSource, scripts: new Map(priorScripts.map((s) => [s.id, s])) }
+    : undefined;
   const realLog = console.log;
   console.log = () => {};
   try {
-    summarizeSourceOutcome('label', priorSource, new Map(priorScripts.map((s) => [s.id, s])), next, mode);
+    summarizeSourceOutcome('label', prior, next, mode);
   } finally {
     console.log = realLog;
   }
@@ -486,15 +527,36 @@ test('summarizeSourceOutcome: a scan failure lands in every script log, not "no 
   const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
   const [log] = await summarize(SOURCE_OK, [script], failed);
   assert.equal(log.length, 1);
-  assert.equal(log[0].level, 'warning');
   assert.match(log[0].message, /source scan failed: ENOENT/);
+});
+
+test('summarizeSourceOutcome: a scan failure stays at info so it cannot badge every script', async () => {
+  // The `loglevel:` sentinel is monotonic within a session, so a
+  // warning here would leave every script under the source reading
+  // WARNING for the rest of the session after one transient blip. The
+  // source row is where a source-level problem gets its badge.
+  const script = { ...OK_ROW, id: 'sa-level' };
+  const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
+  const [log] = await summarize(SOURCE_OK, [script], failed);
+  assert.equal(log[0].level, 'info');
+  assert.equal(await getMaxLogLevel('sa-level'), 'info');
 });
 
 test('summarizeSourceOutcome: a source that stays unreadable does not re-log', async () => {
   const script = { ...OK_ROW, id: 'sb' };
   const brokenSource = { ...SOURCE_OK, scanError: 'ENOENT' };
-  const [log] = await summarize(brokenSource, [script], { source: brokenSource, scripts: [script] });
-  assert.equal(log.length, 0);
+  const [first] = await summarize(SOURCE_OK, [script], { source: brokenSource, scripts: [script] });
+  assert.equal(first.length, 1);
+  // Same failure again, this time with the prior row already carrying
+  // it — and the entry is still in the log, so nothing is appended.
+  summarizeSourceOutcome(
+    'label',
+    { source: brokenSource, scripts: new Map([[script.id, script]]) },
+    { source: brokenSource, scripts: [script] },
+    'manual',
+  );
+  await _flushScriptLogQueueForTests(script.id);
+  assert.equal((await getScriptLog(script.id)).length, 1);
 });
 
 test('summarizeSourceOutcome: a readable-again source logs the recovery', async () => {

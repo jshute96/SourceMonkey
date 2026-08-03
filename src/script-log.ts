@@ -106,17 +106,22 @@ export async function appendScriptLog(
 // as `appendScriptLog`, so the read and the write are atomic with
 // respect to other appends for this script.
 //
+// This is how a *restatement* is written: "this is still true", said by
+// a caller that can't know whether someone already said it. Callers
+// that know a state genuinely CHANGED use `appendScriptLog`, so a
+// fail → recover → same-fail-again sequence still records the second
+// failure.
+//
 // Deliberately matches on the message alone, ignoring `source` and
 // `level`: the Log tab is a human-readable narrative, and two
 // subsystems stating the identical sentence reads as a duplicate no
 // matter which one got there first. That's exactly what the callers
-// want — the boot replay and the add-source path both re-state facts a
-// refresh may already have logged.
+// want — the boot replay, the add-source path, and the unchanged-state
+// refresh outcome all re-state facts another path may already have
+// logged.
 //
-// Only for low-frequency paths (boot replay, initial add). The refresh
-// hot path suppresses repeats from the *stored script state* instead
-// (see `emitScriptOutcomeLog`), which is cheaper and survives the
-// session-storage wipe that clears this log.
+// Costs the same as a plain append (one `get`, one `set`); the only
+// extra work is an in-memory scan of at most LOG_CAP entries.
 export async function appendScriptLogIfAbsent(
   scriptId: string,
   input: AppendLogInput,
@@ -134,6 +139,10 @@ async function writeEntry(
   const mk = levelKey(scriptId);
   const got = await chrome.storage.session.get([lk, mk]);
   const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
+  // Skipping also skips the `loglevel:` bump — deliberate, since the
+  // entry we're matching is already in the log and already raised it.
+  // (Only true while every restatement of a message carries the same
+  // level as the original, which `loadStateLogEntry` guarantees.)
   if (skipIfMessagePresent && prior.some((e) => e.message === input.message)) return;
   const priorLevel = got[mk] as LogLevel | undefined;
   const entry: LogEntry = {
@@ -203,6 +212,13 @@ export async function getAllMaxLogLevels(): Promise<Map<string, LogLevel>> {
 // path that's emitting the event.
 export function logScriptEvent(scriptId: string, input: AppendLogInput): void {
   appendScriptLog(scriptId, input).catch(() => { /* best-effort */ });
+}
+
+// Fire-and-forget `appendScriptLogIfAbsent`. Use this for a
+// restatement — "this is still true" — where the caller can't tell
+// whether the same line is already in the log.
+export function logScriptEventIfAbsent(scriptId: string, input: AppendLogInput): void {
+  appendScriptLogIfAbsent(scriptId, input).catch(() => { /* best-effort */ });
 }
 
 // Test/debug hook so unit tests can drain in-flight appends before

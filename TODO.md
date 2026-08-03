@@ -464,13 +464,31 @@ Two rough edges are left:
   WARNING/ERROR keeps that badge for the rest of the Chrome session
   even after the Log's newest entry says it recovered. Now that
   recoveries are logged, the badge is the only thing still lying.
-  Recomputing the max on every append is too expensive; a cheaper
-  option is to let a recovery entry reset the sentinel explicitly.
-- **`update check started` is appended on every check**, including
-  opportunistic ones on every navigation. That's the remaining source
-  of poll noise in the 500-entry cap — the failure rows themselves are
-  now suppressed on repeat, but these aren't. Either drop it for
-  opportunistic mode or fold it into the outcome row.
+  - It is also why source-level fan-out rows are logged at `info`:
+    anything higher would badge every script under a source from one
+    transient listing failure.
+  - Recomputing the max on every append is too expensive. A recovery
+    entry could reset it — but only if the reset can tell "the failure
+    this supersedes" from an unrelated `sm:error` still in the log.
+- **Poll noise still fills the cap.** Two rows are appended per
+  matched script per tab reload, neither suppressed: `update check
+  started` (every check, both modes) and `no change` (manual mode —
+  and the reload fast-path runs in manual mode). Either drop them for
+  non-user-initiated checks or fold them into the outcome row.
+- **`refreshAllSources` uses `Promise.all`**, so one source throwing
+  rejects the whole batch — contradicting its own docstring, which
+  claims a failed source doesn't take the rest down. `allSettled`
+  would make the doc true; the updater currently compensates by
+  fanning the throw out to every script.
+- **Vanished manifest entries leak their log rows.** `refreshSource`
+  drops the `script:` key but not the `log:` / `loglevel:` session
+  rows; only `removeScript` cleans both up.
+- **The add-to-existing-container path emits no recovery rows.** It
+  refreshes every sibling but only restates load failures, so a
+  sibling that recovered during that refresh never logs it (and the
+  next refresh compares against the already-healthy row). Sharing
+  `summarizeSourceOutcome` would fix it, but that lives in
+  `script-updater.ts`, which imports `script-store.ts`.
 
 ## Testing and example TOODs
 

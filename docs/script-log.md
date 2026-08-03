@@ -108,13 +108,14 @@ Why those levels:
   transition. Error matches what the badge already claims.
 - `refreshError` means the script **is** running, from its
   last-known-good copy; only the update failed. Warning, not error.
-- The level choice can't double-count against the badge:
-  `effectiveScriptStatus` returns INVALID / MISSING / REFRESH FAILED
-  before it ever consults the max log level (see
-  [storage.md](storage.md#displayed-status-ui-level)). It only matters
-  after recovery, and there warning is the right residue — the
-  `loglevel:` sentinel is monotonic within a session, so an error
-  would leave a recovered row reading ERROR until Chrome restarts.
+- The level choice can't double-count against the badge while the
+  failure lasts: `effectiveScriptStatus` returns INVALID / MISSING /
+  REFRESH FAILED before it ever consults the max log level (see
+  [storage.md](storage.md#displayed-status-ui-level)). It only shows
+  through *after* recovery, where the `loglevel:` sentinel's
+  monotonicity leaves a residual badge. Warning is not right there
+  either — the honest answer is OK — but it is the least wrong option
+  available until the sentinel stops being monotonic (see `TODO.md`).
 
 Every caller shares that mapping, so their messages are byte-identical
 and the suppression below actually works:
@@ -125,16 +126,36 @@ and the suppression below actually works:
 - `replayScriptLogsAtBoot` (`script-updater.ts`) — restates whatever
   is still broken after a Chrome restart wiped the log.
 
-Source-level failures fan out to the scripts underneath them:
+Beyond the load pipeline:
+
+- **Rejected registration** (`registerWithFallback` in
+  `src/injector.ts`, source `injector`) — Chrome refused the script's
+  spec, so it silently never runs even though its row reads OK.
+  Error level; the Log is the only surface that says so.
+
+### Source-level failures
+
+`logSourceEventToScripts` fans these out to every script under the
+source. They are always **info**, never warning/error:
+
+- The badge for a source-level problem belongs on the source row,
+  which already renders `scanError`. These entries exist so a user
+  reading one script's Log can see why it wasn't checked.
+- The `loglevel:` sentinel is monotonic within a session, so anything
+  higher would leave every script under the source badged WARNING for
+  the rest of the session after one transient listing failure.
+
+What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — one warning per script, `source scan failed: <reason> — still
-  running the cached copy`. `refreshSource` deliberately leaves every
-  script row untouched in this case, so without this the per-script
-  outcome pass would report `no change` for rows that were never
-  actually checked.
-- **A throw out of `refreshSource`** — one warning per script,
-  `source refresh threw: <reason>`.
+  URL) — `source scan failed: <reason> — still running the cached
+  copy`. `refreshSource` deliberately leaves every script row
+  untouched in this case, so without this the per-script outcome pass
+  would report `no change` for rows that were never actually checked.
+- **A throw out of `refreshSource` / `refreshAllSources`** —
+  `source refresh threw: <reason>`. Both entry points use the same
+  helper so a Refresh All that dies on one source still explains
+  itself in every affected script's Log.
 
 ## Repeat suppression
 
@@ -143,18 +164,25 @@ the reload fast-path re-checks each matched script on every tab
 reload. Unsuppressed, the same line would fill the 500-entry cap and
 evict everything that actually explains something.
 
-- **Refresh paths** compare the entry they're about to write against
-  the one the row's **prior stored state** would have produced. Same
-  message → nothing appended. Different reason → the new reason is
-  logged.
-- The comparison is against `chrome.storage.local` state, not against
-  the log contents. A script that has been broken for days must not
-  re-log on every SW restart, and the prior row is already in hand —
-  no extra read.
-- **Scan errors** use the same idea one level up — the prior source
-  row's `scanError`.
-- **Restate paths** (boot replay, initial add) can't compare against a
-  prior state, so they use `appendScriptLogIfAbsent` instead.
+The rule turns on what the caller **knows**, not on volume:
+
+- **State changed** since the prior stored row → this is news.
+  `appendScriptLog`, unconditionally. That's what makes fail → recover
+  → same-failure-again record the second failure.
+- **State unchanged**, or the caller has no prior to compare against
+  (boot replay, initial add, source-level fan-out) → this is a
+  restatement. `appendScriptLogIfAbsent`, which appends only if that
+  exact message isn't already in the log.
+
+Why restate rather than skip outright:
+
+- Skipping loses the entry permanently once it leaves the log, and
+  two things remove it while the stored row is unchanged — LOG_CAP
+  rotation, and the Log tab's **Clear log** button. Either would strand
+  a red badge with no explanation until the next Chrome session.
+- It costs nothing extra: `appendScriptLogIfAbsent` does the same one
+  `get` + one `set` a plain append does. The only added work is an
+  in-memory scan of at most `LOG_CAP` entries.
 
 ## Recovery is logged too
 
@@ -180,8 +208,15 @@ turns amber on its own must come with a matching Log line; the
 suppression above, not the trigger mode, is what keeps the volume sane.
 
 Trigger mode still gates the **non**-events: `no change` is
-manual-only, so background polling adds nothing to a healthy script's
-log.
+manual-only.
+
+Caveat on what "manual" means: it is "not rate-limited as a refresh",
+not "the user clicked". The
+[reload fast-path](injection.md#reload-fast-path) runs in `manual`
+mode for every matched script on every tab reload, so a healthy script
+*does* accumulate `no change` rows from ordinary browsing. That, plus
+the unconditional `update check started` row, is the remaining source
+of poll noise in the cap — tracked in `TODO.md`.
 
 ## What gets logged today
 
@@ -205,17 +240,27 @@ log.
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
   - `source scan failed: <reason> — still running the cached copy`
-    (warning) and `source refresh threw: <reason>` (warning) — a
-    source-level failure, fanned out to every script under it.
+    (info) and `source refresh threw: <reason>` (info) — a
+    source-level failure, fanned out to every script under it. See
+    [Source-level failures](#source-level-failures) for why info.
+  - `update check threw: <reason>` (error) — `refreshScript` itself
+    threw (a storage failure, not a load failure).
   - Recovery entries (info) — see
     [Recovery is logged too](#recovery-is-logged-too).
-  - All of the failure/recovery rows above are gated by
-    [repeat suppression](#repeat-suppression): a state that hasn't
-    changed since the last check appends nothing.
+  - All of the failure/recovery rows above go through
+    [repeat suppression](#repeat-suppression), so an unchanged state
+    adds nothing as long as its line is still in the log.
   - `row vanished during refresh` (warning) — the script row was
-    deleted while its refresh was in flight.
+    deleted while its refresh was in flight. Not suppressed; it can
+    only happen once per row.
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
+- **Injector** (`registerWithFallback` in `src/injector.ts`, source
+  `injector`):
+  - `Chrome rejected this script's registration: <reason>` (error) —
+    the spec was refused, so the script silently never runs. Its row
+    still reads OK because nothing about the *load* failed, which
+    makes the Log the only place this surfaces.
 - **Add source** (`emitInitialLoadLogIfBroken` in
   `src/script-store.ts`, source `add-source`):
   - The same load-failure entry, for a script that lands broken on its
@@ -282,9 +327,11 @@ log.
   patch global console in the injected world; the user can open
   DevTools on the host page if they want that.
 - Per-tab badge transitions. Those are noisy and already visible.
-- A failure that is **unchanged** since the last check — see
+- A failure that is **unchanged** since the last check *and whose line
+  is still in the log* — see
   [Repeat suppression](#repeat-suppression). The row keeps its badge;
-  only the duplicate log line is dropped.
+  only the duplicate line is dropped. If the line is gone (cleared,
+  or rotated out), the next check puts it back.
 - `no change` on opportunistic checks (manual-only, as above).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.

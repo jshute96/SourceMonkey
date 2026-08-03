@@ -964,10 +964,10 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
   // bypasses the updater, so anything that lands already broken would
   // otherwise have an empty Log tab. Emit once per non-OK script here
   // so the user can always click the row's badge and read what went
-  // wrong. Awaited so the loglevel
-  // sentinel write lands before the caller's `getAllMaxLogLevels`
-  // read — otherwise the first paint of the row would briefly show
-  // OK and only flip on the storage-change listener.
+  // wrong. Awaited so the loglevel sentinel write lands before the
+  // caller's `getAllMaxLogLevels` read — otherwise the first paint of
+  // the row would briefly show OK and only flip on the storage-change
+  // listener.
   if (refreshed) {
     await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
   }

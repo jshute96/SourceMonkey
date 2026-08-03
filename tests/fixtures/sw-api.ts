@@ -29,6 +29,14 @@ interface SmApi {
   resetAllState(): Promise<void>;
   syncNow(): Promise<{ registered: { id: string }[] }>;
   replayScriptLogsAtBoot(): Promise<void>;
+  getScriptLog(scriptId: string): Promise<{
+    timestamp: number;
+    level: 'info' | 'warning' | 'error';
+    source: string;
+    tabId?: number;
+    message: string;
+  }[]>;
+  clearScriptLog(scriptId: string): Promise<void>;
   debugMatchIndex(url: string): Promise<{
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledSources: string[] };

@@ -45,6 +45,7 @@ globalThis.chrome = {
 const {
   LOG_CAP,
   appendScriptLog,
+  appendScriptLogIfAbsent,
   clearScriptLog,
   getScriptLog,
   getMaxLogLevel,
@@ -227,4 +228,45 @@ test('appendScriptLog defaults timestamp to Date.now()', async () => {
   const after = Date.now();
   const entries = await getScriptLog('s1');
   assert.ok(entries[0].timestamp >= before && entries[0].timestamp <= after);
+});
+
+// ---------- appendScriptLogIfAbsent ----------
+
+test('appendScriptLogIfAbsent skips a message already in the log', async () => {
+  await appendScriptLogIfAbsent('s1', { level: 'error', source: 'a', message: 'boom' });
+  await appendScriptLogIfAbsent('s1', { level: 'error', source: 'a', message: 'boom' });
+  assert.equal((await getScriptLog('s1')).length, 1);
+});
+
+test('appendScriptLogIfAbsent matches on message alone, ignoring source and level', async () => {
+  // Two subsystems stating the identical sentence reads as a duplicate
+  // no matter which one got there first — that's what lets the boot
+  // replay recognise a row a refresh already wrote.
+  await appendScriptLog('s1', { level: 'error', source: 'refresh-manual', message: 'same' });
+  await appendScriptLogIfAbsent('s1', { level: 'info', source: 'boot', message: 'same' });
+  const log = await getScriptLog('s1');
+  assert.equal(log.length, 1);
+  assert.equal(log[0].source, 'refresh-manual');
+});
+
+test('appendScriptLogIfAbsent still appends a different message', async () => {
+  await appendScriptLogIfAbsent('s1', { level: 'error', source: 'a', message: 'one' });
+  await appendScriptLogIfAbsent('s1', { level: 'error', source: 'a', message: 'two' });
+  assert.equal((await getScriptLog('s1')).length, 2);
+});
+
+test('appendScriptLogIfAbsent re-appends once LOG_CAP rotation has evicted the entry', async () => {
+  // This is what stops the refresh path's repeat suppression from
+  // permanently stranding a badge with no explanation: the entry that
+  // explained it can rotate out, and the next check puts it back.
+  await appendScriptLogIfAbsent('s1', { level: 'error', source: 'a', message: 'the reason' });
+  for (let i = 0; i < LOG_CAP; i++) {
+    await appendScriptLog('s1', { level: 'info', source: 'noise', message: `n${i}` });
+  }
+  const rotated = await getScriptLog('s1');
+  assert.equal(rotated.some((e) => e.message === 'the reason'), false);
+
+  await appendScriptLogIfAbsent('s1', { level: 'error', source: 'a', message: 'the reason' });
+  const after = await getScriptLog('s1');
+  assert.equal(after[after.length - 1].message, 'the reason');
 });
