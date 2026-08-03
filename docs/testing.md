@@ -286,6 +286,13 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-notification.spec.ts` — `GM_notification` resolves
   with a notification id; details and positional call shapes; the
   GM4 alias returns a Promise; empty `text` rejects.
+- `tests/e2e/gm-url-change.spec.ts` — `@grant window.onurlchange`:
+  page-initiated `pushState` / `replaceState` / hash / back all
+  deliver a `urlchange`; the initial load and a same-URL
+  `replaceState` don't; an ungranted script sees `undefined` and no
+  events; the assignment form and `removeEventListener` work.
+  History is driven from `page.evaluate` (MAIN world) so the calls
+  really are the page's, not the isolated world's.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

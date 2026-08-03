@@ -228,14 +228,15 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
   with per-script `@match` validation. VM's `checkCookieOpts` is
   the reference shape.
-- `window.onurlchange` — SPA navigation hook. **Priority**: SPA
-  scripts work badly without it. Could be page-side via
-  `MutationObserver` on `location.href` + `pushState` / `popstate`
-  listeners.
 - `GM_download` — TM/VM download-to-disk helper. Needs `BLOBS` added
   to the existing offscreen document's `reasons` (see the clipboard
   entry — there is only one such document).
-- `window.close` / `window.focus` — TM-only surface.
+- `window.close` / `window.focus` — TM-only surface. TM's versions
+  bypass the browser restrictions that make the page's own
+  `window.close()` / `.focus()` no-ops. Both are surprising
+  capabilities to hand a script; deferred until something real wants
+  them. See
+  [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md#non-gm-grants).
 
 ### GM_* implementation follow-ups
 
@@ -259,6 +260,20 @@ Adding any of these is a catalog entry + a body — nothing structural.
   would need a MAIN-world helper + postMessage protocol, or a
   per-call DOM-event ferry à la VM's `MouseEvent.relatedTarget`
   trick.
+- **`window.onurlchange` grant scope is per-document.** Once any
+  script on a page grants it, the `urlchange` surface exists on the
+  shared USER_SCRIPT-world `window`, so a sibling script that did
+  NOT grant it can also feature-detect and subscribe. TM sandboxes
+  each script's `window` and gets exact per-script gating. Same
+  shared-realm root cause as the storage-spoofing entry below; a
+  real fix needs per-script worlds.
+- **`window.onurlchange` in MAIN world.** `@inject-into page` +
+  `@grant window.onurlchange` gets nothing, since MAIN-world scripts
+  get no bindings at all. Folded into the general "GM_* in MAIN
+  world" item in
+  [docs/GM-API-strategy.md](docs/GM-API-strategy.md#things-to-revisit-later),
+  but note this one is harder: installing the event surface in MAIN
+  means patching the *page's* `window.addEventListener`.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
 - **Page-side TTL for XHR active requests.** Currently 5 min. Fine
@@ -307,8 +322,13 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `Error`, `Object.keys`, `Object.create`, `Object.prototype.
   hasOwnProperty`, `document.createElement`, `Node.appendChild`,
   `Element.setAttribute`, `chrome.runtime.sendMessage`,
-  `navigator.clipboard.writeText`, `console.log`. New subsystems
-  should extend the capture set if they reach for new builtins.
+  `navigator.clipboard.writeText`, `console.log`,
+  `Object.defineProperty`. The `window.onurlchange` surface also
+  captures the world's own `window.addEventListener` /
+  `removeEventListener`, but deliberately at install time rather than
+  init time so a sibling userscript's legitimate wrapper stays in the
+  chain. New subsystems should extend the capture set if they reach
+  for new builtins.
 - **`GM_notification` SW-restart survival.** Click / done callback
   mappings are in-memory; an SW restart between create and event
   drops them. Open notifications keep showing but their events
@@ -584,7 +604,8 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 ## Missing script functionality
 
-- @grant window.onurlchange
+- (nothing outstanding — `@grant window.onurlchange` shipped; see the
+  `GM_*` deferred-surface section above for what's left)
 
 ## Per-script log follow-ups
 

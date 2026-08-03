@@ -153,6 +153,7 @@ import {
   unregisterMenuCommand,
   type MenuCommandEntry,
 } from './gm-menu.js';
+import { installUrlChangeWatch } from './gm-url-change.js';
 import {
   ACTION_MENU_MORE_LABEL,
   planActionMenu,
@@ -965,6 +966,11 @@ function installNavigationListeners(): void {
     if (d.frameId !== 0) return;
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
+  // `@grant window.onurlchange` feeds off the same-document navigation
+  // events; it registers its own (all-frame) listeners because a
+  // userscript inside an iframe wants its own frame's navigations,
+  // which the main-frame filter above drops. See src/gm-url-change.ts.
+  installUrlChangeWatch();
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {

@@ -34,6 +34,19 @@ this directory on purpose:
 `tests/e2e/bad-scripts.spec.ts` covers them end-to-end (expected
 status per file + byte-for-byte viewer round-trip).
 
+### Page-wired directories
+
+`gm-urlchange/` inverts the usual split: the page wires its own
+buttons in an inline `<script>` and the userscript only observes.
+
+- That's the whole point of the API under test — `urlchange` reports
+  navigations the **page** performs, which an isolated-world script
+  cannot cause or intercept on its own.
+- Its `@match` patterns carry a trailing `*`
+  (`.../gm-urlchange.html*`) because the demo changes the query
+  string and fragment; without it a reload at the pushed URL would no
+  longer match.
+
 ### Multi-script directories
 
 Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
@@ -117,6 +130,7 @@ events.
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
+| `gm-urlchange/`            | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |

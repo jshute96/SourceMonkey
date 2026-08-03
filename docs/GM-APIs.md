@@ -34,6 +34,10 @@ SourceMonkey actually does today.
   registration pipeline. `buildGmBindingsForScript` produces the
   per-script source; `buildGmRuntimeSpec` returns the runtime
   registration alongside `buildBridgeSpec`.
+- **`src/gm-url-change.ts`** — SW-side driver for
+  `@grant window.onurlchange`. Forwards
+  `chrome.webNavigation.onHistoryStateUpdated` to the frame that
+  changed as an `sm:url-change` message.
 
 ## Bindings layout in the wrapper
 
@@ -95,7 +99,8 @@ Scope notes:
   for every script regardless of `@grant`. It's a baked literal with
   no runtime dependency, so it works in MAIN with no `__SM_GM__`
   needed. Matches TM/VM (both expose GM_info implicitly).
-- The rest of the GM_* surface is emitted ONLY in `USER_SCRIPT` world.
+- The rest of the GM_* surface — including the `window.onurlchange`
+  event surface — is emitted ONLY in `USER_SCRIPT` world.
   Scripts with an explicit `@inject-into page` or otherwise running
   in MAIN don't get the non-info bindings — they'd be unable to reach
   `__SM_GM__` (different world) or `chrome.runtime` (undefined in
@@ -666,6 +671,161 @@ Returns `undefined` (matches TM/VM signature).
   the same `sm:gm-menu-fire` message the real click handler does.
   Returns `{ok:false}` for stale or unknown ids.
 
+## `window.onurlchange`
+
+`@grant window.onurlchange` is the one grant whose payload is an
+**event surface**, not a callable. See
+[supported-GM-APIs.md](supported-GM-APIs.md#non-gm-grants) for the
+user-facing contract.
+
+### What the grant emits
+
+- No `const` binding — `window.onurlchange` isn't a legal identifier.
+- The binding emitter appends one eager statement to `js`:
+  `window.__SM_GM__.urlchange.enable(scriptId)`.
+- It lives in `js` rather than `prelude` on purpose: both strings are
+  spliced into the same main-body wrap function (so the runtime is
+  equally guaranteed to be installed), but only `js` is also
+  prepended by `buildSwapEvalBody`, so a hot-swapped script keeps the
+  surface.
+- Installation is **lazy per document**: the surface only appears once
+  some script calls `enable`. An ungranted script must see
+  `window.onurlchange === undefined` so its feature test correctly
+  reports "unsupported".
+
+### Where the signal comes from
+
+USER_SCRIPT world does not share `window.history` with the page.
+Patching `history.pushState` there produces a function only
+isolated-world code ever calls; the page's own SPA router keeps
+calling the real one. So the signal comes from the service worker:
+
+| Navigation | `chrome.webNavigation` event |
+|---|---|
+| `pushState` / `replaceState` | `onHistoryStateUpdated` |
+| same-document back / forward | `onHistoryStateUpdated` |
+| fragment change (`location.hash = …`) | `onReferenceFragmentUpdated` |
+
+Both are forwarded to the exact `(tabId, frameId)` that changed as an
+`sm:url-change` message carrying the reported URL, which the page-side
+runtime replays verbatim to its listeners.
+
+**These are the same two events Tampermonkey uses.** Verified in TM
+5.5.0's `background.js`, which logs "webNavigation
+onReferenceFragmentUpdated or onHistoryStateUpdated not supported,
+onurlchange will not work!" when they're missing.
+
+Sourcing them identically is what buys us TM's firing rules without
+reverse-engineering them:
+
+- nothing on initial load;
+- nothing on a cross-document navigation;
+- one event per reported history update;
+- **no de-duplication** — a `replaceState` back to the current URL
+  fires under TM, and fires here.
+
+An earlier draft tapped page-side `popstate` / `hashchange` as a
+second source and de-duped on `location.href`. Dropped because it:
+
+- coalesced bursts of history updates into one event,
+- swallowed same-URL replaces, and
+- needed the de-dup only to stop the two sources double-firing.
+
+### Why not a MAIN-world history patch
+
+- It would put a SourceMonkey wrapper on `history.pushState` on every
+  page, visible to the page, un-patchable by us if the page replaces
+  it back, and usable by the page to forge navigations.
+- Chrome already reports exactly the missing case for free, under a
+  permission (`webNavigation`) the manifest already holds and
+  `background.ts` already subscribes to for tab status.
+
+### Why an internal listener table, not a real DOM event
+
+The obvious implementation — `window.dispatchEvent(new
+CustomEvent('urlchange', …))` — needs no patching and would even
+reach MAIN-world scripts. It's rejected because events dispatched at
+the shared `window` cross the world boundary:
+
+- the page could **observe** every urlchange we deliver, and
+- the page could **forge** one with an arbitrary `url`, feeding a
+  userscript a URL the document was never at.
+
+So the runtime keeps its own handler list and patches
+`window.addEventListener` / `removeEventListener` on the isolated
+world's `window`:
+
+- only the `urlchange` type is intercepted; every other type forwards
+  to the captured original,
+- the receiver is normalized so a detached
+  `var add = window.addEventListener` still works,
+- the originals are captured at install time, not runtime-init time,
+  so a sibling userscript's legitimate wrapper stays in the chain.
+
+TM lands in the same place from the other direction: it dispatches no
+real event either, so `unsafeWindow.addEventListener('urlchange', …)`
+and `document.addEventListener('urlchange', …)` are dead under TM too.
+
+### Payload and handler slot
+
+- Listeners receive a **null-prototype plain object whose only own
+  property is `url`** — matching TM byte for byte. Not an `Event`, no
+  `type`, no `oldURL`. (TM declined a request to add `oldURL` in
+  Tampermonkey#2601.)
+- Handlers are invoked with no `this`, as TM does.
+- `window.onurlchange = fn` registers into the **same** list as
+  `addEventListener`, because TM's setter literally calls its sandbox
+  `add`/`removeEventListener`. So dispatch order is true registration
+  order across both forms, `= null` unregisters, and re-assigning
+  swaps the handler.
+- Assigning a non-function stores the value (so the getter
+  round-trips) but registers nothing, and logs a `console.info`. TM
+  warns in the same situation.
+
+### Observable differences from Tampermonkey
+
+- **Grant enforcement is per-document, not per-script.** USER_SCRIPT
+  world is one realm per extension per document, so once any script on
+  the page grants the API, a sibling SourceMonkey script that did NOT
+  grant it can also see `window.onurlchange` and register listeners.
+  TM gives each script its own sandboxed `window` and gates the
+  background subscription per script, so its enforcement is exact.
+  Same shared-realm root cause as the cross-script storage caveat
+  above; a real fix needs per-script worlds.
+- **MAIN world is unsupported.** A script with an explicit
+  `@inject-into page` gets no `urlchange` surface, because MAIN-world
+  scripts get no GM bindings at all (see *World gating*) and because
+  installing the patch there would mutate the page's own `window`.
+  `@grant window.onurlchange` on its own puts the script in
+  USER_SCRIPT world, so this only bites the explicit combination.
+- **Latency.** Both managers round-trip through their background
+  page, so both are asynchronous rather than synchronous with the
+  `pushState` call. TM measures ~20–40 ms locally; we do one less hop
+  (no MAIN↔content relay) but a cold MV3 service worker can add to
+  either.
+- Everything else — which navigations fire, the absence of an
+  initial-load event, no de-duplication, frame scoping, the payload
+  shape — is matched deliberately.
+
+### Known limitations
+
+- Listener `options` are ignored for the `urlchange` type — no
+  `once`, no `capture`, no `signal`, and object listeners with a
+  `handleEvent` method aren't accepted (functions only). Whether TM
+  honors any of these is unverified.
+- A listener registered by script A is removable by script B if it
+  holds the same function reference — a consequence of the shared
+  table, and not reachable in practice.
+- Every same-document navigation in every tab costs one
+  `chrome.tabs.sendMessage`. It is deliberately **not** gated on
+  "some script here granted the API": that state would have to
+  survive SW restarts (userScripts registrations do; SW memory
+  doesn't) and would fail silently when it didn't. Frames with no
+  SourceMonkey runtime just reject the send, which we swallow.
+- If `chrome.webNavigation`'s same-document events are unavailable,
+  the feature is inert and the SW logs one `console.info` at startup
+  (TM logs the same).
+
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
@@ -701,4 +861,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
-- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu)
+- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `window.onurlchange` (SPA `urlchange` event fed by `chrome.webNavigation`'s same-document events, matching TM's own source)

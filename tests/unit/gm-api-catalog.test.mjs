@@ -148,3 +148,42 @@ test('GM_getResource* declare @resource requirement', () => {
     assert.ok(spec.requires.includes('resource'), `${n} should require @resource`);
   }
 });
+
+// ---- window.onurlchange (a non-GM_* grant) --------------------------
+
+test('window.onurlchange is in the catalog with the url-change subsystem', () => {
+  const spec = findApi('window.onurlchange');
+  assert.ok(spec, 'window.onurlchange should be in the catalog');
+  assert.equal(spec.name, 'window.onurlchange');
+  assert.equal(spec.subsystem, 'url-change');
+  // Not a callable and not a GM4 name — so no GM. alias.
+  assert.equal(spec.gmDotName, undefined);
+});
+
+test('window.onurlchange canonicalizes to itself and resolves as granted', () => {
+  assert.equal(canonicalizeGrant('window.onurlchange'), 'window.onurlchange');
+  assert.equal(canonicalizeGrant('  window.onurlchange  '), 'window.onurlchange');
+  const r = resolveGrants(['window.onurlchange']);
+  assert.equal(r.hasNone, false);
+  assert.deepEqual(r.unknown, []);
+  assert.deepEqual([...r.granted], ['window.onurlchange']);
+  assert.equal(isSupportedApi('window.onurlchange'), true);
+});
+
+test('window.onurlchange is dropped by @grant none like every other grant', () => {
+  const r = resolveGrants(['window.onurlchange', 'none']);
+  assert.equal(r.hasNone, true);
+  assert.equal(r.granted.size, 0);
+});
+
+test('the other TM window.* grants are deliberately NOT in the catalog', () => {
+  // See docs/supported-GM-APIs.md — `window.close` / `window.focus`
+  // are TM-only surface we haven't implemented, so they land in
+  // `unknown` and the script gets no binding for them.
+  for (const n of ['window.close', 'window.focus']) {
+    assert.equal(findApi(n), undefined, `${n} should not be in the catalog`);
+  }
+  const r = resolveGrants(['window.close', 'window.focus', 'window.onurlchange']);
+  assert.deepEqual([...r.granted], ['window.onurlchange']);
+  assert.deepEqual(r.unknown.sort(), ['window.close', 'window.focus']);
+});
