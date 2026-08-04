@@ -201,8 +201,8 @@ once at SW startup and walks every stored script, emitting:
   MV3 can evict the worker mid-replay, and claiming it up front would
   mark the session replayed while most scripts still had empty logs —
   the exact state the replay exists to prevent. A torn-down pass just
-  runs again on the next wake-up, and every append is
-  `appendScriptLogIfAbsent`, so a redundant pass can't duplicate rows.
+  runs again on the next wake-up, duplicating rows for the scripts the
+  first pass reached — rare, bounded, and cheaper than a de-dupe rule.
 - The key name (`sm:startup-logs-replayed-at`) predates the
   load-state leg. Kept as-is: renaming it would make one session miss
   its sentinel and replay twice, for no benefit.
@@ -212,14 +212,11 @@ once at SW startup and walks every stored script, emitting:
   same session the sentinel is set and the replay bails. (Top-level
   rather than `chrome.runtime.onStartup` because that event isn't
   guaranteed to land before the SW's own first wake-up.)
-- Also defensive against a cold-boot + concurrent-refresh race: replay
-  writes through `appendScriptLogIfAbsent`, which checks the existing
-  log inside the append queue, so a refresh path that got there first
-  won't get duplicated. The inverse ordering (replay first, refresh
-  second) is still possible for `parser` rows — the refresh path
-  appends those unconditionally, because "one row per content version"
-  is its contract. Bounded to one duplicate per affected script per
-  Chrome session, and only when the content changed on disk between
+- A cold-boot + concurrent-refresh race can duplicate a row in either
+  ordering: whichever path runs second states the fact again. Bounded
+  to one duplicate per affected script per Chrome session, and the
+  `source` column tells them apart (`extension-startup` vs a
+  `*-refresh`). Only reachable when the content changed on disk between
   shutdown and the user's first navigation after restart.
 
 See [script-log.md].

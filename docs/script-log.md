@@ -40,7 +40,7 @@ Notes on the storage shape:
 interface LogEntry {
   timestamp: number;       // epoch ms
   level: 'info' | 'warning' | 'error';
-  source: string;          // origin label, e.g. 'refresh-manual', 'wrapper'
+  source: string;          // origin label, e.g. 'manual-refresh', 'script-wrapper'
   tabId?: number;          // present when the event originated from injected code
   message: string;         // human-readable; multiline OK
 }
@@ -49,6 +49,50 @@ interface LogEntry {
 The viewer's table renders `tabId · source` together when `tabId` is
 present, and just `source` otherwise.
 
+### Source labels
+
+`source` is a free-form string, not a union — the set below is just
+what the code emits today. These are **read by users** in the Log
+tab's Source column, so each names the thing that produced the entry,
+not the internal that emitted it.
+
+Load pipeline (service-worker side, never carries a `tabId`):
+
+| Source | Emitted by | Means |
+| --- | --- | --- |
+| `manual-refresh` | `emitScriptOutcomeLog` | The user clicked Refresh / Refresh All. |
+| `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
+| `add-source` | `emitInitialLoadLogIfBroken` | Failed on its first load, when the source was added. |
+| `extension-startup` | `ensureLoadStateInLogTab` | Restated after a browser restart — see below. |
+| `parser` | `ensureStartupLogsInLogTab` | Parse-time diagnostics from `script.startupLogs`. |
+| `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
+
+Registration:
+
+| Source | Emitted by | Means |
+| --- | --- | --- |
+| `chrome-injector` | `registerWithFallback` | Chrome refused the script's spec, so it silently never runs. |
+
+Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
+
+| Source | Emitted by | Means |
+| --- | --- | --- |
+| `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
+| `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
+
+Two naming notes worth keeping:
+
+- **`extension-startup`, not `startup`.** Bare "startup" would read as
+  the *script's* startup, which is what `parser` already covers.
+- **`background-refresh`, not `refresh-opportunistic`.** Both refresh
+  labels are spelled out per mode rather than composed as
+  `refresh-${mode}`: "opportunistic" names our scheduling policy, not
+  anything the user did or would recognise.
+- **`version-probe` is not split by mode**, unlike the refresh labels.
+  It reports a transition — an upstream copy just moved ahead of us —
+  and whether a click or a navigation noticed that tells the user
+  nothing they would act on.
+
 ## API
 
 `src/script-log.ts` exports the public surface:
@@ -56,12 +100,6 @@ present, and just `source` otherwise.
 - `appendScriptLog(scriptId, input)` — async write. Promise resolves
   once the entry is persisted. Also bumps `loglevel:<scriptId>` when
   the new entry's level exceeds the stored max.
-- `appendScriptLogIfAbsent(scriptId, input)` — same, but skipped when
-  the log already carries an entry with that `message` (any source,
-  any level). The check runs inside the append queue, so it can't race
-  a concurrent write. For the low-frequency restate paths only (boot
-  replay, initial add) — see
-  [Repeat suppression](#repeat-suppression).
 - `logScriptEvent(scriptId, input)` — fire-and-forget convenience.
   Swallows errors because the log isn't load-bearing.
 - `getScriptLog(scriptId)` — async read.
@@ -117,8 +155,8 @@ Why those levels:
   either — the honest answer is OK — but it is the least wrong option
   available until the sentinel stops being monotonic (see `TODO.md`).
 
-Every caller shares that mapping, so their messages are byte-identical
-and the suppression below actually works:
+Every caller shares that mapping, so the same failure reads the same
+way whichever path reported it:
 
 - `emitScriptOutcomeLog` (`script-updater.ts`) — every refresh path.
 - `emitInitialLoadLogIfBroken` (`script-store.ts`) — the `addSource` /
@@ -129,9 +167,9 @@ and the suppression below actually works:
 Beyond the load pipeline:
 
 - **Rejected registration** (`registerWithFallback` in
-  `src/injector.ts`, source `injector`) — Chrome refused the script's
-  spec, so it silently never runs even though its row reads OK.
-  Error level; the Log is the only surface that says so.
+  `src/injector.ts`, source `chrome-injector`) — Chrome refused the
+  script's spec, so it silently never runs even though its row reads
+  OK. Error level; the Log is the only surface that says so.
 
 ### Source-level failures
 
@@ -151,44 +189,86 @@ What gets fanned out:
   URL) — `source scan failed: <reason> — still running the cached
   copy`. `refreshSource` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
-  would report `no change` for rows that were never actually checked.
+  would report no change for rows that were never actually checked.
 - **A throw out of `refreshSource` / `refreshAllSources`** —
   `source refresh threw: <reason>`. Both entry points use the same
   helper so a Refresh All that dies on one source still explains
   itself in every affected script's Log.
 
-## Repeat suppression
+## When the log stays quiet
 
-The hazard: a source whose server is down fails on *every* pass, and
-the reload fast-path re-checks each matched script on every tab
-reload. Unsuppressed, the same line would fill the 500-entry cap and
-evict everything that actually explains something.
+Every caller that observed something writes an entry. Nothing is
+dropped for repeating an earlier message — the Log tab is a transcript,
+and a line that vanishes because the same sentence appeared before
+stops being one.
 
-The rule turns on what the caller **knows**, not on volume:
+Two things stay quiet, and both are about **whether anything happened**:
 
-- **State changed** since the prior stored row → this is news.
-  `appendScriptLog`, unconditionally. That's what makes fail → recover
-  → same-failure-again record the second failure.
-- **State unchanged**, or the caller has no prior to compare against
-  (boot replay, initial add, source-level fan-out) → this is a
-  restatement. `appendScriptLogIfAbsent`, which appends only if that
-  exact message isn't already in the log.
+- **A no-op refresh on a valid script.** `checked for updates — no
+  change` is manual-only, so background polling doesn't announce that a
+  healthy script is still healthy.
+- **A re-sync that gets the same registration rejection.**
+  `syncRegistrations` re-runs on every script-storage change, so the
+  injector records the rejection each script was last logged for and
+  writes a row only on the transition. The record is dropped when the
+  script registers cleanly — including via a clean *batch* register,
+  which is how a fixed script comes back — so break → fix → break logs
+  twice.
+  - It lives in `chrome.storage.session` (`injector-logged-rejections`)
+    rather than in a module-scope Map, so it outlives the service
+    worker. MV3 evicts the SW freely and `syncRegistrations` runs again
+    on every wake-up; an in-memory guard would re-log once per SW
+    lifetime. Session storage gives it exactly the lifetime of the log
+    it guards.
 
-Why restate rather than skip outright:
+Everything else emits, including:
 
-- Skipping loses the entry permanently once it leaves the log, and
-  two things remove it while the stored row is unchanged — LOG_CAP
-  rotation, and the Log tab's **Clear log** button. Either would strand
-  a red badge with no explanation until the next Chrome session.
-- It costs nothing extra: `appendScriptLogIfAbsent` does the same one
-  `get` + one `set` a plain append does. The only added work is an
-  in-memory scan of at most `LOG_CAP` entries.
+- A failure identical to the one already in the log, on every check.
+  Each check refetches and re-runs split + parse + validate — an
+  `invalid` row can't take the size+mtime skip (`canSkip` in
+  `script-store.ts` requires `status === 'ok'`) — so it is a fresh
+  verdict on a fresh read.
+- The startup replay's restatement of a failure a refresh may have
+  already logged. Worst case is a duplicate pair of rows, once per
+  script per Chrome session; the `source` column tells them apart.
+- A source that stays unreadable, once per pass. That path is only
+  reachable from a Refresh / Refresh All click, so each repeat is one
+  the user asked for.
+
+Poll volume is a real cost — tracked in `TODO.md` — but the lever is
+running or announcing fewer checks, not letting a check that started go
+silent.
+
+### How a check frames itself
+
+One row when nothing happened, two when something did. Every refresh
+path goes through `emitScriptOutcomeLog`, which writes both.
+
+| Outcome | Rows |
+| --- | --- |
+| Nothing to report | `checked for updates — no change` |
+| Anything else | `checking for updates`, then the outcome |
+
+- The uneventful case is **one self-describing line**, so a routine
+  poll costs a single row rather than a start/outcome pair.
+- A check with news gets the preamble because its outcome is a line in
+  its own right — it carries its own severity and is what the status
+  badge links to, so it can't also be the thing that says a check ran.
+- Which case applies is `hasReportableOutcome`: failing now, failing
+  before, vanished, or content changed. A healthy unchanged row took
+  the size+mtime skip.
+- Both rows are written **after** the work, so they land together. The
+  SW console is where a check is bracketed live (`update check
+  (<mode>): <label>` before, outcome after); the Log tab is the record
+  of what happened.
+- `update check threw: <reason>` stands alone — it names the check and
+  its failure in one line.
 
 ## Recovery is logged too
 
-Suppression on its own would leave a stale failure as the last word on
-a script. So the transition back to healthy gets an info entry naming
-what recovered:
+Without this the last word on a script would be a failure that is no
+longer true. So the transition back to healthy gets an info entry
+naming what recovered:
 
 - `loads cleanly again (was invalid)`
 - `source file is back`
@@ -204,29 +284,30 @@ badge going green.
 
 Both trigger modes log failures. A background check exists precisely to
 notice a failure the user hasn't gone looking for, so a badge that
-turns amber on its own must come with a matching Log line; the
-suppression above, not the trigger mode, is what keeps the volume sane.
+turns amber on its own must come with a matching Log line.
 
-Trigger mode still gates the **non**-events: `no change` is
-manual-only.
+Trigger mode still gates the **non**-events: `checked for updates — no
+change` is manual-only.
 
 Caveat on what "manual" means: it is "not rate-limited as a refresh",
 not "the user clicked". The
 [reload fast-path](injection.md#reload-fast-path) runs in `manual`
 mode for every matched script on every tab reload, so a healthy script
-*does* accumulate `no change` rows from ordinary browsing. That, plus
-the unconditional `update check started` row, is the remaining source
-of poll noise in the cap — tracked in `TODO.md`.
+*does* accumulate `checked for updates — no change` rows from ordinary
+browsing. That is the remaining source of poll noise in the cap —
+tracked in `TODO.md`.
 
 ## What gets logged today
 
 - **Refresh paths** (`src/script-updater.ts`):
-  - `update check started` (info) — on every `runScriptCheck` entry.
+  - `checking for updates` (info) — ahead of any outcome worth
+    reporting; omitted when the check has nothing to say (see
+    [How a check frames itself](#how-a-check-frames-itself)).
   - `loaded new content (<size>)` (info) — when the new build has a
     different `loadedAt` from the prior.
-  - `no change` (info) — only on manual refresh, to mirror the SW
-    console behaviour. Opportunistic background checks don't append a
-    "no change" row to keep the log from filling with poll noise.
+  - `checked for updates — no change` (info) — only on manual refresh,
+    to mirror the SW console behaviour. Opportunistic background checks
+    stay silent to keep the log from filling with poll noise.
   - Load failures (error) — the row's `errorMessage` when it lands
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
@@ -247,16 +328,16 @@ of poll noise in the cap — tracked in `TODO.md`.
     threw (a storage failure, not a load failure).
   - Recovery entries (info) — see
     [Recovery is logged too](#recovery-is-logged-too).
-  - All of the failure/recovery rows above go through
-    [repeat suppression](#repeat-suppression), so an unchanged state
-    adds nothing as long as its line is still in the log.
+  - All of the rows above are outcomes of a real check, so they are
+    appended unconditionally — see
+    [When the log stays quiet](#when-the-log-stays-quiet).
   - `row vanished during refresh` (warning) — the script row was
-    deleted while its refresh was in flight. Not suppressed; it can
-    only happen once per row.
+    deleted while its refresh was in flight. Can only happen once per
+    row.
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source
-  `injector`):
+  `chrome-injector`):
   - `Chrome rejected this script's registration: <reason>` (error) —
     the spec was refused, so the script silently never runs. Its row
     still reads OK because nothing about the *load* failed, which
@@ -327,12 +408,10 @@ of poll noise in the cap — tracked in `TODO.md`.
   patch global console in the injected world; the user can open
   DevTools on the host page if they want that.
 - Per-tab badge transitions. Those are noisy and already visible.
-- A failure that is **unchanged** since the last check *and whose line
-  is still in the log* — see
-  [Repeat suppression](#repeat-suppression). The row keeps its badge;
-  only the duplicate line is dropped. If the line is gone (cleared,
-  or rotated out), the next check puts it back.
-- `no change` on opportunistic checks (manual-only, as above).
+- `checked for updates — no change` on opportunistic checks
+  (manual-only, as above).
+- A re-sync that gets the same registration rejection — see
+  [When the log stays quiet](#when-the-log-stays-quiet).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.
 - Anything for a source with **no scripts under it**. A source whose

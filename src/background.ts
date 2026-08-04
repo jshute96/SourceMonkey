@@ -1944,7 +1944,7 @@ async function recordScriptReport(
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
     logScriptEvent(id, {
       level: 'info',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: `started at ${senderUrl}`,
     });
@@ -1957,7 +1957,7 @@ async function recordScriptReport(
     );
     logScriptEvent(id, {
       level: 'info',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: `reload-swap from loadedAt ${payload.fromLoadedAt ?? '?'} to ${payload.loadedAt ?? '?'}`,
     });
@@ -1969,7 +1969,7 @@ async function recordScriptReport(
     );
     logScriptEvent(id, {
       level: 'warning',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: `abandoned (reason=${payload.reason ?? '?'})`,
     });
@@ -1989,7 +1989,7 @@ async function recordScriptReport(
     // primitive values won't carry one.
     logScriptEvent(id, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: composeWrapperErrorMessage(payload.message, payload.stack),
     });

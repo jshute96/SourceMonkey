@@ -74,7 +74,7 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import type { VersionProbe } from './version-probe.js';
 import { inferDisplayName } from './source-display.js';
-import { appendScriptLogIfAbsent, type LogLevel } from './script-log.js';
+import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
@@ -469,9 +469,10 @@ export function applyMissing(existing: StoredScript): StoredScript {
 //
 // Single source of truth for "how do we phrase this failure in the
 // Log tab", shared by every path that can surface one: the add-source
-// path (script-store), the refresh outcome path and the boot replay
-// (script-updater). Because all three produce byte-identical messages,
-// the repeat-suppression rules in those callers actually work.
+// path (script-store), the refresh outcome path and the startup replay
+// (script-updater). Sharing it means the same failure reads the same
+// way whichever path reported it, so a user comparing two rows can
+// tell "the same problem again" from "a different problem".
 //
 // Levels:
 //   - `invalid` / `missing` → **error**. The script cannot run: the
@@ -1077,15 +1078,15 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
 // bypasses the updater, so without this a script that lands broken on
 // its very first load would show a red badge over an empty Log.
 //
-// `appendScriptLogIfAbsent` rather than a plain append because adding a
-// single file to an *existing* container refreshes every sibling in
-// that container, and we run over all of them — a sibling that has been
-// broken since the last add shouldn't collect one more identical row
-// per add.
+// Plain append. Adding a single file to an *existing* container
+// refreshes every sibling, and we run over all of them — so a sibling
+// that is still broken logs that again. It was genuinely re-read, so
+// saying so is honest, and the add path is a deliberate user action
+// rather than something that fires on its own.
 async function emitInitialLoadLogIfBroken(script: StoredScript): Promise<void> {
   const entry = loadStateLogEntry(script);
   if (!entry) return;
-  await appendScriptLogIfAbsent(script.id, { ...entry, source: 'add-source' });
+  await appendScriptLog(script.id, { ...entry, source: 'add-source' });
 }
 
 // Fill in `displayName` on any source row that doesn't have one yet.

@@ -42,9 +42,12 @@ export interface LogEntry {
   // Epoch ms when the event was recorded.
   timestamp: number;
   level: LogLevel;
-  // Origin label: e.g. 'refresh', 'wrapper', 'injector'. Pairs with the
-  // optional tabId so the log pane can render either "tab 17 — wrapper"
-  // or just "refresh" depending on what the entry actually carries.
+  // Origin label: e.g. 'manual-refresh', 'script-wrapper'. Read by
+  // users in the Log tab's Source column, so it names the thing that
+  // produced the entry rather than the internal that emitted it. See
+  // [docs/script-log.md] for the full set. Pairs with the optional
+  // tabId so the log pane can render either "tab 17 — script-wrapper"
+  // or just "manual-refresh" depending on what the entry carries.
   source: string;
   // Chrome tab ID, when the event originated from injected code in a
   // specific tab. Absent for SW-side and other background events.
@@ -94,56 +97,27 @@ export interface AppendLogInput {
   timestamp?: number;
 }
 
+// Append an entry. Every caller that reaches here observed something,
+// and the Log tab is a transcript of observations, so the entry is
+// always written. A caller that fires on its own schedule rather than
+// on an observation — the injector's per-sync registration pass — is
+// responsible for deciding whether anything happened before it calls.
 export async function appendScriptLog(
   scriptId: string,
   input: AppendLogInput,
 ): Promise<void> {
-  return enqueue(scriptId, () => writeEntry(scriptId, input, false));
-}
-
-// Append `input` only if the script's log doesn't already carry an
-// entry with the same `message`. Runs inside the same per-script queue
-// as `appendScriptLog`, so the read and the write are atomic with
-// respect to other appends for this script.
-//
-// This is how a *restatement* is written: "this is still true", said by
-// a caller that can't know whether someone already said it. Callers
-// that know a state genuinely CHANGED use `appendScriptLog`, so a
-// fail → recover → same-fail-again sequence still records the second
-// failure.
-//
-// Deliberately matches on the message alone, ignoring `source` and
-// `level`: the Log tab is a human-readable narrative, and two
-// subsystems stating the identical sentence reads as a duplicate no
-// matter which one got there first. That's exactly what the callers
-// want — the boot replay, the add-source path, and the unchanged-state
-// refresh outcome all re-state facts another path may already have
-// logged.
-//
-// Costs the same as a plain append (one `get`, one `set`); the only
-// extra work is an in-memory scan of at most LOG_CAP entries.
-export async function appendScriptLogIfAbsent(
-  scriptId: string,
-  input: AppendLogInput,
-): Promise<void> {
-  return enqueue(scriptId, () => writeEntry(scriptId, input, true));
+  return enqueue(scriptId, () => writeEntry(scriptId, input));
 }
 
 // Shared read-modify-write body. Always called from inside `enqueue`.
 async function writeEntry(
   scriptId: string,
   input: AppendLogInput,
-  skipIfMessagePresent: boolean,
 ): Promise<void> {
   const lk = logKey(scriptId);
   const mk = levelKey(scriptId);
   const got = await chrome.storage.session.get([lk, mk]);
   const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
-  // Skipping also skips the `loglevel:` bump — deliberate, since the
-  // entry we're matching is already in the log and already raised it.
-  // (Only true while every restatement of a message carries the same
-  // level as the original, which `loadStateLogEntry` guarantees.)
-  if (skipIfMessagePresent && prior.some((e) => e.message === input.message)) return;
   const priorLevel = got[mk] as LogLevel | undefined;
   const entry: LogEntry = {
     timestamp: input.timestamp ?? Date.now(),
@@ -212,13 +186,6 @@ export async function getAllMaxLogLevels(): Promise<Map<string, LogLevel>> {
 // path that's emitting the event.
 export function logScriptEvent(scriptId: string, input: AppendLogInput): void {
   appendScriptLog(scriptId, input).catch(() => { /* best-effort */ });
-}
-
-// Fire-and-forget `appendScriptLogIfAbsent`. Use this for a
-// restatement — "this is still true" — where the caller can't tell
-// whether the same line is already in the log.
-export function logScriptEventIfAbsent(scriptId: string, input: AppendLogInput): void {
-  appendScriptLogIfAbsent(scriptId, input).catch(() => { /* best-effort */ });
 }
 
 // Test/debug hook so unit tests can drain in-flight appends before

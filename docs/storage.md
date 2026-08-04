@@ -224,8 +224,8 @@ Priority order (highest wins):
 The Status cell is a link to the script's viewer Log tab in both
 pages, and every non-OK state above (except OUTDATED, which the probe
 logs separately) has a matching entry in that Log — INVALID / MISSING
-at error level, REFRESH FAILED at warning. Repeats are suppressed and
-recoveries are logged; see
+at error level, REFRESH FAILED at warning. Recoveries are logged too,
+so a badge going green has a matching line; see
 [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 ## Change detection: the last-change token
@@ -378,7 +378,7 @@ Every load path goes through the same pipeline:
   reconciliation and clears `scanError`.
 - **Logging**: because no script row is touched, the per-script
   outcome pass would report "no change" for rows that were never
-  checked. Instead the reason is fanned out to every script's Log at
+  checked (see [script-log.md](script-log.md#how-a-check-frames-itself)). Instead the reason is fanned out to every script's Log at
   info level (the badge for a source-level problem stays on the source
   row), plus one entry when it clears — see
   [script-log.md](script-log.md#source-level-failures).

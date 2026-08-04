@@ -182,7 +182,7 @@ test.describe('log stack mapping', () => {
     const entryUrl = `sourcemonkey://SourceMonkey/main/${label}`;
     await sm.appendScriptLog(scriptId, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       // Generated line 1 is the wrap head — before any require's text.
       message: `Error: synthetic\n    at wrapHead (${entryUrl}:1:5)`,
     });
@@ -220,7 +220,7 @@ test.describe('log stack mapping', () => {
     // stamped before this body loaded.
     await sm.appendScriptLog(scriptId, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       message: `Error: stale-entry\n    at old (${entryUrl}:5:9)`,
       timestamp: loadedAt - 1000,
     });
@@ -229,7 +229,7 @@ test.describe('log stack mapping', () => {
     // timestamp and not about mapped refs in general.
     await sm.appendScriptLog(scriptId, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       message: `Error: fresh-entry\n    at now (${entryUrl}:5:9)`,
       timestamp: loadedAt + 1000,
     });
@@ -274,7 +274,7 @@ test.describe('log stack mapping', () => {
     const encoded = 'sourcemonkey://SourceMonkey/main%232/main.user.js';
     await sm.appendScriptLog(scriptId, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       message: `Error: encoded-label\n    at f (${encoded}:3:1)`,
     });
 
@@ -342,7 +342,7 @@ test.describe('log stack mapping', () => {
       const entryUrl = `sourcemonkey://SourceMonkey/${folder}/main.user.js`;
       await sm.appendScriptLog(scriptId, {
         level: 'error',
-        source: 'wrapper',
+        source: 'script-wrapper',
         message: `Error: wrap-line\n    at wrapHead (${entryUrl}:1:5)`,
       });
 
@@ -385,7 +385,7 @@ test.describe('log stack mapping', () => {
     const real = 'https://cdn.example.com/a%2Fb/lib%20one.js';
     await sm.appendScriptLog(scriptId, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       message: `Error: real-url\n    at f (${real}:7:2)`,
     });
 

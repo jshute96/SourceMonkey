@@ -84,7 +84,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) and chunked `bytesToBase64` (XHR + `@resource` transport) |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the sources/viewer UI |
-| `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized (optionally de-duped) appends with a fixed cap, plus a sibling `loglevel:` sentinel |
+| `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, plus a sibling `loglevel:` sentinel |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor; shared by site-icon and the viewer linkifier |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override, and the slot renderer used by both sources page and viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher; `.js` suffix gate |
@@ -144,7 +144,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/github-auth.test.mjs` | Unit tests for the GitHub auth helper: host-gated `Authorization` header, no token → no header, never leaks to non-GitHub hosts |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
-| `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate, its Log-tab outcome entries, and the boot replay |
+| `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate, its Log-tab outcome entries, and the startup replay |
 | `tests/unit/script-display.test.mjs` | Unit tests for the size/status display helpers (incl. MISSING label) + the name/path decode helpers |
 | `tests/unit/version-compare.test.mjs` | Unit tests for `@version` ordering: numeric segments, missing tails, prereleases, empty input |
 | `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |

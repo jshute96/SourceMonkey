@@ -12,9 +12,8 @@
 //
 // Every one of those states must also be readable in the script's own
 // Log tab — a badge the user can't explain is worse than no badge — so
-// the same sequence is asserted against the log, including the
-// repeat-suppression that keeps a permanently-down source from filling
-// the 500-entry cap.
+// the same sequence is asserted against the log, including that a
+// source which stays down keeps saying so on each check.
 //
 // The store-level unit tests cover the pure transitions; this drives
 // the real fetch pipeline (fetchHttpText + rebuildSource) end to end.
@@ -98,7 +97,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(after.loadedAt).toBeGreaterThan(priorLoadedAt);
   });
 
-  test('the Log tab explains the failure, stays quiet on repeats, and records the recovery', async ({ sm }) => {
+  test('the Log tab explains the failure, repeats it per check, and records the recovery', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
     const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
     const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
@@ -115,12 +114,13 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(failures.length).toBe(1);
     expect(failures[0].level).toBe('warning');
 
-    // 2. Still down two refreshes later → still exactly one entry. A
-    //    source that stays down must not evict the rest of the log.
+    // 2. Still down two refreshes later → one entry per check. Each
+    //    refresh really re-fetched and re-validated, so every one of
+    //    them is reporting a fresh verdict on a fresh read.
     await sm.updateSource(source!.id, 'manual');
     await sm.updateSource(source!.id, 'manual');
     const afterRepeats = await sm.getScriptLog(scriptId);
-    expect(afterRepeats.filter((e) => /refresh failed/.test(e.message)).length).toBe(1);
+    expect(afterRepeats.filter((e) => /refresh failed/.test(e.message)).length).toBe(3);
 
     // 3. Source comes back → an info entry says so, and the log's
     //    highest level stops being the last word on the script.
@@ -153,7 +153,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(failures[0].message).toMatch(/not a valid userscript/);
   });
 
-  test('a script that cannot load at all logs an error, once', async ({ sm }) => {
+  test('a script that cannot load at all logs an error on every check', async ({ sm }) => {
     // No prior good copy to protect: the row lands `invalid`, which
     // means "can't run" — error level, and the Log has to carry the
     // parse reason behind the INVALID badge.
@@ -167,16 +167,23 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(errors.length).toBe(1);
     expect(errors[0].message).toBe(script.errorMessage);
 
-    // Refreshing an unchanged broken script must not stack up copies.
-    // This also pins the load-bearing invariant behind the whole
-    // design: the add path and the refresh path phrase the identical
-    // failure identically, so each recognises the other's row.
+    // Every refresh re-fetches and re-parses an invalid row — it can't
+    // take the size+mtime skip, which requires status 'ok' — so each
+    // check reports its own verdict.
     await sm.syncNow();
     await sm.updateSource(source!.id, 'manual');
     await sm.updateSource(source!.id, 'manual');
     const afterRefreshes = await sm.getScriptLog(script.id);
-    expect(afterRefreshes.filter((e) => e.level === 'error').length).toBe(1);
-    expect(afterRefreshes[0].source).toBe('add-source');
+    const allErrors = afterRefreshes.filter((e) => e.level === 'error');
+    expect(allErrors.length).toBe(3);
+
+    // The add path and the refresh path phrase the identical failure
+    // identically (they share `loadStateLogEntry`), so a user reading
+    // the Log can tell "the same problem again" from "a new problem"
+    // by the message alone.
+    expect(new Set(allErrors.map((e) => e.message)).size).toBe(1);
+    expect(allErrors[0].source).toBe('add-source');
+    expect(allErrors[1].source).toBe('manual-refresh');
   });
 
   test('a cleared log gets its explanation back on the next refresh', async ({ sm }) => {
