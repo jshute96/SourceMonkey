@@ -12,6 +12,10 @@ real-browser end-to-end suite for everything that touches the
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
+- `tests/greasyfork-examples/` — not a test suite: tooling that builds a
+  corpus of the top 2000 real-world GreasyFork scripts and analyses it
+  (see its own `README.md`). Playwright's `testMatch` covers only
+  `e2e/**` and `examples/**`, so nothing here runs as a test.
 
 ## Running
 

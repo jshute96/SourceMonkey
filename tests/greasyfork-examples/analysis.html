@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GreasyFork corpus analysis</title>
+<style>
+:root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --muted:#5c5c5c; --line:#e0e0e0; --head:#f5f5f5; --accent:#0b5fff; }
+@media (prefers-color-scheme: dark) {
+  :root { --fg:#e8e8e8; --bg:#16181c; --muted:#9aa0a6; --line:#2c3038; --head:#1e2128; --accent:#7aa2ff; }
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:2rem 1.5rem 4rem; background:var(--bg); color:var(--fg);
+       font:15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 68rem; margin: 0 auto; }
+h1 { font-size:1.8rem; margin:0 0 .3rem; }
+h2 { font-size:1.15rem; margin:2.5rem 0 .4rem; padding-top:.6rem; border-top:1px solid var(--line); }
+.sub { color:var(--muted); margin:0 0 2rem; font-size:.9rem; }
+.note { color:var(--muted); margin:.2rem 0 .7rem; font-size:.88rem; max-width:60rem; }
+.toc { columns: 2; gap: 2rem; margin: 0 0 1rem; padding-left: 1.1rem; font-size:.9rem; }
+.toc a { color:var(--accent); text-decoration:none; }
+.toc a:hover { text-decoration:underline; }
+.scroll { overflow-x:auto; }
+/* Size to content, not to the page: a full-width table stretches its first text
+   column across the whole page and strands the numbers far to the right. */
+table { border-collapse:collapse; font-size:.88rem; width:auto; max-width:100%; border:1px solid var(--line); }
+th, td { padding:.32rem .7rem; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+/* Vertical rules so a value and its header stay visibly in the same column. */
+th + th, td + td { border-left:1px solid var(--line); }
+th { background:var(--head); font-weight:600; position:sticky; top:0; }
+th.num, td.num { text-align:right; font-variant-numeric:tabular-nums; }
+td.nil { color:var(--muted); text-align:right; }
+td.url, td.text { max-width:38rem; overflow:hidden; text-overflow:ellipsis; }
+td a { color:var(--accent); text-decoration:none; }
+tbody tr:nth-child(even) { background:color-mix(in srgb, var(--head) 45%, transparent); }
+tbody tr:hover { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+.empty { color:var(--muted); font-style:italic; }
+code { font-size:.85em; background:var(--head); padding:.1rem .3rem; border-radius:3px; }
+</style>
+</head>
+<body>
+<main>
+<h1>GreasyFork corpus analysis</h1>
+<p class="sub">2,000 scripts from <code>corpus.db</code>
+ · queries in <code>analysis.sql</code></p>
+<ul class="toc">
+<li><a href="#corpus-totals">Corpus totals</a></li>
+<li><a href="#dependency-reference-totals">Dependency reference totals</a></li>
+<li><a href="#size-distribution">Size distribution</a></li>
+<li><a href="#size-percentiles">Size percentiles</a></li>
+<li><a href="#require-files-by-reference-count">Require files by reference count</a></li>
+<li><a href="#resource-files-by-reference-count">Resource files by reference count</a></li>
+<li><a href="#most-shared-require-files">Most-shared require files</a></li>
+<li><a href="#dependency-hosts">Dependency hosts</a></li>
+<li><a href="#requires-per-script">Requires per script</a></li>
+<li><a href="#header-fields-ignoring-locale-suffixes">Header fields, ignoring locale suffixes</a></li>
+<li><a href="#header-fields-with-their-locale-suffixes">Header fields with their locale suffixes</a></li>
+<li><a href="#localized-tags-summary">Localized tags summary</a></li>
+<li><a href="#grant-values">@grant values</a></li>
+<li><a href="#grants-per-script">Grants per script</a></li>
+<li><a href="#enum-valued-headers">Enum-valued headers</a></li>
+<li><a href="#antifeature-categories">@antifeature categories</a></li>
+<li><a href="#license-values">@license values</a></li>
+<li><a href="#scripts-without-a-parseable-metadata-block">Scripts without a parseable metadata block</a></li>
+<li><a href="#largest-scripts">Largest scripts</a></li>
+<li><a href="#match-patterns-per-script">Match patterns per script</a></li>
+<li><a href="#pattern-shapes">Pattern shapes</a></li>
+<li><a href="#scheme-wildcards">Scheme wildcards</a></li>
+<li><a href="#where-the-wildcard-falls">Where the wildcard falls</a></li>
+<li><a href="#most-targeted-sites">Most-targeted sites</a></li>
+<li><a href="#scripts-per-site">Scripts per site</a></li>
+<li><a href="#sites-per-script">Sites per script</a></li>
+<li><a href="#scripts-that-match-any-site">Scripts that match any site</a></li>
+</ul>
+<section>
+<h2 id="corpus-totals">Corpus totals</h2>
+<p class="note">One row per kind of file. &quot;On disk&quot; counts what was actually downloaded; sizes cover only those.</p>
+<div class="scroll"><table><thead><tr><th>kind</th><th class="num">files</th><th class="num">on_disk</th><th class="num">total_size</th><th class="num">avg_size</th><th class="num">min_size</th><th class="num">max_size</th></tr></thead><tbody>
+<tr><td class="text">Scripts</td><td class="num">2,000</td><td class="num">2,000</td><td class="num" title="127,646,378 bytes">122 MB</td><td class="num" title="63,823 bytes">62 KB</td><td class="num" title="452 bytes">452 B</td><td class="num" title="2,138,767 bytes">2.0 MB</td></tr>
+<tr><td class="text">Require files</td><td class="num">624</td><td class="num">579</td><td class="num" title="83,588,056 bytes">80 MB</td><td class="num" title="144,366 bytes">141 KB</td><td class="num" title="4 bytes">4 B</td><td class="num" title="11,386,540 bytes">11 MB</td></tr>
+<tr><td class="text">Resource files</td><td class="num">157</td><td class="num">122</td><td class="num" title="28,913,658 bytes">28 MB</td><td class="num" title="236,997 bytes">231 KB</td><td class="num" title="81 bytes">81 B</td><td class="num" title="8,007,369 bytes">7.6 MB</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="dependency-reference-totals">Dependency reference totals</h2>
+<p class="note">A &quot;reference&quot; is one script naming one URL. Unique files are far fewer, which is what the dedup tables below quantify.</p>
+<div class="scroll"><table><thead><tr><th>dependency</th><th class="num">references</th><th class="num">unique_urls</th><th class="num">scripts_using</th></tr></thead><tbody>
+<tr><td class="text">Require</td><td class="num">1,042</td><td class="num">624</td><td class="num">575</td></tr>
+<tr><td class="text">Resource</td><td class="num">166</td><td class="num">157</td><td class="num">62</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="size-distribution">Size distribution</h2>
+<p class="note">Counts of files falling in each size band, by kind.</p>
+<div class="scroll"><table><thead><tr><th>band</th><th class="num">scripts</th><th class="num">require_files</th><th class="num">resource_files</th></tr></thead><tbody>
+<tr><td class="text">&lt; 1 KB</td><td class="num">113</td><td class="num">11</td><td class="num">27</td></tr>
+<tr><td class="text">1 – 4 KB</td><td class="num">551</td><td class="num">67</td><td class="num">23</td></tr>
+<tr><td class="text">4 – 16 KB</td><td class="num">574</td><td class="num">107</td><td class="num">25</td></tr>
+<tr><td class="text">16 – 64 KB</td><td class="num">412</td><td class="num">129</td><td class="num">21</td></tr>
+<tr><td class="text">64 – 256 KB</td><td class="num">227</td><td class="num">210</td><td class="num">13</td></tr>
+<tr><td class="text">256 KB – 1 MB</td><td class="num">105</td><td class="num">46</td><td class="num">4</td></tr>
+<tr><td class="text">&gt;= 1 MB</td><td class="num">18</td><td class="num">9</td><td class="num">9</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="size-percentiles">Size percentiles</h2>
+<p class="note">Median and tails per kind, for a sense of how skewed each population is. Only files on disk count.</p>
+<div class="scroll"><table><thead><tr><th>kind</th><th class="num">files</th><th class="num">p10_size</th><th class="num">p25_size</th><th class="num">median_size</th><th class="num">p75_size</th><th class="num">p90_size</th><th class="num">p99_size</th></tr></thead><tbody>
+<tr><td class="text">Scripts</td><td class="num">2,000</td><td class="num" title="1,309 bytes">1.3 KB</td><td class="num" title="2,863 bytes">2.8 KB</td><td class="num" title="9,059 bytes">8.8 KB</td><td class="num" title="36,059 bytes">35 KB</td><td class="num" title="140,602 bytes">137 KB</td><td class="num" title="943,153 bytes">921 KB</td></tr>
+<tr><td class="text">Require files</td><td class="num">579</td><td class="num" title="3,091 bytes">3.0 KB</td><td class="num" title="8,867 bytes">8.7 KB</td><td class="num" title="50,764 bytes">50 KB</td><td class="num" title="95,778 bytes">94 KB</td><td class="num" title="253,668 bytes">248 KB</td><td class="num" title="1,237,674 bytes">1.2 MB</td></tr>
+<tr><td class="text">Resource files</td><td class="num">122</td><td class="num" title="207 bytes">207 B</td><td class="num" title="1,143 bytes">1.1 KB</td><td class="num" title="5,221 bytes">5.1 KB</td><td class="num" title="35,973 bytes">35 KB</td><td class="num" title="232,111 bytes">227 KB</td><td class="num" title="3,088,641 bytes">2.9 MB</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="require-files-by-reference-count">Require files by reference count</h2>
+<p class="note">&quot;Single size&quot; stores each file once; &quot;replicated size&quot; is what it would cost if every referencing script kept its own copy. The gap is what sharing buys.</p>
+<div class="scroll"><table><thead><tr><th class="num">referencing_scripts</th><th class="num">files</th><th class="num">on_disk</th><th class="num">single_size</th><th class="num">replicated_size</th></tr></thead><tbody>
+<tr><td class="num">24</td><td class="num">1</td><td class="num">1</td><td class="num" title="86,927 bytes">85 KB</td><td class="num" title="2,086,248 bytes">2.0 MB</td></tr>
+<tr><td class="num">17</td><td class="num">1</td><td class="num">1</td><td class="num" title="92,629 bytes">90 KB</td><td class="num" title="1,574,693 bytes">1.5 MB</td></tr>
+<tr><td class="num">15</td><td class="num">1</td><td class="num">1</td><td class="num" title="97,688 bytes">95 KB</td><td class="num" title="1,465,320 bytes">1.4 MB</td></tr>
+<tr><td class="num">14</td><td class="num">1</td><td class="num">1</td><td class="num" title="3,917 bytes">3.8 KB</td><td class="num" title="54,838 bytes">54 KB</td></tr>
+<tr><td class="num">13</td><td class="num">2</td><td class="num">2</td><td class="num" title="55,619 bytes">54 KB</td><td class="num" title="723,047 bytes">706 KB</td></tr>
+<tr><td class="num">12</td><td class="num">2</td><td class="num">2</td><td class="num" title="70,057 bytes">68 KB</td><td class="num" title="840,684 bytes">821 KB</td></tr>
+<tr><td class="num">11</td><td class="num">2</td><td class="num">2</td><td class="num" title="337,705 bytes">330 KB</td><td class="num" title="3,714,755 bytes">3.5 MB</td></tr>
+<tr><td class="num">8</td><td class="num">4</td><td class="num">4</td><td class="num" title="894,761 bytes">874 KB</td><td class="num" title="7,158,088 bytes">6.8 MB</td></tr>
+<tr><td class="num">7</td><td class="num">7</td><td class="num">6</td><td class="num" title="696,242 bytes">680 KB</td><td class="num" title="4,873,694 bytes">4.6 MB</td></tr>
+<tr><td class="num">6</td><td class="num">7</td><td class="num">7</td><td class="num" title="895,891 bytes">875 KB</td><td class="num" title="5,375,346 bytes">5.1 MB</td></tr>
+<tr><td class="num">5</td><td class="num">9</td><td class="num">8</td><td class="num" title="641,442 bytes">626 KB</td><td class="num" title="3,207,210 bytes">3.1 MB</td></tr>
+<tr><td class="num">4</td><td class="num">8</td><td class="num">7</td><td class="num" title="551,756 bytes">539 KB</td><td class="num" title="2,207,024 bytes">2.1 MB</td></tr>
+<tr><td class="num">3</td><td class="num">22</td><td class="num">21</td><td class="num" title="1,900,629 bytes">1.8 MB</td><td class="num" title="5,701,887 bytes">5.4 MB</td></tr>
+<tr><td class="num">2</td><td class="num">77</td><td class="num">73</td><td class="num" title="12,190,761 bytes">12 MB</td><td class="num" title="24,381,522 bytes">23 MB</td></tr>
+<tr><td class="num">1</td><td class="num">480</td><td class="num">443</td><td class="num" title="65,072,032 bytes">62 MB</td><td class="num" title="65,072,032 bytes">62 MB</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="resource-files-by-reference-count">Resource files by reference count</h2>
+
+<div class="scroll"><table><thead><tr><th class="num">referencing_scripts</th><th class="num">files</th><th class="num">on_disk</th><th class="num">single_size</th><th class="num">replicated_size</th></tr></thead><tbody>
+<tr><td class="num">3</td><td class="num">1</td><td class="num">1</td><td class="num" title="32,877 bytes">32 KB</td><td class="num" title="98,631 bytes">96 KB</td></tr>
+<tr><td class="num">2</td><td class="num">7</td><td class="num">5</td><td class="num" title="194,132 bytes">190 KB</td><td class="num" title="388,264 bytes">379 KB</td></tr>
+<tr><td class="num">1</td><td class="num">149</td><td class="num">116</td><td class="num" title="28,686,649 bytes">27 MB</td><td class="num" title="28,686,649 bytes">27 MB</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="most-shared-require-files">Most-shared require files</h2>
+<p class="note">The top 25 libraries by how many scripts pull them in.</p>
+<div class="scroll"><table><thead><tr><th>url</th><th class="num">referencing_scripts</th><th class="num">size</th></tr></thead><tbody>
+<tr><td class="url"><a href="http://code.jquery.com/jquery-3.3.1.min.js" rel="noreferrer">http://code.jquery.com/jquery-3.3.1.min.js</a></td><td class="num">24</td><td class="num" title="86,927 bytes">85 KB</td></tr>
+<tr><td class="url" title="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"><a href="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js" rel="noreferrer">http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js</a></td><td class="num">17</td><td class="num" title="92,629 bytes">90 KB</td></tr>
+<tr><td class="url" title="https://cdnjs.cloudflare.com/ajax/libs/socket.io/1.4.5/socket.io.min.js"><a href="https://cdnjs.cloudflare.com/ajax/libs/socket.io/1.4.5/socket.io.min.js" rel="noreferrer">https://cdnjs.cloudflare.com/ajax/libs/socket.io/1.4.5/socket.io.min.js</a></td><td class="num">15</td><td class="num" title="97,688 bytes">95 KB</td></tr>
+<tr><td class="url"><a href="https://greasemonkey.github.io/gm4-polyfill/gm4-polyfill.js" rel="noreferrer">https://greasemonkey.github.io/gm4-polyfill/gm4-polyfill.js</a></td><td class="num">14</td><td class="num" title="3,917 bytes">3.8 KB</td></tr>
+<tr><td class="url" title="https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js"><a href="https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js" rel="noreferrer">https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js</a></td><td class="num">13</td><td class="num" title="50,945 bytes">50 KB</td></tr>
+<tr><td class="url" title="https://cdn.jsdelivr.net/npm/fontfaceobserver@2.1.0/fontfaceobserver.standalone.min.js"><a href="https://cdn.jsdelivr.net/npm/fontfaceobserver@2.1.0/fontfaceobserver.standalone.min.js" rel="noreferrer">https://cdn.jsdelivr.net/npm/fontfaceobserver@2.1.0/fontfaceobserver.standalone.min.js</a></td><td class="num">13</td><td class="num" title="4,674 bytes">4.6 KB</td></tr>
+<tr><td class="url" title="https://cdn.jsdelivr.net/npm/msgpack-lite@0.1.26/dist/msgpack.min.js"><a href="https://cdn.jsdelivr.net/npm/msgpack-lite@0.1.26/dist/msgpack.min.js" rel="noreferrer">https://cdn.jsdelivr.net/npm/msgpack-lite@0.1.26/dist/msgpack.min.js</a></td><td class="num">12</td><td class="num" title="51,128 bytes">50 KB</td></tr>
+<tr><td class="url" title="https://greasyfork.org/scripts/423602-msgpack/code/msgpack.js"><a href="https://greasyfork.org/scripts/423602-msgpack/code/msgpack.js" rel="noreferrer">https://greasyfork.org/scripts/423602-msgpack/code/msgpack.js</a></td><td class="num">12</td><td class="num" title="18,929 bytes">18 KB</td></tr>
+<tr><td class="url"><a href="https://code.jquery.com/ui/1.12.0/jquery-ui.min.js" rel="noreferrer">https://code.jquery.com/ui/1.12.0/jquery-ui.min.js</a></td><td class="num">11</td><td class="num" title="253,385 bytes">247 KB</td></tr>
+<tr><td class="url" title="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"><a href="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js" rel="noreferrer">https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js</a></td><td class="num">11</td><td class="num" title="84,320 bytes">82 KB</td></tr>
+<tr><td class="url"><a href="https://unpkg.com/three@0.150.0/build/three.min.js" rel="noreferrer">https://unpkg.com/three@0.150.0/build/three.min.js</a></td><td class="num">8</td><td class="num" title="613,667 bytes">599 KB</td></tr>
+<tr><td class="url"><a href="https://cdn.bootcss.com/jquery/1.12.4/jquery.min.js" rel="noreferrer">https://cdn.bootcss.com/jquery/1.12.4/jquery.min.js</a></td><td class="num">8</td><td class="num" title="97,163 bytes">95 KB</td></tr>
+<tr><td class="url"><a href="http://code.jquery.com/jquery-latest.min.js" rel="noreferrer">http://code.jquery.com/jquery-latest.min.js</a></td><td class="num">8</td><td class="num" title="95,786 bytes">94 KB</td></tr>
+<tr><td class="url"><a href="http://code.jquery.com/jquery-3.4.1.min.js" rel="noreferrer">http://code.jquery.com/jquery-3.4.1.min.js</a></td><td class="num">8</td><td class="num" title="88,145 bytes">86 KB</td></tr>
+<tr><td class="url"><a href="http://code.jquery.com/jquery-latest.js" rel="noreferrer">http://code.jquery.com/jquery-latest.js</a></td><td class="num">7</td><td class="num" title="282,766 bytes">276 KB</td></tr>
+<tr><td class="url"><a href="https://code.jquery.com/jquery-3.3.1.min.js" rel="noreferrer">https://code.jquery.com/jquery-3.3.1.min.js</a></td><td class="num">7</td><td class="num" title="86,927 bytes">85 KB</td></tr>
+<tr><td class="url"><a href="https://code.jquery.com/jquery-3.1.1.min.js" rel="noreferrer">https://code.jquery.com/jquery-3.1.1.min.js</a></td><td class="num">7</td><td class="num" title="86,709 bytes">85 KB</td></tr>
+<tr><td class="url" title="https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js"><a href="https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js" rel="noreferrer">https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js</a></td><td class="num">7</td><td class="num" title="85,578 bytes">84 KB</td></tr>
+<tr><td class="url"><a href="http://code.jquery.com/jquery-2.1.4.min.js" rel="noreferrer">http://code.jquery.com/jquery-2.1.4.min.js</a></td><td class="num">7</td><td class="num" title="84,345 bytes">82 KB</td></tr>
+<tr><td class="url"><a href="https://code.jquery.com/jquery-3.3.1.slim.min.js" rel="noreferrer">https://code.jquery.com/jquery-3.3.1.slim.min.js</a></td><td class="num">7</td><td class="num" title="69,917 bytes">68 KB</td></tr>
+<tr><td class="url" title="https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js"><a href="https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js" rel="noreferrer">https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js</a></td><td class="num">7</td><td class="nil">—</td></tr>
+<tr><td class="url"><a href="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js" rel="noreferrer">https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js</a></td><td class="num">6</td><td class="num" title="547,400 bytes">535 KB</td></tr>
+<tr><td class="url" title="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"><a href="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js" rel="noreferrer">https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js</a></td><td class="num">6</td><td class="num" title="102,328 bytes">100 KB</td></tr>
+<tr><td class="url"><a href="http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js" rel="noreferrer">http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js</a></td><td class="num">6</td><td class="num" title="95,786 bytes">94 KB</td></tr>
+<tr><td class="url"><a href="https://code.jquery.com/jquery-3.6.0.min.js" rel="noreferrer">https://code.jquery.com/jquery-3.6.0.min.js</a></td><td class="num">6</td><td class="num" title="89,501 bytes">87 KB</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="dependency-hosts">Dependency hosts</h2>
+<p class="note">Where dependencies are served from, by distinct URL count.</p>
+<div class="scroll"><table><thead><tr><th>host</th><th class="num">require_urls</th><th class="num">resource_urls</th><th class="num">total_urls</th></tr></thead><tbody>
+<tr><td class="text">cdn.jsdelivr.net</td><td class="num">118</td><td class="num">28</td><td class="num">146</td></tr>
+<tr><td class="text">greasyfork.org</td><td class="num">109</td><td class="num">5</td><td class="num">114</td></tr>
+<tr><td class="text">cdnjs.cloudflare.com</td><td class="num">98</td><td class="num">11</td><td class="num">109</td></tr>
+<tr><td class="text">unpkg.com</td><td class="num">68</td><td class="num">2</td><td class="num">70</td></tr>
+<tr><td class="text">ajax.googleapis.com</td><td class="num">42</td><td class="num">19</td><td class="num">61</td></tr>
+<tr><td class="text">update.greasyfork.org</td><td class="num">51</td><td class="num">0</td><td class="num">51</td></tr>
+<tr><td class="text">code.jquery.com</td><td class="num">47</td><td class="num">4</td><td class="num">51</td></tr>
+<tr><td class="text">ibaidu.tujidu.com</td><td class="num">0</td><td class="num">21</td><td class="num">21</td></tr>
+<tr><td class="text">cdn.staticfile.org</td><td class="num">10</td><td class="num">10</td><td class="num">20</td></tr>
+<tr><td class="text">raw.githubusercontent.com</td><td class="num">0</td><td class="num">17</td><td class="num">17</td></tr>
+<tr><td class="text">cdn.bootcss.com</td><td class="num">13</td><td class="num">1</td><td class="num">14</td></tr>
+<tr><td class="text">mirrors.sustech.edu.cn</td><td class="num">11</td><td class="num">2</td><td class="num">13</td></tr>
+<tr><td class="text">lib.baomitu.com</td><td class="num">7</td><td class="num">0</td><td class="num">7</td></tr>
+<tr><td class="text">fastly.jsdelivr.net</td><td class="num">4</td><td class="num">3</td><td class="num">7</td></tr>
+<tr><td class="text">cdn.bootcdn.net</td><td class="num">5</td><td class="num">1</td><td class="num">6</td></tr>
+<tr><td class="text">barnyruilt.alwaysdata.net</td><td class="num">0</td><td class="num">6</td><td class="num">6</td></tr>
+<tr><td class="text">openuserjs.org</td><td class="num">5</td><td class="num">0</td><td class="num">5</td></tr>
+<tr><td class="text">lf9-cdn-tos.bytecdntp.com</td><td class="num">5</td><td class="num">0</td><td class="num">5</td></tr>
+<tr><td class="text">cdn.rawgit.com</td><td class="num">5</td><td class="num">0</td><td class="num">5</td></tr>
+<tr><td class="text">s4.zstatic.net</td><td class="num">4</td><td class="num">0</td><td class="num">4</td></tr>
+<tr><td class="text">koc-cdn.popreach.com</td><td class="num">0</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">github.com</td><td class="num">1</td><td class="num">3</td><td class="num">4</td></tr>
+<tr><td class="text">raw.github.com</td><td class="num">0</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">www.torn.com</td><td class="num">2</td><td class="num">0</td><td class="num">2</td></tr>
+<tr><td class="text">www.jeffersonscher.com</td><td class="num">0</td><td class="num">2</td><td class="num">2</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="requires-per-script">Requires per script</h2>
+<p class="note">How many distinct @require URLs a script names. Scripts with none are the large majority.</p>
+<p class="note">The 0 row also holds the 9 scripts whose metadata block does not parse, which declare nothing we can see.</p>
+<div class="scroll"><table><thead><tr><th class="num">requires_in_script</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="num">0</td><td class="num">1,425</td></tr>
+<tr><td class="num">1</td><td class="num">361</td></tr>
+<tr><td class="num">2</td><td class="num">110</td></tr>
+<tr><td class="num">3</td><td class="num">46</td></tr>
+<tr><td class="num">4</td><td class="num">27</td></tr>
+<tr><td class="num">5</td><td class="num">12</td></tr>
+<tr><td class="num">6</td><td class="num">4</td></tr>
+<tr><td class="num">7</td><td class="num">6</td></tr>
+<tr><td class="num">8</td><td class="num">2</td></tr>
+<tr><td class="num">9</td><td class="num">3</td></tr>
+<tr><td class="num">10</td><td class="num">1</td></tr>
+<tr><td class="num">11</td><td class="num">2</td></tr>
+<tr><td class="num">14</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="header-fields-ignoring-locale-suffixes">Header fields, ignoring locale suffixes</h2>
+<p class="note">Every metadata tag, counted by how many scripts use it and how many lines it accounts for. <code>@description:ar</code> counts under <code>description</code> here.</p>
+<div class="scroll"><table><thead><tr><th>header_field</th><th class="num">scripts</th><th class="num">occurrences</th><th class="num">distinct_suffixes</th></tr></thead><tbody>
+<tr><td class="text">description</td><td class="num">1,991</td><td class="num">5,763</td><td class="num">157</td></tr>
+<tr><td class="text">name</td><td class="num">1,991</td><td class="num">5,041</td><td class="num">156</td></tr>
+<tr><td class="text">namespace</td><td class="num">1,991</td><td class="num">2,009</td><td class="num">1</td></tr>
+<tr><td class="text">updateurl</td><td class="num">1,991</td><td class="num">1,995</td><td class="num">0</td></tr>
+<tr><td class="text">downloadurl</td><td class="num">1,991</td><td class="num">1,993</td><td class="num">0</td></tr>
+<tr><td class="text">version</td><td class="num">1,991</td><td class="num">1,991</td><td class="num">0</td></tr>
+<tr><td class="text">grant</td><td class="num">1,768</td><td class="num">4,040</td><td class="num">0</td></tr>
+<tr><td class="text">author</td><td class="num">1,722</td><td class="num">1,730</td><td class="num">0</td></tr>
+<tr><td class="text">match</td><td class="num">1,445</td><td class="num">9,003</td><td class="num">0</td></tr>
+<tr><td class="text">license</td><td class="num">906</td><td class="num">917</td><td class="num">0</td></tr>
+<tr><td class="text">run-at</td><td class="num">788</td><td class="num">791</td><td class="num">0</td></tr>
+<tr><td class="text">icon</td><td class="num">781</td><td class="num">781</td><td class="num">0</td></tr>
+<tr><td class="text">include</td><td class="num">619</td><td class="num">2,597</td><td class="num">0</td></tr>
+<tr><td class="text">require</td><td class="num">575</td><td class="num">1,056</td><td class="num">0</td></tr>
+<tr><td class="text">connect</td><td class="num">229</td><td class="num">2,271</td><td class="num">0</td></tr>
+<tr><td class="text">supporturl</td><td class="num">229</td><td class="num">230</td><td class="num">0</td></tr>
+<tr><td class="text">exclude</td><td class="num">222</td><td class="num">939</td><td class="num">0</td></tr>
+<tr><td class="text">copyright</td><td class="num">148</td><td class="num">150</td><td class="num">2</td></tr>
+<tr><td class="text">homepageurl</td><td class="num">142</td><td class="num">142</td><td class="num">0</td></tr>
+<tr><td class="text">noframes</td><td class="num">123</td><td class="num">123</td><td class="num">0</td></tr>
+<tr><td class="text">compatible</td><td class="num">115</td><td class="num">445</td><td class="num">0</td></tr>
+<tr><td class="text">homepage</td><td class="num">113</td><td class="num">115</td><td class="num">0</td></tr>
+<tr><td class="text">contributionurl</td><td class="num">67</td><td class="num">71</td><td class="num">0</td></tr>
+<tr><td class="text">resource</td><td class="num">63</td><td class="num">167</td><td class="num">0</td></tr>
+<tr><td class="text">inject-into</td><td class="num">41</td><td class="num">41</td><td class="num">0</td></tr>
+<tr><td class="text">antifeature</td><td class="num">29</td><td class="num">36</td><td class="num">5</td></tr>
+<tr><td class="text">icon64</td><td class="num">18</td><td class="num">18</td><td class="num">0</td></tr>
+<tr><td class="text">contributionamount</td><td class="num">17</td><td class="num">17</td><td class="num">0</td></tr>
+<tr><td class="text">id</td><td class="num">15</td><td class="num">15</td><td class="num">0</td></tr>
+<tr><td class="text">source</td><td class="num">14</td><td class="num">15</td><td class="num">0</td></tr>
+<tr><td class="text">note</td><td class="num">13</td><td class="num">174</td><td class="num">0</td></tr>
+<tr><td class="text">contributor</td><td class="num">13</td><td class="num">27</td><td class="num">0</td></tr>
+<tr><td class="text">date</td><td class="num">13</td><td class="num">13</td><td class="num">0</td></tr>
+<tr><td class="text">history</td><td class="num">12</td><td class="num">475</td><td class="num">0</td></tr>
+<tr><td class="text">unwrap</td><td class="num">12</td><td class="num">13</td><td class="num">0</td></tr>
+<tr><td class="text">iconurl</td><td class="num">11</td><td class="num">11</td><td class="num">0</td></tr>
+<tr><td class="text">allframes</td><td class="num">10</td><td class="num">10</td><td class="num">0</td></tr>
+<tr><td class="text">sandbox</td><td class="num">10</td><td class="num">10</td><td class="num">0</td></tr>
+<tr><td class="text">create</td><td class="num">8</td><td class="num">8</td><td class="num">0</td></tr>
+<tr><td class="text">modified</td><td class="num">8</td><td class="num">8</td><td class="num">0</td></tr>
+<tr><td class="text">website</td><td class="num">8</td><td class="num">8</td><td class="num">0</td></tr>
+<tr><td class="text">encoding</td><td class="num">6</td><td class="num">6</td><td class="num">0</td></tr>
+<tr><td class="text">lastmodified</td><td class="num">6</td><td class="num">6</td><td class="num">0</td></tr>
+<tr><td class="text">screenshot</td><td class="num">5</td><td class="num">7</td><td class="num">0</td></tr>
+<tr><td class="text">created</td><td class="num">5</td><td class="num">5</td><td class="num">0</td></tr>
+<tr><td class="text">incompatible</td><td class="num">5</td><td class="num">5</td><td class="num">0</td></tr>
+<tr><td class="text">delay</td><td class="num">4</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">github</td><td class="num">4</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">home-url</td><td class="num">4</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">minffver</td><td class="num">4</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">mingmver</td><td class="num">4</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">oujs</td><td class="num">4</td><td class="num">4</td><td class="num">1</td></tr>
+<tr><td class="text">priority</td><td class="num">4</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">tag</td><td class="num">3</td><td class="num">5</td><td class="num">0</td></tr>
+<tr><td class="text">keywords</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">lastupdated</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">locale</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">modifiedby</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">nocompat</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">originalauthor</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">updated</td><td class="num">3</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">domain</td><td class="num">2</td><td class="num">12</td><td class="num">0</td></tr>
+<tr><td class="text">comment</td><td class="num">2</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">webrequest</td><td class="num">2</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="text">attribution</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">charset</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">contributors</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">developer</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">home-url2</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">original-author</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">released</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">update</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">warning</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">weibo</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="text">translation</td><td class="num">1</td><td class="num">7</td><td class="num">0</td></tr>
+<tr><td class="text">update-note</td><td class="num">1</td><td class="num">7</td><td class="num">0</td></tr>
+<tr><td class="text">bug</td><td class="num">1</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="text">allow</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">authoremail</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">authuer</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">autor</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">auuthor</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">buy</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">change-log</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">connect-src</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">contact</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">credits</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">discord</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">donate</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">download</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">downstreamurl</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">editurl</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">email</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">en</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">feedback-url</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">from</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">gm_info</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">hompage</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">iconbak</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">include-jquery</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">licence</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">lisans</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">lisense</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">no-frames</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">orginalurl</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">original-changes</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">original-license</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">original-script</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">original-version</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">releasenotes</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">requires</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">rut-at</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">setupurl</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">shortcutkeys</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">storagename</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">support</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">tags</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">timestamp</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">translator</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">updateversion</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">url</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">userscriptsorg</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="text">verison</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="header-fields-with-their-locale-suffixes">Header fields with their locale suffixes</h2>
+<p class="note">Localized fields only, keyed on the full field so <code>@name:zh-CN</code> is its own row. Top 40 by occurrence; unlocalized tags are in the report above.</p>
+<div class="scroll"><table><thead><tr><th>header_field_full</th><th>header_field</th><th>header_field_suffix</th><th class="num">scripts</th><th class="num">occurrences</th></tr></thead><tbody>
+<tr><td class="text">name:zh-CN</td><td class="text">name</td><td class="text">zh-CN</td><td class="num">276</td><td class="num">277</td></tr>
+<tr><td class="text">description:zh-CN</td><td class="text">description</td><td class="text">zh-CN</td><td class="num">271</td><td class="num">271</td></tr>
+<tr><td class="text">description:en</td><td class="text">description</td><td class="text">en</td><td class="num">206</td><td class="num">206</td></tr>
+<tr><td class="text">description:zh-TW</td><td class="text">description</td><td class="text">zh-TW</td><td class="num">196</td><td class="num">196</td></tr>
+<tr><td class="text">name:en</td><td class="text">name</td><td class="text">en</td><td class="num">192</td><td class="num">192</td></tr>
+<tr><td class="text">name:zh-TW</td><td class="text">name</td><td class="text">zh-TW</td><td class="num">190</td><td class="num">190</td></tr>
+<tr><td class="text">description:ja</td><td class="text">description</td><td class="text">ja</td><td class="num">180</td><td class="num">180</td></tr>
+<tr><td class="text">name:ja</td><td class="text">name</td><td class="text">ja</td><td class="num">162</td><td class="num">162</td></tr>
+<tr><td class="text">description:ru</td><td class="text">description</td><td class="text">ru</td><td class="num">134</td><td class="num">134</td></tr>
+<tr><td class="text">name:ru</td><td class="text">name</td><td class="text">ru</td><td class="num">115</td><td class="num">115</td></tr>
+<tr><td class="text">description:fr</td><td class="text">description</td><td class="text">fr</td><td class="num">110</td><td class="num">110</td></tr>
+<tr><td class="text">description:de</td><td class="text">description</td><td class="text">de</td><td class="num">106</td><td class="num">106</td></tr>
+<tr><td class="text">description:es</td><td class="text">description</td><td class="text">es</td><td class="num">102</td><td class="num">102</td></tr>
+<tr><td class="text">description:ko</td><td class="text">description</td><td class="text">ko</td><td class="num">101</td><td class="num">101</td></tr>
+<tr><td class="text">description:it</td><td class="text">description</td><td class="text">it</td><td class="num">92</td><td class="num">92</td></tr>
+<tr><td class="text">name:fr</td><td class="text">name</td><td class="text">fr</td><td class="num">87</td><td class="num">87</td></tr>
+<tr><td class="text">name:ko</td><td class="text">name</td><td class="text">ko</td><td class="num">84</td><td class="num">84</td></tr>
+<tr><td class="text">name:de</td><td class="text">name</td><td class="text">de</td><td class="num">84</td><td class="num">84</td></tr>
+<tr><td class="text">name:es</td><td class="text">name</td><td class="text">es</td><td class="num">80</td><td class="num">80</td></tr>
+<tr><td class="text">name:it</td><td class="text">name</td><td class="text">it</td><td class="num">72</td><td class="num">72</td></tr>
+<tr><td class="text">description:pl</td><td class="text">description</td><td class="text">pl</td><td class="num">67</td><td class="num">67</td></tr>
+<tr><td class="text">description:tr</td><td class="text">description</td><td class="text">tr</td><td class="num">64</td><td class="num">64</td></tr>
+<tr><td class="text">description:vi</td><td class="text">description</td><td class="text">vi</td><td class="num">61</td><td class="num">61</td></tr>
+<tr><td class="text">description:ar</td><td class="text">description</td><td class="text">ar</td><td class="num">60</td><td class="num">60</td></tr>
+<tr><td class="text">description:nl</td><td class="text">description</td><td class="text">nl</td><td class="num">58</td><td class="num">58</td></tr>
+<tr><td class="text">description:id</td><td class="text">description</td><td class="text">id</td><td class="num">57</td><td class="num">57</td></tr>
+<tr><td class="text">name:zh</td><td class="text">name</td><td class="text">zh</td><td class="num">55</td><td class="num">56</td></tr>
+<tr><td class="text">name:pl</td><td class="text">name</td><td class="text">pl</td><td class="num">53</td><td class="num">53</td></tr>
+<tr><td class="text">description:zh</td><td class="text">description</td><td class="text">zh</td><td class="num">52</td><td class="num">52</td></tr>
+<tr><td class="text">name:tr</td><td class="text">name</td><td class="text">tr</td><td class="num">51</td><td class="num">51</td></tr>
+<tr><td class="text">description:uk</td><td class="text">description</td><td class="text">uk</td><td class="num">51</td><td class="num">51</td></tr>
+<tr><td class="text">description:th</td><td class="text">description</td><td class="text">th</td><td class="num">51</td><td class="num">51</td></tr>
+<tr><td class="text">description:cs</td><td class="text">description</td><td class="text">cs</td><td class="num">50</td><td class="num">50</td></tr>
+<tr><td class="text">name:vi</td><td class="text">name</td><td class="text">vi</td><td class="num">49</td><td class="num">49</td></tr>
+<tr><td class="text">description:ro</td><td class="text">description</td><td class="text">ro</td><td class="num">49</td><td class="num">49</td></tr>
+<tr><td class="text">name:ar</td><td class="text">name</td><td class="text">ar</td><td class="num">48</td><td class="num">48</td></tr>
+<tr><td class="text">description:sv</td><td class="text">description</td><td class="text">sv</td><td class="num">48</td><td class="num">48</td></tr>
+<tr><td class="text">description:pt-BR</td><td class="text">description</td><td class="text">pt-BR</td><td class="num">48</td><td class="num">48</td></tr>
+<tr><td class="text">name:nl</td><td class="text">name</td><td class="text">nl</td><td class="num">47</td><td class="num">47</td></tr>
+<tr><td class="text">description:hu</td><td class="text">description</td><td class="text">hu</td><td class="num">47</td><td class="num">47</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="localized-tags-summary">Localized tags summary</h2>
+<p class="note">Which tags get translated at all, and into how many locales.</p>
+<div class="scroll"><table><thead><tr><th>header_field</th><th class="num">locales</th><th class="num">scripts</th><th class="num">occurrences</th></tr></thead><tbody>
+<tr><td class="text">description</td><td class="num">157</td><td class="num">515</td><td class="num">3,737</td></tr>
+<tr><td class="text">name</td><td class="num">156</td><td class="num">481</td><td class="num">3,047</td></tr>
+<tr><td class="text">antifeature</td><td class="num">5</td><td class="num">3</td><td class="num">5</td></tr>
+<tr><td class="text">oujs</td><td class="num">1</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">copyright</td><td class="num">2</td><td class="num">1</td><td class="num">2</td></tr>
+<tr><td class="text">en</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">namespace</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="grant-values">@grant values</h2>
+<p class="note">Every distinct permission requested, and how many scripts request it.</p>
+<div class="scroll"><table><thead><tr><th>grant_value</th><th class="num">scripts</th><th class="num">occurrences</th></tr></thead><tbody>
+<tr><td class="text">none</td><td class="num">998</td><td class="num">998</td></tr>
+<tr><td class="text">GM_setValue</td><td class="num">356</td><td class="num">357</td></tr>
+<tr><td class="text">GM_getValue</td><td class="num">356</td><td class="num">356</td></tr>
+<tr><td class="text">GM_xmlhttpRequest</td><td class="num">313</td><td class="num">314</td></tr>
+<tr><td class="text">GM_addStyle</td><td class="num">271</td><td class="num">271</td></tr>
+<tr><td class="text">unsafeWindow</td><td class="num">224</td><td class="num">225</td></tr>
+<tr><td class="text">GM_registerMenuCommand</td><td class="num">213</td><td class="num">214</td></tr>
+<tr><td class="text">GM_openInTab</td><td class="num">109</td><td class="num">109</td></tr>
+<tr><td class="text">GM_deleteValue</td><td class="num">108</td><td class="num">108</td></tr>
+<tr><td class="text">GM.setValue</td><td class="num">98</td><td class="num">98</td></tr>
+<tr><td class="text">GM.getValue</td><td class="num">97</td><td class="num">97</td></tr>
+<tr><td class="text">GM.xmlHttpRequest</td><td class="num">78</td><td class="num">78</td></tr>
+<tr><td class="text">GM_setClipboard</td><td class="num">74</td><td class="num">74</td></tr>
+<tr><td class="text">GM_info</td><td class="num">62</td><td class="num">62</td></tr>
+<tr><td class="text">GM_getResourceText</td><td class="num">62</td><td class="num">62</td></tr>
+<tr><td class="text">GM_unregisterMenuCommand</td><td class="num">48</td><td class="num">48</td></tr>
+<tr><td class="text">GM_listValues</td><td class="num">46</td><td class="num">46</td></tr>
+<tr><td class="text">GM_notification</td><td class="num">44</td><td class="num">44</td></tr>
+<tr><td class="text">GM.registerMenuCommand</td><td class="num">43</td><td class="num">43</td></tr>
+<tr><td class="text">GM_download</td><td class="num">41</td><td class="num">41</td></tr>
+<tr><td class="text">GM_log</td><td class="num">38</td><td class="num">38</td></tr>
+<tr><td class="text">GM.deleteValue</td><td class="num">35</td><td class="num">35</td></tr>
+<tr><td class="text">GM.openInTab</td><td class="num">31</td><td class="num">31</td></tr>
+<tr><td class="text">GM_addValueChangeListener</td><td class="num">30</td><td class="num">30</td></tr>
+<tr><td class="text">GM_getResourceURL</td><td class="num">23</td><td class="num">24</td></tr>
+<tr><td class="text">GM_addElement</td><td class="num">19</td><td class="num">19</td></tr>
+<tr><td class="text">GM.info</td><td class="num">17</td><td class="num">17</td></tr>
+<tr><td class="text">window.onurlchange</td><td class="num">16</td><td class="num">16</td></tr>
+<tr><td class="text">window.close</td><td class="num">16</td><td class="num">16</td></tr>
+<tr><td class="text">GM.notification</td><td class="num">15</td><td class="num">15</td></tr>
+<tr><td class="text">GM.listValues</td><td class="num">15</td><td class="num">15</td></tr>
+<tr><td class="text">GM.addStyle</td><td class="num">14</td><td class="num">14</td></tr>
+<tr><td class="text">GM.setClipboard</td><td class="num">11</td><td class="num">11</td></tr>
+<tr><td class="text">GM_removeValueChangeListener</td><td class="num">10</td><td class="num">10</td></tr>
+<tr><td class="text">GM_cookie</td><td class="num">7</td><td class="num">7</td></tr>
+<tr><td class="text">window.focus</td><td class="num">6</td><td class="num">6</td></tr>
+<tr><td class="text">GM.getResourceText</td><td class="num">6</td><td class="num">6</td></tr>
+<tr><td class="text">GM_saveTab</td><td class="num">5</td><td class="num">5</td></tr>
+<tr><td class="text">GM_getTab</td><td class="num">5</td><td class="num">5</td></tr>
+<tr><td class="text">GM.download</td><td class="num">5</td><td class="num">5</td></tr>
+<tr><td class="text">GM_getTabs</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">GM.getResourceUrl</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">GM.addElement</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">GM_xmlHttpRequest</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">GM_webRequest</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">GM.xmlhttpRequest</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">GM.unregisterMenuCommand</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">GM.addValueChangeListener</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">ur mum</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">noneT</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">metadata</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">GM_updatingEnabled</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">window.sessionStorage</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">window.onload</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">window.localStorage</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">window.extern</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">unsafeWindows</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">quit lag</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2021.12.6 第3.1版 zzhjim：调整部分关键词、增加部分关键词</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2021.12.6 第3.02版 zzhjim：增加对部分垃圾农场的屏蔽</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text" title="note 2021.11.23 第3.01版 zzhjim：增加对虚假电子书下载网站、高晓松、袁腾飞的屏蔽，删除重复的关键词">note 2021.11.23 第3.01版 zzhjim：增加对虚假电子书下载网站、高晓松、袁腾飞的屏蔽，删除重复的关键词</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2021.11.22 第3.0版 zzhjim：增加对小x百科网、小x知识网的屏蔽</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2019.8.13 第2.2版 zzhjim：增加大量规则，对严重影响搜索体验的网站、营销号进行屏蔽</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2018.1.21 第2.12版 zzhjim：增加对于部分反动网站、百家号的屏蔽</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2018.1.21 第2.09-2.11版 zzhjim：调整部分关键词</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2018.1.18 第2.1版 @zzhjim:调整部分关键字</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2017.8.9 第2.02-2.03版 zzhjim：增加部分关键词</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2017.8.8 第2.01版 zzhjim：增删部分关键词，增强对繁体恶意网站的拦截</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text" title="note 2017.8.6 第2.0版 zzhjim：原脚本已经许久没有更新，我将一些常见的恶意网站名称加入了进去，修改了360搜索的网址。如果还有合适的关键词，欢迎提交讨论。（本脚本配合AC的其他脚本使用效果更好）">note 2017.8.6 第2.0版 zzhjim：原脚本已经许久没有更新，我将一些常见的恶意网站名称加入了进去，修改了360搜索的网址。如果还有合适的关键词，欢迎提交讨论。（本脚本配合AC的其他脚本使用效果更好）</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2017.8.12 第2.04-2.08版 zzhjim：修复一批重大BUG，调整部分关键词</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">note 2015.11.26 第一版，规则自己写吧，觉得要反馈的关键字可以在卡饭回个帖，我合适的加入</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">navigator.userAgent</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">function</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">egg</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">document.getElementById</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">document.cookie</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">aoh72931</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">None.</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">Math.mod</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">GM_getValues</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">GM_Log</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">GM.webRequest</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">GM.removeValueChangeListener</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">GM.getValuez</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">GM.cookie</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">(empty)</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">(C) SnowLord7 2018</td><td class="num">1</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="grants-per-script">Grants per script</h2>
+<p class="note"><code>@grant none</code> counts as one. Scripts with no @grant line at all are the 0 row.</p>
+<p class="note">That 0 row also holds the scripts whose metadata block does not parse.</p>
+<div class="scroll"><table><thead><tr><th class="num">grants_in_script</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="num">0</td><td class="num">232</td></tr>
+<tr><td class="num">1</td><td class="num">1,232</td></tr>
+<tr><td class="num">2</td><td class="num">123</td></tr>
+<tr><td class="num">3</td><td class="num">84</td></tr>
+<tr><td class="num">4</td><td class="num">86</td></tr>
+<tr><td class="num">5</td><td class="num">55</td></tr>
+<tr><td class="num">6</td><td class="num">51</td></tr>
+<tr><td class="num">7</td><td class="num">35</td></tr>
+<tr><td class="num">8</td><td class="num">23</td></tr>
+<tr><td class="num">9</td><td class="num">20</td></tr>
+<tr><td class="num">10</td><td class="num">15</td></tr>
+<tr><td class="num">11</td><td class="num">8</td></tr>
+<tr><td class="num">12</td><td class="num">8</td></tr>
+<tr><td class="num">13</td><td class="num">8</td></tr>
+<tr><td class="num">14</td><td class="num">6</td></tr>
+<tr><td class="num">15</td><td class="num">5</td></tr>
+<tr><td class="num">17</td><td class="num">1</td></tr>
+<tr><td class="num">18</td><td class="num">1</td></tr>
+<tr><td class="num">19</td><td class="num">2</td></tr>
+<tr><td class="num">20</td><td class="num">2</td></tr>
+<tr><td class="num">21</td><td class="num">2</td></tr>
+<tr><td class="num">24</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="enum-valued-headers">Enum-valued headers</h2>
+<p class="note">Tags whose argument comes from a small fixed set. A flag tag written bare (e.g. <code>@noframes</code>) shows as (flag).</p>
+<div class="scroll"><table><thead><tr><th>header_field</th><th>value</th><th class="num">scripts</th><th class="num">occurrences</th></tr></thead><tbody>
+<tr><td class="text">inject-into</td><td class="text">page</td><td class="num">23</td><td class="num">23</td></tr>
+<tr><td class="text">inject-into</td><td class="text">content</td><td class="num">15</td><td class="num">15</td></tr>
+<tr><td class="text">inject-into</td><td class="text">auto</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">nocompat</td><td class="text">chrome</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">noframes</td><td class="text">(flag)</td><td class="num">120</td><td class="num">120</td></tr>
+<tr><td class="text">noframes</td><td class="text">true</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">noframes</td><td class="text">on</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">run-at</td><td class="text">document-start</td><td class="num">448</td><td class="num">448</td></tr>
+<tr><td class="text">run-at</td><td class="text">document-end</td><td class="num">239</td><td class="num">240</td></tr>
+<tr><td class="text">run-at</td><td class="text">document-idle</td><td class="num">72</td><td class="num">72</td></tr>
+<tr><td class="text">run-at</td><td class="text">document-body</td><td class="num">21</td><td class="num">21</td></tr>
+<tr><td class="text">run-at</td><td class="text">document-ready</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">run-at</td><td class="text">context-menu</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">run-at</td><td class="text">window-load</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">run-at</td><td class="text">start</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">run-at</td><td class="text">document_start</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">run-at</td><td class="text">document_idle</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">run-at</td><td class="text">document_end</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">run-at</td><td class="text">document-begin</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">sandbox</td><td class="text">javascript</td><td class="num">8</td><td class="num">8</td></tr>
+<tr><td class="text">sandbox</td><td class="text">raw</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">unwrap</td><td class="text">(flag)</td><td class="num">12</td><td class="num">13</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="antifeature-categories">@antifeature categories</h2>
+<p class="note">The category is the first token; the rest is a human-readable explanation.</p>
+<div class="scroll"><table><thead><tr><th>category</th><th class="num">scripts</th><th class="num">occurrences</th></tr></thead><tbody>
+<tr><td class="text">ads</td><td class="num">10</td><td class="num">10</td></tr>
+<tr><td class="text">referral-link</td><td class="num">8</td><td class="num">8</td></tr>
+<tr><td class="text">tracking,</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">payment</td><td class="num">4</td><td class="num">4</td></tr>
+<tr><td class="text">tracking</td><td class="num">3</td><td class="num">3</td></tr>
+<tr><td class="text">players</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">membership</td><td class="num">1</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="license-values">@license values</h2>
+<p class="note">Free-form in practice, so this is the top 20 spellings rather than a closed set.</p>
+<div class="scroll"><table><thead><tr><th>license</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="text">MIT</td><td class="num">459</td></tr>
+<tr><td class="text">MIT License</td><td class="num">45</td></tr>
+<tr><td class="text">GPL-3.0</td><td class="num">31</td></tr>
+<tr><td class="text">GPL-3.0-or-later</td><td class="num">22</td></tr>
+<tr><td class="text" title="GPL version 3 or any later version; http://www.gnu.org/copyleft/gpl.html">GPL version 3 or any later version; http://www.gnu.org/copyleft/gpl.html</td><td class="num">22</td></tr>
+<tr><td class="text">GNU GPLv3</td><td class="num">15</td></tr>
+<tr><td class="text">GPLv3</td><td class="num">14</td></tr>
+<tr><td class="text">MIT; http://opensource.org/licenses/MIT</td><td class="num">13</td></tr>
+<tr><td class="text">GPL-3.0 License</td><td class="num">12</td></tr>
+<tr><td class="text">GPL</td><td class="num">12</td></tr>
+<tr><td class="text">GPL-3.0-only</td><td class="num">11</td></tr>
+<tr><td class="text">AGPL-3.0-or-later</td><td class="num">8</td></tr>
+<tr><td class="text">MPL-2.0</td><td class="num">6</td></tr>
+<tr><td class="text">LGPLv3</td><td class="num">6</td></tr>
+<tr><td class="text">ISC</td><td class="num">6</td></tr>
+<tr><td class="text">GPL-3.0-or-later; https://www.gnu.org/licenses/gpl-3.0.txt</td><td class="num">6</td></tr>
+<tr><td class="text">none</td><td class="num">5</td></tr>
+<tr><td class="text">CC-BY-NC-SA-4.0</td><td class="num">5</td></tr>
+<tr><td class="text">Unlicense</td><td class="num">4</td></tr>
+<tr><td class="text">GPL License</td><td class="num">4</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="scripts-without-a-parseable-metadata-block">Scripts without a parseable metadata block</h2>
+<p class="note">Downloaded bodies where the ==UserScript== / ==/UserScript== pair is missing — user styles and a few malformed scripts.</p>
+<div class="scroll"><table><thead><tr><th class="num">id</th><th>name</th><th class="num">size</th><th>info_page</th></tr></thead><tbody>
+<tr><td class="num">409893</td><td class="text">Youtube WideScreen (New Design Polymer) [USw] v.75</td><td class="num" title="466,045 bytes">455 KB</td><td class="url" title="https://greasyfork.org/en/scripts/409893-youtube-widescreen-new-design-polymer-usw-v-75"><a href="https://greasyfork.org/en/scripts/409893-youtube-widescreen-new-design-polymer-usw-v-75" rel="noreferrer">https://greasyfork.org/en/scripts/409893-youtube-widescreen-new-design-polymer-usw-v-75</a></td></tr>
+<tr><td class="num">457101</td><td class="text">Deviantart V7 (pre eclipse) theme beta</td><td class="num" title="84,735 bytes">83 KB</td><td class="url" title="https://greasyfork.org/en/scripts/457101-deviantart-v7-pre-eclipse-theme-beta"><a href="https://greasyfork.org/en/scripts/457101-deviantart-v7-pre-eclipse-theme-beta" rel="noreferrer">https://greasyfork.org/en/scripts/457101-deviantart-v7-pre-eclipse-theme-beta</a></td></tr>
+<tr><td class="num">419362</td><td class="text">Global Font: Adobe-branded</td><td class="num" title="59,555 bytes">58 KB</td><td class="url" title="https://greasyfork.org/en/scripts/419362-%E5%85%A8%E5%B1%80%E6%80%9D%E6%BA%90%E9%BB%91%E4%BD%93"><a href="https://greasyfork.org/en/scripts/419362-%E5%85%A8%E5%B1%80%E6%80%9D%E6%BA%90%E9%BB%91%E4%BD%93" rel="noreferrer">https://greasyfork.org/en/scripts/419362-%E5%85%A8%E5%B1%80%E6%80%9D%E6%BA%90%E9%BB%91%E4%BD%93</a></td></tr>
+<tr><td class="num">439505</td><td class="text">Global Font: Huawei-branded</td><td class="num" title="56,414 bytes">55 KB</td><td class="url" title="https://greasyfork.org/en/scripts/439505-%E5%85%A8%E5%B1%80%E9%B8%BF%E8%92%99%E9%BB%91%E4%BD%93"><a href="https://greasyfork.org/en/scripts/439505-%E5%85%A8%E5%B1%80%E9%B8%BF%E8%92%99%E9%BB%91%E4%BD%93" rel="noreferrer">https://greasyfork.org/en/scripts/439505-%E5%85%A8%E5%B1%80%E9%B8%BF%E8%92%99%E9%BB%91%E4%BD%93</a></td></tr>
+<tr><td class="num">419363</td><td class="text">Global Font: Microsoft-branded</td><td class="num" title="54,669 bytes">53 KB</td><td class="url" title="https://greasyfork.org/en/scripts/419363-%E5%85%A8%E5%B1%80%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91"><a href="https://greasyfork.org/en/scripts/419363-%E5%85%A8%E5%B1%80%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91" rel="noreferrer">https://greasyfork.org/en/scripts/419363-%E5%85%A8%E5%B1%80%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91</a></td></tr>
+<tr><td class="num">453435</td><td class="text">Global Font: Apple-branded</td><td class="num" title="45,138 bytes">44 KB</td><td class="url" title="https://greasyfork.org/en/scripts/453435-%E5%85%A8%E5%B1%80%E8%8B%B9%E6%96%B9"><a href="https://greasyfork.org/en/scripts/453435-%E5%85%A8%E5%B1%80%E8%8B%B9%E6%96%B9" rel="noreferrer">https://greasyfork.org/en/scripts/453435-%E5%85%A8%E5%B1%80%E8%8B%B9%E6%96%B9</a></td></tr>
+<tr><td class="num">434134</td><td class="text">[Pokeclicker] Simple Auto Farmer</td><td class="num" title="12,696 bytes">12 KB</td><td class="url" title="https://greasyfork.org/en/scripts/434134-pokeclicker-simple-auto-farmer"><a href="https://greasyfork.org/en/scripts/434134-pokeclicker-simple-auto-farmer" rel="noreferrer">https://greasyfork.org/en/scripts/434134-pokeclicker-simple-auto-farmer</a></td></tr>
+<tr><td class="num">434215</td><td class="text">Fastsplit and Bubble Cells Script</td><td class="num" title="2,475 bytes">2.4 KB</td><td class="url" title="https://greasyfork.org/en/scripts/434215-fastsplit-and-bubble-cells-script"><a href="https://greasyfork.org/en/scripts/434215-fastsplit-and-bubble-cells-script" rel="noreferrer">https://greasyfork.org/en/scripts/434215-fastsplit-and-bubble-cells-script</a></td></tr>
+<tr><td class="num">380394</td><td class="text">Google Drive Auto Download (without preview)</td><td class="num" title="1,238 bytes">1.2 KB</td><td class="url" title="https://greasyfork.org/en/scripts/380394-google-drive-auto-download-without-preview"><a href="https://greasyfork.org/en/scripts/380394-google-drive-auto-download-without-preview" rel="noreferrer">https://greasyfork.org/en/scripts/380394-google-drive-auto-download-without-preview</a></td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="largest-scripts">Largest scripts</h2>
+
+<div class="scroll"><table><thead><tr><th class="num">id</th><th>name</th><th class="num">size</th><th class="num">total_installs</th></tr></thead><tbody>
+<tr><td class="num">6294</td><td class="text">PageExpand</td><td class="num" title="2,138,767 bytes">2.0 MB</td><td class="num">7,467</td></tr>
+<tr><td class="num">399012</td><td class="text">KoC Power Bot Plus</td><td class="num" title="2,002,729 bytes">1.9 MB</td><td class="num">44,115</td></tr>
+<tr><td class="num">485622</td><td class="text">StarTube</td><td class="num" title="1,996,369 bytes">1.9 MB</td><td class="num">10,926</td></tr>
+<tr><td class="num">412873</td><td class="text">Demon Spawn 2.0</td><td class="num" title="1,957,564 bytes">1.9 MB</td><td class="num">4,387</td></tr>
+<tr><td class="num">374794</td><td class="text" title="Lift Web Restrictions: .io Game Mods (MooMoo.io/Krunker.io/..), Ad Link Bypasser, Adblock, &amp; MORE!">Lift Web Restrictions: .io Game Mods (MooMoo.io/Krunker.io/..), Ad Link Bypasser, Adblock, &amp; MORE!</td><td class="num" title="1,845,383 bytes">1.8 MB</td><td class="num">785,590</td></tr>
+<tr><td class="num">559574</td><td class="text">Gemini NanoBanana Watermark Remover</td><td class="num" title="1,786,369 bytes">1.7 MB</td><td class="num">4,775</td></tr>
+<tr><td class="num">370473</td><td class="text">Automail</td><td class="num" title="1,781,902 bytes">1.7 MB</td><td class="num">16,496</td></tr>
+<tr><td class="num">406070</td><td class="text">novel-downloader</td><td class="num" title="1,485,934 bytes">1.4 MB</td><td class="num">125,089</td></tr>
+<tr><td class="num">943</td><td class="text">YouTube Center</td><td class="num" title="1,420,721 bytes">1.4 MB</td><td class="num">80,635</td></tr>
+<tr><td class="num">406404</td><td class="text">WaniKani Item Inspector</td><td class="num" title="1,409,695 bytes">1.3 MB</td><td class="num">3,098</td></tr>
+<tr><td class="num">407284</td><td class="text">IMDb Scout Mod</td><td class="num" title="1,254,159 bytes">1.2 MB</td><td class="num">15,821</td></tr>
+<tr><td class="num">463033</td><td class="text">TW Inventory Reloaded</td><td class="num" title="1,238,039 bytes">1.2 MB</td><td class="num">7,875</td></tr>
+<tr><td class="num">24204</td><td class="text">Picviewer CE+</td><td class="num" title="1,233,048 bytes">1.2 MB</td><td class="num">307,416</td></tr>
+<tr><td class="num">424050</td><td class="text">Rain Classroom PDF Direct Download</td><td class="num" title="1,209,514 bytes">1.2 MB</td><td class="num">6,069</td></tr>
+<tr><td class="num">476012</td><td class="text">pixmap picture overlay</td><td class="num" title="1,155,166 bytes">1.1 MB</td><td class="num">6,018</td></tr>
+<tr><td class="num">743</td><td class="text">Darksoul KOC Power Tools</td><td class="num" title="1,142,319 bytes">1.1 MB</td><td class="num">10,050</td></tr>
+<tr><td class="num">423199</td><td class="text">EasyUpload - Trackers Transfer Tool</td><td class="num" title="1,135,732 bytes">1.1 MB</td><td class="num">6,326</td></tr>
+<tr><td class="num">7750</td><td class="text">4chan X</td><td class="num" title="1,129,939 bytes">1.1 MB</td><td class="num">52,847</td></tr>
+<tr><td class="num">537017</td><td class="text">YouTube +</td><td class="num" title="977,562 bytes">955 KB</td><td class="num">6,724</td></tr>
+<tr><td class="num">445274</td><td class="text">SearchJumper</td><td class="num" title="949,689 bytes">927 KB</td><td class="num">104,947</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="match-patterns-per-script">Match patterns per script</h2>
+<p class="note">How many @match and @include lines a script carries. Scripts with none of a given tag are the 0 row.</p>
+<p class="note">The 0 rows also hold the scripts whose metadata block does not parse.</p>
+<div class="scroll"><table><thead><tr><th class="num">lines_in_script</th><th class="num">scripts_by_match</th><th class="num">scripts_by_include</th></tr></thead><tbody>
+<tr><td class="num">0</td><td class="num">555</td><td class="num">1,381</td></tr>
+<tr><td class="num">1</td><td class="num">852</td><td class="num">306</td></tr>
+<tr><td class="num">2</td><td class="num">253</td><td class="num">133</td></tr>
+<tr><td class="num">3</td><td class="num">81</td><td class="num">32</td></tr>
+<tr><td class="num">4</td><td class="num">65</td><td class="num">50</td></tr>
+<tr><td class="num">5</td><td class="num">19</td><td class="num">11</td></tr>
+<tr><td class="num">6</td><td class="num">23</td><td class="num">9</td></tr>
+<tr><td class="num">7</td><td class="num">15</td><td class="num">12</td></tr>
+<tr><td class="num">8</td><td class="num">15</td><td class="num">9</td></tr>
+<tr><td class="num">9</td><td class="num">6</td><td class="num">6</td></tr>
+<tr><td class="num">10</td><td class="num">9</td><td class="num">8</td></tr>
+<tr><td class="num">11</td><td class="num">7</td><td class="num">3</td></tr>
+<tr><td class="num">12</td><td class="num">4</td><td class="num">3</td></tr>
+<tr><td class="num">13</td><td class="num">4</td><td class="num">3</td></tr>
+<tr><td class="num">14</td><td class="num">5</td><td class="num">0</td></tr>
+<tr><td class="num">15</td><td class="num">3</td><td class="num">0</td></tr>
+<tr><td class="num">16</td><td class="num">10</td><td class="num">4</td></tr>
+<tr><td class="num">17</td><td class="num">5</td><td class="num">0</td></tr>
+<tr><td class="num">18</td><td class="num">4</td><td class="num">3</td></tr>
+<tr><td class="num">19</td><td class="num">3</td><td class="num">1</td></tr>
+<tr><td class="num">20</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">21</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">22</td><td class="num">2</td><td class="num">1</td></tr>
+<tr><td class="num">23</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">24</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="num">25</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">26</td><td class="num">0</td><td class="num">1</td></tr>
+<tr><td class="num">27</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">28</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">29</td><td class="num">4</td><td class="num">0</td></tr>
+<tr><td class="num">30</td><td class="num">0</td><td class="num">3</td></tr>
+<tr><td class="num">31</td><td class="num">5</td><td class="num">1</td></tr>
+<tr><td class="num">32</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">33</td><td class="num">2</td><td class="num">3</td></tr>
+<tr><td class="num">34</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">35</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">36</td><td class="num">1</td><td class="num">2</td></tr>
+<tr><td class="num">38</td><td class="num">0</td><td class="num">1</td></tr>
+<tr><td class="num">41</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="num">42</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">45</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="num">46</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">47</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">48</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">49</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">53</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">55</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">56</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">60</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">62</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">63</td><td class="num">0</td><td class="num">2</td></tr>
+<tr><td class="num">64</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">68</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">72</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="num">76</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">79</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">87</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">97</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">98</td><td class="num">2</td><td class="num">0</td></tr>
+<tr><td class="num">100</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">102</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">122</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">160</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">190</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="num">194</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">195</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">209</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">247</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">287</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">397</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">695</td><td class="num">1</td><td class="num">0</td></tr>
+<tr><td class="num">765</td><td class="num">1</td><td class="num">0</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="pattern-shapes">Pattern shapes</h2>
+<p class="note">Judged on the host and path only. Absolute patterns contain no wildcard; a prefix has one trailing <code>*</code>; an inner glob has a <code>*</code> before the end, so it can match in the middle of a URL.</p>
+<p class="note">A <code>*://</code> scheme is excluded from this judgement — it is just the normal way to write &quot;http or https&quot; and would otherwise push every <code>*://site.com/*</code> into the inner-glob bucket. Scheme wildcards are counted separately below.</p>
+<div class="scroll"><table><thead><tr><th>shape</th><th class="num">match_lines</th><th class="num">include_lines</th><th class="num">total_lines</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="text">prefix-glob</td><td class="num">4,926</td><td class="num">1,375</td><td class="num">6,301</td><td class="num">1,272</td></tr>
+<tr><td class="text">inner-glob</td><td class="num">3,649</td><td class="num">851</td><td class="num">4,500</td><td class="num">729</td></tr>
+<tr><td class="text">absolute</td><td class="num">424</td><td class="num">110</td><td class="num">534</td><td class="num">273</td></tr>
+<tr><td class="text">regex</td><td class="num">3</td><td class="num">257</td><td class="num">260</td><td class="num">67</td></tr>
+<tr><td class="text">all-urls</td><td class="num">1</td><td class="num">0</td><td class="num">1</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="scheme-wildcards">Scheme wildcards</h2>
+<p class="note">How the scheme itself is written, independent of the host/path shape above. <code>*</code> and <code>http*</code> both mean &quot;http or https&quot; in practice.</p>
+<div class="scroll"><table><thead><tr><th>scheme</th><th class="num">is_wildcard</th><th class="num">lines</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="text">*</td><td class="num">1</td><td class="num">5,357</td><td class="num">612</td></tr>
+<tr><td class="text">https</td><td class="num">0</td><td class="num">3,572</td><td class="num">990</td></tr>
+<tr><td class="text">http</td><td class="num">0</td><td class="num">973</td><td class="num">365</td></tr>
+<tr><td class="text">(none written)</td><td class="num">0</td><td class="num">957</td><td class="num">165</td></tr>
+<tr><td class="text">http*</td><td class="num">1</td><td class="num">472</td><td class="num">101</td></tr>
+<tr><td class="text">ftp</td><td class="num">0</td><td class="num">2</td><td class="num">2</td></tr>
+<tr><td class="text">file</td><td class="num">0</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">chrome-extension</td><td class="num">0</td><td class="num">1</td><td class="num">1</td></tr>
+<tr><td class="text">*https</td><td class="num">1</td><td class="num">1</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="where-the-wildcard-falls">Where the wildcard falls</h2>
+<p class="note">Which component of a pattern carries a <code>*</code>. A host wildcard is the one that widens a script's reach across sites.</p>
+<p class="note">Regex <code>@include</code> lines have no glob components at all, so they get their own row rather than counting as &quot;no wildcard&quot;.</p>
+<div class="scroll"><table><thead><tr><th>wildcard_in</th><th class="num">lines</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="text">scheme + path</td><td class="num">3,814</td><td class="num">448</td></tr>
+<tr><td class="text">host wildcard (subdomain)</td><td class="num">3,740</td><td class="num">566</td></tr>
+<tr><td class="text">path only</td><td class="num">2,938</td><td class="num">800</td></tr>
+<tr><td class="text">no wildcard</td><td class="num">473</td><td class="num">241</td></tr>
+<tr><td class="text">any host</td><td class="num">310</td><td class="num">206</td></tr>
+<tr><td class="text">regex (not a glob)</td><td class="num">260</td><td class="num">67</td></tr>
+<tr><td class="text">scheme only</td><td class="num">61</td><td class="num">34</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="most-targeted-sites">Most-targeted sites</h2>
+<p class="note">Sites a pattern resolves to, counting each script once. <code>*.youtube.com</code> attributes to youtube.com — one leading wildcard label is stripped, nothing else.</p>
+<p class="note">Granularity is the hostname as written, so www.youtube.com and youtube.com are separate rows (as are dev./sandbox. subdomains). Folding to a registrable domain would need a public-suffix list.</p>
+<div class="scroll"><table><thead><tr><th>site</th><th class="num">scripts</th><th class="num">pattern_lines</th></tr></thead><tbody>
+<tr><td class="text">www.youtube.com</td><td class="num">111</td><td class="num">152</td></tr>
+<tr><td class="text">moomoo.io</td><td class="num">108</td><td class="num">143</td></tr>
+<tr><td class="text">youtube.com</td><td class="num">81</td><td class="num">119</td></tr>
+<tr><td class="text">agar.io</td><td class="num">50</td><td class="num">55</td></tr>
+<tr><td class="text">twitter.com</td><td class="num">45</td><td class="num">50</td></tr>
+<tr><td class="text">sandbox.moomoo.io</td><td class="num">44</td><td class="num">45</td></tr>
+<tr><td class="text">www.mturk.com</td><td class="num">38</td><td class="num">102</td></tr>
+<tr><td class="text">www.wanikani.com</td><td class="num">37</td><td class="num">75</td></tr>
+<tr><td class="text">diep.io</td><td class="num">35</td><td class="num">38</td></tr>
+<tr><td class="text">dev.moomoo.io</td><td class="num">35</td><td class="num">36</td></tr>
+<tr><td class="text">krunker.io</td><td class="num">33</td><td class="num">33</td></tr>
+<tr><td class="text">x.com</td><td class="num">32</td><td class="num">41</td></tr>
+<tr><td class="text">www.baidu.com</td><td class="num">24</td><td class="num">35</td></tr>
+<tr><td class="text">www.torn.com</td><td class="num">24</td><td class="num">31</td></tr>
+<tr><td class="text">gota.io</td><td class="num">23</td><td class="num">25</td></tr>
+<tr><td class="text">www.twitch.tv</td><td class="num">23</td><td class="num">23</td></tr>
+<tr><td class="text">www.google.com</td><td class="num">22</td><td class="num">30</td></tr>
+<tr><td class="text">reddit.com</td><td class="num">21</td><td class="num">30</td></tr>
+<tr><td class="text">shellshock.io</td><td class="num">20</td><td class="num">21</td></tr>
+<tr><td class="text">facebook.com</td><td class="num">19</td><td class="num">43</td></tr>
+<tr><td class="text">sploop.io</td><td class="num">19</td><td class="num">19</td></tr>
+<tr><td class="text">greasyfork.org</td><td class="num">18</td><td class="num">20</td></tr>
+<tr><td class="text">m.youtube.com</td><td class="num">18</td><td class="num">18</td></tr>
+<tr><td class="text">slither.io</td><td class="num">17</td><td class="num">20</td></tr>
+<tr><td class="text">surviv.io</td><td class="num">16</td><td class="num">39</td></tr>
+<tr><td class="text">www.bilibili.com</td><td class="num">15</td><td class="num">46</td></tr>
+<tr><td class="text">www.pixiv.net</td><td class="num">15</td><td class="num">22</td></tr>
+<tr><td class="text">beta.waze.com</td><td class="num">15</td><td class="num">20</td></tr>
+<tr><td class="text">bing.com</td><td class="num">15</td><td class="num">17</td></tr>
+<tr><td class="text">www.facebook.com</td><td class="num">15</td><td class="num">17</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="scripts-per-site">Scripts per site</h2>
+<p class="note">How many sites are targeted by exactly N scripts. The long tail of one-script sites is the bulk of the corpus.</p>
+<div class="scroll"><table><thead><tr><th class="num">scripts_targeting_site</th><th class="num">sites</th></tr></thead><tbody>
+<tr><td class="num">1</td><td class="num">3,597</td></tr>
+<tr><td class="num">2</td><td class="num">498</td></tr>
+<tr><td class="num">3</td><td class="num">508</td></tr>
+<tr><td class="num">4</td><td class="num">66</td></tr>
+<tr><td class="num">5</td><td class="num">50</td></tr>
+<tr><td class="num">6</td><td class="num">95</td></tr>
+<tr><td class="num">7</td><td class="num">14</td></tr>
+<tr><td class="num">8</td><td class="num">24</td></tr>
+<tr><td class="num">9</td><td class="num">13</td></tr>
+<tr><td class="num">10</td><td class="num">9</td></tr>
+<tr><td class="num">11</td><td class="num">5</td></tr>
+<tr><td class="num">12</td><td class="num">6</td></tr>
+<tr><td class="num">13</td><td class="num">5</td></tr>
+<tr><td class="num">14</td><td class="num">8</td></tr>
+<tr><td class="num">15</td><td class="num">9</td></tr>
+<tr><td class="num">16</td><td class="num">1</td></tr>
+<tr><td class="num">17</td><td class="num">1</td></tr>
+<tr><td class="num">18</td><td class="num">2</td></tr>
+<tr><td class="num">19</td><td class="num">2</td></tr>
+<tr><td class="num">20</td><td class="num">1</td></tr>
+<tr><td class="num">21</td><td class="num">1</td></tr>
+<tr><td class="num">22</td><td class="num">1</td></tr>
+<tr><td class="num">23</td><td class="num">2</td></tr>
+<tr><td class="num">24</td><td class="num">2</td></tr>
+<tr><td class="num">32</td><td class="num">1</td></tr>
+<tr><td class="num">33</td><td class="num">1</td></tr>
+<tr><td class="num">35</td><td class="num">2</td></tr>
+<tr><td class="num">37</td><td class="num">1</td></tr>
+<tr><td class="num">38</td><td class="num">1</td></tr>
+<tr><td class="num">44</td><td class="num">1</td></tr>
+<tr><td class="num">45</td><td class="num">1</td></tr>
+<tr><td class="num">50</td><td class="num">1</td></tr>
+<tr><td class="num">81</td><td class="num">1</td></tr>
+<tr><td class="num">108</td><td class="num">1</td></tr>
+<tr><td class="num">111</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="sites-per-script">Sites per script</h2>
+<p class="note">How many distinct sites one script targets. Scripts whose patterns resolve to no single site (e.g. <code>*://*/*</code> only) count as 0.</p>
+<div class="scroll"><table><thead><tr><th class="num">sites_per_script</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="num">0</td><td class="num">339</td></tr>
+<tr><td class="num">1</td><td class="num">1,102</td></tr>
+<tr><td class="num">2</td><td class="num">245</td></tr>
+<tr><td class="num">3</td><td class="num">86</td></tr>
+<tr><td class="num">4</td><td class="num">40</td></tr>
+<tr><td class="num">5</td><td class="num">14</td></tr>
+<tr><td class="num">6</td><td class="num">18</td></tr>
+<tr><td class="num">7</td><td class="num">16</td></tr>
+<tr><td class="num">8</td><td class="num">10</td></tr>
+<tr><td class="num">9</td><td class="num">9</td></tr>
+<tr><td class="num">10</td><td class="num">7</td></tr>
+<tr><td class="num">11</td><td class="num">7</td></tr>
+<tr><td class="num">12</td><td class="num">3</td></tr>
+<tr><td class="num">13</td><td class="num">8</td></tr>
+<tr><td class="num">14</td><td class="num">2</td></tr>
+<tr><td class="num">15</td><td class="num">3</td></tr>
+<tr><td class="num">16</td><td class="num">11</td></tr>
+<tr><td class="num">17</td><td class="num">4</td></tr>
+<tr><td class="num">18</td><td class="num">3</td></tr>
+<tr><td class="num">19</td><td class="num">2</td></tr>
+<tr><td class="num">20</td><td class="num">1</td></tr>
+<tr><td class="num">21</td><td class="num">4</td></tr>
+<tr><td class="num">22</td><td class="num">2</td></tr>
+<tr><td class="num">23</td><td class="num">4</td></tr>
+<tr><td class="num">24</td><td class="num">1</td></tr>
+<tr><td class="num">25</td><td class="num">2</td></tr>
+<tr><td class="num">26</td><td class="num">1</td></tr>
+<tr><td class="num">27</td><td class="num">2</td></tr>
+<tr><td class="num">28</td><td class="num">5</td></tr>
+<tr><td class="num">29</td><td class="num">3</td></tr>
+<tr><td class="num">30</td><td class="num">1</td></tr>
+<tr><td class="num">31</td><td class="num">5</td></tr>
+<tr><td class="num">32</td><td class="num">2</td></tr>
+<tr><td class="num">33</td><td class="num">1</td></tr>
+<tr><td class="num">34</td><td class="num">2</td></tr>
+<tr><td class="num">36</td><td class="num">2</td></tr>
+<tr><td class="num">37</td><td class="num">1</td></tr>
+<tr><td class="num">38</td><td class="num">3</td></tr>
+<tr><td class="num">42</td><td class="num">1</td></tr>
+<tr><td class="num">45</td><td class="num">1</td></tr>
+<tr><td class="num">46</td><td class="num">1</td></tr>
+<tr><td class="num">47</td><td class="num">1</td></tr>
+<tr><td class="num">51</td><td class="num">1</td></tr>
+<tr><td class="num">62</td><td class="num">1</td></tr>
+<tr><td class="num">64</td><td class="num">1</td></tr>
+<tr><td class="num">68</td><td class="num">3</td></tr>
+<tr><td class="num">76</td><td class="num">1</td></tr>
+<tr><td class="num">85</td><td class="num">1</td></tr>
+<tr><td class="num">91</td><td class="num">3</td></tr>
+<tr><td class="num">93</td><td class="num">1</td></tr>
+<tr><td class="num">96</td><td class="num">1</td></tr>
+<tr><td class="num">112</td><td class="num">1</td></tr>
+<tr><td class="num">159</td><td class="num">1</td></tr>
+<tr><td class="num">190</td><td class="num">2</td></tr>
+<tr><td class="num">194</td><td class="num">1</td></tr>
+<tr><td class="num">195</td><td class="num">1</td></tr>
+<tr><td class="num">208</td><td class="num">1</td></tr>
+<tr><td class="num">233</td><td class="num">1</td></tr>
+<tr><td class="num">262</td><td class="num">1</td></tr>
+<tr><td class="num">392</td><td class="num">1</td></tr>
+<tr><td class="num">685</td><td class="num">1</td></tr>
+<tr><td class="num">695</td><td class="num">1</td></tr>
+</tbody></table></div>
+</section>
+<section>
+<h2 id="scripts-that-match-any-site">Scripts that match any site</h2>
+<p class="note">Patterns with a bare <code>*</code> host run on every page. These are the ones whose cost is paid on every navigation.</p>
+<div class="scroll"><table><thead><tr><th>header_field</th><th class="num">lines</th><th class="num">scripts</th></tr></thead><tbody>
+<tr><td class="text">match</td><td class="num">189</td><td class="num">118</td></tr>
+<tr><td class="text">include</td><td class="num">121</td><td class="num">100</td></tr>
+</tbody></table></div>
+</section>
+</main>
+</body>
+</html>
