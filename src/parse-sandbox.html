@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SourceMonkey parse sandbox</title>
+</head>
+<body>
+<!--
+  Compiles userscript source WITHOUT running it, so a syntax error can be
+  reported at install time instead of at injection time.
+
+  Why this page exists at all
+  ---------------------------
+  `new Function(src)` compiles a function body and returns without
+  executing it — exactly the check we want, and it is V8's own verdict on
+  the same text we are about to inject, not a third-party parser's opinion
+  about a similar text.
+
+  But `new Function` is `eval` as far as CSP is concerned, and the MV3
+  extension CSP (`script-src 'self'`) forbids it everywhere an extension
+  normally runs: the service worker, extension pages, and offscreen
+  documents alike. A **sandboxed** page is the one context that may declare
+  `'unsafe-eval'` (see `content_security_policy.sandbox` in manifest.json),
+  which is why the compile happens here and nowhere else.
+
+  Why that is safe
+  ----------------
+  - The code is compiled, never called. `new Function` returns a function
+    object we drop on the floor.
+  - A sandboxed page has an opaque origin and no `chrome.*` access, so even
+    if some construct did execute it could not reach extension APIs, our
+    storage, or the user's pages.
+  - It talks only to its embedder (the offscreen document) over
+    postMessage, and the embedder is the only thing that can reach us.
+
+  Untrusted input, deliberately
+  -----------------------------
+  Every byte here is attacker-controlled in the sense that matters: a
+  userscript bundle can contain anything. That is the point — we are asking
+  "would V8 accept this?" about text we did not write.
+-->
+<script src="parse-sandbox.js"></script>
+</body>
+</html>

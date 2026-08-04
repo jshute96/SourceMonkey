@@ -59,11 +59,16 @@ const BAD_CASES: BadCase[] = [
   { file: 'invalid-header-fields.user.js', expectedStatus: 'ok' },
   { file: 'blank-lines.user.js',           expectedStatus: 'ok' },
   { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js:.*fetch/ },
-  // The two require cases below load CLEANLY — status `ok`, no
-  // errorMessage. Their `@require`s fetch fine; they fail later, at
-  // injection time, which the addSource path can't see. Runtime
-  // behavior for both is covered in tests/e2e/requires.spec.ts.
-  { file: 'unparsable-require.user.js',    expectedStatus: 'ok' },
+  // Both require cases below fetch their `@require` fine — the failure
+  // is in the code, not the load. They differ in WHEN we can see it:
+  //
+  //   - unparsable: the install-time compile check (src/parse-check.ts)
+  //     compiles the composed program without running it, so a syntax
+  //     error is visible before the script is ever registered.
+  //   - throwing: the library parses and only fails when it RUNS, and
+  //     running it is exactly what we won't do at install time. Still
+  //     `ok` here; the run-time report is covered in requires.spec.ts.
+  { file: 'unparsable-require.user.js',    expectedStatus: 'invalid', errorMatcher: /syntax error/i },
   { file: 'throwing-require.user.js',      expectedStatus: 'ok' },
 ];
 

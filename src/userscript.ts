@@ -28,6 +28,7 @@
 
 import {
   addSource,
+  buildScriptFromText,
   describeError,
   distillMatching,
   getAllScripts,
@@ -42,6 +43,7 @@ import {
 } from './script-store.js';
 import { computeLogIds } from './script-log-id.js';
 import {
+  attachFiles,
   distillRequires,
   fetchRequireForPreview,
   type FileFetchCache,
@@ -93,6 +95,8 @@ import {
 } from './github-auth.js';
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
+import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
+import { dlog } from './debug-log.js';
 import { dropRawView, putRawView } from './raw-view.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
@@ -100,6 +104,12 @@ import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { renderDetails } from './script-details.js';
+
+// Install and Refresh run the load pipeline here in the page, so this
+// page needs its own parse checker — without one, Install would store
+// an unparsable script as `ok` and Refresh would clear an `invalid`
+// verdict it never re-derived. See src/parse-check-client.ts.
+installPageParseChecker();
 
 // Refresh (installed) and the preview fetch both run in the page
 // context, so the page needs its own copy of the cached GitHub token.
@@ -767,9 +777,157 @@ function renderPreview(text: string): void {
     renderInvalidPreview(error);
     return;
   }
-  void wireInstallButtons().catch((err) => {
-    setMessage(`Could not check whether this is already installed: ${describeError(err)}`, 'error');
+  void wireInstallButtons()
+    .catch((err) => {
+      setMessage(`Could not check whether this is already installed: ${describeError(err)}`, 'error');
+    })
+    // After, not alongside: `wireInstallButtons` renders the banner
+    // with `replaceChildren`, so a warning appended while it was still
+    // in flight would be wiped out.
+    .then(() => runPreviewParseCheck(text, previewHeader))
+    .catch((err) => {
+      // Fails open like every other leg of the check — the preview is
+      // still usable, and the install-time check remains the backstop.
+      dlog(`[SourceMonkey] preview parse check skipped: ${describeError(err)}`);
+    });
+}
+
+// Compile what installing this file would register, and say so before
+// the user commits. Without it the first report of a syntax error was
+// an `INVALID` row on the page you land on AFTER clicking Install.
+//
+// Warns rather than blocking. A missing `@match` hides Install because
+// the file isn't an installable userscript at all; a syntax error is a
+// property of code the user may well intend to install and fix (or
+// install because they trust it more than our verdict). So the button
+// stays live and the banner says what will happen.
+//
+// This is where the preview stops being lazy about `@require`s. Their
+// bodies are half the program a syntax error can live in — the case
+// that prompted this was a broken library, not a broken body — so the
+// check fetches every declared one up front, and the tabs get them
+// from the shared cache for free.
+async function runPreviewParseCheck(text: string, header: ParsedHeader | null): Promise<void> {
+  try {
+    await checkPreviewSource(text, header);
+  } finally {
+    // "The check is over", whatever it concluded. Tests need a signal
+    // they can wait on — especially the ones asserting a warning is
+    // ABSENT, which otherwise race the fetches and the compile and
+    // pass for the wrong reason.
+    bannerSlotEl.dataset.parseCheck = 'done';
+  }
+}
+
+// `header` is passed in rather than read from module scope, even
+// though it currently holds the same value: the text being compiled
+// and the header describing its `@require`s have to be the same
+// render's, and taking one from an argument and the other from a
+// mutable module variable is how those quietly come apart.
+async function checkPreviewSource(text: string, header: ParsedHeader | null): Promise<void> {
+  const now = Date.now();
+  const script = await buildScriptFromText({
+    // Placeholder identity: nothing is stored, and the preview's own
+    // location is what `addSource` would record for a real install.
+    id: 'preview',
+    sourceId: 'preview',
+    relativePath: previewLocation,
+    fileUrl: previewFileUrl,
+    source: text,
+    now,
   });
+  // A header problem is already on screen (`renderInvalidPreview`), and
+  // an unparsable header means there's no body to judge.
+  if (script.status !== 'ok') return;
+
+  // The same call the store makes, not a hand-rolled loop beside it.
+  // Fetching each declared `@require` individually looks equivalent and
+  // isn't: `attachFiles` dedups by canonical URL (a library declared
+  // twice is loaded once), and it covers `@resource`, whose bytes are
+  // baked into the checked text and whose fetch failures land a real
+  // install as `invalid`. A loop that skipped both would compose a
+  // program no install ever produces — and duplicate library bodies
+  // read as `already been declared`, i.e. a syntax error reported
+  // against a perfectly healthy script.
+  const files = await attachFiles({
+    scriptFileUrl: previewFileUrl,
+    header,
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: previewFetchCache,
+    now,
+  });
+  if (files.errorMessage) {
+    // Deliberately softer than the syntax-error wording below. A dep
+    // that won't load is usually a flaky host, and the store goes out
+    // of its way not to disable a working script over one — an Update
+    // keeps the prior copy running and records a refresh failure. So
+    // say what we couldn't do, not what will happen.
+    appendPreviewWarning(
+      `This script's code could not be checked: ${files.errorMessage}`,
+    );
+    return;
+  }
+  if (files.requires.length > 0) script.requires = files.requires;
+  if (files.resources.length > 0) script.resources = files.resources;
+
+  const verdict = await checkScriptParses(script);
+  // `unknown` and `null` are the machinery saying it couldn't decide.
+  // Only V8 answering SyntaxError may accuse a script — see
+  // [docs/parse-check.md].
+  if (verdict?.status !== 'syntax-error') return;
+  appendPreviewWarning(
+    `This script's code has a syntax error, so none of it would run: ` +
+    `${verdict.message ?? 'unknown'}. ${syntaxErrorOutcome()}`,
+  );
+}
+
+// What actually happens if the user goes ahead — which is not one
+// sentence, because `rebuildSource` (script-store.ts) deliberately
+// treats an http(s) refresh that doesn't parse as a bad *response*
+// rather than a bad script: a 200 login page served in place of the
+// source must not take down the copy that works. So an Update over
+// http keeps the installed body running and flags the refresh, and
+// promising INVALID there would simply be wrong.
+//
+// A first install has no prior copy to preserve, and a file:// read
+// returns the file's real bytes, so both of those really do land
+// INVALID.
+function syntaxErrorOutcome(): string {
+  // `updateBtn.hidden` is the question `wireInstallButtons` already
+  // answered, so the sentence can't disagree with the button on
+  // screen. It also degrades correctly: the button starts hidden in
+  // the markup, so if that wiring threw we describe an install, which
+  // is what an unwired preview offers.
+  if (updateBtn.hidden) return 'Installing it will store it as INVALID.';
+  // Preservation is gated on the installed row being `ok`, not merely
+  // on it existing: `rebuildSource` keeps a prior copy running because
+  // that copy WORKS. Updating a row that is already `invalid` has
+  // nothing worth keeping, so the bad parse is stored like any other.
+  if (isHttpUrl(previewLocation) && previewInstalledStatus === 'ok') {
+    return 'Updating it will leave the installed copy running and mark the refresh as failed.';
+  }
+  return 'Updating it will store it as INVALID.';
+}
+
+// Status of the row this preview would update, or null when nothing is
+// installed for this location. Recorded by `wireInstallButtons` so the
+// warning above can describe the outcome the store will actually
+// produce, which depends on the prior row and not just on the URL.
+let previewInstalledStatus: StoredScript['status'] | null = null;
+
+// Warnings the parse check has reported, so `renderBanner` can put them
+// back after it replaces the slot. Preview-only; empty for an
+// installed script.
+const previewWarnings: string[] = [];
+
+// Add a warning box below whatever the banner slot already says, rather
+// than replacing it — the install/installed banner is still true, and
+// the two facts belong on screen together.
+function appendPreviewWarning(text: string): void {
+  previewWarnings.push(text);
+  bannerSlotEl.append(makeBanner(text));
 }
 
 // The reason this file can't be installed, or null. Deliberately the
@@ -826,10 +984,11 @@ function renderInvalidPreview(error: string): void {
 }
 
 // Tab strip for a preview: the fetched text, then one tab per declared
-// `@require`. Bodies for the requires are thunks — nothing is fetched
-// from a third-party host until the user opens that tab, so merely
-// looking at a script we haven't installed doesn't pull down its
-// dependencies. No Log tab: nothing has run.
+// `@require`. The bodies are thunks, but they no longer decide WHEN a
+// dependency is fetched: `runPreviewParseCheck` pulls every declared
+// file as soon as the preview renders, because the check judges the
+// composed program. Both share `previewFetchCache`, so opening a tab
+// is a cache hit. No Log tab: nothing has run.
 function previewTabs(text: string, header: ParsedHeader | null): CodeTab[] {
   const fileUrl = previewFileUrl;
   const tabs: CodeTab[] = [{
@@ -881,6 +1040,7 @@ async function wireInstallButtons(): Promise<void> {
     return;
   }
 
+  previewInstalledStatus = existing.status;
   renderInstalledBanner(existing, previewHeader);
   installBtn.hidden = true;
   showOpenButton(existing.id);
@@ -1084,7 +1244,7 @@ function leavePage(): void {
 // wouldn't have helped it.
 function showFileAccessBannerIfBlocked(fileUrl: string, retry?: string): void {
   if (fileAccessAllowed || !isFileUrl(fileUrl)) return;
-  bannerSlotEl.replaceChildren(renderFileAccessBanner(retry));
+  replaceBanner(renderFileAccessBanner(retry));
 }
 
 // Whether the error this row is flagged with is about *reading* the
@@ -1107,13 +1267,27 @@ function readFailed(script: StoredScript): boolean {
 }
 
 function renderBanner(text: string, extraClass = ''): void {
-  bannerSlotEl.replaceChildren();
+  replaceBanner(makeBanner(text, extraClass));
+}
+
+// The one way to replace what the banner slot says. Every caller
+// REPLACES rather than appends, and each one can run after the parse
+// check has reported — `doInstall` discovering the script is already
+// installed, say — so each would otherwise silently delete a "this has
+// a syntax error" warning the user is mid-way through reading. Going
+// through here means a new banner path can't reintroduce that.
+function replaceBanner(banner: HTMLElement): void {
+  bannerSlotEl.replaceChildren(banner);
+  for (const warning of previewWarnings) bannerSlotEl.append(makeBanner(warning));
+}
+
+function makeBanner(text: string, extraClass = ''): HTMLElement {
   const div = document.createElement('div');
   div.className = extraClass ? `banner ${extraClass}` : 'banner';
   const p = document.createElement('p');
   p.textContent = text;
   div.append(p);
-  bannerSlotEl.append(div);
+  return div;
 }
 
 function renderInstalledBanner(existing: StoredScript, header: ParsedHeader | null): void {

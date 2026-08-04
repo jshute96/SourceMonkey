@@ -83,6 +83,7 @@ export interface StoredScriptLike {
   errorMessage?: string;
   size: number | null;
   loadedAt: number;
+  parseCheckedHash?: string;
   enabled: boolean;
   bodyText: string;
 }

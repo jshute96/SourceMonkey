@@ -3,9 +3,13 @@
 //
 // The capture route into the same page is covered by
 // install-capture.spec.ts; this file covers what's specific to Add
-// Source and to preview mode itself: local files, lazy `@require`
-// tabs, and the refusal to offer Install for something that would land
-// as an `invalid` row.
+// Source and to preview mode itself: local files, `@require` tabs, and
+// the refusal to offer Install for something that would land as an
+// `invalid` row.
+//
+// The preview's parse-check warning is in parse-check-pages.spec.ts —
+// it warns rather than refusing, so it belongs with the other paths
+// that run the check, not with the install gate.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -108,11 +112,20 @@ test.describe('script preview', () => {
     await page.close();
   });
 
-  test('@require tabs exist up front but are not fetched until opened', async ({
+  test('@require bodies are fetched once up front, and the tab reuses them', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Previewing a script must not pull its dependencies off
-    // third-party hosts — the user hasn't agreed to anything yet.
+    // This used to assert the opposite — that previewing a script never
+    // pulled its dependencies off third-party hosts, since the user
+    // hadn't agreed to anything yet. The preview's parse check judges
+    // the composed program, and a broken library is the common case, so
+    // the bodies are now fetched as soon as the preview renders. See
+    // docs/script-viewer.md; the trade is a fetch you didn't ask for
+    // against learning the script won't run before you install it.
+    //
+    // The tabs are still thunks, and still share `previewFetchCache`
+    // with the check — so "fetched exactly once" is the assertion that
+    // matters either way.
     const server = await UserscriptServer.start();
     try {
       server.setRoute('/lib.js', "window.libLoaded = 'yes';\n", {
@@ -135,14 +148,18 @@ test.describe('script preview', () => {
       // The tab is listed from the header alone…
       await expect(page.locator('#tabs')).toContainText('lib.js');
       await expect(page.locator('#content')).toContainText('@require');
-      expect(server.requestLog.filter((e) => e.path === '/lib.js')).toHaveLength(0);
 
-      // …and the fetch happens only when the user asks to see it.
+      // …and the body arrives on its own, pulled by the parse check.
+      await expect
+        .poll(() => server.requestLog.filter((e) => e.path === '/lib.js').length)
+        .toBe(1);
+
+      // Opening the tab serves the cached body rather than re-fetching.
       await page.locator('#tabs button', { hasText: 'lib.js' }).click();
       await expect(page.locator('#content')).toContainText('window.libLoaded');
       expect(server.requestLog.filter((e) => e.path === '/lib.js')).toHaveLength(1);
 
-      // Switching away and back reuses the cached body.
+      // Switching away and back reuses it too.
       await page.locator('#tabs button').first().click();
       await page.locator('#tabs button', { hasText: 'lib.js' }).click();
       await expect(page.locator('#content')).toContainText('window.libLoaded');

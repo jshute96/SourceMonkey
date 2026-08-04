@@ -103,7 +103,16 @@ test.describe('badge', () => {
     scriptsDir.rewriteBody('live.user.js', `document.title = 'v2';`);
     await sm.updateSource(added!.id, 'manual');
 
-    const snap = await waitForTabState(sm, tabId, (s) => hasColor(s, PURPLE), 'purple after update');
+    // Wait on the colour AND the title together. `renderBadge` awaits
+    // `setBadgeBackgroundColor` before `setTitle`, so a state sampled
+    // between the two carries the new colour with the old title —
+    // waiting on colour alone and then asserting the title is a race.
+    const snap = await waitForTabState(
+      sm,
+      tabId,
+      (s) => hasColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      'purple + RELOAD title after update',
+    );
     expect(snap.title).toContain('Live | Reload to update');
 
     // Reload the page → new wrapper runs the fresh body → back to green.

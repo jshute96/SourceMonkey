@@ -392,6 +392,13 @@ test.describe('@require', () => {
     // no error, no log, no badge, script just does nothing forever.
     // (Under separate entries the broken require died alone and the
     // body still ran.)
+    //
+    // The install-time parse check normally catches this first and the
+    // script never registers at all — see parse-check-install.spec.ts.
+    // Turn it off here so the run-time backstop is still exercised: it
+    // is what covers a browser without `chrome.offscreen`, a check that
+    // times out, and rows stored before the check existed.
+    await sm.setParseCheckEnabled(false);
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const ok = 1;\n/* unterminated');
     scriptsDir.write({
       relativePath: 'main.user.js',
@@ -431,6 +438,10 @@ test.describe('@require', () => {
   test('the parse-failure sentinel stays quiet on pages the script does not match', async ({
     extensionContext, fixtureServer, sm,
   }) => {
+    // Same reason as the test above: exercise the backstop, not the
+    // install-time check that would otherwise stop this script from
+    // registering.
+    await sm.setParseCheckEnabled(false);
     // The sentinel infers "js[2] failed to parse" from __smRun never
     // being called. But the prelude registers a script's entry BEFORE
     // running the in-page matcher, so on a non-matching page __smRun

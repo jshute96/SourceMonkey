@@ -352,13 +352,56 @@ Banner (`#banner-slot`) states what this file is; the action row
   the `file://` form — a bare path would resolve against the
   extension's own origin.
 
+### When the code won't parse
+
+The preview compiles what installing would register — see
+[parse-check.md](parse-check.md). Without it, the first report of a
+syntax error was an `INVALID` row on the page you land on *after*
+clicking Install.
+
+- **Warns, doesn't block.** Install stays live. A missing `@match`
+  means the file isn't an installable userscript at all; a syntax error
+  is a property of code the user may well intend to install and fix.
+- The warning is appended below the install/installed banner rather
+  than replacing it — both facts are true and belong on screen
+  together. It renders after `wireInstallButtons` resolves, because
+  that path rebuilds the banner slot with `replaceChildren`.
+- A file that can't be fetched is reported as **"could not be
+  checked"**, not as a prediction about the install. A flaky dependency
+  host isn't grounds for telling the user their install will fail — an
+  Update over http keeps the working copy running.
+- **Update gets the same warning**, since it rebuilds the row just the
+  same. The sentence names the button on screen, read off
+  `updateBtn.hidden` so the two can't disagree.
+- The promised outcome is the real one, which is not one sentence.
+  `rebuildSource` treats an http(s) refresh that doesn't parse as a bad
+  *response*, not a bad script — so an Update over http keeps the
+  installed body running and flags the refresh, while a first install
+  or a `file://` edit really does land `INVALID`.
+  - That preservation is gated on the installed row being `ok`, so the
+    sentence checks it too. Updating a row that already doesn't parse
+    stores the new `INVALID` — there is nothing worth keeping.
+- Fails open. `unknown`, an unreachable service worker, or any throw
+  leaves the preview silent; the install-time check is still the
+  backstop.
+
 ### Tabs
 
 - Main tab is the fetched text.
-- One tab per `@require` **declared in the header** — the tabs exist
-  immediately, but nothing is fetched from a third-party host until the
-  user opens that tab. Looking at a script we haven't installed doesn't
-  pull down its dependencies.
+- One tab per `@require` **declared in the header**. The tab bodies are
+  thunks, fetched when the tab is opened.
+- The bodies arrive up front anyway now. The parse check needs the
+  composed program, so it calls `attachFiles` — the store's own loader
+  — as soon as the preview renders.
+- Previewing a script therefore *does* pull down its dependencies: a
+  deliberate reversal of the earlier policy, traded for catching a
+  broken library before the install rather than after it.
+- **This includes the capture path.** Clicking a `.user.js` link, or
+  opening one from disk to read it, lands here — so the fetches happen
+  before the user has decided anything. See
+  [install-capture.md](install-capture.md).
+- Both paths share `previewFetchCache`, so a tab opened after the
+  check is a cache hit.
 - Each lazy load goes through `fetchRequireForPreview`
   (`external-files.ts`), which routes to the same `loadRequire` an
   install uses — so a require that would be rejected at install time

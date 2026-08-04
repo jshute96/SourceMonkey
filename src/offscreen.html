@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SourceMonkey offscreen host</title>
+</head>
+<body>
+<!--
+  Offscreen document: the extension's only way to get a DOM without a
+  visible tab. It exists solely to embed the sandboxed parse page and
+  relay messages to it, because the two halves each lack something the
+  other has:
+
+    - The service worker can call `chrome.*` but has no DOM, so it
+      cannot host an iframe — and its CSP forbids `eval`.
+    - The sandboxed page may use `eval` (so it can compile) but has an
+      opaque origin and no `chrome.*`, so the service worker cannot
+      message it directly.
+
+  This document has both a DOM and `chrome.runtime`, so it bridges
+  them: `chrome.runtime.onMessage` in, `postMessage` to the iframe,
+  and back.
+
+  The iframe is `src`-loaded rather than `srcdoc` so it resolves to the
+  URL declared in the manifest's `sandbox.pages` list — a srcdoc frame
+  would inherit this document's CSP and lose the `'unsafe-eval'` that
+  is the entire point.
+-->
+<!--
+  The `sandbox` attribute is belt-and-braces. The page is already
+  sandboxed by the manifest's `sandbox.pages` key; if that key were
+  ever dropped in an edit, this attribute keeps the frame from
+  silently becoming a fully privileged extension page with `chrome.*`
+  available to whatever it compiles.
+-->
+<iframe id="parse-sandbox" src="parse-sandbox.html" sandbox="allow-scripts"></iframe>
+<script type="module" src="offscreen.js"></script>
+</body>
+</html>

@@ -43,6 +43,13 @@ in a new tab, and **Cancel** goes back where you came from. A file that
 isn't a valid userscript can't be installed — the preview says why and
 shows you what actually came back.
 
+The preview also compiles the script — with its `@require`d libraries —
+before you commit, and warns if the code has a syntax error or a
+library can't be loaded. Install stays available: it's your call
+whether to take a script you intend to fix. Checking the code means
+opening a preview downloads the `@require` / `@resource` files the
+script names, before you install anything.
+
 If you opened a local `.user.js` to read rather than install it,
 **View raw source** shows it, and **Continue to file** loads it in the
 tab. Turn the whole thing off with **Capture `.user.js` links** on the
@@ -158,9 +165,15 @@ update channel to a site you didn't approve.
   it clears. A problem that persists is logged once, not once per
   check.
   - `INVALID` — metadata block missing/malformed, required fields
-    (`@name` plus `@match`/`@include`) missing, or a `@require` /
-    `@resource` dependency couldn't be loaded. Hover for the reason;
-    the same message is also written to the Log tab.
+    (`@name` plus `@match`/`@include`) missing, a `@require` /
+    `@resource` dependency couldn't be loaded, or the script's code
+    has a syntax error. Hover for the reason; the same message is also
+    written to the Log tab.
+    - Syntax errors are found by compiling the script — with its
+      `@require`d libraries — when it's added or refreshed, without
+      running any of it. So a broken library shows up next to the
+      script straight away, rather than the first time you happen to
+      visit a page it matches.
   - `MISSING` — the script's file is no longer in the scan listing
     (deleted on disk, manifest entry removed). The Size column still
     shows the cached body's byte count, and a small trash-can button

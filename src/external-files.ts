@@ -238,10 +238,12 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
   return { requires, resources };
 }
 
-// Fetch a single `@require` the way `attachFiles` would, for the
-// viewer's preview mode: the preview builds its `@require` tabs from
-// the header up front and loads each body only when its tab is opened,
-// so it can't use the batch orchestrator. Routing through the same
+// Fetch a single `@require` the way `attachFiles` would, for one
+// preview TAB: the tabs are built from the header and render one body
+// each, so a tab can't use the batch orchestrator (which returns all
+// files or an error). The preview's parse check does use `attachFiles`
+// — this is the per-tab path only, and the shared `fetchCache` means
+// whichever runs first pays for the fetch. Routing through the same
 // `loadRequire` keeps the validation and the error wording identical
 // to what installing the script would produce.
 //

@@ -68,10 +68,57 @@ What is still unmapped:
   declares `GM`, `GM_info`, every granted `GM_*`, `unsafeWindow` and
   `__sm*` in the same scope as the user program, so a library doing
   `const unsafeWindow = window.wrappedJSObject || window;` — a real
-  idiom — is a parse failure. The sentinel entry reports it, but
-  renaming our internals (or moving the preamble reads onto `__smE`,
-  which would also fix the `self` / `window` TDZ case) would avoid
-  it.
+  idiom — is a parse failure. The install-time parse check now catches
+  it and names the script (see [docs/parse-check.md](docs/parse-check.md)),
+  so it fails visibly rather than silently — but the script still can't
+  run. Renaming our internals (or moving the preamble reads onto
+  `__smE`, which would also fix the `self` / `window` TDZ case) would
+  make it work instead.
+
+## Parse check — follow-ups
+
+The compile-only check is in (see
+[docs/parse-check.md](docs/parse-check.md)). What it doesn't do yet:
+
+- **Compile with the wrap's own declarations.** The check omits the
+  wrap head's `var` preamble, the `__smE` parameter and the GM
+  prelude, so a script declaring `const __smE`, `let __smDecision` or
+  `const __smGmSnap` passes and then fails at injection. Every such
+  name is `__sm`-prefixed so the risk is small, and it errs toward
+  false-accept. Compiling with `new Function('__smE', preamble + src)`
+  would close it.
+- **Say WHICH file failed.** Today the message is V8's, against the
+  whole composed program: "the script's source has a syntax error".
+  Compiling the pieces separately would name the `@require` (or the
+  body) at fault, and the case where every piece parses alone but the
+  join doesn't — two libraries declaring the same `const` — is
+  distinguishable from both.
+- **Report a line and column.** V8 gives neither for a `new Function`
+  SyntaxError. A `<script>` element whose text is
+  `window.__probe = function(){ …src… }` would fire `window.onerror`
+  with a real `lineno`/`colno` while still never running the body;
+  worth measuring against the segment layout, which could then map it
+  to the original file and line.
+- **Batch per refresh pass.** The check is one round trip per changed
+  script. `parseCheckedHash` keeps unchanged content free, so this only
+  bites on a first-add of many scripts at once.
+- **Don't let a failed check clear a real `invalid` verdict.**
+  `applyParseCheck` returns the freshly-built row unchanged when the
+  verdict is null or `unknown`, and that row starts out `ok`. So a
+  refresh whose check couldn't run resets a script that genuinely
+  doesn't parse back to `ok` and logs a recovery.
+  - Installing checkers in extension pages (this change) removes the
+    common cause, but not the shape.
+  - Fix: when the verdict is inconclusive AND the prior row was
+    `invalid` at the same `parseCheckKey`, carry the prior status and
+    message forward. Nothing was re-derived, so nothing justifies the
+    recovery.
+- **Don't fetch dependencies twice on install-from-preview.** The
+  preview fills `previewFetchCache` to run its check; clicking Install
+  then runs `addSource` → `attachFiles` against the store's own cache,
+  so every `@require` / `@resource` is fetched again. Bridging the two
+  caches (or handing the preview's typed entries to the install) would
+  halve the third-party traffic that eager fetching introduced.
 
 ## Cross-manager coverage
 
@@ -124,8 +171,9 @@ Adding any of these is a catalog entry + a body — nothing structural.
   scripts work badly without it. Could be page-side via
   `MutationObserver` on `location.href` + `pushState` / `popstate`
   listeners.
-- `GM_download` — TM/VM download-to-disk helper. Needs an offscreen
-  document for `URL.createObjectURL`.
+- `GM_download` — TM/VM download-to-disk helper. Needs `BLOBS` added
+  to the existing offscreen document's `reasons` (see the clipboard
+  entry — there is only one such document).
 - `window.close` / `window.focus` — TM-only surface.
 
 ### GM_* implementation follow-ups
@@ -138,9 +186,13 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **Offscreen-doc fallback for clipboard.** `navigator.clipboard.
   writeText` may reject without focus / transient activation. TM/VM
   use an offscreen `execCommand('copy')` to avoid the requirement.
-  Add `offscreen` + `clipboardWrite` manifest permissions, build
-  `src/offscreen.html` + `src/offscreen.ts`, route the fallback
-  through it.
+  The offscreen document already exists (`src/offscreen.html` +
+  `src/offscreen.ts`, built for the parse check) and the `offscreen`
+  permission is declared — MV3 allows only ONE per extension, so
+  EXTEND that host rather than adding a second. Needs
+  `clipboardWrite` in the manifest and `CLIPBOARD` added to the
+  `reasons` array in `parse-check.ts`, which is fixed at creation
+  time.
 - **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
   USER_SCRIPT world's own `window`, not the page's. A real bridge
   would need a MAIN-world helper + postMessage protocol, or a

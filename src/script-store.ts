@@ -73,9 +73,11 @@ import {
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import type { VersionProbe } from './version-probe.js';
+import type { ParseVerdict } from './parse-check-protocol.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
+import { dlog } from './debug-log.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
 // metadata-block parse failure, header validation failure, fetch
@@ -142,6 +144,14 @@ export interface StoredScript {
   // entry inside a manifest where the scan has no per-file stat).
   // Absent only on never-loaded rows.
   contentHash?: string;
+  // Fingerprint of the exact source last handed to the compile-only
+  // parse check (src/parse-check.ts): the body's `contentHash` plus
+  // each `@require`'s. Lets a refresh skip a re-check when nothing
+  // that could affect parsing changed, which is the common case on the
+  // opportunistic path. Absent means "never checked" — including on
+  // rows written before this existed, and on rows whose check could
+  // not run.
+  parseCheckedHash?: string;
   // Modification time as reported by Chrome's directory listing on the
   // last successful scan. Opaque integer used only for equality —
   // combined with `size`, it lets refresh skip refetching a file whose
@@ -545,7 +555,13 @@ async function applyFiles(
       else delete built.requires;
       if (prior.resources) built.resources = prior.resources;
       else delete built.resources;
-      return built;
+      // Still route through the parse check. `built` is a fresh row,
+      // so returning here directly would drop `parseCheckedHash` and
+      // make every later refresh re-compile content that never moved.
+      // The check itself is usually free on this path: the deps are
+      // the prior's by construction, so the fingerprint matches unless
+      // the BODY changed — which is exactly when a re-check is right.
+      return applyParseCheck(built, prior);
     }
   }
   const result = await attachFiles({
@@ -585,6 +601,138 @@ async function applyFiles(
   else delete built.requires;
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
+  return applyParseCheck(built, prior);
+}
+
+// ---------- Parse check hook ----------
+//
+// The check needs the exact text the *injector* would compile, so the
+// natural call would be `injector.buildParseCheckSource`. But
+// `injector.ts` imports runtime helpers from this module, and a real
+// (not type-only) cycle between them is something this codebase
+// deliberately avoids — see the note on `source-display.ts`.
+//
+// So the dependency is inverted: whoever owns both modules installs
+// the checker. `background.ts` does it for the service worker,
+// `parse-check-client.ts` for extension pages — and both are needed,
+// because this pipeline runs in whichever context called it.
+//
+// A context with no checker skips the check. That is NOT a benign
+// degradation: the rebuild below resets `status` to `ok`, so a skipped
+// check on a row that was `invalid` clears the verdict and reports a
+// recovery that never happened. It's tolerable only as a failure mode,
+// never as a design — a row left unchecked carries no
+// `parseCheckedHash`, so the next refresh re-derives it.
+export type ParseChecker = (script: StoredScript) => Promise<ParseVerdict | null>;
+
+let parseChecker: ParseChecker | null = null;
+
+export function setParseChecker(fn: ParseChecker | null): void {
+  parseChecker = fn;
+}
+
+// Fingerprint of everything that can affect whether the injected entry
+// parses: the body, each `@require` body in order, and our own
+// extension version.
+//
+// The body's `contentHash` covers the WHOLE file including the header,
+// so `@grant` / `@require` / `@inject-into` edits all move the key.
+//
+// The version leg is there because the checked text also contains code
+// WE emit — the `GM_*` bindings, whose set of `const` names comes from
+// `gm-api-catalog.ts`. Add a binding in a future release and a script
+// that already declares that name becomes a parse failure, with
+// nothing about the script itself having changed. Without the version
+// in the key, the cached pass would survive the upgrade.
+//
+// Future hazard: `buildGmBindingsForScript` is async against the day it
+// bakes persisted `GM_*` values into the bindings. If that lands, those
+// values become part of the checked text and belong in this key — and
+// the install preview, which checks a synthetic row with a placeholder
+// id (`runPreviewParseCheck` in userscript.ts), would start reading
+// some other script's values.
+function parseCheckKey(script: StoredScript): string {
+  const reqs = (script.requires ?? []).map((r) => r.contentHash).join(',');
+  return `${extensionVersion()}|${script.contentHash ?? ''}|${reqs}`;
+}
+
+// Guarded because this module is also loaded by the unit suite, which
+// runs the compiled output under plain Node with no `chrome` global.
+// An empty version there just means the version leg contributes
+// nothing to the key, which is correct for a context that never runs
+// the check anyway.
+function extensionVersion(): string {
+  if (typeof chrome === 'undefined' || !chrome.runtime?.getManifest) return '';
+  return chrome.runtime.getManifest().version;
+}
+
+// Compile the script's user program without running it, and flip the
+// row to `invalid` if V8 refuses it.
+//
+// Why here: this is the last point in the load pipeline where the body
+// and every `@require` are both present and final. Before this
+// existed, a syntax error anywhere in the concatenated program was
+// only discovered at injection time — on a page the script matched,
+// reported by the seal entry, and only as "a @require or the script
+// body has a syntax error". See [docs/parse-check.md].
+//
+// `invalid` is deliberate rather than `refreshError`: unlike a failed
+// dependency fetch, this is not transient and re-running won't help —
+// the content we hold genuinely cannot run. Callers upstream still
+// apply their own preservation policy on top; `rebuildSource` keeps a
+// prior good copy running when an *http* refresh comes back invalid
+// (a login page served in place of the script), while a file:// edit
+// flags immediately, which is what a local dev wants.
+//
+// Fails open. `checkParses` returns null when the machinery is
+// unavailable, and null must never become `invalid` — a working script
+// must not break because our offscreen document didn't open. The seal
+// entry remains the backstop for anything missed here.
+async function applyParseCheck(
+  built: StoredScript,
+  prior: StoredScript | undefined,
+): Promise<StoredScript> {
+  // Nothing to check on a row that already failed for another reason
+  // (missing file, bad header) — there may be no body at all.
+  if (built.status !== 'ok') return built;
+  const key = parseCheckKey(built);
+  // Unchanged since the last check, so the previous verdict still
+  // holds. This is what keeps opportunistic refreshes from paying a
+  // round trip per script for content that didn't move.
+  if (prior?.parseCheckedHash === key && prior.status === 'ok') {
+    built.parseCheckedHash = key;
+    return built;
+  }
+  if (!parseChecker) return built;
+  let verdict: ParseVerdict | null;
+  try {
+    verdict = await parseChecker(built);
+  } catch (err) {
+    // The checker itself failed (a storage read for a storage-granting
+    // script's baked-in values, the offscreen document refusing to
+    // open). Not the script's fault; skip rather than accuse it.
+    dlog(`[SourceMonkey] parse check skipped for ${built.relativePath}: ${describeError(err)}`);
+    return built;
+  }
+  if (!verdict) return built;
+  // `unknown` is the machinery saying it couldn't decide — a stack
+  // overflow in the parser, a sandbox that lost its CSP. It must not
+  // become `invalid`, and it must not be cached as a pass either.
+  if (verdict.status === 'unknown') {
+    dlog(`[SourceMonkey] parse check inconclusive for ${built.relativePath}: ${verdict.message ?? ''}`);
+    return built;
+  }
+  if (verdict.status === 'ok') {
+    built.parseCheckedHash = key;
+    return built;
+  }
+  built.status = 'invalid';
+  built.errorMessage = `script source has a syntax error: ${verdict.message ?? 'unknown'}`;
+  // Don't record the fingerprint: the row is invalid, and a future
+  // refresh that produces the same bytes should re-derive that rather
+  // than inherit a stale pass. (`prior` above only short-circuits on a
+  // prior `ok`.)
+  delete built.parseCheckedHash;
   return built;
 }
 
