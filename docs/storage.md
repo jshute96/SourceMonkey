@@ -188,6 +188,10 @@ content is current again) clears `refreshError`. If the file is later
 confirmed *vanished* from its listing, the row transitions to
 `missing` and the `refreshError` annotation is dropped.
 
+Both the failure and the recovery are copied into the script's own Log
+(warning and info respectively), so the badge is always explainable —
+see [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
+
 This mirrors the [scan-failure](#scan-failure-leave-scripts-untouched)
 policy one level down: scan failure protects every script in a source
 when the *listing* can't be read; `refreshError` protects a single
@@ -218,9 +222,11 @@ Priority order (highest wins):
 - `OK` — everything else (no logs, or only info-level logs).
 
 The Status cell is a link to the script's viewer Log tab in both
-pages. For scripts that land as INVALID or MISSING the refresh /
-add-source paths also append an error-level entry to the per-script
-Log so the Log tab always carries the failure detail.
+pages, and every non-OK state above (except OUTDATED, which the probe
+logs separately) has a matching entry in that Log — INVALID / MISSING
+at error level, REFRESH FAILED at warning. Recoveries are logged too,
+so a badge going green has a matching line; see
+[script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 ## Change detection: the last-change token
 
@@ -370,6 +376,12 @@ Every load path goes through the same pipeline:
   see definitive evidence they're gone.
 - **Recovery**: a later successful refresh runs the normal
   reconciliation and clears `scanError`.
+- **Logging**: because no script row is touched, the per-script
+  outcome pass would report "no change" for rows that were never
+  checked (see [script-log.md](script-log.md#how-a-check-frames-itself)). Instead the reason is fanned out to every script's Log at
+  info level (the badge for a source-level problem stays on the source
+  row), plus one entry when it clears — see
+  [script-log.md](script-log.md#source-level-failures).
 
 ### Entry points
 

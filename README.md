@@ -150,8 +150,13 @@ update channel to a site you didn't approve.
   losing each script's own choice. The table header has a small **+** /
   **−** button that bulk-enables or bulk-disables every script in
   that source.
-- Status is one of `OK | INVALID | MISSING | OUTDATED | WARNING |
-  ERROR` and is a link to the script's Log tab in the viewer.
+- Status is one of `OK | INVALID | MISSING | REFRESH FAILED |
+  OUTDATED | WARNING | ERROR` and is a link to the script's Log tab in
+  the viewer. Whatever the badge says, the reason is in that Log — a
+  failure is written there when it happens, restated after a browser
+  restart if it's still true, and followed by an entry saying so once
+  it clears. A problem that persists is logged once, not once per
+  check.
   - `INVALID` — metadata block missing/malformed, required fields
     (`@name` plus `@match`/`@include`) missing, or a `@require` /
     `@resource` dependency couldn't be loaded. Hover for the reason;
@@ -161,6 +166,9 @@ update channel to a site you didn't approve.
     shows the cached body's byte count, and a small trash-can button
     next to the status lets you clear records you don't expect back.
     Refresh alone won't re-add a missing row.
+  - `REFRESH FAILED` — the script is still running from its last good
+    copy, but the newest update attempt failed (source unreachable, or
+    it served something that isn't a userscript). Hover for the reason.
   - `OUTDATED` — the script runs fine and is current with its own
     source, but its `@updateURL` / `@downloadURL` points at a copy
     declaring a newer `@version`. Hover for the version and URL.

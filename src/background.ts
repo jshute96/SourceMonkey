@@ -68,7 +68,7 @@ import {
   type TabRecord,
 } from './tab-status.js';
 import {
-  replayStartupLogsAtBoot,
+  replayScriptLogsAtBoot,
   requestOpportunisticScriptChecks,
   updateAllSources,
   updateScript,
@@ -193,7 +193,7 @@ interface SourceMonkeyApi {
   // Re-run the SW-boot startup-log replay. Tests use this after
   // seeding a script with diagnostics to verify the Log-tab population
   // path without having to actually restart the SW.
-  replayStartupLogsAtBoot: () => Promise<void>;
+  replayScriptLogsAtBoot: () => Promise<void>;
   // Diagnostic: the match-index's current view of the world. Tests use
   // this when a badge classification looks wrong to distinguish between
   // "matcher cache stale" and "wrapper never reported". Returns the
@@ -319,7 +319,7 @@ const api: SourceMonkeyApi = {
     const list = await chrome.userScripts.getScripts();
     return { registered: list.map((s) => ({ id: s.id })) };
   },
-  replayStartupLogsAtBoot,
+  replayScriptLogsAtBoot,
   resetAllState: async () => {
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
@@ -1944,7 +1944,7 @@ async function recordScriptReport(
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
     logScriptEvent(id, {
       level: 'info',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: `started at ${senderUrl}`,
     });
@@ -1957,7 +1957,7 @@ async function recordScriptReport(
     );
     logScriptEvent(id, {
       level: 'info',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: `reload-swap from loadedAt ${payload.fromLoadedAt ?? '?'} to ${payload.loadedAt ?? '?'}`,
     });
@@ -1969,7 +1969,7 @@ async function recordScriptReport(
     );
     logScriptEvent(id, {
       level: 'warning',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: `abandoned (reason=${payload.reason ?? '?'})`,
     });
@@ -1989,7 +1989,7 @@ async function recordScriptReport(
     // primitive values won't carry one.
     logScriptEvent(id, {
       level: 'error',
-      source: 'wrapper',
+      source: 'script-wrapper',
       tabId,
       message: composeWrapperErrorMessage(payload.message, payload.stack),
     });
@@ -2087,11 +2087,13 @@ void ensureLoaded();
 void syncRegistrations();
 void loadDebugLoggingFlag();
 void loadGithubAuthToken();
-// Surface parse-time diagnostics into each script's Log tab the first
-// time the SW boots in a Chrome session. The replay is gated by a
+// Refill each script's Log tab from persisted state (current load
+// failures + parse-time diagnostics) the first time the SW boots in a
+// Chrome session — session storage, and so the log, was wiped on
+// Chrome shutdown while the state that explains it wasn't. Gated by a
 // session-storage sentinel so SW restarts within the session bail out
-// immediately. See `replayStartupLogsAtBoot` in script-updater.ts.
-void replayStartupLogsAtBoot();
+// immediately. See `replayScriptLogsAtBoot` in script-updater.ts.
+void replayScriptLogsAtBoot();
 
 // background.ts is compiled as an ES module (declared via
 // `"type": "module"` in manifest.json's service_worker entry). The

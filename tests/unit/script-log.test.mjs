@@ -77,7 +77,7 @@ test('appendScriptLog persists an entry and getScriptLog returns it', async () =
 test('appendScriptLog preserves tabId when provided', async () => {
   await appendScriptLog('s1', {
     level: 'error',
-    source: 'wrapper',
+    source: 'script-wrapper',
     tabId: 42,
     message: 'boom',
     timestamp: 2000,
@@ -227,4 +227,16 @@ test('appendScriptLog defaults timestamp to Date.now()', async () => {
   const after = Date.now();
   const entries = await getScriptLog('s1');
   assert.ok(entries[0].timestamp >= before && entries[0].timestamp <= after);
+});
+
+// ---------- repeated messages ----------
+
+test('appendScriptLog appends an identical message every time', async () => {
+  // Callers reach here because they observed something, so the entry
+  // is written whatever it says. A caller that fires on its own
+  // schedule (the injector's per-sync pass) decides for itself whether
+  // anything happened before calling.
+  await appendScriptLog('s1', { level: 'error', source: 'a', message: 'boom' });
+  await appendScriptLog('s1', { level: 'error', source: 'a', message: 'boom' });
+  assert.equal((await getScriptLog('s1')).length, 2);
 });

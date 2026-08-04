@@ -136,6 +136,9 @@ Depends on whether we already had a good copy:
   `status` stays `ok` and the reason is recorded in `refreshError`
   (REFRESH FAILED). A flaky dep host must not disable a working
   script. See [storage.md](storage.md#refresh-failures-keep-the-good-copy-running).
+- Either way the reason is copied into the script's Log — error for
+  the `invalid` case, warning for the still-running one. See
+  [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 - `@resource` bodies are arbitrary bytes with no "is this valid"
   check, so a `@resource` soft failure (a 200 login page) can't be

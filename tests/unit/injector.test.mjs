@@ -13,21 +13,39 @@ import assert from 'node:assert/strict';
 // log via chrome.storage.session. Unit tests run in plain Node so we
 // install a minimal stub for both areas.
 const sessionStore = new Map();
+// `register` is swapped per-test by the registerWithFallback block at
+// the bottom; the default rejects so an unconfigured caller is loud.
+const userScripts = {
+  register: async () => { throw new Error('userScripts.register not stubbed'); },
+};
 globalThis.chrome = globalThis.chrome ?? {
   storage: {
     local: {
       get: async () => ({}),
     },
     session: {
-      get: async (key) => (sessionStore.has(key) ? { [key]: sessionStore.get(key) } : {}),
+      // Mirrors the real API's key shapes. The array form is
+      // load-bearing: the log store reads `[log:<id>, loglevel:<id>]`
+      // in one call.
+      get: async (key) => {
+        if (key === null || key === undefined) return Object.fromEntries(sessionStore);
+        const keys = Array.isArray(key) ? key : [key];
+        const out = {};
+        for (const k of keys) if (sessionStore.has(k)) out[k] = sessionStore.get(k);
+        return out;
+      },
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) sessionStore.set(k, v); },
-      remove: async (key) => { sessionStore.delete(key); },
+      remove: async (key) => {
+        for (const k of (Array.isArray(key) ? key : [key])) sessionStore.delete(k);
+      },
     },
   },
+  userScripts,
 };
 
 import {
   BRIDGE_SCRIPT_ID,
+  registerWithFallback,
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
@@ -1483,4 +1501,72 @@ test('registered entry: the body marker maps to its real line in the stored file
   const got = remapStackRef({ url: entryUrl, line: gen, col: 1 }, entryUrl, viewerSegments(script, label));
   const storedBody = composeRequiredBody({ ...script, requires: [] });
   assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
+});
+
+// ---------- registerWithFallback: one Log row per rejection, not per sync ----------
+//
+// `syncRegistrations` re-runs on every script-storage change, so a spec
+// Chrome keeps rejecting must not add a row each time. The guard is a
+// record of the rejection each script was last LOGGED for, kept in
+// session storage so it lives exactly as long as the log it protects.
+
+const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
+
+const SPEC_A = { id: 'a', matches: ['https://e/*'], js: [{ code: '1' }] };
+
+// Drive one sync. `bad` is the set of spec ids Chrome should reject;
+// an empty set means the whole batch registers in one call, which is
+// the path a recovered script comes back through.
+async function syncOnce(specs, bad) {
+  userScripts.register = async (batch) => {
+    const rejected = batch.filter((s) => bad.has(s.id));
+    if (rejected.length > 0) throw new Error(`bad spec: ${rejected[0].id}`);
+  };
+  await registerWithFallback(specs);
+  await _flushScriptLogQueueForTests('a');
+}
+
+async function rejectionRows() {
+  const log = await getScriptLog('a');
+  return log.filter((e) => e.source === 'chrome-injector').length;
+}
+
+test('registerWithFallback: a rejection logs once, not once per sync', async () => {
+  sessionStore.clear();
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(await rejectionRows(), 1);
+  await syncOnce([SPEC_A], new Set(['a']));
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(await rejectionRows(), 1, 'a spec Chrome keeps rejecting must not refill the log');
+});
+
+test('registerWithFallback: break → fix → break logs twice', async () => {
+  // The fix lands via a clean BATCH registration, which is the common
+  // path and the one that has to clear the record. Without that, the
+  // second failure is silently swallowed for the rest of the session.
+  sessionStore.clear();
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(await rejectionRows(), 1);
+
+  await syncOnce([SPEC_A], new Set());          // fixed
+  assert.equal(await rejectionRows(), 1);
+
+  await syncOnce([SPEC_A], new Set(['a']));     // broke again
+  assert.equal(await rejectionRows(), 2, 'a re-broken script must report again');
+});
+
+test('registerWithFallback: the guard survives a service-worker restart', async () => {
+  // MV3 evicts the SW freely and syncRegistrations runs again on every
+  // wake-up, so an in-memory guard would re-log once per SW lifetime.
+  // Session storage outlives the worker; only Chrome shutdown clears it.
+  sessionStore.clear();
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(await rejectionRows(), 1);
+
+  // Re-import with the module state thrown away, as a fresh SW would.
+  const reloaded = await import(`../../dist/injector.js?sw=${Date.now()}`);
+  userScripts.register = async (batch) => { throw new Error(`bad spec: ${batch[0].id}`); };
+  await reloaded.registerWithFallback([SPEC_A]);
+  await _flushScriptLogQueueForTests('a');
+  assert.equal(await rejectionRows(), 1, 'a fresh worker must not re-log the same rejection');
 });

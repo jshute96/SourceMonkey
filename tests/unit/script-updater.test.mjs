@@ -133,7 +133,7 @@ test('gate: failure in task clears in-flight so the next caller can retry', asyn
   assert.equal(result, 'ok');
 });
 
-// ---------- replayStartupLogsAtBoot ----------
+// ---------- replayScriptLogsAtBoot ----------
 //
 // Boot-replay exists because chrome.storage.session (where the Log
 // tab lives) is wiped on Chrome shutdown, while the script's
@@ -163,18 +163,40 @@ globalThis.chrome = globalThis.chrome ?? {
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
     },
     session: {
-      get: async (key) => (sessionStore.has(key) ? { [key]: sessionStore.get(key) } : {}),
+      // Mirrors the real API's key shapes: null → everything, a string
+      // → that one key, an array → each present key. The log store
+      // reads `[log:<id>, loglevel:<id>]` in one call, so the array
+      // form is load-bearing here, not just completeness.
+      get: async (key) => {
+        if (key === null || key === undefined) return Object.fromEntries(sessionStore);
+        const keys = Array.isArray(key) ? key : [key];
+        const out = {};
+        for (const k of keys) if (sessionStore.has(k)) out[k] = sessionStore.get(k);
+        return out;
+      },
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) sessionStore.set(k, v); },
-      remove: async (key) => { sessionStore.delete(key); },
+      remove: async (key) => {
+        for (const k of (Array.isArray(key) ? key : [key])) sessionStore.delete(k);
+      },
     },
   },
 };
 
-const { replayStartupLogsAtBoot } = await import('../../dist/script-updater.js');
-const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
+const {
+  replayScriptLogsAtBoot,
+  emitScriptOutcomeLog,
+  summarizeSourceOutcome,
+} = await import('../../dist/script-updater.js');
+const {
+  appendScriptLog,
+  clearScriptLog,
+  getMaxLogLevel,
+  getScriptLog,
+  _flushScriptLogQueueForTests,
+} = await import('../../dist/script-log.js');
 
-function seedScript({ scriptId, sourceId = 'src-x', startupLogs }) {
-  // replayStartupLogsAtBoot reads via getAllScripts (one storage.local
+function seedScript({ scriptId, sourceId = 'src-x', startupLogs, ...overrides }) {
+  // replayScriptLogsAtBoot reads via getAllScripts (one storage.local
   // .get(null) scan filtered to `script:` keys), so we only need the
   // script row — no source row, no `sources` index.
   const script = {
@@ -185,6 +207,7 @@ function seedScript({ scriptId, sourceId = 'src-x', startupLogs }) {
     loadedAt: 0, enabled: true,
   };
   if (startupLogs) script.startupLogs = startupLogs;
+  Object.assign(script, overrides);
   localStore.set(`script:${scriptId}`, script);
 }
 
@@ -198,11 +221,11 @@ async function seedSingleScriptThenReplay(scriptId = 'sc-1') {
     scriptId,
     startupLogs: [{ level: 'warn', message: 'unknown @grant entries dropped: GM_audio' }],
   });
-  await replayStartupLogsAtBoot();
+  await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests(scriptId);
 }
 
-test('replayStartupLogsAtBoot: emits one Log entry per script.startupLogs entry on first call', async () => {
+test('replayScriptLogsAtBoot: emits one Log entry per script.startupLogs entry on first call', async () => {
   await seedSingleScriptThenReplay();
   const log = await getScriptLog('sc-1');
   assert.equal(log.length, 1);
@@ -211,34 +234,34 @@ test('replayStartupLogsAtBoot: emits one Log entry per script.startupLogs entry 
   assert.match(log[0].message, /GM_audio/);
 });
 
-test('replayStartupLogsAtBoot: idempotent within a session — second call adds nothing', async () => {
+test('replayScriptLogsAtBoot: idempotent within a session — second call adds nothing', async () => {
   await seedSingleScriptThenReplay();
   const before = await getScriptLog('sc-1');
   // Sentinel is now set, so a second call should bail immediately
   // and not append duplicate rows.
-  await replayStartupLogsAtBoot();
+  await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-1');
   const after = await getScriptLog('sc-1');
   assert.equal(after.length, before.length);
 });
 
-test('replayStartupLogsAtBoot: re-fires after a fresh-Chrome-session reset (session storage cleared)', async () => {
+test('replayScriptLogsAtBoot: re-fires after a fresh-Chrome-session reset (session storage cleared)', async () => {
   await seedSingleScriptThenReplay();
   // Real Chrome shutdown clears `chrome.storage.session` — both the
   // sentinel and the log entries — so the next session's replay
   // should walk the persisted scripts and refill the log.
   sessionStore.clear();
-  await replayStartupLogsAtBoot();
+  await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-1');
   const log = await getScriptLog('sc-1');
   assert.equal(log.length, 1);
   assert.match(log[0].message, /GM_audio/);
 });
 
-test('replayStartupLogsAtBoot: skips diagnostics already present in the log (cold-boot race protection)', async () => {
-  // Simulate the cold-boot scenario where a refresh wrote the parser
-  // row first: the script's log already has it. Replay must NOT
-  // duplicate.
+test('replayScriptLogsAtBoot: replays diagnostics even if a refresh got there first', async () => {
+  // Cold-boot race: a refresh wrote the parser row before the replay
+  // ran, so the replay states it again. A duplicate row costs the user
+  // a glance; the `source` column tells the two apart.
   localStore.clear();
   sessionStore.clear();
   seedScript({
@@ -251,23 +274,24 @@ test('replayStartupLogsAtBoot: skips diagnostics already present in the log (col
     source: 'parser',
     message: 'unknown @grant entries dropped: GM_audio',
   });
-  await replayStartupLogsAtBoot();
+  await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-race');
   const log = await getScriptLog('sc-race');
-  assert.equal(log.length, 1, 'replay must not duplicate the pre-existing parser row');
+  assert.equal(log.length, 2);
+  assert.deepEqual(log.map((e) => e.source), ['parser', 'parser']);
 });
 
-test('replayStartupLogsAtBoot: scripts without startupLogs contribute nothing', async () => {
+test('replayScriptLogsAtBoot: scripts without startupLogs contribute nothing', async () => {
   localStore.clear();
   sessionStore.clear();
   seedScript({ sourceId: 'src-2', scriptId: 'sc-2' /* no startupLogs */ });
-  await replayStartupLogsAtBoot();
+  await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-2');
   const log = await getScriptLog('sc-2');
   assert.equal(log.length, 0);
 });
 
-test('replayStartupLogsAtBoot: walks across multiple sources', async () => {
+test('replayScriptLogsAtBoot: walks across multiple sources', async () => {
   localStore.clear();
   sessionStore.clear();
   seedScript({
@@ -278,7 +302,7 @@ test('replayStartupLogsAtBoot: walks across multiple sources', async () => {
     sourceId: 'src-B', scriptId: 'sc-B',
     startupLogs: [{ level: 'error', message: 'msg B' }],
   });
-  await replayStartupLogsAtBoot();
+  await replayScriptLogsAtBoot();
   await Promise.all(['sc-A', 'sc-B'].map(_flushScriptLogQueueForTests));
   const logA = await getScriptLog('sc-A');
   const logB = await getScriptLog('sc-B');
@@ -287,4 +311,368 @@ test('replayStartupLogsAtBoot: walks across multiple sources', async () => {
   assert.equal(logB.length, 1);
   assert.equal(logB[0].level, 'error');
   assert.equal(logB[0].message, 'msg B');
+});
+
+test('replayScriptLogsAtBoot: restates a still-broken row so the Log matches the badge', async () => {
+  // The refresh paths only log on a state *change*, so a script that
+  // was already invalid before the Chrome restart would show INVALID
+  // over an empty Log (session storage, and the log with it, is wiped
+  // on shutdown; storage.local keeps the row).
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({ scriptId: 'sc-broken', status: 'invalid', errorMessage: 'missing @name' });
+  await replayScriptLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-broken');
+  const log = await getScriptLog('sc-broken');
+  assert.equal(log.length, 1);
+  assert.equal(log[0].level, 'error');
+  assert.equal(log[0].source, 'extension-startup');
+  assert.equal(log[0].message, 'missing @name');
+});
+
+test('replayScriptLogsAtBoot: restates a stale refresh at warning level', async () => {
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({ scriptId: 'sc-stale', status: 'ok', refreshError: 'HTTP 503' });
+  await replayScriptLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-stale');
+  const log = await getScriptLog('sc-stale');
+  assert.equal(log.length, 1);
+  assert.equal(log[0].level, 'warning');
+  assert.equal(log[0].message, 'refresh failed: HTTP 503');
+});
+
+test('replayScriptLogsAtBoot: restates a load error even if a refresh already logged it', async () => {
+  localStore.clear();
+  sessionStore.clear();
+  seedScript({ scriptId: 'sc-dup', status: 'invalid', errorMessage: 'missing @name' });
+  await appendScriptLog('sc-dup', {
+    level: 'error', source: 'manual-refresh', message: 'missing @name',
+  });
+  await replayScriptLogsAtBoot();
+  await _flushScriptLogQueueForTests('sc-dup');
+  const log = await getScriptLog('sc-dup');
+  // The `source` column is what tells the two apart, which is why it
+  // names who produced the row rather than which internal emitted it.
+  assert.deepEqual(log.map((e) => e.source), ['manual-refresh', 'extension-startup']);
+});
+
+// ---------- emitScriptOutcomeLog: every surfaced failure lands in the Log ----------
+//
+// The pane / status column and the Log tab must tell the same story:
+// anything that puts a red or amber badge on a row also explains
+// itself in that row's Log.
+
+const OK_ROW = {
+  id: 'x', sourceId: 's', relativePath: 'a.user.js', fileUrl: 'file:///a.user.js',
+  status: 'ok', size: 10, headerText: '', bodyText: '', header: null,
+  matching: { matches: [], excludes: [], includes: [] }, loadedAt: 100, enabled: true,
+};
+
+// Emit one or more outcomes and return the resulting log. Each call
+// uses a fresh script ID so tests don't have to unpick each other's
+// entries.
+let outcomeSeq = 0;
+async function emitFull(steps, mode = 'manual') {
+  const id = `oc-${++outcomeSeq}`;
+  sessionStore.clear();
+  for (const [prior, next] of steps) emitScriptOutcomeLog(id, prior, next, mode);
+  await _flushScriptLogQueueForTests(id);
+  return await getScriptLog(id);
+}
+
+// Same, minus the `checking for updates` preamble a reportable check
+// writes ahead of its outcome. Most tests here are about WHAT gets
+// reported; the framing itself has its own block below.
+async function emitAll(steps, mode = 'manual') {
+  const log = await emitFull(steps, mode);
+  return log.filter((e) => e.message !== 'checking for updates');
+}
+
+test('emitScriptOutcomeLog: an invalid row logs its errorMessage at error level', async () => {
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  const log = await emitAll([[OK_ROW, bad]]);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].level, 'error');
+  assert.equal(log[0].source, 'manual-refresh');
+  assert.equal(log[0].message, 'no metadata block');
+});
+
+test('emitScriptOutcomeLog: a repeated identical failure is logged every check', async () => {
+  // Each check re-fetches and re-validates (an `invalid` row can't take
+  // the size+mtime skip), so every one of them is a fresh verdict on a
+  // fresh read.
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  const log = await emitAll([[OK_ROW, bad], [bad, bad], [bad, bad]]);
+  assert.equal(log.length, 3, 'every check that starts must report an outcome');
+  assert.deepEqual(
+    log.map((e) => e.message),
+    ['no metadata block', 'no metadata block', 'no metadata block'],
+  );
+});
+
+// ---------- how a check frames itself ----------
+//
+// An uneventful check is ONE row naming both the check and its result.
+// A check with something to report writes `checking for updates` and
+// then the outcome, which carries its own severity and is what the
+// status badge links to.
+
+async function framing(prior, next, mode = 'manual') {
+  return (await emitFull([[prior, next]], mode)).map((e) => e.message);
+}
+
+test('framing: an uneventful check is a single self-describing row', async () => {
+  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['checked for updates — no change']);
+});
+
+test('framing: an uneventful background check says nothing at all', async () => {
+  // Nothing happened and nobody asked, so there is no row to frame.
+  assert.deepEqual(await framing(OK_ROW, OK_ROW, 'opportunistic'), []);
+});
+
+test('framing: a failing check is announced, then reported', async () => {
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  assert.deepEqual(
+    await framing(OK_ROW, bad),
+    ['checking for updates', 'no metadata block'],
+  );
+});
+
+test('framing: a still-failing check is announced again', async () => {
+  // The prior was already broken, which is the case that forces a real
+  // refetch + revalidate — so this check had something to do.
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  assert.deepEqual(
+    await framing(bad, bad),
+    ['checking for updates', 'no metadata block'],
+  );
+});
+
+test('framing: a recovery is announced, then reported', async () => {
+  const stale = { ...OK_ROW, refreshError: 'HTTP 404' };
+  assert.deepEqual(
+    await framing(stale, OK_ROW),
+    ['checking for updates', 'refresh succeeded again (source is reachable)'],
+  );
+});
+
+test('framing: new content is announced, then reported', async () => {
+  const fresh = { ...OK_ROW, loadedAt: OK_ROW.loadedAt + 1 };
+  const log = await framing(OK_ROW, fresh);
+  assert.equal(log[0], 'checking for updates');
+  assert.match(log[1], /^loaded new content/);
+});
+
+test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one does', async () => {
+  // Both rows are unchanged since the prior check, so both must say so.
+  // A broken script going quieter than a healthy one is the failure
+  // mode this guards.
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  const healthy = await emitAll([[OK_ROW, OK_ROW]]);
+  const broken = await emitAll([[bad, bad]]);
+  assert.equal(healthy.length, 1);
+  assert.equal(healthy[0].message, 'checked for updates — no change');
+  assert.equal(broken.length, 1, 'a broken script must not go quiet');
+  assert.equal(broken[0].message, 'no metadata block');
+});
+
+test('emitScriptOutcomeLog: a changed failure reason does append', async () => {
+  const badA = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  const badB = { ...OK_ROW, status: 'invalid', errorMessage: 'missing @name' };
+  const log = await emitAll([[OK_ROW, badA], [badA, badB]]);
+  assert.deepEqual(log.map((e) => e.message), ['no metadata block', 'missing @name']);
+});
+
+test('emitScriptOutcomeLog: a vanished file logs at error level, on every check', async () => {
+  const gone = { ...OK_ROW, status: 'missing', enabled: false };
+  const log = await emitAll([[OK_ROW, gone], [gone, gone]]);
+  assert.equal(log.length, 2, 'the second check re-looked and it is still gone');
+  for (const entry of log) {
+    assert.equal(entry.level, 'error');
+    assert.equal(entry.message, 'source file is missing');
+  }
+});
+
+test('emitScriptOutcomeLog: a refresh failure is a warning, on every check', async () => {
+  // status stays 'ok': the cached copy is still injected, only the
+  // update failed. The badge already reads REFRESH FAILED, which
+  // outranks any log-derived level, so this can't double-count.
+  const stale = { ...OK_ROW, refreshError: 'HTTP 404' };
+  const log = await emitAll([[OK_ROW, stale], [stale, stale]]);
+  assert.equal(log.length, 2, 'a source that is still down still says so');
+  for (const entry of log) {
+    assert.equal(entry.level, 'warning');
+    assert.equal(entry.message, 'refresh failed: HTTP 404');
+  }
+});
+
+test('emitScriptOutcomeLog: a recovered refresh logs an info entry', async () => {
+  const stale = { ...OK_ROW, refreshError: 'HTTP 404' };
+  const recovered = { ...OK_ROW, loadedAt: 200 };
+  const log = await emitAll([[OK_ROW, stale], [stale, recovered]]);
+  assert.equal(log.length, 3);
+  assert.equal(log[1].level, 'info');
+  assert.match(log[1].message, /refresh succeeded again/);
+  assert.match(log[2].message, /loaded new content/);
+});
+
+test('emitScriptOutcomeLog: recovery from invalid is logged even when the bytes are unchanged', async () => {
+  // A dependency-fetch failure can clear without the script body
+  // changing, so loadedAt doesn't move and there is no "loaded new
+  // content" row to explain the badge going back to OK. The recovery
+  // IS the outcome here, so no contradictory "no change" follows it.
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'require fetch failed' };
+  const log = await emitAll([[OK_ROW, bad], [bad, OK_ROW]]);
+  assert.equal(log.length, 2);
+  assert.equal(log[1].level, 'info');
+  assert.match(log[1].message, /loads cleanly again/);
+});
+
+test('emitScriptOutcomeLog: a broken row with no prior still logs', async () => {
+  // A file that first appears already broken during a source refresh
+  // has no prior row to diff against.
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'missing @name' };
+  const log = await emitAll([[undefined, bad]]);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].message, 'missing @name');
+});
+
+test('emitScriptOutcomeLog: a row that vanished mid-refresh is reported', async () => {
+  const log = await emitAll([[OK_ROW, null]]);
+  assert.equal(log.length, 1);
+  assert.equal(log[0].level, 'warning');
+  assert.equal(log[0].message, 'row vanished during refresh');
+});
+
+test('emitScriptOutcomeLog: a cleared log gets its explanation back on the next check', async () => {
+  // LOG_CAP rotation and the Log tab's Clear button both remove the
+  // entry while the stored row keeps its badge, so the next check has
+  // to put the reason back.
+  const id = 'oc-cleared';
+  sessionStore.clear();
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  emitScriptOutcomeLog(id, OK_ROW, bad, 'manual');
+  await _flushScriptLogQueueForTests(id);
+
+  await clearScriptLog(id);
+  emitScriptOutcomeLog(id, bad, bad, 'manual');
+  await _flushScriptLogQueueForTests(id);
+  const after = (await getScriptLog(id)).map((e) => e.message);
+  assert.deepEqual(
+    after,
+    ['checking for updates', 'no metadata block'],
+    'the reason must come back after the log lost it',
+  );
+});
+
+test('emitScriptOutcomeLog: fail → recover → fail again tells the whole story', async () => {
+  const stale = { ...OK_ROW, refreshError: 'HTTP 404' };
+  const good = { ...OK_ROW, loadedAt: 200 };
+  const log = await emitAll([[OK_ROW, stale], [stale, good], [good, stale]]);
+  assert.deepEqual(log.map((e) => e.level), ['warning', 'info', 'info', 'warning']);
+  assert.equal(log[3].message, 'refresh failed: HTTP 404');
+});
+
+test('emitScriptOutcomeLog: opportunistic checks log failures but not "no change"', async () => {
+  const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
+  const failed = await emitAll([[OK_ROW, bad]], 'opportunistic');
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].source, 'background-refresh');
+  const quiet = await emitAll([[OK_ROW, OK_ROW]], 'opportunistic');
+  assert.equal(quiet.length, 0, 'background polling must not add a row per navigation');
+});
+
+// ---------- summarizeSourceOutcome: scan failures ----------
+
+const SOURCE_OK = { id: 's', path: '/tmp/x', lastRefreshedAt: 0, scriptIds: ['a'], enabled: true };
+
+async function summarize(priorSource, priorScripts, next, mode = 'manual') {
+  sessionStore.clear();
+  const prior = priorSource
+    ? { source: priorSource, scripts: new Map(priorScripts.map((s) => [s.id, s])) }
+    : undefined;
+  const realLog = console.log;
+  console.log = () => {};
+  try {
+    summarizeSourceOutcome('label', prior, next, mode);
+  } finally {
+    console.log = realLog;
+  }
+  await Promise.all(next.scripts.map((s) => _flushScriptLogQueueForTests(s.id)));
+  return await Promise.all(next.scripts.map((s) => getScriptLog(s.id)));
+}
+
+test('summarizeSourceOutcome: a scan failure lands in every script log, not "no change"', async () => {
+  // refreshSource leaves every script row untouched when the listing
+  // can't be read, so the per-script loop would otherwise report "no
+  // change" for rows that were never actually checked.
+  const script = { ...OK_ROW, id: 'sa' };
+  const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
+  const [log] = await summarize(SOURCE_OK, [script], failed);
+  assert.equal(log.length, 1);
+  assert.match(log[0].message, /source scan failed: ENOENT/);
+});
+
+test('summarizeSourceOutcome: a scan failure stays at info so it cannot badge every script', async () => {
+  // The `loglevel:` sentinel is monotonic within a session, so a
+  // warning here would leave every script under the source reading
+  // WARNING for the rest of the session after one transient blip. The
+  // source row is where a source-level problem gets its badge.
+  const script = { ...OK_ROW, id: 'sa-level' };
+  const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
+  const [log] = await summarize(SOURCE_OK, [script], failed);
+  assert.equal(log[0].level, 'info');
+  assert.equal(await getMaxLogLevel('sa-level'), 'info');
+});
+
+test('summarizeSourceOutcome: a source that stays unreadable re-logs per pass', async () => {
+  const script = { ...OK_ROW, id: 'sb' };
+  const brokenSource = { ...SOURCE_OK, scanError: 'ENOENT' };
+  const [first] = await summarize(SOURCE_OK, [script], { source: brokenSource, scripts: [script] });
+  assert.equal(first.length, 1);
+  // Each pass really did try to read the source, and this path is only
+  // reachable from a Refresh / Refresh All click, so every repeat is
+  // one the user asked for.
+  summarizeSourceOutcome(
+    'label',
+    { source: brokenSource, scripts: new Map([[script.id, script]]) },
+    { source: brokenSource, scripts: [script] },
+    'manual',
+  );
+  await _flushScriptLogQueueForTests(script.id);
+  assert.equal((await getScriptLog(script.id)).length, 2);
+});
+
+test('summarizeSourceOutcome: a readable-again source logs the recovery', async () => {
+  const script = { ...OK_ROW, id: 'sc' };
+  const [log] = await summarize(
+    { ...SOURCE_OK, scanError: 'ENOENT' },
+    [script],
+    { source: SOURCE_OK, scripts: [script] },
+  );
+  assert.deepEqual(log.map((e) => e.message), [
+    'source scan succeeded again (source is readable)',
+    'checked for updates — no change',
+  ]);
+  assert.equal(log[0].level, 'info');
+});
+
+test('summarizeSourceOutcome: a broad refresh frames each script for itself', async () => {
+  // One Refresh All, two scripts, two different framings — the routine
+  // one costs a single row, the one with news gets its preamble.
+  const healthy = { ...OK_ROW, id: 'sd-ok' };
+  const broken = {
+    ...OK_ROW, id: 'sd-bad', status: 'invalid', errorMessage: 'no metadata block',
+  };
+  const [healthyLog, brokenLog] = await summarize(
+    SOURCE_OK,
+    [healthy, broken],
+    { source: SOURCE_OK, scripts: [healthy, broken] },
+  );
+  assert.deepEqual(healthyLog.map((e) => e.message), ['checked for updates — no change']);
+  assert.deepEqual(
+    brokenLog.map((e) => e.message),
+    ['checking for updates', 'no metadata block'],
+  );
 });

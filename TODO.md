@@ -454,6 +454,69 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 - @grant window.onurlchange
 
+## Per-script log follow-ups
+
+Every failure the UI surfaces now lands in the script's Log (see
+[docs/script-log.md](docs/script-log.md#every-surfaced-failure-lands-in-the-log)).
+Two rough edges are left:
+
+- **The `loglevel:` sentinel is monotonic.** A script that hit
+  WARNING/ERROR keeps that badge for the rest of the Chrome session
+  even after the Log's newest entry says it recovered. Now that
+  recoveries are logged, the badge is the only thing still lying.
+  - It is also why source-level fan-out rows are logged at `info`:
+    anything higher would badge every script under a source from one
+    transient listing failure.
+  - Recomputing the max on every append is too expensive. A recovery
+    entry could reset it — but only if the reset can tell "the failure
+    this supersedes" from an unrelated `sm:error` still in the log.
+- **Poll noise still fills the cap.** The reload fast-path runs in
+  `manual` mode for every matched script on every tab reload, so
+  ordinary browsing appends `checked for updates — no change` per
+  script per reload — and two rows for a script that is still failing.
+  Dropping the row for non-user-initiated checks would fix it; the
+  blocker is that `manual` currently means "not rate-limited", not
+  "the user clicked", so the fast-path can't be told apart from a
+  Refresh click.
+- **`refreshAllSources` uses `Promise.all`**, so one source throwing
+  rejects the whole batch — contradicting its own docstring, which
+  claims a failed source doesn't take the rest down. `allSettled`
+  would make the doc true; the updater currently compensates by
+  fanning the throw out to every script.
+- **Vanished manifest entries leak their log rows.** `refreshSource`
+  drops the `script:` key but not the `log:` / `loglevel:` session
+  rows; only `removeScript` cleans both up.
+- **The add-to-existing-container path emits no recovery rows.** It
+  refreshes every sibling but only restates load failures, so a
+  sibling that recovered during that refresh never logs it (and the
+  next refresh compares against the already-healthy row). Sharing
+  `summarizeSourceOutcome` would fix it, but that lives in
+  `script-updater.ts`, which imports `script-store.ts`.
+
+## Log and error message quality
+
+The Source labels are now written for users (`manual-refresh`,
+`extension-startup`, `script-wrapper` — see
+[docs/script-log.md](docs/script-log.md#source-labels)). The **messages**
+haven't had the same pass.
+
+- **Audit every message a user can read** for whether it says what
+  happened and what to do about it. They accumulated one call site at a
+  time, so they vary in voice, detail, and whether they name the thing
+  that failed. Covers `errorMessage` / `refreshError` text from
+  `script-store.ts` and `directories.ts`, the Log entries in
+  `script-updater.ts`, and the viewer's `setMessage` copy.
+- **Point at the offending line for header problems.** `validateHeader`
+  and `splitHeaderBody` currently report only what is wrong ("no
+  metadata block", a bad `@match`), never *where*. The parser has the
+  metadata block in hand, so an entry could carry the line number and
+  the line itself — the same "here is the actual source line" treatment
+  the Log tab already gives stack frames (see
+  [docs/script-log.md](docs/script-log.md), stack mapping).
+  - Wants a structured field on the entry rather than the line spliced
+    into the message, so the viewer can render it as source rather than
+    as prose.
+
 ## Testing and example TOODs
 
 - API explorer page with forms to call any GM API with any args

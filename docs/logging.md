@@ -176,11 +176,18 @@ regardless of how many times the SW restarts in between.
 
 `chrome.storage.session` (where the Log tab lives) is cleared on
 Chrome shutdown, so a fresh Chrome session starts with an empty Log
-tab even though every script's `startupLogs` are still persisted in
+tab even though the state that explains it is still persisted in
 `chrome.storage.local`. To repopulate without forcing a manual
-refresh, `replayStartupLogsAtBoot()` (in `src/script-updater.ts`)
-runs once at SW startup and emits one `parser` row per diagnostic
-for every stored script.
+refresh, `replayScriptLogsAtBoot()` (in `src/script-updater.ts`) runs
+once at SW startup and walks every stored script, emitting:
+
+- one `parser` row per `startupLogs` diagnostic, and
+- one `boot` row for a script whose row is *currently* broken
+  (`invalid` / `missing` / carrying a `refreshError`). The refresh
+  paths only log on a state *change*, so without this a script that
+  was already broken before the restart would show a red or amber
+  badge over an empty Log. See
+  [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 - Gated by a sentinel key in `chrome.storage.session`. The sentinel
   is missing on first SW boot of a Chrome session and present on
@@ -190,20 +197,27 @@ for every stored script.
   bail. The sentinel auto-clears on Chrome shutdown (same lifecycle
   as the Log tab itself), so the next Chrome session always replays
   exactly once.
+- The sentinel is written **after** the walk finishes, not before.
+  MV3 can evict the worker mid-replay, and claiming it up front would
+  mark the session replayed while most scripts still had empty logs —
+  the exact state the replay exists to prevent. A torn-down pass just
+  runs again on the next wake-up, duplicating rows for the scripts the
+  first pass reached — rare, bounded, and cheaper than a de-dupe rule.
+- The key name (`sm:startup-logs-replayed-at`) predates the
+  load-state leg. Kept as-is: renaming it would make one session miss
+  its sentinel and replay twice, for no benefit.
 - Wired into `background.ts`'s top-level startup block — fires on
   every SW boot. On the cold-boot of a fresh Chrome session the
   sentinel is missing, so the replay runs; on SW restarts within the
   same session the sentinel is set and the replay bails. (Top-level
   rather than `chrome.runtime.onStartup` because that event isn't
   guaranteed to land before the SW's own first wake-up.)
-- Also defensive against a cold-boot + concurrent-refresh race: the
-  per-script append checks the existing log for a matching parser row
-  before writing, so a refresh path that wrote the same diagnostic
-  first won't get duplicated by replay. The inverse ordering (replay
-  first, refresh second) is still possible and would produce one
-  duplicate row per affected script per Chrome session — bounded and
-  rare (requires the script's content to have changed between Chrome
-  shutdown and the user's first navigation after restart).
+- A cold-boot + concurrent-refresh race can duplicate a row in either
+  ordering: whichever path runs second states the fact again. Bounded
+  to one duplicate per affected script per Chrome session, and the
+  `source` column tells them apart (`extension-startup` vs a
+  `*-refresh`). Only reachable when the content changed on disk between
+  shutdown and the user's first navigation after restart.
 
 See [script-log.md].
 

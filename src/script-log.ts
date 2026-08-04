@@ -42,9 +42,12 @@ export interface LogEntry {
   // Epoch ms when the event was recorded.
   timestamp: number;
   level: LogLevel;
-  // Origin label: e.g. 'refresh', 'wrapper', 'injector'. Pairs with the
-  // optional tabId so the log pane can render either "tab 17 — wrapper"
-  // or just "refresh" depending on what the entry actually carries.
+  // Origin label: e.g. 'manual-refresh', 'script-wrapper'. Read by
+  // users in the Log tab's Source column, so it names the thing that
+  // produced the entry rather than the internal that emitted it. See
+  // [docs/script-log.md] for the full set. Pairs with the optional
+  // tabId so the log pane can render either "tab 17 — script-wrapper"
+  // or just "manual-refresh" depending on what the entry carries.
   source: string;
   // Chrome tab ID, when the event originated from injected code in a
   // specific tab. Absent for SW-side and other background events.
@@ -94,30 +97,41 @@ export interface AppendLogInput {
   timestamp?: number;
 }
 
+// Append an entry. Every caller that reaches here observed something,
+// and the Log tab is a transcript of observations, so the entry is
+// always written. A caller that fires on its own schedule rather than
+// on an observation — the injector's per-sync registration pass — is
+// responsible for deciding whether anything happened before it calls.
 export async function appendScriptLog(
   scriptId: string,
   input: AppendLogInput,
 ): Promise<void> {
-  return enqueue(scriptId, async () => {
-    const lk = logKey(scriptId);
-    const mk = levelKey(scriptId);
-    const got = await chrome.storage.session.get([lk, mk]);
-    const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
-    const priorLevel = got[mk] as LogLevel | undefined;
-    const entry: LogEntry = {
-      timestamp: input.timestamp ?? Date.now(),
-      level: input.level,
-      source: input.source,
-      message: input.message,
-    };
-    if (input.tabId !== undefined) entry.tabId = input.tabId;
-    const next = prior.length >= LOG_CAP
-      ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
-      : [...prior, entry];
-    const toSet: Record<string, unknown> = { [lk]: next };
-    if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
-    await chrome.storage.session.set(toSet);
-  });
+  return enqueue(scriptId, () => writeEntry(scriptId, input));
+}
+
+// Shared read-modify-write body. Always called from inside `enqueue`.
+async function writeEntry(
+  scriptId: string,
+  input: AppendLogInput,
+): Promise<void> {
+  const lk = logKey(scriptId);
+  const mk = levelKey(scriptId);
+  const got = await chrome.storage.session.get([lk, mk]);
+  const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
+  const priorLevel = got[mk] as LogLevel | undefined;
+  const entry: LogEntry = {
+    timestamp: input.timestamp ?? Date.now(),
+    level: input.level,
+    source: input.source,
+    message: input.message,
+  };
+  if (input.tabId !== undefined) entry.tabId = input.tabId;
+  const next = prior.length >= LOG_CAP
+    ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
+    : [...prior, entry];
+  const toSet: Record<string, unknown> = { [lk]: next };
+  if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+  await chrome.storage.session.set(toSet);
 }
 
 export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {
