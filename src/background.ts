@@ -207,6 +207,10 @@ interface SourceMonkeyApi {
   getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
   appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
   clearScriptLog: (scriptId: string) => Promise<void>;
+  // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
+  // script in a dupe group gets which `#N` is decided by UUID sort, so
+  // a test that needs the label cannot predict it — it has to ask.
+  getScriptLogLabel: (scriptId: string) => Promise<string>;
   // GM_registerMenuCommand test surface. Playwright can't click the
   // real Chrome action context menu, so tests need a way to (a) read
   // back what we would have rendered for a tab and (b) synthesize the
@@ -267,6 +271,9 @@ const api: SourceMonkeyApi = {
   getScriptLog,
   appendScriptLog,
   clearScriptLog,
+  // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
+  // test never races the id table and gets a UUID prefix back.
+  getScriptLogLabel: scriptLogLabel,
   getActionContextMenu: async (tabId: number) => {
     const cmdsByScript = getMenuCommandsForTab(tabId);
     const out: { scriptId: string; commands: MenuCommandEntry[] }[] = [];

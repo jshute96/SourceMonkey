@@ -71,7 +71,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-display.ts` | Source-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble + display-name rules |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
-| `src/stack-link.ts` | Pure `parseStackRefs(text)` — splits a log message into plain-text + `{url, line, col}` ref runs for any `<scheme>://…:L:C` URL |
+| `src/stack-link.ts` | Pure stack-ref helpers: `parseStackRefs` splits a log message into text + `{url, line, col}` runs; `displayRefText` decodes our own URLs for reading |
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter |
@@ -148,7 +148,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
 | `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
-| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs`: URL + line/col extraction across `sourcemonkey`/`http`/`https`/`file` schemes, query-string and port-number handling |
+| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs` (URL + line/col extraction, query strings, ports) and `displayRefText` (which URLs decode) |
 | `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — every URL shape, plus label encoding (dedup `#N`, spaces, emoji) |
 | `tests/unit/script-url-hash.test.mjs` | Unit tests for `parseHash` / `buildHash`: filename/line/col forms, percent encoding, round-trip, and invalid-input fallbacks |
 | `tests/unit/code-tabs.test.mjs` | Unit tests for `expandToVisualColumn`: tab-stop expansion of a V8 stack column, and out-of-range clamping |

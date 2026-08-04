@@ -1,5 +1,8 @@
 // Pure helpers used by the userscript viewer to turn stack-trace
-// references like
+// references into clickable, readable links: `parseStackRefs` finds
+// them, `displayRefText` decides how they read.
+//
+// References look like
 //   sourcemonkey://<scriptId>/<file>:<line>:<col>
 //   https://cdn.example.com/jquery.js?v=3:97:11
 // inside the Log tab's entries into clickable links that jump to
@@ -11,6 +14,9 @@
 // parser ignorant of script identity — the same code linkifies both
 // main-body refs (`sourcemonkey://<id>/<name>.user.js`) and
 // `@require` refs (their real CDN URLs, query string and all).
+
+import { decodeForDisplay } from './script-display.js';
+import { ROOT } from './script-source-url.js';
 
 export type RefRun =
   | { kind: 'text'; text: string }
@@ -66,4 +72,30 @@ export function parseStackRefs(text: string): RefRun[] {
     runs.push({ kind: 'text', text: text.slice(lastIndex) });
   }
   return runs;
+}
+
+// Text to paint for a ref, as opposed to the URL used to find its tab.
+//
+// `script-source-url.ts` percent-encodes the script's log label into
+// `//# sourceURL=` — a bare `#` would start a fragment and a space or
+// paren would end the run `parseStackRefs` matches — so a second
+// `foo.user.js` arrives as `foo%232`. Right on the wire, unreadable in
+// the log. Decoding here is the viewer's usual display-decodes /
+// functional-stays-encoded split (docs/names-and-paths.md).
+//
+// **Only our own URLs decode**, and the reason is not that decoding
+// them is unsafe elsewhere — `displayLocation` decodes any absolute
+// URL and accepts the same `%2F`-reads-as-`/` ambiguity. It is that a
+// stack ref is a *coordinate*, not a name: the user compares it
+// against devtools, pastes it into a Sources-panel search, or matches
+// it to a `@require` line, and all of those want the bytes that were
+// actually in the URL. Our own synthetic URLs are the exception
+// because their encoding is an artifact we introduced, not part of any
+// address the user could go look up.
+//
+// Matched against the full `sourcemonkey://SourceMonkey` prefix rather
+// than the scheme: the scheme is unregistered and a hostile script can
+// put `sourcemonkey://elsewhere/…` in its own log message.
+export function displayRefText(text: string, url: string): string {
+  return url.startsWith(`${ROOT}/`) ? decodeForDisplay(text) : text;
 }

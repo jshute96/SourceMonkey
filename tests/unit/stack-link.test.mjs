@@ -1,15 +1,20 @@
-// Tests for the pure ref parser used by the userscript viewer to
-// turn stack-trace `<scheme>://…:L:C` refs in log messages into
-// clickable links. Compiled output lives at dist/stack-link.js.
+// Tests for the pure stack-ref helpers the userscript viewer uses to
+// turn `<scheme>://…:L:C` refs in log messages into clickable,
+// readable links. Compiled output lives at dist/stack-link.js.
 //
-// The parser is a pure URL extractor — it doesn't know which refs
-// belong to which script. The viewer filters by matching URLs
+// `parseStackRefs` is a pure URL extractor — it doesn't know which
+// refs belong to which script. The viewer filters by matching URLs
 // against its tabs.
+//
+// `displayRefText` decides how a ref *reads*, which is a separate
+// question from which tab it points at: our own synthetic URLs carry a
+// percent-encoded log label that has to be undone for display, and
+// everything else keeps the bytes it arrived with.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseStackRefs } from '../../dist/stack-link.js';
+import { displayRefText, parseStackRefs } from '../../dist/stack-link.js';
 
 test('parseStackRefs: empty input yields no runs', () => {
   assert.deepEqual(parseStackRefs(''), []);
@@ -119,4 +124,77 @@ test('parseStackRefs: file:// URLs (e.g. local require) are recognized', () => {
   const refs = runs.filter((r) => r.kind === 'ref');
   assert.equal(refs.length, 1);
   assert.equal(refs[0].url, 'file:///home/u/scripts/mylib.js');
+});
+
+// ---------- displayRefText ----------
+//
+// The decode half of the round trip `script-source-url.ts` opens. Its
+// `encodeSegment` escapes everything outside `[A-Za-z0-9._~-]`, which
+// includes `%` itself, so `decodeURIComponent` is a strict inverse
+// rather than an approximate one — that is what these pin.
+
+const ROOT = 'sourcemonkey://SourceMonkey';
+
+test('displayRefText: the #N dedup suffix reads as a #', () => {
+  // The reported bug. `foo.user.js#2` cannot go into a `//# sourceURL=`
+  // with a literal `#` (it would start a fragment), so the wire form is
+  // `foo%232` and the display form has to undo it.
+  const url = `${ROOT}/foo%232/foo.user.js`;
+  assert.equal(
+    displayRefText(`${url}:12:3`, url),
+    `${ROOT}/foo#2/foo.user.js:12:3`,
+  );
+});
+
+test('displayRefText: a literal percent in a name survives the round trip', () => {
+  // A file really called `a%20b.user.js` encodes to `a%2520b`, so
+  // decoding once gives back the on-disk name — NOT `a b.user.js`.
+  // names-and-paths.md requires the name on screen to be the name on
+  // disk, and this is the case a non-inverse decoder would break.
+  const url = `${ROOT}/a%2520b/a%2520b.user.js`;
+  assert.equal(
+    displayRefText(`${url}:1:1`, url),
+    `${ROOT}/a%20b/a%20b.user.js:1:1`,
+  );
+});
+
+test('displayRefText: a malformed escape leaves the ref intact', () => {
+  // `100% free.user.js` → the `%20free` fragment below makes
+  // decodeURIComponent throw. One undecoded ref beats a blank one.
+  const url = `${ROOT}/100%_free/x.user.js`;
+  assert.equal(displayRefText(`${url}:1:1`, url), `${url}:1:1`);
+});
+
+test('displayRefText: line and column are untouched', () => {
+  // Digits never carry escapes, so decoding the whole ref rather than
+  // just the URL portion has to be a no-op on the suffix.
+  const url = `${ROOT}/x/x.user.js`;
+  assert.equal(displayRefText(`${url}:0:0`, url), `${url}:0:0`);
+});
+
+test('displayRefText: real URLs keep their escapes', () => {
+  // A ref is a coordinate, not a name: `%2F` here is a literal slash
+  // inside a path segment, and decoding it would name a different file.
+  for (const url of [
+    'https://cdn.example.com/a%2Fb/lib%20one.js',
+    'http://cdn.example.com/lib%20one.js',
+    'file:///home/u/a%20b/lib.js',
+  ]) {
+    assert.equal(displayRefText(`${url}:9:9`, url), `${url}:9:9`);
+  }
+});
+
+test('displayRefText: our scheme alone is not enough', () => {
+  // The scheme is unregistered, so a hostile script can put any
+  // `sourcemonkey://…` string in its own log message. Only the full
+  // `sourcemonkey://SourceMonkey/` prefix is ours.
+  const url = 'sourcemonkey://elsewhere/%2e%2e/x.js';
+  assert.equal(displayRefText(`${url}:1:1`, url), `${url}:1:1`);
+});
+
+test('displayRefText: the root prefix must be followed by a slash', () => {
+  // `sourcemonkey://SourceMonkeyEvil/…` is a different host that merely
+  // starts with our name.
+  const url = 'sourcemonkey://SourceMonkeyEvil/a%232/x.js';
+  assert.equal(displayRefText(`${url}:1:1`, url), `${url}:1:1`);
 });

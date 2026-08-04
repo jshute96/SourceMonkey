@@ -143,7 +143,8 @@ const req = (source, url = 'https://cdn/x.js') =>
 
 test('wrapCombinedEntry: no requires → head on line 1, body lines preserved, no map', () => {
   // The overwhelmingly common case must be byte-for-byte what it was
-  // before Mode A: nothing to concatenate means nothing to shift, so
+  // before Mode A (see docs/injection-modes.md for what the modes are):
+  // nothing to concatenate means nothing to shift, so
   // body line N stays at physical line N and no source map is paid for.
   const wrapped = wrapCombinedEntry({
     ...COMBINED_ARGS,

@@ -92,7 +92,7 @@ import {
 } from './github-auth.js';
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { dropRawView, putRawView } from './raw-view.js';
-import { parseStackRefs } from './stack-link.js';
+import { displayRefText, parseStackRefs } from './stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
 import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
@@ -505,11 +505,11 @@ function storedTabs(script: StoredScript): CodeTab[] {
       // the same label) for the require's entry in the combined
       // entry's source map, so devtools' file and this tab agree.
       //
-      // Raw stack frames never carry this URL — under Mode A V8 tags
-      // every frame in the combined entry with the script's own
-      // sourceURL. `stackSegments` below is what turns such a frame
-      // back into a ref at this URL, which is what lets the Log tab
-      // linkify to this tab.
+      // Raw stack frames never carry this URL — under Mode A (see
+      // docs/injection-modes.md) V8 tags every frame in the combined
+      // entry with the script's own sourceURL. `stackSegments` below
+      // is what turns such a frame back into a ref at this URL, which
+      // is what lets the Log tab linkify to this tab.
       fileUrl: r.url,
       sourceUrl: requireSourceUrls[i],
     });
@@ -1155,50 +1155,88 @@ type ResolvedRef =
   // Use it as it stands: a frame from another file, or from a script
   // with no `@require`s where nothing moved in the first place.
   | { kind: 'asIs' }
-  // Rewritten to the original file and line.
-  | { kind: 'mapped'; ref: StackRef }
+  // Rewritten to the original file and line. `stale` when the entry
+  // predates the body whose layout did the rewriting.
+  | { kind: 'mapped'; ref: StackRef; stale: boolean }
   // Ours, but the generated line belongs to our wrap rather than to
   // user code — the head, a `// @require` marker, a `;` ASI guard, the
-  // closing brace. There is no honest line to point at, so it must not
+  // closing brace. There is no original line at all, so it must not
   // stay clickable at the generated one: that number indexes the
   // concatenated program, and following it would land the user on
   // unrelated code (or past EOF, where the click does nothing at all).
   | { kind: 'unmappable' };
 
+// Tooltip note for a ref mapped with a layout that isn't the one it
+// was recorded under. See `resolveLogRef`.
+const STALE_REF_NOTE =
+  'Recorded before the current version of this script — the file and line may not match.';
+
 function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
   if (stackSegments.length === 0 || ref.url !== stackEntryUrl) return { kind: 'asIs' };
+  const mapped = remapStackRef(ref, stackEntryUrl, stackSegments);
+  if (!mapped) return { kind: 'unmappable' };
   // The layout is recomputed from the CURRENT stored script, but the
   // log outlives refreshes — nothing clears it but the user's Clear
   // button. An entry recorded before this body loaded was generated
-  // against a different arrangement of requires, so mapping it with
-  // today's segments would turn an obviously-generated line number
-  // into a confidently wrong file and line. Leave those alone.
+  // against a different arrangement of requires, so today's segments
+  // may well name the wrong file and line for it.
   //
-  // Not airtight: an already-open tab still running the previous body
-  // can log an entry with a fresh timestamp. Documented in
+  // Mapped anyway, and still clickable. The alternative — leaving it
+  // at the generated coordinate — is not the honest option it looks
+  // like: that number indexes the concatenated program, so it is
+  // wrong too, just less legibly, and it points into the `.user.js` at
+  // an offset that includes every preceding `@require`. A best-effort
+  // file and line at least lands the user somewhere they can judge.
+  // The tooltip says the entry is older than the body it was mapped
+  // against, so a mismatch reads as expected rather than as a bug.
+  //
+  // The old layout cannot be recovered to do better: a refresh
+  // overwrites `bodyText` and every `requires[].source` in place, and
+  // a `LogEntry` stores no layout of its own.
+  //
+  // The staleness signal is not airtight either: an already-open tab
+  // still running the previous body can log an entry with a fresh
+  // timestamp, which reads as current. Documented in
   // docs/script-log.md; closing it would need the wrapper to stamp
   // reports with the loadedAt they ran under.
   const loadedAt = currentScript?.loadedAt;
-  if (loadedAt !== undefined && timestamp < loadedAt) return { kind: 'asIs' };
-  const mapped = remapStackRef(ref, stackEntryUrl, stackSegments);
-  return mapped ? { kind: 'mapped', ref: mapped } : { kind: 'unmappable' };
+  const stale = loadedAt !== undefined && timestamp < loadedAt;
+  return { kind: 'mapped', ref: mapped, stale };
 }
 
-// Text to paint for a stack ref, as opposed to the URL we match tabs
-// against. `script-source-url.ts` percent-encodes the script's log
-// label on its way into `//# sourceURL=` — a bare `#` would start a
-// fragment and a space or paren would end the run `parseStackRefs`
-// matches — so a second `foo.user.js` arrives as `foo%232`. That is
-// the right wire form and the wrong thing to read, so decode it here,
-// the same display-decodes / functional-stays-encoded split the rest
-// of the viewer follows.
-//
-// Only our own scheme is decoded. An `http(s)` or `file` ref is a real
-// URL the user may want to compare against a `@require` line or the
-// address bar, and a legitimately-escaped `%2F` inside one decodes
-// into a path that names a different file.
-function displayRefText(text: string, url: string): string {
-  return url.startsWith('sourcemonkey://') ? decodeForDisplay(text) : text;
+// Paint a ref into `el` with the wire form kept as a tooltip whenever
+// decoding changed it — the viewer's standing rule is that the encoded
+// form is always one hover away (docs/names-and-paths.md). It earns its
+// keep here beyond consistency: devtools' Sources tree indexes the file
+// under the ENCODED folder name, so the tooltip is what a user needs to
+// find the same file there.
+function setRefText(el: HTMLElement, raw: string, url: string, stale = false): void {
+  const shown = displayRefText(raw, url);
+  el.textContent = shown;
+  const title = refTitle(raw, shown, stale);
+  if (title) el.title = title;
+}
+
+// A ref with no tab to link to. Stays a bare text node unless there is
+// a tooltip to carry, which needs an element.
+function refNode(raw: string, url: string, stale = false): Node {
+  const shown = displayRefText(raw, url);
+  const title = refTitle(raw, shown, stale);
+  if (!title) return document.createTextNode(shown);
+  const span = document.createElement('span');
+  span.textContent = shown;
+  span.title = title;
+  return span;
+}
+
+// What a ref's tooltip should say: the wire form when decoding changed
+// what is on screen, and the staleness caveat when the entry predates
+// the layout that mapped it. Empty when there is nothing to add.
+function refTitle(raw: string, shown: string, stale: boolean): string {
+  const parts: string[] = [];
+  if (shown !== raw) parts.push(raw);
+  if (stale) parts.push(STALE_REF_NOTE);
+  return parts.join('\n');
 }
 
 // Paint a log entry's message into a <td>. Each URL:line:col stack
@@ -1225,25 +1263,29 @@ function appendLogMessageContent(td: HTMLElement, message: string, timestamp: nu
       td.appendChild(document.createTextNode(run.text));
       continue;
     }
+    // One `raw` and one `tabIndex` for every outcome, so that "every
+    // painted ref goes through the decode" is structural rather than a
+    // property of remembering to call it on each branch.
     const resolved = resolveLogRef(run, timestamp);
-    if (resolved.kind === 'unmappable') {
-      td.appendChild(document.createTextNode(displayRefText(run.text, run.url)));
-      continue;
-    }
     const ref = resolved.kind === 'mapped' ? resolved.ref : run;
-    const text = displayRefText(
-      resolved.kind === 'mapped' ? `${ref.url}:${ref.line}:${ref.col}` : run.text,
-      ref.url,
-    );
-    const tabIndex = tabsView.findTabBySourceUrl(ref.url);
+    const raw = resolved.kind === 'mapped'
+      ? `${ref.url}:${ref.line}:${ref.col}`
+      : run.text;
+    // An unmappable ref keeps its text but must never become a link,
+    // even though its URL is this script's and so does match a tab —
+    // the generated line indexes the concatenated program.
+    const tabIndex = resolved.kind === 'unmappable'
+      ? -1
+      : tabsView.findTabBySourceUrl(ref.url);
+    const stale = resolved.kind === 'mapped' && resolved.stale;
     if (tabIndex < 0) {
-      td.appendChild(document.createTextNode(text));
+      td.appendChild(refNode(raw, ref.url, stale));
       continue;
     }
     const a = document.createElement('a');
     a.className = 'log-stack-link';
     a.href = '#';
-    a.textContent = text;
+    setRefText(a, raw, ref.url, stale);
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
       tabsView.goToTabLine(tabIndex, ref.line, ref.col);

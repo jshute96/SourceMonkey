@@ -18,7 +18,7 @@ How a stored location becomes the text a user reads. Helpers live in
 - **Display decodes. Everything functional stays encoded.**
 - Decoded: headings, page titles, the viewer's `Log ID` and `Location`
   rows, code-tab labels, install-prompt text, badge/menu labels, SW
-  console log IDs.
+  console log IDs, and stack refs in the viewer's Log tab.
 - Not decoded: `href`s, the Location row's copy button, fetch URLs,
   stored `relativePath`, `@match` patterns, anything compared for
   identity (e.g. the preview's already-installed check).
@@ -43,6 +43,31 @@ How a stored location becomes the text a user reads. Helpers live in
 - A `relativePath` from a local directory source is a literal on-disk
   name: a file really called `a%20b.user.js` must keep its `%20`, or
   the name on screen won't be the name on disk.
+
+### Stack refs decode by scheme, not by shape
+
+- The one place the decode is gated on the URL's **scheme** rather than
+  on "is it a URL at all".
+- A Log-tab stack ref may name our synthetic `sourcemonkey://…` URL,
+  which embeds the percent-encoded log label (`main%232`), or a real
+  `http(s)`/`file` URL from a `@require` or from page code.
+- Only our own URLs decode — and not because decoding the others is
+  unsafe. `displayLocation` decodes any absolute URL and accepts the
+  same `%2F`-reads-as-`/` ambiguity (see **Known limitations**).
+- The line is **coordinate vs name**. A stack ref is compared against
+  devtools, pasted into a Sources-panel search, or matched to a
+  `@require` line, so it wants the bytes that were really in the URL.
+  Our synthetic URLs are the exception because their encoding is an
+  artifact we introduced, not part of an address anyone can look up.
+- Matched against the whole `sourcemonkey://SourceMonkey` prefix, not
+  the scheme: the scheme is unregistered, and a script can put
+  `sourcemonkey://elsewhere/…` in its own log message.
+- `displayRefText` in `src/stack-link.ts`; `setRefText` / `refNode` in
+  `src/userscript.ts` paint it. The raw URL still does the tab lookup
+  and the click target; only the painted text changes.
+- Devtools' Sources tree indexes the file under the **encoded** folder
+  name, so the tooltip carrying the raw form is how a user finds the
+  same file there.
 
 ### Decoding never throws
 

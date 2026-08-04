@@ -33,6 +33,10 @@ interface SmApi {
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledSources: string[] };
   }>;
+  // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
+  // member of a dupe group gets which `#N` is decided by UUID sort, so
+  // a test that needs the label has to ask rather than predict it.
+  getScriptLogLabel(scriptId: string): Promise<string>;
   // GM_registerMenuCommand test surface.
   getActionContextMenu(tabId: number): Promise<{
     scriptId: string;

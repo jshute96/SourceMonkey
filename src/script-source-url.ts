@@ -34,9 +34,17 @@
 // or a paren ends the URL run that `stack-link.ts` matches, so a
 // stack-trace ref would stop linkifying to its tab. Everything
 // outside an unreserved-character whitelist is re-encoded — devtools
-// shows the encoded form, same as it always has.
+// shows the encoded form, same as it always has. The viewer's Log tab
+// decodes it back for display (`displayRefText` in `stack-link.ts`),
+// so the two disagree on purpose: devtools indexes the file under
+// `main%232`, the Log tab reads `main#2` and keeps the wire form in a
+// tooltip.
 
-const ROOT = 'sourcemonkey://SourceMonkey';
+// Exported so consumers can recognize our own URLs by the exact prefix
+// rather than by the scheme alone — the scheme is unregistered, so a
+// hostile script can put `sourcemonkey://anything/…` in a log message
+// and have it parsed as a ref.
+export const ROOT = 'sourcemonkey://SourceMonkey';
 
 // Strip characters that would break out of the `//# sourceURL=<url>`
 // comment these URLs are spliced into. The log label is derived from

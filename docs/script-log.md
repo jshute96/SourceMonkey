@@ -231,9 +231,13 @@ Plumbing notes specific to logging:
 - The Log tab decodes it at paint time, matching the display-decodes /
   functional-stays-encoded rule the rest of the viewer follows. Tab
   lookup and the click target still use the raw URL.
-- **Only `sourcemonkey://` refs decode.** An `http(s)` or `file` ref
-  names a real file, and a `%2F` inside one is a literal slash in a
-  segment — decoding would silently rename what it points at.
+- **Only our own `sourcemonkey://SourceMonkey/…` refs decode.** A ref
+  is a coordinate, not a name: an `http(s)` or `file` ref gets compared
+  against devtools or a `@require` line, so it keeps the bytes that
+  were really in the URL.
+- The raw form stays as the ref's `title`, so it is one hover away —
+  which is also the name devtools' Sources tree indexed the file under.
+  See [names-and-paths.md](names-and-paths.md).
 
 ### Why recompute rather than persist
 
@@ -255,11 +259,21 @@ Plumbing notes specific to logging:
   entries whose generated line numbers were produced by the *previous*
   arrangement. Mapping those with today's segments would turn an
   obviously-generated number into a confidently wrong file and line.
-- Entries recorded before the current body's `loadedAt` are therefore
-  left unmapped.
-- Not airtight: a tab still running the previous body can log an entry
-  with a fresh timestamp. Closing that would need the wrapper to stamp
-  each report with the `loadedAt` it actually ran under.
+- **They are mapped anyway, and stay clickable.** Best effort beats a
+  dead end: leaving the ref at its generated coordinate is not the
+  cautious option it resembles — that number indexes the concatenated
+  program, so it is wrong too, just less legibly, and it points into
+  the `.user.js` at an offset that includes every preceding `@require`.
+- Entries older than the current `loadedAt` carry a tooltip saying so,
+  so a line that doesn't match reads as expected rather than as a bug.
+- The previous layout cannot be recovered to do better. A refresh
+  overwrites `bodyText` and every `requires[].source` in place on the
+  same row, and a `LogEntry` stores only timestamp / level / source /
+  tabId / message.
+- The staleness signal is not airtight: a tab still running the
+  previous body can log an entry with a fresh timestamp, which reads as
+  current. Closing that would need the wrapper to stamp each report
+  with the `loadedAt` it actually ran under.
 
 ### What is left unmapped, deliberately
 

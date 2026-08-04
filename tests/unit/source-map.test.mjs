@@ -164,7 +164,9 @@ test('inlineSourceMapComment: emits a decodable base64 data URI', () => {
 
 test('inlineSourceMapComment: survives source text above U+00FF', () => {
   // `btoa` alone throws on any code point past Latin-1, and userscripts
-  // are full of them — the script that prompted Mode A is half Chinese.
+  // are full of them — the script that prompted Mode A (the
+  // concatenated arrangement; see docs/injection-modes.md) is half
+  // Chinese.
   const map = buildSourceMap({
     file: 'gen.js',
     segments: [{ url: 'zh.js', content: '// 增强\nconst 名前 = "🎉";', generatedLine: 0, lineCount: 2 }],

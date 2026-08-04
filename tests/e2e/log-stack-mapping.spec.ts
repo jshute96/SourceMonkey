@@ -1,7 +1,8 @@
 // The viewer's Log tab maps `Error.stack` line numbers back to the
 // file they were written in.
 //
-// Why this needs its own coverage: under Mode A a script's `@require`
+// Why this needs its own coverage: under Mode A (see
+// docs/injection-modes.md for what the modes are) a script's `@require`
 // bodies and its own body are concatenated into ONE injected entry, so
 // V8 stamps every frame with the script's `.user.js` sourceURL at a
 // GENERATED line. Chrome's console hides that — devtools applies the
@@ -195,14 +196,20 @@ test.describe('log stack mapping', () => {
     await page.close();
   });
 
-  test('entries older than the current body are left unmapped', async ({
+  test('entries older than the current body are mapped anyway, and flagged', async ({
     extensionContext, extensionId, fixtureServer, sm,
   }) => {
     // The log outlives refreshes — nothing clears it but the user's
-    // Clear button. An entry recorded against an older arrangement of
-    // requires would map to a confidently wrong file and line if we
-    // applied today's segments to it, which is worse than the
-    // obviously-generated number it already carries.
+    // Clear button — so an entry can predate the arrangement of
+    // requires we map it with, and its file and line may be wrong.
+    //
+    // We map it regardless. The alternative, leaving it at the
+    // generated coordinate, only looks like the cautious choice: that
+    // number indexes the concatenated program, so it is wrong too,
+    // just less legibly. The old layout can't be recovered to do
+    // better — a refresh overwrites `bodyText` and every
+    // `requires[].source` in place — so best-effort plus a tooltip
+    // beats a dead end.
     const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
     const sources = await sm.getSources();
     const withScripts = await sm.getSourceWithScripts(sources[0].id);
@@ -217,12 +224,40 @@ test.describe('log stack mapping', () => {
       message: `Error: stale-entry\n    at old (${entryUrl}:5:9)`,
       timestamp: loadedAt - 1000,
     });
+    // The contrast: identical ref, stamped after this body loaded. Same
+    // mapping, no caveat — so the tooltip assertion below is about the
+    // timestamp and not about mapped refs in general.
+    await sm.appendScriptLog(scriptId, {
+      level: 'error',
+      source: 'wrapper',
+      message: `Error: fresh-entry\n    at now (${entryUrl}:5:9)`,
+      timestamp: loadedAt + 1000,
+    });
 
     const page = await openLogTab(extensionContext, extensionId, scriptId);
     const row = page.locator('#log-pane td.log-msg', { hasText: 'stale-entry' });
-    // Untouched: still the entry URL at the generated line, not lib.js.
-    await expect(row).toContainText(`${entryUrl}:5:9`);
-    await expect(row).not.toContainText('lib.js');
+    // Mapped like any other ref — generated line 5 lands in lib.js —
+    // and still clickable.
+    const link = row.locator('.log-stack-link');
+    await expect(link).toHaveCount(1);
+    // Any line in lib.js: which one is the source map's business (unit
+    // tests cover the arithmetic). What matters here is that the ref
+    // moved out of the entry URL and into a require file at all.
+    await expect(link).toHaveText(/\/lib\.js:\d+:\d+$/);
+    await expect(row).not.toContainText(`${entryUrl}:5:9`);
+
+    // The caveat rides along in the tooltip, so a wrong line reads as
+    // expected rather than as a bug. Without this the mapping would be
+    // a confident claim about a layout we no longer have.
+    await expect(link).toHaveAttribute('title', /Recorded before the current version/);
+
+    // The same ref, stamped after this body loaded: mapped identically,
+    // no caveat.
+    const freshLink = page
+      .locator('#log-pane td.log-msg', { hasText: 'fresh-entry' })
+      .locator('.log-stack-link');
+    await expect(freshLink).toHaveText(await link.innerText());
+    await expect(freshLink).not.toHaveAttribute('title', /Recorded before/);
 
     await page.close();
   });
@@ -249,6 +284,94 @@ test.describe('log stack mapping', () => {
     await expect(row).not.toContainText('%232');
 
     await page.close();
+  });
+
+  test('a dedup-suffixed script decodes on the mapped and unmappable paths', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // The reported bug, end to end. Two scripts share the basename
+    // `main.user.js`, so BOTH earn a `#N` log ID, which
+    // `script-source-url.ts` must percent-encode into every sourceURL
+    // it builds — and therefore into every frame V8 stamps.
+    //
+    // Unlike the synthetic case above, this one is really source-mapped:
+    // the frame's URL IS the entry URL, so it goes through the mapped
+    // arm, matches a tab, and is painted as an anchor. That is the path
+    // a user actually hits, and the one a decode applied at only some
+    // call sites would leave broken.
+    const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
+    const second = ScriptsDir.create();
+    try {
+      fs.writeFileSync(path.join(second.path, 'lib.js'), LIB_JS);
+      second.write({
+        relativePath: 'main.user.js',
+        meta: {
+          name: 'StackMappingTwin',
+          match: [`${fixtureServer.baseUrl}/*`],
+          runAt: 'document-end',
+          extra: ['// @require     lib.js'],
+        },
+        body: 'requireBoom();',
+      });
+      await sm.addSource(second.path);
+      await sm.syncNow();
+
+      // Which twin got `#1` is decided by UUID sort, so ask rather
+      // than assume — the assertions below only need "some `#N`".
+      const label = await sm.getScriptLogLabel(scriptId);
+      expect(label).toMatch(/^main\.user\.js#\d+$/);
+
+      const target = await extensionContext.newPage();
+      await target.goto(`${fixtureServer.baseUrl}/target.html`);
+      await target.waitForTimeout(500);
+      await target.close();
+
+      // The raw log still carries the encoded form — that is correct on
+      // the wire and is what the viewer has to undo.
+      const raw = await sm.getScriptLog(scriptId);
+      const rawError = raw.find((e) => e.level === 'error' && /boom-from-require/.test(e.message));
+      expect(rawError, 'the throw should be logged').toBeTruthy();
+      expect(rawError!.message).toContain('%23');
+
+      // Seed the unmappable case before opening the pane, so one render
+      // covers both arms. A generated line that belongs to our wrap
+      // head has no original line to map to.
+      // `main.user.js#1` → folder `main%231` (strip `.user.js`, then
+      // percent-encode) — see folderForLabel in script-source-url.ts.
+      const folder = label.replace(/\.user\.js(?=#|$)/, '').replace('#', '%23');
+      const entryUrl = `sourcemonkey://SourceMonkey/${folder}/main.user.js`;
+      await sm.appendScriptLog(scriptId, {
+        level: 'error',
+        source: 'wrapper',
+        message: `Error: wrap-line\n    at wrapHead (${entryUrl}:1:5)`,
+      });
+
+      const page = await openLogTab(extensionContext, extensionId, scriptId);
+
+      // Mapped arm + anchor textContent: named lib.js at the throwing
+      // line, in a folder whose `#N` reads as a `#`.
+      const link = page.locator('.log-stack-link', { hasText: 'lib.js' }).first();
+      await expect(link).toBeVisible();
+      await expect(link).toHaveText(new RegExp(`/main#\\d+/.*/lib\\.js:${THROW_LINE}:\\d+$`));
+      await expect(link).not.toContainText('%23');
+
+      // Unmappable arm: plain text, decoded there too, still not a link.
+      const row = page.locator('#log-pane td.log-msg', { hasText: 'wrap-line' });
+      await expect(row).toContainText('sourcemonkey://SourceMonkey/main#');
+      await expect(row).not.toContainText('%23');
+      await expect(row.locator('.log-stack-link')).toHaveCount(0);
+
+      // Last, because it leaves the Log pane: the link still resolves to
+      // the right tab, which is the proof that the lookup used the raw
+      // URL and not the decoded text.
+      await link.click();
+      await expect.poll(() => page.evaluate(() => location.hash))
+        .toMatch(new RegExp(`^#lib\\.js:${THROW_LINE}:\\d+$`));
+
+      await page.close();
+    } finally {
+      second.cleanup();
+    }
   });
 
   test('a percent escape in a real URL is left encoded', async ({
