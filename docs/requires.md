@@ -240,11 +240,17 @@ buys most of it back:
   source shadows the generated script rather than duplicating it.
 - The map is emitted **only** when the script has requires. Without
   them nothing shifts and no map is paid for.
-- `Error.stack` *strings* are not mapped — V8 maps positions for the
-  devtools UI but leaves the string in generated coordinates. The
-  viewer's Log tab parses those strings, so log entries currently show
-  concatenated line numbers. Applying the same map there is a planned
-  follow-up; see [TODO.md](../TODO.md).
+- The reload fast-path's swapped body carries the same map, and lays
+  its lines out the same way, so a hot-swapped script reports original
+  coordinates exactly as a freshly registered one does.
+- `Error.stack` *strings* are not mapped by V8 — it maps positions for
+  the devtools UI but leaves the string in generated coordinates. The
+  viewer's Log tab parses those strings, so it applies the layout
+  itself and re-renders each ref at its original file and line; see
+  [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
+  A script that reads its own `err.stack` still sees generated
+  coordinates — we rewrite the string on the way into our views, not
+  at the source.
 - `sourcesContent` is embedded without a size cap: `sourcemonkey://`
   URLs aren't fetchable, so dropping the text would leave a map with
   nothing to show. The real limit is whatever

@@ -187,16 +187,111 @@ Plumbing notes specific to logging:
   - Each `@require` tab carries `sourceUrl = buildRequireSourceUrl(logLabel, r.url)`
     (a synthetic `sourcemonkey://SourceMonkey/<folder>/<host>/<path>`
     URL) — the same string the injector puts in the entry's source
-    map for that require. It is NOT what stack frames carry: requires
-    are concatenated into the script's own entry, so every frame
-    reports the main URL, and stack refs can't route to a require tab
-    until the Log tab applies that map (see TODO.md). The require
-    tab's `fileUrl` keeps the original fetched URL for display.
+    map for that require. The require tab's `fileUrl` keeps the
+    original fetched URL for display.
+  - Raw frames never carry that require URL; see **Stack refs are
+    source-mapped first** below.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
     the wrap prefix (the `self.__smRun(id, function(__smE){…`
     + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.
+
+## Stack refs are source-mapped first
+
+### The problem
+
+- `@require` bodies and the script body are concatenated into one
+  injected entry (Mode A — see [injection-modes.md](injection-modes.md)).
+- V8 stamps every frame from that entry with the script's own
+  `//# sourceURL=`, at a **generated** line.
+- It source-maps that for the devtools UI, but **not** for
+  `err.stack` — and `err.stack` is the string the wrapper sends us.
+- So an unmapped log line blames the `.user.js` at a line that
+  typically falls inside its own metadata header.
+
+### What the Log tab does
+
+- Recomputes the entry's segment layout from the stored script, via
+  the shared `composeSource` in `src/composed-source.ts`.
+- Applies it with `remapStackRef` (`src/source-map.ts`) to each ref
+  `parseStackRefs` found.
+- Re-renders the ref text with the mapped URL and line, so the string
+  the user reads names the real file. The generated number is an
+  artifact of our injection and means nothing to the script's author.
+- Routes the click to the tab that owns the mapped URL — which is how
+  a stack ref reaches a `@require` tab at all.
+
+### Refs are decoded for display
+
+- `script-source-url.ts` percent-encodes the log label into
+  `//# sourceURL=`, so a second `foo.user.js` reaches the log as
+  `foo%232`. That encoding is required — a bare `#` starts a fragment,
+  and a space or paren ends the run `parseStackRefs` matches.
+- The Log tab decodes it at paint time, matching the display-decodes /
+  functional-stays-encoded rule the rest of the viewer follows. Tab
+  lookup and the click target still use the raw URL.
+- **Only our own `sourcemonkey://SourceMonkey/…` refs decode.** A ref
+  is a coordinate, not a name: an `http(s)` or `file` ref gets compared
+  against devtools or a `@require` line, so it keeps the bytes that
+  were really in the URL.
+- The raw form stays as the ref's `title`, so it is one hover away —
+  which is also the name devtools' Sources tree indexed the file under.
+  See [names-and-paths.md](names-and-paths.md).
+
+### Why recompute rather than persist
+
+- The inputs (require sources, body text, log label) are already on
+  the `StoredScript` row the viewer loaded.
+- Recomputing is memoised on the script's `loadedAt`, so an unrelated
+  storage change doesn't re-concatenate megabytes of libraries.
+- Both run paths agree on the layout, so there is one answer to "which
+  file is generated line N?" — `wrapCombinedEntry` and
+  `buildSwapEvalBody` produce the same arrangement for both the
+  with-requires and the no-requires case. The viewer never has to know
+  which one ran. See `src/composed-source.ts` for the two layouts.
+
+### The log outlives the layout
+
+- Nothing clears a script's log on refresh — only the user's **Clear
+  log** button, or browser shutdown.
+- So a refresh that changes a `@require`'s line count leaves older
+  entries whose generated line numbers were produced by the *previous*
+  arrangement. Mapping those with today's segments would turn an
+  obviously-generated number into a confidently wrong file and line.
+- **They are mapped anyway, and stay clickable.** Best effort beats a
+  dead end: leaving the ref at its generated coordinate is not the
+  cautious option it resembles — that number indexes the concatenated
+  program, so it is wrong too, just less legibly, and it points into
+  the `.user.js` at an offset that includes every preceding `@require`.
+- Entries older than the current `loadedAt` carry a tooltip saying so,
+  so a line that doesn't match reads as expected rather than as a bug.
+- The previous layout cannot be recovered to do better. A refresh
+  overwrites `bodyText` and every `requires[].source` in place on the
+  same row, and a `LogEntry` stores only timestamp / level / source /
+  tabId / message.
+- The staleness signal is not airtight: a tab still running the
+  previous body can log an entry with a fresh timestamp, which reads as
+  current. Closing that would need the wrapper to stamp each report
+  with the `loadedAt` it actually ran under.
+
+### What is left unmapped, deliberately
+
+- Frames from another file — the page, a sibling userscript,
+  `__prelude.js`. They pass through untouched.
+- Generated lines that belong to our wrap rather than to user code:
+  the head, the `// @require` marker lines, the `;` ASI guards, the
+  closing `});`. Guessing at a neighbouring line would point the user
+  at unrelated code.
+- Scripts with no `@require`. Nothing was concatenated, so nothing
+  moved, and the reported lines are already original.
+- Columns are passed through rather than mapped, and that is exact:
+  composition moves whole lines and never code within a line.
+- Line numbers are counted the way V8 counts them (`\r`, `\r\n`,
+  U+2028, U+2029 all end a line), but the code pane's gutter comes from
+  Prism, which splits on `\n` only. A `@require` with CR-only endings
+  or a raw U+2028 will map to a line the gutter numbers differently.
+  Devtools is unaffected — it counts like V8.
 
 ## Lifecycle and reset
 

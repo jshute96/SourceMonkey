@@ -92,7 +92,9 @@ import {
 } from './github-auth.js';
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { dropRawView, putRawView } from './raw-view.js';
-import { parseStackRefs } from './stack-link.js';
+import { displayRefText, parseStackRefs } from './stack-link.js';
+import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
+import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { renderDetails } from './script-details.js';
@@ -274,6 +276,18 @@ let currentFilenamePath = '';
 // adding/removing a sibling with the same basename would otherwise
 // leave a stale `#N` on screen).
 let currentLogId = '';
+
+// The injected entry's line layout, recomputed whenever the tab strip
+// is rebuilt, plus the sourceURL every frame from that entry carries.
+// Together they let the Log tab map a generated stack line back to the
+// `@require` (or body) it was written in — see `remapLogRef`. Empty
+// segments mean "nothing to undo": either the script has no
+// `@require`s, or we're in preview mode with nothing injected at all.
+let stackSegments: readonly MappedSegment[] = [];
+let stackEntryUrl = '';
+// Identity of the script state `stackSegments` was computed from, so a
+// re-render for an unrelated reason doesn't redo the concatenation.
+let stackLayoutKey = '';
 // Most recently rendered script. The session-storage listener calls
 // paintLog without re-reading the script, so we capture the latest
 // here so log-pane linkification can consult the tab list without
@@ -446,14 +460,39 @@ function storedTabs(script: StoredScript): CodeTab[] {
   // basename if the log-id sweep hasn't run yet — same default the
   // injector uses, so the two stay in lockstep.
   const label = currentLogId || scriptBasename(script.relativePath);
+  const mainSourceUrl = buildSourceUrl(label);
+  const requireSourceUrls = (script.requires ?? []).map(
+    (r) => buildRequireSourceUrl(label, r.url),
+  );
+  // Re-derive the injected entry's line layout so the Log tab can undo
+  // it — see `resolveLogRef`. Same shared `composeSource` the injector
+  // runs, given the same URLs and the same start line, so the segments
+  // are the ones the registered entry's source map was built from.
+  //
+  // Memoised: this concatenates every `@require` body with the script
+  // to find the offsets, then discards the text. Renders fire on any
+  // `script:*` storage mutation, and a script with a couple of MB of
+  // libraries would redo that work behind unrelated events. The
+  // layout only changes when the body does, which is exactly what
+  // `loadedAt` tracks.
+  const layoutKey = `${script.id}@${script.loadedAt}:${label}`;
+  if (layoutKey !== stackLayoutKey) {
+    stackLayoutKey = layoutKey;
+    stackSegments = composeSource(script, {
+      requireUrls: requireSourceUrls,
+      mainUrl: mainSourceUrl,
+      startLine: USER_SOURCE_START_LINE,
+    }).segments;
+  }
+  stackEntryUrl = mainSourceUrl;
   const tabs: CodeTab[] = [{
     kind: 'code',
     label: scriptBasename(script.relativePath),
     body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
-    sourceUrl: buildSourceUrl(label),
+    sourceUrl: mainSourceUrl,
   }];
-  for (const r of script.requires ?? []) {
+  for (const [i, r] of (script.requires ?? []).entries()) {
     tabs.push({
       kind: 'code',
       label: requireBasename(r.url, r.ref),
@@ -464,13 +503,15 @@ function storedTabs(script: StoredScript): CodeTab[] {
       //
       // The injector builds the same URL (`buildRequireSourceUrl` with
       // the same label) for the require's entry in the combined
-      // entry's source map, so devtools' file and this tab agree. It
-      // is NOT what stack frames carry any more: under Mode A every
-      // frame is tagged with the script's own sourceURL, so log-pane
-      // refs can't linkify to a require tab until the Log tab learns
-      // to apply that source map. See TODO.md.
+      // entry's source map, so devtools' file and this tab agree.
+      //
+      // Raw stack frames never carry this URL — under Mode A (see
+      // docs/injection-modes.md) V8 tags every frame in the combined
+      // entry with the script's own sourceURL. `stackSegments` below
+      // is what turns such a frame back into a ref at this URL, which
+      // is what lets the Log tab linkify to this tab.
       fileUrl: r.url,
-      sourceUrl: buildRequireSourceUrl(label, r.url),
+      sourceUrl: requireSourceUrls[i],
     });
   }
   tabs.push({ kind: 'log', label: 'Log' });
@@ -1091,7 +1132,7 @@ function paintLog(entries: LogEntry[]): void {
 
     const tdMsg = document.createElement('td');
     tdMsg.className = 'log-msg';
-    appendLogMessageContent(tdMsg, e.message);
+    appendLogMessageContent(tdMsg, e.message, e.timestamp);
     tr.appendChild(tdMsg);
 
     tbody.appendChild(tr);
@@ -1100,13 +1141,117 @@ function paintLog(entries: LogEntry[]): void {
   logPaneEl.appendChild(table);
 }
 
+// How a stack ref should be rendered, once the injected entry's
+// concatenation has been undone.
+//
+// Errors reach the log as `err.stack` strings, and V8 does not source-
+// map those — every frame from the combined entry names the script's
+// own sourceURL at a GENERATED line, so a throw inside a `@require`
+// arrives claiming to be in the `.user.js` at a line that is usually
+// somewhere in its metadata header. Chrome's own console gets this
+// right because devtools applies the entry's source map to the
+// display; this is us doing the same thing for our own view.
+type ResolvedRef =
+  // Use it as it stands: a frame from another file, or from a script
+  // with no `@require`s where nothing moved in the first place.
+  | { kind: 'asIs' }
+  // Rewritten to the original file and line. `stale` when the entry
+  // predates the body whose layout did the rewriting.
+  | { kind: 'mapped'; ref: StackRef; stale: boolean }
+  // Ours, but the generated line belongs to our wrap rather than to
+  // user code — the head, a `// @require` marker, a `;` ASI guard, the
+  // closing brace. There is no original line at all, so it must not
+  // stay clickable at the generated one: that number indexes the
+  // concatenated program, and following it would land the user on
+  // unrelated code (or past EOF, where the click does nothing at all).
+  | { kind: 'unmappable' };
+
+// Tooltip note for a ref mapped with a layout that isn't the one it
+// was recorded under. See `resolveLogRef`.
+const STALE_REF_NOTE =
+  'Recorded before the current version of this script — the file and line may not match.';
+
+function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
+  if (stackSegments.length === 0 || ref.url !== stackEntryUrl) return { kind: 'asIs' };
+  const mapped = remapStackRef(ref, stackEntryUrl, stackSegments);
+  if (!mapped) return { kind: 'unmappable' };
+  // The layout is recomputed from the CURRENT stored script, but the
+  // log outlives refreshes — nothing clears it but the user's Clear
+  // button. An entry recorded before this body loaded was generated
+  // against a different arrangement of requires, so today's segments
+  // may well name the wrong file and line for it.
+  //
+  // Mapped anyway, and still clickable. The alternative — leaving it
+  // at the generated coordinate — is not the honest option it looks
+  // like: that number indexes the concatenated program, so it is
+  // wrong too, just less legibly, and it points into the `.user.js` at
+  // an offset that includes every preceding `@require`. A best-effort
+  // file and line at least lands the user somewhere they can judge.
+  // The tooltip says the entry is older than the body it was mapped
+  // against, so a mismatch reads as expected rather than as a bug.
+  //
+  // The old layout cannot be recovered to do better: a refresh
+  // overwrites `bodyText` and every `requires[].source` in place, and
+  // a `LogEntry` stores no layout of its own.
+  //
+  // The staleness signal is not airtight either: an already-open tab
+  // still running the previous body can log an entry with a fresh
+  // timestamp, which reads as current. Documented in
+  // docs/script-log.md; closing it would need the wrapper to stamp
+  // reports with the loadedAt they ran under.
+  const loadedAt = currentScript?.loadedAt;
+  const stale = loadedAt !== undefined && timestamp < loadedAt;
+  return { kind: 'mapped', ref: mapped, stale };
+}
+
+// Paint a ref into `el` with the wire form kept as a tooltip whenever
+// decoding changed it — the viewer's standing rule is that the encoded
+// form is always one hover away (docs/names-and-paths.md). It earns its
+// keep here beyond consistency: devtools' Sources tree indexes the file
+// under the ENCODED folder name, so the tooltip is what a user needs to
+// find the same file there.
+function setRefText(el: HTMLElement, raw: string, url: string, stale = false): void {
+  const shown = displayRefText(raw, url);
+  el.textContent = shown;
+  const title = refTitle(raw, shown, stale);
+  if (title) el.title = title;
+}
+
+// A ref with no tab to link to. Stays a bare text node unless there is
+// a tooltip to carry, which needs an element.
+function refNode(raw: string, url: string, stale = false): Node {
+  const shown = displayRefText(raw, url);
+  const title = refTitle(raw, shown, stale);
+  if (!title) return document.createTextNode(shown);
+  const span = document.createElement('span');
+  span.textContent = shown;
+  span.title = title;
+  return span;
+}
+
+// What a ref's tooltip should say: the wire form when decoding changed
+// what is on screen, and the staleness caveat when the entry predates
+// the layout that mapped it. Empty when there is nothing to add.
+function refTitle(raw: string, shown: string, stale: boolean): string {
+  const parts: string[] = [];
+  if (shown !== raw) parts.push(raw);
+  if (stale) parts.push(STALE_REF_NOTE);
+  return parts.join('\n');
+}
+
 // Paint a log entry's message into a <td>. Each URL:line:col stack
-// ref whose URL matches a code tab's `sourceUrl` becomes a clickable
-// link that switches to that tab and jumps to line/col. Refs whose
-// URL doesn't match any tab render as plain text — they may point
-// at code outside this script (the page, another userscript, a
-// browser internal).
-function appendLogMessageContent(td: HTMLElement, message: string): void {
+// ref is first mapped back to the file it was written in
+// (`remapLogRef`); if the result matches a code tab's `sourceUrl` it
+// becomes a clickable link that switches to that tab and jumps to
+// line/col. Refs that don't match any tab render as plain text — they
+// may point at code outside this script (the page, another userscript,
+// a browser internal).
+//
+// A remapped ref is re-rendered with its new URL and line, so the text
+// the user reads names the real file. That is the whole point: the
+// generated line number is an artifact of our injection and means
+// nothing to someone reading their own script.
+function appendLogMessageContent(td: HTMLElement, message: string, timestamp: number): void {
   const runs = parseStackRefs(message);
   if (runs.length === 1 && runs[0].kind === 'text') {
     td.textContent = message;
@@ -1118,18 +1263,32 @@ function appendLogMessageContent(td: HTMLElement, message: string): void {
       td.appendChild(document.createTextNode(run.text));
       continue;
     }
-    const tabIndex = tabsView.findTabBySourceUrl(run.url);
+    // One `raw` and one `tabIndex` for every outcome, so that "every
+    // painted ref goes through the decode" is structural rather than a
+    // property of remembering to call it on each branch.
+    const resolved = resolveLogRef(run, timestamp);
+    const ref = resolved.kind === 'mapped' ? resolved.ref : run;
+    const raw = resolved.kind === 'mapped'
+      ? `${ref.url}:${ref.line}:${ref.col}`
+      : run.text;
+    // An unmappable ref keeps its text but must never become a link,
+    // even though its URL is this script's and so does match a tab —
+    // the generated line indexes the concatenated program.
+    const tabIndex = resolved.kind === 'unmappable'
+      ? -1
+      : tabsView.findTabBySourceUrl(ref.url);
+    const stale = resolved.kind === 'mapped' && resolved.stale;
     if (tabIndex < 0) {
-      td.appendChild(document.createTextNode(run.text));
+      td.appendChild(refNode(raw, ref.url, stale));
       continue;
     }
     const a = document.createElement('a');
     a.className = 'log-stack-link';
     a.href = '#';
-    a.textContent = run.text;
+    setRefText(a, raw, ref.url, stale);
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
-      tabsView.goToTabLine(tabIndex, run.line, run.col);
+      tabsView.goToTabLine(tabIndex, ref.line, ref.col);
     });
     td.appendChild(a);
   }

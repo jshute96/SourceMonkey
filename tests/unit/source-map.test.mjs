@@ -13,6 +13,8 @@ import {
   buildSourceMap,
   encodeVlq,
   inlineSourceMapComment,
+  lookupGeneratedLine,
+  remapStackRef,
 } from '../../dist/source-map.js';
 
 // ---------- encodeVlq ----------
@@ -162,7 +164,9 @@ test('inlineSourceMapComment: emits a decodable base64 data URI', () => {
 
 test('inlineSourceMapComment: survives source text above U+00FF', () => {
   // `btoa` alone throws on any code point past Latin-1, and userscripts
-  // are full of them — the script that prompted Mode A is half Chinese.
+  // are full of them — the script that prompted Mode A (the
+  // concatenated arrangement; see docs/injection-modes.md) is half
+  // Chinese.
   const map = buildSourceMap({
     file: 'gen.js',
     segments: [{ url: 'zh.js', content: '// 增强\nconst 名前 = "🎉";', generatedLine: 0, lineCount: 2 }],
@@ -180,4 +184,93 @@ test('inlineSourceMapComment: emits no newline of its own', () => {
   // would make the entry's line count disagree with `totalLines`.
   const map = buildSourceMap({ file: 'gen.js', segments: [], totalLines: 1 });
   assert.doesNotMatch(inlineSourceMapComment(map), /\n/);
+});
+
+// ---------- lookupGeneratedLine / remapStackRef ----------
+//
+// The reverse direction, used by the viewer's Log tab. Coordinates are
+// the trap here: segments are 0-based (wire format), stack refs are
+// 1-based (what a user reads), and an off-by-one shows up as a stack
+// frame pointing one line away from the code that threw.
+
+// Two requires ahead of the body, laid out the way composeSource emits
+// them: a `// @require` comment line, the source, then a `;` seam.
+// Generated line 0 is the wrap head.
+//
+//   0  <wrap head>
+//   1  // @require https://cdn/a.js
+//   2  a.js line 1
+//   3  a.js line 2
+//   4  ;
+//   5  // @require https://cdn/b.js
+//   6  b.js line 1
+//   7  ;
+//   8  main line 1
+//   9  main line 2
+const LAYOUT = [
+  { url: 'sm://a.js', content: 'a1\na2', generatedLine: 2, lineCount: 2 },
+  { url: 'sm://b.js', content: 'b1', generatedLine: 6, lineCount: 1 },
+  { url: 'sm://main.user.js', content: 'm1\nm2', generatedLine: 8, lineCount: 2 },
+];
+
+test('lookupGeneratedLine: maps each segment to its own 1-based lines', () => {
+  assert.deepEqual(lookupGeneratedLine(LAYOUT, 3), { url: 'sm://a.js', line: 1 });
+  assert.deepEqual(lookupGeneratedLine(LAYOUT, 4), { url: 'sm://a.js', line: 2 });
+  assert.deepEqual(lookupGeneratedLine(LAYOUT, 7), { url: 'sm://b.js', line: 1 });
+  assert.deepEqual(lookupGeneratedLine(LAYOUT, 9), { url: 'sm://main.user.js', line: 1 });
+  assert.deepEqual(lookupGeneratedLine(LAYOUT, 10), { url: 'sm://main.user.js', line: 2 });
+});
+
+test('lookupGeneratedLine: lines that belong to our wrap map to nothing', () => {
+  // Line 1 is the wrap head, 2 and 6 are `// @require` comments, 5 and
+  // 8 are `;` seams, 11 is past the end (the closing `});`). None of
+  // those are code the user wrote, so guessing at a neighboring line
+  // would put a stack frame on something unrelated.
+  for (const gen of [1, 2, 5, 6, 8, 11]) {
+    assert.equal(lookupGeneratedLine(LAYOUT, gen), null, `generated line ${gen}`);
+  }
+});
+
+test('lookupGeneratedLine: boundary between adjacent segments', () => {
+  // The half-open interval is what keeps a segment from claiming the
+  // line after its last: a.js covers 3–4, not 5.
+  assert.deepEqual(lookupGeneratedLine(LAYOUT, 4), { url: 'sm://a.js', line: 2 });
+  assert.equal(lookupGeneratedLine(LAYOUT, 5), null);
+});
+
+test('remapStackRef: rewrites a frame from the entry into the original file', () => {
+  const out = remapStackRef({ url: 'sm://entry.js', line: 3, col: 9 }, 'sm://entry.js', LAYOUT);
+  assert.deepEqual(out, { url: 'sm://a.js', line: 1, col: 9 });
+});
+
+test('remapStackRef: passes the column through untouched', () => {
+  // Composition moves whole lines only, never code within a line, so
+  // the generated column IS the original column. Anything else here
+  // would be a guess.
+  const out = remapStackRef({ url: 'sm://entry.js', line: 10, col: 137 }, 'sm://entry.js', LAYOUT);
+  assert.equal(out.col, 137);
+});
+
+test('remapStackRef: leaves frames from other files alone', () => {
+  // A frame in the page, another userscript, or our own __prelude.js.
+  assert.equal(
+    remapStackRef({ url: 'https://example.com/app.js', line: 3, col: 1 }, 'sm://entry.js', LAYOUT),
+    null,
+  );
+});
+
+test('remapStackRef: no segments means nothing moved', () => {
+  // A script with no @require is injected unshifted, so its line
+  // numbers are already original and remapping must be a no-op.
+  assert.equal(
+    remapStackRef({ url: 'sm://entry.js', line: 3, col: 1 }, 'sm://entry.js', []),
+    null,
+  );
+});
+
+test('remapStackRef: an unmapped generated line stays unmapped', () => {
+  assert.equal(
+    remapStackRef({ url: 'sm://entry.js', line: 5, col: 1 }, 'sm://entry.js', LAYOUT),
+    null,
+  );
 });

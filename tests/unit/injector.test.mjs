@@ -33,12 +33,18 @@ import {
   buildRegistrationSpec,
   buildSwapEvalBody,
   collectActiveSpecs,
-  composeRequiredBody,
   normalizeDeclaredRunAt,
   resolveWorld,
   wrapCombinedEntry,
   wrapPreludeEntry,
 } from '../../dist/injector.js';
+import {
+  USER_SOURCE_START_LINE,
+  composeRequiredBody,
+  composeSource,
+} from '../../dist/composed-source.js';
+import { remapStackRef } from '../../dist/source-map.js';
+import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 
 // ---------- normalizeDeclaredRunAt ----------
@@ -137,7 +143,8 @@ const req = (source, url = 'https://cdn/x.js') =>
 
 test('wrapCombinedEntry: no requires → head on line 1, body lines preserved, no map', () => {
   // The overwhelmingly common case must be byte-for-byte what it was
-  // before Mode A: nothing to concatenate means nothing to shift, so
+  // before Mode A (see docs/injection-modes.md for what the modes are):
+  // nothing to concatenate means nothing to shift, so
   // body line N stays at physical line N and no source map is paid for.
   const wrapped = wrapCombinedEntry({
     ...COMBINED_ARGS,
@@ -449,6 +456,14 @@ test('composeRequiredBody: separator prevents ASI hazards between segments', () 
   assert.match(out, /\(function\(\)\{return 1\}\)\(\)\n;/);
 });
 
+// 1-based physical line of the (unique) marker in `code`.
+function generatedLineOf(code, marker) {
+  const lines = code.split('\n');
+  const idx = lines.findIndex((l) => l.includes(marker));
+  assert.ok(idx >= 0, `marker ${marker} not found in generated code`);
+  return idx + 1;
+}
+
 // ---------- buildSwapEvalBody ----------
 
 test('buildSwapEvalBody: prepends GM bindings ahead of the composed body', async () => {
@@ -483,13 +498,52 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
       ref: 'x', size: 0, contentHash: '', loadedAt: 0,
     }],
   });
-  const body = await buildSwapEvalBody(script, '0.0.0');
+  const body = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
   // The swap eval is a single (0,eval) of this string, so evaluating
   // it in one scope is exactly what the prelude does.
   assert.equal(new Function(`${body}`)(), 'from-require:ok');
-  // And it carries no source map — the prelude only appends a
-  // sourceURL, so a swapped script reports concatenated line numbers.
-  assert.doesNotMatch(body, /sourceMappingURL/);
+  // It carries the same inline source map a fresh registration emits,
+  // so devtools splits a hot-swapped script back into its original
+  // files instead of showing concatenated line numbers.
+  assert.match(body, /sourceMappingURL=data:application\/json/);
+});
+
+test('buildSwapEvalBody: puts user code on the same generated line as the registered entry', async () => {
+  // The viewer's Log tab maps a stack line back to its original file
+  // without knowing whether the script was registered or hot-swapped,
+  // so the two paths must lay their lines out identically. There are
+  // TWO layouts to keep in step, and the no-require one is the trap:
+  // the registered path deliberately puts the body's first line on the
+  // SAME physical line as the wrap head (so generated line N ==
+  // original line N and no map is needed), and a swap body that adds a
+  // newline there shifts every logged stack line by one — invisibly,
+  // because a script with no requires has no segments to map by.
+  //
+  // Compare the real outputs rather than a hardcoded index: an
+  // assertion that doesn't call wrapCombinedEntry can't notice drift.
+  const cases = [
+    ['no requires, with GM bindings', makeScript({
+      header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_setValue' }] },
+      bodyText: 'FIRST_BODY_LINE;',
+    })],
+    ['no requires, no bindings', { ...makeScript({ bodyText: 'FIRST_BODY_LINE;' }), header: null }],
+    ['with requires', makeScript({
+      bodyText: 'FIRST_BODY_LINE;',
+      requires: [{
+        url: 'https://cdn/x.js', source: 'R1;\nR2;',
+        ref: 'x', size: 0, contentHash: '', loadedAt: 0,
+      }],
+    })],
+  ];
+  for (const [label, script] of cases) {
+    const spec = await buildRegistrationSpec(script, '0.0.0', 'a.user.js');
+    const swap = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
+    assert.equal(
+      generatedLineOf(swap, 'FIRST_BODY_LINE;'),
+      generatedLineOf(spec.js[2].code, 'FIRST_BODY_LINE;'),
+      `${label}: swap and registered disagree on where user code lands`,
+    );
+  }
 });
 
 test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async () => {
@@ -510,7 +564,9 @@ test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async 
 test('buildSwapEvalBody: passes through plain body when no header (defensive)', async () => {
   // Headerless scripts aren't a production case (validateHeader
   // rejects them), but the helper should still return something
-  // eval-able rather than throwing.
+  // eval-able rather than throwing. No preamble and no requires means
+  // the body passes through untouched — same shape the registered
+  // path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const body = await buildSwapEvalBody(script, '0.0.0');
   assert.equal(body, 'console.log("hi");');
@@ -1331,4 +1387,100 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
   delete source.enabled;
   const specs = await collectActiveSpecs([script], new Map([['source-1', source]]));
   assert.equal(specs.length, 1);
+});
+
+// ---------- Generated-line round-trip ----------
+//
+// The viewer's Log tab does NOT read a persisted map. It recomputes
+// the segment list from the stored script (src/composed-source.ts) and
+// applies it to the line numbers in `err.stack`. That only works while
+// the recomputed layout matches the code we actually registered, and
+// nothing else in the suite would notice if the two drifted — the map
+// tests check the map against the segments, and the wrap tests check
+// the text, but no test checks the segments against the text.
+//
+// These do. They locate a marker's REAL physical line in the generated
+// code, then assert the mapping sends that line back to the file and
+// line the marker was written on.
+
+function markerScript() {
+  return makeScript({
+    // Two requires with different line counts, so an off-by-one in
+    // either the seam handling or the start line shows up as a wrong
+    // FILE, not just a wrong line.
+    bodyText: 'BODY_MARKER;',
+    requires: [
+      {
+        url: 'https://cdn/a.js',
+        source: 'A_FIRST;\nA_MARKER;\nA_LAST;',
+        ref: 'a', size: 0, contentHash: '', loadedAt: 0,
+      },
+      {
+        url: 'https://cdn/b.js',
+        source: 'B_MARKER;',
+        ref: 'b', size: 0, contentHash: '', loadedAt: 0,
+      },
+    ],
+  });
+}
+
+// What the viewer computes, from the stored script alone.
+function viewerSegments(script, label) {
+  return composeSource(script, {
+    requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(label, r.url)),
+    mainUrl: buildSourceUrl(label),
+    startLine: USER_SOURCE_START_LINE,
+  }).segments;
+}
+
+function assertRoundTrip(code, script, label) {
+  const entryUrl = buildSourceUrl(label);
+  const segments = viewerSegments(script, label);
+  const expected = [
+    ['A_FIRST;', buildRequireSourceUrl(label, 'https://cdn/a.js'), 1],
+    ['A_MARKER;', buildRequireSourceUrl(label, 'https://cdn/a.js'), 2],
+    ['A_LAST;', buildRequireSourceUrl(label, 'https://cdn/a.js'), 3],
+    ['B_MARKER;', buildRequireSourceUrl(label, 'https://cdn/b.js'), 1],
+    // The body's marker is its only line, but the stored body carries
+    // the metadata header ahead of it, so its original line is not 1.
+    ['BODY_MARKER;', entryUrl, null],
+  ];
+  for (const [marker, url, origLine] of expected) {
+    const gen = generatedLineOf(code, marker);
+    const got = remapStackRef({ url: entryUrl, line: gen, col: 7 }, entryUrl, segments);
+    assert.ok(got, `generated line ${gen} (${marker}) did not map`);
+    assert.equal(got.url, url, `${marker} mapped to the wrong file`);
+    assert.equal(got.col, 7, `${marker} lost its column`);
+    if (origLine !== null) assert.equal(got.line, origLine, `${marker} mapped to the wrong line`);
+  }
+}
+
+test('registered entry: generated lines map back to the file that owns them', async () => {
+  const script = markerScript();
+  const label = 'a.user.js';
+  const spec = await buildRegistrationSpec(script, '0.0.0', label);
+  // js[] is [config, prelude, combined, seal] — see assembleEntries.
+  assertRoundTrip(spec.js[2].code, script, label);
+});
+
+test('swap-eval body: generated lines map back the same way', async () => {
+  // The whole reason buildSwapEvalBody keeps its preamble on line 0:
+  // the viewer applies ONE layout and can't tell which path ran.
+  const script = markerScript();
+  const label = 'a.user.js';
+  assertRoundTrip(await buildSwapEvalBody(script, '0.0.0', label), script, label);
+});
+
+test('registered entry: the body marker maps to its real line in the stored file', async () => {
+  // Pinned separately from assertRoundTrip because it's the case a
+  // reader is most likely to doubt: the mapped line must be the line
+  // in the file the user edits, header included.
+  const script = markerScript();
+  const label = 'a.user.js';
+  const spec = await buildRegistrationSpec(script, '0.0.0', label);
+  const entryUrl = buildSourceUrl(label);
+  const gen = generatedLineOf(spec.js[2].code, 'BODY_MARKER;');
+  const got = remapStackRef({ url: entryUrl, line: gen, col: 1 }, entryUrl, viewerSegments(script, label));
+  const storedBody = composeRequiredBody({ ...script, requires: [] });
+  assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
 });

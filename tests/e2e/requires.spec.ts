@@ -245,7 +245,8 @@ test.describe('@require', () => {
   test('a minified @require exposing one top-level class reaches the main body', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The script that prompted Mode A: PRO-2684/GM_config is minified,
+    // The script that prompted Mode A (the concatenated arrangement;
+    // see docs/injection-modes.md): PRO-2684/GM_config is minified,
     // ships no `/* exported */` directive, puts its whole program on
     // one physical line, and names its class `GM_config` — every one
     // of which defeated some part of the name bridge. Nothing here is

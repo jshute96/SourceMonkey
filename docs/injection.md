@@ -503,7 +503,12 @@ receives `{action}` and branches:
 - `run-new` — calls indirect `eval` with the SW-supplied body
   string plus `//# sourceURL=`. Sends `sm:swapped` and records the
   new `loadedAt` so subsequent async errors attribute to the new
-  body. **Caveat:** the swap eval runs at the prelude's function
+  body. The body `buildSwapEvalBody` hands over is laid out exactly
+  like a registered entry, and carries the same inline source map, so
+  devtools and the viewer's Log tab report original coordinates for a
+  hot-swapped script too. That parity is load-bearing and easy to
+  break — see `src/composed-source.ts`, which describes both layouts.
+  **Caveat:** the swap eval runs at the prelude's function
   scope, not inside the main-body wrap function's closure, so the
   GM_* bindings spliced into the wrap function are NOT visible to
   the swap-evaluated body. A storage-granting script that takes
