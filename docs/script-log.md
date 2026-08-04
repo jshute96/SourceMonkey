@@ -222,6 +222,19 @@ Plumbing notes specific to logging:
 - Routes the click to the tab that owns the mapped URL — which is how
   a stack ref reaches a `@require` tab at all.
 
+### Refs are decoded for display
+
+- `script-source-url.ts` percent-encodes the log label into
+  `//# sourceURL=`, so a second `foo.user.js` reaches the log as
+  `foo%232`. That encoding is required — a bare `#` starts a fragment,
+  and a space or paren ends the run `parseStackRefs` matches.
+- The Log tab decodes it at paint time, matching the display-decodes /
+  functional-stays-encoded rule the rest of the viewer follows. Tab
+  lookup and the click target still use the raw URL.
+- **Only `sourcemonkey://` refs decode.** An `http(s)` or `file` ref
+  names a real file, and a `%2F` inside one is a literal slash in a
+  segment — decoding would silently rename what it points at.
+
 ### Why recompute rather than persist
 
 - The inputs (require sources, body text, log label) are already on

@@ -227,6 +227,52 @@ test.describe('log stack mapping', () => {
     await page.close();
   });
 
+  test('an encoded log-ID suffix is shown decoded', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // What a SECOND `main.user.js` really produces. The log label
+    // `main.user.js#2` cannot go into `//# sourceURL=` as written — a
+    // bare `#` starts a fragment, splitting the path — so the emitted
+    // URL, and therefore every frame V8 stamps with it, carries `%232`.
+    // Correct on the wire, unreadable in the log.
+    const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
+    const encoded = 'sourcemonkey://SourceMonkey/main%232/main.user.js';
+    await sm.appendScriptLog(scriptId, {
+      level: 'error',
+      source: 'wrapper',
+      message: `Error: encoded-label\n    at f (${encoded}:3:1)`,
+    });
+
+    const page = await openLogTab(extensionContext, extensionId, scriptId);
+    const row = page.locator('#log-pane td.log-msg', { hasText: 'encoded-label' });
+    await expect(row).toContainText('sourcemonkey://SourceMonkey/main#2/main.user.js:3:1');
+    await expect(row).not.toContainText('%232');
+
+    await page.close();
+  });
+
+  test('a percent escape in a real URL is left encoded', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // Only our own scheme decodes. An `http(s)` ref names a file the
+    // user may want to compare against a `@require` line or paste into
+    // the address bar, and `%2F` there is a literal slash in a segment
+    // — decoding it would silently rename the file it points at.
+    const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
+    const real = 'https://cdn.example.com/a%2Fb/lib%20one.js';
+    await sm.appendScriptLog(scriptId, {
+      level: 'error',
+      source: 'wrapper',
+      message: `Error: real-url\n    at f (${real}:7:2)`,
+    });
+
+    const page = await openLogTab(extensionContext, extensionId, scriptId);
+    const row = page.locator('#log-pane td.log-msg', { hasText: 'real-url' });
+    await expect(row).toContainText(`${real}:7:2`);
+
+    await page.close();
+  });
+
   test('a script with no @require is left alone', async ({
     extensionContext, extensionId, fixtureServer, sm,
   }) => {

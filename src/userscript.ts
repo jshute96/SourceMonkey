@@ -1184,6 +1184,23 @@ function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
   return mapped ? { kind: 'mapped', ref: mapped } : { kind: 'unmappable' };
 }
 
+// Text to paint for a stack ref, as opposed to the URL we match tabs
+// against. `script-source-url.ts` percent-encodes the script's log
+// label on its way into `//# sourceURL=` — a bare `#` would start a
+// fragment and a space or paren would end the run `parseStackRefs`
+// matches — so a second `foo.user.js` arrives as `foo%232`. That is
+// the right wire form and the wrong thing to read, so decode it here,
+// the same display-decodes / functional-stays-encoded split the rest
+// of the viewer follows.
+//
+// Only our own scheme is decoded. An `http(s)` or `file` ref is a real
+// URL the user may want to compare against a `@require` line or the
+// address bar, and a legitimately-escaped `%2F` inside one decodes
+// into a path that names a different file.
+function displayRefText(text: string, url: string): string {
+  return url.startsWith('sourcemonkey://') ? decodeForDisplay(text) : text;
+}
+
 // Paint a log entry's message into a <td>. Each URL:line:col stack
 // ref is first mapped back to the file it was written in
 // (`remapLogRef`); if the result matches a code tab's `sourceUrl` it
@@ -1210,13 +1227,14 @@ function appendLogMessageContent(td: HTMLElement, message: string, timestamp: nu
     }
     const resolved = resolveLogRef(run, timestamp);
     if (resolved.kind === 'unmappable') {
-      td.appendChild(document.createTextNode(run.text));
+      td.appendChild(document.createTextNode(displayRefText(run.text, run.url)));
       continue;
     }
     const ref = resolved.kind === 'mapped' ? resolved.ref : run;
-    const text = resolved.kind === 'mapped'
-      ? `${ref.url}:${ref.line}:${ref.col}`
-      : run.text;
+    const text = displayRefText(
+      resolved.kind === 'mapped' ? `${ref.url}:${ref.line}:${ref.col}` : run.text,
+      ref.url,
+    );
     const tabIndex = tabsView.findTabBySourceUrl(ref.url);
     if (tabIndex < 0) {
       td.appendChild(document.createTextNode(text));
