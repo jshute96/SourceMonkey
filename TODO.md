@@ -378,10 +378,21 @@ during cumulative review of the GM_* phases:
 
 The shipped design and its known gaps live in
 [docs/install-capture.md](docs/install-capture.md) (see its
-**Limitations / future work** section — `file://` capture,
-`Content-Disposition` downloads, `@version` awareness). Only the items
+**Limitations / future work** section — `Content-Disposition`
+downloads, mixed-case suffixes, `@version` awareness). Only the items
 that need doing *here* rather than describing there:
 
+- **Say when `file://` capture is unavailable.** The capture covers
+  local `.user.js` files, but only when the user has granted "Allow
+  access to file URLs". With the grant missing nothing fires and
+  nothing explains why. The options page should read
+  `chrome.extension.isAllowedFileSchemeAccess()` and say so next to
+  the capture toggle. The sources page already has a file-access
+  banner slot to model it on.
+- **Manual check: capture with file access OFF.** Chrome grants file
+  access unconditionally to `--load-extension` builds (writing
+  `allow_file_access: false` into Preferences does not override it),
+  so the e2e suite can only ever exercise the ON case.
 - **Drop the Chrome < 152 download workaround** once 152 is the
   supported floor. The DNR session rule, `needsDownloadWorkaround`,
   `parseChromeMajor`, and their tests go together, and the

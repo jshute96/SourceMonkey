@@ -131,6 +131,36 @@ export function sourceFsPath(source: string): string {
   }
 }
 
+// Windows drive-letter (`file:///C:/…`) and UNC (`file://server/…`)
+// URLs. `sourceFsPath` mangles both — it strips only the leading POSIX
+// slash and discards `host` — so the canonicalizer below leaves them
+// as URLs rather than producing a path that points somewhere else.
+// The rest of the module is POSIX-only by design (see `pathToFileUrl`,
+// `parentDir`), so this is containment, not Windows support.
+function isNonPosixFileUrl(source: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(source);
+  } catch {
+    return false;
+  }
+  return u.host !== '' || /^\/[A-Za-z]:/.test(u.pathname);
+}
+
+// One canonical spelling for a source input, so every entry point
+// agrees on what a given file is called: the sources page's path
+// field, an `addSource` call, and a captured `file://` navigation all
+// have to produce the same `relativePath`, or one file on disk ends up
+// with two installed rows.
+//
+// The bare filesystem path is the winner because it is what the path
+// field (the oldest and most common route) has always stored. http(s)
+// inputs pass through untouched — there is only one spelling of those.
+export function canonicalSourceInput(source: string): string {
+  if (!isFileUrl(source) || isNonPosixFileUrl(source)) return source;
+  return sourceFsPath(source);
+}
+
 // True for any input pointing at an individual `.user.js` script —
 // http(s):// URL, file:// URL, or absolute local path — based on the
 // pathname suffix. Single-script inputs no longer get their own source

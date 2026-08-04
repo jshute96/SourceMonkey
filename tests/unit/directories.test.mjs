@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  canonicalSourceInput,
   fetchHttpText,
   parseListing,
   parseManifest,
@@ -169,6 +170,45 @@ test('sourceFsPath strips file:// and percent-decodes the path', () => {
   // that mistakenly hand one in get a non-fatal but obviously-wrong
   // value (the URL string) rather than a silent decode.
   assert.equal(sourceFsPath('https://x/foo.user.js'), 'https://x/foo.user.js');
+});
+
+test('canonicalSourceInput gives one spelling per local file', () => {
+  // The whole point: a captured `file://` navigation and a path typed
+  // into the sources page have to produce the same stored value, or
+  // one file on disk gets two installed rows.
+  assert.equal(canonicalSourceInput('file:///home/me/foo.user.js'), '/home/me/foo.user.js');
+  assert.equal(canonicalSourceInput('/home/me/foo.user.js'), '/home/me/foo.user.js');
+  assert.equal(
+    canonicalSourceInput('file:///home/me/my%20scripts/foo.user.js'),
+    '/home/me/my scripts/foo.user.js',
+  );
+  // Idempotent — `addSource` canonicalizes on write and readers
+  // canonicalize stored values again on compare.
+  assert.equal(
+    canonicalSourceInput(canonicalSourceInput('file:///home/me/foo.user.js')),
+    '/home/me/foo.user.js',
+  );
+  // Round-trips back to the same URL, so the fetch still hits the file
+  // the user pointed at.
+  assert.equal(
+    pathToFileUrl(canonicalSourceInput('file:///home/me/a%23b.user.js')),
+    'file:///home/me/a%23b.user.js',
+  );
+  // http(s) has only one spelling; nothing to collapse.
+  assert.equal(
+    canonicalSourceInput('https://example.com/foo.user.js'),
+    'https://example.com/foo.user.js',
+  );
+});
+
+test('canonicalSourceInput leaves non-POSIX file URLs alone', () => {
+  // Collapsing these would corrupt them: the drive letter becomes a
+  // path segment (and gets its colon percent-encoded on the way back),
+  // and a UNC host is dropped entirely — pointing at a different file.
+  // Keeping the URL form means they behave exactly as they did before
+  // canonicalization existed.
+  assert.equal(canonicalSourceInput('file:///C:/Users/me/foo.user.js'), 'file:///C:/Users/me/foo.user.js');
+  assert.equal(canonicalSourceInput('file://server/share/foo.user.js'), 'file://server/share/foo.user.js');
 });
 
 test('scriptFileUrl resolves container scripts to their URL/path form', () => {

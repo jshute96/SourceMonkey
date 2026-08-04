@@ -44,9 +44,10 @@ details live in the topic-specific docs linked below.
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
   and GitHub auth token entry. Reached via the Options link at the top
   of the sources page.
-- **Install capture** (`src/install-capture.ts`) — turns a web
-  navigation to a `.user.js` URL into the userscript viewer's preview
-  mode (`userscript.html?preview=<url>`), which fetches, describes,
+- **Install capture** (`src/install-capture.ts`) — turns a navigation
+  to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
+  viewer's preview mode
+  (`userscript.html?preview=<url>`), which fetches, describes,
   and — on confirmation — `addSource`s the script. Its "View raw
   source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
   through `src/raw-view.ts`. See
@@ -71,6 +72,10 @@ details live in the topic-specific docs linked below.
   lives in its own module and is dispatched to from `directories.ts`.
   See [file-access.md](file-access.md) and
   [http-sources.md](http-sources.md).
+- **File-access permission UI** (`src/file-access.ts`) — the
+  "Allow access to file URLs" probe plus the shared banner every page
+  raises when the toggle is what blocked a local read. See
+  [file-access.md](file-access.md).
 - **GitHub auth** (`src/github-auth.ts`) — persisted PAT cache +
   `githubAuthHeaders(url)` host-gated helper. Spread into every
   fetch site that talks to `api.github.com` or
@@ -219,9 +224,9 @@ details live in the topic-specific docs linked below.
   GitHub-hosted markdown URL to the matching `chrome-extension://...`
   page, so web pages can link into the extension without knowing its
   ID.
-- [install-capture.md](install-capture.md) — capturing `.user.js` link
-  clicks into the viewer's preview mode, and the Chrome-version quirks
-  that make it necessary.
+- [install-capture.md](install-capture.md) — capturing `.user.js`
+  navigations (web links and local files) into the viewer's preview
+  mode, and the Chrome-version quirks that make it necessary.
 
 ## Build pipeline
 

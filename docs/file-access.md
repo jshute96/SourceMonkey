@@ -31,9 +31,29 @@ For any reading to work the user must:
 - (Already handled in the manifest) `"file:///*"` is in
   `host_permissions`.
 
-When the toggle is off, `chrome.extension.isAllowedFileSchemeAccess()`
-returns false and the sources page renders a banner with the
-extension's settings URL and instructions.
+## Telling the user the toggle is off
+
+[`src/file-access.ts`](../src/file-access.ts) owns both halves: the
+`chrome.extension.isAllowedFileSchemeAccess()` probe, and the
+**"File access is disabled."** banner every page renders from it.
+
+- **Sources page** — up front, on every load. Without the toggle,
+  every fetch the page could make will fail.
+- **Script viewer / install preview** — only after a `file://` read
+  actually failed, since an unrelated page has no reason to nag. Covers
+  the preview fetch, a load error, and a failed **Refresh**, but not a
+  parse verdict on a file we read successfully. See
+  [script-viewer.md](script-viewer.md#when-a-local-file-wont-read).
+
+Why it takes a probe rather than error text: a blocked read and a
+missing file both surface as the XHR `onerror` below, with no status
+or message to tell them apart.
+
+The toggle also gates the `file://` half of the `.user.js` install
+capture — see
+[install-capture.md → Local files](install-capture.md#local-files).
+Nothing surfaces a banner there: with the toggle off the navigation
+event never fires, so there's no moment to hang one on.
 
 ## Reading a file
 

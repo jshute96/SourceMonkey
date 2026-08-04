@@ -75,6 +75,7 @@ import {
   type ParsedHeader,
 } from './userscript-header.js';
 import {
+  canonicalSourceInput,
   fetchFileUrlText,
   fetchHttpText,
   isFileUrl,
@@ -91,6 +92,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
+import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { dropRawView, putRawView } from './raw-view.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
@@ -171,9 +173,25 @@ const filenameCopyBtn = (() => {
   return btn;
 })();
 
+// Whether the per-extension "Allow access to file URLs" toggle is on.
+// Probed once per page rather than per failure: the toggle lives on
+// chrome://extensions and flipping it doesn't reach an already-open
+// page, so the answer can't change under us. Caching it also keeps the
+// "was it the toggle?" question answerable from the synchronous render
+// path.
+//
+// Fired at module scope rather than inside `load()` so it runs
+// alongside the rest of module init and is normally already settled by
+// the time anything awaits it. This is on every viewer open, including
+// the http scripts that can never need the answer, so it should not be
+// the thing first paint waits on.
+const fileAccessProbe = isFileSchemeAccessAllowed();
+let fileAccessAllowed = true;
+
 void load();
 
 async function load(): Promise<void> {
+  fileAccessAllowed = await fileAccessProbe;
   if (scriptId) {
     await loadStored();
     return;
@@ -419,6 +437,20 @@ function render(script: StoredScript): void {
     setMessage('');
   }
 
+  // Same question the preview asks after a failed fetch, for the same
+  // reason: a local script we couldn't read has most likely hit the
+  // file-access toggle. Cleared first because `render` re-runs on every
+  // storage change — the banner must not outlive the error that raised
+  // it (a Refresh that succeeds clears `refreshError`).
+  //
+  // Reload is the wrong advice here: this row is already in storage, so
+  // re-opening the page re-renders the same cached copy and the same
+  // error. Refresh is what re-reads.
+  bannerSlotEl.replaceChildren();
+  if (readFailed(script)) {
+    showFileAccessBannerIfBlocked(script.fileUrl, 'then click Refresh');
+  }
+
   // Resolved location for the script: an absolute filesystem path for
   // file:// sources, the github page URL for github sources, or the
   // resolved URL for non-github HTTP sources. Skip the row entirely if
@@ -428,6 +460,11 @@ function render(script: StoredScript): void {
     ? scriptAbsolutePath(sourcePath, script.relativePath)
     : '';
 
+  // Anchor href: for file:// sources we use the file:// URL (the
+  // display string is the bare fs path, not navigable). For everything
+  // else display = href, so the user clicks the same URL they'd copy
+  // from the row.
+  const locationHref = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
   renderDetails(summaryEl, {
     header: script.header,
     logId: currentLogId,
@@ -435,12 +472,16 @@ function render(script: StoredScript): void {
     location: currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
-          // Anchor href: for file:// sources we use the file:// URL (the
-          // display string is the bare fs path, not navigable). For
-          // everything else display = href, so the user clicks the same
-          // URL they'd copy from the row.
-          href: isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath,
+          href: locationHref,
           trailing: filenameCopyBtn,
+          // This href is a `.user.js` URL for nearly every installed
+          // script, so a plain navigation would be captured and land
+          // the user in a preview of the script they are already
+          // looking at. Open it the same way the preview does: bypass
+          // first, then a new tab. (A github source's blob URL ends in
+          // `.user.js` too, and is an HTML page, so it would land on
+          // the "not an installable userscript" banner.)
+          onActivate: () => navigateRaw(locationHref),
         }
       : undefined,
     size: formatScriptSize(script),
@@ -577,13 +618,15 @@ function buildStatusCell(script: StoredScript): Node {
 
 // Three spellings of one location, all needed:
 //
-//   previewInput     — verbatim from the query string. What `addSource`
-//                      is handed, and what a capture bypass is keyed on
-//                      (it's the URL the browser would navigate to).
-//   previewLocation  — `normalizeSourceInput(previewInput)`: a
-//                      github.com blob URL rewritten to its raw form, a
-//                      local path left alone. Exactly what `addSource`
-//                      would store as `relativePath`, so it's what the
+//   previewInput     — verbatim from the query string. For an http(s)
+//                      capture this is the URL the browser was about to
+//                      navigate to, so it's what a bypass is keyed on.
+//   previewLocation  — `normalizeSourceInput` then
+//                      `canonicalSourceInput`: a github.com blob URL
+//                      rewritten to its raw form, a `file://` URL
+//                      collapsed to its bare path, a local path left
+//                      alone. Exactly what `addSource` would store as
+//                      `relativePath`, so it's what the
 //                      already-installed check compares, and what the
 //                      Location row displays.
 //   previewFileUrl   — the fetchable form of the above: a bare local
@@ -625,7 +668,11 @@ async function loadPreview(): Promise<void> {
     if (!isPreviewableInput(input)) {
       throw new Error('not an http(s):// or file:// URL, or an absolute path');
     }
-    previewLocation = await normalizeSourceInput(input);
+    // Same canonicalization `addSource` runs, so what the
+    // already-installed check compares is exactly what installing
+    // would store. A no-op for http(s); a plain POSIX `file://` URL
+    // collapses to its bare path.
+    previewLocation = canonicalSourceInput(await normalizeSourceInput(input));
     previewFileUrl = sourceCanonicalUrl(previewLocation);
     text = await fetchPreviewText(previewFileUrl);
   } catch (err) {
@@ -639,6 +686,10 @@ async function loadPreview(): Promise<void> {
     });
     document.title = `${displayLocation(previewLocation || input)} — SourceMonkey`;
     setMessage(`Could not fetch this script: ${describeError(err)}`, 'error');
+    // The likeliest reason a local file wouldn't read. `previewFileUrl`
+    // is still '' if normalizeSourceInput is what threw, which is
+    // correctly not a file:// URL — we never got as far as a read.
+    showFileAccessBannerIfBlocked(previewFileUrl);
     summaryEl.replaceChildren();
     tabsView.clear();
     installBtn.hidden = true;
@@ -748,20 +799,28 @@ function renderInvalidPreview(error: string): void {
     // Only costs the user the Open button; the banner already says
     // what's wrong with the file.
   });
-  // Most likely this URL is a web page that merely ends in `.user.js` —
-  // a forge's blob view, say. The capture can't tell (it runs before
-  // any response headers exist), so give the user the way through that
-  // landing on nothing else offers: go to the page. Only meaningful for
-  // http(s); a local file has nothing to navigate to.
-  if (isHttpUrl(previewInput ?? '')) {
+  // Most likely this location is not a script at all: a web page whose
+  // path merely ends in `.user.js` (a forge's blob view, say), or a
+  // local `.user.js` the user opened to read. The capture can't tell —
+  // it runs before any response exists — so give the user the way
+  // through that landing on nothing else offers: go to the location
+  // itself, in this tab, with the capture stood down.
+  //
+  // The target is the navigable spelling: the verbatim input for
+  // http(s), the `file://` form for a local file (a bare `/path` would
+  // resolve against the extension's own origin).
+  const continueTarget = isHttpUrl(previewInput ?? '')
+    ? previewInput ?? ''
+    : isFileUrl(previewFileUrl) ? previewFileUrl : '';
+  if (continueTarget) {
+    // "page" is wrong for a local file, and this button's whole job is
+    // to tell the user where they'll end up.
+    if (isFileUrl(continueTarget)) continueBtn.textContent = 'Continue to file';
     continueBtn.hidden = false;
+    // Same bypass-then-go as the raw view, but in THIS tab: the user
+    // asked to leave the preview, not to open a second tab.
     continueBtn.addEventListener('click', () => {
-      const url = previewInput ?? '';
-      markInstallBypass(url)
-        .then(() => { location.href = url; })
-        // storage.session is quota-limited, so this can genuinely
-        // fail. Say so rather than leaving the button inert.
-        .catch((err) => setMessage(`Could not open the page: ${describeError(err)}`, 'error'));
+      withBypass(continueTarget, (url) => { location.href = url; });
     });
   }
 }
@@ -807,13 +866,12 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
   return entry.source;
 }
 
-// Look for an existing row for this URL and pick the button set. A
-// container script's `relativePath` holds the full URL the user added
-// (post-normalization), which is exactly what `addSource` would store
-// for this install — so it's the field to match on.
+// Look for an existing row for this location and pick the button set.
+// A container script's `relativePath` holds the full URL/path the user
+// added, canonicalized — which is exactly what `addSource` would store
+// for this install, so it's the field to match on.
 async function wireInstallButtons(): Promise<void> {
-  const scripts = await getAllScripts();
-  const existing = scripts.find((s) => s.relativePath === previewLocation);
+  const existing = await findInstalled();
 
   if (!existing) {
     renderBanner('This script is not installed yet.', 'preview');
@@ -831,9 +889,18 @@ async function wireInstallButtons(): Promise<void> {
 }
 
 async function offerOpenExisting(): Promise<void> {
-  const scripts = await getAllScripts();
-  const existing = scripts.find((s) => s.relativePath === previewLocation);
+  const existing = await findInstalled();
   if (existing) showOpenButton(existing.id);
+}
+
+// The stored row for the location being previewed, if we have one.
+// Both sides go through `canonicalSourceInput`: `previewLocation` is
+// already canonical, but a row written before `addSource` started
+// collapsing `file://` inputs still carries the URL spelling, and a
+// miss here is a duplicate install.
+async function findInstalled(): Promise<StoredScript | undefined> {
+  const scripts = await getAllScripts();
+  return scripts.find((s) => canonicalSourceInput(s.relativePath) === previewLocation);
 }
 
 function showOpenButton(id: string): void {
@@ -891,29 +958,36 @@ async function doUpdate(id: string): Promise<void> {
 // Show the unprocessed file in a new tab, leaving the preview open
 // behind it.
 //
-// A local file has none of the complications below: nothing captures
-// `file://` navigations and no response header gets rewritten, so it
-// opens the fetched copy on `raw.html` (titled with the filename) or,
-// with no copy in hand, the file:// URL itself.
+// This is also the escape hatch for a `.user.js` the user opened to
+// *read* rather than install — the cost of capturing `file://` — so it
+// has to work whether or not the fetch succeeded.
 //
-// For http(s) it depends on what the browser does with a `.user.js`
-// response (see install-capture.ts):
+// Every real navigation from here sets a one-shot capture bypass,
+// including `file://`: since the capture now covers local files, an
+// unbypassed navigation would be pulled straight back into this same
+// preview.
 //
-//   - Chrome ≥ 152 renders it as source text on its own, so navigate
-//     for real — the address bar keeps the true URL. Capture is stood
-//     down for that one navigation.
-//   - Chrome ≤ 151 renders it only if the download workaround has
-//     rewritten the response to `text/html`, which HTML-parses the
-//     script into one unreadable run-on line. Show the copy we already
-//     fetched on `raw.html` instead — a real page, so the tab gets a
-//     title naming the file.
+// Whether to navigate at all depends on what the browser does with a
+// `.user.js` response (see install-capture.ts):
+//
+//   - http(s) on Chrome ≥ 152 — the browser renders it as source text
+//     on its own, so navigate for real and the address bar keeps the
+//     true URL.
+//   - Everything else — show the copy we already fetched on
+//     `raw.html`, a real page, so the tab gets a title naming the
+//     file. On Chrome ≤ 151 a real navigation would land on a response
+//     the download workaround rewrote to `text/html` (which HTML-parses
+//     the script into one run-on line) or, for `file://`, on the legacy
+//     download path. `file://` takes this branch on EVERY version:
+//     `raw.html` is already the better answer (titled tab, guaranteed
+//     readable) and it costs no navigation to get wrong.
 //
 // With no fetched copy to hand over — the fetch failed, or hasn't
 // landed yet — there is nothing to render locally, so it navigates on
-// any version. That doubles as the retry for a URL our fetch couldn't
-// read: the tab carries cookies the extension's fetch doesn't. On
-// Chrome ≤ 151 the result is whatever the browser makes of it (the
-// run-on-line render, or a download).
+// any version. For http that doubles as the retry for a URL our fetch
+// couldn't read: the tab carries cookies the extension's fetch
+// doesn't. On Chrome ≤ 151 the result is whatever the browser makes of
+// it (the run-on-line render, or a download).
 function openRawSource(): void {
   const target = previewInput ?? '';
   const isHttp = isHttpUrl(target);
@@ -924,22 +998,12 @@ function openRawSource(): void {
     return;
   }
   if (!previewText) {
-    // Nothing fetched to render locally, so navigate. For http that
-    // doubles as the retry for an auth-gated URL — the tab carries
-    // cookies the extension's fetch doesn't — and needs the capture
-    // stood down for one navigation.
-    const nav = isHttp ? target : previewFileUrl;
-    (isHttp ? markInstallBypass(target) : Promise.resolve())
-      .then(() => openTab(nav))
-      .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+    // Nothing fetched to render locally, so navigate.
+    navigateRaw(isHttp ? target : previewFileUrl);
     return;
   }
   if (isHttp && !needsDownloadWorkaround(navigator.userAgent)) {
-    // Mark the bypass before opening so the capture listener can't see
-    // the navigation first.
-    markInstallBypass(target)
-      .then(() => openTab(target))
-      .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+    navigateRaw(target);
     return;
   }
   putRawView({ title: scriptBasename(previewLocation), text: previewText })
@@ -952,6 +1016,30 @@ function openRawSource(): void {
     // per-script logs, so a big script can genuinely fail here. Say so
     // rather than having the button do nothing.
     .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+}
+
+// Every navigation the preview initiates goes through here: stand the
+// capture down for that one URL, then go.
+//
+// The bypass is keyed on the URL the browser will actually request,
+// not on `previewInput` — for a local file opened by path the two
+// differ (a bare path isn't navigable, only its `file://` form is).
+// The `go` step runs only after the bypass row lands: the capture
+// listener reads it from the service worker, and an unmarked
+// navigation would be pulled straight back into this preview.
+//
+// `chrome.storage.session` is quota-limited and shared with the
+// per-script logs, so the write can genuinely fail; say so rather than
+// leaving the button inert.
+function withBypass(url: string, go: (url: string) => void): void {
+  markInstallBypass(url)
+    .then(() => go(url))
+    .catch((err) => setMessage(`Could not open ${url}: ${describeError(err)}`, 'error'));
+}
+
+// Open the real URL in a new tab, leaving this preview in place.
+function navigateRaw(url: string): void {
+  withBypass(url, openTab);
 }
 
 // Open a new tab beside this one. `chrome.tabs.create`, not
@@ -984,6 +1072,38 @@ function leavePage(): void {
   void chrome.tabs.getCurrent().then((tab) => {
     if (tab?.id != null) void chrome.tabs.remove(tab.id);
   });
+}
+
+// Show the sources page's file-access banner when a local read failed
+// *and* the toggle is the plausible reason.
+//
+// Chrome reports "toggle off" and "no such file" as the same opaque
+// fetch failure, so the error text alone can't tell them apart — the
+// toggle state can. Gated on the URL being `file://` so an http fetch
+// that failed for its own reasons doesn't get blamed on a toggle that
+// wouldn't have helped it.
+function showFileAccessBannerIfBlocked(fileUrl: string, retry?: string): void {
+  if (fileAccessAllowed || !isFileUrl(fileUrl)) return;
+  bannerSlotEl.replaceChildren(renderFileAccessBanner(retry));
+}
+
+// Whether the error this row is flagged with is about *reading* the
+// file, as opposed to what we read once it arrived.
+//
+// The distinction matters because only the first kind is something the
+// toggle explains. A local script with a stored parse verdict ("no
+// metadata block") is flagged for a reason the toggle had nothing to do
+// with, and putting the banner under that message would offer an
+// unrelated setting as the explanation.
+//
+// Told apart by the URL: every fetch helper in `directories.ts` names
+// the thing it couldn't read (`error fetching <url>`, `fetch <url>
+// failed: …`), and no parse or validation message does. Deliberately
+// matched against this script's own `fileUrl`, so a failed `@require`
+// against some other host doesn't count either.
+function readFailed(script: StoredScript): boolean {
+  const message = script.errorMessage ?? script.refreshError;
+  return message !== undefined && message.includes(script.fileUrl);
 }
 
 function renderBanner(text: string, extraClass = ''): void {

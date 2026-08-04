@@ -31,11 +31,15 @@ export interface LocationRow {
   // Optional trailing control, e.g. the viewer's copy-to-clipboard
   // button. Moved into the cell on every render.
   trailing?: HTMLElement;
-  // Intercepts activation of the location anchor. Preview mode uses
-  // this: a plain navigation to a `.user.js` URL is captured straight
-  // back into another preview tab (see install-capture.ts), so the
-  // click has to be routed to the raw view instead. Wired for
-  // `auxclick` too, or a middle-click would take the plain path.
+  // Intercepts activation of the location anchor. Both viewer modes
+  // use it, because a plain navigation to a `.user.js` URL — http(s)
+  // or file:// — is captured straight back into a preview (see
+  // install-capture.ts):
+  //   - preview mode routes the click to its raw view;
+  //   - installed mode stands the capture down for that one
+  //     navigation, so the row's link opens what it says it opens.
+  // Wired for `auxclick` too, or a middle-click would take the plain
+  // path.
   onActivate?: () => void;
 }
 

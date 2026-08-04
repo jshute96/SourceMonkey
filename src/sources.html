@@ -141,12 +141,11 @@
       .remove-script:disabled { cursor: not-allowed; opacity: 0.5; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
-      .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 1em; }
-      .banner strong { display: block; margin-bottom: 0.3em; }
-      .banner p { margin: 0.3em 0; }
-      .banner code { background: #fef3c7; padding: 0.15em 0.4em; border-radius: 3px; user-select: all; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      .banner a.chrome-link { display: inline-block; background: #fef3c7; padding: 0.15em 0.4em; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #92400e; text-decoration: none; cursor: pointer; }
-      .banner a.chrome-link:hover { text-decoration: underline; }
+      /* The banner box itself is in styles.css (shared with the
+         viewer). These are the sources-page-only parts: a roomier
+         gap before the source list, and the raw-API-error line the
+         "Allow User Scripts" banner appends. */
+      .banner { margin-bottom: 1em; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
       /* Inline busy spinner for individual controls (toggles, add form). */
       @keyframes sm-spin { to { transform: rotate(360deg); } }

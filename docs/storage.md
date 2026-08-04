@@ -65,7 +65,9 @@ Key spaces in `chrome.storage.local`:
   - Directory/manifest/github-dir source: `relativePath` is the path
     relative to the source root; `fileUrl` is the joined absolute URL.
   - Container source: `relativePath` is the full URL or absolute path
-    the user added; `fileUrl` is its canonical URL form.
+    the user added, in its canonical spelling (`canonicalSourceInput`:
+    a `file://` URL collapses to its bare path, so one file on disk
+    can't land as two rows); `fileUrl` is its URL form.
 - `status` — `'ok' | 'invalid' | 'missing'`.
 - `errorMessage?` — set when `status === 'invalid'`. Cleared on the
   transition to `missing` (the row's body is preserved, but the prior

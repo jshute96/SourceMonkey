@@ -96,8 +96,11 @@ test.describe('script preview', () => {
     await expect(page.locator('#banner-slot')).toContainText('missing @match or @include');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#update-btn')).toBeHidden();
-    // A local file has nowhere to "continue" to.
-    await expect(page.locator('#continue-btn')).toBeHidden();
+    // Local `.user.js` navigations are captured too, so this file needs
+    // the same way out an http one gets — pointed at the `file://` form,
+    // since the bare path the preview was opened with isn't navigable.
+    await expect(page.locator('#continue-btn')).toBeVisible();
+    await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
     // The source is still on screen — seeing what you actually got is
     // the point when a file isn't what you expected.
     await expect(page.locator('#content')).toContainText("console.log('unreachable')");

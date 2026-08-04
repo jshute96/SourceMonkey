@@ -319,6 +319,12 @@ needed for I/O — used everywhere instead of branching on scheme):
   `tree/<default-branch>` after a metadata API call; everything else
   passes through. Async because the bare-repo case does I/O and can
   throw on rate-limit / 404.
+- `canonicalSourceInput(s)` — runs right after it, and picks one
+  spelling per location so every entry point stores the same
+  `relativePath`: a plain POSIX `file://` URL collapses to its bare
+  path; http(s), raw paths, and Windows drive-letter / UNC file URLs
+  pass through. See
+  [install-capture.md](install-capture.md#one-file-one-installed-row).
 
 GitHub helpers (live in `src/github-source.ts`):
 

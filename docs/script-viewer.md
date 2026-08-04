@@ -86,6 +86,8 @@ One page, one set of panels, two query strings:
    `invalid` row, or `Refresh failed: <reason>` (amber,
    `.refresh-failed`) for a still-running `refresh-failed` row
    (`status: ok` + `refreshError`). Hidden when neither is set.
+   Accompanied by the file-access banner when the toggle explains it
+   (see [When a local file won't read](#when-a-local-file-wont-read)).
 4. **Details panel** (`#header-summary` → `<dl>`) — built by
    `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
@@ -139,8 +141,9 @@ One page, one set of panels, two query strings:
        via `navigator.clipboard.writeText`; icon swaps to a checkmark
        for ~1.2 s on success. Row omitted if the
        parent source row has vanished. In preview mode this is the
-       normalized URL being previewed. See the Link rendering section
-       below for the linkify rules.
+       normalized URL being previewed. Activating the anchor is
+       intercepted in both modes — a plain navigation to a `.user.js`
+       URL gets captured — see the Link rendering section below.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
        preview, the byte length of the fetched text.
      - `Status` — installed mode only. `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
@@ -256,9 +259,14 @@ what differs is the controls and where the data comes from.
 ### Getting the script
 
 - `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
-  URL is fetched (and later stored) in its raw form. The un-normalized
-  input is kept too: it's what `addSource` is handed and what a capture
-  bypass is keyed on.
+  URL is fetched (and later stored) in its raw form.
+- `canonicalSourceInput` then collapses a `file://` URL to its bare
+  filesystem path, the same spelling `addSource` stores — so a captured
+  local script and one added by path are the same installed row, not
+  two. See
+  [install-capture.md](install-capture.md#one-file-one-installed-row).
+- The un-normalized input is kept too: it's what a capture bypass is
+  keyed on.
 - http(s) → `fetchHttpText` (so GitHub auth applies); `file://` →
   `fetchFileUrlText`. Anything else is a hand-edited URL and errors out.
 - The page never runs what it fetched — the body is rendered as text
@@ -273,7 +281,7 @@ Banner (`#banner-slot`) states what this file is; the action row
 |-----------|--------|---------|
 | Not installed | "not installed yet" | **Install**, Cancel, View raw source |
 | Already installed | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
-| Not installable | the parse / validation error | **Continue to page** (http only), Cancel, View raw source |
+| Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
 - **Install** → `addSource(<input>)`, then jumps to the new script's
   viewer. A web install is not a special kind of script: it lands in
@@ -290,6 +298,43 @@ Banner (`#banner-slot`) states what this file is; the action row
   leaving the preview open behind it. See
   [install-capture.md](install-capture.md#how-the-raw-view-stays-readable).
 
+### When a local file won't read
+
+- Chrome reports "the file-access toggle is off" and "no such file" as
+  the **same** opaque fetch failure, so the error text alone can't
+  name the cause.
+- When a `file://` read fails, the page asks
+  `chrome.extension.isAllowedFileSchemeAccess()`. If the toggle really
+  is off, `#banner-slot` gets the **"File access is disabled."**
+  banner — the same one the sources page shows, from
+  [`src/file-access.ts`](../src/file-access.ts) — with a click-through
+  to `chrome://extensions/?id=<our id>`.
+- Both modes raise it, because both can hit the toggle:
+  - **Preview** — the fetch behind `Could not fetch this script: …`.
+  - **Installed** — a load error or a failed **Refresh** on a script
+    that lives on disk.
+- Gated on the URL being `file://`, so an http fetch that failed for
+  its own reasons isn't blamed on a toggle that wouldn't have helped.
+- Gated on the failure being a **read**, not a verdict on what was
+  read. A local script flagged with a parse error was read just fine,
+  and the toggle doesn't explain it. Told apart by whether the message
+  names the file's own URL — every fetch helper in `directories.ts`
+  does, and no parse or validation message does.
+- The banner's closing instruction differs by caller, because what
+  actually retries the read does:
+  - Sources page and preview read on load → *reload this page*.
+  - Installed mode renders a stored row → *click Refresh*. A reload
+    would replay the same cached copy and the same error.
+- The toggle is probed **once per page**, not per failure: it lives on
+  `chrome://extensions` and flipping it can't reach an already-open
+  page, so the answer can't change under us. The probe is fired at
+  module scope so first paint doesn't wait on it, and it resolves to
+  "allowed" if it ever throws — an explanation is not worth blanking
+  the viewer for.
+- Not what the capture does. A `file://` navigation with the toggle
+  off never reaches this page at all — see
+  [install-capture.md](install-capture.md#limitations--future-work).
+
 ### When the file can't be installed
 
 - The check is `splitHeaderBody(...).error`, then `validateHeader(...)`
@@ -299,10 +344,13 @@ Banner (`#banner-slot`) states what this file is; the action row
 - Install and Update are both hidden; the banner carries the reason.
 - The source is still rendered. Seeing what actually came back is the
   whole point when a URL returns a login page instead of a script.
-- **Continue to page** appears for http(s) URLs: a path ending in
-  `.user.js` that has no metadata block is usually an ordinary web
-  page. See
+- **Continue to page** loads the location itself, with the capture
+  stood down: a path ending in `.user.js` and carrying no metadata
+  block is usually an ordinary web page. See
   [install-capture.md](install-capture.md#when-the-url-isnt-a-script).
+- For a local file the button reads **Continue to file** and targets
+  the `file://` form — a bare path would resolve against the
+  extension's own origin.
 
 ### Tabs
 
@@ -340,6 +388,9 @@ merged page treats them like any other viewer content:
   a `.user.js` URL for real would be captured straight back into a
   second preview, so the click routes to View raw source instead
   (which is what the old prompt's "from `<url>`" link did).
+- Installed mode intercepts it too, for the same reason, but stands the
+  capture down and opens the real location in a new tab — there is no
+  fetched copy to show there, and the row should open what it says.
 
 ### Future work
 
