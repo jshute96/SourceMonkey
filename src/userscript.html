@@ -98,10 +98,12 @@
       .actions button:disabled { cursor: not-allowed; opacity: 0.5; }
       .actions .primary { font-weight: 600; }
       .actions .spacer { margin-left: auto; }
-      .banner { border: 1px solid #d97706; background: #fffbeb; padding: 0.7em 1em; border-radius: 6px; margin-bottom: 0.7em; }
+      /* The banner box is in styles.css (shared with the sources page,
+         which is also where the file-access banner comes from). Only
+         the viewer's own colour variants live here — the amber default
+         is a warning, and "already installed" / "preview" are not. */
       .banner.installed { border-color: #2563eb; background: #eff6ff; }
       .banner.preview { border-color: #6b7280; background: #f3f4f6; }
-      .banner p { margin: 0.3em 0; }
       @keyframes sm-spin { to { transform: rotate(360deg); } }
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
       /* @grant / @connect rows: API names and hosts, not prose. */
@@ -430,10 +432,12 @@
       </label>
       <button id="refresh-btn" type="button">Refresh</button>
     </div>
-    <!-- Preview mode only (`?preview=<url>`): the banner says what this
+    <!-- In preview mode (`?preview=<url>`) the banner says what this
          file is relative to what's installed, and the action row asks
-         the install / update question. Both stay hidden for an
-         installed script, which uses the controls row above. -->
+         the install / update question; the action row stays hidden for
+         an installed script, which uses the controls row above. The
+         banner slot is shared with the file-access banner, which either
+         mode can raise when a local read fails. -->
     <div id="banner-slot"></div>
     <div id="preview-actions" class="actions" hidden>
       <!-- Install stays hidden until the fetch has landed and we know

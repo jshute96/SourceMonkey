@@ -257,11 +257,13 @@ update channel to a site you didn't approve.
 
 - **"Allow access to file URLs"** — without it the extension can't
   read your local directories, and opening a local `.user.js` won't
-  offer to install it.
+  offer to install it. The sources page says so up front, and the
+  script viewer says so whenever a local file fails to load, preview,
+  or refresh — each with a link straight to the toggle.
 - **"Allow User Scripts"** (or, on Chrome 120–137, the page-wide
   Developer mode toggle) — without it Chrome will refuse to inject
   anything, though the badge will still count matches. The sources
-  page surfaces a banner with a copy-pasteable details URL when this
+  page surfaces a banner with a link to the details page when this
   toggle is off.
 
 Both toggles are persistent — once on, they stay on across browser

@@ -81,6 +81,11 @@ import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from './github-auth.js';
+import {
+  extensionDetailsLink,
+  isFileSchemeAccessAllowed,
+  renderFileAccessBanner,
+} from './file-access.js';
 
 // Refresh-from-sources-page paths run fetchHttpText in the page
 // context, so the page needs its own copy of the cached GitHub token
@@ -1380,12 +1385,6 @@ function cssEscape(value: string): string {
   return value.replace(/["\\]/g, '\\$&');
 }
 
-function isFileSchemeAccessAllowed(): Promise<boolean> {
-  return new Promise((resolve) => {
-    chrome.extension.isAllowedFileSchemeAccess((allowed) => resolve(allowed));
-  });
-}
-
 // Probe whether chrome.userScripts is callable. Presence of the
 // namespace only confirms the permission is in the manifest; the user
 // still has to flip the per-extension toggle before any call works.
@@ -1430,43 +1429,6 @@ function renderUserScriptsBanner(error?: string): HTMLElement {
   }
 
   return div;
-}
-
-function renderFileAccessBanner(): HTMLElement {
-  const div = document.createElement('div');
-  div.className = 'banner';
-
-  const heading = document.createElement('strong');
-  heading.textContent = 'File access is disabled.';
-  div.appendChild(heading);
-
-  const explain = document.createElement('p');
-  explain.textContent =
-    'SourceMonkey can\'t read local files until you enable ' +
-    '"Allow access to file URLs". Open the extension\'s details page, ' +
-    'turn it on, then reload this page:';
-  div.appendChild(explain);
-
-  div.appendChild(extensionDetailsLink());
-
-  return div;
-}
-
-// chrome:// URLs are blocked from <a href> navigation, so we use a
-// click handler that calls chrome.tabs.create — that path is allowed
-// from extension pages. Rendered as an <a> so it looks/behaves like
-// any other link.
-function extensionDetailsLink(): HTMLElement {
-  const url = `chrome://extensions/?id=${chrome.runtime.id}`;
-  const a = document.createElement('a');
-  a.href = url;
-  a.textContent = url;
-  a.className = 'chrome-link';
-  a.addEventListener('click', (event) => {
-    event.preventDefault();
-    void chrome.tabs.create({ url });
-  });
-  return a;
 }
 
 function makeMessage(className: string, text: string): HTMLElement {

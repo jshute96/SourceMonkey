@@ -5,9 +5,44 @@
    styles belong in this file rather than copy-pasted into each
    <style> block.
 
-   Currently shared: the source-type bubble + its display-name sibling
-   (DOM helper in src/source-display.ts, used on the sources page
-   heading and the userscript viewer's Source row). */
+   Currently shared:
+   - the source-type bubble + its display-name sibling (DOM helper in
+     src/source-display.ts, used on the sources page heading and the
+     userscript viewer's Source row);
+   - the warning banner box, whose file-access variant (DOM helper in
+     src/file-access.ts) renders on both the sources page and the
+     viewer / install preview. */
+
+/* Warning banner. Pages keep their own margin and colour variants
+   (`.banner.installed` / `.banner.preview` on the viewer) in their
+   <style> block; everything below is common to every banner. */
+.banner {
+  border: 1px solid #d97706;
+  background: #fffbeb;
+  padding: 0.7em 1em;
+  border-radius: 6px;
+  margin-bottom: 0.7em;
+}
+
+.banner strong { display: block; margin-bottom: 0.3em; }
+
+.banner p { margin: 0.3em 0; }
+
+/* The `chrome://extensions/?id=…` link every permission banner ends
+   with. Styled as inline code because that's what it is — an address
+   the user may prefer to copy rather than click. */
+.banner a.chrome-link {
+  display: inline-block;
+  background: #fef3c7;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #92400e;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.banner a.chrome-link:hover { text-decoration: underline; }
 
 .source-display-name {
   /* Prefer space / slash boundaries when wrapping. `<wbr>` markers

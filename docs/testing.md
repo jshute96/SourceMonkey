@@ -227,11 +227,19 @@ files into TM/VM, hit the same URLs, compare outcomes).
   `install-capture.spec.ts`; its preview mode has its own spec in
   `script-preview.spec.ts`).
 - XHR header surgery — deferred along with the implementation.
-- `.user.js` capture with **"Allow access to file URLs" OFF**. Chrome
-  grants file access unconditionally to `--load-extension` builds, and
-  writing `allow_file_access: false` into the pre-seeded Preferences
-  does not override it, so `install-capture-file.spec.ts` only ever
-  runs with the grant ON. The OFF case is a manual check.
+- **Chrome's own enforcement of "Allow access to file URLs" OFF.**
+  Chrome grants file access unconditionally to `--load-extension`
+  builds, and writing `allow_file_access: false` into the pre-seeded
+  Preferences does not override it, so the browser always behaves as
+  if the toggle were on.
+  - Still a manual check: that `.user.js` capture doesn't fire for a
+    local file with the toggle really off.
+  - Not a gap any more: the UI that *reacts* to the toggle.
+    `file-access-banner.spec.ts` stubs
+    `chrome.extension.isAllowedFileSchemeAccess` via `addInitScript`,
+    which is the only thing the pages branch on, and
+    `install-capture-file.spec.ts` covers the grant-ON side (a failed
+    read must not raise the banner).
 - `GM_notification` click / done callback dispatch in production
   Chrome — headless tests cover the SW round-trip and Promise
   resolution but Chrome's notification UI is suppressed in

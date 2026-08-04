@@ -72,6 +72,10 @@ details live in the topic-specific docs linked below.
   lives in its own module and is dispatched to from `directories.ts`.
   See [file-access.md](file-access.md) and
   [http-sources.md](http-sources.md).
+- **File-access permission UI** (`src/file-access.ts`) — the
+  "Allow access to file URLs" probe plus the shared banner every page
+  raises when the toggle is what blocked a local read. See
+  [file-access.md](file-access.md).
 - **GitHub auth** (`src/github-auth.ts`) — persisted PAT cache +
   `githubAuthHeaders(url)` host-gated helper. Spread into every
   fetch site that talks to `api.github.com` or

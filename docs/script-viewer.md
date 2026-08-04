@@ -86,6 +86,8 @@ One page, one set of panels, two query strings:
    `invalid` row, or `Refresh failed: <reason>` (amber,
    `.refresh-failed`) for a still-running `refresh-failed` row
    (`status: ok` + `refreshError`). Hidden when neither is set.
+   Accompanied by the file-access banner when the toggle explains it
+   (see [When a local file won't read](#when-a-local-file-wont-read)).
 4. **Details panel** (`#header-summary` → `<dl>`) — built by
    `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
@@ -295,6 +297,43 @@ Banner (`#banner-slot`) states what this file is; the action row
 - **View raw source** opens the unprocessed file in a **new tab**,
   leaving the preview open behind it. See
   [install-capture.md](install-capture.md#how-the-raw-view-stays-readable).
+
+### When a local file won't read
+
+- Chrome reports "the file-access toggle is off" and "no such file" as
+  the **same** opaque fetch failure, so the error text alone can't
+  name the cause.
+- When a `file://` read fails, the page asks
+  `chrome.extension.isAllowedFileSchemeAccess()`. If the toggle really
+  is off, `#banner-slot` gets the **"File access is disabled."**
+  banner — the same one the sources page shows, from
+  [`src/file-access.ts`](../src/file-access.ts) — with a click-through
+  to `chrome://extensions/?id=<our id>`.
+- Both modes raise it, because both can hit the toggle:
+  - **Preview** — the fetch behind `Could not fetch this script: …`.
+  - **Installed** — a load error or a failed **Refresh** on a script
+    that lives on disk.
+- Gated on the URL being `file://`, so an http fetch that failed for
+  its own reasons isn't blamed on a toggle that wouldn't have helped.
+- Gated on the failure being a **read**, not a verdict on what was
+  read. A local script flagged with a parse error was read just fine,
+  and the toggle doesn't explain it. Told apart by whether the message
+  names the file's own URL — every fetch helper in `directories.ts`
+  does, and no parse or validation message does.
+- The banner's closing instruction differs by caller, because what
+  actually retries the read does:
+  - Sources page and preview read on load → *reload this page*.
+  - Installed mode renders a stored row → *click Refresh*. A reload
+    would replay the same cached copy and the same error.
+- The toggle is probed **once per page**, not per failure: it lives on
+  `chrome://extensions` and flipping it can't reach an already-open
+  page, so the answer can't change under us. The probe is fired at
+  module scope so first paint doesn't wait on it, and it resolves to
+  "allowed" if it ever throws — an explanation is not worth blanking
+  the viewer for.
+- Not what the capture does. A `file://` navigation with the toggle
+  off never reaches this page at all — see
+  [install-capture.md](install-capture.md#limitations--future-work).
 
 ### When the file can't be installed
 

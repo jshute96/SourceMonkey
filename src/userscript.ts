@@ -92,6 +92,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
+import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { dropRawView, putRawView } from './raw-view.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
@@ -172,9 +173,25 @@ const filenameCopyBtn = (() => {
   return btn;
 })();
 
+// Whether the per-extension "Allow access to file URLs" toggle is on.
+// Probed once per page rather than per failure: the toggle lives on
+// chrome://extensions and flipping it doesn't reach an already-open
+// page, so the answer can't change under us. Caching it also keeps the
+// "was it the toggle?" question answerable from the synchronous render
+// path.
+//
+// Fired at module scope rather than inside `load()` so it runs
+// alongside the rest of module init and is normally already settled by
+// the time anything awaits it. This is on every viewer open, including
+// the http scripts that can never need the answer, so it should not be
+// the thing first paint waits on.
+const fileAccessProbe = isFileSchemeAccessAllowed();
+let fileAccessAllowed = true;
+
 void load();
 
 async function load(): Promise<void> {
+  fileAccessAllowed = await fileAccessProbe;
   if (scriptId) {
     await loadStored();
     return;
@@ -420,6 +437,20 @@ function render(script: StoredScript): void {
     setMessage('');
   }
 
+  // Same question the preview asks after a failed fetch, for the same
+  // reason: a local script we couldn't read has most likely hit the
+  // file-access toggle. Cleared first because `render` re-runs on every
+  // storage change — the banner must not outlive the error that raised
+  // it (a Refresh that succeeds clears `refreshError`).
+  //
+  // Reload is the wrong advice here: this row is already in storage, so
+  // re-opening the page re-renders the same cached copy and the same
+  // error. Refresh is what re-reads.
+  bannerSlotEl.replaceChildren();
+  if (readFailed(script)) {
+    showFileAccessBannerIfBlocked(script.fileUrl, 'then click Refresh');
+  }
+
   // Resolved location for the script: an absolute filesystem path for
   // file:// sources, the github page URL for github sources, or the
   // resolved URL for non-github HTTP sources. Skip the row entirely if
@@ -655,6 +686,10 @@ async function loadPreview(): Promise<void> {
     });
     document.title = `${displayLocation(previewLocation || input)} — SourceMonkey`;
     setMessage(`Could not fetch this script: ${describeError(err)}`, 'error');
+    // The likeliest reason a local file wouldn't read. `previewFileUrl`
+    // is still '' if normalizeSourceInput is what threw, which is
+    // correctly not a file:// URL — we never got as far as a read.
+    showFileAccessBannerIfBlocked(previewFileUrl);
     summaryEl.replaceChildren();
     tabsView.clear();
     installBtn.hidden = true;
@@ -1037,6 +1072,38 @@ function leavePage(): void {
   void chrome.tabs.getCurrent().then((tab) => {
     if (tab?.id != null) void chrome.tabs.remove(tab.id);
   });
+}
+
+// Show the sources page's file-access banner when a local read failed
+// *and* the toggle is the plausible reason.
+//
+// Chrome reports "toggle off" and "no such file" as the same opaque
+// fetch failure, so the error text alone can't tell them apart — the
+// toggle state can. Gated on the URL being `file://` so an http fetch
+// that failed for its own reasons doesn't get blamed on a toggle that
+// wouldn't have helped it.
+function showFileAccessBannerIfBlocked(fileUrl: string, retry?: string): void {
+  if (fileAccessAllowed || !isFileUrl(fileUrl)) return;
+  bannerSlotEl.replaceChildren(renderFileAccessBanner(retry));
+}
+
+// Whether the error this row is flagged with is about *reading* the
+// file, as opposed to what we read once it arrived.
+//
+// The distinction matters because only the first kind is something the
+// toggle explains. A local script with a stored parse verdict ("no
+// metadata block") is flagged for a reason the toggle had nothing to do
+// with, and putting the banner under that message would offer an
+// unrelated setting as the explanation.
+//
+// Told apart by the URL: every fetch helper in `directories.ts` names
+// the thing it couldn't read (`error fetching <url>`, `fetch <url>
+// failed: …`), and no parse or validation message does. Deliberately
+// matched against this script's own `fileUrl`, so a failed `@require`
+// against some other host doesn't count either.
+function readFailed(script: StoredScript): boolean {
+  const message = script.errorMessage ?? script.refreshError;
+  return message !== undefined && message.includes(script.fileUrl);
 }
 
 function renderBanner(text: string, extraClass = ''): void {

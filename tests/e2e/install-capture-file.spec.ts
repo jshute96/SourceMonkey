@@ -258,6 +258,14 @@ test.describe('.user.js capture for local files', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(missing)}`,
     );
     await expect(page.locator('#message')).toContainText('Could not fetch this script');
+    // A local read that failed asks whether the file-access toggle is
+    // to blame, and here it isn't — the grant is on, the file is just
+    // missing. The banner must stay away, or every typo'd path starts
+    // telling the user to go change a setting that is already right.
+    // (The toggle-OFF half of this is the manual check in
+    // docs/testing.md — Chrome won't let a `--load-extension` build
+    // turn the grant off.)
+    await expect(page.locator('#banner-slot')).not.toContainText('File access is disabled');
 
     const [rawPage] = await Promise.all([
       extensionContext.waitForEvent('page'),

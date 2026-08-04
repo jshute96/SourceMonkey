@@ -294,10 +294,14 @@ path those differ.
 
 ## Limitations / future work
 
-- **`file://` capture needs the file-access toggle**, and there is no
-  way to tell the user so: with the toggle off nothing fires, which is
-  indistinguishable from the option being off. A hint on the options
-  page (`chrome.extension.isAllowedFileSchemeAccess`) would fix it.
+- **`file://` capture needs the file-access toggle**, and there is
+  still no way to tell the user so: with the toggle off nothing fires,
+  which is indistinguishable from the capture option being off. The
+  banner added in
+  [script-viewer.md](script-viewer.md#when-a-local-file-wont-read)
+  only covers a preview the user reached some other way — it needs a
+  failed read to hang off, and a capture that never fires produces
+  none. A hint on the options page would close the gap.
 - **Mixed-case suffixes are ignored** everywhere, by design — see
   "Every matcher has to agree" above.
 - **A script installed as part of a directory / repo source isn't
