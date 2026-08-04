@@ -613,12 +613,16 @@ async function applyFiles(
 // deliberately avoids — see the note on `source-display.ts`.
 //
 // So the dependency is inverted: whoever owns both modules installs
-// the checker. `background.ts` does that at startup. Contexts that
-// don't install one simply skip the check, which is the correct
-// degradation — an extension *page* that calls `addSource` (the
-// viewer's Install button) can't necessarily drive an offscreen
-// document, and a row left unchecked carries no `parseCheckedHash`,
-// so the next service-worker refresh performs it.
+// the checker. `background.ts` does it for the service worker,
+// `parse-check-client.ts` for extension pages — and both are needed,
+// because this pipeline runs in whichever context called it.
+//
+// A context with no checker skips the check. That is NOT a benign
+// degradation: the rebuild below resets `status` to `ok`, so a skipped
+// check on a row that was `invalid` clears the verdict and reports a
+// recovery that never happened. It's tolerable only as a failure mode,
+// never as a design — a row left unchecked carries no
+// `parseCheckedHash`, so the next refresh re-derives it.
 export type ParseChecker = (script: StoredScript) => Promise<ParseVerdict | null>;
 
 let parseChecker: ParseChecker | null = null;
@@ -643,7 +647,10 @@ export function setParseChecker(fn: ParseChecker | null): void {
 //
 // Future hazard: `buildGmBindingsForScript` is async against the day it
 // bakes persisted `GM_*` values into the bindings. If that lands, those
-// values become part of the checked text and belong in this key.
+// values become part of the checked text and belong in this key — and
+// the install preview, which checks a synthetic row with a placeholder
+// id (`runPreviewParseCheck` in userscript.ts), would start reading
+// some other script's values.
 function parseCheckKey(script: StoredScript): string {
   const reqs = (script.requires ?? []).map((r) => r.contentHash).join(',');
   return `${extensionVersion()}|${script.contentHash ?? ''}|${reqs}`;

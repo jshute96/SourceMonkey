@@ -36,9 +36,13 @@ import {
 } from './github-auth.js';
 import { installDeepLinkRedirect } from './deep-link.js';
 import { installUserJsCapture } from './install-capture.js';
-import { checkParses } from './parse-check.js';
+import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
-import type { ParseVerdict } from './parse-check-protocol.js';
+import {
+  isParseCheckDisabled,
+  setParseCheckDisabled,
+  type ParseVerdict,
+} from './parse-check-protocol.js';
 import type { ParseChecker } from './script-store.js';
 import {
   ensureLogIdsLoaded,
@@ -216,8 +220,10 @@ interface SourceMonkeyApi {
   checkParses: (sources: string[]) => Promise<ParseVerdict[] | null>;
   // Turn the install-time parse check off, so a test can drive a
   // script that fails to parse all the way to injection and exercise
-  // the run-time sentinel backstop. Reset by `resetAllState`.
-  setParseCheckEnabled: (enabled: boolean) => void;
+  // the run-time sentinel backstop. Covers the checkers in extension
+  // pages too, and resets itself with the session storage
+  // `resetAllState` clears.
+  setParseCheckEnabled: (enabled: boolean) => Promise<void>;
   // How many source compiles have run this session. Lets a test tell
   // a cached verdict from a fresh one.
   getParseCheckRuns: () => number;
@@ -290,9 +296,7 @@ const api: SourceMonkeyApi = {
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
   checkParses,
-  setParseCheckEnabled: (enabled: boolean) => {
-    setParseChecker(enabled ? compileParseChecker : null);
-  },
+  setParseCheckEnabled: (enabled: boolean) => setParseCheckDisabled(!enabled),
   getParseCheckRuns: () => parseCheckRuns,
   getActionContextMenu: async (tabId: number) => {
     const cmdsByScript = getMenuCommandsForTab(tabId);
@@ -341,10 +345,14 @@ const api: SourceMonkeyApi = {
   },
   replayScriptLogsAtBoot,
   resetAllState: async () => {
-    // Restore the parse check in case a prior test disabled it to
-    // exercise the run-time backstop.
-    setParseChecker(compileParseChecker);
+    // The parse check re-enables itself: its off-switch lives in the
+    // session storage cleared below, precisely so no context has to
+    // remember to restore it. The circuit breaker does have to be
+    // reset by hand — it's a module variable in the worker, so a case
+    // that deliberately wedges the sandbox would otherwise leave the
+    // check off for every later test in this worker.
     parseCheckRuns = 0;
+    resetParseCheckFailures();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -2102,7 +2110,11 @@ installScriptLogIdListener();
 // can't: both paths leave one.
 let parseCheckRuns = 0;
 
+// Counts only THIS context's compiles. Extension pages run their own
+// (`parse-check-client.ts`), and the tests that read this counter
+// drive service-worker refreshes.
 const compileParseChecker: ParseChecker = async (script) => {
+  if (await isParseCheckDisabled()) return null;
   parseCheckRuns++;
   const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
   const verdicts = await checkParses([source]);

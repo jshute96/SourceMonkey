@@ -18,7 +18,11 @@
 // about the whole composed program. Naming the file means compiling
 // the pieces separately as well; see TODO.md.
 //
-// ---------- Why it takes three contexts ----------
+// This is the SERVICE WORKER's route to the sandbox. Extension pages
+// have a DOM and embed their own sandbox frame instead — see
+// `parse-check-client.ts`. Both share `parse-sandbox-host.ts`.
+//
+// ---------- Why the SW route takes three contexts ----------
 //
 // `new Function(src)` compiles without executing, which is exactly the
 // check — and it is V8's own verdict on the same text we inject, not a
@@ -137,14 +141,11 @@ export async function checkParses(sources: readonly string[]): Promise<ParseVerd
   if (consecutiveFailures >= FAILURE_LIMIT) return null;
   try {
     await ensureOffscreenDocument();
-    // Random rather than a counter: the offscreen document outlives
-    // service-worker restarts, and a counter restarts at zero with it.
-    // A reused id can resolve a NEW request with an OLD request's
-    // verdicts, which is the one way this machinery could mark a good
-    // script invalid.
-    const id = crypto.randomUUID();
+    // Correlating a reply with its request is the sandbox host's job
+    // (`parse-sandbox-host.ts`) — this leg is a single awaited
+    // sendMessage, so there is nothing here to mix up.
     const reply = await withTimeout(
-      chrome.runtime.sendMessage({ type: PARSE_CHECK_MSG, id, sources }),
+      chrome.runtime.sendMessage({ type: PARSE_CHECK_MSG, sources }),
       PARSE_TIMEOUT_MS,
     );
     const verdicts = (reply as { verdicts?: ParseVerdict[] } | undefined)?.verdicts;

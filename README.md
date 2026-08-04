@@ -43,6 +43,13 @@ in a new tab, and **Cancel** goes back where you came from. A file that
 isn't a valid userscript can't be installed — the preview says why and
 shows you what actually came back.
 
+The preview also compiles the script — with its `@require`d libraries —
+before you commit, and warns if the code has a syntax error or a
+library can't be loaded. Install stays available: it's your call
+whether to take a script you intend to fix. Checking the code means
+opening a preview downloads the `@require` / `@resource` files the
+script names, before you install anything.
+
 If you opened a local `.user.js` to read rather than install it,
 **View raw source** shows it, and **Continue to file** loads it in the
 tab. Turn the whole thing off with **Capture `.user.js` links** on the

@@ -9,12 +9,13 @@
 // This file deliberately imports nothing. tsc would emit an ES module
 // for a file with imports, and a sandboxed page loads it as a classic
 // `<script src>`. The message shapes below are mirrored (not shared)
-// from `src/parse-check.ts`, which is the source of truth; they are
-// small and change together.
+// from `src/parse-check-protocol.ts`, which is the source of truth;
+// they are small and change together.
 
 interface ParseRequest {
   type: 'sm:parse-check';
-  // Correlates the reply. The offscreen relay round-trips it.
+  // Correlates the reply. Round-tripped by whichever context embeds
+  // this frame — `parse-sandbox-host.ts` drives both of them.
   id: string;
   // Each entry is compiled independently, as a FUNCTION BODY — which
   // is what the injected entry actually is, so constructs that are

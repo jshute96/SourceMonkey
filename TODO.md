@@ -99,14 +99,26 @@ The compile-only check is in (see
   with a real `lineno`/`colno` while still never running the body;
   worth measuring against the segment layout, which could then map it
   to the original file and line.
-- **Check from extension pages.** The viewer's Install button calls
-  `addSource` in the page context, which installs no checker, so that
-  path is checked only on the next service-worker refresh. Either
-  route page-side installs through the SW, or confirm an extension
-  page can drive an offscreen document.
 - **Batch per refresh pass.** The check is one round trip per changed
   script. `parseCheckedHash` keeps unchanged content free, so this only
   bites on a first-add of many scripts at once.
+- **Don't let a failed check clear a real `invalid` verdict.**
+  `applyParseCheck` returns the freshly-built row unchanged when the
+  verdict is null or `unknown`, and that row starts out `ok`. So a
+  refresh whose check couldn't run resets a script that genuinely
+  doesn't parse back to `ok` and logs a recovery.
+  - Installing checkers in extension pages (this change) removes the
+    common cause, but not the shape.
+  - Fix: when the verdict is inconclusive AND the prior row was
+    `invalid` at the same `parseCheckKey`, carry the prior status and
+    message forward. Nothing was re-derived, so nothing justifies the
+    recovery.
+- **Don't fetch dependencies twice on install-from-preview.** The
+  preview fills `previewFetchCache` to run its check; clicking Install
+  then runs `addSource` → `attachFiles` against the store's own cache,
+  so every `@require` / `@resource` is fetched again. Bridging the two
+  caches (or handing the preview's typed entries to the install) would
+  halve the third-party traffic that eager fetching introduced.
 
 ## Cross-manager coverage
 

@@ -178,6 +178,17 @@ Capture-specific points:
   never committed, so the previous history entry is still that page.
 - A tab opened straight into the preview (a site's `target=_blank`
   install button) has no history to go back to, so Cancel closes it.
+- **The preview fetches the script's `@require` / `@resource` files.**
+  It compiles the script to catch syntax errors before the install (see
+  [parse-check.md](parse-check.md)), and that needs the composed
+  program.
+  - So a captured click — including opening a local `.user.js` you only
+    meant to read — issues requests to every host those tags name,
+    before the user has decided anything.
+  - Those requests carry the stored GitHub token when the URL is a
+    GitHub one (`githubAuthHeaders`, `file-loader.ts`), same as an
+    installed script's fetches do.
+  - Nothing is stored, and nothing runs.
 
 ### When the URL isn't a script
 

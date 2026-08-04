@@ -86,6 +86,13 @@ import {
   isFileSchemeAccessAllowed,
   renderFileAccessBanner,
 } from './file-access.js';
+import { installPageParseChecker } from './parse-check-client.js';
+
+// Add / Refresh / Refresh All run the load pipeline here in the page,
+// so this page needs its own parse checker — without one, a
+// page-driven refresh would clear an `invalid` verdict it never
+// re-derived. See src/parse-check-client.ts.
+installPageParseChecker();
 
 // Refresh-from-sources-page paths run fetchHttpText in the page
 // context, so the page needs its own copy of the cached GitHub token

@@ -32,16 +32,24 @@ text.
 But `new Function` is `eval` as far as CSP is concerned, and MV3's
 extension CSP forbids it in every context an extension normally uses.
 A **sandboxed page** may declare `'unsafe-eval'`, and is the only place
-that may. So the work is split three ways:
+that may.
 
-| Context | Has | Lacks |
-|---------|-----|-------|
-| Service worker (`parse-check.ts`) | `chrome.*` | DOM, `eval` |
-| Offscreen document (`offscreen.ts`) | `chrome.*`, DOM | `eval` |
-| Sandboxed iframe (`parse-sandbox.ts`) | `eval` | `chrome.*` |
+- A sandboxed page has an opaque origin and no `chrome.*`, so the only
+  thing that can talk to it is whoever embeds it, over `postMessage`.
+- **Anything with a DOM can be that embedder.** `parse-sandbox-host.ts`
+  is the shared driver: readiness, correlation ids, timeouts, verdict
+  validation, circuit breaker.
 
-The service worker messages the offscreen document, which relays over
-`postMessage` to the sandboxed iframe and hands the verdict back.
+| Context | Has | Lacks | Reaches the sandbox by |
+|---------|-----|-------|------------------------|
+| Sandboxed iframe (`parse-sandbox.ts`) | `eval`, DOM | `chrome.*`, any caller but its embedder | — it *is* the sandbox |
+| Extension page (`parse-check-client.ts`) | `chrome.*`, DOM | `eval` | embedding its own frame |
+| Offscreen document (`offscreen.ts`) | `chrome.*`, DOM | `eval` | embedding its own frame |
+| Service worker (`parse-check.ts`) | `chrome.*` | DOM, `eval` | messaging the offscreen document |
+
+The service worker is the only context that needs a relay, and it needs
+one for a single reason: **it has no DOM**, so it cannot host an iframe.
+That is the whole job of the offscreen document.
 
 ## What is checked
 
@@ -83,8 +91,12 @@ surfaced.
 
 Machinery failures that resolve to "don't know":
 
-- no `chrome.offscreen`, or the document won't open;
+- the sandbox frame won't load, or (for the service worker) no
+  `chrome.offscreen` / the document won't open;
 - the sandbox doesn't answer inside the timeout;
+- a verdict comes back with a status we don't recognise — validated in
+  `parse-sandbox-host.ts`, because `applyParseCheck` treats anything
+  that isn't `ok`/`unknown` as `invalid`;
 - no checker installed for this context (see below);
 - **any throw that isn't a `SyntaxError`.**
 
@@ -100,7 +112,10 @@ That last one carries the weight:
 
 A circuit breaker stops trying after a few consecutive failures, so a
 permanently wedged sandbox costs a few timeouts rather than one per
-script forever.
+script forever. It re-arms on a cooldown rather than tripping for good:
+the offscreen document lives as long as the browser session does, and a
+breaker that never reset would mean three unlucky timeouts turn the
+check off until restart — including after the sandbox recovers.
 
 The seal entry stays in place as the run-time backstop, so anything
 missed here is still reported exactly as it was before.
@@ -110,14 +125,77 @@ missed here is still reported exactly as it was before.
 `script-store.ts` does **not** import the injector — a real (not
 type-only) module cycle between them is something this codebase avoids.
 Instead the dependency is inverted: `setParseChecker` takes the
-implementation, and `background.ts` installs it at startup.
+implementation, and each context installs one at startup.
 
-Consequences:
+### The service worker
 
-- Extension *pages* that call `addSource` directly (the viewer's
-  Install button) install no checker, so they skip the check.
-- A skipped row carries no `parseCheckedHash`, so the next
-  service-worker refresh performs it.
+`background.ts` installs `compileParseChecker`, which composes the
+source and drives the offscreen document.
+
+### Extension pages
+
+The load pipeline runs **wherever it was called from**. The sources
+page (Add Source, Refresh, Refresh All) and the viewer (Install,
+Refresh) call `addSource` / `updateSource` / `updateScript` in the
+*page*, not in the service worker.
+
+`parse-check-client.ts` installs a checker there. The page has a DOM,
+so it embeds its own `parse-sandbox.html` and compiles locally. The
+service worker is not involved, which buys:
+
+- no SW wake on the path behind an Install click;
+- no structured clone of the whole script — bodies, `@require` bodies,
+  base64 `@resource` blobs — to every extension context;
+- no dependency on the SW surviving the round trip;
+- **parallelism**: one single-threaded worker with one shared sandbox
+  is a queue; per-page frames are not;
+- a circuit breaker per page, so one wedged sandbox doesn't turn the
+  feature off everywhere.
+
+Only the transport differs from the SW's checker. Both compose the
+checked text with `buildParseCheckSource`, so both judge the same
+program.
+
+### The install preview
+
+The preview (`userscript.html?preview=…`) has no stored row for the
+store hook to fire on, so it calls `checkScriptParses` directly on a
+`StoredScript` it builds from the fetched text.
+
+- **Runs before Install**, so a syntax error is visible while the user
+  is still deciding — not on the `INVALID` row they land on after.
+- **Warns, doesn't block.** Install stays enabled; see
+  [script-viewer.md](script-viewer.md#when-the-code-wont-parse).
+- **Covers Update as well** — previewing a location already installed
+  offers Update, which rebuilds the row the same way.
+- Fetches every declared `@require` and `@resource` up front, through
+  the **same `attachFiles`** the store uses, because the check judges
+  the composed program.
+  - Hand-rolling that fetch loop is how the preview accused a healthy
+    script: `attachFiles` dedups by canonical URL, so a library
+    declared twice is loaded once. Fetching per declared ref
+    concatenated it twice, and any top-level `const` in it read as
+    `already been declared`.
+- A file that can't be fetched is reported as "could not be checked",
+  not as a prediction. A flaky dependency host is not grounds for
+  telling the user their install will fail — an Update over http keeps
+  the working copy running.
+
+### Why not just skip it in pages
+
+Skipping doesn't leave a row *unverified*:
+
+- The rebuild resets `status` to `ok`, so an unchecked page refresh
+  **cleared** a prior `invalid` verdict.
+- It then reported "loads cleanly again (was invalid)" for a script
+  that still didn't parse.
+- The next background refresh flagged it again, so the Log alternated
+  between the two.
+- Install had the mirror-image hole: a broken script landed as `ok`.
+
+Covered by `tests/e2e/parse-check-pages.spec.ts`, which drives the real
+buttons — `sm.*` test helpers run in the SW and can't see this class of
+bug.
 
 ## Caching
 
@@ -173,6 +251,13 @@ it holds a renderer process for the session.
 - `tests/e2e/parse-check.spec.ts` — the mechanism, including
   compile-without-execute and function-body-not-program.
 - `tests/e2e/parse-check-install.spec.ts` — what a user sees.
+- `tests/e2e/parse-check-pages.spec.ts` — the page-driven paths, via
+  the real Install / Refresh / Refresh All buttons.
 - `sm.setParseCheckEnabled(false)` turns the check off so a test can
   drive an unparsable script all the way to injection and exercise the
   run-time backstop.
+  - The off-switch is a **session-storage key**, read before every
+    compile, so it reaches every checker — the SW's and each page's.
+  - `resetAllState` clears session storage, so it resets itself. A
+    module variable had to be restored by hand, and one missed restore
+    left the check off for the rest of that SW's life.

@@ -343,9 +343,11 @@ test.describe('site-icon slot', () => {
       // PNG's data URL swapped in.
       const rows = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`);
       const slots = rows.locator('.site-icon');
-      const count = await slots.count();
-      expect(count).toBe(traversals.length);
-      for (let i = 0; i < count; i++) {
+      // `toHaveCount`, not `await slots.count()`: the page renders its
+      // rows asynchronously after load, so a one-shot read can see zero
+      // and "pass" the traversal check by finding nothing to check.
+      await expect(slots).toHaveCount(traversals.length);
+      for (let i = 0; i < traversals.length; i++) {
         const slot = slots.nth(i);
         await expect(slot.locator('svg.site-icon-globe')).toBeVisible();
         // No img element should ever appear in the slot for these
