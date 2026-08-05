@@ -541,12 +541,11 @@ explicitly — an omitted one would silently mean top-frame-only.
 
 #### The shared helpers follow the scripts
 
-`wrapper-bridge.js` and `wrapper-gm-runtime.js` install **per-frame**
-globals (a `message` listener, `window.__SM_GM__`). A script running
-in a sub-frame therefore needs its helper in that same frame,
-otherwise every MAIN-world report is dropped and every `GM_*` call is
-a `ReferenceError`.
-
+- `wrapper-bridge.js` and `wrapper-gm-runtime.js` install **per-frame**
+  globals (a `message` listener, `window.__SM_GM__`).
+- So a script running in a sub-frame needs its helper in that same
+  frame. Without it, every MAIN-world report is dropped and every
+  `GM_*` call is a `ReferenceError`.
 - `buildBridgeSpec` / `buildGmRuntimeSpec` set `allFrames: true` iff at
   least one **active** script does.
 - Gated on the active set rather than hardcoded, because the helpers
@@ -555,8 +554,8 @@ a `ReferenceError`.
 
 #### What runs once per frame, and what doesn't
 
-Injection is per frame, so the wrapper runs per frame. Three things
-are deliberately *not*:
+Injection is per frame, so the wrapper runs per frame. Deliberately
+*not* per frame:
 
 - **Startup logs** (parse-time diagnostics from the load pipeline) are
   emitted to the page console in the top frame only — they describe

@@ -40,6 +40,7 @@ import {
   collectActiveSpecs,
   resolveAllFrames,
 } from '../../dist/injector.js';
+import { parseHeader } from '../../dist/userscript-header.js';
 
 const header = (...tags) => ({ tags: [{ tag: 'name', value: 'Hello' }, ...tags] });
 
@@ -79,10 +80,17 @@ test('resolveAllFrames: @noframes is a flag — any value still disables frames'
   assert.equal(resolveAllFrames(header({ tag: 'noframes', value: '0' })), false);
 });
 
-test('resolveAllFrames: tag lookup is case-insensitive', () => {
-  // parseHeader lowercases tags, but resolveAllFrames is also called
-  // with hand-built headers in tests and by the viewer.
-  assert.equal(resolveAllFrames({ tags: [{ tag: 'noframes', value: '' }] }), false);
+test('resolveAllFrames: a header written `// @NoFrames` still disables frames', () => {
+  // `hasTag` lowercases only the *query*, so the case-insensitivity
+  // lives in parseHeader. Go through the real parser rather than a
+  // hand-built header, which is the only way this asserts anything.
+  const header = parseHeader([
+    '// ==UserScript==',
+    '// @name        Mixed Case',
+    '// @NoFrames',
+    '// ==/UserScript==',
+  ].join('\n'));
+  assert.equal(resolveAllFrames(header), false);
 });
 
 test('resolveAllFrames: a headerless script gets the default', () => {

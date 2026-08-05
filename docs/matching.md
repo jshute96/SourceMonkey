@@ -362,11 +362,26 @@ view**, and sub-frame reports are second-class:
   frame's `documentId` is its own, so twenty ad iframes would evict
   every real bfcache entry from a five-slot cache.
 
-The per-script Log is coalesced the same way: one row per script per
-top-level document for starts, plus one row per *distinct* error
-message (two different failures are two different things to fix, the
-same failure in twenty frames is one). The guard resets on every
-top-frame commit and on tab close.
+Which document a sub-frame error lands on:
+
+- It goes to the tab's **current** document, not the sender's — a frame
+  has no way to name its parent document (`MessageSender` carries no
+  parent id).
+- A late error (async listener, slow XHR callback, teardown) from a
+  frame of a document the user has already navigated away from would
+  therefore land on the wrong one, and errors are sticky.
+- Guard: `sender.tab.url` is Chrome's snapshot of the **top-level** URL
+  the frame belonged to. If it no longer matches the document we'd
+  write to, the report is logged but kept off the badge.
+- Still slips through: a reload to the same URL. See
+  [TODO.md](../TODO.md).
+
+The per-script Log is coalesced the same way:
+
+- One row per script per top-level document for starts.
+- One row per *distinct* error message — two different failures are two
+  different things to fix; the same failure in twenty frames is one.
+- The guard resets on every top-frame commit and on tab close.
 
 ### documentId is the lifecycle key
 

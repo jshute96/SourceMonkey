@@ -428,8 +428,8 @@ export function wrapCombinedEntry(args: {
 // `sourcemonkey://SourceMonkey/<folder>/...`:
 //
 //   sourcemonkey://SourceMonkey/
-//     __bridge.js                         (one page-wide registration, USER_SCRIPT world)
-//     __gm-runtime.js                     (one page-wide registration, USER_SCRIPT world)
+//     __bridge.js                         (one <all_urls> registration, USER_SCRIPT world, per frame)
+//     __gm-runtime.js                     (one <all_urls> registration, USER_SCRIPT world, per frame)
 //     __prelude.js                        (one tree entry — bytes ship per script, devtools dedups by URL)
 //     <folder-1>/                         (per-script — dedup-aware log label)
 //       __config.js                       (per-script config blob)

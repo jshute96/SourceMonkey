@@ -1164,8 +1164,10 @@ function installNavigationListeners(): void {
     console.info('[SourceMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       if (changeInfo.url) {
+        enqueueTabWork(tabId, async () => clearSubFrameLogGuard(tabId));
         enqueueTabWork(tabId, () => updateTabMatches(tabId, changeInfo.url, null, 'navigation'));
       } else if (changeInfo.status === 'loading' && tab.url) {
+        enqueueTabWork(tabId, async () => clearSubFrameLogGuard(tabId));
         enqueueTabWork(tabId, () => updateTabMatches(tabId, tab.url, null, 'navigation'));
       }
     });
@@ -1191,8 +1193,12 @@ function installNavigationListeners(): void {
       setupReloadFastPath(d.tabId, d.documentId, d.url, batch);
     }
     // A new top-level document means a new set of sub-frames, so the
-    // "already logged this" guard starts over.
-    clearSubFrameLogGuard(d.tabId);
+    // "already logged this" guard starts over. Enqueued, NOT called
+    // inline: `recordScriptReport` re-seeds the guard from inside the
+    // same per-tab queue, so a synchronous clear here could land
+    // *before* the previous document's queued reports run and let them
+    // re-seed keys that then silence the new document's frames.
+    enqueueTabWork(d.tabId, async () => clearSubFrameLogGuard(d.tabId));
     enqueueTabWork(
       d.tabId,
       () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation', batch),
@@ -1206,6 +1212,8 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  // Safe to clear inline here (unlike the navigation path): the tab is
+  // gone, so nothing can re-seed the guard for this id afterwards.
   clearSubFrameLogGuard(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
   // document, so the SW-side mapping is dead weight after close. Drop
@@ -3079,10 +3087,16 @@ function composeWrapperErrorMessage(
 //     ERROR regardless of whether it was expected.
 
 // True when the message came from a sub-frame rather than the tab's
-// top-level document. `frameId` is 0 for the main frame. Chrome has
-// set it on `onUserScriptMessage` senders since the API shipped; if a
-// future/older build ever omits it we fall back to treating the sender
-// as the top frame, which is the pre-`allFrames` behavior.
+// top-level document. `frameId` is 0 for the main frame.
+//
+// Chrome sets `frameId` on `onUserScriptMessage` senders (the e2e
+// frames spec asserts it: four sub-frames leave the per-tab document
+// LRU at one entry, which only holds if we recognised them). If a
+// build ever omitted it we treat the sender as top-frame, which
+// degrades to the pre-`allFrames` behavior — noisier logs and per-frame
+// LRU entries, but the badge keeps working. The opposite default would
+// classify EVERY sender as a sub-frame, so no `sm:start` would ever
+// reach the badge and every script would read MISSING.
 function isSubFrameSender(sender: chrome.runtime.MessageSender): boolean {
   const frameId = (sender as { frameId?: number }).frameId;
   return typeof frameId === 'number' && frameId !== 0;
@@ -3090,12 +3104,20 @@ function isSubFrameSender(sender: chrome.runtime.MessageSender): boolean {
 
 // tabId → set of sub-frame log keys already written for the current
 // top-level document. Reset on every top-frame commit and on tab close.
+//
+// Module scope, not `chrome.storage.session` (which is where the
+// injector's comparable rejection guard lives): MV3 eviction losing
+// this costs at most one duplicate Log row, and the guard only has to
+// outlive a single page load — the SW is by definition awake for the
+// messages it is de-duplicating.
 const subFrameLogGuard = new Map<number, Set<string>>();
 // Bound per tab so a page that mints frames in a loop (or throws a
 // fresh error message each time) can't grow this without limit. Past
 // the cap we stop logging sub-frame events for this document rather
-// than evicting — the first N are the informative ones.
-const SUB_FRAME_LOG_KEY_CAP = 32;
+// than evicting — the first N are the informative ones. The budget is
+// shared by every script on the tab, so it's set well above
+// (scripts × event kinds) for a realistic page.
+const SUB_FRAME_LOG_KEY_CAP = 128;
 
 function clearSubFrameLogGuard(tabId: number): void {
   subFrameLogGuard.delete(tabId);
@@ -3286,7 +3308,6 @@ async function recordScriptReport(
   // currently showing — that's the one whose badge the user is looking
   // at. Frames never get a slot of their own in the per-tab document
   // LRU (cap 5): twenty ad iframes would evict every bfcache entry.
-  const targetDocId = subFrame ? (record?.currentDocId ?? '') : senderDocId;
   let state = subFrame ? getCurrentState(record) : getDocState(record, senderDocId);
   if (!state) {
     // No top-level document to attach a frame error to (the tab record
@@ -3310,6 +3331,33 @@ async function recordScriptReport(
       actual: {},
     };
   }
+  // Guard the sub-frame merge against attributing a frame's failure to a
+  // document that frame never lived in.
+  //
+  // The top-frame path is safe by construction: it writes to the
+  // sender's OWN documentId, so a late report from a document we've
+  // navigated away from updates that document's slot and nothing else
+  // (see writeDocState below). The sub-frame path has no such id, so an
+  // error thrown by a frame of document A — an async listener, a slow
+  // XHR callback, teardown — that reaches us after the tab has moved to
+  // B would otherwise land on B: a red badge, +1 count, for a script B
+  // never ran, and errors are sticky.
+  //
+  // `sender.tab` is Chrome's snapshot of the tab at message-dispatch
+  // time, so its `url` is the TOP-level URL the frame belonged to. If it
+  // no longer matches the document we're about to write, the tab moved
+  // on and the report is stale — log it (already done above) but keep it
+  // off the badge. Same-URL reloads slip through; they're indistinguishable
+  // without a parent-document id, which MessageSender doesn't carry.
+  // See TODO.md.
+  if (subFrame) {
+    const senderTopUrl = sender.tab?.url;
+    if (senderTopUrl && senderTopUrl !== state.url) return;
+  }
+  // The document we're writing to: the sender's own for a top-frame
+  // report (unchanged from before frames existed), the tab's current
+  // top-level one for a sub-frame error.
+  const targetDocId = subFrame ? state.documentId : senderDocId;
   const report: ActualStatus = type === SM_ERROR_MSG
     ? { state: 'error', name, message: String(payload.message ?? '') }
     : { state: 'started', name };

@@ -21,8 +21,9 @@ SourceMonkey actually does today.
   GM4 namespace covering the granted APIs with `gmDotName` plus
   `GM.info`.
 - **`src/wrapper-gm-runtime.js`** — USER_SCRIPT-world shared runtime
-  (`window.__SM_GM__`). Registered once per page at `document_start`
-  like the MAIN-world bridge. Provides:
+  (`window.__SM_GM__`). Registered once per frame at `document_start`
+  like the MAIN-world bridge — `allFrames` follows the active script
+  set, see [injection.md](injection.md#frames). Provides:
   - Shim cache of native references (Promise, Error, JSON.parse/
     stringify, etc.) — defends against sibling userscripts that
     monkey-patch builtins.
@@ -477,7 +478,8 @@ its own dispatch doesn't corrupt iteration.
 - **Iframe-of-same-tab broadcast skip.** The openers table dedupes
   by tabId, so a write in the main frame of tab T doesn't broadcast
   to other frames of T (the `tabId === excludeTabId` guard fires
-  for every frame in T). Each frame gets its own check-pending
+  for every frame in T). Reachable in practice now that scripts run
+  in sub-frames — see [TODO.md](../TODO.md). Each frame gets its own check-pending
   snapshot at load time; they're consistent at that moment and
   diverge on writes until each frame's next reload. Acceptable for
   now.

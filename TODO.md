@@ -163,10 +163,28 @@ left:
   red). Fixing it means tracking sub-frame navigations in the expected
   set, which brings its own false-MISSING problem for frames Chrome
   can't inject into.
+- **A sub-frame error can still land on the wrong document.** Frame
+  reports carry no parent-document id, so they're attributed to the
+  tab's current document, guarded by comparing `sender.tab.url`. A
+  reload to the same URL defeats the guard: the error from the old
+  document's frame lands on the new one (red badge, sticky). Closing it
+  needs a parent id we don't have — `chrome.webNavigation.getFrame` per
+  report would do it, at a round trip each.
 - **Per-frame `sm:check-pending` round trips.** Every frame's wrapper
   round-trips the SW on the document-start critical path. Fine at
   normal frame counts; a page with dozens of matching frames pays it
   per frame.
+- **`GM_setValue` doesn't broadcast between frames of one tab.** The
+  openers table dedupes by tabId, so a write in one frame never
+  reaches its siblings — documented before frames existed, reachable
+  now. See the *Iframe-of-same-tab broadcast skip* note in
+  [docs/GM-APIs.md](docs/GM-APIs.md). Fixing it means keying openers
+  by `(tabId, frameId)`, which is also what VM does.
+- **The shared helpers register at `<all_urls>` × all frames.** One
+  non-`@noframes` script is enough to put `wrapper-gm-runtime.js` into
+  every frame of every page the user visits. Narrowing to the union of
+  frame-running scripts' patterns would cut that, at the cost of a
+  more complex spec (especially with regex includes).
 
 ## Parse check — follow-ups
 

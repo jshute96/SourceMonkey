@@ -160,7 +160,7 @@ details live in the topic-specific docs linked below.
   as a fall-through for future catalog additions whose bodies
   haven't landed yet.
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
-  USER_SCRIPT-world helper registered once per page (alongside the
+  USER_SCRIPT-world helper registered once per frame (alongside the
   MAIN-world bridge). Installs `window.__SM_GM__` with per-subsystem
   helpers: storage cache + batched writes, DOM injection, clipboard,
   XHR start/abort with terminal-event dispatch, value-change

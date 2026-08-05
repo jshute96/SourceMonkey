@@ -1,5 +1,8 @@
-/* SourceMonkey GM_* shared runtime. Registered once per page in
+/* SourceMonkey GM_* shared runtime. Registered once per FRAME in
    USER_SCRIPT world at document_start, ahead of every userscript.
+   (One registration, but `allFrames` follows the active script set —
+   userscripts run in sub-frames too, and this installs a per-frame
+   global. See docs/injection.md#frames.)
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
    for every API the script @grants. Two delegation modes:
