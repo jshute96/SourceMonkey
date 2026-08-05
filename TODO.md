@@ -378,6 +378,32 @@ Adding any of these is a catalog entry + a body — nothing structural.
   asking the USER_SCRIPT-world runtime to insert a CSP-exempt copy,
   at the cost of the returned element no longer being the live one.
   TM/VM have the same limitation today.
+- **Frame-scope the remaining SW pushes.** `sm:gm-xhr-event` now goes
+  to `sender.frameId`, but `sm:gm-tab-closed`,
+  `sm:gm-notification-event` and `sm:gm-menu-fire` still go tab-wide,
+  and `sm:gm-value-update` is inherently tab-scoped (the openers table
+  keys on tabId). Harmless while nothing registers with `allFrames` —
+  the bridge only exists in the top frame — but the day `@noframes`
+  work turns that on, a MAIN-world script's events would be posted
+  into every subframe's realm. Needs a per-frame openers table.
+- **Gate `sm:start` over the bridge too.** It's what populates the
+  `gmOpeners` table, i.e. who receives value broadcasts. A forged one
+  can only name an id the page can already see, and the push relay is
+  world-gated, so there's no live hole — but `bridgeMayActAs` exists
+  now and applying it would close the shape rather than relying on id
+  entropy.
+- **Shim-cache `setTimeout` / `clearTimeout` in the GM runtime.** Every
+  other primitive it uses is captured at init; timers are still read
+  off the live global, which a MAIN-world page can replace. No impact
+  today (the runtime installs at `document_start`), just inconsistent
+  with the file's stated discipline.
+- **Bridge gate vs. matcher divergence.** `bridgeMayActAs` decides
+  whether a MAIN-world script may act by re-running our own
+  `url-match.ts` against the sender's URL, while Chrome decided
+  whether to inject with its matcher. A disagreement refuses a
+  legitimate script — fatal for a storage-granting one. Worth a
+  cheaper, divergence-proof signal (e.g. keying off the tab's recorded
+  `expected` set, or a per-document token minted at `sm:start`).
 - **MAIN-world storage flush at teardown.** A MAIN-world
   `GM_setValue` batch leaves as a postMessage the bridge relays in a
   later task, so a `pagehide` flush can be dropped where a

@@ -155,10 +155,12 @@ details live in the topic-specific docs linked below.
 - **GM_* binding emitter** (`src/gm-bindings.ts`) — pure compiler.
   Given a script's resolved grants + parsed header, returns the JS
   source spliced into the main-body wrap function at register time.
-  Emits real bodies for every catalog entry except `unsafeWindow`
-  (a passthrough binding); the `notImplemented` stub remains only
-  as a fall-through for future catalog additions whose bodies
-  haven't landed yet.
+  Emits real bodies for every catalog entry; `unsafeWindow` is a
+  `window` alias rather than a call (what makes it the page's window
+  is the execution world — see
+  [injection.md](injection.md#unsafewindow-forces-main-world)). The
+  `notImplemented` stub remains only as a fall-through for future
+  catalog additions whose bodies haven't landed yet.
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
   helper registered once per page **per execution world** that needs
   it. Installs `window.__SM_GM__` with per-subsystem helpers: storage

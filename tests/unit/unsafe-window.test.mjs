@@ -239,50 +239,106 @@ function makeSource(over = {}) {
 }
 
 test('collectActiveSpecs: an unsafeWindow + GM_* script asks for the MAIN runtime', async () => {
-  const { specs, gmRuntimeWorlds } = await collectActiveSpecs(
+  const { specs, gmRuntimeScope } = await collectActiveSpecs(
     [makeScript({ header: grantHeader('unsafeWindow', 'GM_setValue') })],
     new Map([['source-1', makeSource()]]),
   );
   assert.equal(specs.length, 1);
-  assert.deepEqual([...gmRuntimeWorlds], ['MAIN']);
+  assert.deepEqual([...gmRuntimeScope.keys()], ['MAIN']);
+  // Scoped to the script's own patterns, not <all_urls> — in MAIN the
+  // runtime is a page-visible global, so it goes only where its
+  // scripts go.
+  assert.deepEqual([...gmRuntimeScope.get('MAIN').matches], ['https://example.com/*']);
 });
 
 test('collectActiveSpecs: unsafeWindow alone needs no runtime anywhere', async () => {
-  const { gmRuntimeWorlds } = await collectActiveSpecs(
+  const { gmRuntimeScope } = await collectActiveSpecs(
     [makeScript({ header: grantHeader('unsafeWindow') })],
     new Map([['source-1', makeSource()]]),
   );
-  assert.deepEqual([...gmRuntimeWorlds], []);
+  assert.equal(gmRuntimeScope.size, 0);
 });
 
-test('collectActiveSpecs: both worlds can need the runtime at once', async () => {
-  const { gmRuntimeWorlds } = await collectActiveSpecs(
+test('collectActiveSpecs: both worlds can need the runtime at once, each with its own scope', async () => {
+  const { gmRuntimeScope } = await collectActiveSpecs(
     [
-      makeScript({ id: 's1', header: grantHeader('unsafeWindow', 'GM_addStyle') }),
-      makeScript({ id: 's2', header: grantHeader('GM_addStyle') }),
+      makeScript({
+        id: 's1',
+        header: grantHeader('unsafeWindow', 'GM_addStyle'),
+        matching: { matches: ['https://main.example/*'], excludes: [], includes: [] },
+      }),
+      makeScript({
+        id: 's2',
+        header: grantHeader('GM_addStyle'),
+        matching: { matches: ['https://iso.example/*'], excludes: [], includes: ['*://glob/*'] },
+      }),
     ],
     new Map([['source-1', makeSource()]]),
   );
-  assert.deepEqual([...gmRuntimeWorlds].sort(), ['MAIN', 'USER_SCRIPT']);
+  assert.deepEqual([...gmRuntimeScope.keys()].sort(), ['MAIN', 'USER_SCRIPT']);
+  assert.deepEqual([...gmRuntimeScope.get('MAIN').matches], ['https://main.example/*']);
+  assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').matches], ['https://iso.example/*']);
+  assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').includeGlobs], ['*://glob/*']);
 });
 
-test('buildGmRuntimeSpecs: one registration per requested world, distinct ids', () => {
-  assert.deepEqual(buildGmRuntimeSpecs(new Set()), []);
+test('collectActiveSpecs: the scope unions every script in the world', async () => {
+  const { gmRuntimeScope } = await collectActiveSpecs(
+    [
+      makeScript({
+        id: 's1',
+        header: grantHeader('unsafeWindow', 'GM_addStyle'),
+        matching: { matches: ['https://a.example/*'], excludes: [], includes: [] },
+      }),
+      makeScript({
+        id: 's2',
+        header: grantHeader('unsafeWindow', 'GM_setValue'),
+        matching: { matches: ['https://b.example/*'], excludes: [], includes: [] },
+      }),
+    ],
+    new Map([['source-1', makeSource()]]),
+  );
+  assert.deepEqual(
+    [...gmRuntimeScope.get('MAIN').matches].sort(),
+    ['https://a.example/*', 'https://b.example/*'],
+  );
+});
 
-  const userOnly = buildGmRuntimeSpecs(new Set(['USER_SCRIPT']));
+function scopeOf(matches, includeGlobs = []) {
+  return { matches: new Set(matches), includeGlobs: new Set(includeGlobs) };
+}
+
+test('buildGmRuntimeSpecs: one registration per requested world, distinct ids, scoped patterns', () => {
+  assert.deepEqual(buildGmRuntimeSpecs(new Map()), []);
+
+  const userOnly = buildGmRuntimeSpecs(new Map([
+    ['USER_SCRIPT', scopeOf(['https://x.example/*'])],
+  ]));
   assert.equal(userOnly.length, 1);
   assert.equal(userOnly[0].id, GM_RUNTIME_SCRIPT_ID);
   assert.equal(userOnly[0].world, 'USER_SCRIPT');
+  assert.deepEqual(userOnly[0].matches, ['https://x.example/*']);
 
-  const both = buildGmRuntimeSpecs(new Set(['MAIN', 'USER_SCRIPT']));
+  const both = buildGmRuntimeSpecs(new Map([
+    ['MAIN', scopeOf(['https://m.example/*'])],
+    ['USER_SCRIPT', scopeOf([], ['*://glob/*'])],
+  ]));
   assert.deepEqual(both.map((s) => s.world), ['USER_SCRIPT', 'MAIN']);
   assert.deepEqual(both.map((s) => s.id), [GM_RUNTIME_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID]);
   // Same source in both worlds — one implementation, two transports.
   assert.equal(both[0].js[0].code, both[1].js[0].code);
-  for (const s of both) {
-    assert.deepEqual(s.matches, ['<all_urls>']);
-    assert.equal(s.runAt, 'document_start');
-  }
+  // Glob-only scope emits includeGlobs and no matches.
+  assert.equal(both[0].matches, undefined);
+  assert.deepEqual(both[0].includeGlobs, ['*://glob/*']);
+  for (const s of both) assert.equal(s.runAt, 'document_start');
+});
+
+test('buildGmRuntimeSpecs: an empty scope still registers something Chrome accepts', () => {
+  // Unreachable in production (a script with no patterns never gets a
+  // spec), but a registration with neither `matches` nor
+  // `includeGlobs` is rejected — and one rejection takes the whole
+  // batch, and every GM_* call with it.
+  const [spec] = buildGmRuntimeSpecs(new Map([['MAIN', scopeOf([])]]));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
 });
 
 // ---------- the case that can't work ----------
@@ -353,4 +409,14 @@ test('generated wrappers: the bridge pushes back every SW-originated type the ru
     assert.ok(WRAPPER_GM_RUNTIME.includes(type), `runtime does not handle ${type}`);
     assert.ok(WRAPPER_BRIDGE.includes(type), `bridge does not push ${type}`);
   }
+});
+
+test('generated wrappers: the bridge relays a push only when it is addressed to MAIN', () => {
+  // Load-bearing, not a hint: re-posting a push makes its payload
+  // readable by the page, and these payloads carry an isolated
+  // script's stored values and cross-origin response bodies. Losing
+  // this check would be a silent data leak on any page that runs both
+  // a MAIN-world and a USER_SCRIPT-world script. The SW stamps the
+  // field (`pushWorld` in background.ts).
+  assert.match(WRAPPER_BRIDGE, /smWorld\s*!==\s*"MAIN"/);
 });

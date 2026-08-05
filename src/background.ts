@@ -23,6 +23,7 @@ import {
   findMatchesForUrl,
   installStorageListener,
   onCacheChanged,
+  scriptWorld,
   type MatchedScript,
 } from './match-index.js';
 import {
@@ -80,6 +81,7 @@ import {
   SM_GM_LOG_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
+  type InjectionWorld,
   type SyncScope,
 } from './injector.js';
 import {
@@ -1128,6 +1130,7 @@ async function dispatchActionMenuCommand(
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-menu-fire',
+      smWorld: pushWorld(scriptId),
       scriptId,
       commandId,
     });
@@ -1244,6 +1247,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (taken) {
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-tab-closed',
+      smWorld: pushWorld(taken.scriptId),
       requestId: taken.requestId,
     }).catch(() => undefined);
   }
@@ -2037,7 +2041,9 @@ async function handleXhrStart(
   if ('reason' in policy) {
     // Not `connectBlockedMessage`: we never got as far as reading the
     // script's rules, so blaming them would be wrong.
-    await sendXhrError(tabId, payload.id, gmXhrError(policy.reason));
+    await sendXhrError(
+      sender, tabId, payload.scriptId, payload.id, gmXhrError(policy.reason),
+    );
     return;
   }
   const initial = policy.check(payload.request.url);
@@ -2045,7 +2051,9 @@ async function handleXhrStart(
     // `denied` separates "the header forbids this host" from "that URL
     // never parsed" — only the first is the script's rules refusing.
     await sendXhrError(
+      sender,
       tabId,
+      payload.scriptId,
       payload.id,
       initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
     );
@@ -2061,11 +2069,17 @@ async function handleXhrStart(
     tabId,
   );
   try {
+    // Frame-scoped: the response body is the sensitive part of the API,
+    // and `chrome.tabs.sendMessage` with no frameId hands it to every
+    // frame in the tab. Only the frame that asked needs it. (Moot while
+    // nothing registers with `allFrames`, but it stops being moot the
+    // day something does.)
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
+      smWorld: pushWorld(payload.scriptId),
       id: payload.id,
       event,
-    });
+    }, senderFrameOptions(sender));
   } catch {
     // Sender tab closed or otherwise unreachable. Drop quietly —
     // there's nobody to deliver to.
@@ -2075,14 +2089,30 @@ async function handleXhrStart(
 // Ship a synthesized XHR error event back to the originating tab. Used
 // for @connect denials, which the userscript's onerror handles just
 // like a network failure.
-async function sendXhrError(tabId: number, id: string, message: string): Promise<void> {
+async function sendXhrError(
+  sender: chrome.runtime.MessageSender,
+  tabId: number,
+  scriptId: string,
+  id: string,
+  message: string,
+): Promise<void> {
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
+      smWorld: pushWorld(scriptId),
       id,
       event: { kind: 'error', message },
-    });
+    }, senderFrameOptions(sender));
   } catch { /* tab gone */ }
+}
+
+// Address a reply at the exact frame that sent the request, when Chrome
+// told us which one that was. Older senders (or a missing frameId) fall
+// back to the tab-wide send rather than dropping the message.
+function senderFrameOptions(
+  sender: chrome.runtime.MessageSender,
+): { frameId?: number } {
+  return typeof sender.frameId === 'number' ? { frameId: sender.frameId } : {};
 }
 
 // Load a script's `@connect` policy once and return a reusable
@@ -2171,6 +2201,7 @@ function installNotificationListeners(): void {
     if (!taken) return;
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-notification-event',
+      smWorld: pushWorld(taken.scriptId),
       requestId: taken.requestId,
       event: 'clicked',
     }).catch(() => undefined);
@@ -2180,6 +2211,7 @@ function installNotificationListeners(): void {
     if (!taken) return;
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-notification-event',
+      smWorld: pushWorld(taken.scriptId),
       requestId: taken.requestId,
       event: 'closed',
     }).catch(() => undefined);
@@ -2632,6 +2664,7 @@ async function broadcastValueUpdate(
       sent++;
       void chrome.tabs.sendMessage(tabId, {
         type: 'sm:gm-value-update',
+        smWorld: pushWorld(scriptId),
         scriptId,
         writes,
       }).catch(() => undefined);
@@ -2770,10 +2803,28 @@ async function bridgeMayActAs(
   const url = sender.url ?? sender.tab?.url;
   if (!url) return false;
   await ensureLoaded();
+  // URL-based, so this answers "could this script run here?" rather
+  // than "did it?". Frame-level gating (`@noframes`) isn't reflected.
   return findMatchesForUrl(url).some((m) => m.id === scriptId && m.world === 'MAIN');
 }
 
 const BRIDGE_DENIED = 'blocked: not a MAIN-world script running on this page';
+
+// Which world an SW->page push is addressed to. Every `chrome.tabs
+// .sendMessage` we aim at a userscript carries this as `smWorld`.
+//
+// It exists for `wrapper-bridge.js`, which re-posts pushes into MAIN
+// world so the MAIN copy of the GM runtime can hear them. That relay
+// makes the payload readable by the page, so it must fire only for
+// pushes addressed to a MAIN-world script — a page could otherwise read
+// an isolated script's stored values off a `sm:gm-value-update`, or its
+// cross-origin response body off a `sm:gm-xhr-event`, just by also
+// running any MAIN-world script on the same page.
+//
+// Unknown ids resolve to USER_SCRIPT so the bridge fails closed.
+function pushWorld(scriptId: string): InjectionWorld {
+  return scriptWorld(scriptId) ?? 'USER_SCRIPT';
+}
 
 function viaBridge(msg: unknown): boolean {
   return (msg as { __viaBridge?: unknown } | null)?.__viaBridge === true;
@@ -2801,12 +2852,21 @@ function guardBridgeCall(
     try { sendResponse({ ok: true }); } catch { /* receiver gone */ }
     return false;
   }
-  void bridgeMayActAs(scriptId, sender).then((allowed) => {
-    if (allowed) work();
-    try {
-      sendResponse(allowed ? { ok: true } : { ok: false, error: BRIDGE_DENIED });
-    } catch { /* receiver gone */ }
-  });
+  bridgeMayActAs(scriptId, sender).then(
+    (allowed) => {
+      if (allowed) work();
+      try {
+        sendResponse(allowed ? { ok: true } : { ok: false, error: BRIDGE_DENIED });
+      } catch { /* receiver gone */ }
+    },
+    (err) => {
+      // The gate itself failed (a chrome.storage read rejected). We
+      // returned true, so the channel stays open until we answer —
+      // answer, and don't run the work.
+      console.info('[SourceMonkey] bridge gate threw:', err);
+      try { sendResponse({ ok: false, error: BRIDGE_DENIED }); } catch { /* gone */ }
+    },
+  );
   return true;
 }
 

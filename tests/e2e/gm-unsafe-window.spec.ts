@@ -235,6 +235,82 @@ test.describe('@grant unsafeWindow', () => {
     expect(warning!.level).toBe('warn');
   });
 
+  test('a USER_SCRIPT-world script\'s value broadcast is not relayed into the page', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The bridge now re-posts SW pushes into MAIN world so the MAIN
+    // GM runtime can hear them. Those payloads carry real data — stored
+    // values here, cross-origin response bodies on the XHR path — so
+    // relaying indiscriminately would leak an isolated script's data to
+    // any page that happens to also run a MAIN-world script. The SW
+    // stamps each push with the destination script's world and the
+    // bridge relays only `smWorld === 'MAIN'`.
+    const SECRET = 'broadcast-canary-4b71';
+    scriptsDir.write({
+      relativePath: 'victim.user.js',
+      meta: {
+        name: 'BroadcastVictim',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue', 'GM_getValue'],   // USER_SCRIPT world
+      },
+      body: `
+        // Tab 2 records what it receives so we can prove the broadcast
+        // really happened (and only the relay was suppressed).
+        if (location.search.indexOf('writer') !== -1) {
+          GM_setValue('secret', '${SECRET}');
+        } else {
+          setInterval(() => {
+            document.body.dataset.smSeen = String(GM_getValue('secret', ''));
+          }, 100);
+        }
+      `,
+    });
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: {
+        name: 'MainSide',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow'],
+      },
+      body: `document.documentElement.dataset.smMain = '1';`,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    // Reader tab first, with a page-side tap on the bridge's push
+    // channel — this is what a hostile page would install.
+    const reader = await extensionContext.newPage();
+    await reader.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(reader.locator('html')).toHaveAttribute('data-sm-main', '1');
+    await reader.evaluate(() => {
+      const seen: unknown[] = [];
+      (window as unknown as { __PUSHES__: unknown[] }).__PUSHES__ = seen;
+      window.addEventListener('message', (ev) => {
+        const d = ev.data as { __sm?: string; payload?: unknown };
+        if (ev.source === window && d && d.__sm === 'sourcemonkey-bridge-push') seen.push(d.payload);
+      }, true);
+    });
+
+    // Writer tab triggers the cross-tab broadcast.
+    const writer = await extensionContext.newPage();
+    await writer.goto(`${fixtureServer.baseUrl}/${PAGE}?writer`);
+    await writer.waitForTimeout(600);
+
+    // The isolated script in the reader tab DID get the broadcast...
+    await expect(reader.locator('body')).toHaveAttribute('data-sm-seen', SECRET);
+    // ...but the page never saw it.
+    const pushes = await reader.evaluate(
+      () => JSON.stringify((window as unknown as { __PUSHES__: unknown[] }).__PUSHES__),
+    );
+    expect(pushes).not.toContain(SECRET);
+    expect(pushes).not.toContain('sm:gm-value-update');
+
+    await writer.close();
+    await reader.close();
+  });
+
   test('a page cannot drive GM_* for a USER_SCRIPT-world script through the widened bridge', async ({
     extensionContext, fixtureServer, sm,
   }) => {

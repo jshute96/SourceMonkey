@@ -346,7 +346,8 @@ fetch via the SW). Highlights:
   from MAIN world over the bridge; `@grant none` pages stay free of
   `__SM_GM__`; `@inject-into content` is isolated and warns; a
   page-forged bridge GM call for a USER_SCRIPT-world script is
-  refused.
+  refused; and an isolated script's cross-tab value broadcast is not
+  relayed into the page.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

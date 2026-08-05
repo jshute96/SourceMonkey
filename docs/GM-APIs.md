@@ -541,8 +541,14 @@ its own dispatch doesn't corrupt iteration.
   - USER_SCRIPT-world scripts request values over their own direct
     `chrome.runtime` path (no marker) and skip the gate entirely, so
     nothing legitimate is withheld.
-  - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts` and
-    the forged-GM-call case in `tests/e2e/gm-unsafe-window.spec.ts`.
+  - The push direction is gated symmetrically: `wrapper-bridge.js`
+    re-posts an SW push into MAIN world only when the SW stamped it
+    `smWorld: 'MAIN'`, so a page running any MAIN-world script can't
+    read an isolated script's `sm:gm-value-update` writes or
+    `sm:gm-xhr-event` response bodies off its own window.
+  - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts`, plus
+    the forged-GM-call and broadcast-relay cases in
+    `tests/e2e/gm-unsafe-window.spec.ts`.
 
 ## Clipboard (`GM_setClipboard`)
 

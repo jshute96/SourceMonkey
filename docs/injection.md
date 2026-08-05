@@ -582,11 +582,16 @@ whole `GM_*` surface works there too.
   arrive at the bridge on `chrome.runtime.onMessage`, which MAIN world
   can't listen on; the bridge re-posts them as
   `sourcemonkey-bridge-push`.
-- Registration is **per world and per need**: a world only gets the
-  runtime when some active script there grants an API that needs it.
-  `GM_info` (a baked literal) and `unsafeWindow` (a `window` alias)
-  don't, so an ordinary `@grant none` MAIN-world script still leaves no
-  `window.__SM_GM__` on the page.
+- Registration is **per world, per need, and per pattern**:
+  - A world only gets the runtime when some active script there grants
+    an API that needs it. `GM_info` (a baked literal) and
+    `unsafeWindow` (a `window` alias) don't, so an ordinary
+    `@grant none` MAIN-world script leaves no `window.__SM_GM__` on the
+    page.
+  - Its `matches` / `includeGlobs` are the union of those scripts' own,
+    not `<all_urls>`. In MAIN world the runtime is a page-visible
+    global — a fingerprint and an attack surface — so installing one
+    such script must not put it on every page the user visits.
 
 ##### Trust model
 
@@ -603,13 +608,31 @@ whole `GM_*` surface works there too.
   MAIN world on the sending frame's URL — i.e. only for scripts whose
   GM surface the page could already reach directly. It fails closed on
   an unknown id, a non-matching URL, or a missing sender URL.
+- The **return** direction needs the same discipline. A push the bridge
+  re-posts becomes readable by the page, and pushes carry real payloads
+  — a script's stored values on `sm:gm-value-update`, a cross-origin
+  response body on `sm:gm-xhr-event`. So the SW stamps every push with
+  the destination script's world (`pushWorld`, backed by
+  `scriptWorld` in the match index) and the bridge relays only
+  `smWorld === "MAIN"`. Unknown ids stamp as USER_SCRIPT, so it fails
+  closed.
 - Consequences: a page still cannot touch a USER_SCRIPT-world script's
   GM values (the pre-existing read-leak fix still holds — see
-  `tests/e2e/gm-storage-read-leak.spec.ts`), and cannot drive a
-  MAIN-world script scoped to some other site.
+  `tests/e2e/gm-storage-read-leak.spec.ts`), cannot read its broadcasts
+  or XHR responses just by running a MAIN-world script alongside it,
+  and cannot drive a MAIN-world script scoped to some other site.
 - `sm:gm-xhr-abort` and `sm:gm-tab-close` are deliberately ungated:
   they name a per-call random request id, not a script, and cancelling
   a request the page can already observe gains it nothing.
+- **Failing closed has a cost.** The gate decides "does this script
+  match this URL?" with our own matcher (`url-match.ts`), while Chrome
+  decided whether to inject with its. Where the two disagree, a
+  legitimate MAIN-world script would be refused. For a storage-granting
+  script that means no snapshot, which the GM prelude treats as fatal —
+  it reports `sm:error` and doesn't run the body. Loud rather than
+  silent, and the same matcher agreement the badge already depends on
+  (see [matching.md](matching.md)), but it is a new way for a
+  divergence to bite.
 
 ##### Costs of running in MAIN
 

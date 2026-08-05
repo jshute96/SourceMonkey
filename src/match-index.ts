@@ -292,6 +292,20 @@ export function cacheSize(): number {
   return cache.size;
 }
 
+// The execution world a script would be injected into, or null when the
+// id isn't in the injectable cache at all.
+//
+// Used by the SW to stamp every push it sends into a tab with the world
+// the receiving script lives in. `wrapper-bridge.js` re-posts pushes
+// into MAIN world, where the page can read them, so it must relay only
+// what is addressed to a MAIN-world script — otherwise an isolated
+// script's stored values and XHR response bodies would become
+// page-visible on any page that happens to also run a MAIN-world
+// script. Callers treat `null` as "not MAIN" (fail closed).
+export function scriptWorld(id: string): InjectionWorld | null {
+  return cache.get(id)?.world ?? null;
+}
+
 // Test/debug: dump the current cache contents. Lets e2e tests
 // distinguish "the script never landed in the cache" from "the URL
 // pattern doesn't match" when a badge classification looks wrong.

@@ -114,7 +114,8 @@
      Why MAIN world needs this at all: `@grant unsafeWindow` forces a
      script into MAIN (only there is `window` the page's window), and
      such scripts routinely also @grant storage / XHR / menus. Without
-     a MAIN transport they'd trade one broken API for six.
+     a MAIN transport, fixing unsafeWindow would break everything else
+     they use.
 
      Trust: in MAIN world the page can both READ our postMessages and
      FORGE both directions. That is inherent — the page shares the realm
@@ -130,7 +131,7 @@
      fails), so hitting this means the bridge never registered — a
      rejected Promise is what each caller's own error path expects. */
   var BRIDGE_TIMEOUT_MS = 30000;
-  var _bridgePending = null;   /* requestId -> {resolve, reject, timer} */
+  var _bridgePending = null;   /* requestId -> {resolve, timer} */
   var _bridgeSeq = 1;
   var _pushHandlers = [];
 
@@ -145,7 +146,7 @@
      listeners. Installed only in MAIN — in USER_SCRIPT world we have
      the real chrome.runtime channels. */
   function installBridgeListener() {
-    _bridgePending = _ObjectCreate(null);
+    var pending = _ObjectCreate(null);
     try {
       window.addEventListener("message", function (ev) {
         try {
@@ -158,14 +159,20 @@
           }
           if (d.__sm !== BRIDGE_REPLY_MARKER) return;
           if (typeof d.requestId !== "string") return;
-          var entry = _bridgePending[d.requestId];
+          var entry = pending[d.requestId];
           if (!entry) return;
-          delete _bridgePending[d.requestId];
+          delete pending[d.requestId];
           try { clearTimeout(entry.timer); } catch (_tE) {}
           entry.resolve(d.reply);
         } catch (_e) {}
       }, true);
-    } catch (_lE) {}
+    } catch (_lE) {
+      /* No listener means no reply can ever arrive. Leave
+         _bridgePending null so bridgeSend rejects immediately instead
+         of parking every call for the full timeout. */
+      return;
+    }
+    _bridgePending = pending;
   }
   if (!_sendMessage) installBridgeListener();
 
@@ -179,7 +186,7 @@
         delete _bridgePending[requestId];
         reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
       }, BRIDGE_TIMEOUT_MS);
-      _bridgePending[requestId] = { resolve: resolve, reject: reject, timer: timer };
+      _bridgePending[requestId] = { resolve: resolve, timer: timer };
       try {
         window.postMessage({ __sm: BRIDGE_MARKER, requestId: requestId, payload: payload }, "*");
       } catch (e) {
@@ -343,8 +350,16 @@
     }
     try {
       var p = transportSend({ type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites });
-      if (p && typeof p.catch === "function") {
-        p.catch(function (err) {
+      if (p && typeof p.then === "function") {
+        p.then(function (reply) {
+          /* A resolved promise isn't proof the write landed. The SW
+             answers {ok:true}; the MAIN-world bridge answers with a
+             generic fallback when the SW call failed, and the SW
+             answers {ok:false} when the bridge gate refused. Both
+             resolve, so check the payload or lose writes in silence. */
+          if (reply && reply.ok === true) return;
+          try { console.info("[SourceMonkey] storage flush not confirmed", scriptId, reply && reply.error); } catch (_e0) {}
+        }, function (err) {
           try { console.info("[SourceMonkey] storage flush rejected", scriptId, err && err.message); } catch (_e) {}
         });
       }

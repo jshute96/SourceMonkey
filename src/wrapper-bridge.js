@@ -92,7 +92,11 @@
   /* Payload types we relay page -> SW. Telemetry + the reload
      fast-path handshake, plus the SW-backed half of the GM_* surface
      that the MAIN-world runtime needs. Anything not listed is dropped,
-     so a page can't reach message handlers we never meant to expose. */
+     so a page can't reach message handlers we never meant to expose.
+
+     Adding a message type anywhere on the page side means adding it
+     here too. A missing entry is silent in the worst way: the call
+     works in USER_SCRIPT world and hangs until its timeout in MAIN. */
   var ALLOWED = [
     "sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending",
     "sm:gm-batch-write",
@@ -100,7 +104,12 @@
     "sm:gm-tab-open", "sm:gm-tab-close",
     "sm:gm-notification-show",
     "sm:gm-menu-register", "sm:gm-menu-unregister",
-    "sm:gm-log"
+    "sm:gm-log",
+    /* Generic envelope for async APIs that have no dedicated body yet
+       (the fall-through in gm-bindings.ts). Unreachable today — every
+       async catalog entry has its own message type — and listed so the
+       first one that isn't doesn't debug this from scratch. */
+    "sm:gm-call"
   ];
   /* Message types we relay SW -> page. These are pushes the SW sends
      unprompted via chrome.tabs.sendMessage; MAIN world has no
@@ -171,6 +180,16 @@
      Re-post them into the page so the MAIN-world copy of
      wrapper-gm-runtime.js can dispatch to the userscript's callbacks.
 
+     `smWorld === "MAIN"` is load-bearing, not a hint. Re-posting makes
+     the payload readable by the page, and these payloads carry real
+     data: a script's stored values on sm:gm-value-update, a
+     cross-origin response body on sm:gm-xhr-event. The SW stamps every
+     push with the world of the script it's addressed to (`pushWorld`
+     in background.ts) precisely so an isolated script's data never
+     crosses over just because some unrelated MAIN-world script also
+     runs on this page. Unknown ids are stamped USER_SCRIPT, so we fail
+     closed.
+
      Sender filter matches the runtime's own: our extension id, and no
      sender.tab (i.e. it came from the SW, not from another tab's
      content). Type allowlist keeps unrelated internal traffic — the
@@ -184,6 +203,7 @@
           if (!sender || sender.id !== _extensionId || sender.tab) return;
           if (!msg || typeof msg !== "object") return;
           if (PUSHED.indexOf(msg.type) === -1) return;
+          if (msg.smWorld !== "MAIN") return;
           window.postMessage({ __sm: PUSH_MARKER, payload: msg }, "*");
         } catch (_e3) {}
       });
