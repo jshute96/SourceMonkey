@@ -28,12 +28,49 @@ export const PARSE_SANDBOX_READY_MSG = 'sm:parse-sandbox-ready';
 // feature off instead of disabling every userscript the user has.
 export type ParseStatus = 'ok' | 'syntax-error' | 'unknown';
 
+// One location probe's answer, already in the coordinates of the
+// source that was checked — the sandbox removes its own framing before
+// reporting. Line and column are 1-based, as V8 reports them.
+export interface ParseProbeResult {
+  message: string;
+  line: number;
+  column: number;
+}
+
+// Both probes' answers, unselected. Choosing between them is
+// deliberately NOT done in the sandbox: it is the subtlest rule in the
+// feature, and a sandboxed classic script cannot be imported by the
+// unit suite. `selectParseLocation` in parse-location.ts decides, and
+// is tested directly.
+export interface ParseProbes {
+  wrapped?: ParseProbeResult;
+  raw?: ParseProbeResult;
+}
+
+// Where the error is, once a probe has been chosen and its line mapped
+// back through the segment list to the file that line was written in.
+export interface ParseLocation {
+  // The `@require` URL, or the script's own path.
+  file: string;
+  line: number;
+  column: number;
+}
+
 export interface ParseVerdict {
   status: ParseStatus;
-  // Present for `syntax-error` (V8's message about the whole compiled
-  // source — it reports no line, no column, and no file) and for
-  // `unknown` (whatever went wrong, for diagnostics only).
+  // Present for `syntax-error` (V8's message) and for `unknown`
+  // (whatever went wrong, for diagnostics only).
   message?: string;
+  // Wire only, sandbox → checker. Consumed by `attachParseLocation`,
+  // which replaces it with `location`; nothing downstream reads it.
+  probes?: ParseProbes;
+  // Derived by the checker, which is the only participant holding both
+  // the verdict and the segment list the line has to be mapped
+  // through. Absent when the probes couldn't place the error — V8
+  // landing on our own sentinel (the source ends mid-construct), or on
+  // the GM-bindings preamble, neither of which is a line the user
+  // wrote.
+  location?: ParseLocation;
 }
 
 // ---------- The test toggle ----------

@@ -96,6 +96,7 @@ import {
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
+import { describeParseError } from './parse-location.js';
 import { dlog } from './debug-log.js';
 import { dropRawView, putRawView } from './raw-view.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
@@ -879,7 +880,7 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
   if (verdict?.status !== 'syntax-error') return;
   appendPreviewWarning(
     `This script's code has a syntax error, so none of it would run: ` +
-    `${verdict.message ?? 'unknown'}. ${syntaxErrorOutcome()}`,
+    `${describeParseError(verdict)}. ${syntaxErrorOutcome()}`,
   );
 }
 

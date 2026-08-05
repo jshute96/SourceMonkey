@@ -362,6 +362,11 @@ clicking Install.
 - **Warns, doesn't block.** Install stays live. A missing `@match`
   means the file isn't an installable userscript at all; a syntax error
   is a property of code the user may well intend to install and fix.
+- **Says where**, when it can: the message is followed by the file the
+  error is in — a `@require`'s URL or the script's own path — plus a
+  line and column within that file. Same wording as the `invalid` row's
+  message, via `describeParseError`, so the preview and the row can't
+  describe one verdict two ways.
 - The warning is appended below the install/installed banner rather
   than replacing it — both facts are true and belong on screen
   together. It renders after `wireInstallButtons` resolves, because

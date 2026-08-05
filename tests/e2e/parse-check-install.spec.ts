@@ -82,6 +82,70 @@ test.describe('parse check at install time', () => {
     expect(scripts[0].errorMessage).toMatch(/already been declared/i);
   });
 
+  test('the error names the @require it is in, and the line', async ({ sm }) => {
+    // The point of the whole location machinery. The reported line is
+    // a line of the CONCATENATED program, which is not a file anyone
+    // can open; this asserts it comes back as a line of the library
+    // the user would actually go and edit.
+    fs.writeFileSync(
+      path.join(scriptsDir.path, 'lib.js'),
+      'function ok() {\n  return 1;\n}\nlet broken = ;\n',
+    );
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'BadRequire', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'ok();',
+    });
+    const scripts = await installAndRead(sm);
+    expect(scripts[0].status).toBe('invalid');
+    expect(scripts[0].errorMessage).toMatch(/lib\.js/);
+    expect(scripts[0].errorMessage).toMatch(/line 4\b/);
+  });
+
+  test('the error names the script itself when the body is at fault', async ({ sm }) => {
+    // The no-`@require` layout, where the composed program is just the
+    // body behind our preamble. Line 1 is the `// ==UserScript==`
+    // marker, so a body error's line is offset by the whole header —
+    // getting this wrong by even one line would be invisible without a
+    // case that has a real header in front of it.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'BadBody', match: ['https://example.com/*'] },
+      body: 'var a = 1;\nvar b = 2;\nlet c = ;\n',
+    });
+    const scripts = await installAndRead(sm);
+    expect(scripts[0].status).toBe('invalid');
+    expect(scripts[0].errorMessage).toMatch(/main\.user\.js/);
+    // Header + body: the `let c = ;` line, counted in the file the
+    // user opens rather than in the program we built.
+    const source = fs.readFileSync(path.join(scriptsDir.path, 'main.user.js'), 'utf8');
+    const expected = source.split('\n').findIndex((l) => l.includes('let c = ;')) + 1;
+    expect(expected).toBeGreaterThan(1);
+    expect(scripts[0].errorMessage).toMatch(new RegExp(`line ${expected}\\b`));
+  });
+
+  test('a collision is blamed on the file that redeclares, not the first one', async ({ sm }) => {
+    // Attribution across two `@require`s. V8 reports the duplicate at
+    // the SECOND declaration, so the location has to resolve into
+    // b.js — naming a.js would send the user to the innocent file.
+    fs.writeFileSync(path.join(scriptsDir.path, 'a.js'), 'const shared = 1;\n');
+    fs.writeFileSync(path.join(scriptsDir.path, 'b.js'), '// pad\nconst shared = 2;\n');
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: {
+        name: 'Collide',
+        match: ['https://example.com/*'],
+        extra: ['// @require     a.js', '// @require     b.js'],
+      },
+      body: 'void shared;',
+    });
+    const scripts = await installAndRead(sm);
+    expect(scripts[0].status).toBe('invalid');
+    expect(scripts[0].errorMessage).toMatch(/b\.js/);
+    expect(scripts[0].errorMessage).not.toMatch(/a\.js/);
+    expect(scripts[0].errorMessage).toMatch(/line 2\b/);
+  });
+
   test('a healthy script with @requires stays ok', async ({ sm }) => {
     // The accept side. A false rejection here disables working code,
     // so this is the case that must never regress.

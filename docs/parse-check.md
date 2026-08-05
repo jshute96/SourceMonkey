@@ -36,6 +36,15 @@ that may.
 
 - A sandboxed page has an opaque origin and no `chrome.*`, so the only
   thing that can talk to it is whoever embeds it, over `postMessage`.
+- Its CSP also allows `'unsafe-inline'`, which the location probes need
+  to insert a `<script>` at all. That is Chrome's own default for
+  sandboxed pages; our manifest had narrowed past it.
+- `'unsafe-inline'` **does** grant something `'unsafe-eval'` doesn't —
+  inline `<script>` execution. What makes that cost nothing here is an
+  invariant, not the opaque origin: **nothing in the sandbox page ever
+  writes HTML.** The only DOM write is `el.textContent = text`, so
+  there is no injection sink for the new grant to reach. A future edit
+  that reaches for `innerHTML` is what would break it.
 - **Anything with a DOM can be that embedder.** `parse-sandbox-host.ts`
   is the shared driver: readiness, correlation ids, timeouts, verdict
   validation, circuit breaker.
@@ -236,20 +245,131 @@ create a second one.
 The document is created lazily on the first check and never closed, so
 it holds a renderer process for the session.
 
+## Locating the error
+
+The verdict says *whether*; a second step says *where*. They are
+separate on purpose — only the verdict can disable a script, and
+nothing about locating it may change that.
+
+### Why it takes a second compile
+
+- `new Function` reports **no position at all** — not in the message,
+  not in `err.stack`, which stops at `at new Function (<anonymous>)`.
+- Chrome *does* report one when a classic `<script>` fails to parse:
+  the window `error` event carries `lineno` and `colno`.
+- So on `syntax-error` only, the sandbox compiles the same text again
+  as a `<script>` purely to find out where.
+
+### Why that does not run the script
+
+Appending a `<script>` normally executes it. Each probe therefore ends
+with an unmatched `(`:
+
+- An **opener** cannot be closed — nothing follows it. A closing `}` or
+  `)` would be closed *by* whatever the source left dangling; appending
+  `}` to a source ending in `if (1) {` yields a valid program, and it
+  runs.
+- The leading newline matters: without it, a source whose last line is
+  a `//` comment swallows the sentinel.
+- A parse failure aborts the whole script **before evaluation begins**,
+  so not one statement runs.
+- V8 reports the *first* error, so the sentinel never masks a real one.
+  It only speaks when the source had nothing to say — which makes it a
+  tripwire too.
+
+`preventDefault()` on the error event is required, not cosmetic: an
+uncaught error in an extension context is forwarded into
+`chrome://extensions/?errors`. See CLAUDE.md.
+
+### Why there are two probes
+
+Neither framing is faithful alone:
+
+- **wrapped** (`function __smParseProbe__() { … }`) reproduces
+  `new Function`'s semantics exactly, so a top-level `return` stays
+  legal — as it is in the entry we inject. But a source with unbalanced
+  braces swallows the wrapper's closing `}`, and the parse runs on to a
+  later, different error.
+- **raw** has no wrapper to swallow, so it places a stray or missing
+  brace exactly. But it is a *Script*, where a top-level `return` is an
+  error V8 would never have raised for real.
+
+`selectParseLocation` (`src/parse-location.ts`) picks between them, and
+the verdict's own message is the discriminator. `new Function` is
+*itself* a wrapper, so it shares the wrapped probe's blind spot:
+
+- **messages agree** → the wrapper probably held; trust the wrapped
+  probe, subject to the range check below.
+- **messages disagree** → both wrappers were escaped; only the raw
+  probe describes the real structure.
+
+Agreement is suggestive, not proof. After escaping the wrapper the
+wrapped probe hits the closing `}` *we* appended and reports
+`Unexpected token '}'` — the same text a stray `}` produces for the
+verdict. So the two can agree while the wrapper was escaped after all.
+
+- The tell is **range**: a wrapped probe that truly held lands inside
+  the source, or on the sentinel if the source is unterminated.
+- Landing outside while the raw probe lands *inside* proves the source
+  is not unterminated, so the out-of-range answer is escape fallout and
+  the raw probe is taken instead.
+- There is no fallback the other way. A wrapped probe that disagreed is
+  describing a different parse of a different program — not a second
+  opinion about this error.
+
+A further filter applies to the raw probe: it is a *Script*, so it can
+raise `Illegal return statement` and `new.target expression is not
+allowed here`, which `new Function` never can. Either one proves it
+stopped at code that is legal in the real entry, so its answer is
+discarded rather than shown. (Those two are the whole list —
+`Illegal break statement` and `'super' keyword unexpected here` read
+the same from both framings.)
+
+The chosen probe supplies the message *and* the line, except that a
+winning wrapped probe reports the *verdict's* message — identical by
+construction, and guaranteed free of the DOM prefix. Pairing one
+compile's message with another's position is how you get
+`Unexpected token 'var'` pointing at a line containing no `var`.
+
+### Mapping back to a file
+
+The reported line is a line of the composed program, which is not a
+file anyone can open. `buildParseCheckSource` returns the same
+`MappedSegment[]` the source map is built from, and
+`lookupGeneratedLine` turns the line into a file plus a line within it
+— the machinery the Log tab's stack refs already use.
+
+- Columns pass through unchanged: composition only moves whole lines.
+- A line no segment covers is ours (the GM-bindings preamble, a seam),
+  so the position is dropped rather than blamed on the user's file.
+- A position outside the checked text is the sentinel — the source ends
+  mid-construct — so it is reported as the message alone.
+
 ## Limits
 
-- **No line or column.** V8 reports neither for a `new Function`
-  `SyntaxError` — not in the message, not in the stack. The message
-  alone is what we surface.
-- **No file attribution yet.** "The script's source has a syntax error"
-  does not say whether it was a `@require` or the body.
+- **A brace imbalance is placed at the brace, not always at its
+  cause.** See TODO.md.
+- **A top-level `return` above a brace imbalance loses its position
+  entirely** — neither probe can describe it honestly. The message
+  still says what's wrong. See TODO.md.
 - **Parse errors only.** A library that parses and throws when it runs
   is unaffected; running it is exactly what this must not do.
 
 ## Testing
 
 - `tests/e2e/parse-check.spec.ts` — the mechanism, including
-  compile-without-execute and function-body-not-program.
+  compile-without-execute and function-body-not-program, and the
+  location probes: that they place an error, and that they never run
+  the source they place.
+- `tests/unit/parse-location.test.mjs` — probe selection and line
+  mapping, driven by positions Chromium really reported. The selection
+  rule lives in a plain module precisely so it can be tested here
+  rather than only through a browser.
+- `tests/bad-examples/` — installable by hand, one file per route
+  through the location logic (body, `@require`, swallowed brace,
+  swallowed brace at end of file, join-only collision, unterminated
+  construct). Add the directory as a source to see the real messages;
+  `bad-scripts.spec.ts` pins them.
 - `tests/e2e/parse-check-install.spec.ts` — what a user sees.
 - `tests/e2e/parse-check-pages.spec.ts` — the page-driven paths, via
   the real Install / Refresh / Refresh All buttons.

@@ -209,7 +209,8 @@ details live in the topic-specific docs linked below.
 - [parse-check.md](parse-check.md) — compiling a script's source
   without running it, at install time, so a syntax error shows up next
   to the script instead of at injection time; why it needs a sandboxed
-  page, and why it fails open.
+  page, why it fails open, and how the error is traced back to a line
+  of the `@require` or body it was written in.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display

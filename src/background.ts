@@ -38,6 +38,7 @@ import { installDeepLinkRedirect } from './deep-link.js';
 import { installUserJsCapture } from './install-capture.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
+import { attachParseLocation } from './parse-location.js';
 import {
   isParseCheckDisabled,
   setParseCheckDisabled,
@@ -2117,8 +2118,12 @@ const compileParseChecker: ParseChecker = async (script) => {
   if (await isParseCheckDisabled()) return null;
   parseCheckRuns++;
   const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
-  const verdicts = await checkParses([source]);
-  return verdicts ? verdicts[0] : null;
+  const verdicts = await checkParses([source.text]);
+  // Same resolution the page checker does, through the same helper —
+  // the two routes differ only in transport, and a verdict that named
+  // a different file depending on which context ran the check would be
+  // a bug nobody would think to look for.
+  return verdicts ? attachParseLocation(verdicts[0], source) : null;
 };
 setParseChecker(compileParseChecker);
 

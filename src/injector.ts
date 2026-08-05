@@ -78,11 +78,13 @@ import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindi
 import {
   buildSourceMap,
   inlineSourceMapComment,
+  type MappedSegment,
 } from './source-map.js';
 import {
   USER_SOURCE_START_LINE,
   composeRequiredBody,
   composeSource,
+  countLines,
 } from './composed-source.js';
 import {
   BRIDGE_SOURCE_URL,
@@ -540,15 +542,70 @@ function buildMainWorldGmInfoOnly(
 // prefixed, so the practical risk is negligible; the run-time seal
 // entry still reports it. Closing it properly means compiling with the
 // parameter name and the preamble included — see TODO.md.
+//
+// Returns provenance alongside the text. A syntax error is reported as
+// a line in the COMPOSED program, which is not a line of any file the
+// user has open — `segments` is what maps it back, using the same
+// machinery the source map and the Log tab's stack refs already share.
+// See src/parse-location.ts.
+export interface ParseCheckSource {
+  text: string;
+  // Which original file each generated line came from. `url` here is
+  // the require's real URL (or the script's path) rather than a
+  // synthetic `sourcemonkey://` one: this list is read by us, to name
+  // a file in a sentence, not by devtools.
+  segments: MappedSegment[];
+  // Lines in `text`. A reported position outside it isn't the user's
+  // code — see the sentinel note in parse-sandbox.ts.
+  lineCount: number;
+}
+
 export async function buildParseCheckSource(
   script: StoredScript,
   scriptHandlerVersion: string,
-): Promise<string> {
+): Promise<ParseCheckSource> {
   const world = resolveWorld(script.header);
   const gmEmit = world === 'USER_SCRIPT'
     ? await buildGmBindingsForScript(script, scriptHandlerVersion)
     : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
-  return gmEmit.js + '\n' + composeRequiredBody(script);
+  // The preamble always occupies at least one WHOLE line, even when
+  // `gmEmit.js` is empty, and two things rest on that:
+  //
+  //   - The user's first line is never at offset 0. A `#!` hashbang is
+  //     legal only there, so it stays the syntax error it also is in
+  //     the real injected entry (which likewise wraps the source), and
+  //     the location probes can't be handed a source that parses as a
+  //     shebang script.
+  //   - The offset below is derived from what was actually emitted
+  //     rather than assumed to be 1 — the same discipline
+  //     `composeSource` applies internally, and for the same reason:
+  //     assumed line counts drift from emitted ones.
+  const preamble = gmEmit.js + '\n';
+  const startLine = countLines(preamble) - 1;
+  const requires = script.requires ?? [];
+  const composed = composeSource(script, {
+    requireUrls: requires.map((r) => r.url),
+    mainUrl: script.relativePath,
+    startLine,
+  });
+  return {
+    text: preamble + composed.text,
+    // `composeSource` emits no segments for a script with no
+    // `@require`s — the viewer keys "pass stack refs through unmapped"
+    // off exactly that, so it stays as it is. Here the opposite is
+    // wanted: one segment for the body means every reported line
+    // resolves through the same lookup, with no second code path for
+    // the majority of scripts.
+    segments: composed.segments.length > 0
+      ? composed.segments
+      : [{
+          url: script.relativePath,
+          content: composed.text,
+          generatedLine: startLine,
+          lineCount: composed.lineCount,
+        }],
+    lineCount: startLine + composed.lineCount,
+  };
 }
 
 // Build the body string for the reload-fast-path swap eval. Prepends

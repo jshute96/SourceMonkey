@@ -24,12 +24,24 @@ interface ParseRequest {
   sources: string[];
 }
 
+interface ParseProbeResult {
+  message: string;
+  line: number;
+  column: number;
+}
+
+interface ParseProbes {
+  wrapped?: ParseProbeResult;
+  raw?: ParseProbeResult;
+}
+
 interface ParseVerdict {
   status: 'ok' | 'syntax-error' | 'unknown';
   // V8 gives no line or column for a `new Function` SyntaxError —
   // not in the message, not in the stack — so this is the message
-  // alone.
+  // alone. `probes` is where the position comes from.
   message?: string;
+  probes?: ParseProbes;
 }
 
 // `new Function` compiles the body and returns; it never runs it. A
@@ -56,8 +68,116 @@ function checkOne(source: string): ParseVerdict {
     //     would be branded broken at once. That is the exact outcome
     //     the design says cannot happen.
     if (!(err instanceof SyntaxError)) return { status: 'unknown', message };
-    return { status: 'syntax-error', message };
+    return { status: 'syntax-error', message, probes: locate(source) };
   }
+}
+
+// ---------- Finding out WHERE ----------
+//
+// `new Function` answers "does this parse?" and nothing else: no line,
+// no column, not even a position in `err.stack`, which stops at
+// `at new Function (<anonymous>)`. V8 does report a position when a
+// classic `<script>` fails to parse — the window `error` event carries
+// `lineno` and `colno` — so once the verdict is in we compile the same
+// text a second way, purely to locate the error it already found.
+//
+// **Appending a `<script>` normally runs it.** What keeps this
+// compile-only is the sentinel below, not luck; see `PROBE_SENTINEL`.
+//
+// Two probes, because neither framing is faithful on its own:
+//
+//   - **wrapped** reproduces `new Function`'s semantics exactly — the
+//     text is a function body, so a top-level `return` is legal, as it
+//     is in the entry we actually inject. Its weakness is that a
+//     source with unbalanced braces swallows the wrapper's closing
+//     `}`, and the parse then runs on to a later, different error.
+//   - **raw** has no wrapper to swallow, so it places a stray or
+//     missing brace exactly — but it is a *Script*, where a top-level
+//     `return` is an error V8 would never have raised for real.
+//
+// The caller picks. See `selectParseLocation` in parse-location.ts.
+function locate(source: string): ParseProbes | undefined {
+  try {
+    return {
+      wrapped: runProbe(`${WRAPPER_HEAD}${source}${WRAPPER_TAIL}${PROBE_SENTINEL}`, 1),
+      raw: runProbe(`${source}${PROBE_SENTINEL}`, 0),
+    };
+  } catch {
+    // Locating is a nicety; the verdict is the product. Never let a
+    // DOM failure here turn a usable `syntax-error` into a throw.
+    return undefined;
+  }
+}
+
+// An unmatched OPENER, appended to whatever we compile, so the probe
+// script can never parse — and therefore can never execute a single
+// statement, since a parse failure aborts the whole script before
+// evaluation begins.
+//
+// It has to be an opener. A closing `}` or `)` would be *closed by*
+// whatever the source left dangling: appending `}` to a source ending
+// in `if (1) {` produces a valid program, and it runs. An opener at
+// end of input has nothing after it to close it.
+//
+// The leading newline matters too — without it a source whose last
+// line is a `//` comment swallows the sentinel.
+//
+// V8 reports the FIRST error it hits, so a real error in the source is
+// still the one reported; the sentinel only speaks when the source had
+// nothing to say. A probe that comes back with NO error at all would
+// therefore mean the sentinel failed to do its job and the source ran —
+// so it reports no position, and `selectParseLocation` simply has one
+// fewer probe to choose from.
+const PROBE_SENTINEL = '\n(';
+const WRAPPER_HEAD = 'function __smParseProbe__() {\n';
+const WRAPPER_TAIL = '\n}';
+
+// Compile `text` as a classic script and report where it failed.
+// `lineOffset` is how many lines of our own framing precede the
+// source, so the caller gets source coordinates back.
+function runProbe(text: string, lineOffset: number): ParseProbeResult | undefined {
+  let hit: ParseProbeResult | undefined;
+  const onError = (event: ErrorEvent): void => {
+    hit = {
+      // `event.error.message` is the clean one; `event.message` has
+      // "Uncaught SyntaxError: " in front of it as well.
+      message: stripDomPrefix(event.error instanceof Error ? event.error.message : event.message),
+      line: event.lineno - lineOffset,
+      column: event.colno,
+    };
+    // Marks the error handled, which is what stops Chrome reporting it
+    // as an uncaught page error — and an uncaught error in an
+    // extension context is forwarded into chrome://extensions/?errors,
+    // making SourceMonkey look broken when it is working exactly as
+    // designed. Verified: without this the error surfaces, with it the
+    // console stays clean. See CLAUDE.md.
+    event.preventDefault();
+  };
+  window.addEventListener('error', onError);
+  const el = document.createElement('script');
+  el.textContent = text;
+  try {
+    // The parse — and the `error` event it fires — both happen
+    // synchronously inside this call, which is why `hit` is readable
+    // immediately after it and no async plumbing is needed.
+    document.body.append(el);
+  } finally {
+    el.remove();
+    window.removeEventListener('error', onError);
+  }
+  return hit;
+}
+
+// Inserting the script means the SyntaxError arrives wrapped in the
+// DOM method that raised it: "Failed to execute 'append' on 'Element':
+// Unexpected token ';'". Strip it so the message we may end up showing
+// is about the user's code and not about our insertion trick. Matched
+// loosely rather than by exact string so a different insertion method
+// (or wording) degrades to a cosmetic prefix rather than a wrong
+// message — and `selectParseLocation` compares with `endsWith`, so an
+// unstripped prefix still matches.
+function stripDomPrefix(message: string): string {
+  return message.replace(/^Failed to execute '[^']*' on '[^']*': /, '');
 }
 
 window.addEventListener('message', (event: MessageEvent) => {

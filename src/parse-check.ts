@@ -14,9 +14,11 @@
 // into an `invalid` status on the sources page, next to the script,
 // the moment it is added or refreshed.
 //
-// It still does not say WHICH file was at fault — the message is V8's,
-// about the whole composed program. Naming the file means compiling
-// the pieces separately as well; see TODO.md.
+// The verdict is about the whole composed program, so on its own it
+// says nothing about WHERE. The sandbox answers that separately, by
+// compiling the same text a second way to get a line and column out of
+// V8, and `parse-location.ts` maps that line back to the `@require`
+// (or the body) it was written in.
 //
 // This is the SERVICE WORKER's route to the sandbox. Extension pages
 // have a DOM and embed their own sandbox frame instead — see
