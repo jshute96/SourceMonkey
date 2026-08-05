@@ -234,7 +234,7 @@ alone. Where GM4 re-cased a name, the API gets a second property so
 both spellings work — `GM.xmlHttpRequest` *and* `GM.xmlhttpRequest`,
 `GM.getResourceUrl` *and* `GM.getResourceURL`. The rationale and the
 TM/VM comparison are in
-[supported-GM-APIs.md → Granting](supported-GM-APIs.md#the-two-gm-spellings).
+[supported-GM-APIs.md → Granting](supported-GM-APIs.md#the-re-cased-gm-spellings).
 
 ## Storage (`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`)
 

@@ -237,11 +237,17 @@ export function getValues(header: ParsedHeader, tag: string): string[] {
 
 // Map of locale → value for tags like `@name:de`. Excludes the
 // unlocalized form.
+//
+// First declaration wins for a repeated locale, so this matches
+// `getValue`'s "first non-localized value" rule. It matters now that
+// locales are case-folded: `@name:ZH-CN` followed by `@name:zh-cn` is
+// a genuine duplicate rather than two keys.
 export function getLocalized(header: ParsedHeader, tag: string): Record<string, string> {
   const t = tag.toLowerCase();
   const out: Record<string, string> = {};
   for (const e of header.tags) {
-    if (e.tag === t && e.locale !== undefined) out[e.locale] = e.value;
+    if (e.tag !== t || e.locale === undefined) continue;
+    if (!Object.prototype.hasOwnProperty.call(out, e.locale)) out[e.locale] = e.value;
   }
   return out;
 }

@@ -125,7 +125,12 @@ function peelTrailingPunctuation(raw: string): { url: string; trailing: string }
 export interface ParsedTagLine {
   before: string;   // start of line through the gap after the tag (e.g. "// @match     ")
   tag: string;      // lowercased canonical tag, no locale (e.g. "match")
-  locale?: string;  // locale suffix when present (e.g. "de" for @name:de)
+  // Locale suffix when present (e.g. "de" for @name:de), verbatim.
+  // Deliberately NOT lowercased the way `parseHeader` lowercases it:
+  // this parser exists to rebuild the source line for display, so
+  // every segment has to round-trip byte-for-byte. Don't use it as a
+  // lookup key — `src/userscript-header.ts` owns the normalized form.
+  locale?: string;
   value: string;    // raw value text, no trailing whitespace
   after: string;    // trailing whitespace
 }

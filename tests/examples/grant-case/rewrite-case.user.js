@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        SourceMonkey example: @grant casing (GM4 GM. forms)
+// @name        SourceMonkey example: @grant casing (GM. prefix-rewrite forms)
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @version     1.0.0
 // @description Grants the GM. prefix-rewrite spellings instead of the GM4 ones.
@@ -37,9 +37,9 @@
   const log = document.getElementById('log');
   if (log) {
     const li = document.createElement('li');
-    li.dataset.script = 'gm4-case';
+    li.dataset.script = 'rewrite-case';
     li.dataset.probe = JSON.stringify(probe);
-    li.textContent = '[gm4-case] ' + JSON.stringify(probe);
+    li.textContent = '[rewrite-case] ' + JSON.stringify(probe);
     log.appendChild(li);
   }
 

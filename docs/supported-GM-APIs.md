@@ -63,9 +63,9 @@ resolve to nothing.
   mean GM_xmlhttpRequest?)`. TM's built-in editor lints the same
   mistake as `'X' is not a valid @grant argument`.
 
-### The two `GM.` spellings
+### The re-cased `GM.` spellings
 
-Two APIs answer to a second `GM.` name, because GM4 re-cased them:
+Where GM4 re-cased a name, the API answers to a second `GM.` spelling:
 
 | API | GM4 spelling | Prefix-rewrite spelling |
 |-----|--------------|-------------------------|
@@ -74,23 +74,36 @@ Two APIs answer to a second `GM.` name, because GM4 re-cased them:
 
 Why we accept the right-hand column:
 
-- VM resolves `GM.foo` by consulting a two-entry alias table and
+- VM resolves `GM.foo` by consulting a small alias table and
   otherwise rewriting the name to `'GM_' + foo` verbatim, so both
   spellings work there. TM accepts only the GM4 spelling.
 - Real scripts rely on it. In the GreasyFork top-2000 corpus three
   scripts grant `GM.xmlhttpRequest`, and one of them grants nothing
   else — under exact-GM4-only matching it is dead on arrival.
+- `GM.getResourceURL` has no corpus hits. It falls out of the same VM
+  rule, and excluding it would be an arbitrary exception.
 - Every other API's GM4 name is just its legacy name minus `GM_`, so
   the two columns collapse and there is only ever one spelling.
 
-Granting either spelling exposes both, along with the legacy `GM_x`.
-That mirrors TM, where one boolean gates an API's whole alias group;
-VM instead defines only the exact spelling the script wrote. We also
-don't reproduce VM's quirk where the rewrite spelling loses its
-Promise wrapper — our spellings behave identically.
+**Granting either spelling exposes both**, along with the legacy
+`GM_x`:
+
+- The model is TM's — one boolean gates an API's whole alias group.
+  VM instead defines only the exact spelling the script wrote.
+- But TM's group for `GM_xmlhttpRequest` does *not* contain
+  `GM.xmlhttpRequest`, so we are a **strict superset of both**.
+- Portability cost, stated plainly: a script that grants
+  `GM_xmlhttpRequest` and calls `GM.xmlhttpRequest` works here and
+  nowhere else. That's the same trap the byte-exact rule above guards
+  against, accepted here because the alternative is plumbing the raw
+  granted spelling all the way to the emitter.
+- We do not reproduce VM's quirk where the rewrite spelling loses its
+  Promise wrapper — our spellings behave identically.
 
 `tests/examples/grant-case/` demonstrates all of this against a live
-page, and runs under other managers for comparison.
+page. Its prefix-rewrite assertions are skipped under Tampermonkey,
+which rejects those grants — see
+[cross-manager-test-results.md](cross-manager-test-results.md).
 
 ---
 
@@ -284,7 +297,7 @@ strict `Content-Security-Policy: script-src 'self'`.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Also answers to `GM.xmlhttpRequest` (see [Granting](#the-two-gm-spellings)). Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; events (`load`, `error`, `timeout`, `abort`) are shipped back to the originating tab. |
+| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Also answers to `GM.xmlhttpRequest` (see [Granting](#the-re-cased-gm-spellings)). Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; events (`load`, `error`, `timeout`, `abort`) are shipped back to the originating tab. |
 
 ### XHR details object
 
@@ -703,7 +716,7 @@ baked into the per-script wrapper. See
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_getResourceText` / `GM.getResourceText` | ✅ | ✓ | ✓ | ✓ | UTF-8 decode on demand. Returns `undefined` for an unknown name. Binary resources still decode (mojibake-tolerant); use `GM_getResourceURL` instead. |
-| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type. Same URL on repeat calls for one name. GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form; `GM.getResourceURL` also resolves (see [Granting](#the-two-gm-spellings)). |
+| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type. Same URL on repeat calls for one name. GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form; `GM.getResourceURL` also resolves (see [Granting](#the-re-cased-gm-spellings)). |
 
 ---
 

@@ -363,13 +363,19 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
 function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
   const props: string[] = [];
   for (const spec of grantedSpecs) {
-    if (!spec.gmDotName) continue;
-    if (spec.subsystem === 'unsafe-window') continue;
+    // Gate on the same helper the catalog index is built from, NOT on
+    // `gmDotName`. The two must agree: anything reachable as a `GM.x`
+    // grant has to be bound as a `GM.x` property, or a script that
+    // successfully granted the name gets `undefined is not a function`.
+    // `gmDotSpellings` returns [] for `unsafeWindow` (no `GM_` prefix,
+    // no GM4 alias), which is why there's no separate check for it.
+    const dots = gmDotSpellings(spec);
+    if (dots.length === 0) continue;
     if (spec.name === 'GM_info') {
       props.push(`info: GM_info`);
       continue;
     }
-    for (const dot of gmDotSpellings(spec)) {
+    for (const dot of dots) {
       if (spec.gmDotPromised) {
         // The legacy GM_x can be sync (storage reads from cache) or
         // throw (sync stub). Wrap in a Promise so the GM4 alias

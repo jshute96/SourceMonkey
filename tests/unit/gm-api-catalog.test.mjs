@@ -98,10 +98,15 @@ test('gmDotSpellings yields both spellings only where GM4 re-cased the name', ()
   assert.deepEqual(gmDotSpellings(findApi('unsafeWindow')), []);
 });
 
-test('every catalog entry with a GM. alias exposes at most two spellings', () => {
+test('exactly the GM4-re-cased APIs carry a second GM. spelling', () => {
+  // Locks *which* entries are double-spelled, so adding a catalog
+  // entry whose gmDotName re-cases the legacy name is a deliberate
+  // act rather than a silently-extra alias. (Asserting `length <= 2`
+  // instead would be true by construction and could never fail.)
+  const doubled = GM_APIS.filter((a) => gmDotSpellings(a).length === 2).map((a) => a.name);
+  assert.deepEqual(doubled.sort(), ['GM_getResourceURL', 'GM_xmlhttpRequest']);
   for (const a of GM_APIS) {
     const spellings = gmDotSpellings(a);
-    assert.ok(spellings.length <= 2, `${a.name} has ${spellings.length} GM. spellings`);
     assert.equal(new Set(spellings).size, spellings.length, `${a.name} has a duplicate spelling`);
   }
 });

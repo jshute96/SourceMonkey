@@ -159,11 +159,15 @@ exact string and silently ignore anything that misses:
 - VM's `parseMeta` only converts `-`/`_` to camelCase
   (`@run-at` → `runAt`); it never case-folds.
 
-We are keeping the looser behavior for now: a script with `@Match`
-runs under SourceMonkey and nowhere else, which is a compatibility
-trap, but tightening it would break scripts that work today. The
-GreasyFork top-2000 corpus contains **no** mis-cased tag names, so
-the practical exposure is nil either way. Tracked in `TODO.md`.
+We are keeping the looser behavior for now:
+
+- A script with `@Match` runs under SourceMonkey and nowhere else —
+  a genuine compatibility trap.
+- But tightening it would break scripts that work here today.
+- And the GreasyFork top-2000 corpus contains **no** mis-cased tag
+  names, so the practical exposure is nil either way.
+
+Tracked in `TODO.md`.
 
 ---
 
