@@ -283,6 +283,33 @@ test.describe('parse check on page-driven paths', () => {
     await page.close();
   });
 
+  test('the preview names the @require the error is in', async ({
+    extensionContext, extensionId,
+  }) => {
+    // The page route runs its OWN checker in its own sandbox frame, so
+    // the location machinery has to work there too — a regression that
+    // only broke the page route would be invisible to the
+    // service-worker tests.
+    fs.writeFileSync(
+      path.join(scriptsDir.path, 'lib.js'),
+      'function ok() {\n  return 1;\n}\nlet broken = ;\n',
+    );
+    const file = scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'PreviewWhere', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
+      body: 'ok();',
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
+    );
+    const banner = page.locator('#banner-slot');
+    await expect(banner).toContainText('lib.js');
+    await expect(banner).toContainText('line 4');
+    await page.close();
+  });
+
   test('a library declared twice is not reported as a duplicate declaration', async ({
     extensionContext, extensionId,
   }) => {

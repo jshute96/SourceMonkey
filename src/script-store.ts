@@ -74,6 +74,7 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import type { VersionProbe } from './version-probe.js';
 import type { ParseVerdict } from './parse-check-protocol.js';
+import { describeParseError } from './parse-location.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
@@ -727,7 +728,7 @@ async function applyParseCheck(
     return built;
   }
   built.status = 'invalid';
-  built.errorMessage = `script source has a syntax error: ${verdict.message ?? 'unknown'}`;
+  built.errorMessage = `script source has a syntax error: ${describeParseError(verdict)}`;
   // Don't record the fingerprint: the row is invalid, and a future
   // refresh that produces the same bytes should re-derive that rather
   // than inherit a stale pass. (`prior` above only short-circuits on a

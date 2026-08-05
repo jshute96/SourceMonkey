@@ -174,6 +174,12 @@ update channel to a site you didn't approve.
       running any of it. So a broken library shows up next to the
       script straight away, rather than the first time you happen to
       visit a page it matches.
+    - Where it can, the message names the file the error is in — the
+      `@require`'s URL or the script's own path — along with a line and
+      column in that file, so a syntax error in a bundled library points
+      at the library rather than at the script that pulled it in. Some
+      errors can't be pinned to a line (a file that just ends
+      mid-construct, say); those still report what's wrong.
   - `MISSING` — the script's file is no longer in the scan listing
     (deleted on disk, manifest entry removed). The Size column still
     shows the cached body's byte count, and a small trash-can button

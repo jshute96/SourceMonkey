@@ -25,8 +25,20 @@
 
   Why that is safe
   ----------------
-  - The code is compiled, never called. `new Function` returns a function
+  - The verdict compile is never called. `new Function` returns a function
     object we drop on the floor.
+  - Locating the error does insert a `<script>` element, which normally
+    means running it — so each probe has an unmatched `(` appended, making
+    the probe script impossible to parse and therefore impossible to
+    execute. A parse failure aborts the whole script before evaluation
+    begins, so not one statement runs. See `PROBE_SENTINEL` in
+    parse-sandbox.js. (This is also why this page's CSP — in manifest.json,
+    under content_security_policy.sandbox — allows 'unsafe-inline', which
+    is Chrome's own default for sandboxed pages.)
+  - The probe text is set with `textContent`, never `innerHTML`, so a
+    closing script tag inside a user's source cannot break out of the
+    element. Nothing in this page ever writes HTML; that is the invariant
+    that makes 'unsafe-inline' cost nothing here, so keep it that way.
   - A sandboxed page has an opaque origin and no `chrome.*` access, so even
     if some construct did execute it could not reach extension APIs, our
     storage, or the user's pages.

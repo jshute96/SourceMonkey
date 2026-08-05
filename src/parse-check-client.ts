@@ -32,6 +32,7 @@
 // service-worker refresh performs the check.
 
 import { dlog } from './debug-log.js';
+import { attachParseLocation } from './parse-location.js';
 import { isParseCheckDisabled } from './parse-check-protocol.js';
 import { createParseSandboxHost, type ParseSandboxHost } from './parse-sandbox-host.js';
 import { setParseChecker, type ParseChecker } from './script-store.js';
@@ -57,8 +58,11 @@ export const checkScriptParses: ParseChecker = async (script) => {
     // never run.
     const { buildParseCheckSource } = await import('./injector.js');
     const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
-    const verdicts = await ensureHost().compile([source]);
-    return verdicts ? verdicts[0] : null;
+    const verdicts = await ensureHost().compile([source.text]);
+    // Resolved here rather than by the caller: `source` is what maps a
+    // reported line back to a file, and this is the last point where
+    // we still hold it.
+    return verdicts ? attachParseLocation(verdicts[0], source) : null;
   } catch (err) {
     dlog(`[SourceMonkey] parse check unavailable in this page: ${String(err)}`);
     return null;

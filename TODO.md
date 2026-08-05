@@ -87,18 +87,20 @@ The compile-only check is in (see
   name is `__sm`-prefixed so the risk is small, and it errs toward
   false-accept. Compiling with `new Function('__smE', preamble + src)`
   would close it.
-- **Say WHICH file failed.** Today the message is V8's, against the
-  whole composed program: "the script's source has a syntax error".
-  Compiling the pieces separately would name the `@require` (or the
-  body) at fault, and the case where every piece parses alone but the
-  join doesn't — two libraries declaring the same `const` — is
-  distinguishable from both.
-- **Report a line and column.** V8 gives neither for a `new Function`
-  SyntaxError. A `<script>` element whose text is
-  `window.__probe = function(){ …src… }` would fire `window.onerror`
-  with a real `lineno`/`colno` while still never running the body;
-  worth measuring against the segment layout, which could then map it
-  to the original file and line.
+- **Place a brace imbalance at its cause, not its symptom.** A stray or
+  missing `}` is reported by the raw probe at the brace itself, which
+  is right — but only when the raw probe is the one chosen, via a
+  disagreeing message or an out-of-range wrapped probe. Where the two
+  probes both parse past the brace and land in range, the reported line
+  is a real error that the imbalance *caused*, further down the file.
+  Reporting the imbalance itself would mean tracking brace depth, which
+  is a parser.
+- **A top-level `return` above a brace imbalance loses the position.**
+  The raw probe stops at the `return` with a Script-only diagnostic, so
+  it's discarded; the wrapped probe escaped, so it disagrees. Nothing
+  is left to place the error and only the message is shown. Correct —
+  the alternative was naming a legal line — but a third probe framing
+  (async function body, say) might reach it.
 - **Batch per refresh pass.** The check is one round trip per changed
   script. `parseCheckedHash` keeps unchanged content free, so this only
   bites on a first-add of many scripts at once.

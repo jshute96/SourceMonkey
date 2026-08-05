@@ -42,6 +42,25 @@ interface BadCase {
   file: string;
   expectedStatus: 'ok' | 'invalid';
   errorMatcher?: RegExp;
+  // For the syntax-error cases: which file in the corpus the error
+  // should be attributed to. The expected LINE is not written here —
+  // it is read off that file's `>>> the error` marker at run time, so
+  // editing an example can never silently invalidate the assertion.
+  errorIn?: string;
+}
+
+// Every example that has a located error marks the offending line with
+// a comment directly above it. Returns the 1-based line number of the
+// line BELOW the marker.
+const ERROR_MARKER = '>>> the error';
+function escapeRe(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function markedErrorLine(file: string): number {
+  const lines = fs.readFileSync(path.join(BAD_SCRIPTS_DIR, file), 'utf8').split('\n');
+  const markerIdx = lines.findIndex((l) => l.includes(ERROR_MARKER));
+  if (markerIdx < 0) throw new Error(`no '${ERROR_MARKER}' marker in ${file}`);
+  return markerIdx + 2;
 }
 
 // Expected outcomes when tests/bad-examples/ is added as a source. Status
@@ -68,8 +87,61 @@ const BAD_CASES: BadCase[] = [
   //   - throwing: the library parses and only fails when it RUNS, and
   //     running it is exactly what we won't do at install time. Still
   //     `ok` here; the run-time report is covered in requires.spec.ts.
-  { file: 'unparsable-require.user.js',    expectedStatus: 'invalid', errorMatcher: /syntax error/i },
+  {
+    file: 'unparsable-require.user.js',
+    expectedStatus: 'invalid',
+    errorMatcher: /syntax error/i,
+    errorIn: 'unparsable-require-lib.js',
+  },
   { file: 'throwing-require.user.js',      expectedStatus: 'ok' },
+
+  // ---------- Where the error is ----------
+  //
+  // One per distinct route through the location machinery (see
+  // docs/parse-check.md, "Locating the error"). These are the cases to
+  // install by hand when you want to see what the message looks like.
+  //
+  //   - body: no `@require`, so the composed program is the file
+  //     behind our preamble — the line must survive the header's
+  //     height.
+  //   - require: the error is in a library, and naming the script
+  //     instead would point at innocent code.
+  //   - stray brace: the wrapped probe is swallowed, so the raw probe
+  //     is the one that places the brace.
+  //   - collision: nothing is wrong until the files are joined, and
+  //     the blame belongs to the file that redeclares.
+  {
+    file: 'syntax-error-body.user.js',
+    expectedStatus: 'invalid',
+    errorMatcher: /syntax error/i,
+    errorIn: 'syntax-error-body.user.js',
+  },
+  {
+    file: 'syntax-error-require.user.js',
+    expectedStatus: 'invalid',
+    errorMatcher: /syntax error/i,
+    errorIn: 'syntax-error-require-lib.js',
+  },
+  {
+    file: 'stray-brace.user.js',
+    expectedStatus: 'invalid',
+    errorMatcher: /Unexpected token '\}'/,
+    errorIn: 'stray-brace.user.js',
+  },
+  {
+    // The shape where the two probes' messages agree even though the
+    // wrapper was escaped, so only the range check separates them.
+    file: 'stray-brace-at-end.user.js',
+    expectedStatus: 'invalid',
+    errorMatcher: /Unexpected token '\}'/,
+    errorIn: 'stray-brace-at-end.user.js',
+  },
+  {
+    file: 'require-collision.user.js',
+    expectedStatus: 'invalid',
+    errorMatcher: /'SHARED_CONFIG' has already been declared/,
+    errorIn: 'require-collision-lib-b.js',
+  },
 ];
 
 async function openViewer(extensionContext: BrowserContext, extensionId: string, scriptId: string): Promise<Page> {
@@ -105,6 +177,15 @@ test.describe('bad-examples corpus', () => {
         expect(s!.errorMessage ?? '', `wrong errorMessage for ${c.file}`).toMatch(c.errorMatcher);
       } else {
         expect(s!.errorMessage ?? '', `expected no errorMessage for ${c.file}`).toBe('');
+      }
+      if (c.errorIn) {
+        // `@require`s resolve to a full file:// URL and the script's own
+        // body to its relative path, so match the tail of whichever
+        // form this case produces rather than the whole thing.
+        const at = new RegExp(
+          `\\(in \\S*${escapeRe(c.errorIn)}, line ${markedErrorLine(c.errorIn)}, column \\d+\\)`,
+        );
+        expect(s!.errorMessage ?? '', `wrong error location for ${c.file}`).toMatch(at);
       }
     }
 

@@ -175,7 +175,11 @@ export function composeSource(
 // `\r\n` must count as one, hence the alternation order.
 const LINE_TERMINATORS = /\r\n|[\n\r\u2028\u2029]/g;
 
-function countLines(text: string): number {
+// Exported because `buildParseCheckSource` measures its own preamble
+// with it: a parse-check line offset that counted terminators
+// differently from the segment list it is compared against would
+// misattribute every error in the file.
+export function countLines(text: string): number {
   if (text === '') return 1;
   const matches = text.match(LINE_TERMINATORS);
   return matches ? matches.length + 1 : 1;
