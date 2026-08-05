@@ -127,9 +127,11 @@ measuring:
   script stays `ok`.
 
 Dependency failures are split further than the pipeline can split
-them: `fetch failed (network error, 404, or oversize)` is one message
-covering three different offline outcomes, so the fetch shim's log is
-consulted for which one it actually was.
+them: `FETCH_FAILED` (`external-files.ts`) is one message covering
+three different offline outcomes, so the fetch shim's log is consulted
+for which one it actually was. The validator imports that string, and
+the header messages, rather than keeping copies that would go stale the
+next time the wording improves.
 
 `--json FILE` writes one record per script — name, status, category,
 message, the structured `location` when the verdict has one, and the

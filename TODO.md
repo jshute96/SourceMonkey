@@ -608,27 +608,39 @@ Two rough edges are left:
 
 ## Log and error message quality
 
-The Source labels are now written for users (`manual-refresh`,
+The Source labels are written for users (`manual-refresh`,
 `extension-startup`, `script-wrapper` — see
-[docs/script-log.md](docs/script-log.md#source-labels)). The **messages**
-haven't had the same pass.
+[docs/script-log.md](docs/script-log.md#source-labels)), and the
+messages a **script validation** failure produces have now had the same
+pass (the rules they follow are in
+[docs/diagnostics.md](docs/diagnostics.md#wording)). What's left:
 
-- **Audit every message a user can read** for whether it says what
-  happened and what to do about it. They accumulated one call site at a
-  time, so they vary in voice, detail, and whether they name the thing
-  that failed. Covers `errorMessage` / `refreshError` text from
-  `script-store.ts` and `directories.ts`, the Log entries in
-  `script-updater.ts`, and the viewer's `setMessage` copy.
-- **Point at the offending line for header problems.** `validateHeader`
-  and `splitHeaderBody` currently report only what is wrong ("no
-  metadata block", a bad `@match`), never *where*. The parser has the
-  metadata block in hand, so an entry could carry the line number and
-  the line itself — the same "here is the actual source line" treatment
-  the Log tab already gives stack frames (see
-  [docs/script-log.md](docs/script-log.md), stack mapping).
-  - Wants a structured field on the entry rather than the line spliced
-    into the message, so the viewer can render it as source rather than
-    as prose.
+- **The messages that aren't about script content.** The pass covered
+  `errorMessage` / the header and dependency wording. Not yet audited:
+  anything reporting on the extension's own machinery, where
+  implementation jargon leaks — "SW" for the service worker is the
+  known example — plus the viewer's `setMessage` copy for states that
+  aren't diagnostics.
+- **The version-probe rows keep their own wording.**
+  `version-probe-fetch.ts` still says `no metadata block` where the
+  viewer now says `no // ==UserScript== metadata block, so this is not a
+  userscript`. Deliberate — `probe.error` renders as a value in a
+  definition-list cell (`script-details.ts`), beside `could not fetch`
+  and `no @version`, so a full message doesn't fit. Revisit if that row
+  ever gets room, or if the split starts confusing people.
+- **Say which fetch failure it was.** `FETCH_FAILED`
+  (`external-files.ts`) lists three possibilities because
+  `fetchResourceBytes` returns `null` for all of them: no response, a
+  non-ok status, and over the size cap. Every one of those is known at
+  the point it returns. Making it report a reason would let the message
+  state the fact, and would retire the fetch-log reconstruction the
+  offline validator does to recover it (`REASON_TEXT` in
+  `scripts/validate-userscripts.mjs`).
+- **Split "not a usable reference".** `resolveScriptResource` returns
+  `null` both for an unsupported scheme and for a relative path that
+  climbs out of the script's folder — two different mistakes with
+  different fixes. The message states the rule instead of naming the
+  problem, because the resolver doesn't say which.
 
 ## Testing and example TOODs
 

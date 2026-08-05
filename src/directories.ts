@@ -273,7 +273,7 @@ function fetchFileUrlTextXhr(url: string): Promise<string> {
     // Resolve with whatever responseText we got — '' is a valid result
     // for an empty file and must not be conflated with "missing".
     xhr.onload = () => resolve(xhr.responseText ?? '');
-    xhr.onerror = () => reject(new Error(`error fetching ${url}`));
+    xhr.onerror = () => reject(new Error(`could not read ${url}`));
     xhr.send();
   });
 }
@@ -289,17 +289,20 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   try {
     response = await fetch(url);
   } catch (err) {
-    throw new Error(`error fetching ${url}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!response.ok && response.status !== 0) {
-    throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
+    throw new Error(`could not read ${url}: HTTP ${response.status}`);
   }
   // Opaque responses (response.type === 'opaque') have an unreadable
   // body; surface a distinct error rather than returning empty content,
   // so a manual refresh from a page context can succeed where the SW
   // path fell through.
   if (response.type === 'opaque') {
-    throw new Error(`opaque response from ${url} (file:// fetch not permitted in this context)`);
+    throw new Error(
+      `could not read ${url} in background refresh (file:// fetch is not permitted there) — ` +
+      `try Refresh from the script page`,
+    );
   }
   // An empty body here is a 0-byte file, not an error — keep it
   // distinct from "missing" so the row renders Size=0 Status=ERROR
@@ -308,7 +311,7 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
 }
 
 // Best-effort "does the path point to a readable file" probe. Used to
-// turn the otherwise-cryptic "error fetching …/" message into a
+// turn the otherwise-cryptic "could not read …/" message into a
 // clearer one when the user types a path to an existing non-userscript
 // file. Returns false on any error (including non-existence and
 // permission failures) — callers should only rely on a true result.
@@ -357,10 +360,10 @@ export async function fetchHttpText(
   try {
     response = await fetch(url, { cache: 'no-store', headers });
   } catch (err) {
-    throw new Error(`error fetching ${url}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (response.status === 304) return { kind: 'unchanged' };
-  if (!response.ok) throw new Error(`fetch ${url} failed: HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`could not read ${url}: HTTP ${response.status}`);
   const text = await response.text();
   const result: HttpFetchResult = { kind: 'ok', text };
   const etag = response.headers.get('ETag');
@@ -505,11 +508,13 @@ export async function scanForUserScripts(
     // Common foot-gun at the top level: the user types a path to a file
     // whose name doesn't end with `.user.js` (e.g. `notes.md`). The
     // listing fetch above asks Chrome for `file://…/notes.md/`, which
-    // produces an opaque "error fetching" message. Probe by reading the
+    // produces an opaque "could not read" message. Probe by reading the
     // path as a plain file; if that succeeds we know the path exists
     // but isn't a userscript, so swap in a clearer message.
     if (depth === 0 && await isReadableFile(absolutePath)) {
-      throw new Error(`filename doesn't end with .user.js`);
+      throw new Error(
+        `${absolutePath} is a file, not a folder, and its name doesn't end in .user.js`,
+      );
     }
     throw err;
   }

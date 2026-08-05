@@ -49,12 +49,24 @@ import {
   applyFiles,
   buildScriptFromText,
   setParseChecker,
+  NO_MATCH_OR_INCLUDE,
+  NO_NAME,
 } from '../dist/script-store.js';
 import { buildParseCheckSource } from '../dist/injector.js';
 import { attachParseLocation } from '../dist/parse-location.js';
 import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { resolveScriptResource } from '../dist/file-loader.js';
-import { distillRequires, distillResources, MAX_FILE_BYTES } from '../dist/external-files.js';
+import {
+  CAP_TEXT,
+  distillRequires,
+  distillResources,
+  FETCH_FAILED,
+  MAX_FILE_BYTES,
+} from '../dist/external-files.js';
+import {
+  NO_METADATA_BLOCK,
+  UNTERMINATED_METADATA_BLOCK,
+} from '../dist/userscript-header.js';
 import { checkParseNode } from './parse-check-node.mjs';
 // The offline tree's layout (percent-encoded segments, truncated long
 // names, `<path>/index` for a path that is also a directory prefix) is
@@ -343,17 +355,13 @@ function scriptUrlFor(file, offlineRoot) {
 // Every failure arrives as `status: 'invalid'` plus a human-readable
 // `errorMessage`, which is all the extension itself has. For a report
 // we want the messages bucketed, and dependency failures split further
-// than the pipeline can split them: "fetch failed (network error, 404,
-// or oversize)" is one message covering three very different offline
-// outcomes, so we ask the fetch log which one it actually was.
-
-const FETCH_FAILED = 'fetch failed (network error, 404, or oversize)';
-
-// Rendered in whole MB when the cap divides evenly, so the report says
-// the same "1 MB" the docs and TODO.md do rather than "1024 KB".
-const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
-  ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
-  : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
+// than the pipeline can split them: `FETCH_FAILED` is one message
+// covering three very different offline outcomes, so we ask the fetch
+// log which one it actually was.
+//
+// The strings themselves are imported rather than copied — they are
+// user-facing wording, and a copy here would go stale the next time
+// somebody improves one.
 
 const REASON_TEXT = {
   'not-downloaded': 'not in the offline tree (dead link or never downloaded)',
@@ -372,7 +380,7 @@ function classify(script) {
   }
   const message = script.errorMessage ?? '(no message)';
 
-  const syntax = /^script source has a syntax error: (.*)$/s.exec(message);
+  const syntax = /^syntax error: (.*)$/s.exec(message);
   if (syntax) {
     // No position to strip: `errorMessage` carries the message alone and
     // the location travels beside it in `errorLocation` (see
@@ -406,21 +414,35 @@ function classify(script) {
 // The complete set `buildScriptFromText` can produce: the `SplitError`
 // union from `userscript-header.ts`, then `validateHeader`'s returns.
 const HEADER_MESSAGES = new Set([
-  'no metadata block',
-  'unterminated metadata block',
-  'missing @name',
-  'missing @match or @include',
+  NO_METADATA_BLOCK,
+  UNTERMINATED_METADATA_BLOCK,
+  NO_NAME,
+  NO_MATCH_OR_INCLUDE,
 ]);
 
 // The URL behind a failing dependency line. `@require` names its ref
-// directly; `@resource` names the resource, so the ref is looked up in
-// the header.
+// directly; `@resource` names both, as `<name> (<ref>)`.
+//
+// Either way the ref is checked against the header before being
+// resolved, so a message we mis-parsed yields '' rather than a
+// confidently wrong URL.
+//
+// The name is matched lazily so a ref containing `)` — `(./icon
+// (copy).png)` — splits at the FIRST gap rather than the last. A
+// resource name can never contain a space (`splitResourceValue` ends it
+// at the first whitespace), so the first gap is always the right one.
+const RESOURCE_SUBJECT = /^(.*?) \((.*)\)$/;
+
 function depUrl(script, kind, subject) {
   let ref = subject;
   if (kind === 'resource') {
-    const decl = distillResources(script.header).find((d) => d.name === subject);
-    if (!decl) return '';
-    ref = decl.ref;
+    const m = RESOURCE_SUBJECT.exec(subject);
+    if (!m) return '';
+    const [, name, declRef] = m;
+    if (!distillResources(script.header).some((d) => d.name === name && d.ref === declRef)) {
+      return '';
+    }
+    ref = declRef;
   } else if (!distillRequires(script.header).includes(subject)) {
     return '';
   }

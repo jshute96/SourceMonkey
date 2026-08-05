@@ -314,8 +314,8 @@ baked into the per-script wrapper. See
 
 ## Not in the catalog at all
 
-Granting any of these names logs an "unknown @grant entries dropped"
-warning. Detection happens at parse time; the diagnostic is persisted
+Granting any of these names logs an "ignoring @grant … — unsupported
+APIs" warning. Detection happens at parse time; the diagnostic is persisted
 on the stored script and surfaces two ways:
 
 - a `console.info` in the **page** DevTools console (via the wrapper's

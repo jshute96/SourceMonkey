@@ -17,8 +17,14 @@ import {
   hashSource,
   loadStateLogEntry,
   rebuildSource,
+  NO_MATCH_OR_INCLUDE,
+  NO_NAME,
 } from '../../dist/script-store.js';
-import { parseHeader } from '../../dist/userscript-header.js';
+import {
+  parseHeader,
+  NO_METADATA_BLOCK,
+  UNTERMINATED_METADATA_BLOCK,
+} from '../../dist/userscript-header.js';
 
 const VALID_SCRIPT = `// ==UserScript==
 // @name        Hello
@@ -88,21 +94,21 @@ test('validateHeader is OK for @name + @include', async () => {
 // which is the block the missing tag belongs in.
 test('validateHeader complains about a missing @name', async () => {
   assert.deepEqual(validateHeader(parseHeader(MISSING_NAME)), {
-    message: 'missing @name',
+    message: NO_NAME,
     line: 1,
   });
 });
 
 test('validateHeader complains about no matching patterns', async () => {
   assert.deepEqual(validateHeader(parseHeader(NO_MATCH)), {
-    message: 'missing @match or @include',
+    message: NO_MATCH_OR_INCLUDE,
     line: 1,
   });
 });
 
 test('validateHeader complains about a null header', async () => {
   // No block at all: the whole file is the answer, so no line.
-  assert.deepEqual(validateHeader(null), { message: 'no metadata block' });
+  assert.deepEqual(validateHeader(null), { message: NO_METADATA_BLOCK });
 });
 
 // ---------- extractStartupLogs ----------
@@ -144,7 +150,7 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'unknown @grant entries dropped: GM_webRequest, GM_audio',
+      message: 'ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -164,7 +170,7 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'unknown @grant entries dropped: GM_typo',
+      message: 'ignoring @grant GM_typo — unsupported APIs',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -218,7 +224,7 @@ console.log('hi');
   assert.deepEqual(entry.startupLogs, [
     {
       level: 'warn',
-      message: 'unknown @grant entries dropped: GM_typoName',
+      message: 'ignoring @grant GM_typoName — unsupported APIs',
       location: { file: 'a.user.js', line: 5 },
     },
   ]);
@@ -240,7 +246,7 @@ body
 test('buildScriptFromText reports a missing metadata block', async () => {
   const entry = await buildScriptFromText({ ...COMMON, source: NO_BLOCK });
   assert.equal(entry.status, 'invalid');
-  assert.equal(entry.errorMessage, 'no metadata block');
+  assert.equal(entry.errorMessage, NO_METADATA_BLOCK);
   assert.equal(entry.headerText, '');
   assert.equal(entry.bodyText, NO_BLOCK);
   assert.equal(entry.header, null);
@@ -250,13 +256,13 @@ test('buildScriptFromText reports an unterminated metadata block', async () => {
   const broken = '// ==UserScript==\n// @name Foo\nconsole.log("oops");\n';
   const entry = await buildScriptFromText({ ...COMMON, source: broken });
   assert.equal(entry.status, 'invalid');
-  assert.equal(entry.errorMessage, 'unterminated metadata block');
+  assert.equal(entry.errorMessage, UNTERMINATED_METADATA_BLOCK);
 });
 
 test('buildScriptFromText reports a missing required field', async () => {
   const entry = await buildScriptFromText({ ...COMMON, source: MISSING_NAME });
   assert.equal(entry.status, 'invalid');
-  assert.equal(entry.errorMessage, 'missing @name');
+  assert.equal(entry.errorMessage, NO_NAME);
   // Even on validation failure we still record what was parsed so the
   // viewer can show the partial header.
   assert.ok(entry.header);
@@ -1007,7 +1013,7 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
   // the text, so the Log tab can render it as a link.
   assert.deepEqual(loadStateLogEntry(bad), {
     level: 'error',
-    message: 'missing @name',
+    message: NO_NAME,
     location: { file: 'a.user.js', line: 1 },
   });
 });

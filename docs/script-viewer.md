@@ -27,11 +27,12 @@ Returns `{leadingText, headerText, bodyText, error?}`:
 - `bodyText` — everything after the closing marker (a single
   trailing newline is stripped so the body doesn't lead with a blank
   line).
-- `error` — `'no metadata block'` or `'unterminated metadata
-  block'`. On error, `leadingText = ''`, `headerText = ''`, and
+- `error` — `NO_METADATA_BLOCK` or `UNTERMINATED_METADATA_BLOCK`
+  (exported from the same module, since the message doubles as the
+  discriminant). On error, `leadingText = ''`, `headerText = ''`, and
   `bodyText = source`.
 - `headerStartLine` — 1-based line of the `// ==UserScript==` marker,
-  when there is one. Set even for `unterminated metadata block`, which
+  when there is one. Set even for the unterminated-block error, which
   is precisely the error whose one useful destination is the line that
   opened the block that never closed.
 

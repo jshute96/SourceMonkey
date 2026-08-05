@@ -635,7 +635,7 @@ test('fetchHttpText: a thrown fetch surfaces with the underlying message', async
   const fakeFetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(
     withFetch(fakeFetch, () => fetchHttpText('https://x/foo.user.js')),
-    /error fetching .*: Failed to fetch/,
+    /could not read .*: Failed to fetch/,
   );
 });
 

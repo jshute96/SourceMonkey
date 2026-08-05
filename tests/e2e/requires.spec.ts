@@ -134,7 +134,7 @@ test.describe('@require', () => {
       const source = await sm.addSource(child);
       const data = await sm.getSourceWithScripts(source!.id);
       expect(data!.scripts[0].status).toBe('invalid');
-      expect(data!.scripts[0].errorMessage).toMatch(/blocked or invalid/);
+      expect(data!.scripts[0].errorMessage).toMatch(/not a usable reference/);
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }

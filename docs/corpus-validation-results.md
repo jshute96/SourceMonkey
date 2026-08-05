@@ -20,11 +20,11 @@ npm run validate -- tests/examples tests/bad-examples
 | Suite | Result |
 |-------|--------|
 | `tests/examples/` | 21 scripts, all `ok` |
-| `tests/bad-examples/` | 17 scripts: 5 `ok`, 12 `invalid` |
+| `tests/bad-examples/` | 18 scripts: 6 `ok`, 12 `invalid` |
 
 - The bad-examples verdicts match `tests/e2e/bad-scripts.spec.ts` file
-  for file — same status on all 17, and the same message and line for
-  each located syntax error.
+  for file — same status on every one, and the same message and line
+  for each located syntax error.
 - That spec drives the real extension in Chromium, so the agreement is
   the evidence that Node's V8 and Chrome's answer alike here.
 - The failures cover every route: header (no block, unterminated block,
@@ -58,6 +58,10 @@ npm run validate -- --offline-root tests/greasyfork-examples/files \
 
 ## Corpus failures by type
 
+The Failure column summarizes each group rather than quoting the
+classifier's `detail` verbatim — the messages are longer than a table
+cell. Don't grep for these strings.
+
 | Count | Step | Failure |
 |-------|------|---------|
 | 46 | `@require` | not in the offline tree |
@@ -65,11 +69,11 @@ npm run validate -- --offline-root tests/greasyfork-examples/files \
 | 10 | `@require` | filename must end in `.js` |
 | 10 | `@require` | over the 1 MB per-file limit |
 | 6 | `@resource` | over the 1 MB per-file limit |
-| 3 | `@require` | response is an HTML page, not JavaScript |
+| 3 | `@require` | an HTML page served in place of the JavaScript |
 | 3 | parse | `Identifier '…' has already been declared` |
-| 2 | header | unterminated metadata block |
+| 2 | header | metadata block never closed |
 | 1 | `@require` | `data:` URL |
-| 1 | header | no metadata block |
+| 1 | header | no metadata block at all |
 
 ## What's a corpus artifact and what's real
 

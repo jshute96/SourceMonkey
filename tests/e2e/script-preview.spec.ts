@@ -97,7 +97,7 @@ test.describe('script preview', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
-    await expect(page.locator('#banner-slot')).toContainText('missing @match or @include');
+    await expect(page.locator('#banner-slot')).toContainText('no @match or @include in the metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#update-btn')).toBeHidden();
     // Local `.user.js` navigations are captured too, so this file needs
@@ -234,7 +234,7 @@ test.describe('script preview', () => {
         `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
       );
       await page.locator('#tabs button', { hasText: 'login.js' }).click();
-      await expect(page.locator('#content')).toContainText('is an HTML page');
+      await expect(page.locator('#content')).toContainText('returned an HTML page');
       await page.close();
     } finally {
       await server.stop();

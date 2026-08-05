@@ -76,7 +76,7 @@ test.describe('diagnostic location links', () => {
   test('a header problem links to the metadata block it belongs in', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // `missing @match or @include` is about a tag that ISN'T there, so
+    // A missing @match is about a tag that ISN'T there, so
     // there is no offending line — it points at the `==UserScript==`
     // marker, which is where the reader has to add one.
     scriptsDir.writeRaw(
@@ -89,7 +89,7 @@ test.describe('diagnostic location links', () => {
     // No column: only the parse check knows one, and inventing a
     // column for a header problem would be a made-up precision.
     await expect(link).toHaveText('nomatch.user.js, line 1');
-    await expect(page.locator('#message')).toContainText('missing @match or @include');
+    await expect(page.locator('#message')).toContainText('no @match or @include in the metadata block');
 
     await link.click();
     await expect.poll(() => page.evaluate(() => location.hash)).toBe('#nomatch.user.js:1');
@@ -109,7 +109,7 @@ test.describe('diagnostic location links', () => {
 
     const link = page.locator(`#message ${LINK}`);
     await expect(link).toHaveText('plain.user.js');
-    await expect(page.locator('#message')).toContainText('no metadata block');
+    await expect(page.locator('#message')).toContainText('no // ==UserScript== metadata block');
 
     await link.click();
     // The main tab with no highlight is the viewer's default landing,
@@ -180,7 +180,7 @@ test.describe('diagnostic location links', () => {
     await sm.replayScriptLogsAtBoot();
 
     const logged = await sm.getScriptLog(scriptId);
-    const warning = logged.find((e) => /unknown @grant/.test(e.message));
+    const warning = logged.find((e) => /ignoring @grant/.test(e.message));
     expect(warning, 'the unknown grant should be logged').toBeTruthy();
     // The line the offending grant is written on, read off the file the
     // fixture rendered rather than assumed from the metadata order.
@@ -194,7 +194,7 @@ test.describe('diagnostic location links', () => {
     );
     await page.waitForFunction(() => document.title.includes('—'));
 
-    const row = page.locator('#log-pane tr', { hasText: 'unknown @grant' });
+    const row = page.locator('#log-pane tr', { hasText: 'ignoring @grant' });
     await expect(row).toBeVisible();
     await expect(row.locator(LINK)).toHaveText(`main.user.js, line ${grantLine}`);
 

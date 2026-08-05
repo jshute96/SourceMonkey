@@ -61,6 +61,7 @@ import {
   getValues,
   parseHeader,
   splitHeaderBody,
+  NO_METADATA_BLOCK,
   type ParsedHeader,
 } from './userscript-header.js';
 import {
@@ -310,7 +311,7 @@ export function extractStartupLogs(
     if (resolved.unknown.length > 0) {
       const log: StartupLog = {
         level: 'warn',
-        message: `unknown @grant entries dropped: ${resolved.unknown.join(', ')}`,
+        message: `ignoring @grant ${resolved.unknown.join(', ')} — unsupported APIs`,
       };
       // One message can name several bad grants, and they may be spread
       // over several `@grant` lines — so the location is the FIRST one,
@@ -353,6 +354,18 @@ export interface HeaderProblem {
   line?: number;
 }
 
+// The messages `validateHeader` can return. Exported for the same
+// reason the split errors are (see `userscript-header.ts`): the offline
+// validator groups failures by message, so these are the strings it
+// matches against rather than literals maintained in two places.
+//
+// Same phrasing rule too — each has to read correctly alone in the
+// viewer's message bar and after the preview's `This script cannot be
+// installed: ` prefix.
+export const NO_NAME = 'no @name in the metadata block';
+export const NO_MATCH_OR_INCLUDE =
+  'no @match or @include in the metadata block, so this script would never run on any page';
+
 // Verify the parsed header has the fields we require to consider a
 // script `ok`. Returns null on success, otherwise a human-readable
 // problem. Required: an `@name` plus at least one of
@@ -364,13 +377,13 @@ export interface HeaderProblem {
 // reader has to go to add it.
 export function validateHeader(header: ParsedHeader | null): HeaderProblem | null {
   // No block at all — the whole file is the answer, so no line.
-  if (!header) return { message: 'no metadata block' };
+  if (!header) return { message: NO_METADATA_BLOCK };
   const line = header.startLine;
-  if (!getValue(header, 'name')) return { message: 'missing @name', line };
+  if (!getValue(header, 'name')) return { message: NO_NAME, line };
   const matches = getValues(header, 'match');
   const includes = getValues(header, 'include');
   if (matches.length === 0 && includes.length === 0) {
-    return { message: 'missing @match or @include', line };
+    return { message: NO_MATCH_OR_INCLUDE, line };
   }
   return null;
 }
@@ -416,8 +429,8 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   if (split.error) {
     status = 'invalid';
     errorMessage = split.error;
-    // `unterminated metadata block` gets the line that opened the block
-    // that never closed. `no metadata block` gets nothing — there is no
+    // UNTERMINATED_METADATA_BLOCK gets the line that opened the block
+    // that never closed. NO_METADATA_BLOCK gets nothing — there is no
     // marker to point at, and the answer is the file as a whole.
     errorLine = split.headerStartLine;
   } else {
@@ -533,6 +546,13 @@ export function setScriptError(
 function locationIn(file: string, line: number | undefined): DiagnosticLocation {
   return line === undefined ? { file } : { file, line };
 }
+
+// Two states that used to share the message `not loaded`, which read as
+// the same fact but isn't: one is a row waiting for its first fetch, the
+// other is a row whose fetch never happened and won't be retried until
+// the next refresh.
+const NOT_LOADED_YET = 'not loaded yet';
+const NOT_READ = 'could not be read';
 
 // Build an `invalid` entry for a brand-new (never-loaded-successfully)
 // script whose first fetch failed. No content to preserve, so the
@@ -872,7 +892,9 @@ async function applyParseCheck(
   // `errorLocation` to say the whole thing.
   setScriptError(
     built,
-    `script source has a syntax error: ${verdict.message ?? 'unknown'}`,
+    // No "script source has a…" prefix: `errorLocation` names the file,
+    // and that file is routinely a `@require` rather than the script.
+    `syntax error: ${verdict.message ?? 'unknown'}`,
     verdict.location,
   );
   // Don't record the fingerprint: the row is invalid, and a future
@@ -1037,13 +1059,17 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
           sourceId: args.sourceId,
           relativePath: found.relativePath,
           fileUrl,
-          errorMessage: 'unchanged marker with no prior entry',
+          // Prefixed as internal because it is: the orchestrator told us
+          // "unchanged" for a file we have never held. Nothing the user
+          // can do about it, and saying so beats an accusation.
+          errorMessage: 'internal error: unchanged marker with no prior entry',
           now: args.now,
         })));
       }
     } else if (fr) {
       // Failed fetch. If we had prior content, keep it.
-      const errorMessage = 'errorMessage' in fr ? fr.errorMessage : 'unknown error';
+      const errorMessage =
+        'errorMessage' in fr ? fr.errorMessage : 'could not be read (no reason reported)';
       if (prior) {
         entryPromises.push(Promise.resolve(applyFetchError(prior, errorMessage)));
       } else {
@@ -1061,10 +1087,10 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       // generic message; this branch is mostly defensive — the
       // orchestrator should always supply a result.
       entryPromises.push(Promise.resolve(prior
-        ? applyFetchError(prior, 'not loaded')
+        ? applyFetchError(prior, NOT_READ)
         : buildInitialInvalidEntry({
             id, sourceId: args.sourceId, relativePath: found.relativePath,
-            fileUrl, errorMessage: 'not loaded', now: args.now,
+            fileUrl, errorMessage: NOT_READ, now: args.now,
           })));
     }
   }
@@ -1346,7 +1372,7 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
       sourceId: containerId,
       relativePath: path,
       fileUrl: scriptFileUrl(cPath, path),
-      errorMessage: 'not loaded',
+      errorMessage: NOT_LOADED_YET,
       now,
     });
 

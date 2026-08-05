@@ -30,6 +30,20 @@ repository. See `README.md` for setup instructions and available commands.
   - This applies to diagnostics emitted into the **page** console too (e.g. the startup-log channel and the injected error shims in `userscript-prelude.js`): injected `.error`/`.warn` from a `chrome.userScripts`-registered script still surface in the extensions Errors panel.
   - Capturing error/warning *severity* for the viewer's Log tab is a separate path (the per-script log's `level` field + the `sm:*` reports) and is unaffected — keep logging the real level there; just don't escalate the `console` method.
 
+### Error messages
+Applies to any string a user can read (`errorMessage`, `refreshError`, Log
+entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wording).
+
+- **No internal vocabulary** (`SW`, `opaque response`, `fetch threw`).
+- **Name what failed**, and the fix where there is one.
+- **Lowercase, no trailing period, subject included** — the same string
+  appears alone and after prefixes like `This script cannot be installed: `.
+- **One message per problem**; wrap the shared string rather than writing a
+  second copy for another surface.
+- **Don't guess between causes** — say which, or state the possibilities and
+  file the plumbing in TODO.md.
+- **`internal error:` prefix** when the user can't act on it.
+
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT
 spend the entire session planning unless explicitly asked for a plan. If a plan

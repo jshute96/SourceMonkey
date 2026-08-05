@@ -49,17 +49,17 @@ export const BAD_SCRIPTS_DIR = path.resolve(__dirname, '..', 'bad-examples');
 export const BAD_CASES = [
   // No block at all, so no line to name — the location is the file
   // itself, which still opens the source the reader has to fix.
-  { file: 'empty.user.js',                 expectedStatus: 'invalid', errorMatcher: /no metadata block/,
+  { file: 'empty.user.js',                 expectedStatus: 'invalid', errorMatcher: /no \/\/ ==UserScript== metadata block/,
     errorIn: 'empty.user.js', errorLine: null },
-  { file: 'no-header.user.js',             expectedStatus: 'invalid', errorMatcher: /no metadata block/,
+  { file: 'no-header.user.js',             expectedStatus: 'invalid', errorMatcher: /no \/\/ ==UserScript== metadata block/,
     errorIn: 'no-header.user.js', errorLine: null },
   // A tag that isn't there has no line of its own, so these point at
   // the `// ==UserScript==` marker — the block the tag belongs in.
-  { file: 'empty-header.user.js',          expectedStatus: 'invalid', errorMatcher: /missing @name/,
+  { file: 'empty-header.user.js',          expectedStatus: 'invalid', errorMatcher: /no @name in the metadata block/,
     errorIn: 'empty-header.user.js', errorLine: 1 },
-  { file: 'unclosed-header.user.js',       expectedStatus: 'invalid', errorMatcher: /unterminated metadata block/,
+  { file: 'unclosed-header.user.js',       expectedStatus: 'invalid', errorMatcher: /metadata block is never closed/,
     errorIn: 'unclosed-header.user.js', errorLine: 1 },
-  { file: 'malformed-field.user.js',       expectedStatus: 'invalid', errorMatcher: /missing @match or @include/,
+  { file: 'malformed-field.user.js',       expectedStatus: 'invalid', errorMatcher: /no @match or @include in the metadata block/,
     errorIn: 'malformed-field.user.js', errorLine: 1 },
   { file: 'two-headers.user.js',           expectedStatus: 'ok' },
   { file: 'leading-text.user.js',          expectedStatus: 'ok' },
@@ -67,7 +67,7 @@ export const BAD_CASES = [
   { file: 'blank-lines.user.js',           expectedStatus: 'ok' },
   // The file that failed has no content to point into, so the location
   // is the `@require` line that named it.
-  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js:.*fetch/,
+  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js: could not be fetched/,
     errorIn: 'missing-require.user.js' },
   // Both require cases below fetch their `@require` fine — the failure
   // is in the code, not the load. They differ in WHEN we can see it:

@@ -32,11 +32,19 @@ it, shared with the header diagnostics.
 | Diagnostic | Where it points |
 |------------|-----------------|
 | syntax error (parse check) | the offending token, in the file it was written in |
-| `unterminated metadata block` | the `// ==UserScript==` line that opened it |
-| `no metadata block` | the file, with no line — there is nothing to point at |
-| `missing @name`, `missing @match or @include` | the `// ==UserScript==` marker |
+| "the … metadata block is never closed" | the `// ==UserScript==` line that opened it |
+| "no `// ==UserScript==` metadata block" | the file, with no line — there is nothing to point at |
+| "no `@name`" / "no `@match` or `@include`" | the `// ==UserScript==` marker |
 | unknown `@grant` (a warning) | the first offending `@grant` line |
 | `@require` / `@resource` that won't load | the header line that declared it |
+
+The header messages are exported constants rather than inline literals,
+so a rewording can't quietly stop matching what compares against them:
+
+| Constant | Module |
+|----------|--------|
+| `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
+| `NO_NAME`, `NO_MATCH_OR_INCLUDE` | `script-store.ts` |
 
 Rules that run through that table:
 
@@ -131,6 +139,45 @@ what the row now says.
 - **Sources page** — hover text only. The dataset is a string channel,
   so the message is flattened there; the row's link opens the viewer,
   which has the clickable form.
+
+## Wording
+
+One message per problem, phrased to survive every place it lands.
+
+- **Lowercase, no trailing period, subject included.** The same string
+  appears alone in the message bar and the Log tab, *and* after the
+  preview's `This file cannot be installed: ` prefix. A capitalized
+  sentence breaks the second; a bare fragment (`missing @name`) reads
+  badly in all three.
+  - A period would also land in the wrong place: surfaces render
+    `<message> (in <where>)`, so it would sit before the parenthetical.
+  - For the same reason, a message carrying a location shouldn't end
+    with an instruction — `… — add a // ==/UserScript== line (in f, line
+    1)` reads as *where to add it*, which is not what line 1 is.
+- **No prefix the location already carries.** The parse check says
+  `syntax error: …`, not `script source has a syntax error: …` — the
+  location names the file, which is routinely a `@require`.
+- **Name the thing that failed.** `@require` names its ref; `@resource`
+  names both its name and its ref, because the name alone doesn't say
+  what wouldn't load.
+- **Don't guess between causes.** Where the pipeline genuinely can't
+  tell (`FETCH_FAILED`), the message states the possibilities and
+  TODO.md tracks the plumbing that would narrow it. Where it can, it
+  says which.
+- **Say when it's ours.** A failure the user can't act on is prefixed
+  `internal error:` rather than phrased as an accusation.
+
+Two consequences worth stating outright:
+
+- **The install preview holds no wording of its own.** It wraps the
+  store's string. It used to keep parallel sentences for the two
+  metadata-block failures, which meant one problem had two texts and
+  only one of them ever improved.
+- **The version-probe rows are the deliberate exception.**
+  `version-probe-fetch.ts` keeps its own terse set (`could not fetch`,
+  `no @version`, `no metadata block`) because they render as a value in
+  a definition-list cell, where a full message doesn't fit. Listed in
+  TODO.md so the exception stays a decision rather than a leftover.
 
 ## Testing
 

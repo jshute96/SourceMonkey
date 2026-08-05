@@ -986,9 +986,7 @@ function previewValidationError(
   const split = splitHeaderBody(text);
   if (split.error) {
     return {
-      message: split.error === 'no metadata block'
-        ? 'This file has no // ==UserScript== metadata block, so it is not an installable userscript.'
-        : 'This file has an unterminated // ==UserScript== metadata block, so it is not an installable userscript.',
+      message: cannotInstall(split.error),
       // An unterminated block has one useful place to point: the line
       // that opened it. A file with no block at all has none, so the
       // location is the file itself — clicking still gets the reader to
@@ -999,9 +997,26 @@ function previewValidationError(
   const problem = validateHeader(header);
   if (!problem) return null;
   return {
-    message: `This script cannot be installed: ${problem.message}`,
+    message: cannotInstall(problem.message),
     location: locationIn(problem.line),
   };
+}
+
+// The store's own wording for the problem, in a sentence about what it
+// means here. The preview used to keep its own phrasing for the two
+// metadata-block failures, which meant one problem had two texts and
+// only one of them ever got improved.
+//
+// "This file", not "this script": the most common problem here is that
+// the thing has no metadata block at all, and a prefix calling it a
+// script would contradict the message saying it isn't one. Every other
+// problem is about a file too.
+//
+// No trailing period: `appendDiagnostic` renders this as
+// `<message> (in <where>)`, so one here would sit before the
+// parenthetical rather than after it.
+function cannotInstall(problem: string): string {
+  return `This file cannot be installed: ${problem}`;
 }
 
 // A location in the previewed script's own source. `previewLocation` is
@@ -1319,14 +1334,15 @@ function showFileAccessBannerIfBlocked(fileUrl: string, retry?: string): void {
 // file, as opposed to what we read once it arrived.
 //
 // The distinction matters because only the first kind is something the
-// toggle explains. A local script with a stored parse verdict ("no
-// metadata block") is flagged for a reason the toggle had nothing to do
+// toggle explains. A local script flagged for a header problem or a
+// syntax error is flagged for a reason the toggle had nothing to do
 // with, and putting the banner under that message would offer an
 // unrelated setting as the explanation.
 //
 // Told apart by the URL: every fetch helper in `directories.ts` names
-// the thing it couldn't read (`error fetching <url>`, `fetch <url>
-// failed: …`), and no parse or validation message does. Deliberately
+// the thing it couldn't read (`could not read <url>: …`), and no parse
+// or validation message does. Still true of rows persisted under the
+// older wording, which named the URL too. Deliberately
 // matched against this script's own `fileUrl`, so a failed `@require`
 // against some other host doesn't count either.
 function readFailed(script: StoredScript): boolean {

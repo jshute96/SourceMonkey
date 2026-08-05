@@ -23,7 +23,7 @@
 // the producers genuinely differ in how much they know:
 //   - the parse check has both (V8 reports them)
 //   - a header diagnostic has a line and no meaningful column
-//   - `no metadata block` has neither — the whole file is the answer
+//   - a missing metadata block has neither — the whole file is the answer
 export interface DiagnosticLocation {
   file: string;
   line?: number;

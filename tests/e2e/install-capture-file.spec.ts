@@ -181,7 +181,7 @@ test.describe('.user.js capture for local files', () => {
     const page = await extensionContext.newPage();
     await page.goto(url).catch(() => {});
     await waitForInstallPrompt(page);
-    await expect(page.locator('#banner-slot')).toContainText('not an installable userscript');
+    await expect(page.locator('#banner-slot')).toContainText('no // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
     // Read before the click: a lost bypass re-navigates this tab, and

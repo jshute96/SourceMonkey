@@ -106,7 +106,7 @@ non-GitHub sources stay quiet.
 | `abandoned <logId> tab=<n> <url> (reason=…)` | no | log |
 | `error <logId> tab=<n> <url>: <msg>` | no | info |
 
-Per-script `parser`-source rows (e.g. `unknown @grant entries dropped: <names>`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
+Per-script `parser`-source rows (e.g. `ignoring @grant <names> — unsupported APIs`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
 
 **No `console.warn` / `console.error` anywhere in the extension** —
 not the SW, not extension pages, and not injected wrapper / prelude /

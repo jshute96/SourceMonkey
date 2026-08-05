@@ -72,6 +72,11 @@ Key spaces in `chrome.storage.local`:
 - `errorMessage?` — set when `status === 'invalid'`. Cleared on the
   transition to `missing` (the row's body is preserved, but the prior
   error reason is dropped — the file is simply gone).
+  - Message *text* is a snapshot of what the wording was when the row
+    was parsed. Same for `startupLogs`, which the boot replay re-emits
+    verbatim. A reworded message therefore reaches an existing row only
+    on its next content change; nothing compares these strings, so the
+    staleness is cosmetic.
 - `errorLocation?` — where in the script's own files `errorMessage` is
   about, when it was derived from their content. Absent when the script
   itself couldn't be fetched; a `@require` that wouldn't load still gets
@@ -140,11 +145,12 @@ update-probe verdict to render the Status column.
   present (`@name` plus at least one of `@match` / `@include`).
 - `'invalid'` — fetch failed, split/parse/validate reported a problem,
   or a `@require` / `@resource` dependency couldn't be loaded. The
-  script can't run. `errorMessage` carries the reason:
-  `'no metadata block'`, `'unterminated metadata block'`,
-  `'missing @name'`, `'missing @match or @include'`, a
-  fetch-failure message, or the offending dep URL. The content-derived
-  ones also carry an `errorLocation`.
+  script can't run. `errorMessage` carries the reason — a header
+  problem (`NO_METADATA_BLOCK` / `UNTERMINATED_METADATA_BLOCK` from
+  `userscript-header.ts`, `NO_NAME` / `NO_MATCH_OR_INCLUDE` from
+  `script-store.ts`), a syntax error, a fetch failure, or a dependency
+  that wouldn't load. The content-derived ones also carry an
+  `errorLocation` — see [diagnostics.md](diagnostics.md).
 - `'missing'` — file was in the scan listing previously but no
   longer is. Behavior:
   - On the **ok → missing** transition (and only then), `enabled`

@@ -11,6 +11,8 @@ import {
   getLocalized,
   hasTag,
   splitHeaderBody,
+  NO_METADATA_BLOCK,
+  UNTERMINATED_METADATA_BLOCK,
 } from '../../dist/userscript-header.js';
 
 const SAMPLE = `// ==UserScript==
@@ -199,7 +201,7 @@ body();
 test('splitHeaderBody flags missing opening marker', () => {
   const src = "console.log('no header');\n";
   const result = splitHeaderBody(src);
-  assert.equal(result.error, 'no metadata block');
+  assert.equal(result.error, NO_METADATA_BLOCK);
   assert.equal(result.leadingText, '');
   assert.equal(result.headerText, '');
   assert.equal(result.bodyText, src);
@@ -211,7 +213,7 @@ test('splitHeaderBody flags unterminated block', () => {
 console.log('forgot the close');
 `;
   const result = splitHeaderBody(src);
-  assert.equal(result.error, 'unterminated metadata block');
+  assert.equal(result.error, UNTERMINATED_METADATA_BLOCK);
   assert.equal(result.leadingText, '');
   assert.equal(result.headerText, '');
   assert.equal(result.bodyText, src);
@@ -289,7 +291,7 @@ test('splitHeaderBody returns empty bodyText when nothing follows the block', ()
 
 // ---------- line numbers ----------
 //
-// Every header diagnostic ("missing @name", "unknown @grant …", a
+// Every header diagnostic (a missing @name, an unknown @grant, a
 // `@require` that won't load) is turned into a clickable jump by the
 // viewer, and the line it jumps to comes from here. The number has to
 // be counted in the WHOLE source, because that is what the viewer's
@@ -338,7 +340,7 @@ test('an unterminated block still reports the line that opened it', () => {
   // itself — there is no closing line to point at, by definition.
   const src = 'lead\nlead\n// ==UserScript==\n// @name Nope\n';
   const split = splitHeaderBody(src);
-  assert.equal(split.error, 'unterminated metadata block');
+  assert.equal(split.error, UNTERMINATED_METADATA_BLOCK);
   assert.equal(split.headerStartLine, 3);
   // parseHeader gives up entirely on an unterminated block, so the
   // split is the only source for this one.
@@ -347,7 +349,7 @@ test('an unterminated block still reports the line that opened it', () => {
 
 test('a file with no metadata block offers no line at all', () => {
   const split = splitHeaderBody("console.log('nothing here');\n");
-  assert.equal(split.error, 'no metadata block');
+  assert.equal(split.error, NO_METADATA_BLOCK);
   assert.equal(split.headerStartLine, undefined);
 });
 

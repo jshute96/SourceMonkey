@@ -159,8 +159,8 @@ export class CodeTabsView {
   // gutter clicks) to place the bar at the start of the line.
   //
   // `tabLine` is optional because not every navigation has a line to
-  // offer: a diagnostic about a file as a whole (`no metadata block`)
-  // knows which file to open and nothing more. Omitting it selects the
+  // offer: a diagnostic about a file as a whole (a missing metadata
+  // block) knows which file to open and nothing more. Omitting it selects the
   // tab and leaves no highlight behind — including when the tab was
   // already active and carrying one from a previous jump, which would
   // otherwise read as this navigation's answer.

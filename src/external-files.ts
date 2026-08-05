@@ -47,6 +47,29 @@ import { getValues, type ParsedHeader } from './userscript-header.js';
 // @require and @resource — split caps possible later if pain shows up.
 export const MAX_FILE_BYTES = 1024 * 1024;
 
+// Rendered in whole MB when the cap divides evenly, so messages say
+// "1 MB" rather than "1024 KB". Exported because the offline validator
+// reports the cap too, and two renderings of one number could disagree.
+export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
+  ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
+  : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
+
+// One message for three outcomes, because `fetchResourceBytes` returns
+// null for all of them and doesn't say which. Still a list of
+// possibilities rather than the fact — see TODO.md, "Say which fetch
+// failure it was"; the fix is in the fetcher, not here. Exported so the
+// offline validator matches on this string rather than a copy of it.
+export const FETCH_FAILED =
+  `could not be fetched (no response, an HTTP error, or over the ${CAP_TEXT} limit)`;
+
+// `resolveScriptResource` returns null for two different reasons — an
+// unsupported scheme, and a relative path that climbs out of the
+// script's own folder — so the message states the rule rather than
+// guessing which was meant. Splitting it needs the resolver to say
+// which; see TODO.md.
+const UNUSABLE_REF =
+  'not a usable reference — must be an http(s) URL, or a relative path inside the script\'s folder';
+
 interface SharedFileFields {
   // Verbatim ref from the metadata line (post-trim). Kept so error
   // messages name what the user wrote, not the canonicalized URL.
@@ -312,7 +335,11 @@ export async function fetchRequireForPreview(
     seenUrls: new Set(),
   });
   if (res.errorMessage) throw new Error(res.errorMessage);
-  if (!res.entry) throw new Error(`@require ${ref}: no content`);
+  // Defensive: `loadRequire` returns neither an entry nor an error only
+  // when it skipped the fetch (a URL already seen this pass, or a
+  // preserved prior), and this call can do neither — fresh `seenUrls`,
+  // empty `prior`, `recheck: 'all'`. So it says nothing about the file.
+  if (!res.entry) throw new Error(`@require ${ref}: internal error: no content and no reason`);
   return res.entry;
 }
 
@@ -336,7 +363,7 @@ interface LoadRequireArgs {
 async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequire>> {
   const resolved = resolveScriptResource(args.ref, args.scriptFileUrl);
   if (!resolved) {
-    return { errorMessage: `@require ${args.ref}: blocked or invalid reference (must be http(s) or a relative path inside the script's directory)` };
+    return { errorMessage: `@require ${args.ref}: ${UNUSABLE_REF}` };
   }
   if (resolved.kind === 'data') {
     return { errorMessage: `@require ${args.ref}: data: URLs are not supported` };
@@ -365,7 +392,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // XHR case) is accepted by the predicate like any other non-markup
   // type.
   if (!requireAcceptContentType(got.contentType)) {
-    return { errorMessage: `@require ${args.ref}: response is an HTML page (Content-Type "${got.contentType}"), not JavaScript` };
+    return { errorMessage: `@require ${args.ref}: the server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login` };
   }
   // Strict UTF-8 decode: catches binary regardless of what the server
   // claimed the type was (a misconfigured CDN serving a PNG, or the
@@ -439,12 +466,16 @@ interface LoadResourceArgs {
 }
 
 async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredResource>> {
+  // A `@resource` line carries a name AND a ref, and the name alone
+  // doesn't say what failed to load. `@require` names its ref because
+  // that is all it has; this names both.
+  const subject = `@resource ${args.decl.name} (${args.decl.ref})`;
   const resolved = resolveScriptResource(args.decl.ref, args.scriptFileUrl);
   if (!resolved) {
-    return { errorMessage: `@resource ${args.decl.name}: blocked or invalid reference (must be http(s) or a relative path inside the script's directory)` };
+    return { errorMessage: `${subject}: ${UNUSABLE_REF}` };
   }
   if (resolved.kind === 'data') {
-    return { errorMessage: `@resource ${args.decl.name}: data: URLs are not supported` };
+    return { errorMessage: `${subject}: data: URLs are not supported` };
   }
   // No suffix gate — resources can be any media type.
   // No URL-level dedup either: two `@resource` lines with different
@@ -465,7 +496,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   const pending = ensureFetch(args.fetchCache, resolved.url);
   const got = await pending;
   if (isFailure(got)) {
-    return { errorMessage: `@resource ${args.decl.name}: ${got.errorMessage}` };
+    return { errorMessage: `${subject}: ${got.errorMessage}` };
   }
   const u8 = new Uint8Array(got.bytes);
   const contentHash = await sha256Hex(got.bytes);
@@ -508,16 +539,13 @@ async function fetchFileBytes(url: string): Promise<FetchedFile | FileFailure> {
   try {
     const res = await fetchResourceBytes(url, { maxBytes: MAX_FILE_BYTES });
     if (!res) {
-      return {
-        failed: true,
-        errorMessage: 'fetch failed (network error, 404, or oversize)',
-      };
+      return { failed: true, errorMessage: FETCH_FAILED };
     }
     return { bytes: res.body, contentType: res.contentType };
   } catch (err) {
     return {
       failed: true,
-      errorMessage: `fetch threw: ${err instanceof Error ? err.message : String(err)}`,
+      errorMessage: `could not be fetched: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }

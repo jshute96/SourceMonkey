@@ -169,6 +169,17 @@ test('offline mode resolves @require URLs out of the tree', async (t) => {
       '// ==/UserScript==',
       'console.log(1);',
     ].join('\n'),
+    // A `@resource`, whose failure message names both the resource name
+    // and its ref — a different subject shape from `@require`, which
+    // `depUrl` has to take apart to find the URL. Without this the
+    // resource branch reports `url: ''` and falls back to a generic
+    // reason, and nothing fails.
+    'example.com/scripts/dead-resource.user.js': [
+      OFFLINE_SCRIPT_HEADER,
+      '// @resource    theme https://example.com/style/absent.css',
+      '// ==/UserScript==',
+      'console.log(1);',
+    ].join('\n'),
   });
 
   const { records } = await runValidator(['--offline-root', root, root]);
@@ -191,6 +202,17 @@ test('offline mode resolves @require URLs out of the tree', async (t) => {
   assert.equal(
     got.get('dead-relative.user.js')?.url,
     'https://example.com/scripts/absent-helper.js',
+  );
+
+  // The `@resource` subject is `<name> (<ref>)`, so recovering the URL
+  // means taking that apart rather than reading the ref directly. A
+  // mis-parse doesn't throw — it yields no URL and a generic reason —
+  // so both halves are pinned.
+  assert.equal(got.get('dead-resource.user.js')?.category, '@resource');
+  assert.match(got.get('dead-resource.user.js')?.detail ?? '', /not in the offline tree/);
+  assert.equal(
+    got.get('dead-resource.user.js')?.url,
+    'https://example.com/style/absent.css',
   );
 });
 

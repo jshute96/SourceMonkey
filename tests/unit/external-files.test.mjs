@@ -210,7 +210,7 @@ test('attachFiles: rejects @require traversal-bearing ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /blocked or invalid/);
+  assert.match(r.errorMessage, /not a usable reference/);
 });
 
 test('attachFiles: rejects @require absolute file:// ref', async () => {
@@ -223,7 +223,7 @@ test('attachFiles: rejects @require absolute file:// ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /blocked or invalid/);
+  assert.match(r.errorMessage, /not a usable reference/);
 });
 
 test('attachFiles: rejects @require data: ref', async () => {
@@ -364,8 +364,8 @@ test('attachFiles: @resource rejects traversal-bearing ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /@resource bad/);
-  assert.match(r.errorMessage, /blocked or invalid/);
+  assert.match(r.errorMessage, /@resource bad \(\.\.\/secret\.css\)/);
+  assert.match(r.errorMessage, /not a usable reference/);
 });
 
 test('attachFiles: @resource fetch failure surfaces name + error', async () => {
@@ -379,7 +379,9 @@ test('attachFiles: @resource fetch failure surfaces name + error', async () => {
     fetchCache: new Map([[url, Promise.resolve(fakeFailure('404'))]]),
     now: 2000,
   });
-  assert.match(r.errorMessage, /@resource gone/);
+  // The name AND the ref: a resource name alone doesn't say what
+  // failed to load.
+  assert.match(r.errorMessage, /@resource gone \(https:\/\/example\.com\/missing\.css\)/);
   assert.match(r.errorMessage, /404/);
 });
 
@@ -523,8 +525,8 @@ test('attachFiles: @require accepts text/plain and rejects xhtml', async () => {
   assert.equal(await check('application/json'), undefined);
   // XHTML is markup under a non-`text/html` spelling — same soft-failure
   // signature, so the gate has a second clause for it.
-  assert.match(await check('application/xhtml+xml'), /is an HTML page/);
-  assert.match(await check('text/html-sandboxed'), /is an HTML page/);
+  assert.match(await check('application/xhtml+xml'), /returned an HTML page/);
+  assert.match(await check('text/html-sandboxed'), /returned an HTML page/);
 });
 
 test('attachFiles: @require rejects a text/html Content-Type (soft-failure login page)', async () => {
@@ -548,7 +550,7 @@ test('attachFiles: @require rejects a text/html Content-Type (soft-failure login
     )]]),
     now: 2000,
   });
-  assert.match(r.errorMessage, /is an HTML page/);
+  assert.match(r.errorMessage, /returned an HTML page/);
 });
 
 test('attachFiles: @resource at same URL succeeds even when @require would reject the Content-Type', async () => {

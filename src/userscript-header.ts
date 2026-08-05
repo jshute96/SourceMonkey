@@ -66,7 +66,28 @@ function stripLeadingBom(source: string): string {
   return source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
 }
 
-export type SplitError = 'no metadata block' | 'unterminated metadata block';
+// The two ways the split can fail, as the text a user reads.
+//
+// Named constants rather than inline literals because these strings are
+// both the message and the value something compares against — today the
+// offline validator, which groups failures by message. A reworded
+// literal would silently stop matching.
+//
+// Phrased to read correctly in all three places they appear: alone in
+// the viewer's message bar, alone in the Log tab, and after the
+// preview's `This script cannot be installed: ` prefix. That rules out
+// both a capitalized sentence and a bare fragment like `no metadata
+// block`.
+export const NO_METADATA_BLOCK =
+  'no // ==UserScript== metadata block, so this is not a userscript';
+// The fix is phrased as a need rather than an instruction ("it needs",
+// not "add"): this message carries a location, so it renders as
+// `… — add a … line (in f.user.js, line 1)`, where the parenthetical
+// reads as *where to add it*. Line 1 is where the block opened.
+export const UNTERMINATED_METADATA_BLOCK =
+  'the // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line';
+
+export type SplitError = typeof NO_METADATA_BLOCK | typeof UNTERMINATED_METADATA_BLOCK;
 
 export interface SplitResult {
   leadingText: string; // anything before the `==UserScript==` line; '' when block starts at file top
@@ -74,9 +95,9 @@ export interface SplitResult {
   bodyText: string;    // everything after the closing marker; full source on error
   error?: SplitError;
   // 1-based line of the `// ==UserScript==` marker, when there is one.
-  // Set even for `unterminated metadata block`, which is precisely the
+  // Set even for UNTERMINATED_METADATA_BLOCK, which is precisely the
   // error whose one useful place to point is the line that opened the
-  // block that never closed. Absent for `no metadata block`.
+  // block that never closed. Absent for NO_METADATA_BLOCK.
   headerStartLine?: number;
 }
 
@@ -84,8 +105,8 @@ export interface SplitResult {
 // block, the raw metadata block itself, and the body text.
 //
 // Failure modes:
-//   - no `==UserScript==` line          → error: 'no metadata block'
-//   - open marker but no matching close → error: 'unterminated metadata block'
+//   - no `==UserScript==` line          → NO_METADATA_BLOCK
+//   - open marker but no matching close → UNTERMINATED_METADATA_BLOCK
 // In both cases we return leadingText = '', headerText = '', and
 // bodyText = the whole source so callers always have something to
 // display.
@@ -93,7 +114,7 @@ export function splitHeaderBody(source: string): SplitResult {
   source = stripLeadingBom(source);
   const startMatch = BLOCK_START.exec(source);
   if (!startMatch) {
-    return { leadingText: '', headerText: '', bodyText: source, error: 'no metadata block' };
+    return { leadingText: '', headerText: '', bodyText: source, error: NO_METADATA_BLOCK };
   }
   const headerStartLine = countLineBreaks(source.slice(0, startMatch.index)) + 1;
   const afterStart = source.slice(startMatch.index + startMatch[0].length);
@@ -103,7 +124,7 @@ export function splitHeaderBody(source: string): SplitResult {
       leadingText: '',
       headerText: '',
       bodyText: source,
-      error: 'unterminated metadata block',
+      error: UNTERMINATED_METADATA_BLOCK,
       headerStartLine,
     };
   }

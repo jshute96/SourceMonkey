@@ -181,7 +181,7 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
       },
     });
   } catch (err) {
-    throw new Error(`error fetching ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!response.ok) {
     throw new Error(
@@ -291,7 +291,7 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
       },
     });
   } catch (err) {
-    throw new Error(`error fetching ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!response.ok) {
     // 403 with rate-limit headers is the common failure mode for
