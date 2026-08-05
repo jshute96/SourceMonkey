@@ -159,10 +159,15 @@ const SCRIPT_KEY_PREFIX = 'script:';
 // page only ever reflected the state it wrote itself, so a script that
 // recovered elsewhere kept a stale badge until a manual reload (issue
 // #10). The page's own flow handlers still mutate the DOM directly; this
-// listener catches everything else. Its updates are idempotent and
-// preserve row highlights / spinners, so the echo of one of our own
-// writes is a harmless repaint rather than a fight with the handler that
-// made it.
+// listener catches everything else.
+//
+// chrome.storage fires in the writing context too, so a page-own write
+// echoes back into this watcher. That is fine only because BOTH sides are
+// idempotent: the watcher's row/section repaints preserve highlights and
+// spinners and never recreate a `<tr>`, AND the flow handlers'
+// structural inserts are guarded (add replaces-if-present, remove checks
+// for an existing placeholder, refresh re-finds the live section) so the
+// echo can't duplicate a section/placeholder or drop a highlight.
 if (chrome.storage?.local?.onChanged) {
   chrome.storage.local.onChanged.addListener((changes) => {
     void onLocalStorageChange(changes);
@@ -419,6 +424,14 @@ async function applySourceChange(
 ): Promise<void> {
   const next = change.newValue as StoredSource | undefined;
   if (!next) return;
+  // A missing section here means this `source:*` row was written without
+  // (or before) the `sources`-index entry that reconcileSectionsToIndex
+  // builds sections from. The store always writes a new source row and
+  // the index together in one `set` (script-store.ts addSource), so
+  // within a batch the reconcile above has already built the section by
+  // the time this runs — this early return only skips a row with no
+  // section yet, which a later index delta will place. If the store ever
+  // splits those writes, a new source could render one batch late.
   const section = findSection(id);
   if (!section) return;
   const prev = change.oldValue as StoredSource | undefined;
@@ -505,10 +518,25 @@ function updateScriptRowInPlace(id: string, script: StoredScript): void {
   const section = row.closest<HTMLElement>('.directory');
   const sourceOn = section ? !section.classList.contains('disabled') : true;
   const scriptOn = isScriptEnabled(script);
-  const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
-  if (cb) {
+  const label = row.querySelector<HTMLLabelElement>('.toggle');
+  const cb = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  // Skip the toggle sync while THIS row's toggle is mid-flight (a
+  // `.busy-spinner` sibling means an onToggleScript on this page holds
+  // the checkbox disabled with its intended value shown). The echo of
+  // that very write must not re-enable the checkbox under the spinner;
+  // the handler's `finally` restores the final state. Everything else
+  // (status, size) still updates.
+  const busy = !!label?.querySelector('.busy-spinner');
+  if (cb && !busy) {
     cb.checked = scriptOn;
     cb.disabled = !sourceOn;
+  }
+  // Mirror applySourceEnabledToDom's label upkeep so the two parallel
+  // paths agree on the greyed styling + tooltip when a `script:*` delta
+  // lands on a row under a disabled source.
+  if (label && !busy) {
+    label.classList.toggle('toggle-disabled', !sourceOn);
+    label.title = sourceOn ? 'Enable this script' : 'Source is disabled';
   }
   row.classList.toggle('disabled', !sourceOn || !scriptOn);
   if (section) refreshBulkToggle(section);
@@ -1075,17 +1103,18 @@ async function onAddDirectory(
     // the render sees post-refresh scriptIds in sync with storage.
     const latest = (await getSource(result.source.id)) ?? result.source;
     await refreshLogIds();
-    if (result.kind === 'existingContainer') {
-      // Add into an existing container — re-render that section in
-      // place to surface the new row without disturbing siblings.
-      const section = findSection(latest.id);
-      const fresh = await renderSourceSection(latest);
-      if (section) section.replaceWith(fresh);
-      else directoriesEl.appendChild(fresh);
-    } else {
-      removeEmptyPlaceholder();
-      directoriesEl.appendChild(await renderSourceSection(latest));
-    }
+    // Replace-if-present, append otherwise — for BOTH the new-source and
+    // existing-container cases. `addSource` writes the `sources` index
+    // early, then spends a while in `refreshSource`; during that await
+    // the live storage watcher can already have built and appended this
+    // section (from the index-change echo). An unconditional append here
+    // would then produce a second section for the same source. See the
+    // watcher's reconcileSectionsToIndex.
+    removeEmptyPlaceholder();
+    const section = findSection(latest.id);
+    const fresh = await renderSourceSection(latest);
+    if (section) section.replaceWith(fresh);
+    else directoriesEl.appendChild(fresh);
     refreshMoveButtons();
     if (jump) jumpToSource(latest.id);
     return true;
@@ -1260,7 +1289,15 @@ async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButt
   try {
     await removeSource(id);
     section.remove();
-    if (directoriesEl.querySelector('.directory') == null) {
+    // Guard against an existing placeholder, not just the last `.directory`
+    // going away: `removeSource` writes `sources: []` early, and the live
+    // storage watcher's reconcileSectionsToIndex may already have appended
+    // the placeholder from that echo. Appending a second here is the
+    // duplicate the watcher's own guard was written to avoid.
+    if (
+      directoriesEl.querySelector('.directory') == null &&
+      directoriesEl.querySelector('.empty-placeholder') == null
+    ) {
       directoriesEl.appendChild(emptyPlaceholder());
     }
     refreshMoveButtons();
@@ -1293,10 +1330,16 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     if (section && latest) {
       await refreshLogIds();
       const fresh = await renderSourceSection(latest);
-      section.replaceWith(fresh);
-      refreshMoveButtons();
       const after = await getSourceWithScripts(id);
+      // Paint the change-highlights onto `fresh` BEFORE it's attached, so
+      // they survive regardless of what else touched the DOM. On a
+      // structural refresh (script set changed) the live storage watcher
+      // can replace — and detach — the section we captured above; re-find
+      // the section that's actually live now so our highlighted rebuild
+      // always lands instead of no-oping against a detached node.
       applyChangeHighlights(fresh, priorScripts, after?.scripts ?? []);
+      (findSection(id) ?? section).replaceWith(fresh);
+      refreshMoveButtons();
     } else {
       // Section gone or source disappeared — fall back to button reset.
       btn.disabled = false;
@@ -1335,9 +1378,12 @@ async function onRefreshAll(): Promise<void> {
       const latest = await getSource(s.id);
       if (!section || !latest) continue;
       const fresh = await renderSourceSection(latest);
-      section.replaceWith(fresh);
       const after = await getSourceWithScripts(s.id);
+      // Highlight before attaching, and replace whatever section is live
+      // now — the storage watcher may have rebuilt (and detached) the one
+      // captured above on a structural refresh. See onRefreshDirectory.
       applyChangeHighlights(fresh, priorsBySource.get(s.id) ?? [], after?.scripts ?? []);
+      (findSection(s.id) ?? section).replaceWith(fresh);
     }
     refreshMoveButtons();
   } finally {

@@ -126,6 +126,62 @@ test.describe('sources page live updates', () => {
 
     await page.close();
   });
+
+  // The page's own writes echo back into the live watcher (chrome.storage
+  // fires in the writing context too). These two guard that the watcher
+  // and the flow handler don't BOTH insert the same structural node.
+
+  test("adding a source via the page's own form yields exactly one section", async ({
+    extensionContext, extensionId,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await expect(page.locator('.empty-placeholder')).toBeVisible();
+
+    // addSource writes the `sources` index early, then scans; the index
+    // echo could make the watcher build the section before the handler's
+    // own append. Exactly one section must exist, not two.
+    await page.locator('#add-path').fill(scriptsDir.path);
+    await page.locator('#add-form button[type="submit"]').click();
+
+    await expect(page.locator('section.directory')).toHaveCount(1);
+    await expect(page.locator('section.directory tbody tr')).toHaveCount(1);
+    await expect(page.locator('.empty-placeholder')).toHaveCount(0);
+
+    await page.close();
+  });
+
+  test("removing the last source via the page's own button leaves one placeholder", async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await expect(section).toBeVisible();
+
+    // removeSource writes `sources: []`; that echo makes the watcher add
+    // the empty placeholder. The handler must not add a second one.
+    page.once('dialog', (dialog) => void dialog.accept());
+    await section.locator('button', { hasText: 'Remove' }).click();
+
+    await expect(section).toHaveCount(0);
+    await expect(page.locator('.empty-placeholder')).toHaveCount(1);
+
+    await page.close();
+  });
 });
 
 test.describe('viewer live updates', () => {

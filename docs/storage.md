@@ -716,6 +716,26 @@ repaints never recreate the `<tr>`, so a refresh's `row-updated` /
 `row-failed` highlight survives; section rebuilds carry those classes
 onto the new rows explicitly.
 
+**Coordination with the page's own handlers.** `chrome.storage` fires in
+the writing context too, so a page-driven Add / Remove / Refresh echoes
+back into this watcher while the handler is still running. Both sides are
+therefore idempotent:
+
+- **Add** replaces-if-present instead of blindly appending its new
+  section — `addSource` writes the `sources` index early, so the watcher
+  can already have built the section from that echo before the handler
+  finishes its scan.
+- **Remove (last source)** guards its empty-placeholder append against an
+  existing placeholder, since the watcher's index reconcile adds one too.
+- **Refresh** paints its change-highlights onto the rebuilt section
+  *before* attaching it and replaces whichever section is live at that
+  moment, so a structural refresh whose section the watcher rebuilt
+  mid-flight still lands its highlights.
+
+A per-row repaint also skips the enabled-toggle sync while that row's
+toggle is mid-flight (a `.busy-spinner` is present), so the echo of a
+toggle write can't re-enable the checkbox under its own spinner.
+
 ### Background-SW sync coalescing
 
 `onCacheChanged` (in `match-index.ts`) fires for every
