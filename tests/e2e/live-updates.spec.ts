@@ -6,6 +6,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
 
 test.describe('sources page live updates', () => {
   let scriptsDir: ScriptsDir;
@@ -62,6 +63,50 @@ test.describe('sources page live updates', () => {
     await page.close();
   });
 
+  test('a live repaint keeps the diagnostic location in the hover text', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The row's `data-script-error` snapshot feeds both the status
+    // link's hover text and every later repaint, and it is stored
+    // already-described — message plus `(in <file>, line N…)`. The live
+    // update path has to describe it the same way the first render does,
+    // or a script that breaks while the page is open reports WHAT went
+    // wrong without WHERE, and keeps doing so from then on.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const row = page.locator(`tr[data-script-id="${script.id}"]`);
+    await expect(row).toHaveAttribute('data-script-status', 'ok');
+
+    // Break the body with a syntax error the parse check can pin to a
+    // line, and refresh from the SW so the page learns about it only
+    // through the storage watcher.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: 'function () {}\n',
+    });
+    await sm.updateSource(source!.id, 'manual');
+
+    await expect(row).toHaveAttribute('data-script-status', 'invalid');
+    const stored = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(stored.errorLocation?.file).toBe('a.user.js');
+    // Both the dataset and the visible hover text carry the location.
+    await expect(row).toHaveAttribute('data-script-error', /\(in a\.user\.js, line \d+/);
+    await expect(row.locator('td.status-cell a')).toHaveAttribute(
+      'title', /\(in a\.user\.js, line \d+/,
+    );
+
+    await page.close();
+  });
+
   test('enabled toggles flipped elsewhere grey the row and section', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -76,6 +121,7 @@ test.describe('sources page live updates', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/sources.html`);
     const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    const sourceCheckbox = section.locator('.directory-toggle input[type="checkbox"]');
     const row = page.locator(`tr[data-script-id="${script.id}"]`);
     const checkbox = row.locator('.toggle input[type="checkbox"]');
     await expect(checkbox).toBeChecked();
@@ -87,10 +133,86 @@ test.describe('sources page live updates', () => {
     await expect(row).toHaveClass(/disabled/);
 
     // Source-level disable greys the whole section and hard-disables the
-    // per-script checkbox (its underlying value is preserved).
+    // per-script checkbox (its underlying value is preserved). The
+    // source's OWN toggle has to follow too — it lives in the section
+    // header, and nothing on this page clicked it, so a greyed-out
+    // section under a checked "on" toggle is the state to avoid.
     await sm.setSourceEnabled(source!.id, false);
     await expect(section).toHaveClass(/disabled/);
     await expect(checkbox).toBeDisabled();
+    await expect(sourceCheckbox).not.toBeChecked();
+
+    // And back: re-enabling elsewhere re-checks it and ungreys the row.
+    await sm.setSourceEnabled(source!.id, true);
+    await expect(section).not.toHaveClass(/disabled/);
+    await expect(sourceCheckbox).toBeChecked();
+    await expect(checkbox).toBeEnabled();
+
+    await page.close();
+  });
+
+  test('a watcher-driven section rebuild keeps the refresh highlights', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Refresh highlights say what changed on the last refresh and stay
+    // until the next one. A structural change arriving from elsewhere
+    // rebuilds the whole section — every `<tr>` is replaced — so the
+    // classes have to be carried onto the new rows explicitly or the
+    // user's what-changed colour vanishes for an unrelated reason.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    const row = page.locator(`tr[data-script-id="${script.id}"]`);
+
+    // Change the file, then refresh from THIS page so the row picks up
+    // the green "updated" highlight.
+    scriptsDir.rewriteBody('a.user.js', '/* v2 */\n');
+    await section.locator('button', { hasText: 'Refresh' }).click();
+    await expect(row).toHaveClass(/row-updated/);
+
+    // A second script appears elsewhere: `scriptIds` changes, which is
+    // structural, so the watcher rebuilds the section under us.
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    await sm.updateSource(source!.id, 'manual');
+
+    await expect(section.locator('tbody tr')).toHaveCount(2);
+    await expect(row).toHaveClass(/row-updated/);
+
+    await page.close();
+  });
+
+  test('a source removed elsewhere drops its section', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await expect(section).toBeVisible();
+
+    // Removed from the SW — the index reconcile drops the section and,
+    // since it was the only one, puts the empty placeholder back.
+    await sm.removeSource(source!.id);
+    await expect(section).toHaveCount(0);
+    await expect(page.locator('.empty-placeholder')).toHaveCount(1);
 
     await page.close();
   });
@@ -179,6 +301,61 @@ test.describe('sources page live updates', () => {
 
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toHaveCount(1);
+
+    await page.close();
+  });
+});
+
+// The stale-dataset bug this PR fixes was specifically about
+// `data-script-refresh-error`: it was written when a refresh failed and
+// never removed when the refresh started working again, so every later
+// repaint recomputed REFRESH FAILED from the leftover value. Needs an
+// HTTP source, since that's what can fail a fetch and then recover.
+test.describe('sources page live updates (refresh failures)', () => {
+  let server: UserscriptServer;
+  test.beforeEach(async () => { server = await UserscriptServer.start(); });
+  test.afterEach(async () => { await server.stop(); });
+
+  test('REFRESH FAILED appears and clears again without a reload', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/app.user.js', userscriptText('App'));
+    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const row = page.locator(`tr[data-script-id="${script.id}"]`);
+    const statusLink = row.locator('td.status-cell a');
+    await expect(statusLink).toHaveText('OK');
+
+    // The URL starts 404'ing. The script stays `ok` and injectable; only
+    // the update failed, so the row flips to REFRESH FAILED and stores
+    // the reason for its hover text.
+    server.removeRoute('/app.user.js');
+    await sm.updateSource(source!.id, 'manual');
+    await expect(statusLink).toHaveText('REFRESH FAILED');
+    await expect(row).toHaveAttribute('data-script-refresh-error', /.+/);
+    await expect(row).toHaveAttribute('data-script-status', 'ok');
+
+    // The source comes back. Nothing about the STORED status changed
+    // across this transition — it was `ok` throughout — so the cleared
+    // `refreshError` can only show up if it reached the repaint and the
+    // stale dataset was deleted.
+    server.setRoute('/app.user.js', userscriptText('App', ' /* v2 */'));
+    await sm.updateSource(source!.id, 'manual');
+    await expect(row).not.toHaveAttribute('data-script-refresh-error');
+    await expect(row.locator('td.status-cell')).not.toHaveClass(/status-refresh-failed/);
+
+    // The badge still reads WARNING, because the failure and recovery
+    // are both in the script's Log and the level promotes the cell.
+    // Clearing the log drops the promotion — and that clear goes through
+    // `applyStatusCellsToDom`, the repaint that recomputes purely from
+    // the row datasets. It's the path a stale snapshot used to poison,
+    // so this is where REFRESH FAILED would come back from the dead.
+    await expect(statusLink).toHaveText('WARNING');
+    await sm.clearScriptLog(script.id);
+    await expect(statusLink).toHaveText('OK');
 
     await page.close();
   });

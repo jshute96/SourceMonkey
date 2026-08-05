@@ -424,6 +424,11 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
+- **Live storage watcher** (sources page): a `sources`-index reorder
+  arriving from another origin, and the `.busy-spinner` guards that
+  stop an echo from overwriting a control the user just clicked. The
+  reorder case has no test because nothing on the SW test surface
+  moves a source — `moveSource` would have to be exposed first.
 
 ## HTTP sources — follow-ups
 

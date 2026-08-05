@@ -237,7 +237,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     const sourceKey = currentScript ? `source:${currentScript.sourceId}` : null;
     let touched = false;
     for (const key of Object.keys(changes)) {
-      if (key.startsWith('script:') || (sourceKey && key === sourceKey)) {
+      if (key.startsWith('script:')) {
+        touched = true;
+        break;
+      }
+      // A source row is written on every refresh attempt, successful or
+      // not (`lastRefreshedAt`, `scanError`), and none of that shows
+      // here. Re-render only for the fields this page actually reads,
+      // or a source stuck retrying a failing scan would re-render every
+      // viewer open on it, on every retry, with nothing changing.
+      if (sourceKey && key === sourceKey && sourceFieldsShownHereChanged(changes[key])) {
         touched = true;
         break;
       }
@@ -274,6 +283,21 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
+// Does a `source:*` delta touch anything this viewer shows? The Enable
+// toggle reads the source's enabled state and the Source row reads its
+// display name and path; nothing else on the page comes from that row.
+// An add or a removal always counts — the re-read handles both.
+function sourceFieldsShownHereChanged(change: chrome.storage.StorageChange): boolean {
+  const prev = change.oldValue as StoredSource | undefined;
+  const next = change.newValue as StoredSource | undefined;
+  if (!prev || !next) return true;
+  return (
+    isSourceEnabled(prev) !== isSourceEnabled(next) ||
+    (prev.displayName ?? '') !== (next.displayName ?? '') ||
+    prev.path !== next.path
+  );
+}
+
 // Swap the Status row's inner content without rebuilding the rest of
 // the details panel — the row sits inside a <dl> we don't want to
 // thrash on every log append. Find the existing meta-status anchor
@@ -296,11 +320,8 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   // Re-read the parent source too: its enabled state greys the Enable
   // toggle and its display name shows in the Source row, and either can
   // change from the sources page or another tab while this viewer is
-  // open. render() reads these from the cached values below.
-  const source = await getSource(script.sourceId);
-  sourceEnabled = source ? isSourceEnabled(source) : true;
-  sourcePath = source?.path ?? '';
-  sourceRow = source ?? null;
+  // open. render() reads these from the cached values.
+  cacheSource(await getSource(script.sourceId));
   await refreshLogId();
   render(script);
   // render() wipes the flash overlay via `textContent =` and may
@@ -317,6 +338,15 @@ async function rehydrateAfterStorageChange(): Promise<void> {
 let sourceEnabled = true;
 let sourcePath = '';
 let sourceRow: StoredSource | null = null;
+
+// Single place the three cached source values are derived, so the load
+// path and the live re-hydrate can't fall out of step on what a missing
+// source means (treated as enabled, with no path and no row to render).
+function cacheSource(source: StoredSource | undefined): void {
+  sourceEnabled = source ? isSourceEnabled(source) : true;
+  sourcePath = source?.path ?? '';
+  sourceRow = source ?? null;
+}
 let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
 // Path currently shown in the Location cell. onCopyFilename copies
 // this rather than reading textContent, which would also break if the
@@ -358,10 +388,7 @@ async function loadStored(): Promise<void> {
     showMissing('Script not found in storage. Open it from the sources page.');
     return;
   }
-  const source = await getSource(script.sourceId);
-  sourceEnabled = source ? isSourceEnabled(source) : true;
-  sourcePath = source?.path ?? '';
-  sourceRow = source ?? null;
+  cacheSource(await getSource(script.sourceId));
   await refreshLogId();
   // Hydrate the max log level before render() so the first paint of
   // the Status row already reflects WARNING / ERROR. Without this the

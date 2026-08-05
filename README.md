@@ -212,6 +212,11 @@ update channel to a site you didn't approve.
   vanished script is automatically disabled so it stops being
   injected; the row stays in storage and the user can re-enable it
   if it comes back.
+- An open sources page keeps itself current. A script installed from
+  a link, refreshed from the viewer, updated by a background check, or
+  toggled in a second tab shows its new status, size, and enable state
+  right away — no page reload. Script viewers follow the same way, so
+  enabling or disabling a source reaches every viewer open on it.
 - External tools can trigger a refresh-all by opening the sources
   page with `?refresh` in the query string, e.g.
   `google-chrome chrome-extension://<extension-id>/sources.html?refresh`

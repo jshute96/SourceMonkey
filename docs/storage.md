@@ -689,11 +689,14 @@ undisturbed.
 
 ### Live storage watcher (changes from any origin)
 
-The in-place mutators above cover the page's **own** actions. A
-`chrome.storage.local.onChanged` listener covers everything else — a
-Refresh from the viewer, a background opportunistic refresh, an Install
-captured in another tab, or a second Sources tab — so the page always
-shows the current stored state without a manual reload.
+The in-place mutators above cover the page's **own** actions.
+A `chrome.storage.local.onChanged` listener covers everything else:
+
+- a Refresh from the viewer, or a background opportunistic refresh;
+- an Install captured in another tab, or a second Sources tab.
+
+The page therefore always shows the current stored state without a
+manual reload.
 
 - **`script:*` changed** → the row is repainted **in place** (status
   cell, size, enabled toggle, row greying) from the new value, and its
@@ -702,19 +705,47 @@ shows the current stored state without a manual reload.
   **deleted**. This is the core of the issue-#10 fix: a stale
   `data-script-refresh-error` used to pin the recompute to REFRESH
   FAILED forever, and there was no local listener at all.
+  - The datasets are written by `applyScriptRowDatasets`, shared with
+    the initial render, so the two can't disagree on what goes in them
+    — notably the `(in <file>, line N)` the hover text depends on.
+  - The Filename cell (favicon, `@description` tooltip, name) is
+    rebuilt only when one of those inputs actually moved. It is a
+    separate check because rebuilding re-runs the favicon fetch and
+    flashes the globe placeholder.
 - **`source:*` changed** → the cheapest correct action: grey/ungrey in
   place on an `enabled` flip; rebuild the section (preserving row
   highlights) on a `scriptIds` / `displayName` / `scanError` change;
   nothing when only metadata like `lastRefreshedAt` moved.
+  - Greying syncs the source's **own** header toggle as well as the
+    per-script ones. `onToggleSource` arrives with it already flipped by
+    the click; the watcher does not, and a greyed-out section under a
+    checked "on" toggle takes two clicks to undo.
 - **`sources` index changed** → sections are added / removed / reordered
-  to match, reusing existing section elements.
+  to match, reusing existing section elements. Re-seating is skipped
+  when the DOM order already matches: moving an attached node detaches
+  it first, which blurs anything focused inside it.
 
-The listener is idempotent and preserves row highlights and in-flight
-spinners, so the echo of one of the page's own writes is a harmless
-repaint rather than a fight with the handler that made it. Row-level
-repaints never recreate the `<tr>`, so a refresh's `row-updated` /
-`row-failed` highlight survives; section rebuilds carry those classes
-onto the new rows explicitly.
+**Deltas are handled one at a time**, through a promise chain seeded
+with the initial render. The handler awaits storage reads, and Chrome
+re-fires the listener without waiting for the previous call to settle.
+
+- Two interleaved runs could each build a section for the same source
+  and append both, or let an older render replace a node the newer one
+  had already detached (`replaceWith` on a detached node is a silent
+  no-op, so the newer render would just be dropped).
+- Chaining behind the initial render matters for the same reason:
+  `render()` empties the container and refills it across several awaits.
+
+The listener is idempotent, so the echo of one of the page's own writes
+is a harmless repaint rather than a fight with the handler that made it:
+
+- Row-level repaints never recreate the `<tr>`, so a refresh's
+  `row-updated` / `row-failed` highlight and any in-flight spinner
+  survive.
+- Section rebuilds carry those highlight classes onto the new rows
+  explicitly. They cannot preserve an in-flight spinner — a rebuild
+  replaces every `<tr>` — but the page-own op that owns one has already
+  finished its DOM work by then.
 
 **Coordination with the page's own handlers.** `chrome.storage` fires in
 the writing context too, so a page-driven Add / Remove / Refresh echoes
@@ -732,9 +763,19 @@ therefore idempotent:
   moment, so a structural refresh whose section the watcher rebuilt
   mid-flight still lands its highlights.
 
-A per-row repaint also skips the enabled-toggle sync while that row's
-toggle is mid-flight (a `.busy-spinner` is present), so the echo of a
-toggle write can't re-enable the checkbox under its own spinner.
+**Busy affordances win over the echo.** A control the page is still
+awaiting shows the value the user just chose; the echo of that very
+write must not overwrite it, or the operation appears to undo itself
+mid-flight. Every busy state is therefore checked before it's touched:
+
+- **Per-script and per-source toggles** — skipped while their label
+  carries a `.busy-spinner`. The handler's `finally` writes the settled
+  state.
+- **The bulk `+`/`−` button** — its `disabled` is left alone while
+  `.busy` is set. One bulk write echoes back once per row, so without
+  this each repaint would re-enable it mid-operation.
+- **The Up / Down arrows** — `refreshMoveButtons()` no-ops while a move
+  is in flight, since the watcher's index reconcile ends in one.
 
 ### Background-SW sync coalescing
 

@@ -237,10 +237,14 @@ re-renders when:
 - a **`script:*`** row changes — this script (status, content, size,
   enabled), or a sibling whose add/remove shifts this script's dedup
   `#N` log ID;
-- **this script's parent `source:*`** row changes — a source
-  enable/disable greys the Enable toggle, and a rename updates the
-  Source row. The re-hydrate re-reads the source alongside the script,
-  so both reach the panel without a reload.
+- **this script's parent `source:*`** row changes, but only in a field
+  this page shows — `enabled` (greys the Enable toggle), `displayName`
+  or `path` (the Source row). The re-hydrate re-reads the source
+  alongside the script, so both reach the panel without a reload.
+  - Everything else on that row is ignored on purpose. A refresh
+    rewrites `lastRefreshedAt` (and `scanError`) whether or not it
+    achieved anything, so a source stuck retrying a failing scan would
+    otherwise re-render every viewer open on it, on every retry.
 
 If the re-read finds the script gone (its source was removed), the
 viewer drops into the not-found state. Session-storage changes

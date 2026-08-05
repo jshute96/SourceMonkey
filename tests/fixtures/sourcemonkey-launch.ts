@@ -91,9 +91,10 @@ export async function launchSourceMonkeyContext(opts: {
  * Return a function that re-resolves a live SW handle each call. MV3
  * service workers idle out aggressively, and Playwright's
  * `serviceWorkers()` list can hand back a Worker whose underlying CDP
- * target has already been torn down. Don't cache — every call walks
- * the current list and verifies each candidate with a no-op evaluate,
- * falling back to `waitForEvent` for a fresh spawn if nothing is live.
+ * target has already been torn down. Don't cache — every call walks the
+ * current list and polls each candidate for the `self.SourceMonkey` test
+ * surface, falling back to `waitForEvent` for a fresh spawn if the list
+ * is empty.
  */
 export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker> {
   // The worker is "ready" only once its top-level module has run far
@@ -117,13 +118,21 @@ export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker>
     return false;
   };
   return async () => {
+    // A worker that answers but never exposes the surface (its module
+    // body threw, say) is still the best handle available: returning it
+    // fails the test on `SourceMonkey.<method> is not a function`, which
+    // names the real problem. Discarding it in favour of `waitForEvent`
+    // would report a spawn timeout instead and hide the cause.
+    let answered: Worker | null = null;
     for (const candidate of ctx.serviceWorkers()) {
       try {
         if (await apiReady(candidate)) return candidate;
+        answered ??= candidate;
       } catch {
         // stale; try the next one
       }
     }
+    if (answered) return answered;
     const sw = await ctx.waitForEvent('serviceworker', { timeout: 5000 });
     await apiReady(sw);
     return sw;

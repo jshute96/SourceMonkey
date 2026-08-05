@@ -61,11 +61,11 @@ One-line descriptions of every source file, grouped by directory.
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
 | `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
-| `src/sources.ts` | Sources page controller — render, in-place updates, live `storage.local` watchers, busy spinners, `?refresh`/`?add_source`/`?first_run` triggers, per-source anchors |
+| `src/sources.ts` | Sources page controller — render, in-place updates, live `storage.local` watcher, `?refresh`/`?add_source`/`?first_run` triggers |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle, GitHub auth token) plus a link back to the sources page |
 | `src/options.ts` | Options page controller — binds the boolean setting checkboxes (link capture, debug logging) + GitHub-token controls (save / clear / reveal) |
 | `src/userscript.html` | Userscript viewer markup: controls row, banner slot + preview actions, details panel, tab strip, code box, log pane |
-| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), live `storage` watchers (script + parent source), and the log pane |
+| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), live `storage` watchers, log pane |
 | `src/script-details.ts` | Builds the viewer's details `<dl>` (header fields, permissions, source/location/size/status) for both viewer modes |
 | `src/code-tabs.ts` | Tabbed code view: tab strip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |

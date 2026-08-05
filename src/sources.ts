@@ -67,7 +67,7 @@ import {
   getAllMaxLogLevels,
   type LogLevel,
 } from './script-log.js';
-import { renderSiteIconInto } from './site-icon.js';
+import { iconRefFromHeader, renderSiteIconInto } from './site-icon.js';
 import {
   canonicalSourceInput,
   containerKindForSingleFileInput,
@@ -124,7 +124,12 @@ openOptionsBtn.addEventListener('click', () => {
   location.href = 'options.html';
 });
 
-void bootstrap();
+// Kept so the live storage watcher below can queue its first delta
+// behind the initial render. `render()` empties the container and then
+// appends sections across several awaits; a delta landing inside that
+// window would otherwise build sections for ids the render loop hasn't
+// reached yet and the two would each append their own.
+const bootstrapDone = bootstrap();
 
 // Repaint Status cells when the per-script max-log-level row changes
 // on the SW side (a fresh error / warning was appended, or the log
@@ -168,9 +173,32 @@ const SCRIPT_KEY_PREFIX = 'script:';
 // structural inserts are guarded (add replaces-if-present, remove checks
 // for an existing placeholder, refresh re-finds the live section) so the
 // echo can't duplicate a section/placeholder or drop a highlight.
+//
+// Deltas are handled ONE AT A TIME through a promise chain. The handler
+// awaits storage reads, and Chrome fires the listener again without
+// waiting for the previous call to settle — two interleaved runs can
+// each build a section for the same source and append both, or let an
+// older render win by replacing a node the newer one already detached.
+// Serializing is the same guard `moveInFlight` gives the index writes.
+// The chain starts at the initial render so the first delta is applied
+// to a fully built page.
+let watcherChain: Promise<void> = bootstrapDone.catch((err: unknown) => {
+  console.info('[SourceMonkey] sources page failed to start', err);
+});
 if (chrome.storage?.local?.onChanged) {
   chrome.storage.local.onChanged.addListener((changes) => {
-    void onLocalStorageChange(changes);
+    // Both arms run the next delta: one failure must not stall the chain.
+    watcherChain = watcherChain
+      .then(
+        () => onLocalStorageChange(changes),
+        () => onLocalStorageChange(changes),
+      )
+      // Nothing here is worth failing the page over, but an unhandled
+      // rejection would land in chrome://extensions/?errors and read as
+      // a broken extension — swallow it into the page console instead.
+      .catch((err: unknown) => {
+        console.info('[SourceMonkey] live storage update failed', err);
+      });
   });
 }
 
@@ -223,6 +251,37 @@ function applyStatusCellsToDom(): void {
       row.dataset.scriptRefreshError ?? undefined,
     );
   }
+}
+
+// Write the `data-script-*` snapshot that the repaint paths read back,
+// and hand the caller the description to paint with, so the initial
+// render and the live in-place update can't drift. The error message is
+// stored already-described (message + `(in file, line …)`) because the
+// dataset is a string channel with no room for the structured location,
+// and the hover text is its only consumer — the clickable form of the
+// same location lives in the viewer, which this row's link opens.
+// Fields that no longer apply are DELETED, not left behind: a stale
+// `data-script-refresh-error` used to pin the recompute to REFRESH
+// FAILED long after the refresh started succeeding again.
+function applyScriptRowDatasets(
+  row: HTMLTableRowElement,
+  script: StoredScript,
+): { errorMessage: string | undefined } {
+  row.dataset.scriptStatus = script.status;
+  const errorMessage = script.errorMessage
+    ? describeDiagnostic(script.errorMessage, script.errorLocation)
+    : undefined;
+  if (errorMessage) row.dataset.scriptError = errorMessage;
+  else delete row.dataset.scriptError;
+  if (script.refreshError) row.dataset.scriptRefreshError = script.refreshError;
+  else delete row.dataset.scriptRefreshError;
+  // The outdated verdict needs the parsed header and the stored probes,
+  // neither of which survives as a dataset attribute — record it in the
+  // page-wide map instead so the repaint path can look it up by id.
+  const outdated = scriptOutdatedProbe(script);
+  if (outdated) currentOutdated.set(script.id, outdated);
+  else currentOutdated.delete(script.id);
+  return { errorMessage };
 }
 
 // Apply `effectiveScriptStatus` to one status cell: rewrite the link
@@ -362,7 +421,11 @@ async function onLocalStorageChange(
   // only repaint rows whose stored value changed and that are on screen.
   for (const { id, change } of changedScripts) {
     if (change.newValue === undefined) continue;
-    updateScriptRowInPlace(id, change.newValue as StoredScript);
+    updateScriptRowInPlace(
+      id,
+      change.newValue as StoredScript,
+      change.oldValue as StoredScript | undefined,
+    );
   }
 }
 
@@ -381,14 +444,6 @@ async function reconcileSectionsToIndex(ids: readonly string[]): Promise<void> {
     const sid = section.dataset.sourceId;
     if (!sid || !wanted.has(sid)) section.remove();
   }
-  if (ids.length === 0) {
-    if (!directoriesEl.querySelector('.empty-placeholder')) {
-      directoriesEl.appendChild(emptyPlaceholder());
-    }
-    refreshMoveButtons();
-    return;
-  }
-  removeEmptyPlaceholder();
   const ordered: HTMLElement[] = [];
   for (const id of ids) {
     let section = findSection(id);
@@ -399,9 +454,26 @@ async function reconcileSectionsToIndex(ids: readonly string[]): Promise<void> {
     }
     ordered.push(section);
   }
+  // The placeholder goes when there is something to show in its place —
+  // not merely because the index is non-empty. An index whose rows are
+  // all unreadable (the write race above) would otherwise leave the page
+  // blank with no message and nothing scheduled to fix it.
+  if (ordered.length === 0) {
+    if (!directoriesEl.querySelector('.empty-placeholder')) {
+      directoriesEl.appendChild(emptyPlaceholder());
+    }
+    refreshMoveButtons();
+    return;
+  }
+  removeEmptyPlaceholder();
   // appendChild moves an already-attached node, so appending each section
   // in index order lays them out in that order without a full rebuild.
-  for (const section of ordered) directoriesEl.appendChild(section);
+  // Only done when the order actually differs: re-seating an attached
+  // node detaches it first, and Chrome blurs anything focused inside it,
+  // so an unconditional pass would steal focus on every index write.
+  if (!sameNodeOrder(directoriesEl, ordered)) {
+    for (const section of ordered) directoriesEl.appendChild(section);
+  }
   refreshMoveButtons();
 }
 
@@ -474,43 +546,55 @@ async function reRenderSectionPreservingHighlights(source: StoredSource): Promis
     );
     if (row) row.classList.add(...cls);
   }
-  old.replaceWith(fresh);
+  // Re-find rather than reusing `old`: rendering awaited, and a flow
+  // handler can have swapped the section out underneath us in that
+  // window. `replaceWith` on a node with no parent is a silent no-op, so
+  // reusing a detached `old` would throw this newer render away and
+  // leave the older one on screen. Nothing left to replace means the
+  // source is gone — drop the render rather than resurrect the section.
+  const live = findSection(source.id);
+  if (!live) return;
+  live.replaceWith(fresh);
   refreshMoveButtons();
 }
 
 // Repaint one already-rendered script row from a fresh stored value
-// WITHOUT recreating the <tr>, so any refresh highlight, in-flight
-// spinner, or favicon on the row survives. This is the heart of the
-// issue-#10 fix: the row's datasets are refreshed from the new value —
-// and the ones that no longer apply are DELETED — so a cleared
-// `refreshError` finally reaches the repaint instead of a stale
-// `data-script-refresh-error` pinning the cell to REFRESH FAILED. A row
-// that isn't on screen (its section not built yet) is left to the
-// structural paths.
-function updateScriptRowInPlace(id: string, script: StoredScript): void {
+// WITHOUT recreating the <tr>, so any refresh highlight or in-flight
+// spinner on the row survives. This is the heart of the issue-#10 fix:
+// the row's datasets are refreshed from the new value — and the ones
+// that no longer apply are DELETED — so a cleared `refreshError`
+// finally reaches the repaint instead of a stale
+// `data-script-refresh-error` pinning the cell to REFRESH FAILED.
+//
+// `prev` is the pre-change stored value (absent when the row was just
+// added), used to leave alone the parts that didn't move. A row that
+// isn't on screen (its section not built yet) is left to the structural
+// paths.
+function updateScriptRowInPlace(
+  id: string,
+  script: StoredScript,
+  prev: StoredScript | undefined,
+): void {
   const row = directoriesEl.querySelector<HTMLTableRowElement>(
     `.script-table tr[data-script-id="${cssEscape(id)}"]`,
   );
   if (!row) return;
 
-  row.dataset.scriptStatus = script.status;
-  if (script.errorMessage) row.dataset.scriptError = script.errorMessage;
-  else delete row.dataset.scriptError;
-  if (script.refreshError) row.dataset.scriptRefreshError = script.refreshError;
-  else delete row.dataset.scriptRefreshError;
-
-  // Keep the outdated-probe lookup the status paint reads by id in sync.
-  const outdated = scriptOutdatedProbe(script);
-  if (outdated) currentOutdated.set(id, outdated);
-  else currentOutdated.delete(id);
+  const { errorMessage } = applyScriptRowDatasets(row, script);
 
   const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
-  if (cell) {
-    paintStatusCell(cell, id, script.status, script.errorMessage, script.refreshError);
-  }
+  if (cell) paintStatusCell(cell, id, script.status, errorMessage, script.refreshError);
 
   const sizeCell = row.querySelector<HTMLTableCellElement>('td.size-cell');
   if (sizeCell) sizeCell.textContent = formatScriptSize(script);
+
+  // The Filename cell is only rebuilt when something it shows actually
+  // moved. Rebuilding unconditionally would re-run the favicon fetch and
+  // flash the globe placeholder on every unrelated refresh.
+  const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
+  if (nameCell && nameCellChanged(prev, script)) {
+    fillNameCell(nameCell, script, row.dataset.inContainer === '1');
+  }
 
   // Enabled toggle + row greying. The parent source's enabled state is
   // read from the section class (kept current by applySourceChange /
@@ -540,6 +624,30 @@ function updateScriptRowInPlace(id: string, script: StoredScript): void {
   }
   row.classList.toggle('disabled', !sourceOn || !scriptOn);
   if (section) refreshBulkToggle(section);
+}
+
+// Are `wanted` already the container's section children, in that order?
+function sameNodeOrder(container: HTMLElement, wanted: readonly HTMLElement[]): boolean {
+  const current = [...container.querySelectorAll<HTMLElement>(':scope > section.directory')];
+  return (
+    current.length === wanted.length && current.every((node, i) => node === wanted[i])
+  );
+}
+
+// Does anything the Filename cell renders differ between two versions
+// of the same script row? Compares the rendered inputs (name text,
+// description tooltip, favicon target) rather than the whole row, so an
+// ordinary content refresh that left the header alone doesn't re-run the
+// favicon fetch and flash the globe placeholder.
+function nameCellChanged(prev: StoredScript | undefined, next: StoredScript): boolean {
+  if (!prev) return true;
+  return (
+    prev.relativePath !== next.relativePath ||
+    prev.fileUrl !== next.fileUrl ||
+    scriptDescription(prev) !== scriptDescription(next) ||
+    iconRefFromHeader(prev.header) !== iconRefFromHeader(next.header) ||
+    JSON.stringify(prev.matching) !== JSON.stringify(next.matching)
+  );
 }
 
 // Order-sensitive equality for two `scriptIds` lists (a reorder is a
@@ -865,27 +973,12 @@ function renderScriptRow(
 
   const tr = document.createElement('tr');
   tr.dataset.scriptId = script.id;
-  // Stash the persisted status + sourceId + errorMessage on the row so
-  // `applyStatusCellsToDom` can repaint the Status cell after a
-  // chrome.storage.session change without re-querying the store.
-  tr.dataset.scriptStatus = script.status;
   tr.dataset.sourceId = script.sourceId;
   if (inContainer) tr.dataset.inContainer = '1';
-  // Stashed already-described (message + `(in file, line …)`) because
-  // the dataset is a string channel and the repaint path has no access
-  // to the structured location. The hover text is the only consumer, so
-  // flattening here loses nothing — the clickable form of the same
-  // location lives in the viewer, which this row's link opens.
-  if (script.errorMessage) {
-    tr.dataset.scriptError = describeDiagnostic(script.errorMessage, script.errorLocation);
-  }
-  if (script.refreshError) tr.dataset.scriptRefreshError = script.refreshError;
-  // The outdated verdict needs the parsed header and the stored probes,
-  // neither of which survives as a dataset attribute — record it here
-  // so the repaint path can look it up by id.
-  const outdated = scriptOutdatedProbe(script);
-  if (outdated) currentOutdated.set(script.id, outdated);
-  else currentOutdated.delete(script.id);
+  // Stash the persisted status + errorMessage on the row so
+  // `applyStatusCellsToDom` can repaint the Status cell after a
+  // chrome.storage.session change without re-querying the store.
+  const { errorMessage } = applyScriptRowDatasets(tr, script);
   if (!sourceOn || !scriptOn) tr.classList.add('disabled');
 
   const toggleCell = document.createElement('td');
@@ -900,6 +993,53 @@ function renderScriptRow(
 
   const nameCell = document.createElement('td');
   nameCell.classList.add('name-cell');
+  fillNameCell(nameCell, script, inContainer);
+  tr.appendChild(nameCell);
+
+  const sizeCell = document.createElement('td');
+  sizeCell.className = 'size-cell';
+  sizeCell.textContent = formatScriptSize(script);
+  tr.appendChild(sizeCell);
+
+  const statusCell = document.createElement('td');
+  paintStatusCell(statusCell, script.id, script.status, errorMessage, script.refreshError);
+  tr.appendChild(statusCell);
+
+  // Container rows always offer a remove button (every script inside a
+  // container was added one-by-one and can be taken back out the same
+  // way). Non-container rows rely on paintStatusCell's trash affordance
+  // for `missing` rows only.
+  if (inContainer) {
+    const actionCell = document.createElement('td');
+    actionCell.className = 'action-cell';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-script';
+    removeBtn.textContent = '🗑';
+    removeBtn.title = 'Remove this script';
+    removeBtn.setAttribute('aria-label', 'Remove this script');
+    removeBtn.addEventListener('click', () => {
+      void onRemoveScript(script.id, script.sourceId, removeBtn);
+    });
+    actionCell.appendChild(removeBtn);
+    tr.appendChild(actionCell);
+  }
+
+  return tr;
+}
+
+// Build (or rebuild) the Filename cell's contents: favicon slot, the
+// linked name, and the dedup `#N` suffix. Shared with the live in-place
+// row update, which re-runs it when a refresh changed something this
+// cell shows — otherwise a script whose `@match` or `@description` was
+// edited keeps the old site's favicon and the old hover text until the
+// section happens to be rebuilt for an unrelated reason.
+function fillNameCell(
+  nameCell: HTMLTableCellElement,
+  script: StoredScript,
+  inContainer: boolean,
+): void {
+  nameCell.textContent = '';
   // Slot for the favicon: a fixed-width container so the filename
   // text always starts at the same x-position. renderSiteIconInto
   // synchronously paints a globe placeholder (clickable when the
@@ -939,44 +1079,6 @@ function renderScriptRow(
   suffix.className = 'log-id-suffix';
   suffix.textContent = logIdDupeSuffix(currentLogIds.get(script.id) ?? '');
   nameCell.appendChild(suffix);
-  tr.appendChild(nameCell);
-
-  const sizeCell = document.createElement('td');
-  sizeCell.className = 'size-cell';
-  sizeCell.textContent = formatScriptSize(script);
-  tr.appendChild(sizeCell);
-
-  const statusCell = document.createElement('td');
-  paintStatusCell(
-    statusCell,
-    script.id,
-    script.status,
-    tr.dataset.scriptError,
-    script.refreshError,
-  );
-  tr.appendChild(statusCell);
-
-  // Container rows always offer a remove button (every script inside a
-  // container was added one-by-one and can be taken back out the same
-  // way). Non-container rows rely on paintStatusCell's trash affordance
-  // for `missing` rows only.
-  if (inContainer) {
-    const actionCell = document.createElement('td');
-    actionCell.className = 'action-cell';
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-script';
-    removeBtn.textContent = '🗑';
-    removeBtn.title = 'Remove this script';
-    removeBtn.setAttribute('aria-label', 'Remove this script');
-    removeBtn.addEventListener('click', () => {
-      void onRemoveScript(script.id, script.sourceId, removeBtn);
-    });
-    actionCell.appendChild(removeBtn);
-    tr.appendChild(actionCell);
-  }
-
-  return tr;
 }
 
 // Tooltip text for a script row: the parsed `@description` value, or
@@ -1111,8 +1213,11 @@ async function onAddDirectory(
     // would then produce a second section for the same source. See the
     // watcher's reconcileSectionsToIndex.
     removeEmptyPlaceholder();
-    const section = findSection(latest.id);
     const fresh = await renderSourceSection(latest);
+    // Look the section up AFTER the render await, not before: the
+    // watcher can append it during that window, and an append decided on
+    // a stale lookup would leave two sections for the same source.
+    const section = findSection(latest.id);
     if (section) section.replaceWith(fresh);
     else directoriesEl.appendChild(fresh);
     refreshMoveButtons();
@@ -1221,10 +1326,11 @@ async function onMoveSource(
         directoriesEl.insertBefore(sibling, section);
       }
     } finally {
-      // refreshMoveButtons recomputes per-position disabled state, so
-      // we don't need to undo setMoveButtonsBusy explicitly — the
-      // refresh writes the correct enabled/disabled value for each
-      // arrow based on its new index.
+      // Clearing the busy flag first lets refreshMoveButtons run: it
+      // recomputes per-position disabled state, which is what undoes
+      // setMoveButtonsBusy — each arrow gets the correct enabled value
+      // for its new index.
+      setMoveButtonsBusy(false);
       refreshMoveButtons();
     }
   };
@@ -1239,7 +1345,14 @@ async function onMoveSource(
 // Disable every move arrow on the page while a move is in flight. The
 // follow-up refreshMoveButtons() restores per-position disabled state
 // (Up off on first, Down off on last, everything else on).
+// Set while a move's index write is in flight. The write echoes back
+// into the live storage watcher, whose reconcile ends in a
+// refreshMoveButtons() — which would re-enable every arrow in the
+// middle of the move it belongs to.
+let moveButtonsBusy = false;
+
 function setMoveButtonsBusy(busy: boolean): void {
+  moveButtonsBusy = busy;
   for (const btn of directoriesEl.querySelectorAll<HTMLButtonElement>('.move-source')) {
     btn.disabled = busy;
   }
@@ -1252,6 +1365,7 @@ function setMoveButtonsBusy(busy: boolean): void {
 // Filters on `section.directory` so the empty-list placeholder
 // (`p.empty-placeholder`) that shares this container is ignored.
 function refreshMoveButtons(): void {
+  if (moveButtonsBusy) return;
   const sections = directoriesEl.querySelectorAll<HTMLElement>('section.directory');
   const last = sections.length - 1;
   sections.forEach((section, i) => {
@@ -1524,21 +1638,40 @@ function findSection(sourceId: string): HTMLElement | null {
 }
 
 // Apply a source enable/disable to its section without rebuilding it:
-// flip the section's `.disabled` class, retitle the per-script toggle
-// labels, enable/disable each per-script checkbox, and update the
-// bulk-toggle's disabled state. Per-script `enabled` values are
-// preserved in storage, so the row classes recompute from each
-// checkbox's current `checked`.
+// flip the section's `.disabled` class and its own header toggle,
+// retitle the per-script toggle labels, enable/disable each per-script
+// checkbox, and update the bulk-toggle's disabled state. Per-script
+// `enabled` values are preserved in storage, so the row classes
+// recompute from each checkbox's current `checked`.
+//
+// Every checkbox here is skipped while its own label carries a
+// `.busy-spinner`: that label belongs to a click this page is still
+// awaiting, and the handler's `finally` writes the settled state. When
+// the caller is the live storage watcher the write being echoed IS that
+// click, so touching the checkbox would undo the optimistic value the
+// user is looking at.
 function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
   section.classList.toggle('disabled', !enabled);
+
+  // The source's own toggle lives in the section header, outside tbody.
+  // `onToggleSource` arrives with it already flipped by the click, but
+  // the watcher does not — without this a source disabled from another
+  // tab greys the whole section while its toggle still reads "on".
+  const sourceLabel = section.querySelector<HTMLLabelElement>('.directory-toggle');
+  const sourceCb = sourceLabel?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (sourceCb && !sourceLabel?.querySelector('.busy-spinner')) {
+    sourceCb.checked = enabled;
+  }
 
   for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
     const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
     const lab = row.querySelector<HTMLLabelElement>('.toggle');
     if (!cb || !lab) continue;
-    cb.disabled = !enabled;
-    lab.classList.toggle('toggle-disabled', !enabled);
-    lab.title = enabled ? 'Enable this script' : 'Source is disabled';
+    if (!lab.querySelector('.busy-spinner')) {
+      cb.disabled = !enabled;
+      lab.classList.toggle('toggle-disabled', !enabled);
+      lab.title = enabled ? 'Enable this script' : 'Source is disabled';
+    }
     row.classList.toggle('disabled', !enabled || !cb.checked);
   }
 
@@ -1556,10 +1689,14 @@ function refreshBulkToggle(section: HTMLElement): void {
     section.querySelectorAll<HTMLInputElement>('tbody .toggle input[type="checkbox"]'),
   );
   const allOn = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
-  btn.disabled = !sourceOn;
   btn.title = bulkTitle(sourceOn, allOn);
-  // While busy the symbol is replaced by a spinner; don't overwrite it.
+  // While busy the symbol is replaced by a spinner and the button is
+  // held disabled by setBulkBusy; don't overwrite either. A bulk toggle
+  // writes every row at once, and the echo of that write reaches this
+  // function once per row — each call would otherwise re-enable the
+  // button under its own spinner, mid-operation.
   if (!btn.classList.contains('busy')) {
+    btn.disabled = !sourceOn;
     btn.textContent = allOn ? '−' : '+';
   } else {
     btn.dataset.idleText = allOn ? '−' : '+';
