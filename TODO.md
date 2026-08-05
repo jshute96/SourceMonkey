@@ -207,12 +207,14 @@ gates, or the emitted wrap — the rate is the regression signal.
   generated copy of the script before TM installs it. Until then the
   TM-compatibility claim for `@require` — the whole premise of the
   concatenated arrangement — rests on unit and SM-only e2e coverage.
-- **`tests/examples/grant-case/` has not been run under TM.** The
-  spec is written manager-agnostically and should pass there, but the
-  TM verdicts it encodes (byte-exact grant matching, `GM.xmlhttpRequest`
-  rejected) come from static analysis of TM 5.5.0.0's shipped
-  `page.js`, not an observed run. Run
-  `npm run test:e2e:tm -- tests/examples/grant-case/` to confirm.
+- **`tests/examples/grant-case/` has not been run under TM.** Its
+  prefix-rewrite test is `test.skip`ped under TM because TM rejects
+  `@grant GM.xmlhttpRequest`; the remaining test should pass there.
+  Both verdicts come from static analysis of TM 5.5.0.0's shipped
+  `page.js`, not an observed run. Confirm with
+  `npm run test:e2e:tm -- tests/examples/grant-case/`, and confirm the
+  skipped half by hand (serve the examples, install the three scripts
+  into TM, read the `#log` rows).
 
 ## Header / `@grant` name-case divergences
 

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 import { emitGmBindings } from '../../dist/gm-bindings.js';
+import { GM_APIS } from '../../dist/gm-api-catalog.js';
 
 function makeInfo(over = {}) {
   return {
@@ -256,6 +257,19 @@ test('emitGmBindings: APIs with one GM. spelling are not duplicated', () => {
   const out = emitGmBindings(['GM_setValue'], makeInfo());
   const matches = out.js.match(/setValue: function/g) ?? [];
   assert.equal(matches.length, 1);
+});
+
+test('emitGmBindings: the GM object has no duplicate keys with everything granted', () => {
+  // Two APIs contribute two `GM.` property names each, so a future
+  // catalog entry whose gmDotName collides with another entry's
+  // `name.slice(3)` would silently shadow it in the object literal.
+  const all = GM_APIS.map((a) => a.name);
+  const out = emitGmBindings(all, makeInfo({ grants: all }));
+  const literal = /const GM = Object\.freeze\(\{ (.*) \}\);/.exec(out.js);
+  assert.ok(literal, 'GM object literal emitted');
+  const keys = [...literal[1].matchAll(/(?:^|, )(\w+):/g)].map((m) => m[1]);
+  assert.ok(keys.length > 0);
+  assert.equal(new Set(keys).size, keys.length, `duplicate GM key in: ${keys.join(', ')}`);
 });
 
 test('emitGmBindings: GM.info is exposed (not GM.GM_info)', () => {

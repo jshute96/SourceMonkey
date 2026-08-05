@@ -31,6 +31,17 @@ Specs that opt out under TM via
   URLs only, so it can't install the example cleanly. Skipped under
   TM until we ship an absolute-URL variant. SM coverage:
   `tests/examples/gm-resource/gm-resource.spec.ts`.
+- **`grant-case/`** (one test of two) — the prefix-rewrite test skips
+  under TM. `@grant GM.xmlhttpRequest` / `@grant GM.getResourceURL`
+  are VM's `GM.foo` → `GM_foo` rewrite; TM's grant table is a fixed
+  list of exact names with no rewrite, so it drops them. The other
+  test — canonical spellings bind, mis-capitalised legacy `GM_` names
+  bind nothing — is universal and does run under TM. See
+  [supported-GM-APIs.md](supported-GM-APIs.md#the-re-cased-gm-spellings).
+  - **Nothing here has actually been run under TM yet.** Both
+    verdicts come from reading TM 5.5.0.0's shipped `page.js`. To
+    check the skipped half by hand: serve the examples, install the
+    three scripts into TM, open the page, read the `#log` rows.
 - **`require-scope/`** — same shape, for `@require ./lib.js`. TM
   installs these examples from a local file, so it has no base URL to
   resolve a relative ref against even in principle, and the fixture
@@ -48,19 +59,6 @@ Specs that opt out under TM via
     *will* try to install both variants; TM prefetches `@require`
     URLs at the install prompt, so expect that install to error or
     stall rather than complete.
-
-## Not yet run under TM
-
-- **`grant-case/`** — added with the `@grant` name-casing work; the
-  TM project has not been run against it yet. The spec asserts that
-  `@grant GM.xmlhttpRequest` / `@grant GM.getResourceURL` bind, which
-  is VM's prefix-rewrite behaviour. TM's grant table is a fixed list
-  of exact names with no rewrite, so **the `gm4-case` assertions are
-  expected to fail under TM** — that failure confirms the research
-  rather than reporting a bug. Triage it into "Behavior diffs" (with
-  the assertion loosened to the granted-in-both spellings) once
-  someone has actually run it. See
-  [supported-GM-APIs.md](supported-GM-APIs.md#the-two-gm-spellings).
 
 ## Failing specs (untriaged divergences)
 

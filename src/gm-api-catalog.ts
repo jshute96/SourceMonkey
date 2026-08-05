@@ -154,14 +154,18 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
 //   GM_xmlhttpRequest  → GM.xmlHttpRequest (GM4)   + GM.xmlhttpRequest (rewrite)
 //   GM_getResourceURL  → GM.getResourceUrl (GM4)   + GM.getResourceURL (rewrite)
 //
-// Both spellings appear in published GreasyFork scripts, so we
-// accept both as grants and expose both on the `GM` object.
+// `GM.xmlhttpRequest` is the one with real usage — published
+// GreasyFork scripts both grant it and call it. `GM.getResourceURL`
+// has no corpus hits; we accept it because it falls out of the same
+// VM rule and leaving it out would be an arbitrary exception.
 //
 // Tampermonkey does NOT accept the rewrite spellings — its grant
 // table is a fixed list of exact names per API. But TM gates that
 // whole list on one boolean, so granting any member exposes every
-// member; the "a grant names an API, not a spelling" model is TM's,
-// and we're applying it to a slightly larger spelling set.
+// member. We borrow that "a grant names an API, not a spelling"
+// model and apply it to a larger spelling set, which makes us a
+// strict superset of both: a script granting `GM_xmlhttpRequest` and
+// calling `GM.xmlhttpRequest` works here and nowhere else.
 //
 // We also do NOT copy VM's quirk that the rewrite spelling gets
 // synchronous semantics while the GM4 spelling is promisified — our
@@ -199,10 +203,13 @@ function ensureIndex(): Map<string, GmApiSpec> {
 // compare grant names byte-exactly, and we deliberately don't
 // diverge (see docs/supported-GM-APIs.md → "Granting").
 //
-// One lowercase key can in principle collide (`GM.xmlHttpRequest`
-// and `GM.xmlhttpRequest` fold together); first-write-wins is fine
-// because the value we report is the canonical `GM_x` name either
-// way.
+// Values are index keys, not canonical `GM_x` names, so a `GM.` miss
+// suggests a `GM.` spelling and a `GM_` miss suggests a `GM_` one.
+// (A cross-form suggestion is structurally impossible: `.` and `_`
+// don't case-fold together.) Where two keys collide —
+// `GM.xmlHttpRequest` and `GM.xmlhttpRequest` fold to the same
+// string — first-write-wins picks the GM4 spelling, which is the
+// better one to suggest anyway.
 let byLowerName: Map<string, string> | null = null;
 function ensureCaseFoldedIndex(): Map<string, string> {
   if (byLowerName !== null) return byLowerName;

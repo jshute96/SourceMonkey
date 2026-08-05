@@ -94,6 +94,17 @@ test('locale suffixes are case-folded so @name:ZH-CN and @name:zh-CN collide', (
   assert.equal(getValue(h, 'name'), 'Hello');
 });
 
+test('getLocalized keeps the first value when case-folding makes a duplicate', () => {
+  // Matches getValue/getValues, which are first-wins for repeats.
+  const h = parseHeader(`// ==UserScript==
+// @name Hello
+// @name:ZH-CN first
+// @name:zh-cn second
+// ==/UserScript==
+`);
+  assert.deepEqual(getLocalized(h, 'name'), { 'zh-cn': 'first' });
+});
+
 test('hasTag detects flag tags without values', () => {
   const h = parseHeader(SAMPLE);
   assert.equal(hasTag(h, 'noframes'), true);
