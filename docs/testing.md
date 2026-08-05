@@ -130,9 +130,18 @@ tests:
   `syncRegistrations` synchronously, returning the post-sync
   registration list. `resetAllState()` clears storage and unregisters
   every userscript.
+- Per-script log: `getScriptLog(id)`, `appendScriptLog(id, entry)`,
+  `clearScriptLog(id)`, `getScriptLogLabel(id)`.
 
-These mirror production functions — they don't add test-only logic to
-the SW.
+These mirror production functions. Two of them wait where production
+deliberately doesn't, so a test can't observe a half-written state:
+
+- `getScriptLog` drains that script's in-flight appends first.
+  Production logging (`logScriptEvent`) is fire-and-forget — a refresh
+  must not block on writing its own transcript — so `updateSource()`
+  can resolve before the entry it produced has landed.
+- `getScriptLogLabel` is the awaited form, so a test never races the
+  id table and gets a UUID prefix back.
 
 ### The syncNow contract
 

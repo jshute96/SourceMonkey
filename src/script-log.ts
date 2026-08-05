@@ -205,8 +205,10 @@ export function logScriptEvent(scriptId: string, input: AppendLogInput): void {
   appendScriptLog(scriptId, input).catch(() => { /* best-effort */ });
 }
 
-// Test/debug hook so unit tests can drain in-flight appends before
-// asserting on the stored log.
+// Test/debug hook to drain in-flight appends before asserting on the
+// stored log. Used by unit tests directly, and by the SW's e2e
+// `getScriptLog` accessor — both would otherwise race `logScriptEvent`,
+// which returns before its write lands.
 export async function _flushScriptLogQueueForTests(scriptId: string): Promise<void> {
   const inFlight = queues.get(scriptId);
   if (inFlight) await inFlight.catch(() => {});
