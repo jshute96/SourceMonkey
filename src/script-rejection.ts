@@ -7,6 +7,11 @@
 // The sources page and the viewer render that as REJECTED. See
 // [docs/diagnostics.md](../docs/diagnostics.md#rejected-registrations).
 //
+// Rarer than it used to be: `matchPatternProblem` (src/url-match.ts)
+// catches the malformed shapes we are sure about at parse time, so what
+// reaches here is the rest of Chrome's grammar — a malformed port, a
+// host its canonicalizer rejects, or whatever it tightens next.
+//
 // Written only by `src/injector.ts` — `registerWithFallback` and the
 // targeted retry are the only places that ever learn a spec was
 // refused. Read by the sources page and the viewer for the row's
@@ -38,7 +43,7 @@ export const REJECTIONS_KEY = 'injector-rejections';
 // the specs the last sync tried to register.
 //
 // The reason is Chrome's own wording, e.g. "Script with ID … has
-// invalid value for matches[1]: Empty path". Passed through verbatim:
+// invalid value for matches[1]: Invalid port". Passed through verbatim:
 // it names the offending header value, which is exactly what the user
 // has to fix.
 export type RejectionMap = Record<string, string>;

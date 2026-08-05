@@ -118,6 +118,18 @@ test.describe('bad-examples corpus', () => {
       line: markedErrorLine('unknown-grant.user.js'),
     });
 
+    // The other warning-only case: a `@match` Chrome's grammar refuses
+    // is dropped so the rest of the script's patterns still register,
+    // and the reason is a located warning on the line that declared it.
+    const badMatch = byFile.get('invalid-match.user.js');
+    expect(badMatch?.startupLogs, 'invalid-match should record a startup log').toHaveLength(1);
+    expect(badMatch!.startupLogs![0].message)
+      .toMatch(/Ignoring @match https:\/\/example\.org — it has no path/);
+    expect(badMatch!.startupLogs![0].location).toEqual({
+      file: 'invalid-match.user.js',
+      line: markedErrorLine('invalid-match.user.js'),
+    });
+
     // Sanity-check that we covered every file in the directory; the
     // test fails loudly if someone adds a new bad script without
     // updating BAD_CASES.

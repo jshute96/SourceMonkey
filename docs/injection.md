@@ -159,10 +159,15 @@ rules and why it carries no location.
   [script-log.md](script-log.md#when-the-log-stays-quiet) for the cost
   (a persistently refused script fills its own log) and why it's
   accepted.
+- **Rarer than it was.** The malformed `@match` shapes we are sure
+  about are caught at parse time and never reach a registration (see
+  [matching.md](matching.md#patterns-chrome-refuses)). What still lands
+  here is the rest of Chrome's grammar — a malformed port, a host its
+  canonicalizer rejects — which we don't reproduce because a false
+  positive would drop a working pattern.
 - **Not predictable earlier.** The install preview and the early stages
-  of a refresh can't show REJECTED: nothing has been offered to Chrome
-  yet. `validateHeader` checks that a script *has* a `@match` /
-  `@include`, not that Chrome's grammar accepts the pattern.
+  of a refresh can't show REJECTED for those: nothing has been offered
+  to Chrome yet.
 
 ## What gets registered
 
@@ -171,8 +176,9 @@ source's `enabled` flag are both true, we build a
 `RegisteredUserScript`:
 
 - `id` — the stored script UUID.
-- `matches` — `@match` patterns, passed through verbatim (Chrome
-  match-pattern grammar).
+- `matches` — `@match` patterns, verbatim, minus any Chrome's grammar
+  would refuse (see [matching.md](matching.md#patterns-chrome-refuses) —
+  one bad pattern would take the whole registration down).
 - `includeGlobs` — `@include` glob patterns.
 - `excludeGlobs` — `@exclude` glob patterns.
 - `js` — the per-script config blob, the inlined prelude, the user

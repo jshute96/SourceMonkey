@@ -95,6 +95,17 @@ export const BAD_CASES = [
   // runs. Its located WARNING rides on `startupLogs`, asserted by
   // bad-scripts.spec.ts; the click-through is in diagnostic-links.spec.ts.
   { file: 'unknown-grant.user.js',         expectedStatus: 'ok' },
+  // Same shape for a `@match` Chrome's grammar refuses: the pattern is
+  // dropped, the script runs on the ones that are left, and the located
+  // warning rides on `startupLogs`.
+  { file: 'invalid-match.user.js',         expectedStatus: 'ok' },
+  // ...and the same problem with nothing left to match on, which the
+  // script can't survive. The location is the offending `@match` line —
+  // unlike the missing-tag failures above, this text really is in the
+  // file.
+  { file: 'unusable-match.user.js',        expectedStatus: 'invalid',
+    errorMatcher: /@match https:\/\/example\.com has no path, so this script would never run on any page/,
+    errorIn: 'unusable-match.user.js' },
 
   // ---------- Where the error is ----------
   //

@@ -613,15 +613,38 @@ REJECTED is in (see
 Chrome refuses shows the state, keeps the reason in its Log, and clears
 itself once a sync places it. What's missing:
 
-- **Nothing checks match patterns before Chrome does.**
-  `validateHeader` only asks that a `@match` / `@include` exists, so
-  `@match https://example.com` (no path — Tampermonkey takes it) loads
-  clean and is refused at registration. A pattern check would let the
-  install preview, the offline validator, and the INVALID path catch it
-  where the user is already looking, and would name the header line.
-  The cost is owning a second copy of Chrome's grammar, which drifts.
+- **The match-pattern check is narrower than Chrome's parser.**
+  `matchPatternProblem` (`src/url-match.ts`) covers the shapes Chrome
+  names — no path, bad scheme, empty host, misplaced host wildcard —
+  and stops there, because a false positive would drop a pattern that
+  works. A malformed port and anything Chrome tightens next still land
+  as REJECTED. Widening it means owning more of a grammar that drifts,
+  so each addition wants a probe against a real Chrome first (the one
+  in `tests/e2e/rejected-registration.spec.ts`'s header is the record
+  of the last such run).
+- **Chrome-refused shapes other managers run are common in the wild.**
+  Measured over `tests/greasyfork-examples/corpus.db` (1,991 scripts,
+  9,003 `@match` patterns): 1,035 patterns fail the check, and 81
+  scripts have nothing usable left, so they load INVALID. They can't
+  run today either — Chrome refuses the registration — but the patterns
+  exist because managers with their own matchers are more forgiving
+  than Chrome's parser. The two shapes that account for nearly all of
+  it:
+    - `*.example.com/*` — no scheme at all (710 patterns).
+    - `http*://example.com/*` — a scheme glob Chrome won't take (206).
+  Both have an obvious reading (`*://*.example.com/*` and
+  `*://example.com/*`), and we already own a wrapper-side matcher for
+  the regex `@include` case — register `<all_urls>` and decide in the
+  prelude. Doing that would need `matchPattern` to accept the shapes
+  too, so it is a matching-semantics change, not just a validation one.
+  Measure what TM actually runs for each shape before deciding —
+  `npm run test:e2e:tm` already drives a real TM.
+- **The install preview doesn't show parse-time warnings.**
+  `checkPreviewSource` builds the row and reports header errors and
+  syntax errors, but drops `startupLogs` — so an unsupported `@grant`
+  or a dropped `@match` is only visible after installing.
 - **The message is Chrome's, so it speaks Chrome's coordinates.**
-  `matches[1]: Empty path` counts within the spec we built, not the
+  `matches[1]: Invalid port` counts within the spec we built, not the
   lines of the file. Deliberate — the alternative is inventing a
   mapping that could point at the wrong tag — but it means REJECTED is
   the one user-visible verdict with no clickable location.

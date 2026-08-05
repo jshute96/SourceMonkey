@@ -73,6 +73,11 @@ import {
   type StoredResource,
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import {
+  ignoredMatchMessage,
+  matchPatternProblem,
+  unusableMatchMessage,
+} from './url-match.js';
 import type { VersionProbe } from './version-probe.js';
 import type { ParseVerdict } from './parse-check-protocol.js';
 import {
@@ -322,6 +327,22 @@ export function extractStartupLogs(
       logs.push(log);
     }
   }
+  // A `@match` Chrome's grammar refuses. One of these would take the
+  // whole registration down (Chrome refuses the spec, not the pattern),
+  // so `buildRegistrationSpec` drops it — and this is what says so, on
+  // the line that declared it.
+  //
+  // One row per bad pattern, unlike the grants above: each has its own
+  // reason and its own line, so collapsing them would leave the
+  // location pointing at one of several unrelated problems.
+  for (const pattern of getValues(header, 'match')) {
+    const problem = matchPatternProblem(pattern);
+    if (!problem) continue;
+    const log: StartupLog = { level: 'warn', message: ignoredMatchMessage(problem) };
+    const line = headerTagLine(header, 'match', pattern);
+    if (line !== undefined) log.location = { file: relativePath, line };
+    logs.push(log);
+  }
   return logs;
 }
 
@@ -376,13 +397,15 @@ export const SYNTAX_ERROR_PREFIX = 'Syntax error: ';
 
 // Verify the parsed header has the fields we require to consider a
 // script `ok`. Returns null on success, otherwise a human-readable
-// problem. Required: an `@name` plus at least one of
+// problem. Required: an `@name` plus at least one usable
 // `@match` / `@include` (otherwise the script can never match a page).
 //
-// Every failure here is about a tag that ISN'T there, so none of them
-// has a line of its own. They point at the `// ==UserScript==` marker
-// instead: that's the block the missing tag belongs in, and where the
-// reader has to go to add it.
+// The missing-tag failures are about something that ISN'T there, so
+// none of them has a line of its own. They point at the
+// `// ==UserScript==` marker instead: that's the block the missing tag
+// belongs in, and where the reader has to go to add it. The unusable
+// `@match` case is the exception — the offending text is right there in
+// the file, so it gets that line.
 export function validateHeader(header: ParsedHeader | null): HeaderProblem | null {
   // No block at all — the whole file is the answer, so no line.
   if (!header) return { message: NO_METADATA_BLOCK };
@@ -392,6 +415,27 @@ export function validateHeader(header: ParsedHeader | null): HeaderProblem | nul
   const includes = getValues(header, 'include');
   if (matches.length === 0 && includes.length === 0) {
     return { message: NO_MATCH_OR_INCLUDE, line };
+  }
+  // Patterns Chrome's grammar refuses are dropped rather than run (see
+  // `matchPatternProblem`), so a script whose every `@match` is one of
+  // those — with no `@include` to fall back on — is in the same
+  // position as one that declared no pattern at all: it can never match
+  // a page. Say so with the FIRST bad pattern's own reason, which is
+  // more use than the generic sentence above and points at a real line.
+  //
+  // Only the first: the others' reasons ride on `startupLogs` for an
+  // `ok` script, and an `invalid` row doesn't carry those. A reader who
+  // fixes this one sees the next on the following load, which is the
+  // same one-at-a-time path every other header failure takes.
+  if (includes.length === 0) {
+    const problems = matches.map((m) => matchPatternProblem(m));
+    const first = problems[0];
+    if (first && problems.every((p) => p !== null)) {
+      return {
+        message: unusableMatchMessage(first),
+        line: headerTagLine(header, 'match', first.pattern) ?? line,
+      };
+    }
   }
   return null;
 }

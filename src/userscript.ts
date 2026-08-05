@@ -547,8 +547,8 @@ function paintScriptMessage(script: StoredScript): void {
     setDiagnosticMessage(script.errorMessage, script.errorLocation, 'error');
   } else if (currentRejection) {
     // No location: Chrome names the offending value in its own words
-    // (`matches[1]: Empty path`), and we have no mapping from that back
-    // to a line in the file. See docs/diagnostics.md.
+    // (`matches[1]: Invalid port`), and we have no mapping from that
+    // back to a line in the file. See docs/diagnostics.md.
     setMessage(describeRejection(currentRejection), 'error');
   } else if (script.refreshError) {
     // No location: `refreshError` means the fetch failed, so there is

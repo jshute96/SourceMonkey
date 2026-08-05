@@ -182,15 +182,22 @@ update channel to a site you didn't approve.
       mid-construct, say); those still report what's wrong.
     - Every problem SourceMonkey finds by reading a script says where,
       not just what — a header field that's missing or malformed, an
-      `@require` that won't load, an unsupported `@grant`. In the
-      viewer the location is a **link**: click it to jump to that file
-      and line, whether the script is installed or you're looking at
-      the install preview for one you haven't added yet.
+      `@require` that won't load, an unsupported `@grant`, a `@match`
+      Chrome would refuse. In the viewer the location is a **link**:
+      click it to jump to that file and line, whether the script is
+      installed or you're looking at the install preview for one you
+      haven't added yet.
+    - A `@match` pattern Chrome won't accept — `https://example.com`
+      with no path, say, which other userscript managers take — is
+      dropped with a warning in the Log rather than taken as fatal, so
+      the script still runs on its other patterns. It's `INVALID` only
+      when there's no usable pattern left, because then it could never
+      run anywhere.
   - `REJECTED` — the script itself is fine, but Chrome refused to
-    register it, so it never runs. Almost always a `@match` pattern
-    Chrome's stricter grammar won't take (`https://example.com` with
-    no path, say — other userscript managers accept it). Hover for
-    Chrome's own wording, which names the offending value.
+    register it, so it never runs. Always a `@match` pattern Chrome's
+    stricter grammar won't take, in one of the forms SourceMonkey
+    doesn't check for you (a malformed port, say). Hover for Chrome's
+    own wording, which names the offending value.
     - Nothing else is affected: the other scripts in the same source
       still run.
     - Refresh really does retry it — as does loading a page the script

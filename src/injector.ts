@@ -77,6 +77,7 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import { matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
 import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
 import {
@@ -709,7 +710,14 @@ export async function buildRegistrationSpec(
   scriptHandlerVersion: string = '0.0.0',
   logLabel: string = scriptBasename(script.relativePath),
 ): Promise<RegistrationSpec | null> {
-  const matches = script.matching.matches.slice();
+  // Patterns Chrome's match-pattern grammar refuses never go in the
+  // spec: it rejects the registration as a whole, so one bad `@match`
+  // would take the script's good patterns down with it. Dropping them
+  // costs nothing — `matchPattern` can't match them either — and the
+  // reason is already in the script's Log, on the header line that
+  // declared it (see `extractStartupLogs`). A script left with no
+  // pattern at all was already stored `invalid` by `validateHeader`.
+  const matches = script.matching.matches.filter((m) => matchPatternProblem(m) === null);
   const includeGlobs: string[] = [];
   const excludeGlobs: string[] = [];
   let hasRegexInclude = false;

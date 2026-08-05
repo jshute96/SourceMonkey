@@ -29,6 +29,50 @@ Three pattern flavours, all implemented in `src/url-match.ts`:
 
 Host comparison is case-insensitive.
 
+#### Patterns Chrome refuses
+
+`matchPatternProblem` checks each `@match` against the same grammar at
+parse time, because Chrome refuses a **registration as a whole** over
+one malformed pattern — the script's good patterns die with the bad
+one, and the complaint comes back in Chrome's coordinates
+(`matches[1]: Empty path`).
+
+What it flags, all cases Chrome names in its own refusal:
+
+- no path (`https://example.com`) — the common one, and the one other
+  managers accept;
+- no `://`, or a scheme outside `*` / `http` / `https` / `file` / `ftp`;
+- an empty host, for a scheme that has one;
+- `*` anywhere in the host but as the whole host or its first label.
+
+What happens to one:
+
+- **Dropped** from the registration spec (`buildRegistrationSpec`), so
+  the script still runs everywhere its other patterns say.
+- **Warned about** in the Log, on the header line that declared it —
+  one row per pattern, since each has its own reason and line.
+- **Fatal** only when it leaves the script with no `@match` and no
+  `@include` that could ever match: `validateHeader` then stores the
+  row INVALID with that pattern's own reason.
+
+Deliberately narrower than Chrome's parser — a false positive would
+drop a pattern that works. A malformed port, say, still reaches Chrome
+and still comes back as
+[REJECTED](injection.md#rejected-registrations), which remains the
+backstop for everything this doesn't reproduce.
+
+Dropping is safe because the two agree: every pattern flagged here is
+one `matchPattern` could never have matched either, so no page loses a
+script it was getting.
+
+How common this is, measured over the Greasy Fork corpus
+(`tests/greasyfork-examples/corpus.db`, 1,991 scripts): 1,035 of 9,003
+`@match` patterns fail the check, and 81 scripts are left with nothing
+usable. None of them could run before either — Chrome refused their
+registrations — but the patterns exist because other managers match
+with their own engines rather than Chrome's. TODO.md tracks whether to
+grow a lenient reading of the two dominant shapes instead.
+
 ### `@include` — free-form glob
 
 A `*`-glob anchored to the whole URL string. `*` matches any run of

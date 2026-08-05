@@ -36,6 +36,8 @@ it, shared with the header diagnostics.
 | "No `// ==UserScript==` metadata block" | the file, with no line — there is nothing to point at |
 | "No `@name`" / "No `@match` or `@include`" | the `// ==UserScript==` marker |
 | unknown `@grant` (a warning) | the first offending `@grant` line |
+| a `@match` Chrome's grammar refuses (a warning) | the `@match` line that declared it |
+| "`@match <pattern>` has no path, so this script would never run…" | the first offending `@match` line, when no pattern is usable |
 | `@require` / `@resource` that won't load | the header line that declared it |
 
 The header messages are exported constants rather than inline literals,
@@ -45,20 +47,26 @@ so a rewording can't quietly stop matching what compares against them:
 |----------|--------|
 | `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
 | `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-store.ts` |
+| `ignoredMatchMessage`, `unusableMatchMessage` | `url-match.ts` |
 
 The same rule covers anything that *recognizes* a message rather than
 prints it. `scripts/validate-userscripts.mjs` groups its survey by
 message, and used to do it with regexes over the wording — which went
 stale silently the first time these were recased, mislabelling whole
-buckets without failing. It now imports `SYNTAX_ERROR_PREFIX` and calls
-`isFetchFailureMessage` (`external-files.ts`), which is derived from
-`describeFetchFailure` itself and pinned by a unit test.
+buckets without failing. It now imports `SYNTAX_ERROR_PREFIX`, and calls
+`isFetchFailureMessage` (`external-files.ts`) and
+`unusableMatchGroupKey` (`url-match.ts`) — each derived from the
+function that writes the message, and pinned by a unit test.
 
 Rules that run through that table:
 
 - **A tag that isn't there has no line of its own.** Those point at the
   marker, because that is the block the missing tag belongs in and
   where the reader has to add it.
+  - The unusable-`@match` failure is the near miss that proves the
+    rule: it reads like the missing-pattern one, but the offending
+    text *is* in the file, so it gets that line rather than the
+    marker.
 - **A file that never loaded has no content to point into.** So the
   location is the *declaration* — the only place the reader can act.
   This is the one case where "we couldn't read a file" still yields a
@@ -159,8 +167,9 @@ the exception that shapes the rules above.
   is its own display status, `rejected` / REJECTED, ranked directly
   under `invalid` in `effectiveScriptStatus`.
 - **Not a diagnostic.** It carries no `DiagnosticLocation`: Chrome
-  names the offending value in its own coordinates (`matches[1]: Empty
-  path`), and we have no mapping from that back to a header line.
+  names the offending value in its own coordinates (`matches[1]:
+  Invalid port`), and we have no mapping from that back to a header
+  line.
 - **Chrome's wording is passed through verbatim.** It names the tag and
   the index, which is what the reader has to fix. Rewriting it in our
   own voice would lose that and risk drifting from what Chrome
@@ -168,11 +177,16 @@ the exception that shapes the rules above.
   lives in one place — `describeRejection` in `script-rejection.ts`,
   listed under [One string, one place](#one-string-one-place).
 
-Why the gap exists at all: `validateHeader` checks that a script *has*
-a `@match`/`@include`, not that Chrome's stricter match-pattern grammar
-accepts it — see [file-index](file-index.md) for `src/script-rejection.ts`,
-which holds the state, and [injection.md](injection.md#rejected-registrations)
-for the registration path that produces it.
+Why the gap still exists: `matchPatternProblem` reproduces the shapes
+of Chrome's match-pattern grammar we are sure about — those become
+located warnings or an INVALID row before anything is registered (see
+[matching.md](matching.md#patterns-chrome-refuses)) — but not the whole
+parser, because a false positive would drop a pattern that works. What
+reaches REJECTED is the remainder: a malformed port, a host Chrome's
+canonicalizer rejects, or whatever it tightens next. See
+[file-index](file-index.md) for `src/script-rejection.ts`, which holds
+the state, and [injection.md](injection.md#rejected-registrations) for
+the registration path that produces it.
 
 ## Wording
 
@@ -328,8 +342,12 @@ names a culprit has to be reachable only when that culprit is real:
 - `tests/unit/diagnostic-location.test.mjs` — the label and the
   validator, especially what they do with a partial location.
 - `tests/e2e/rejected-registration.spec.ts` — the REJECTED state end to
-  end, driven by a `@match` with an empty path (valid to us, invalid to
-  Chrome).
+  end, driven by a `@match` with a malformed port (valid to us, invalid
+  to Chrome — the empty-path case it used to use is now caught before
+  registration).
+- `tests/unit/url-match.test.mjs` — the `@match` grammar check, and the
+  invariant that everything it flags is a pattern `matchPattern` could
+  never match anyway.
 - `tests/unit/userscript-header.test.mjs` — header line numbers across
   leading text, all three line-ending shapes, and a BOM.
 - `tests/e2e/diagnostic-links.spec.ts` — clicking through, in both
