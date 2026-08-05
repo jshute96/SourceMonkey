@@ -149,6 +149,11 @@ would go stale the next time the wording improves.
   `isFetchFailureMessage` (`external-files.ts`), which is derived from
   `describeFetchFailure` itself so it cannot disagree with it. A unit
   test pins that every `FetchFailReason` stays recognized.
+- `unusableMatchGroupKey` (`url-match.ts`) is the same arrangement for
+  the one header failure whose message isn't fixed text: it names the
+  `@match` Chrome would refuse, so the recognizer that spots it also
+  elides the pattern, and every script making that mistake groups
+  together instead of one row apiece.
 
 `--json FILE` writes one record per script — name, status, category,
 message, the structured `location` when the verdict has one, and the

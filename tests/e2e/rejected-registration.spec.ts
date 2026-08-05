@@ -1,14 +1,19 @@
 // End-to-end coverage of the REJECTED state: a script we loaded and
 // validated happily, that `chrome.userScripts.register` then refuses.
 //
-// The gap is real. SourceMonkey validates that a script HAS a metadata
-// block, a `@name`, and at least one `@match`/`@include` — it does not
-// re-implement Chrome's match-pattern grammar, so a pattern Chrome
-// considers malformed sails through the loader and only fails at
-// registration time. `@match https://example.com` (no path) is the
-// easiest such case to reproduce: Tampermonkey accepts it, our
-// validator accepts it, and Chrome answers
-//   "Script with ID <id> has invalid value for matches[0]: Empty path".
+// The gap is real, and deliberately narrower than it used to be.
+// `matchPatternProblem` (src/url-match.ts) now reproduces the shapes of
+// Chrome's match-pattern grammar we are sure about — a missing path, a
+// bad scheme, an empty host, a misplaced host wildcard — so those are
+// caught at parse time and never reach a registration. What it does NOT
+// reproduce is the rest of Chrome's parser, because a false positive
+// there would drop a pattern that works.
+//
+// A malformed port is one of those: `@match https://rejected.example:notaport/*`
+// passes our check, and Chrome answers
+//   "Script with ID <id> has invalid value for matches[0]: Invalid port".
+// That is what this suite provokes with, and any other refusal Chrome
+// grows tomorrow lands on the same path.
 //
 // What that must produce:
 //   - the script row stays `status: 'ok'` (nothing about the LOAD
@@ -29,18 +34,22 @@ import { waitForTabState } from '../fixtures/sw-api';
 // Chrome's own wording for the failure this suite provokes. Matched
 // loosely (the id and index vary) so a Chrome rephrasing doesn't fail
 // the suite for the wrong reason.
-const EMPTY_PATH = /Empty path/i;
+const INVALID_PORT = /Invalid port/i;
+
+// Valid to us, refused by Chrome — see the header. Keep this a pattern
+// `matchPatternProblem` accepts, or the script lands INVALID at load
+// time and never gets as far as a registration to be refused.
+const BAD_PATTERN = 'https://rejected.example:notaport/*';
 
 test.describe('rejected registrations', () => {
   let dir: ScriptsDir;
   test.beforeEach(() => { dir = ScriptsDir.create('sourcemonkey-rejected-'); });
   test.afterEach(() => { dir.cleanup(); });
 
-  // A `@match` with no path — valid to us, invalid to Chrome.
   function writeBad(body = 'console.log("bad");\n'): void {
     dir.write({
       relativePath: 'bad-match.user.js',
-      meta: { name: 'Bad Match', match: ['https://rejected.example'] },
+      meta: { name: 'Bad Match', match: [BAD_PATTERN] },
       body,
     });
   }
@@ -71,7 +80,7 @@ test.describe('rejected registrations', () => {
     // But Chrome refused it, and says why.
     const rejections = await sm.getRejections();
     expect(Object.keys(rejections)).toEqual([bad.id]);
-    expect(rejections[bad.id]).toMatch(EMPTY_PATH);
+    expect(rejections[bad.id]).toMatch(INVALID_PORT);
 
     // The good sibling still registered: one bad pattern must not take
     // the whole batch down.
@@ -90,7 +99,7 @@ test.describe('rejected registrations', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].level).toBe('error');
     expect(rows[0].message).toMatch(/Chrome rejected this script's registration/);
-    expect(rows[0].message).toMatch(EMPTY_PATH);
+    expect(rows[0].message).toMatch(INVALID_PORT);
   });
 
   type SmForLog = { getScriptLog(id: string): Promise<{ source: string }[]> };
@@ -168,7 +177,7 @@ test.describe('rejected registrations', () => {
       relativePath: 'bad-match.user.js',
       meta: {
         name: 'Bad Match',
-        match: [`${fixtureServer.baseUrl}/*`, 'https://rejected.example'],
+        match: [`${fixtureServer.baseUrl}/*`, BAD_PATTERN],
       },
       body: 'console.log("bad");\n',
     });
@@ -205,7 +214,7 @@ test.describe('rejected registrations', () => {
       relativePath: 'bad-match.user.js',
       meta: {
         name: 'Bad Match',
-        match: [`${fixtureServer.baseUrl}/*`, 'https://rejected.example'],
+        match: [`${fixtureServer.baseUrl}/*`, BAD_PATTERN],
       },
       body: 'console.log("bad");\n',
     });
@@ -323,7 +332,7 @@ test.describe('rejected registrations', () => {
 
     const badCell = page.locator(`tr[data-script-id="${bad.id}"] td.status-cell a`);
     await expect(badCell).toHaveText('REJECTED');
-    await expect(badCell).toHaveAttribute('title', EMPTY_PATH);
+    await expect(badCell).toHaveAttribute('title', INVALID_PORT);
     // The sibling is unaffected.
     await expect(page.locator(`tr[data-script-id="${good.id}"] td.status-cell a`))
       .toHaveText('OK');
@@ -343,7 +352,7 @@ test.describe('rejected registrations', () => {
     await expect(page.locator('.meta-status')).toHaveText('REJECTED');
     const message = page.locator('#message');
     await expect(message).toContainText("Chrome rejected this script's registration");
-    await expect(message).toContainText(/Empty path/i);
+    await expect(message).toContainText(INVALID_PORT);
     await page.close();
   });
 });

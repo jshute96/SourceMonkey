@@ -67,6 +67,7 @@ import {
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,
 } from '../dist/userscript-header.js';
+import { unusableMatchGroupKey } from '../dist/url-match.js';
 import { checkParseNode } from './parse-check-node.mjs';
 // The offline tree's layout (percent-encoded segments, truncated long
 // names, `<path>/index` for a path that is also a directory prefix) is
@@ -420,6 +421,13 @@ function classify(script) {
     return { category: `@${kind}`, detail: reason.replace(/"[^"]*"/g, '"…"'), url };
   }
 
+  // A header failure too, but one that names the offending `@match`, so
+  // it can't be a member of the set below. The pattern is elided by the
+  // module that writes the message, so a hundred scripts each botching
+  // a different URL the same way land in ONE row.
+  const unusableMatch = unusableMatchGroupKey(message);
+  if (unusableMatch) return { category: 'header', detail: unusableMatch };
+
   if (HEADER_MESSAGES.has(message)) return { category: 'header', detail: message };
   // A message no step here recognizes. Bucketing it as `header` (the
   // only other producer today) would let a new failure shape hide
@@ -428,8 +436,10 @@ function classify(script) {
   return { category: 'other', detail: message };
 }
 
-// The complete set `buildScriptFromText` can produce: the `SplitError`
+// The fixed messages `buildScriptFromText` can produce: the `SplitError`
 // union from `userscript-header.ts`, then `validateHeader`'s returns.
+// Its one variable message — the unusable `@match` — is recognized just
+// above instead, since it carries the pattern that caused it.
 const HEADER_MESSAGES = new Set([
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,

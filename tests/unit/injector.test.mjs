@@ -637,6 +637,44 @@ test('buildRegistrationSpec: passes @match values through as matches', async () 
   assert.deepEqual(spec.matches, ['https://example.com/*']);
 });
 
+test('buildRegistrationSpec: drops a @match Chrome would refuse, keeping the rest', async () => {
+  // Chrome refuses the whole registration over one malformed pattern,
+  // so a script with one good `@match` and one bad one would never run
+  // at all if we passed both through. The bad one can't match anything
+  // anyway, and the reason is already a warning in the script's Log.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*', 'https://example.com', 'https://www.*.com/*'],
+      excludes: [],
+      includes: [],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+});
+
+test('buildRegistrationSpec: unusable @match with a regex @include still falls back to <all_urls>', async () => {
+  // Nothing left for Chrome to match on, but the wrapper-side matcher
+  // has a regex to apply — same path as a script that declared no
+  // `@match` at all.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com'],
+      excludes: [],
+      includes: ['/^https:\\/\\/foo\\..*$/'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+});
+
+test('buildRegistrationSpec: nothing usable at all registers nothing', async () => {
+  // `validateHeader` stores such a script `invalid`, so this is the
+  // belt-and-braces case: no spec rather than a spec Chrome refuses.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://example.com'], excludes: [], includes: [] },
+  }));
+  assert.equal(spec, null);
+});
+
 test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
