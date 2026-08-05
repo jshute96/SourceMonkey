@@ -1,19 +1,23 @@
 // E2E coverage for the @grant name-casing example.
 //
-// The assertions here are deliberately manager-agnostic — this
-// example exists partly so it can be run under Tampermonkey
+// The example exists partly so it can be run under Tampermonkey
 // (`npm run test:e2e:tm -- tests/examples/grant-case/`) to check what
-// TM does with the same three headers. So we only assert on the
-// spellings every manager we care about agrees on:
+// TM does with the same three headers. What's asserted:
 //
-//   - canonical spellings bind (control).
-//   - the `GM.` prefix-rewrite spellings bind (VM resolves these by
-//     rewriting `GM.foo` → `GM_foo`; SourceMonkey matches).
-//   - mis-capitalised legacy `GM_` names bind nothing.
+//   - canonical spellings bind (control) — true in every manager.
+//   - mis-capitalised legacy `GM_` names bind nothing — also true in
+//     every manager; grant matching is byte-exact everywhere.
+//   - the `GM.` prefix-rewrite spellings bind. True in VM (which
+//     resolves `GM.foo` by rewriting it to `GM_foo`) and here.
+//     **Expected to FAIL under Tampermonkey**, whose grant table is a
+//     fixed list of exact names with no rewrite. That failure is the
+//     informative result, not a regression — see the PR / TODO note
+//     about running this under TM.
 //
-// SourceMonkey-specific extras — notably that we expose *both* `GM.`
-// spellings when either is granted, where VM exposes only the one the
-// script wrote — live in tests/e2e/gm-grants.spec.ts.
+// Only the granted spellings are asserted, so this stays quiet about
+// the one place we're looser than VM: we expose *both* `GM.`
+// spellings when either is granted, where VM binds only the one the
+// script wrote. That's covered in tests/e2e/gm-grants.spec.ts.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

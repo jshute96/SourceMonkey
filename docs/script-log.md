@@ -422,7 +422,9 @@ tracked in `TODO.md`.
     re-fire the row. A refresh that doesn't change the bytes adds
     nothing. Also mirrored into the page DevTools console via the
     wrapper's [startup-log channel](logging.md#page-console-startup-logs)
-    on every matching page load.
+    on every matching page load. A name that differs from a known one
+    only in capitalization carries the near miss inline —
+    `GM_xmlHttpRequest (did you mean GM_xmlhttpRequest?)`.
   - On the first SW boot of a fresh Chrome session, a
     [boot-replay pass](logging.md#boot-replay) appends parser rows
     for every persisted script — without this the Log tab would be

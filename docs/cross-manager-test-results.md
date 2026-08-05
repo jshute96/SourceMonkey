@@ -49,6 +49,19 @@ Specs that opt out under TM via
     URLs at the install prompt, so expect that install to error or
     stall rather than complete.
 
+## Not yet run under TM
+
+- **`grant-case/`** — added with the `@grant` name-casing work; the
+  TM project has not been run against it yet. The spec asserts that
+  `@grant GM.xmlhttpRequest` / `@grant GM.getResourceURL` bind, which
+  is VM's prefix-rewrite behaviour. TM's grant table is a fixed list
+  of exact names with no rewrite, so **the `gm4-case` assertions are
+  expected to fail under TM** — that failure confirms the research
+  rather than reporting a bug. Triage it into "Behavior diffs" (with
+  the assertion loosened to the granted-in-both spellings) once
+  someone has actually run it. See
+  [supported-GM-APIs.md](supported-GM-APIs.md#the-two-gm-spellings).
+
 ## Failing specs (untriaged divergences)
 
 Last full TM run: 23 passed, 0 failed, 6 skipped (TM 5.5.0).
