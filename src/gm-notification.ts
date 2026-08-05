@@ -44,6 +44,13 @@ interface NotificationEntry {
 
 const byChromeId = new Map<string, NotificationEntry>();
 
+// One string for the two guards that check the same thing: this one and
+// `handleNotificationShow` in `background.ts`, which rejects before it
+// ever calls in here. Names the browser permission the reader would go
+// looking for rather than the API object we happened to test.
+export const NOTIFICATIONS_UNAVAILABLE =
+  'this browser will not show notifications to SourceMonkey — check the extension\'s notification permission';
+
 // Page-supplied notification image. Chrome fetches `iconUrl` from the
 // privileged extension context, so we only honor http(s) / data: URLs.
 // A `file://` or `chrome-extension://` image would let a script probe
@@ -76,7 +83,7 @@ export async function showGmNotification(
   // but a future direct caller (test surface, retry path) shouldn't
   // crash if the API is missing.
   if (!chrome.notifications) {
-    return { ok: false, error: 'chrome.notifications unavailable' };
+    return { ok: false, error: NOTIFICATIONS_UNAVAILABLE };
   }
   const d = payload.details;
   const options: chrome.notifications.NotificationOptions<true> = {

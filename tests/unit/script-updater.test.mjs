@@ -542,7 +542,7 @@ test('emitScriptOutcomeLog: a row that vanished mid-refresh is reported', async 
   const log = await emitAll([[OK_ROW, null]]);
   assert.equal(log.length, 1);
   assert.equal(log[0].level, 'warning');
-  assert.equal(log[0].message, 'row vanished during refresh');
+  assert.equal(log[0].message, 'this script was removed while it was being refreshed');
 });
 
 test('emitScriptOutcomeLog: a cleared log gets its explanation back on the next check', async () => {
@@ -611,7 +611,7 @@ test('summarizeSourceOutcome: a scan failure lands in every script log, not "no 
   const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
   const [log] = await summarize(SOURCE_OK, [script], failed);
   assert.equal(log.length, 1);
-  assert.match(log[0].message, /source scan failed: ENOENT/);
+  assert.match(log[0].message, /this source did not load: ENOENT/);
 });
 
 test('summarizeSourceOutcome: a scan failure stays at info so it cannot badge every script', async () => {
@@ -652,7 +652,7 @@ test('summarizeSourceOutcome: a readable-again source logs the recovery', async 
     { source: SOURCE_OK, scripts: [script] },
   );
   assert.deepEqual(log.map((e) => e.message), [
-    'source scan succeeded again (source is readable)',
+    'this source is readable again',
     'checked for updates — no change',
   ]);
   assert.equal(log[0].level, 'info');

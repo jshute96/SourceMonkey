@@ -175,8 +175,18 @@ from every `GM_xmlhttpRequest` call. Grammar:
 | `@connect *.example.com` | Allow `example.com` itself AND any subdomain. |
 | `@connect https://example.com` | Same as `@connect example.com` (scheme stripped). |
 
-A denied request fires `onerror` with a `"blocked by @connect
-policy: …"` message.
+A denied request fires `onerror` with
+`"[SourceMonkey] GM_xmlhttpRequest: blocked by this script's @connect
+rules: …"` — built by `connectBlockedMessage` in `gm-connect.ts`, so
+the pre-flight check and the post-redirect re-check say the same thing.
+
+Two near neighbours deliberately do *not* use that wording, because
+the script's header isn't what refused the call:
+
+- A URL that won't parse (a relative one, say) — the request fails for
+  a script with `@connect *` too.
+- A failure to evaluate the rules at all, which carries `internal
+  error:`.
 
 ### XHR caveats
 

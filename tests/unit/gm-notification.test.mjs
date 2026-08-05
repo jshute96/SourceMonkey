@@ -131,7 +131,7 @@ test('showGmNotification short-circuits when chrome.notifications is undefined',
       scriptId: 's', requestId: 'r-no-perm', details: detailsOf(),
     }, 7);
     assert.equal(res.ok, false);
-    assert.match(res.error, /unavailable/);
+    assert.match(res.error, /will not show notifications/);
   } finally {
     globalThis.chrome.notifications = real;
   }

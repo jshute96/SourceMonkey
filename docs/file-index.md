@@ -109,7 +109,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/wrapper-gm-runtime.js` | USER_SCRIPT-world shared runtime — installs `window.__SM_GM__` (shim cache, async sendMessage helper, storage cache + batched writes) |
 | `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
 | `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, timeout |
-| `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL |
+| `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL, phrase the denial |
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
 | `src/gm-originator-map.ts` | Shared shed-on-tab-close helper for the gm-tab / gm-notification per-request maps (drop entries by originator tab) |

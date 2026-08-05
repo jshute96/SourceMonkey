@@ -194,12 +194,12 @@ source. They are always **info**, never warning/error:
 What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — `source scan failed: <reason> — still running the cached
-  copy`. `refreshSource` deliberately leaves every script row
+  URL) — `this source did not load: <reason> — still running the
+  cached copy`. `refreshSource` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
 - **A throw out of `refreshSource` / `refreshAllSources`** —
-  `source refresh threw: <reason>`. Both entry points use the same
+  `could not refresh this source: <reason>`. Both entry points use the same
   helper so a Refresh All that dies on one source still explains
   itself in every affected script's Log.
 
@@ -269,8 +269,8 @@ path goes through `emitScriptOutcomeLog`, which writes both.
   SW console is where a check is bracketed live (`update check
   (<mode>): <label>` before, outcome after); the Log tab is the record
   of what happened.
-- `update check threw: <reason>` stands alone — it names the check and
-  its failure in one line.
+- `could not check for updates: <reason>` stands alone — it names the
+  check and its failure in one line.
 
 ## Recovery is logged too
 
@@ -281,7 +281,7 @@ naming what recovered:
 - `loads cleanly again (was invalid)`
 - `source file is back`
 - `refresh succeeded again (source is reachable)`
-- `source scan succeeded again (source is readable)`
+- `this source is readable again`
 
 This matters most when the bytes didn't change — e.g. a `@require`
 host that starts answering again clears the failure without bumping
@@ -328,25 +328,26 @@ tracked in `TODO.md`.
     [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
-  - `source scan failed: <reason> — still running the cached copy`
-    (info) and `source refresh threw: <reason>` (info) — a
+  - `this source did not load: <reason> — still running the cached
+    copy` (info) and `could not refresh this source: <reason>` (info) — a
     source-level failure, fanned out to every script under it. See
     [Source-level failures](#source-level-failures) for why info.
-  - `update check threw: <reason>` (error) — `refreshScript` itself
-    threw (a storage failure, not a load failure).
+  - `could not check for updates: <reason>` (error) — `refreshScript`
+    itself threw (a storage failure, not a load failure).
   - Recovery entries (info) — see
     [Recovery is logged too](#recovery-is-logged-too).
   - All of the rows above are outcomes of a real check, so they are
     appended unconditionally — see
     [When the log stays quiet](#when-the-log-stays-quiet).
-  - `row vanished during refresh` (warning) — the script row was
-    deleted while its refresh was in flight. Can only happen once per
-    row.
+  - `this script was removed while it was being refreshed` (warning) —
+    the script row was deleted while its refresh was in flight. Can
+    only happen once per row.
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source
   `chrome-injector`):
-  - `Chrome rejected this script's registration: <reason>` (error) —
+  - `Chrome rejected this script's registration, so it will not
+    run: <reason>` (error) —
     the spec was refused, so the script silently never runs. Its row
     still reads OK because nothing about the *load* failed, which
     makes the Log the only place this surfaces.

@@ -55,6 +55,14 @@ export { MAX_SCAN_DEPTH } from './source-scan.js';
 // pathname (sans query/fragment) so e.g. `…/foo.user.js?v=2` still
 // classifies as a single-file URL.
 
+// The shapes a user may type as a location, as a sentence fragment.
+// Shared because two validators reject on it — the sources page's Add
+// field (`isValidSourceInput`) and the viewer's preview
+// (`isPreviewableInput`) — and their messages had already drifted into
+// two different descriptions of one rule.
+export const LOCATION_SHAPES =
+  'must be an http(s):// or file:// URL, or an absolute path starting with /';
+
 export function isHttpUrl(source: string): boolean {
   return /^https?:\/\//i.test(source);
 }
@@ -484,7 +492,9 @@ export async function scanForUserScripts(
   // that rejects HTTP, because there's no remote listing API.
   if (depth === 0) {
     if (isContainerSource(absolutePath)) {
-      throw new Error('container sources have no scan; refreshSource handles them directly');
+      throw new Error(
+        'internal error: this source kind is refreshed directly, not scanned',
+      );
     }
     if (isManifestSource(absolutePath)) {
       return scanManifest(sourceCanonicalUrl(absolutePath));
@@ -493,8 +503,14 @@ export async function scanForUserScripts(
       return scanGithubDir(absolutePath);
     }
     if (isHttpUrl(absolutePath)) {
+      // No mention of "container sources": that's how we store a
+      // stand-alone script, and the reader adding a URL has no name for
+      // it — from the page it just looks like adding the script itself.
+      // Ends with what to do, per the "name the fix" rule; the reader
+      // is standing at the Add field that produced this.
       throw new Error(
-        `URL must point at a directory (use a github tree URL) or ${MANIFEST_FILENAME} (manifest); single .user.js URLs go into the matching container source`,
+        `this URL is neither a folder (use a github tree URL) nor a ${MANIFEST_FILENAME} — ` +
+        'to install a single script, paste the URL of the .user.js file itself',
       );
     }
     // Local-directory only. Normalise file:// → raw path once so the
@@ -548,7 +564,9 @@ async function fetchManifestText(canonicalUrl: string): Promise<string> {
   if (isHttpUrl(canonicalUrl)) {
     const fetched = await fetchHttpText(canonicalUrl);
     if (fetched.kind !== 'ok') {
-      throw new Error(`manifest fetch returned unexpected ${fetched.kind}`);
+      // Unreachable in practice: this call sends no conditional-GET
+      // headers, so `fetchHttpText` can only answer `ok` or throw.
+      throw new Error(`internal error: unexpected result reading the manifest (${fetched.kind})`);
     }
     return fetched.text;
   }

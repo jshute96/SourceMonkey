@@ -56,8 +56,11 @@
 // Requirements: manifest must include the "userScripts" permission AND
 // the user must enable the "Allow User Scripts" toggle (Chrome ≥138) or
 // developer mode (Chrome 120–137) on chrome://extensions. If the toggle
-// is off, chrome.userScripts.register throws; we surface that via
-// getLastError() so the sources page can prompt the user.
+// is off, chrome.userScripts.register throws. The sources page prompts
+// for the toggle off its own probe (`probeUserScriptsApi` in
+// sources.ts) rather than anything this module records — it needs an
+// answer at render time, and an SW that has been evicted since the last
+// sync would have nothing to report.
 
 import {
   describeError,
@@ -875,8 +878,9 @@ export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): Registratio
 
 // ---------- Runtime sync (uses chrome.userScripts) ----------
 
-let lastError: string | null = null;
-export function getLastError(): string | null { return lastError; }
+// Guards the "userScripts is unavailable" console line so it appears
+// once per service-worker lifetime rather than once per sync.
+let loggedUserScriptsUnavailable = false;
 
 // Per-script registration errors from the last sync. Populated when the
 // batch register() rejects and we fall back to per-script registration
@@ -975,7 +979,17 @@ async function ensureWorldConfigured(): Promise<void> {
 // we expect.
 export async function syncRegistrations(): Promise<void> {
   if (!isUserScriptsAvailable()) {
-    lastError = 'chrome.userScripts not available (permission missing?)';
+    // Nothing to register into. Not stored anywhere — the sources page
+    // runs its own probe for the banner — but a sync that can't do
+    // anything shouldn't be silent in the SW console either.
+    //
+    // Once per SW lifetime: `syncRegistrations` re-runs on every
+    // script-storage change, and with the toggle off that would be a
+    // console line per write, forever, all saying the same thing.
+    if (!loggedUserScriptsUnavailable) {
+      loggedUserScriptsUnavailable = true;
+      console.info('[SourceMonkey] chrome.userScripts is unavailable — nothing was registered');
+    }
     return;
   }
   perScriptErrors.clear();
@@ -1010,7 +1024,6 @@ export async function syncRegistrations(): Promise<void> {
       await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });
     }
     const registered = await registerWithFallback(specs);
-    lastError = null;
     const failed = specs.length - registered;
     if (failed > 0) {
       console.info(
@@ -1020,8 +1033,7 @@ export async function syncRegistrations(): Promise<void> {
       console.log(`[SourceMonkey] registered ${registered} userscript(s) with chrome.userScripts`);
     }
   } catch (err) {
-    lastError = describeError(err);
-    console.info('[SourceMonkey] userScripts sync failed:', lastError);
+    console.info('[SourceMonkey] userScripts sync failed:', describeError(err));
   }
 }
 
@@ -1077,7 +1089,7 @@ export async function registerWithFallback(specs: RegistrationSpec[]): Promise<n
         logScriptEvent(spec.id, {
           level: 'error',
           source: 'chrome-injector',
-          message: `Chrome rejected this script's registration: ${msg}`,
+          message: `Chrome rejected this script's registration, so it will not run: ${msg}`,
         });
       }
     }

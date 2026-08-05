@@ -228,7 +228,7 @@ async function runScriptCheck(
     logScriptEvent(scriptId, {
       level: 'error',
       source: refreshLogSource(mode),
-      message: `update check threw: ${msg}`,
+      message: `could not check for updates: ${msg}`,
     });
     throw err;
   }
@@ -273,7 +273,7 @@ async function runSourceCheck(
     // one's Log rather than letting the failure live only in the SW
     // console.
     logSourceEventToScripts(
-      [...(prior?.scripts.values() ?? [])], mode, `source refresh threw: ${msg}`,
+      [...(prior?.scripts.values() ?? [])], mode, `could not refresh this source: ${msg}`,
     );
     throw err;
   }
@@ -305,7 +305,7 @@ async function runAllSourcesCheck(
     // so the two paths can't drift, applied across every source.
     for (const snapshot of priorBySourceId.values()) {
       logSourceEventToScripts(
-        [...snapshot.scripts.values()], mode, `source refresh threw: ${msg}`,
+        [...snapshot.scripts.values()], mode, `could not refresh this source: ${msg}`,
       );
     }
     throw err;
@@ -501,7 +501,7 @@ export function emitScriptOutcomeLog(
     logScriptEvent(scriptId, {
       level: 'warning',
       source,
-      message: 'row vanished during refresh',
+      message: 'this script was removed while it was being refreshed',
     });
     return;
   }
@@ -752,13 +752,15 @@ export function summarizeSourceOutcome(
   if (scanError) {
     logSourceEventToScripts(
       nextScripts, mode,
-      `source scan failed: ${scanError} — still running the cached copy`,
+      // Same no-echo phrasing as the sources page's banner, since
+      // `scanError` usually starts with its own `could not read …`.
+      `this source did not load: ${scanError} — still running the cached copy`,
     );
     console.log(`[SourceMonkey] source refresh: ${label}: scan failed: ${scanError}`);
     return;
   }
   if (prior?.source.scanError) {
-    logSourceEventToScripts(nextScripts, mode, 'source scan succeeded again (source is readable)');
+    logSourceEventToScripts(nextScripts, mode, 'this source is readable again');
   }
   const priorBy = prior?.scripts ?? new Map<string, StoredScript>();
   let changed = 0;

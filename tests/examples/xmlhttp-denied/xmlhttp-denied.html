@@ -29,11 +29,11 @@
         connections refuse fast, so the test is reliable offline.</li>
       <li><strong>no-connect</strong> &mdash;
         no <code>@connect</code>. Expected:
-        <em>blocked by @connect policy</em>.</li>
+        <em>blocked by this script&rsquo;s @connect rules</em>.</li>
       <li><strong>connect-mismatch</strong> &mdash;
         <code>@connect somewhere.else.example.org</code>. Host
         doesn&rsquo;t cover <code>127.0.0.1</code>. Expected:
-        <em>blocked by @connect policy</em>.</li>
+        <em>blocked by this script&rsquo;s @connect rules</em>.</li>
       <li><strong>connect-allowed</strong> &mdash;
         <code>@connect 127.0.0.1</code>. Policy allows the
         request through; the network call itself fails with

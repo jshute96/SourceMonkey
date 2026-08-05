@@ -82,6 +82,7 @@ import {
   fetchHttpText,
   isFileUrl,
   isHttpUrl,
+  LOCATION_SHAPES,
   normalizeSourceInput,
   scriptAbsolutePath,
   sourceCanonicalUrl,
@@ -692,13 +693,22 @@ async function loadPreview(): Promise<void> {
   await githubTokenReady;
 
   let text: string;
+  // Set only for an input we rejected on shape. The catch below is
+  // shared with the real fetch failures, and reporting a malformed
+  // location as one of those would send the reader looking at their
+  // network for a problem that is in the address bar.
+  let badInput = false;
   try {
     // Check the shape before canonicalizing: `sourceCanonicalUrl`
     // turns anything that isn't already http(s)/file:// into a
     // file:// URL, so an `ftp://…` param would otherwise fail with a
     // baffling `file:///ftp%3A//…` error instead of being named.
     if (!isPreviewableInput(input)) {
-      throw new Error('not an http(s):// or file:// URL, or an absolute path');
+      badInput = true;
+      // A whole sentence, not a fragment: the catch renders it as-is
+      // rather than under the `Could not fetch this script: ` prefix
+      // the other failures there take.
+      throw new Error(`This is not a script location — it ${LOCATION_SHAPES}.`);
     }
     // Same canonicalization `addSource` runs, so what the
     // already-installed check compares is exactly what installing
@@ -717,7 +727,10 @@ async function loadPreview(): Promise<void> {
       fileUrl: previewFileUrl || input,
     });
     document.title = `${displayLocation(previewLocation || input)} — SourceMonkey`;
-    setMessage(`Could not fetch this script: ${describeError(err)}`, 'error');
+    setMessage(
+      badInput ? describeError(err) : `Could not fetch this script: ${describeError(err)}`,
+      'error',
+    );
     // The likeliest reason a local file wouldn't read. `previewFileUrl`
     // is still '' if normalizeSourceInput is what threw, which is
     // correctly not a file:// URL — we never got as far as a read.

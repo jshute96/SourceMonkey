@@ -119,7 +119,9 @@ import {
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
 import {
+  connectBlockedMessage,
   extractSelfHosts,
+  gmXhrError,
   isUrlConnectAllowed,
   parseConnectRules,
 } from './gm-connect.js';
@@ -132,6 +134,7 @@ import {
 } from './gm-tab.js';
 import {
   dropOriginator as dropOriginatorNotifications,
+  NOTIFICATIONS_UNAVAILABLE,
   showGmNotification,
   takeForClicked as takeNotificationForClicked,
   takeForClosed as takeNotificationForClosed,
@@ -857,7 +860,7 @@ async function dispatchActionMenuCommand(
   commandId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!findMenuCommand(tabId, scriptId, commandId)) {
-    return { ok: false, error: 'menu command not registered' };
+    return { ok: false, error: 'this menu command is no longer registered' };
   }
   try {
     await chrome.tabs.sendMessage(tabId, {
@@ -1390,12 +1393,20 @@ async function handleXhrStart(
   // catches it.
   const policy = await loadConnectPolicy(payload.scriptId);
   if ('reason' in policy) {
-    await sendXhrError(tabId, payload.id, `[SourceMonkey] blocked by @connect policy: ${policy.reason}`);
+    // Not `connectBlockedMessage`: we never got as far as reading the
+    // script's rules, so blaming them would be wrong.
+    await sendXhrError(tabId, payload.id, gmXhrError(policy.reason));
     return;
   }
   const initial = policy.check(payload.request.url);
   if (!initial.allowed) {
-    await sendXhrError(tabId, payload.id, `[SourceMonkey] blocked by @connect policy: ${initial.reason}`);
+    // `denied` separates "the header forbids this host" from "that URL
+    // never parsed" — only the first is the script's rules refusing.
+    await sendXhrError(
+      tabId,
+      payload.id,
+      initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
+    );
     return;
   }
   // Run the fetch and ship the result back to the sender's tab. Other
@@ -1438,20 +1449,42 @@ async function sendXhrError(tabId: number, id: string, message: string): Promise
 // resolved (script gone, no header, parse error) — that's a hard deny.
 async function loadConnectPolicy(scriptId: string): Promise<
   | { reason: string }
-  | { check: (url: string) => { allowed: true } | { allowed: false; reason: string } }
+  | { check: (url: string) => { allowed: true } | { allowed: false; denied: boolean; reason: string } }
 > {
   try {
     const script = await getScript(scriptId);
-    if (!script || !script.header) {
-      return { reason: 'script not found or has no parsed header' };
+    // Two different failures, and only the second is ours. A script
+    // removed while a page it was running on is still open is a real
+    // race the user can act on, so it says what happened and how to
+    // recover rather than hiding behind `internal error:`.
+    if (!script) {
+      return { reason: 'this script is no longer installed — reload the page' };
+    }
+    if (!script.header) {
+      return { reason: 'internal error: this script\'s header is not available, so @connect could not be checked' };
     }
     const rules = parseConnectRules(script.header);
     const selfHosts = extractSelfHosts(script.header);
     return { check: (url: string) => isUrlConnectAllowed(url, rules, selfHosts) };
   } catch (err) {
-    return { reason: `policy check failed: ${err instanceof Error ? err.message : String(err)}` };
+    return {
+      reason: `internal error: could not check this script's @connect rules: ${
+        err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
+
+// Shared by the GM handlers that reply with an error when the calling
+// tab can't be identified (`handleTabOpen`, `handleNotificationShow`).
+// `handleXhrStart` has the same guard but returns silently — see the
+// TODO.md note.
+//
+// "could not identify", not "no longer known": the guard is
+// `sender.tab?.id == null`, so we never had an id — claiming we lost
+// one would be a guess. The userscript surfaces this to its own
+// author, so it describes the situation rather than naming our field.
+const NO_ORIGINATOR_TAB =
+  'internal error: could not identify the tab this call came from';
 
 // ---------- GM_openInTab dispatch ----------
 
@@ -1461,7 +1494,7 @@ async function handleTabOpen(
 ): Promise<{ ok: boolean; tabId?: number; error?: string }> {
   const originatorTabId = sender.tab?.id;
   if (originatorTabId == null) {
-    return { ok: false, error: 'no originator tab id' };
+    return { ok: false, error: NO_ORIGINATOR_TAB };
   }
   return openGmTab(payload, originatorTabId);
 }
@@ -1478,10 +1511,10 @@ async function handleNotificationShow(
 ): Promise<{ ok: boolean; notificationId?: string; error?: string }> {
   const originatorTabId = sender.tab?.id;
   if (originatorTabId == null) {
-    return { ok: false, error: 'no originator tab id' };
+    return { ok: false, error: NO_ORIGINATOR_TAB };
   }
   if (!chrome.notifications) {
-    return { ok: false, error: 'chrome.notifications unavailable' };
+    return { ok: false, error: NOTIFICATIONS_UNAVAILABLE };
   }
   return showGmNotification(payload, originatorTabId);
 }
@@ -1992,11 +2025,14 @@ async function recordScriptReport(
       level: 'info',
       source: 'script-wrapper',
       tabId,
-      message: `reload-swap from loadedAt ${payload.fromLoadedAt ?? '?'} to ${payload.loadedAt ?? '?'}`,
+      // The two `loadedAt` values stay on the console line above: they
+      // are epoch milliseconds, which identify a content version when
+      // reading a transcript but say nothing to someone reading the Log.
+      message: 'page reloaded — swapped in the newer copy of this script',
     });
   } else if (type === SM_ABANDONED_MSG) {
-    // SW told the wrapper to skip. Surface at info-level — this is rare
-    // and worth knowing about, but it isn't an error.
+    // SW told the wrapper to skip. Warning, not error — a script that
+    // was asked not to run is worth surfacing, but nothing failed.
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
@@ -2004,7 +2040,12 @@ async function recordScriptReport(
       level: 'warning',
       source: 'script-wrapper',
       tabId,
-      message: `abandoned (reason=${payload.reason ?? '?'})`,
+      // `reason` is a token from the skip decision, not a sentence, so
+      // it goes in parentheses as a detail rather than being read as
+      // the explanation. Today the wrapper's own fallback (`skip`) is
+      // the only value that gets here — see the `{action: 'skip'}`
+      // note on `CheckPendingReply`.
+      message: `did not run on this page (${payload.reason ?? 'no reason given'})`,
     });
   } else {
     // console.info (not console.warn / .error) so a userscript runtime

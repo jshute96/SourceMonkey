@@ -75,6 +75,7 @@ import {
   isContainerSource,
   isHttpUrl,
   isFileUrl,
+  LOCATION_SHAPES,
   isSingleFileInput,
   normalizeSourceInput,
 } from './directories.js';
@@ -517,7 +518,12 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   section.appendChild(header);
 
   if (source.scanError) {
-    section.appendChild(makeMessage('error', `Scan failed: ${source.scanError}`));
+    // "Scan" is the name of our pipeline stage, not something the page
+    // ever shows — what the reader sees is a source that didn't load.
+    // Phrased to avoid echoing what follows: most `scanError` values
+    // already open with `could not read <url>: …`, so a
+    // `Could not …:` prefix would say "could not" twice in a row.
+    section.appendChild(makeMessage('error', `This source did not load: ${source.scanError}`));
   }
   section.appendChild(await renderScriptTable(source, sourceOn));
   return section;
@@ -766,9 +772,7 @@ async function onAddDirectory(
   if (!path) return false;
 
   if (!isValidSourceInput(path)) {
-    showAddError(
-      'Sources must be an absolute path (starting with /) or an http(s):// / file:// URL.',
-    );
+    showAddError(`A source ${LOCATION_SHAPES}.`);
     return false;
   }
   showAddError(null);

@@ -183,20 +183,31 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
   } catch (err) {
     throw new Error(`could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
+  // Every failure below shares the `could not read <url>: <reason>`
+  // shape the rest of the fetch pipeline uses (`directories.ts`), so a
+  // GitHub failure and a plain HTTP one read the same way. "Repo
+  // metadata" was our name for this request, not something the reader
+  // asked for.
   if (!response.ok) {
     throw new Error(
-      `GitHub repo metadata ${apiUrl} returned HTTP ${response.status}${githubAuthHint(response.status)}`,
+      `could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
     );
   }
   let json: unknown;
   try {
     json = await response.json();
   } catch (err) {
-    throw new Error(`GitHub repo metadata ${apiUrl} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    // The parser's own complaint is kept: `Unexpected token <` is how a
+    // captive portal or proxy error page announces itself, and dropping
+    // it would leave "not valid JSON" with nothing to act on.
+    throw new Error(
+      `could not read ${apiUrl}: the response is not valid JSON (${
+        err instanceof Error ? err.message : String(err)})`,
+    );
   }
   const branch = (json as { default_branch?: unknown } | null)?.default_branch;
   if (typeof branch !== 'string' || !branch) {
-    throw new Error(`GitHub repo metadata ${apiUrl} missing default_branch`);
+    throw new Error(`could not read ${apiUrl}: GitHub did not report the repo's default branch`);
   }
   return branch;
 }
@@ -300,17 +311,25 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
     // status for both unauthenticated). Surface the status plus the
     // private-repo hint so the user has something concrete to act on.
     throw new Error(
-      `GitHub Contents API ${apiUrl} returned HTTP ${response.status}${githubAuthHint(response.status)}`,
+      `could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
     );
   }
   let json: unknown;
   try {
     json = await response.json();
   } catch (err) {
-    throw new Error(`GitHub Contents API ${apiUrl} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    // The parser's own complaint is kept: `Unexpected token <` is how a
+    // captive portal or proxy error page announces itself, and dropping
+    // it would leave "not valid JSON" with nothing to act on.
+    throw new Error(
+      `could not read ${apiUrl}: the response is not valid JSON (${
+        err instanceof Error ? err.message : String(err)})`,
+    );
   }
   if (!Array.isArray(json)) {
-    throw new Error(`GitHub Contents API ${apiUrl} did not return a directory listing`);
+    // GitHub answers a file path with an object rather than a listing,
+    // so this is the "you pointed at a file" case, not a broken API.
+    throw new Error(`could not read ${apiUrl}: that path is not a folder in the repo`);
   }
   return json as GithubContentsEntry[];
 }

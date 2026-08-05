@@ -610,17 +610,24 @@ Two rough edges are left:
 
 The Source labels are written for users (`manual-refresh`,
 `extension-startup`, `script-wrapper` — see
-[docs/script-log.md](docs/script-log.md#source-labels)), and the
-messages a **script validation** failure produces have now had the same
-pass (the rules they follow are in
+[docs/script-log.md](docs/script-log.md#source-labels)), and both the
+**script validation** messages and the ones reporting on the
+extension's **own machinery** have now had the same pass (the rules
+they follow are in
 [docs/diagnostics.md](docs/diagnostics.md#wording)). What's left:
 
-- **The messages that aren't about script content.** The pass covered
-  `errorMessage` / the header and dependency wording. Not yet audited:
-  anything reporting on the extension's own machinery, where
-  implementation jargon leaks — "SW" for the service worker is the
-  known example — plus the viewer's `setMessage` copy for states that
-  aren't diagnostics.
+- **`handleXhrStart` fails silently when it can't identify the tab.**
+  `background.ts` returns without sending anything, so the calling
+  script dangles until the page-side 5-minute TTL fires and reports a
+  timeout — a misleading account of what happened. The other two GM
+  handlers with the same guard reply with `NO_ORIGINATOR_TAB`; this one
+  can't, because the reply path it would use *is* the tab. Needs a
+  different route, not a different string.
+- **`sm:abandoned` has no real reasons to report.** The Log row says
+  `did not run on this page (<reason>)`, but the SW's
+  `{action: 'skip', reason}` branch is unused, so the only value that
+  reaches it is the wrapper's own `"skip"` fallback. Either give the
+  skip decision real reasons or drop the parenthetical.
 - **The version-probe rows keep their own wording.**
   `version-probe-fetch.ts` still says `no metadata block` where the
   viewer now says `no // ==UserScript== metadata block, so this is not a
@@ -643,6 +650,21 @@ pass (the rules they follow are in
   problem, because the resolver doesn't say which.
 
 ## Testing and example TOODs
+
+- **Two specs flake under full-suite load, never in isolation.** Both
+  pass standalone (`refresh-failed.spec.ts` went 35/35 under
+  `--repeat-each=5`), and each has failed at more than one assertion
+  across runs, which points at a race rather than one wrong
+  expectation:
+  - `refresh-failed.spec.ts:100` — seen with the first `refresh
+    failed` row absent, and separately with `loaded new content`
+    absent.
+  - `version-probe.spec.ts:262` — the status cell reads `ERROR` where
+    the test expects `OK`, i.e. something logged an error-level row
+    during the check.
+  - Worth finding before it hides a regression: a real race between a
+    refresh's storage write and the log read would be a product bug,
+    not a test-only timing bug.
 
 - API explorer page with forms to call any GM API with any args
 - examples for all supported GM APIs, all headers

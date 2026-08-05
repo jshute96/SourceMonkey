@@ -160,6 +160,10 @@ One message per problem, phrased to survive every place it lands.
 - **Name the thing that failed.** `@require` names its ref; `@resource`
   names both its name and its ref, because the name alone doesn't say
   what wouldn't load.
+- **Friendly is not vague.** Dropping our vocabulary can't also drop the
+  facts. Name the *step* that failed, not just the subsystem it was in —
+  `failed reading this script's stored GM values during setup` leaves
+  somewhere to start; `could not load your settings` doesn't.
 - **Don't guess between causes.** Where the pipeline genuinely can't
   tell (`FETCH_FAILED`), the message states the possibilities and
   TODO.md tracks the plumbing that would narrow it. Where it can, it
@@ -178,6 +182,66 @@ Two consequences worth stating outright:
   `no @version`, `no metadata block`) because they render as a value in
   a definition-list cell, where a full message doesn't fit. Listed in
   TODO.md so the exception stays a decision rather than a leftover.
+
+### Beyond diagnostics
+
+The same rules govern every string a user can read, not just the
+verdicts about a script's content:
+
+- **Log rows about our own machinery** (`script-updater.ts`,
+  `background.ts`, `injector.ts`) — `could not check for updates`, not
+  `update check threw`; `this script was removed while it was being
+  refreshed`, not `row vanished`.
+- **Source-level failures** — `this source did not load`, not `scan
+  failed`. "Scan" is the pipeline stage's name; the sources page never
+  shows it.
+  - Phrased so it doesn't echo what follows it. `scanError` values
+    usually open with their own `could not read <url>: …`, so a
+    `could not …:` wrapper would say "could not" twice running.
+- **Errors GM APIs throw back into script code** — the audience is the
+  script's author, so `GM_openInTab: url required` stays as it is. Only
+  *our* internals get rewritten, and a failure in our plumbing gets the
+  `internal error:` prefix so it doesn't read as the script's fault.
+
+Two capitalization conventions coexist, and both are correct:
+
+- **Diagnostics and Log rows are lowercase fragments** — they get
+  wrapped by prefixes and `(in <where>)` suffixes.
+- **The viewer's `setMessage` copy is a standalone sentence**
+  (`Install failed: …`, `This script is already installed.`) — nothing
+  wraps it, and it sits alone in the message bar.
+
+### One string, one place
+
+Where a message reaches more than one surface it lives in one
+constant, so the copies can't drift:
+
+| Helper | Covers |
+|--------|--------|
+| `gmXhrError` (`gm-connect.ts`) | every failure `GM_xmlhttpRequest` hands back to a script |
+| `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
+| `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
+| `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
+| `LOCATION_SHAPES` (`directories.ts`) | the add-source and preview validators' description of a valid location |
+| `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
+
+The last one is the cautionary case: it was two literals, and the Log
+copy had already lost the "reload the page to retry" half — the only
+part the reader could act on.
+
+### Blame the right thing
+
+Sharper wording makes a wrong attribution worse, so a message that
+names a culprit has to be reachable only when that culprit is real:
+
+- `isUrlConnectAllowed` returns `denied` alongside `reason`. A URL that
+  wouldn't parse fails the check without the header having refused
+  anything, so only `denied: true` goes through
+  `connectBlockedMessage` — otherwise a script with `@connect *` would
+  be told its own rules blocked a relative URL.
+- `loadConnectPolicy` splits "this script is gone" (a race the user
+  fixes by reloading) from "its header is missing" (ours). The first
+  must not carry the `internal error:` prefix.
 
 ## Testing
 

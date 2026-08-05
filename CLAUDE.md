@@ -36,6 +36,8 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
 
 - **No internal vocabulary** (`SW`, `opaque response`, `fetch threw`).
 - **Name what failed**, and the fix where there is one.
+- **Friendly is not vague.** Plain wording still has to leave something to
+  debug with: name the step that failed, not just the subsystem it was in.
 - **Lowercase, no trailing period, subject included** — the same string
   appears alone and after prefixes like `This script cannot be installed: `.
 - **One message per problem**; wrap the shared string rather than writing a

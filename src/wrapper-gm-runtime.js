@@ -704,7 +704,15 @@
         /* TTL elapsed without a terminal event. Synthesize an error
            so the userscript at least sees a settled state instead of
            silently dangling. */
-        dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] XHR timed out waiting for SW response (TTL " + XHR_PAGE_SIDE_TTL_MS + "ms)" });
+        /* Minutes, not the raw millisecond count — a six-digit number
+           is not something a reader can weigh. "gave up on", not
+           "dropped": this only stops the page waiting, the SW-side
+           fetch is never aborted and may still complete. */
+        dispatchXhrEvent(id, {
+          kind: "error",
+          message: "[SourceMonkey] GM_xmlhttpRequest: no response from the extension after "
+            + (XHR_PAGE_SIDE_TTL_MS / 60000) + " minutes, so this request was given up on",
+        });
       }, XHR_PAGE_SIDE_TTL_MS);
       /* Build the serializable request payload — strip callbacks
          and other non-cloneable fields. */
