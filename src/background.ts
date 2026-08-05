@@ -35,6 +35,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { installDeepLinkRedirect } from './deep-link.js';
+import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { installUserJsCapture } from './install-capture.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
@@ -53,6 +54,7 @@ import {
 import {
   buildSwapEvalBody,
   isUserScriptsAvailable,
+  resetRejectionRetryGate,
   syncRegistrations,
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
@@ -83,6 +85,7 @@ import {
   updateScript,
   updateSource,
 } from './script-updater.js';
+import type { ProbePolicy } from './version-probe.js';
 import {
   addSource,
   getScript,
@@ -120,7 +123,9 @@ import {
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
 import {
+  connectBlockedMessage,
   extractSelfHosts,
+  gmXhrError,
   isUrlConnectAllowed,
   parseConnectRules,
 } from './gm-connect.js';
@@ -133,6 +138,7 @@ import {
 } from './gm-tab.js';
 import {
   dropOriginator as dropOriginatorNotifications,
+  NOTIFICATIONS_UNAVAILABLE,
   showGmNotification,
   takeForClicked as takeNotificationForClicked,
   takeForClosed as takeNotificationForClosed,
@@ -181,7 +187,16 @@ interface SourceMonkeyApi {
   setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
   updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
-  updateScript: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  // `probe` mirrors the production signature: `'force'` is what a real
+  // Refresh click passes, and several behaviors key off it (upstream
+  // version probes, and retrying a refused registration immediately
+  // rather than under the rate limit). Tests modelling a click have to
+  // be able to say so.
+  updateScript: (
+    id: string,
+    mode: 'manual' | 'opportunistic',
+    probe?: ProbePolicy,
+  ) => Promise<unknown>;
   updateAllSources: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // Inspect the per-tab badge state Chrome would render. We pull
   // text/title back from chrome.action and the structured TabRecord
@@ -217,6 +232,10 @@ interface SourceMonkeyApi {
   // failures and wrapper errors are surfaced through the log pane.
   getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
   appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
+  // Registrations chrome.userScripts refused on the last sync, keyed by
+  // script id — the state the UI renders as REJECTED. Empty unless
+  // something is broken, which is what most tests assert.
+  getRejections: () => Promise<RejectionMap>;
   // Compile-only parse check (src/parse-check.ts). Null means the
   // check could not run, which callers must not read as failure.
   checkParses: (sources: string[]) => Promise<ParseVerdict[] | null>;
@@ -302,6 +321,7 @@ const api: SourceMonkeyApi = {
     return getScriptLog(scriptId);
   },
   appendScriptLog,
+  getRejections: readRejections,
   clearScriptLog,
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
@@ -320,7 +340,7 @@ const api: SourceMonkeyApi = {
   getActionContextMenuPlan: async (tabId: number) => {
     const record = await getTabRecord(tabId);
     const state = getCurrentState(record);
-    return buildActionMenuPlan(state, tabId);
+    return buildActionMenuPlan(state, tabId, await rejectedScriptIds());
   },
   fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
     // Goes through the same dispatchActionMenuCommand helper the real
@@ -364,6 +384,9 @@ const api: SourceMonkeyApi = {
     // check off for every later test in this worker.
     parseCheckRuns = 0;
     resetParseCheckFailures();
+    // Same reason: a retry from the previous test would otherwise
+    // rate-limit the next one's out of existence.
+    resetRejectionRetryGate();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -595,6 +618,13 @@ async function updateTabMatches(
   await renderBadge(tabId, state);
 }
 
+// The scripts Chrome is currently refusing to register, as a set for
+// the badge. Read per paint rather than cached: it changes rarely and
+// a stale copy would keep painting REJECTED after a fix landed.
+async function rejectedScriptIds(): Promise<ReadonlySet<string>> {
+  return new Set(Object.keys(await readRejections()));
+}
+
 async function renderBadge(tabId: number, state: TabMatchState | null): Promise<void> {
   // Each setX call can reject if the tab closed between our query and
   // here; swallow that rather than spamming the SW console.
@@ -603,7 +633,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
       await chrome.action.setBadgeText({ tabId, text: '' });
       await chrome.action.setTitle({ tabId, title: 'SourceMonkey' });
     } else {
-      const view = computeBadge(state);
+      const view = computeBadge(state, await rejectedScriptIds());
       await chrome.action.setBadgeText({ tabId, text: String(view.count) });
       await chrome.action.setBadgeBackgroundColor({ tabId, color: view.color });
       await chrome.action.setTitle({ tabId, title: view.title });
@@ -715,8 +745,9 @@ async function runMenuRebuildLoop(): Promise<void> {
 function buildActionMenuPlan(
   state: TabMatchState | null,
   tabId: number | null,
+  rejected: ReadonlySet<string>,
 ): ActionMenuPlan {
-  const rows = state ? computeBadge(state).rows : [];
+  const rows = state ? computeBadge(state, rejected).rows : [];
   const cmdsByScript: ReadonlyMap<string, readonly MenuCommandEntry[]> =
     tabId != null ? getMenuCommandsForTab(tabId) : new Map();
   const groups: ActionMenuScript[] = rows.map((row) => ({
@@ -736,7 +767,7 @@ async function doRebuildActionContextMenu(
   tabId: number | null,
 ): Promise<void> {
   if (!chrome.contextMenus) return;
-  const plan = buildActionMenuPlan(state, tabId);
+  const plan = buildActionMenuPlan(state, tabId, await rejectedScriptIds());
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
   menuItemToCommand.clear();
   erroredScriptRows.clear();
@@ -867,7 +898,11 @@ async function dispatchActionMenuCommand(
   commandId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!findMenuCommand(tabId, scriptId, commandId)) {
-    return { ok: false, error: 'menu command not registered' };
+    // Not user-facing today, so not recased: the real click path
+    // (`dispatchActionMenuCommand` in the context-menu handler) discards
+    // this reply, and only the test surface reads it. If it ever reaches
+    // a person, it takes a capital like any other message.
+    return { ok: false, error: 'this menu command is no longer registered' };
   }
   try {
     await chrome.tabs.sendMessage(tabId, {
@@ -988,6 +1023,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 onCacheChanged(() => {
   scheduleSync();
 });
+
+// Repaint open tabs when the set of refused registrations changes, so a
+// REJECTED badge clears the moment a retry places the script (and
+// appears the moment one stops registering). Without this the badge
+// would keep its old label until the next navigation, contradicting the
+// sources page beside it.
+//
+// Session area only: this is the injector's rejection map, and script
+// content changes come through `onCacheChanged` above.
+if (chrome.storage.session.onChanged) {
+  chrome.storage.session.onChanged.addListener((changes) => {
+    if (REJECTIONS_KEY in changes) void refreshAllOpenTabs();
+  });
+}
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleSync(): void {
@@ -1400,12 +1449,20 @@ async function handleXhrStart(
   // catches it.
   const policy = await loadConnectPolicy(payload.scriptId);
   if ('reason' in policy) {
-    await sendXhrError(tabId, payload.id, `[SourceMonkey] blocked by @connect policy: ${policy.reason}`);
+    // Not `connectBlockedMessage`: we never got as far as reading the
+    // script's rules, so blaming them would be wrong.
+    await sendXhrError(tabId, payload.id, gmXhrError(policy.reason));
     return;
   }
   const initial = policy.check(payload.request.url);
   if (!initial.allowed) {
-    await sendXhrError(tabId, payload.id, `[SourceMonkey] blocked by @connect policy: ${initial.reason}`);
+    // `denied` separates "the header forbids this host" from "that URL
+    // never parsed" — only the first is the script's rules refusing.
+    await sendXhrError(
+      tabId,
+      payload.id,
+      initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
+    );
     return;
   }
   // Run the fetch and ship the result back to the sender's tab. Other
@@ -1448,20 +1505,42 @@ async function sendXhrError(tabId: number, id: string, message: string): Promise
 // resolved (script gone, no header, parse error) — that's a hard deny.
 async function loadConnectPolicy(scriptId: string): Promise<
   | { reason: string }
-  | { check: (url: string) => { allowed: true } | { allowed: false; reason: string } }
+  | { check: (url: string) => { allowed: true } | { allowed: false; denied: boolean; reason: string } }
 > {
   try {
     const script = await getScript(scriptId);
-    if (!script || !script.header) {
-      return { reason: 'script not found or has no parsed header' };
+    // Two different failures, and only the second is ours. A script
+    // removed while a page it was running on is still open is a real
+    // race the user can act on, so it says what happened and how to
+    // recover rather than hiding behind `internal error:`.
+    if (!script) {
+      return { reason: 'this script is no longer installed — reload the page' };
+    }
+    if (!script.header) {
+      return { reason: 'internal error: this script\'s header is not available, so @connect could not be checked' };
     }
     const rules = parseConnectRules(script.header);
     const selfHosts = extractSelfHosts(script.header);
     return { check: (url: string) => isUrlConnectAllowed(url, rules, selfHosts) };
   } catch (err) {
-    return { reason: `policy check failed: ${err instanceof Error ? err.message : String(err)}` };
+    return {
+      reason: `internal error: could not check this script's @connect rules: ${
+        err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
+
+// Shared by the GM handlers that reply with an error when the calling
+// tab can't be identified (`handleTabOpen`, `handleNotificationShow`).
+// `handleXhrStart` has the same guard but returns silently — see the
+// TODO.md note.
+//
+// "could not identify", not "no longer known": the guard is
+// `sender.tab?.id == null`, so we never had an id — claiming we lost
+// one would be a guess. The userscript surfaces this to its own
+// author, so it describes the situation rather than naming our field.
+const NO_ORIGINATOR_TAB =
+  'internal error: could not identify the tab this call came from';
 
 // ---------- GM_openInTab dispatch ----------
 
@@ -1471,7 +1550,7 @@ async function handleTabOpen(
 ): Promise<{ ok: boolean; tabId?: number; error?: string }> {
   const originatorTabId = sender.tab?.id;
   if (originatorTabId == null) {
-    return { ok: false, error: 'no originator tab id' };
+    return { ok: false, error: NO_ORIGINATOR_TAB };
   }
   return openGmTab(payload, originatorTabId);
 }
@@ -1488,10 +1567,10 @@ async function handleNotificationShow(
 ): Promise<{ ok: boolean; notificationId?: string; error?: string }> {
   const originatorTabId = sender.tab?.id;
   if (originatorTabId == null) {
-    return { ok: false, error: 'no originator tab id' };
+    return { ok: false, error: NO_ORIGINATOR_TAB };
   }
   if (!chrome.notifications) {
-    return { ok: false, error: 'chrome.notifications unavailable' };
+    return { ok: false, error: NOTIFICATIONS_UNAVAILABLE };
   }
   return showGmNotification(payload, originatorTabId);
 }
@@ -1937,7 +2016,7 @@ function composeWrapperErrorMessage(
 ): string {
   const msg = message ?? '';
   const st = stack ?? '';
-  if (!st) return msg || 'unknown runtime error';
+  if (!st) return msg || 'Unknown runtime error';
   const firstLine = st.split('\n', 1)[0];
   if (msg && !firstLine.includes(msg)) return `${msg}\n${st}`;
   return st;
@@ -1989,7 +2068,7 @@ async function recordScriptReport(
       level: 'info',
       source: 'script-wrapper',
       tabId,
-      message: `started at ${senderUrl}`,
+      message: `Started at ${senderUrl}`,
     });
   } else if (type === SM_SWAPPED_MSG) {
     // The reload swap path. Log alongside sm:start so the SW console
@@ -2002,11 +2081,14 @@ async function recordScriptReport(
       level: 'info',
       source: 'script-wrapper',
       tabId,
-      message: `reload-swap from loadedAt ${payload.fromLoadedAt ?? '?'} to ${payload.loadedAt ?? '?'}`,
+      // The two `loadedAt` values stay on the console line above: they
+      // are epoch milliseconds, which identify a content version when
+      // reading a transcript but say nothing to someone reading the Log.
+      message: 'Page reloaded — swapped in the newer copy of this script',
     });
   } else if (type === SM_ABANDONED_MSG) {
-    // SW told the wrapper to skip. Surface at info-level — this is rare
-    // and worth knowing about, but it isn't an error.
+    // SW told the wrapper to skip. Warning, not error — a script that
+    // was asked not to run is worth surfacing, but nothing failed.
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
@@ -2014,7 +2096,12 @@ async function recordScriptReport(
       level: 'warning',
       source: 'script-wrapper',
       tabId,
-      message: `abandoned (reason=${payload.reason ?? '?'})`,
+      // `reason` is a token from the skip decision, not a sentence, so
+      // it goes in parentheses as a detail rather than being read as
+      // the explanation. Today the wrapper's own fallback (`skip`) is
+      // the only value that gets here — see the `{action: 'skip'}`
+      // note on `CheckPendingReply`.
+      message: `Did not run on this page (${payload.reason ?? 'no reason given'})`,
     });
   } else {
     // console.info (not console.warn / .error) so a userscript runtime

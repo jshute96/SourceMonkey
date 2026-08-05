@@ -49,17 +49,17 @@ export const BAD_SCRIPTS_DIR = path.resolve(__dirname, '..', 'bad-examples');
 export const BAD_CASES = [
   // No block at all, so no line to name — the location is the file
   // itself, which still opens the source the reader has to fix.
-  { file: 'empty.user.js',                 expectedStatus: 'invalid', errorMatcher: /no \/\/ ==UserScript== metadata block/,
+  { file: 'empty.user.js',                 expectedStatus: 'invalid', errorMatcher: /No \/\/ ==UserScript== metadata block/,
     errorIn: 'empty.user.js', errorLine: null },
-  { file: 'no-header.user.js',             expectedStatus: 'invalid', errorMatcher: /no \/\/ ==UserScript== metadata block/,
+  { file: 'no-header.user.js',             expectedStatus: 'invalid', errorMatcher: /No \/\/ ==UserScript== metadata block/,
     errorIn: 'no-header.user.js', errorLine: null },
   // A tag that isn't there has no line of its own, so these point at
   // the `// ==UserScript==` marker — the block the tag belongs in.
-  { file: 'empty-header.user.js',          expectedStatus: 'invalid', errorMatcher: /no @name in the metadata block/,
+  { file: 'empty-header.user.js',          expectedStatus: 'invalid', errorMatcher: /No @name in the metadata block/,
     errorIn: 'empty-header.user.js', errorLine: 1 },
   { file: 'unclosed-header.user.js',       expectedStatus: 'invalid', errorMatcher: /metadata block is never closed/,
     errorIn: 'unclosed-header.user.js', errorLine: 1 },
-  { file: 'malformed-field.user.js',       expectedStatus: 'invalid', errorMatcher: /no @match or @include in the metadata block/,
+  { file: 'malformed-field.user.js',       expectedStatus: 'invalid', errorMatcher: /No @match or @include in the metadata block/,
     errorIn: 'malformed-field.user.js', errorLine: 1 },
   { file: 'two-headers.user.js',           expectedStatus: 'ok' },
   { file: 'leading-text.user.js',          expectedStatus: 'ok' },
@@ -67,7 +67,12 @@ export const BAD_CASES = [
   { file: 'blank-lines.user.js',           expectedStatus: 'ok' },
   // The file that failed has no content to point into, so the location
   // is the `@require` line that named it.
-  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js: could not be fetched/,
+  //
+  // One exact string, not an alternation: both `file://` legs (the
+  // page's XHR and the service worker's / Node's `fetch`) report an
+  // unreadable local file the same way, so the browser and the CLI
+  // must agree here.
+  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js: The file may not exist/,
     errorIn: 'missing-require.user.js' },
   // Both require cases below fetch their `@require` fine — the failure
   // is in the code, not the load. They differ in WHEN we can see it:
@@ -90,6 +95,17 @@ export const BAD_CASES = [
   // runs. Its located WARNING rides on `startupLogs`, asserted by
   // bad-scripts.spec.ts; the click-through is in diagnostic-links.spec.ts.
   { file: 'unknown-grant.user.js',         expectedStatus: 'ok' },
+  // Same shape for a `@match` Chrome's grammar refuses: the pattern is
+  // dropped, the script runs on the ones that are left, and the located
+  // warning rides on `startupLogs`.
+  { file: 'invalid-match.user.js',         expectedStatus: 'ok' },
+  // ...and the same problem with nothing left to match on, which the
+  // script can't survive. The location is the offending `@match` line —
+  // unlike the missing-tag failures above, this text really is in the
+  // file.
+  { file: 'unusable-match.user.js',        expectedStatus: 'invalid',
+    errorMatcher: /@match https:\/\/example\.com has no path, so this script would never run on any page/,
+    errorIn: 'unusable-match.user.js' },
 
   // ---------- Where the error is ----------
   //

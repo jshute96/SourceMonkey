@@ -117,7 +117,7 @@ test('isUrlConnectAllowed: exact host matches, others rejected', () => {
 test('isUrlConnectAllowed: invalid URL → block with reason', () => {
   const r = isUrlConnectAllowed('not-a-url', [{ kind: 'wildcard' }], new Set());
   assert.equal(r.allowed, false);
-  assert.match(r.reason, /invalid URL/);
+  assert.match(r.reason, /not a valid URL/);
 });
 
 test('isUrlConnectAllowed: self resolves against the script\'s self hosts', () => {

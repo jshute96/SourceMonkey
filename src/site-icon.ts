@@ -322,7 +322,7 @@ async function fetchHtml(url: string): Promise<{ text: string; finalUrl: string 
     maxBytes: MAX_HTML_BYTES,
     acceptContentType: (ct) => ct.includes('html'),
   });
-  if (!res) return null;
+  if ('failed' in res) return null;
   // Decode as UTF-8. Real-world HTML in non-UTF-8 charsets is rare
   // enough today that we accept the occasional mojibake — and even
   // then the icon link tags are ASCII attributes that decode fine.
@@ -339,7 +339,9 @@ async function fetchIconAt(url: string): Promise<string | null> {
     maxBytes: MAX_ICON_BYTES,
     acceptContentType: (ct) => ct.startsWith('image/'),
   });
-  if (!res) return null;
+  // Icons fail quietly — a missing favicon is cosmetic, and there is
+  // no surface that would show a reason.
+  if ('failed' in res) return null;
   // Strip any `; charset=…` parameter; default to image/x-icon when
   // the server omitted Content-Type so the data URL still renders.
   const mime = res.contentType.split(';')[0].trim() || 'image/x-icon';

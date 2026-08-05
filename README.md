@@ -1,110 +1,164 @@
-# SourceMonkey
+# SourceMonkey - Userscript manager Chrome extension
 
-A userscript manager Chrome extension that treats userscripts like source code, built and managed with real coding tools.
+Userscripts are JavaScript patch scripts that modify specific web
+pages. They're like lightweight Chrome extensions that are easy to
+write, update and share. A userscript manager handles your registered
+scripts.
 
-> **Status:** Works end-to-end for the common cases. The sources
-> page can register local directories or HTTP manifests, every
-> `*.user.js` it finds is persistently loaded, matching scripts are
-> injected via `chrome.userScripts`, and the most-used `GM_*` /
-> `GM.*` APIs are wired up. `@require` prefetches required libraries
-> and runs them in the script's own scope, as Tampermonkey does;
-> `@resource` prefetches arbitrary blobs surfaced via
-> `GM_getResourceText` / `GM_getResourceURL`. Deferred: XHR header
-> surgery and `GM_cookie`. See
-> [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) for the
-> per-API surface.
+SourceMonkey is a userscript manager that treats userscripts like source code,
+built and managed with real coding tools.
 
-## Usage
+During development, userscripts live on local disk, where you can work
+on them with standard software engineering tools (editors, IDEs,
+debuggers) and vibe-coding or agentic coding tools (like Claude Code).
+You can write tests and use source control (like GitHub) easily.
+SourceMonkey picks up the newest version from disk and installs it in
+Chrome automatically.
 
-Open the sources page by clicking the SourceMonkey toolbar icon, or via
-`chrome://extensions` → SourceMonkey → "Details" → "Extension options".
-The sources page has an **Options** link at the top-left for the
-configurable settings (`.user.js` link capture, debug logging, GitHub
-auth token).
+Userscripts can also be loaded from the web, including from GitHub repos, and
+from sites like [Greasy Fork](https://greasyfork.org/).
 
-### Installing scripts from a `.user.js` link
+SourceMonkey is generally compatible with
+[TamperMonkey](https://www.tampermonkey.net/) and other common
+userscript managers.
 
-Click a `.user.js` link anywhere — GreasyFork, GitHub, a colleague's
-gist — and SourceMonkey previews it instead of letting Chrome download
-the file. Opening a `.user.js` file from your own disk does the same
-thing, as long as SourceMonkey has "Allow access to file URLs".
+### Example userscripts
 
-The preview is the same page you get for an installed script:
-the script's name, version, description, what pages it runs on, which
-`GM_*` permissions, `@connect` hosts, and external files it asks for,
-and its full source in a tabbed view (one tab per `@require`, loaded
-when you open it). **Install** registers it exactly as if you'd typed
-the URL into the Add Source field, so it updates like any other web
-source.
+[`tests/examples`](tests/examples/README.md) includes example scripts
+that interactively demonstrate supported `GM` APIs and other
+functionality.
 
-If the script is already installed you get **Open installed script** /
-**Update now** instead. **View raw source** opens the unprocessed file
-in a new tab, and **Cancel** goes back where you came from. A file that
-isn't a valid userscript can't be installed — the preview says why and
-shows you what actually came back.
+These also function as a **compliance test suite** for userscript managers,
+with tests that compare behavior between SourceMonkey and TamperMonkey.
 
-The preview also compiles the script — with its `@require`d libraries —
-before you commit, and warns if the code has a syntax error or a
-library can't be loaded. Install stays available: it's your call
-whether to take a script you intend to fix. Checking the code means
-opening a preview downloads the `@require` / `@resource` files the
-script names, before you install anything.
+### Status
 
-If you opened a local `.user.js` to read rather than install it,
-**View raw source** shows it, and **Continue to file** loads it in the
-tab. Turn the whole thing off with **Capture `.user.js` links** on the
-Options page if you'd rather have Chrome's stock behavior.
+SourceMonkey works end-to-end for script development, and loading
+scripts that use common features. Most `GM*` APIs are wired up, and
+common headers including `@require` and `@resource` are supported. See
+[docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
+[docs/supported-headers.md](docs/supported-headers.md) for details.
+
+There's no released version yet, so you have to [build from
+source](#development).
+
+## Getting started
+
+1. Build and load the extension — see [Development](#development).
+2. On `chrome://extensions`, for SourceMonkey enable:
+   - **Pin to toolbar**, so the SourceMonkey icon is visible.
+   - **"Allow User Scripts"** (on Chrome 120–137, the page-wide
+     Developer mode toggle instead). Without it Chrome refuses to
+     inject anything.
+   - **"Allow access to file URLs"**, if you want to load scripts from
+     local disk.
+
+   The permission toggles persist across browser restarts, and
+   SourceMonkey shows a banner with a link to the toggle whenever one is
+   missing.
+3. Click the SourceMonkey toolbar icon to open the **sources page**.
+   On first run it seeds a few default sources so the page isn't empty;
+   remove them like any other source.
+
+## Using SourceMonkey
+
+### The sources page
+
+The sources page is where scripts are registered and managed. Each
+source has a section listing its scripts, with enable toggles (per
+source and per script), reorder buttons, and **Refresh** / **Remove**.
+**Refresh All** re-checks everything at once.
+
+Each script row shows a status, linking to that script's log, where there
+are usually more details:
+
+| Status | Meaning |
+| --- | --- |
+| `OK` | Loaded and registered |
+| `INVALID` | The script can't run: bad or missing headers, a `@require` that wouldn't load, or a syntax error |
+| `REJECTED` | The script is fine, but Chrome refused to register it |
+| `MISSING` | The file is gone from its source (deleted on disk, dropped from a manifest) |
+| `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
+| `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
+| `ERROR` / `WARNING` | Loaded fine, but some errors or warnings have been logged |
+
+An open sources page keeps itself current — a script installed from a
+link, refreshed elsewhere, updated by a background check, or toggled in
+a second tab shows its new state right away, with no page reload.
+
+Clicking a script name opens the **script viewer**, which shows the script's
+headers, content (including the `@require` files it loads), status, and a
+**Log** tab showing errors and other log messages. Viewers follow the
+same way, so enabling or disabling a source reaches every viewer open on
+it.
+
+The **Options** link at the top-left covers `.user.js` link capture,
+debug logging, and a GitHub token (for private repos and a higher API
+rate limit).
+
+Details: [docs/storage.md](docs/storage.md) (status model),
+[docs/script-viewer.md](docs/script-viewer.md),
+[docs/script-log.md](docs/script-log.md),
+[docs/diagnostics.md](docs/diagnostics.md).
 
 ### Registering sources
 
-On its first run SourceMonkey opens the sources page and seeds a set of
-default sources so the page isn't empty out of the box — you'll see each
-one get added, with its scripts loaded. Remove them like any other
-source — they won't come back.
+Type a path or URL into the Add Source field and click **Add source**.
+A source can be:
 
-Type a source into the Add Source field and click **Add source**. A
-single `.user.js` (URL or local path) opens the same preview described
-above, so you see what you're getting before it's added; directories,
-manifests, and repo folders are added directly.
-What you can type:
+- An **absolute path or `file://` URL to a directory** of userscripts.
+  Scanned recursively; every `*.user.js` becomes a row.
+- A **single `.user.js`**, by local path or `http(s)://` URL. This
+  opens a preview first (see below).
+- A **manifest** (`script_manifest.json`) — a list of userscripts to
+  load. See [Manifest files](#manifest-files-script_manifestjson).
+- A **GitHub URL**, pasted straight from the browser. A repo, a
+  `/tree/…` directory, or a `/blob/…` file all work; directories are
+  scanned via the GitHub API.
 
-- An **absolute path to a directory** of userscripts. Scanned
-  recursively (up to two subdirectory levels deep); every
-  `*.user.js` becomes a row.
-- A **`file://` URL** to the directory above.
-- An **`http(s)://` URL ending in `.user.js`** — folded into the
-  matching "Scripts from web" container source (or "Scripts from
-  GitHub" if the URL is a GitHub raw URL).
-- An **absolute path or `file://` URL to a single `.user.js` file**
-  — folded into the "Scripts from local disk" container.
-- A **manifest**: anything whose pathname's basename is
-  `script_manifest.json`. The manifest is fetched and the URLs it
-  lists become individual scripts. Works at an http(s) URL, a
-  `file://` URL, or a bare local path — the same manifest file can be
-  tested locally and then served over HTTP unchanged.
-- A **GitHub URL** — paste a `github.com` URL straight from the
-  browser. A `/blob/.../foo.user.js` URL is rewritten to its
-  `raw.githubusercontent.com` counterpart and folded into the GitHub
-  container; a `/blob/.../script_manifest.json` URL is stored as a
-  github-manifest source. A `/tree/<ref>/<dir>` URL is scanned
-  recursively via the GitHub Contents API. A bare repo URL
-  (`github.com/<o>/<r>`) resolves to the repo's default branch.
+Single scripts are grouped into one of three container sources, created
+on demand — `Scripts from local disk`, `Scripts from web`,
+`Scripts from GitHub`.
 
-The three container sources — `Scripts from local disk`,
-`Scripts from web`, `Scripts from GitHub` — are created on demand
-when you add the first script of their kind. Subsequent single-file
-adds of the same kind join the existing container, and each row
-gets its own remove button.
+Details: [docs/file-access.md](docs/file-access.md),
+[docs/http-sources.md](docs/http-sources.md).
 
-Each source shows up as its own section on the sources page with a
-per-source enable toggle, per-script enable toggles, **↑ / ↓** buttons
-to reorder it in the list, a **Refresh** button (re-scans + re-fetches
-just that source), and a **Remove** button. The page-level
-**Refresh All** does every source at once.
+### Installing scripts from a `.user.js` link
 
-### Manifest format
+Click a `.user.js` link anywhere — Greasy Fork, GitHub, a file on your
+own disk, etc. — and SourceMonkey previews it instead of letting Chrome
+download the file.
 
-The manifest body is JSON in one of two shapes:
+The preview shows the script's source code and some summary information,
+and validates the script and its `@require` libraries, reporting errors for
+invalid scripts.  **Install** loads the script, the same as adding its
+URL on the sources page.
+
+If the script is already registered, the preview allows updating the
+existing copy.
+
+Link capture can be turned off on the Options page if you want Chrome's
+defaults or have another userscript manager handling links.
+
+Details: [docs/install-capture.md](docs/install-capture.md),
+[docs/parse-check.md](docs/parse-check.md).
+
+### Manifest files (`script_manifest.json`)
+
+SourceMonkey allows adding a directory as a source, and then
+automatically loading all userscripts under that directory.
+
+For local directories, and supported web sources like GitHub,
+SourceMonkey can list files to find the userscripts. Other file hosting
+sites may not support listing files. Manifest files allow loading
+multi-userscript collections from these sites too.
+
+A manifest file is a JSON file containing a list of userscripts to
+load, typically using relative paths starting from the manifest file's
+location.
+
+The manifest body is JSON in one of two shapes — a bare array, or an
+object with a `scripts` key:
 
 ```json
 ["foo.user.js", "sub/bar.user.js", "https://elsewhere/baz.user.js"]
@@ -114,280 +168,96 @@ The manifest body is JSON in one of two shapes:
 { "scripts": ["foo.user.js", "sub/bar.user.js"] }
 ```
 
-Each entry is a URL string. Resolution rules:
+Each entry is a URL string:
 
-- **Absolute** URLs (`https://…`, `file:///…`) are used verbatim.
-- **Relative** URLs resolve against the manifest URL's parent:
-  `foo.user.js` listed in `https://example.com/scripts/script_manifest.json`
-  becomes `https://example.com/scripts/foo.user.js`; the same entry
-  in `/home/me/scripts/script_manifest.json` becomes
-  `/home/me/scripts/foo.user.js`.
-- Entries are trimmed; empty strings and duplicates are skipped.
-- A non-string entry or a body that isn't one of the two supported
-  shapes fails the whole source with a scan error.
+- **Relative** entries resolve against the manifest's own location, so
+  the same manifest works unchanged whether it's served over HTTP or
+  read from a local directory.
+- **Absolute** URLs (`https://…`, `file:///…`) are used verbatim, and
+  can point anywhere.
 
 To generate a manifest from a directory of userscripts, run
-`scripts/make_manifest.sh` inside that directory and redirect stdout
-to `script_manifest.json` — it scans recursively for `*.user.js` and
-emits the bare-array shape.
+`scripts/make_manifest.sh` inside that directory and redirect stdout to
+`script_manifest.json`.
 
-### Refresh behaviour
+### Keeping scripts up to date
 
-HTTP entries (whether added into the web/GitHub container or reached
-via a manifest) re-fetch with conditional GETs — SourceMonkey stores each
-script's `ETag` / `Last-Modified` and sends them on the next refresh,
-so an unchanged file answers `304` and no body is re-downloaded.
-Local-directory sources skip refetches when the file's size +
-modification time match the stored copy. For combinations where
-neither pre-fetch shortcut applies (manifest entries, HTTP servers
-that don't return validators), the fetched body's hash is compared
-against the prior so identical content still counts as "no change."
+- **While you browse**, SourceMonkey checks in the background whether
+  the source files of the scripts running on the page have changed. Any
+  change is loaded immediately, and the toolbar badge turns purple with
+  a "Reload to update" tooltip.
+- **Reloading a tab picks up edits on the same click** — SourceMonkey
+  races a quick re-check against the page load, so a script you just
+  saved usually runs on that very reload.
+- **Refresh** (per source, or **Refresh All**) checks for updates manually.
+  External tools can trigger it by opening
+  `chrome-extension://<extension-id>/sources.html?refresh`.
+- Re-fetches are cheap: HTTP sources use conditional GETs, local files
+  compare size + mtime, and unchanged content is detected by hash.
+- Every script updates from the place you installed it. A declared
+  `@updateURL` / `@downloadURL` is read for its `@version` and reported
+  as `OUTDATED`, but never fetched from — so a script can't quietly
+  move its own update channel to a site you didn't approve.
 
-Every script updates from the place you installed it. An `@updateURL`
-or `@downloadURL` pointing elsewhere is read for its `@version` and
-reported, never fetched from — so a script can't quietly move its own
-update channel to a site you didn't approve.
+Details: [docs/updates.md](docs/updates.md).
 
-### Per-source UI
+### The toolbar icon
 
-- Each source section shows a table with a per-script enable toggle
-  plus **Filename**, **Size**, and **Status**. The source itself has
-  an enable toggle to the left of its path/URL; disabling a source
-  greys out (and effectively disables) every script under it without
-  losing each script's own choice. The table header has a small **+** /
-  **−** button that bulk-enables or bulk-disables every script in
-  that source.
-- Status is one of `OK | INVALID | MISSING | REFRESH FAILED |
-  OUTDATED | WARNING | ERROR` and is a link to the script's Log tab in
-  the viewer. Whatever the badge says, the reason is in that Log — a
-  failure is written there when it happens, restated after a browser
-  restart if it's still true, and followed by an entry saying so once
-  it clears. A problem that persists is logged once, not once per
-  check.
-  - `INVALID` — metadata block missing/malformed, required fields
-    (`@name` plus `@match`/`@include`) missing, a `@require` /
-    `@resource` dependency couldn't be loaded, or the script's code
-    has a syntax error. Hover for the reason; the same message is also
-    written to the Log tab.
-    - Syntax errors are found by compiling the script — with its
-      `@require`d libraries — when it's added or refreshed, without
-      running any of it. So a broken library shows up next to the
-      script straight away, rather than the first time you happen to
-      visit a page it matches.
-    - Where it can, the message names the file the error is in — the
-      `@require`'s URL or the script's own path — along with a line and
-      column in that file, so a syntax error in a bundled library points
-      at the library rather than at the script that pulled it in. Some
-      errors can't be pinned to a line (a file that just ends
-      mid-construct, say); those still report what's wrong.
-    - Every problem SourceMonkey finds by reading a script says where,
-      not just what — a header field that's missing or malformed, an
-      `@require` that won't load, an unsupported `@grant`. In the
-      viewer the location is a **link**: click it to jump to that file
-      and line, whether the script is installed or you're looking at
-      the install preview for one you haven't added yet.
-  - `MISSING` — the script's file is no longer in the scan listing
-    (deleted on disk, manifest entry removed). The Size column still
-    shows the cached body's byte count, and a small trash-can button
-    next to the status lets you clear records you don't expect back.
-    Refresh alone won't re-add a missing row.
-  - `REFRESH FAILED` — the script is still running from its last good
-    copy, but the newest update attempt failed (source unreachable, or
-    it served something that isn't a userscript). Hover for the reason.
-  - `OUTDATED` — the script runs fine and is current with its own
-    source, but its `@updateURL` / `@downloadURL` points at a copy
-    declaring a newer `@version`. Hover for the version and URL.
-  - `ERROR` / `WARNING` — the script loaded fine, but at least one
-    entry in its per-script Log carries that level (a refresh error,
-    an injection failure, a parser warning, etc.). Click the badge
-    to see the Log tab for the detail.
-- Each script row shows the favicon of the site its `@match`
-  patterns target, to the left of the filename. Icons are discovered
-  by fetching the matched page's HTML and parsing
-  `<link rel="icon">`, with `/favicon.ico` and Google's S2 favicon
-  service as fallbacks; the result is cached for a week.
-- After a refresh, any row that actually changed is highlighted:
-  light green when it updated successfully, light red when it errored
-  or vanished. The color stays on the row until the next refresh. A
-  vanished script is automatically disabled so it stops being
-  injected; the row stays in storage and the user can re-enable it
-  if it comes back.
-- An open sources page keeps itself current. A script installed from
-  a link, refreshed from the viewer, updated by a background check, or
-  toggled in a second tab shows its new status, size, and enable state
-  right away — no page reload. Script viewers follow the same way, so
-  enabling or disabling a source reaches every viewer open on it.
-- External tools can trigger a refresh-all by opening the sources
-  page with `?refresh` in the query string, e.g.
-  `google-chrome chrome-extension://<extension-id>/sources.html?refresh`
-  after writing new userscripts to disk.
-- Clicking a script name opens a viewer in a new tab showing the
-  file's name, size, status, an enable toggle (greyed out when the
-  parent source is disabled), a parsed-header summary (Name /
-  Description / Match / Exclude), and the highlighted source. The
-  viewer reads from storage; its own **Refresh** button re-fetches
-  just this one script (from disk for local sources, over HTTP for
-  URL-backed ones). The **Source** row shows the same type bubble +
-  display name as the sources page; the display name doubles as a
-  back-link to the parent source's section. The **Location** row
-  shows the absolute filesystem path for local sources and the
-  resolved URL for URL-backed ones. Names and URLs are shown the way
-  a browser shows them — a script installed from the web reads as
-  `My Script 🚀.user.js`, not `My%20Script%20%F0%9F%9A%80.user.js`,
-  while links and the copy button still hand out the real URL.
-- The viewer's **Log** tab lists what the script did and anything it
-  threw. Stack traces are clickable and land on the exact line — in
-  the `@require`'d library file when that's where the error came
-  from, not in the script that pulled it in. Warnings SourceMonkey
-  raises itself, like an unsupported `@grant`, are clickable the same
-  way and land on the header line they're about.
-- As you browse, the SourceMonkey toolbar icon shows a per-tab badge
-  with the number of scripts involved on the current page (expected
-  by the matcher OR actually started by the injected wrapper). The
-  badge color signals health:
-  - **green** — everything matches up.
-  - **orange** — some scripts are missing or unexpected.
-  - **purple** — a running script's source on disk has changed; a
-    reload would pick up the new version.
-  - **red** — at least one script reported an error.
+As you browse, the toolbar icon shows how many scripts apply to the
+current page, colored by health: **green** all good, **orange**
+scripts missing or unexpected, **purple** a newer version is available
+(reload the page to update), **red** a script errored or Chrome refused to
+register it.
 
-  Hovering the icon shows one line per script as
-  `"<name> | <STATUS>"` (`OK` / `ERROR` / `MISSING` / `UNEXPECTED` /
-  `Reload to update`). The state updates on navigation and re-counts
-  immediately when you flip an enable toggle on the sources page.
-- **Auto-update.** While you browse a page that uses your scripts,
-  SourceMonkey checks (in the background, rate-limited, never blocking
-  navigation) whether their source files on disk have changed. Any
-  change is loaded into storage and the affected tabs flip purple
-  with a "Reload to update" tooltip — same signal you'd see after a
-  manual Refresh. The same pass checks any declared `@updateURL` /
-  `@downloadURL` for a newer version, at most once every few hours per
-  script.
-- **Reload picks up edits on the same click.** When you explicitly
-  reload a tab whose scripts you just edited, SourceMonkey races a
-  filesystem re-check against the page load (≤500ms). If the new
-  version is ready in time, the updated body runs on that reload
-  instead of the old one. If the new script isn't ready in time,
-  falls back to the currently loaded script. The next reload will
-  get the newer version.
+Hovering the icon lists each script and its status.  Right-clicking also lists
+scripts and statuses.  Click one to open it in the viewer — or straight to
+its log, if it errored.
 
-- **Debug logging.** Verbose lifecycle messages — per-navigation
-  match lists and the per-script `update check (opportunistic)` /
-  `no change` lines that fire on every navigation — are off by
-  default to keep the service-worker console quiet. Manual Refresh
-  clicks still log unconditionally. Enable the verbose lines via the
-  "Enable debug logging" checkbox on the Options page (linked from the
-  top of the sources page).
-- **GitHub authentication.** Paste a GitHub personal access token on
-  the Options page to fetch private repos and to raise the GitHub
-  API rate limit from 60/hour (unauthenticated, per-IP) to
-  5000/hour (per-token). The token is attached only to requests at
-  `api.github.com` and `raw.githubusercontent.com` — never sent
-  anywhere else. A fine-grained PAT with **Contents: Read-only** is
-  enough; the Options page has the step-by-step.
-- **Log IDs.** Every script gets a short, file-derived label used in
-  every SW log line and shown on the script viewer page (as **Log
-  ID**). The label is the script's basename (`foo.user.js`, decoded
-  for scripts added by URL); if two scripts share a basename they're
-  disambiguated as `foo.user.js#1`, `foo.user.js#2`, etc., and the
-  same suffix is rendered next to the filename link on the sources
-  page so you can map a log entry back to its row.
+When scripts register context menu commands (`GM_registerMenuCommand`),
+those also appear on the icon's right-click menu.
 
-**One-time setup:** on `chrome://extensions`, for SourceMonkey enable:
+Chrome only shows six top-level entries in that menu.  Anything past
+that goes under a `More` submenu.
 
-- **"Allow access to file URLs"** — without it the extension can't
-  read your local directories, and opening a local `.user.js` won't
-  offer to install it. The sources page says so up front, and the
-  script viewer says so whenever a local file fails to load, preview,
-  or refresh — each with a link straight to the toggle.
-- **"Allow User Scripts"** (or, on Chrome 120–137, the page-wide
-  Developer mode toggle) — without it Chrome will refuse to inject
-  anything, though the badge will still count matches. The sources
-  page surfaces a banner with a link to the details page when this
-  toggle is off.
+### Supported `GM_*` / `GM.*` APIs and headers
 
-Both toggles are persistent — once on, they stay on across browser
-restarts.
+SourceMonkey supports the standard header fields and `GM` APIs common to
+other userscript managers.
 
-Each script's body runs in either the page's own world (`MAIN`) or
-Chrome's isolated `USER_SCRIPT` world. The choice is per-script,
-following Violentmonkey's `@inject-into` and Tampermonkey's
-`@grant none` default:
+A script gets the APIs it asks for with `@grant`, in either the classic
+`GM_setValue` spelling or the newer `GM.setValue` one. Anything it
+didn't ask for isn't there. `@require`d libraries see the same APIs
+their script does.
 
-- `@inject-into page` → MAIN. `@inject-into content` → USER_SCRIPT.
-- Unset / `auto` → MAIN when `@grant` is absent or only `none`,
-  otherwise USER_SCRIPT. So a `@grant none` script can read the
-  page's own globals (`window.jQuery`, `window.map`, …) like in
-  Tampermonkey.
-
-The wrapper around every body:
-
-- Logs `[SourceMonkey] script "<name>" running on <url>` to the page
-  console on activation.
-- Catches synchronous throws from the body and logs them as
-  `[SourceMonkey] script "<name>" threw: <message>`, also forwarding
-  to the service worker.
-- Installs filtered `window` `error` / `unhandledrejection` listeners
-  so async failures from handlers the script installs (timers, event
-  listeners, promise chains) are attributed back to the right script
-  via a per-script `# sourceURL=` marker and reported the same way.
-
-MAIN-world scripts can't reach the SW directly, so the wrapper falls
-back to `window.postMessage` and a tiny USER_SCRIPT-world bridge
-forwards those events to the service worker. The badge stays accurate
-for `@grant none` / page-world scripts.
-
-### `GM_*` / `GM.*` APIs
-
-SourceMonkey emits per-script bindings at registration time for
-every API declared in `@grant` (both legacy `GM_x` and GM4 `GM.x`
-forms canonicalize to the same name). Ungranted APIs are
-`undefined` in the script's scope. `GM_info` is implicit (no
-`@grant` required — matches TM/VM) and available in every world.
-`@require` library files see the same bindings their host script
-does, so polyfill helpers like `gm4-polyfill.js` work without
-modification.
-
-- **Storage** — `GM_setValue`, `GM_getValue`, `GM_deleteValue`,
-  `GM_listValues`, plus `GM_addValueChangeListener` /
-  `GM_removeValueChangeListener`. Page-side cache + batched async
-  writes; values broadcast live to other tabs running the same
-  script.
-- **DOM injection** — `GM_addStyle`, `GM_addElement`. CSP-exempt
-  in USER_SCRIPT world.
-- **Clipboard** — `GM_setClipboard` via `navigator.clipboard.writeText`.
-- **XHR** — `GM_xmlhttpRequest` with `text` / `json` / `blob` /
-  `arraybuffer` / `document` response types, abort, timeout, and
-  `@connect` URL gating (strict-by-default: no `@connect` declared
-  → blocked).
-- **Logging** — `GM_log` forwards to `console.log` with a per-script
-  prefix so multi-script pages stay greppable.
-- **Tabs** — `GM_openInTab` opens a new tab via `chrome.tabs.create`
-  and returns a `{close, closed, onclose}` control object.
-- **Notifications** — `GM_notification` via `chrome.notifications`.
-  Supports details-object and legacy positional call shapes; click /
-  done callbacks dispatch cross-tab back to the originator.
-- **Metadata** — `GM_info` (script metadata + grants list +
-  `scriptHandler: "SourceMonkey"`).
-
-For the full per-API inventory — which names work, which are
-stubbed not-implemented, and how they map to TM / VM / GM4 — see
+For exactly which names work and how they compare to Tampermonkey,
+Violentmonkey, and Greasemonkey 4, see
 [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md).
 
-For the full per-tag inventory — which header fields SourceMonkey
-honors, which are parsed but not acted on, and which are ignored —
-see [docs/supported-headers.md](docs/supported-headers.md).
+For the header tags SourceMonkey honors, see
+[docs/supported-headers.md](docs/supported-headers.md).
 
-## Installation
+### How scripts run
 
-Not yet released. To run a local development build, see
-[Development](#development) below.
+Scripts run either in the page's own JavaScript world or in an isolated
+one, chosen the same way Tampermonkey and Violentmonkey choose: a
+script with no `@grant` (or `@grant none`) shares the page's world and
+can read its globals, like `window.jQuery`; anything else is isolated.
+Set `@inject-into page` or `@inject-into content` to pick explicitly.
+
+Whatever a script throws is caught and reported against that script —
+including failures that happen later, from timers, event listeners, and
+promises. They show up in the script's **Log** tab with a clickable
+stack trace that lands on the offending line, in the `@require`d
+library file when that's where it came from.
+
+Details: [docs/injection.md](docs/injection.md),
+[docs/injection-modes.md](docs/injection-modes.md).
 
 ## Development
 
-Requires Node.js 22 or newer.
-
 ### Setup
+
+Requires Node.js 22 or newer.
 
 ```sh
 npm install
@@ -403,7 +273,8 @@ npm run watch       # rebuild on TS changes
 
 The built extension is written to `dist/`. Load it into Chrome via
 `chrome://extensions` → "Load unpacked" → select the `dist/`
-directory.
+directory, then enable the toggles listed under [Getting
+started](#getting-started).
 
 ### Test
 
@@ -442,8 +313,9 @@ variant launches its own Chromium against the same persistent profile
 (so the same TM installation), but can't run while the headed browser
 is open against the profile.
 
-See [docs/cross-manager-testing.md](docs/cross-manager-testing.md) for
-the one-time TM profile setup and the diagnostic helpers, plus
+See [docs/testing.md](docs/testing.md) for the harness layout,
+[docs/cross-manager-testing.md](docs/cross-manager-testing.md) for the
+one-time TM profile setup, and
 [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
 for known TM-specific divergences.
 
@@ -463,7 +335,8 @@ It reports each script as `ok` or `invalid` with the same message the
 extension would show, grouped by failure type. `--offline-root` serves
 every `@require` / `@resource` URL out of a downloaded tree instead of
 the network, which is how the GreasyFork corpus
-(`tests/greasyfork-examples/`) gets checked in bulk.
+(`tests/greasyfork-examples/`) gets checked in bulk. See
+[docs/offline-validation.md](docs/offline-validation.md).
 
 ### Code layout
 
@@ -475,7 +348,10 @@ the network, which is how the GreasyFork corpus
 - `tests/examples/` — interactive GM API example pages with paired
   userscripts; double as a cross-manager compliance reference. See
   [tests/examples/README.md](tests/examples/README.md).
-- `docs/` — design docs and `file-index.md`.
+- `docs/` — design docs. Start with
+  [docs/architecture.md](docs/architecture.md) for the component map,
+  and [docs/file-index.md](docs/file-index.md) for a one-line
+  description of every file.
 
 ## License
 

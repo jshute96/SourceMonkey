@@ -55,6 +55,14 @@ export { MAX_SCAN_DEPTH } from './source-scan.js';
 // pathname (sans query/fragment) so e.g. `…/foo.user.js?v=2` still
 // classifies as a single-file URL.
 
+// The shapes a user may type as a location, as a sentence fragment.
+// Shared because two validators reject on it — the sources page's Add
+// field (`isValidSourceInput`) and the viewer's preview
+// (`isPreviewableInput`) — and their messages had already drifted into
+// two different descriptions of one rule.
+export const LOCATION_SHAPES =
+  'must be an http(s):// or file:// URL, or an absolute path starting with /';
+
 export function isHttpUrl(source: string): boolean {
   return /^https?:\/\//i.test(source);
 }
@@ -273,7 +281,7 @@ function fetchFileUrlTextXhr(url: string): Promise<string> {
     // Resolve with whatever responseText we got — '' is a valid result
     // for an empty file and must not be conflated with "missing".
     xhr.onload = () => resolve(xhr.responseText ?? '');
-    xhr.onerror = () => reject(new Error(`could not read ${url}`));
+    xhr.onerror = () => reject(new Error(`Could not read ${url}`));
     xhr.send();
   });
 }
@@ -289,10 +297,10 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   try {
     response = await fetch(url);
   } catch (err) {
-    throw new Error(`could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!response.ok && response.status !== 0) {
-    throw new Error(`could not read ${url}: HTTP ${response.status}`);
+    throw new Error(`Could not read ${url}: HTTP ${response.status}`);
   }
   // Opaque responses (response.type === 'opaque') have an unreadable
   // body; surface a distinct error rather than returning empty content,
@@ -300,7 +308,7 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   // path fell through.
   if (response.type === 'opaque') {
     throw new Error(
-      `could not read ${url} in background refresh (file:// fetch is not permitted there) — ` +
+      `Could not read ${url} in background refresh (file:// fetch is not permitted there) — ` +
       `try Refresh from the script page`,
     );
   }
@@ -311,7 +319,7 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
 }
 
 // Best-effort "does the path point to a readable file" probe. Used to
-// turn the otherwise-cryptic "could not read …/" message into a
+// turn the otherwise-cryptic "Could not read …/" message into a
 // clearer one when the user types a path to an existing non-userscript
 // file. Returns false on any error (including non-existence and
 // permission failures) — callers should only rely on a true result.
@@ -360,10 +368,10 @@ export async function fetchHttpText(
   try {
     response = await fetch(url, { cache: 'no-store', headers });
   } catch (err) {
-    throw new Error(`could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (response.status === 304) return { kind: 'unchanged' };
-  if (!response.ok) throw new Error(`could not read ${url}: HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Could not read ${url}: HTTP ${response.status}`);
   const text = await response.text();
   const result: HttpFetchResult = { kind: 'ok', text };
   const etag = response.headers.get('ETag');
@@ -450,7 +458,7 @@ export function parseManifest(body: string): string[] {
   try {
     parsed = JSON.parse(body);
   } catch (err) {
-    throw new Error(`manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
   let arr: unknown;
   if (Array.isArray(parsed)) {
@@ -458,12 +466,12 @@ export function parseManifest(body: string): string[] {
   } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { scripts?: unknown }).scripts)) {
     arr = (parsed as { scripts: unknown[] }).scripts;
   } else {
-    throw new Error('manifest must be a JSON array of URL strings, or `{"scripts": [...]}`');
+    throw new Error('Manifest must be a JSON array of URL strings, or `{"scripts": [...]}`');
   }
   const entries: string[] = [];
   for (const item of arr as unknown[]) {
     if (typeof item !== 'string') {
-      throw new Error('manifest entries must all be strings');
+      throw new Error('Manifest entries must all be strings');
     }
     const trimmed = item.trim();
     if (trimmed) entries.push(trimmed);
@@ -484,7 +492,9 @@ export async function scanForUserScripts(
   // that rejects HTTP, because there's no remote listing API.
   if (depth === 0) {
     if (isContainerSource(absolutePath)) {
-      throw new Error('container sources have no scan; refreshSource handles them directly');
+      throw new Error(
+        'Internal error: this source kind is refreshed directly, not scanned',
+      );
     }
     if (isManifestSource(absolutePath)) {
       return scanManifest(sourceCanonicalUrl(absolutePath));
@@ -493,8 +503,14 @@ export async function scanForUserScripts(
       return scanGithubDir(absolutePath);
     }
     if (isHttpUrl(absolutePath)) {
+      // No mention of "container sources": that's how we store a
+      // stand-alone script, and the reader adding a URL has no name for
+      // it — from the page it just looks like adding the script itself.
+      // Ends with what to do, per the "name the fix" rule; the reader
+      // is standing at the Add field that produced this.
       throw new Error(
-        `URL must point at a directory (use a github tree URL) or ${MANIFEST_FILENAME} (manifest); single .user.js URLs go into the matching container source`,
+        `This URL is neither a folder (use a github tree URL) nor a ${MANIFEST_FILENAME} — ` +
+        'to install a single script, paste the URL of the .user.js file itself',
       );
     }
     // Local-directory only. Normalise file:// → raw path once so the
@@ -548,7 +564,9 @@ async function fetchManifestText(canonicalUrl: string): Promise<string> {
   if (isHttpUrl(canonicalUrl)) {
     const fetched = await fetchHttpText(canonicalUrl);
     if (fetched.kind !== 'ok') {
-      throw new Error(`manifest fetch returned unexpected ${fetched.kind}`);
+      // Unreachable in practice: this call sends no conditional-GET
+      // headers, so `fetchHttpText` can only answer `ok` or throw.
+      throw new Error(`Internal error: unexpected result reading the manifest (${fetched.kind})`);
     }
     return fetched.text;
   }
@@ -600,7 +618,7 @@ export function resolveManifestEntryUrl(entry: string, canonicalUrl: string): UR
   try {
     resolved = new URL(entry, canonicalUrl);
   } catch {
-    throw new Error(`manifest entry is not a valid URL: ${entry}`);
+    throw new Error(`Manifest entry is not a valid URL: ${entry}`);
   }
   if (!resolved.search && base.search && resolved.origin === base.origin) {
     resolved.search = base.search;
@@ -622,7 +640,7 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
     const resolved = resolveManifestEntryUrl(entry, canonicalUrl);
     if (!ALLOWED_ENTRY_SCHEMES.has(resolved.protocol)) {
       throw new Error(
-        `manifest entry scheme ${resolved.protocol} is not allowed (use http, https, or file)`,
+        `Manifest entry scheme ${resolved.protocol} is not allowed (use http, https, or file)`,
       );
     }
     // Use urlBaseName on the resolved URL so percent-encoded segments

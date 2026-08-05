@@ -134,7 +134,11 @@ test.describe('@require', () => {
       const source = await sm.addSource(child);
       const data = await sm.getSourceWithScripts(source!.id);
       expect(data!.scripts[0].status).toBe('invalid');
-      expect(data!.scripts[0].errorMessage).toMatch(/not a usable reference/);
+      // Names the containment rule specifically — a `../` ref and an
+      // unsupported scheme are different mistakes and used to share
+      // one message that stated neither.
+      expect(data!.scripts[0].errorMessage)
+        .toMatch(/points outside the script's own folder/);
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
     }

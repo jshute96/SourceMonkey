@@ -143,8 +143,8 @@ a row's persisted state to the entry it warrants:
 | Row state | Level | Message |
 | --- | --- | --- |
 | `status: 'invalid'` | error | the row's `errorMessage` |
-| `status: 'missing'` | error | `source file is missing` |
-| `refreshError` (status still `ok`) | warning | `refresh failed: <reason>` |
+| `status: 'missing'` | error | `Source file is missing` |
+| `refreshError` (status still `ok`) | warning | `Refresh failed: <reason>` |
 | otherwise | — | nothing to say |
 
 Why those levels:
@@ -176,8 +176,11 @@ Beyond the load pipeline:
 
 - **Rejected registration** (`registerWithFallback` in
   `src/injector.ts`, source `chrome-injector`) — Chrome refused the
-  script's spec, so it silently never runs even though its row reads
-  OK. Error level; the Log is the only surface that says so.
+  script's spec, so it never runs even though its row loaded fine.
+  Error level. The status cell says REJECTED for as long as the
+  refusal stands; the Log is where the reason gets a timestamp and a
+  permanent home. See
+  [injection.md](injection.md#rejected-registrations).
 
 ### Source-level failures
 
@@ -194,12 +197,12 @@ source. They are always **info**, never warning/error:
 What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — `source scan failed: <reason> — still running the cached
-  copy`. `refreshSource` deliberately leaves every script row
+  URL) — `This source did not load: <reason> — still running the
+  cached copy`. `refreshSource` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
 - **A throw out of `refreshSource` / `refreshAllSources`** —
-  `source refresh threw: <reason>`. Both entry points use the same
+  `Could not refresh this source: <reason>`. Both entry points use the same
   helper so a Refresh All that dies on one source still explains
   itself in every affected script's Log.
 
@@ -210,24 +213,36 @@ dropped for repeating an earlier message — the Log tab is a transcript,
 and a line that vanishes because the same sentence appeared before
 stops being one.
 
-Two things stay quiet, and both are about **whether anything happened**:
+One thing stays quiet, and it is about **whether anything happened**:
 
-- **A no-op refresh on a valid script.** `checked for updates — no
+- **A no-op refresh on a valid script.** `Checked for updates — no
   change` is manual-only, so background polling doesn't announce that a
   healthy script is still healthy.
-- **A re-sync that gets the same registration rejection.**
-  `syncRegistrations` re-runs on every script-storage change, so the
-  injector records the rejection each script was last logged for and
-  writes a row only on the transition. The record is dropped when the
-  script registers cleanly — including via a clean *batch* register,
-  which is how a fixed script comes back — so break → fix → break logs
-  twice.
-  - It lives in `chrome.storage.session` (`injector-logged-rejections`)
-    rather than in a module-scope Map, so it outlives the service
-    worker. MV3 evicts the SW freely and `syncRegistrations` runs again
-    on every wake-up; an in-memory guard would re-log once per SW
-    lifetime. Session storage gives it exactly the lifetime of the log
-    it guards.
+
+A **registration rejection is not** one of those, and used to be. Every
+refused attempt writes a row, including a re-sync that gets the same
+reason for the same content:
+
+- The retry is the thing being reported. A suppressed retry looks
+  exactly like no retry, and "Clear log" followed by a Refresh left a
+  REJECTED row with an empty Log explaining it.
+- Every path that re-checks a script also **re-attempts the
+  registration** (`retryRejectedRegistrations`), so each row records a
+  real attempt rather than a replayed memory. Without that forcing
+  step a Refresh finding no new content wouldn't reach Chrome at all —
+  see [injection.md](injection.md#rejected-registrations).
+- **Volume is controlled by attempting less, not by logging less.** One
+  navigation fans out into many checks of the same script, so the retry
+  itself is rate-limited to one automatic attempt per 10 s (a Refresh
+  click bypasses that). A page load produces one row, not ten.
+  - Not literally one row per action: a Refresh that **changes the
+    script's content** also triggers a full sync through
+    `onCacheChanged`, and that sync makes its own attempt. Two real
+    attempts, two rows.
+- The remaining cost is that a script Chrome keeps refusing accumulates
+  rows in its own log, and `LOG_CAP` rotation will eventually evict that
+  script's other entries. Only that script's log is affected, and every
+  row in it says the same actionable thing.
 
 Everything else emits, including:
 
@@ -254,8 +269,8 @@ path goes through `emitScriptOutcomeLog`, which writes both.
 
 | Outcome | Rows |
 | --- | --- |
-| Nothing to report | `checked for updates — no change` |
-| Anything else | `checking for updates`, then the outcome |
+| Nothing to report | `Checked for updates — no change` |
+| Anything else | `Checking for updates`, then the outcome |
 
 - The uneventful case is **one self-describing line**, so a routine
   poll costs a single row rather than a start/outcome pair.
@@ -269,8 +284,8 @@ path goes through `emitScriptOutcomeLog`, which writes both.
   SW console is where a check is bracketed live (`update check
   (<mode>): <label>` before, outcome after); the Log tab is the record
   of what happened.
-- `update check threw: <reason>` stands alone — it names the check and
-  its failure in one line.
+- `Could not check for updates: <reason>` stands alone — it names the
+  check and its failure in one line.
 
 ## Recovery is logged too
 
@@ -278,15 +293,22 @@ Without this the last word on a script would be a failure that is no
 longer true. So the transition back to healthy gets an info entry
 naming what recovered:
 
-- `loads cleanly again (was invalid)`
-- `source file is back`
-- `refresh succeeded again (source is reachable)`
-- `source scan succeeded again (source is readable)`
+- `Loads cleanly again (was invalid)`
+- `Source file is back`
+- `Refresh succeeded again (source is reachable)`
+- `This source is readable again`
+- `Chrome accepted this script's registration — it runs again`
+  (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
 
 This matters most when the bytes didn't change — e.g. a `@require`
 host that starts answering again clears the failure without bumping
-`loadedAt`, so there's no `loaded new content` row to explain the
+`loadedAt`, so there's no `Loaded new content` row to explain the
 badge going green.
+
+A recovery row does not pull the Status cell back to OK by itself:
+`loglevel:` is monotonic within a session, so the earlier error rows
+hold it at ERROR until "Clear log". That applies to every entry in the
+list above, and is tracked in TODO.md.
 
 ## Opportunistic vs manual
 
@@ -294,62 +316,69 @@ Both trigger modes log failures. A background check exists precisely to
 notice a failure the user hasn't gone looking for, so a badge that
 turns amber on its own must come with a matching Log line.
 
-Trigger mode still gates the **non**-events: `checked for updates — no
+Trigger mode still gates the **non**-events: `Checked for updates — no
 change` is manual-only.
 
 Caveat on what "manual" means: it is "not rate-limited as a refresh",
 not "the user clicked". The
 [reload fast-path](injection.md#reload-fast-path) runs in `manual`
 mode for every matched script on every tab reload, so a healthy script
-*does* accumulate `checked for updates — no change` rows from ordinary
+*does* accumulate `Checked for updates — no change` rows from ordinary
 browsing. That is the remaining source of poll noise in the cap —
 tracked in `TODO.md`.
 
 ## What gets logged today
 
 - **Refresh paths** (`src/script-updater.ts`):
-  - `checking for updates` (info) — ahead of any outcome worth
+  - `Checking for updates` (info) — ahead of any outcome worth
     reporting; omitted when the check has nothing to say (see
     [How a check frames itself](#how-a-check-frames-itself)).
-  - `loaded new content (<size>)` (info) — when the new build has a
+  - `Loaded new content (<size>)` (info) — when the new build has a
     different `loadedAt` from the prior.
-  - `checked for updates — no change` (info) — only on manual refresh,
+  - `Checked for updates — no change` (info) — only on manual refresh,
     to mirror the SW console behaviour. Opportunistic background checks
     stay silent to keep the log from filling with poll noise.
   - Load failures (error) — the row's `errorMessage` when it lands
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
     `@require` / `@resource` resolve or fetch failures.
-  - `source file is missing` (error) — the file vanished from its
+  - `Source file is missing` (error) — the file vanished from its
     source's listing.
-  - `refresh failed: <reason>` (warning) — a script that's still
+  - `Refresh failed: <reason>` (warning) — a script that's still
     running from its cached copy but whose latest refresh failed
     (`status: ok` + `refreshError`; see
     [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
-  - `source scan failed: <reason> — still running the cached copy`
-    (info) and `source refresh threw: <reason>` (info) — a
+  - `This source did not load: <reason> — still running the cached
+    copy` (info) and `Could not refresh this source: <reason>` (info) — a
     source-level failure, fanned out to every script under it. See
     [Source-level failures](#source-level-failures) for why info.
-  - `update check threw: <reason>` (error) — `refreshScript` itself
-    threw (a storage failure, not a load failure).
+  - `Could not check for updates: <reason>` (error) — `refreshScript`
+    itself threw (a storage failure, not a load failure).
   - Recovery entries (info) — see
     [Recovery is logged too](#recovery-is-logged-too).
   - All of the rows above are outcomes of a real check, so they are
     appended unconditionally — see
     [When the log stays quiet](#when-the-log-stays-quiet).
-  - `row vanished during refresh` (warning) — the script row was
-    deleted while its refresh was in flight. Can only happen once per
-    row.
+  - `This script was removed while it was being refreshed` (warning) —
+    the script row was deleted while its refresh was in flight. Can
+    only happen once per row.
   - Source / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source
   `chrome-injector`):
-  - `Chrome rejected this script's registration: <reason>` (error) —
-    the spec was refused, so the script silently never runs. Its row
-    still reads OK because nothing about the *load* failed, which
-    makes the Log the only place this surfaces.
+  - `Chrome rejected this script's registration, so it will not
+    run: <reason>` (error) — the spec was refused, so the script never
+    runs even though nothing about its *load* failed. `<reason>` is
+    Chrome's own wording, verbatim, because it names the offending
+    header value.
+    - The sentence is built by `describeRejection`
+      (`src/script-rejection.ts`), shared with the viewer's message
+      bar so one problem keeps one wording.
+    - Written on every refused attempt, not just when the state
+      changes — see
+      [injection.md](injection.md#rejected-registrations).
 - **Add source** (`emitInitialLoadLogIfBroken` in
   `src/script-store.ts`, source `add-source`):
   - The same load-failure entry, for a script that lands broken on its
@@ -363,7 +392,7 @@ tracked in `TODO.md`.
     long-broken script would show a red badge over an empty Log.
 - **Update probes** (`src/script-updater.ts`, source
   `probe-manual` / `probe-opportunistic`):
-  - `newer version <v> at <update|download> URL (running <v>) — <url>`
+  - `Newer version <v> at <update|download> URL (running <v>) — <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version
     *changes*, so an upstream that's been ahead for a month doesn't
@@ -372,9 +401,9 @@ tracked in `TODO.md`.
     [updates.md](updates.md).
 - **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
   by `emitScriptOutcomeLog` in `src/script-updater.ts`):
-  - `ignoring @grant <names> — unsupported APIs` (warning) — emitted
+  - `Ignoring @grant <names> — unsupported APIs` (warning) — emitted
     once per loaded content version, immediately after the
-    `loaded new content` row. Detection happens at parse time and is
+    `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't
     re-fire the row. A refresh that doesn't change the bytes adds
     nothing. Also mirrored into the page DevTools console via the
@@ -416,10 +445,8 @@ tracked in `TODO.md`.
   patch global console in the injected world; the user can open
   DevTools on the host page if they want that.
 - Per-tab badge transitions. Those are noisy and already visible.
-- `checked for updates — no change` on opportunistic checks
+- `Checked for updates — no change` on opportunistic checks
   (manual-only, as above).
-- A re-sync that gets the same registration rejection — see
-  [When the log stays quiet](#when-the-log-stays-quiet).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.
 - Anything for a source with **no scripts under it**. A source whose

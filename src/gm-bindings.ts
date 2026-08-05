@@ -414,11 +414,18 @@ export function emitGmBindings(
     // send sm:error so the failure surfaces on the per-script log +
     // badge, and `return` from the @run-at callback so the user body
     // never runs. The user can recover by reloading.
+    //
+    // One string in both places. As two literals they had already
+    // drifted — the Log copy lost the "reload" half, which is the only
+    // part the reader can act on.
+    const gmValuesFailure =
+      "Failed reading this script's stored GM values during setup, " +
+      'so the script did not run — reload the page to retry';
     preludeLines.push(
       `var __smGmSnap = (typeof __smDecision === "object" && __smDecision && __smDecision.gmValues);`,
       `if (!__smGmSnap) {`,
-      `  try { console.info("[SourceMonkey] " + __smName + ": GM storage snapshot unavailable (SW unreachable?); script body will not run. Reload to retry."); } catch (_smSE0) {}`,
-      `  __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, message: "GM storage snapshot unavailable (SW unreachable?)" });`,
+      `  try { console.info("[SourceMonkey] " + __smName + ": " + ${jsLit(gmValuesFailure)}); } catch (_smSE0) {}`,
+      `  __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, message: ${jsLit(gmValuesFailure)} });`,
       `  return;`,
       `}`,
       `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, __smGmSnap);`,

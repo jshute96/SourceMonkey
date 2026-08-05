@@ -39,6 +39,7 @@
 // aborted request can be cancelled mid-fetch.
 
 import { bytesToBase64 } from './bytes.js';
+import { connectBlockedMessage } from './gm-connect.js';
 
 export interface GmXhrRequestPayload {
   // HTTP method. Default GET. Uppercased before sending.
@@ -213,7 +214,7 @@ export async function runXhr(
       try { host = new URL(res.url).hostname; } catch { /* keep full url */ }
       return {
         kind: 'error',
-        message: `[SourceMonkey] blocked by @connect policy: redirect to ${host} not allowed`,
+        message: connectBlockedMessage(`redirect to ${host} not allowed`),
       };
     }
     const rt = request.responseType ?? 'text';

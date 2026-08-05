@@ -73,6 +73,11 @@ import {
   type StoredResource,
 } from './external-files.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import {
+  ignoredMatchMessage,
+  matchPatternProblem,
+  unusableMatchMessage,
+} from './url-match.js';
 import type { VersionProbe } from './version-probe.js';
 import type { ParseVerdict } from './parse-check-protocol.js';
 import {
@@ -311,7 +316,7 @@ export function extractStartupLogs(
     if (resolved.unknown.length > 0) {
       const log: StartupLog = {
         level: 'warn',
-        message: `ignoring @grant ${resolved.unknown.join(', ')} — unsupported APIs`,
+        message: `Ignoring @grant ${resolved.unknown.join(', ')} — unsupported APIs`,
       };
       // One message can name several bad grants, and they may be spread
       // over several `@grant` lines — so the location is the FIRST one,
@@ -321,6 +326,22 @@ export function extractStartupLogs(
       if (line !== undefined) log.location = { file: relativePath, line };
       logs.push(log);
     }
+  }
+  // A `@match` Chrome's grammar refuses. One of these would take the
+  // whole registration down (Chrome refuses the spec, not the pattern),
+  // so `buildRegistrationSpec` drops it — and this is what says so, on
+  // the line that declared it.
+  //
+  // One row per bad pattern, unlike the grants above: each has its own
+  // reason and its own line, so collapsing them would leave the
+  // location pointing at one of several unrelated problems.
+  for (const pattern of getValues(header, 'match')) {
+    const problem = matchPatternProblem(pattern);
+    if (!problem) continue;
+    const log: StartupLog = { level: 'warn', message: ignoredMatchMessage(problem) };
+    const line = headerTagLine(header, 'match', pattern);
+    if (line !== undefined) log.location = { file: relativePath, line };
+    logs.push(log);
   }
   return logs;
 }
@@ -360,21 +381,31 @@ export interface HeaderProblem {
 // matches against rather than literals maintained in two places.
 //
 // Same phrasing rule too — each has to read correctly alone in the
-// viewer's message bar and after the preview's `This script cannot be
+// viewer's message bar and after the preview's `This file cannot be
 // installed: ` prefix.
-export const NO_NAME = 'no @name in the metadata block';
+export const NO_NAME = 'No @name in the metadata block';
 export const NO_MATCH_OR_INCLUDE =
-  'no @match or @include in the metadata block, so this script would never run on any page';
+  'No @match or @include in the metadata block, so this script would never run on any page';
+
+// Opens every parse-check verdict (`Syntax error: <what V8 said>`).
+// Exported for the same reason as the constants above: the offline
+// validator groups its survey by the message AFTER this prefix, so it
+// has to strip exactly what we wrote. It used to carry its own regex,
+// which stopped matching the moment this string was recased — and a
+// stale recognizer mislabels a whole bucket instead of failing.
+export const SYNTAX_ERROR_PREFIX = 'Syntax error: ';
 
 // Verify the parsed header has the fields we require to consider a
 // script `ok`. Returns null on success, otherwise a human-readable
-// problem. Required: an `@name` plus at least one of
+// problem. Required: an `@name` plus at least one usable
 // `@match` / `@include` (otherwise the script can never match a page).
 //
-// Every failure here is about a tag that ISN'T there, so none of them
-// has a line of its own. They point at the `// ==UserScript==` marker
-// instead: that's the block the missing tag belongs in, and where the
-// reader has to go to add it.
+// The missing-tag failures are about something that ISN'T there, so
+// none of them has a line of its own. They point at the
+// `// ==UserScript==` marker instead: that's the block the missing tag
+// belongs in, and where the reader has to go to add it. The unusable
+// `@match` case is the exception — the offending text is right there in
+// the file, so it gets that line.
 export function validateHeader(header: ParsedHeader | null): HeaderProblem | null {
   // No block at all — the whole file is the answer, so no line.
   if (!header) return { message: NO_METADATA_BLOCK };
@@ -384,6 +415,27 @@ export function validateHeader(header: ParsedHeader | null): HeaderProblem | nul
   const includes = getValues(header, 'include');
   if (matches.length === 0 && includes.length === 0) {
     return { message: NO_MATCH_OR_INCLUDE, line };
+  }
+  // Patterns Chrome's grammar refuses are dropped rather than run (see
+  // `matchPatternProblem`), so a script whose every `@match` is one of
+  // those — with no `@include` to fall back on — is in the same
+  // position as one that declared no pattern at all: it can never match
+  // a page. Say so with the FIRST bad pattern's own reason, which is
+  // more use than the generic sentence above and points at a real line.
+  //
+  // Only the first: the others' reasons ride on `startupLogs` for an
+  // `ok` script, and an `invalid` row doesn't carry those. A reader who
+  // fixes this one sees the next on the following load, which is the
+  // same one-at-a-time path every other header failure takes.
+  if (includes.length === 0) {
+    const problems = matches.map((m) => matchPatternProblem(m));
+    const first = problems[0];
+    if (first && problems.every((p) => p !== null)) {
+      return {
+        message: unusableMatchMessage(first),
+        line: headerTagLine(header, 'match', first.pattern) ?? line,
+      };
+    }
   }
   return null;
 }
@@ -551,8 +603,8 @@ function locationIn(file: string, line: number | undefined): DiagnosticLocation 
 // the same fact but isn't: one is a row waiting for its first fetch, the
 // other is a row whose fetch never happened and won't be retried until
 // the next refresh.
-const NOT_LOADED_YET = 'not loaded yet';
-const NOT_READ = 'could not be read';
+const NOT_LOADED_YET = 'Not loaded yet';
+const NOT_READ = 'Could not be read';
 
 // Build an `invalid` entry for a brand-new (never-loaded-successfully)
 // script whose first fetch failed. No content to preserve, so the
@@ -642,17 +694,17 @@ export function loadStateLogEntry(
     // says exactly what the status badge's hover text says.
     return {
       level: 'error',
-      message: script.errorMessage ?? 'unknown error',
+      message: script.errorMessage ?? 'Unknown error',
       ...(script.errorLocation ? { location: script.errorLocation } : {}),
     };
   }
   if (script.status === 'missing') {
     // Deliberately no location: a vanished file has no content, and
     // `applyMissing` clears any location the row used to carry.
-    return { level: 'error', message: script.errorMessage ?? 'source file is missing' };
+    return { level: 'error', message: script.errorMessage ?? 'Source file is missing' };
   }
   if (script.refreshError) {
-    return { level: 'warning', message: `refresh failed: ${script.refreshError}` };
+    return { level: 'warning', message: `Refresh failed: ${script.refreshError}` };
   }
   return null;
 }
@@ -894,7 +946,7 @@ async function applyParseCheck(
     built,
     // No "script source has a…" prefix: `errorLocation` names the file,
     // and that file is routinely a `@require` rather than the script.
-    `syntax error: ${verdict.message ?? 'unknown'}`,
+    `${SYNTAX_ERROR_PREFIX}${verdict.message ?? 'unknown'}`,
     verdict.location,
   );
   // Don't record the fingerprint: the row is invalid, and a future
@@ -1020,10 +1072,14 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
             // location into the text is the only way "where" survives
             // — and where in the fetched copy it went wrong is the
             // useful half of this message.
-            refreshError: `fetched copy is not a valid userscript (${
+            refreshError: `Fetched copy is not a valid userscript (${
               withFiles.errorMessage
                 ? describeDiagnostic(withFiles.errorMessage, withFiles.errorLocation)
-                : 'parse failed'
+                // Capitalized to match the `describeDiagnostic` string
+                // it stands in for — the two share this slot, so a
+                // lowercase fallback would read as a different kind of
+                // thing depending on which branch ran.
+                : 'Parse failed'
             })`,
           };
         }
@@ -1062,14 +1118,14 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
           // Prefixed as internal because it is: the orchestrator told us
           // "unchanged" for a file we have never held. Nothing the user
           // can do about it, and saying so beats an accusation.
-          errorMessage: 'internal error: unchanged marker with no prior entry',
+          errorMessage: 'Internal error: unchanged marker with no prior entry',
           now: args.now,
         })));
       }
     } else if (fr) {
       // Failed fetch. If we had prior content, keep it.
       const errorMessage =
-        'errorMessage' in fr ? fr.errorMessage : 'could not be read (no reason reported)';
+        'errorMessage' in fr ? fr.errorMessage : 'Could not be read (no reason reported)';
       if (prior) {
         entryPromises.push(Promise.resolve(applyFetchError(prior, errorMessage)));
       } else {

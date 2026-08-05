@@ -67,6 +67,12 @@ import {
   getAllMaxLogLevels,
   type LogLevel,
 } from './script-log.js';
+import {
+  REJECTIONS_KEY,
+  coerceRejectionMap,
+  readRejections,
+  type RejectionMap,
+} from './script-rejection.js';
 import { iconRefFromHeader, renderSiteIconInto } from './site-icon.js';
 import {
   canonicalSourceInput,
@@ -75,6 +81,7 @@ import {
   isContainerSource,
   isHttpUrl,
   isFileUrl,
+  LOCATION_SHAPES,
   isSingleFileInput,
   normalizeSourceInput,
 } from './directories.js';
@@ -145,12 +152,20 @@ void bootstrap().catch((err: unknown) => {
 
 // Repaint Status cells when the per-script max-log-level row changes
 // on the SW side (a fresh error / warning was appended, or the log
-// was cleared). Filtering on the `loglevel:` prefix keeps unrelated
+// was cleared), or when the injector rewrites the set of registrations
+// Chrome refused. Filtering on those two keys keeps unrelated
 // session-storage writes from kicking off pointless DOM walks.
 if (chrome.storage?.session?.onChanged) {
   chrome.storage.session.onChanged.addListener((changes) => {
     let touched = false;
     for (const key of Object.keys(changes)) {
+      if (key === REJECTIONS_KEY) {
+        // Whole-map key: the injector rewrites it as one authoritative
+        // set per sync, so we replace ours rather than merging.
+        currentRejections = coerceRejectionMap(changes[key]?.newValue);
+        touched = true;
+        continue;
+      }
       if (!key.startsWith(LOG_LEVEL_KEY_PREFIX)) continue;
       const scriptId = key.slice(LOG_LEVEL_KEY_PREFIX.length);
       const next = changes[key]?.newValue;
@@ -204,6 +219,12 @@ let currentLogLevels = new Map<string, LogLevel>();
 // only ever appear for scripts whose `@updateURL` / `@downloadURL`
 // points somewhere we don't fetch from — see src/version-probe.ts.
 const currentOutdated = new Map<string, VersionProbe>();
+
+// Page-wide {scriptId → why Chrome refused its registration}, mirroring
+// the injector's session-storage map. Drives the REJECTED status; empty
+// on a healthy profile. Seeded in `render()` and kept fresh by the
+// `chrome.storage.session.onChanged` listener above.
+let currentRejections: RejectionMap = {};
 
 async function refreshLogIds(): Promise<void> {
   const all = await getAllScripts();
@@ -280,8 +301,10 @@ function paintStatusCell(
   cell.className = 'status-cell';
   const level = currentLogLevels.get(scriptId);
   const outdated = currentOutdated.get(scriptId);
+  const rejection = currentRejections[scriptId];
   const effective = effectiveScriptStatus(
     { status: storedStatus, refreshError }, level, outdated !== undefined,
+    rejection !== undefined,
   );
   cell.classList.add(`status-${effective}`);
   // Anchor that takes the user straight to the script viewer's Log
@@ -292,14 +315,16 @@ function paintStatusCell(
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = formatScriptStatusLabel(effective);
-  // Hover text follows whatever the cell is actually showing: the
-  // refresh-failure reason, the newer version we found upstream, or
-  // otherwise the load errorMessage.
-  const title = effective === 'refresh-failed'
-    ? refreshError
-    : effective === 'outdated' && outdated
-      ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
-      : errorMessage;
+  // Hover text follows whatever the cell is actually showing: Chrome's
+  // rejection reason, the refresh-failure reason, the newer version we
+  // found upstream, or otherwise the load errorMessage.
+  const title = effective === 'rejected' && rejection
+    ? rejection
+    : effective === 'refresh-failed'
+      ? refreshError
+      : effective === 'outdated' && outdated
+        ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
+        : errorMessage;
   if (title) link.title = title;
   cell.appendChild(link);
   // Trash-can affordance only on persisted-missing rows (the file
@@ -454,7 +479,7 @@ async function syncSectionFromStorage(
   }
 
   const priorError = section.querySelector<HTMLElement>(':scope > p.error');
-  const errorText = source.scanError ? `Scan failed: ${source.scanError}` : '';
+  const errorText = scanErrorText(source);
   if (!errorText) {
     priorError?.remove();
   } else if (priorError) {
@@ -765,13 +790,14 @@ async function render(): Promise<void> {
   const sources = await getSources();
 
   await refreshLogIds();
-  // Pre-populate log levels so the very first paint of each row's
-  // Status cell already reflects WARNING / ERROR, rather than briefly
-  // showing OK and then flipping when the async listener fires. Seeded
-  // even with no sources to render: a repaint can add sections to a page
-  // that started empty, and those rows would otherwise paint from an
-  // empty map with no later event to correct them.
+  // Pre-populate log levels and rejections so the very first paint of
+  // each row's Status cell already reflects WARNING / ERROR / REJECTED,
+  // rather than briefly showing OK and then flipping when the async
+  // listener fires. Seeded even with no sources to render: a repaint can
+  // add sections to a page that started empty, and those rows would
+  // otherwise paint from empty maps with no later event to correct them.
   currentLogLevels = await getAllMaxLogLevels();
+  currentRejections = await readRejections();
 
   if (sources.length === 0) {
     directoriesEl.appendChild(emptyPlaceholder());
@@ -850,11 +876,23 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   header.appendChild(buttons);
   section.appendChild(header);
 
-  if (source.scanError) {
-    section.appendChild(makeMessage('error', `Scan failed: ${source.scanError}`));
-  }
+  const scanError = scanErrorText(source);
+  if (scanError) section.appendChild(makeMessage('error', scanError));
   section.appendChild(await renderScriptBlock(source, sourceOn));
   return section;
+}
+
+// The section's scan-failure line, or '' when the source scanned fine.
+// Shared with the repaint so the two can't render the same failure two
+// different ways.
+//
+// "Scan" is the name of our pipeline stage, not something the page ever
+// shows — what the reader sees is a source that didn't load. Phrased to
+// avoid echoing what follows: most `scanError` values already open with
+// `Could not read <url>: …`, so a `Could not …:` prefix would say
+// "could not" twice in a row.
+function scanErrorText(source: StoredSource): string {
+  return source.scanError ? `This source did not load: ${source.scanError}` : '';
 }
 
 // The section's script list: a table, or the message that stands in for
@@ -1115,9 +1153,7 @@ async function onAddDirectory(
   if (!path) return false;
 
   if (!isValidSourceInput(path)) {
-    showAddError(
-      'Sources must be an absolute path (starting with /) or an http(s):// / file:// URL.',
-    );
+    showAddError(`A source ${LOCATION_SHAPES}`);
     return false;
   }
   showAddError(null);
@@ -1163,8 +1199,8 @@ async function onAddDirectory(
       if (existing) {
         showAddError(
           isContainerSource(existing.path)
-            ? 'This script is already in its container.'
-            : 'This source is already registered.',
+            ? 'This script is already in its container'
+            : 'This source is already registered',
         );
         if (jump) jumpToSource(existing.id);
       }
@@ -1771,6 +1807,11 @@ function cssEscape(value: string): string {
 // Returns the raw error message so the banner can surface anything
 // that isn't the routine "toggle is off" case.
 async function probeUserScriptsApi(): Promise<{ usable: true } | { usable: false; error?: string }> {
+  // Deliberately NOT recased to a message of ours. This value shares a
+  // slot with Chrome's verbatim `err.message` below and renders as
+  // `Chrome reported: <it>`, so it is written to read as Chrome's own
+  // report rather than as SourceMonkey's sentence — the API-flavoured
+  // wording is the point. See docs/diagnostics.md#wording.
   if (!chrome.userScripts) return { usable: false, error: 'chrome.userScripts is not available' };
   try {
     await chrome.userScripts.getScripts();

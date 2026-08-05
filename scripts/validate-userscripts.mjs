@@ -51,22 +51,23 @@ import {
   setParseChecker,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
+  SYNTAX_ERROR_PREFIX,
 } from '../dist/script-store.js';
 import { buildParseCheckSource } from '../dist/injector.js';
 import { attachParseLocation } from '../dist/parse-location.js';
 import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { resolveScriptResource } from '../dist/file-loader.js';
 import {
-  CAP_TEXT,
   distillRequires,
   distillResources,
-  FETCH_FAILED,
+  isFetchFailureMessage,
   MAX_FILE_BYTES,
 } from '../dist/external-files.js';
 import {
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,
 } from '../dist/userscript-header.js';
+import { unusableMatchGroupKey } from '../dist/url-match.js';
 import { checkParseNode } from './parse-check-node.mjs';
 // The offline tree's layout (percent-encoded segments, truncated long
 // names, `<path>/index` for a path that is also a directory prefix) is
@@ -353,21 +354,23 @@ function scriptUrlFor(file, offlineRoot) {
 // ---------- Classifying the outcome ----------
 //
 // Every failure arrives as `status: 'invalid'` plus a human-readable
-// `errorMessage`, which is all the extension itself has. For a report
-// we want the messages bucketed, and dependency failures split further
-// than the pipeline can split them: `FETCH_FAILED` is one message
-// covering three very different offline outcomes, so we ask the fetch
-// log which one it actually was.
+// `errorMessage`, which is all the extension itself has. That message
+// now says which fetch failure it was, so the report mostly just passes
+// it through.
 //
-// The strings themselves are imported rather than copied — they are
-// user-facing wording, and a copy here would go stale the next time
-// somebody improves one.
+// One thing the harness still knows better than the pipeline: the
+// offline mirror answers a URL it doesn't hold with a 404, which is a
+// different fact from a server that really replied 404. So the fetch
+// log is consulted for that case alone — the size and empty-file
+// outcomes it used to supply are reported by the pipeline itself now.
+//
+// Strings that ARE shared with the pipeline get imported, never copied:
+// they are user-facing wording, and a copy here would go stale the next
+// time somebody improves one.
 
-const REASON_TEXT = {
+const OFFLINE_REASON_TEXT = {
   'not-downloaded': 'not in the offline tree (dead link or never downloaded)',
   'not-found': 'file not found',
-  oversize: `over the ${CAP_TEXT} per-file limit`,
-  empty: 'empty file',
 };
 
 function classify(script) {
@@ -380,28 +383,50 @@ function classify(script) {
   }
   const message = script.errorMessage ?? '(no message)';
 
-  const syntax = /^syntax error: (.*)$/s.exec(message);
-  if (syntax) {
+  if (message.startsWith(SYNTAX_ERROR_PREFIX)) {
     // No position to strip: `errorMessage` carries the message alone and
     // the location travels beside it in `errorLocation` (see
     // docs/diagnostics.md). That is what we want here anyway — the
     // position is per script, the message is what groups.
-    return { category: 'syntax error', detail: syntax[1] };
+    return { category: 'syntax error', detail: message.slice(SYNTAX_ERROR_PREFIX.length) };
   }
 
   const dep = /^@(require|resource) (.*?): ([\s\S]*)$/.exec(message);
   if (dep) {
     const [, kind, subject, reason] = dep;
-    if (reason === FETCH_FAILED) {
-      const url = depUrl(script, kind, subject);
-      const logged = fetchLog.get(url);
-      const why = logged ? REASON_TEXT[logged.reason] ?? logged.reason : 'fetch failed';
-      return { category: `@${kind}`, detail: why, url };
+    // Resolved for every dependency failure, not just the fetch ones:
+    // it is the only source of the record's `url` field, and an
+    // oversize or empty dependency is exactly as worth locating as an
+    // unreachable one.
+    const url = depUrl(script, kind, subject);
+    // "We tried to read it and got nothing usable", asked of the
+    // pipeline via `isFetchFailureMessage` rather than pattern-matched
+    // here. This was a regex over the wording (`/^could not be
+    // (fetched|read)/`) and went stale silently the first time those
+    // messages were reworded — the whole point of the import rule above.
+    //
+    // A loose gate on purpose. It also admits failures the log can say
+    // nothing about (a timeout, a rejected content type), which is
+    // harmless: those never coincide with a `not-downloaded` /
+    // `not-found` entry, so the lookup simply misses and the pipeline's
+    // own message stands.
+    if (isFetchFailureMessage(reason)) {
+      const offline = OFFLINE_REASON_TEXT[fetchLog.get(url)?.reason];
+      // No log entry, or one we have no better wording for: the
+      // pipeline's own message is already specific.
+      return { category: `@${kind}`, detail: offline ?? reason, url };
     }
     // Everything else is already a specific message; strip embedded
     // content-type values so near-identical failures group together.
-    return { category: `@${kind}`, detail: reason.replace(/"[^"]*"/g, '"…"') };
+    return { category: `@${kind}`, detail: reason.replace(/"[^"]*"/g, '"…"'), url };
   }
+
+  // A header failure too, but one that names the offending `@match`, so
+  // it can't be a member of the set below. The pattern is elided by the
+  // module that writes the message, so a hundred scripts each botching
+  // a different URL the same way land in ONE row.
+  const unusableMatch = unusableMatchGroupKey(message);
+  if (unusableMatch) return { category: 'header', detail: unusableMatch };
 
   if (HEADER_MESSAGES.has(message)) return { category: 'header', detail: message };
   // A message no step here recognizes. Bucketing it as `header` (the
@@ -411,8 +436,10 @@ function classify(script) {
   return { category: 'other', detail: message };
 }
 
-// The complete set `buildScriptFromText` can produce: the `SplitError`
+// The fixed messages `buildScriptFromText` can produce: the `SplitError`
 // union from `userscript-header.ts`, then `validateHeader`'s returns.
+// Its one variable message — the unusable `@match` — is recognized just
+// above instead, since it carries the pattern that caused it.
 const HEADER_MESSAGES = new Set([
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,

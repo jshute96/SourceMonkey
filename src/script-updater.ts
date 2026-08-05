@@ -60,6 +60,7 @@ import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
 import { appendScriptLog, logScriptEvent, type AppendLogInput } from './script-log.js';
 import { describeDiagnostic } from './diagnostic-location.js';
+import { retryRejectedRegistrations } from './injector.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -215,7 +216,7 @@ async function runScriptCheck(
   checkLog(`[SourceMonkey] update check (${mode}): ${label}${tokenSuffix}`);
   // No Log-tab row before the work: `emitScriptOutcomeLog` writes the
   // whole story afterwards, as one line when there is nothing to report
-  // and a `checking for updates` preamble when there is. The SW console
+  // and a `Checking for updates` preamble when there is. The SW console
   // above still brackets the work for anyone watching it live.
   let next: StoredScript | null;
   try {
@@ -228,7 +229,7 @@ async function runScriptCheck(
     logScriptEvent(scriptId, {
       level: 'error',
       source: refreshLogSource(mode),
-      message: `update check threw: ${msg}`,
+      message: `Could not check for updates: ${msg}`,
     });
     throw err;
   }
@@ -241,6 +242,18 @@ async function runScriptCheck(
   // the old body. The probe's own storage write repaints any open
   // viewer via storage.onChanged when it lands.
   if (next) void runVersionProbes([next], probe);
+  // Not awaited, same as the probe above: it must not sit in the
+  // fast-path window. No-ops unless this script is currently rejected,
+  // in which case a refresh that changed nothing would otherwise never
+  // re-offer it to Chrome. See `retryRejectedRegistrations`.
+  //
+  // `probe === 'force'` is the only signal we have for "the user
+  // clicked Refresh" — `mode: 'manual'` means "not rate-limited" and
+  // the reload fast-path uses it for every matched script on every
+  // reload. A click retries immediately; a navigation-driven check
+  // takes the rate limit, so one page load can't produce a burst of
+  // identical rows.
+  void retryRejectedRegistrations([scriptId], { userInitiated: probe === 'force' });
   return next;
 }
 
@@ -273,13 +286,19 @@ async function runSourceCheck(
     // one's Log rather than letting the failure live only in the SW
     // console.
     logSourceEventToScripts(
-      [...(prior?.scripts.values() ?? [])], mode, `source refresh threw: ${msg}`,
+      [...(prior?.scripts.values() ?? [])], mode, `Could not refresh this source: ${msg}`,
     );
     throw err;
   }
   if (result) {
     summarizeSourceOutcome(label, prior, result, mode);
     await runVersionProbes(result.scripts, probe);
+    // Retry any script under this source that Chrome is refusing —
+    // refreshing a source is one of the places a user goes to say "try
+    // again". See `retryRejectedRegistrations`.
+    await retryRejectedRegistrations(
+      result.scripts.map((s) => s.id), { userInitiated: probe === 'force' },
+    );
   }
   return result;
 }
@@ -305,7 +324,7 @@ async function runAllSourcesCheck(
     // so the two paths can't drift, applied across every source.
     for (const snapshot of priorBySourceId.values()) {
       logSourceEventToScripts(
-        [...snapshot.scripts.values()], mode, `source refresh threw: ${msg}`,
+        [...snapshot.scripts.values()], mode, `Could not refresh this source: ${msg}`,
       );
     }
     throw err;
@@ -318,7 +337,14 @@ async function runAllSourcesCheck(
       mode,
     );
   }
-  await runVersionProbes([...result.values()].flatMap((r) => r.scripts), probe);
+  const allScripts = [...result.values()].flatMap((r) => r.scripts);
+  await runVersionProbes(allScripts, probe);
+  // Refresh All is the other "try again" button, so it retries every
+  // refused registration it just re-read. See
+  // `retryRejectedRegistrations`.
+  await retryRejectedRegistrations(
+    allScripts.map((s) => s.id), { userInitiated: probe === 'force' },
+  );
   return result;
 }
 
@@ -381,7 +407,7 @@ async function probeOneScript(
   const after = outdatedProbe(loadedVersion, probes);
   if (!after || after.version === before?.version) return;
   const message =
-    `newer version ${after.version} at ${probeLabel(after.kinds)} ` +
+    `Newer version ${after.version} at ${probeLabel(after.kinds)} ` +
     `(running ${loadedVersion}) — ${after.url}`;
   console.info(`[SourceMonkey] ${getScriptLogLabel(script.id)}: ${message}`);
   // Not split by trigger mode like the refresh labels: this entry
@@ -460,8 +486,8 @@ function logScriptOutcome(
 // `loadStateLogEntry` for the phrasing and the level rationale.
 //
 // **One row per uneventful check, two when there's news.** A check
-// that finds nothing writes a single `checked for updates — no change`
-// line. A check with something to report writes `checking for updates`
+// that finds nothing writes a single `Checked for updates — no change`
+// line. A check with something to report writes `Checking for updates`
 // and then the outcome, which carries its own severity and is what the
 // status badge links to.
 //
@@ -495,13 +521,13 @@ export function emitScriptOutcomeLog(
   // console is where a check is bracketed live; the Log tab is a
   // record of what happened.
   if (hasReportableOutcome(prior, next)) {
-    logScriptEvent(scriptId, { level: 'info', source, message: 'checking for updates' });
+    logScriptEvent(scriptId, { level: 'info', source, message: 'Checking for updates' });
   }
   if (!next) {
     logScriptEvent(scriptId, {
       level: 'warning',
       source,
-      message: 'row vanished during refresh',
+      message: 'This script was removed while it was being refreshed',
     });
     return;
   }
@@ -533,10 +559,10 @@ export function emitScriptOutcomeLog(
     logScriptEvent(scriptId, {
       level: 'info',
       source,
-      message: `loaded new content${size}`,
+      message: `Loaded new content${size}`,
     });
     // Replay parse-time diagnostics whenever a new version lands. They
-    // appear AFTER the "loaded new content" line so it's clear which
+    // appear AFTER the "Loaded new content" line so it's clear which
     // version the warning belongs to. One entry per content version —
     // a refresh that doesn't change content adds nothing.
     for (const entry of next.startupLogs ?? []) {
@@ -589,7 +615,7 @@ function refreshLogSource(mode: UpdateMode): string {
 // The single line a check writes when it has nothing to report: names
 // the check AND its result, so a routine poll costs one row rather than
 // a start/outcome pair. Manual-only (see `emitScriptOutcomeLog`).
-const NO_CHANGE_MESSAGE = 'checked for updates — no change';
+const NO_CHANGE_MESSAGE = 'Checked for updates — no change';
 
 // Whether this check has anything to say beyond that one line — i.e.
 // whether there was something to check for this script in the first
@@ -620,9 +646,9 @@ function hasReportableOutcome(
 // a bare "ok again" wouldn't tell the user whether the file came back,
 // the parse started succeeding, or the server did.
 function recoveryMessage(prior: StoredScript): string {
-  if (prior.status === 'invalid') return 'loads cleanly again (was invalid)';
-  if (prior.status === 'missing') return 'source file is back';
-  return 'refresh succeeded again (source is reachable)';
+  if (prior.status === 'invalid') return 'Loads cleanly again (was invalid)';
+  if (prior.status === 'missing') return 'Source file is back';
+  return 'Refresh succeeded again (source is reachable)';
 }
 
 // Map a StartupLog level (page-console-flavored: log/info/warn/error)
@@ -752,13 +778,15 @@ export function summarizeSourceOutcome(
   if (scanError) {
     logSourceEventToScripts(
       nextScripts, mode,
-      `source scan failed: ${scanError} — still running the cached copy`,
+      // Same no-echo phrasing as the sources page's banner, since
+      // `scanError` usually starts with its own `Could not read …`.
+      `This source did not load: ${scanError} — still running the cached copy`,
     );
     console.log(`[SourceMonkey] source refresh: ${label}: scan failed: ${scanError}`);
     return;
   }
   if (prior?.source.scanError) {
-    logSourceEventToScripts(nextScripts, mode, 'source scan succeeded again (source is readable)');
+    logSourceEventToScripts(nextScripts, mode, 'This source is readable again');
   }
   const priorBy = prior?.scripts ?? new Map<string, StoredScript>();
   let changed = 0;

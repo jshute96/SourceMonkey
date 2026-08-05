@@ -126,12 +126,34 @@ measuring:
 - **`parse check errored`** — composing the checked text threw. The
   script stays `ok`.
 
-Dependency failures are split further than the pipeline can split
-them: `FETCH_FAILED` (`external-files.ts`) is one message covering
-three different offline outcomes, so the fetch shim's log is consulted
-for which one it actually was. The validator imports that string, and
-the header messages, rather than keeping copies that would go stale the
-next time the wording improves.
+Dependency failures mostly report themselves now: the pipeline names
+which fetch failure it hit, so the validator passes the message
+straight through.
+
+The fetch shim's log is consulted for one case only — the offline
+mirror answers a URL it doesn't hold with a `404`, and "not in the
+offline tree" is a different fact from a server that really replied
+404. Size and empty-file outcomes used to come from the log too; they
+come from the pipeline now.
+
+Strings shared with the pipeline are imported, never copied — a copy
+would go stale the next time the wording improves.
+
+- That covers *recognizing* a message as well as printing one. The
+  classifier used to detect a syntax error and a fetch failure with
+  regexes over the wording (`/^syntax error: /`, `/^could not be
+  (fetched|read)/`), and both went stale silently when those messages
+  were recased and reworded — a stale regex mislabels a whole bucket
+  instead of failing.
+- It now imports `SYNTAX_ERROR_PREFIX` (`script-store.ts`) and calls
+  `isFetchFailureMessage` (`external-files.ts`), which is derived from
+  `describeFetchFailure` itself so it cannot disagree with it. A unit
+  test pins that every `FetchFailReason` stays recognized.
+- `unusableMatchGroupKey` (`url-match.ts`) is the same arrangement for
+  the one header failure whose message isn't fixed text: it names the
+  `@match` Chrome would refuse, so the recognizer that spots it also
+  elides the pattern, and every script making that mistake groups
+  together instead of one row apiece.
 
 `--json FILE` writes one record per script — name, status, category,
 message, the structured `location` when the verdict has one, and the

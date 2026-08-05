@@ -97,7 +97,7 @@ test.describe('script preview', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
-    await expect(page.locator('#banner-slot')).toContainText('no @match or @include in the metadata block');
+    await expect(page.locator('#banner-slot')).toContainText('No @match or @include in the metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#update-btn')).toBeHidden();
     // Local `.user.js` navigations are captured too, so this file needs
@@ -109,6 +109,27 @@ test.describe('script preview', () => {
     // the point when a file isn't what you expected.
     await expect(page.locator('#content')).toContainText("console.log('unreachable')");
     expect(await sm.getSources()).toHaveLength(0);
+    await page.close();
+  });
+
+  test('a location we can never fetch is reported as a bad location, not a failed fetch', async ({
+    extensionContext, extensionId,
+  }) => {
+    // `?preview=` is reachable by hand and by the capture route, so the
+    // input isn't always something the Add Source field validated. An
+    // `ftp://` URL is rejected on shape before any fetch is attempted,
+    // and saying "Could not fetch" there would send the reader looking
+    // at their network for a problem that's in the address.
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${
+        encodeURIComponent('ftp://example.com/thing.user.js')}`,
+    );
+    const message = page.locator('#message');
+    await expect(message).toContainText('This is not a script location');
+    await expect(message).toContainText('http(s):// or file:// URL');
+    await expect(message).not.toContainText('Could not fetch');
+    await expect(page.locator('#install-btn')).toBeHidden();
     await page.close();
   });
 

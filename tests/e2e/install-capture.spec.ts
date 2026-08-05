@@ -208,7 +208,7 @@ test.describe('.user.js link capture', () => {
     await page.goto(`${server.baseUrl}/broken.user.js`).catch(() => {});
     await waitForInstallPrompt(page);
 
-    await expect(page.locator('#banner-slot')).toContainText('no // ==UserScript== metadata block');
+    await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     // The source is still shown, so the user can see what they got.
     await expect(page.locator('#content')).toContainText('no metadata block here');

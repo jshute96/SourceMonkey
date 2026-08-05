@@ -123,28 +123,59 @@ function extractHostFromPattern(pat: string): string | null {
 }
 
 // Check whether `url` is allowed under the script's @connect rules.
-// Returns `{allowed: true}` or `{allowed: false, reason: string}`.
 // Reason is plain English so the SW can log it / surface to the
 // userscript via onerror.
+//
+// `denied` distinguishes "the header forbids this" from "we couldn't
+// even read the URL". Both stop the request, but only the first is the
+// script's `@connect` lines doing their job — see
+// `connectBlockedMessage`, which must not be told to blame them for a
+// URL that never parsed.
 export function isUrlConnectAllowed(
   url: string,
   rules: readonly ConnectRule[],
   selfHosts: ReadonlySet<string>,
-): { allowed: true } | { allowed: false; reason: string } {
+): { allowed: true } | { allowed: false; denied: boolean; reason: string } {
   if (rules.length === 0) {
-    return { allowed: false, reason: '@connect not declared' };
+    return { allowed: false, denied: true, reason: '@connect not declared' };
   }
   let host: string;
   try {
     host = new URL(url).hostname;
   } catch {
-    return { allowed: false, reason: 'invalid URL' };
+    // Not a denial: a relative URL (which TM resolves and we don't)
+    // lands here even for a script with `@connect *`.
+    return {
+      allowed: false,
+      denied: false,
+      reason: `${url} is not a valid URL — GM_xmlhttpRequest needs an absolute one`,
+    };
   }
   for (const rule of rules) {
     if (hostMatchesRule(host, rule, selfHosts)) return { allowed: true };
   }
   return {
     allowed: false,
+    denied: true,
     reason: `host ${host} not in @connect allowlist`,
   };
+}
+
+// Every error `GM_xmlhttpRequest` hands back to a userscript starts
+// here, so the three paths that can fail it — the pre-flight check, the
+// post-redirect re-check (`gm-xhr.ts`), and a policy we couldn't even
+// load (`background.ts`) — read the same way.
+export function gmXhrError(problem: string): string {
+  return `[SourceMonkey] GM_xmlhttpRequest: ${problem}`;
+}
+
+// The one phrasing for a request the script's own header forbids: it
+// names whose rules blocked the call rather than a "policy" object the
+// reader can't see.
+//
+// Only for a real denial (`denied: true`). A URL we couldn't parse, or
+// a failure to *evaluate* the rules, is not the header's doing and
+// goes through `gmXhrError` directly.
+export function connectBlockedMessage(reason: string): string {
+  return gmXhrError(`blocked by this script's @connect rules: ${reason}`);
 }

@@ -36,13 +36,23 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
 
 - **No internal vocabulary** (`SW`, `opaque response`, `fetch threw`).
 - **Name what failed**, and the fix where there is one.
-- **Lowercase, no trailing period, subject included** — the same string
-  appears alone and after prefixes like `This script cannot be installed: `.
+- **Friendly is not vague.** Plain wording still has to leave something to
+  debug with: name the step that failed, not just the subsystem it was in.
+- **Capitalized, no trailing period, subject included** — the same string
+  appears alone and after prefixes like `This file cannot be installed: `.
+  A capital after that colon is intended.
+  - A tail after a `: ` is a message too, so it takes a capital. If it
+    can't grammatically (`is empty`), give it a subject (`The file is
+    empty`) rather than exempting it.
+  - Only a splice *inside* a sentence we wrote stays lowercase —
+    `LOCATION_SHAPES`, which completes `A source must be an …`.
 - **One message per problem**; wrap the shared string rather than writing a
   second copy for another surface.
+  - That covers code that *recognizes* a message too: import the shared
+    constant or predicate, never pattern-match the wording.
 - **Don't guess between causes** — say which, or state the possibilities and
   file the plumbing in TODO.md.
-- **`internal error:` prefix** when the user can't act on it.
+- **`Internal error:` prefix** when the user can't act on it.
 
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT

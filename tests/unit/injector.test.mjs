@@ -13,15 +13,33 @@ import assert from 'node:assert/strict';
 // log via chrome.storage.session. Unit tests run in plain Node so we
 // install a minimal stub for both areas.
 const sessionStore = new Map();
-// `register` is swapped per-test by the registerWithFallback block at
-// the bottom; the default rejects so an unconfigured caller is loud.
+// Backing store for chrome.storage.local. Mostly unused (the pure
+// helpers read nothing), but `retryRejectedRegistrations` rebuilds
+// specs from the store, so its tests seed real script/source rows.
+const localStore = new Map();
+// `register` / `unregister` are swapped per-test by the
+// registerWithFallback and retry blocks at the bottom; the defaults
+// are loud so an unconfigured caller can't pass by accident.
 const userScripts = {
   register: async () => { throw new Error('userScripts.register not stubbed'); },
+  unregister: async () => {},
+  // Must precede register(); the retry path calls it via
+  // ensureWorldConfigured. Without it here the retry's error
+  // containment swallows the TypeError and silently does nothing.
+  configureWorld: async () => {},
 };
 globalThis.chrome = globalThis.chrome ?? {
+  runtime: { getManifest: () => ({ version: '0.0.0-test' }) },
   storage: {
     local: {
-      get: async () => ({}),
+      get: async (key) => {
+        if (key === null || key === undefined) return Object.fromEntries(localStore);
+        const keys = Array.isArray(key) ? key : [key];
+        const out = {};
+        for (const k of keys) if (localStore.has(k)) out[k] = localStore.get(k);
+        return out;
+      },
+      set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
     },
     session: {
       // Mirrors the real API's key shapes. The array form is
@@ -153,11 +171,11 @@ test('buildConfigBlob: a startup log\'s location never reaches the page', () => 
     matching: null,
     startupLogs: [{
       level: 'warn',
-      message: 'ignoring @grant GM_nope — unsupported APIs',
+      message: 'Ignoring @grant GM_nope — unsupported APIs',
       location: { file: '/home/someone/private/x.user.js', line: 4 },
     }],
   });
-  assert.match(blob, /"message":"ignoring @grant GM_nope — unsupported APIs"/);
+  assert.match(blob, /"message":"Ignoring @grant GM_nope — unsupported APIs"/);
   assert.doesNotMatch(blob, /"location"/);
   assert.doesNotMatch(blob, /home\/someone/);
 });
@@ -619,6 +637,44 @@ test('buildRegistrationSpec: passes @match values through as matches', async () 
   assert.deepEqual(spec.matches, ['https://example.com/*']);
 });
 
+test('buildRegistrationSpec: drops a @match Chrome would refuse, keeping the rest', async () => {
+  // Chrome refuses the whole registration over one malformed pattern,
+  // so a script with one good `@match` and one bad one would never run
+  // at all if we passed both through. The bad one can't match anything
+  // anyway, and the reason is already a warning in the script's Log.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*', 'https://example.com', 'https://www.*.com/*'],
+      excludes: [],
+      includes: [],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+});
+
+test('buildRegistrationSpec: unusable @match with a regex @include still falls back to <all_urls>', async () => {
+  // Nothing left for Chrome to match on, but the wrapper-side matcher
+  // has a regex to apply — same path as a script that declared no
+  // `@match` at all.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com'],
+      excludes: [],
+      includes: ['/^https:\\/\\/foo\\..*$/'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+});
+
+test('buildRegistrationSpec: nothing usable at all registers nothing', async () => {
+  // `validateHeader` stores such a script `invalid`, so this is the
+  // belt-and-braces case: no spec rather than a spec Chrome refuses.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://example.com'], excludes: [], includes: [] },
+  }));
+  assert.equal(spec, null);
+});
+
 test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes to wrapper', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
@@ -1074,13 +1130,13 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
 test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
   const script = makeScript({
     id: 'forwarded',
-    startupLogs: [{ level: 'warn', message: 'ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
   });
   const spec = await buildRegistrationSpec(script);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"startupLogs":\[/);
-  assert.match(cfg.code, /ignoring @grant GM_audio — unsupported APIs/);
+  assert.match(cfg.code, /Ignoring @grant GM_audio — unsupported APIs/);
 });
 
 // ---------- resolveWorld ----------
@@ -1525,12 +1581,12 @@ test('registered entry: the body marker maps to its real line in the stored file
   assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
 });
 
-// ---------- registerWithFallback: one Log row per rejection, not per sync ----------
+// ---------- registerWithFallback: every refused attempt is logged ----------
 //
-// `syncRegistrations` re-runs on every script-storage change, so a spec
-// Chrome keeps rejecting must not add a row each time. The guard is a
-// record of the rejection each script was last LOGGED for, kept in
-// session storage so it lives exactly as long as the log it protects.
+// The Log is a transcript of what happened, and "we offered the spec
+// again and Chrome refused again" happened. Suppressing the repeat
+// would make a live refusal indistinguishable from a stale one, and
+// would leave the row explaining nothing after a "Clear log".
 
 const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
 
@@ -1550,37 +1606,66 @@ async function syncOnce(specs, bad) {
 
 async function rejectionRows() {
   const log = await getScriptLog('a');
-  return log.filter((e) => e.source === 'chrome-injector').length;
+  return log.filter((e) => e.source === 'chrome-injector' && e.level === 'error').length;
 }
 
-test('registerWithFallback: a rejection logs once, not once per sync', async () => {
+// The other half of the injector's story: a refusal that finally went
+// in. Info level, and required by the "every surfaced failure has a
+// matching recovery line" rule in docs/script-log.md.
+async function recoveryRows() {
+  const log = await getScriptLog('a');
+  return log.filter((e) => e.source === 'chrome-injector' && e.level === 'info').length;
+}
+
+test('registerWithFallback: every rejected attempt adds a row', async () => {
   sessionStore.clear();
   await syncOnce([SPEC_A], new Set(['a']));
   assert.equal(await rejectionRows(), 1);
   await syncOnce([SPEC_A], new Set(['a']));
   await syncOnce([SPEC_A], new Set(['a']));
-  assert.equal(await rejectionRows(), 1, 'a spec Chrome keeps rejecting must not refill the log');
+  assert.equal(await rejectionRows(), 3, 'a retry that is refused again is a real event');
 });
 
-test('registerWithFallback: break → fix → break logs twice', async () => {
-  // The fix lands via a clean BATCH registration, which is the common
-  // path and the one that has to clear the record. Without that, the
-  // second failure is silently swallowed for the rest of the session.
+test('registerWithFallback: a cleared log refills on the next attempt', async () => {
+  // The case that motivated dropping the old transition guard: with it,
+  // "Clear log" then Refresh left the row flagged REJECTED with an
+  // empty Log, which reads as though nothing is being retried.
   sessionStore.clear();
   await syncOnce([SPEC_A], new Set(['a']));
   assert.equal(await rejectionRows(), 1);
 
-  await syncOnce([SPEC_A], new Set());          // fixed
+  const { clearScriptLog } = await import('../../dist/script-log.js');
+  await clearScriptLog('a');
+  assert.equal(await rejectionRows(), 0);
+
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(await rejectionRows(), 1, 'the next sync must re-explain the badge');
+});
+
+test('registerWithFallback: a fix logs one recovery row, then stays quiet', async () => {
+  sessionStore.clear();
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(await rejectionRows(), 1);
+  assert.equal(await recoveryRows(), 0);
+
+  // The fix lands via a clean BATCH registration, which is the common
+  // path — fixing the file changes its content, which triggers a sync.
+  // The recovery is logged once; a healthy script that keeps
+  // registering says nothing more.
+  await syncOnce([SPEC_A], new Set());
+  assert.equal(await recoveryRows(), 1, 'the user needs to see their fix took');
+  await syncOnce([SPEC_A], new Set());
+  assert.equal(await recoveryRows(), 1, 'still-healthy is not an event');
   assert.equal(await rejectionRows(), 1);
 
   await syncOnce([SPEC_A], new Set(['a']));     // broke again
-  assert.equal(await rejectionRows(), 2, 'a re-broken script must report again');
+  assert.equal(await rejectionRows(), 2);
 });
 
-test('registerWithFallback: the guard survives a service-worker restart', async () => {
+test('registerWithFallback: logging survives a service-worker restart', async () => {
   // MV3 evicts the SW freely and syncRegistrations runs again on every
-  // wake-up, so an in-memory guard would re-log once per SW lifetime.
-  // Session storage outlives the worker; only Chrome shutdown clears it.
+  // wake-up. A fresh worker reports the refusal it observes, same as
+  // any other sync.
   sessionStore.clear();
   await syncOnce([SPEC_A], new Set(['a']));
   assert.equal(await rejectionRows(), 1);
@@ -1590,5 +1675,180 @@ test('registerWithFallback: the guard survives a service-worker restart', async 
   userScripts.register = async (batch) => { throw new Error(`bad spec: ${batch[0].id}`); };
   await reloaded.registerWithFallback([SPEC_A]);
   await _flushScriptLogQueueForTests('a');
-  assert.equal(await rejectionRows(), 1, 'a fresh worker must not re-log the same rejection');
+  assert.equal(await rejectionRows(), 2);
+});
+
+// ---------- registerWithFallback: the REJECTED state the UI renders ----------
+//
+// The rejection map in session storage is what the sources page and the
+// viewer read to show REJECTED. It has to describe the CURRENT
+// registration set, not the history of everything ever refused.
+
+const { readRejections } = await import('../../dist/script-rejection.js');
+
+const SPEC_B = { id: 'b', matches: ['https://f/*'], js: [{ code: '1' }] };
+
+test('registerWithFallback: a refused spec is recorded with Chrome\'s reason', async () => {
+  sessionStore.clear();
+  await syncOnce([SPEC_A, SPEC_B], new Set(['a']));
+  const rejections = await readRejections();
+  assert.deepEqual(Object.keys(rejections), ['a'], 'only the refused spec is recorded');
+  assert.match(rejections.a, /bad spec: a/);
+});
+
+test('registerWithFallback: registering cleanly clears the record', async () => {
+  sessionStore.clear();
+  await syncOnce([SPEC_A], new Set(['a']));
+  assert.equal(Object.keys(await readRejections()).length, 1);
+
+  // Batch path — the common recovery.
+  await syncOnce([SPEC_A], new Set());
+  assert.deepEqual(await readRejections(), {}, 'a placed script must not stay REJECTED');
+
+  // Per-script fallback path: `a` recovers while `b` is the bad one.
+  await syncOnce([SPEC_A, SPEC_B], new Set(['a']));
+  await syncOnce([SPEC_A, SPEC_B], new Set(['b']));
+  assert.deepEqual(Object.keys(await readRejections()), ['b']);
+});
+
+test('registerWithFallback: a script that leaves the active set stops being REJECTED', async () => {
+  // Disabling / deleting a rejected script (or its refresh flipping it
+  // to INVALID) drops it from the spec list. Without the wholesale
+  // rewrite its row would keep a REJECTED badge nobody can clear.
+  sessionStore.clear();
+  await syncOnce([SPEC_A, SPEC_B], new Set(['a', 'b']));
+  assert.deepEqual(Object.keys(await readRejections()).sort(), ['a', 'b']);
+
+  await syncOnce([SPEC_B], new Set(['b']));
+  assert.deepEqual(Object.keys(await readRejections()), ['b']);
+
+  // Everything disabled — nothing is offered, so nothing is rejected.
+  await syncOnce([], new Set());
+  assert.deepEqual(await readRejections(), {});
+});
+
+// ---------- retryRejectedRegistrations: one attempt per action ----------
+//
+// A navigation fans out into several checks of the same script (the
+// reload fast-path plus an opportunistic check per commit event, per
+// frame). Each one used to re-offer the spec and write its own Log row,
+// so a single page load produced a burst of identical entries. The fix
+// is to make fewer ATTEMPTS — the logging itself stays unconditional.
+
+const {
+  retryRejectedRegistrations,
+  _setRetryNowForTests,
+  REJECTION_RETRY_MIN_INTERVAL_MS,
+} = await import('../../dist/injector.js');
+
+// The retry rebuilds specs from the store, so it needs a script row to
+// find. Only the fields collectActiveSpecs reads matter here.
+function seedStore(scriptId) {
+  const script = {
+    id: scriptId,
+    sourceId: 'src-1',
+    relativePath: `bad-${scriptId}.user.js`,
+    status: 'ok',
+    enabled: true,
+    size: 10,
+    loadedAt: 1,
+    bodyText: 'x',
+    headerText: '',
+    leadingText: '',
+    matching: { matches: ['https://e/*'], includes: [], excludes: [] },
+    header: { tags: [{ tag: 'name', value: 'Bad' }], startLine: 1 },
+  };
+  localStore.set(`script:${scriptId}`, script);
+  const source = localStore.get('source:src-1')
+    ?? { id: 'src-1', path: '/tmp/x', enabled: true, scriptIds: [] };
+  if (!source.scriptIds.includes(scriptId)) source.scriptIds.push(scriptId);
+  localStore.set('source:src-1', source);
+}
+
+test('retryRejectedRegistrations: rate-limits automatic retries, not clicks', async () => {
+  sessionStore.clear();
+  localStore.clear();
+  seedStore('a');
+
+  let clock = 1_000_000;
+  _setRetryNowForTests(() => clock);
+  // Chrome refuses everything for the whole test.
+  userScripts.register = async (batch) => { throw new Error(`bad spec: ${batch[0].id}`); };
+
+  // Seed the rejection map the way a sync would.
+  await registerWithFallback([SPEC_A]);
+  await _flushScriptLogQueueForTests('a');
+  assert.equal(await rejectionRows(), 1);
+
+  // A navigation-driven burst: many calls, one attempt.
+  for (let i = 0; i < 10; i++) await retryRejectedRegistrations(['a']);
+  await _flushScriptLogQueueForTests('a');
+  assert.equal(await rejectionRows(), 2, 'a burst of checks must produce one row');
+
+  // Still inside the window — nothing more.
+  clock += REJECTION_RETRY_MIN_INTERVAL_MS - 1;
+  await retryRejectedRegistrations(['a']);
+  await _flushScriptLogQueueForTests('a');
+  assert.equal(await rejectionRows(), 2);
+
+  // Past it — one more.
+  clock += 2;
+  await retryRejectedRegistrations(['a']);
+  await _flushScriptLogQueueForTests('a');
+  assert.equal(await rejectionRows(), 3);
+
+  // A Refresh click ignores the window entirely: the user asked.
+  await retryRejectedRegistrations(['a'], { userInitiated: true });
+  await retryRejectedRegistrations(['a'], { userInitiated: true });
+  await _flushScriptLogQueueForTests('a');
+  assert.equal(await rejectionRows(), 5, 'a click always gets an answer');
+
+  _setRetryNowForTests(() => Date.now());
+});
+
+test('retryRejectedRegistrations: a script nobody is refusing is a no-op', async () => {
+  sessionStore.clear();
+  localStore.clear();
+  seedStore('a');
+  _setRetryNowForTests(() => 2_000_000);
+  let registerCalls = 0;
+  userScripts.register = async () => { registerCalls++; };
+
+  await retryRejectedRegistrations(['a'], { userInitiated: true });
+  assert.equal(registerCalls, 0, 'nothing rejected → nothing re-offered');
+  assert.equal(await rejectionRows(), 0);
+  _setRetryNowForTests(() => Date.now());
+});
+
+test('retryRejectedRegistrations: a caller is never dropped for arriving late', async () => {
+  // The coalescing bug: `if (retryInFlight) return retryInFlight` used
+  // to ignore the caller's ids, so a Refresh click on script B landing
+  // while a background retry of A was running rode A's promise and B
+  // was never re-offered — the exact "I clicked Refresh and got
+  // nothing" symptom, just narrower.
+  sessionStore.clear();
+  localStore.clear();
+  seedStore('a');
+  seedStore('b');
+
+  let clock = 5_000_000;
+  _setRetryNowForTests(() => clock);
+  const offered = [];
+  userScripts.register = async (batch) => {
+    offered.push(batch[0].id);
+    throw new Error(`bad spec: ${batch[0].id}`);
+  };
+
+  // Seed both as rejected, the way a sync would.
+  await registerWithFallback([SPEC_A, SPEC_B]);
+  offered.length = 0;
+
+  // Background check for `a` and a Refresh click on `b`, concurrently.
+  await Promise.all([
+    retryRejectedRegistrations(['a']),
+    retryRejectedRegistrations(['b'], { userInitiated: true }),
+  ]);
+  assert.deepEqual(offered.sort(), ['a', 'b'], 'both callers must get an attempt');
+
+  _setRetryNowForTests(() => Date.now());
 });

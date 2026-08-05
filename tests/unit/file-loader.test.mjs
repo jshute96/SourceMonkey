@@ -2,15 +2,25 @@
 //
 // Covers `resolveScriptResource` — scheme acceptance + the relative-
 // path-against-script-parent rule (including the `..` rejection that
-// keeps a header reference from escaping the script's directory).
-// The byte-fetch helpers are not unit-tested here: they depend on
-// real http(s)/file:// I/O and are covered indirectly by the icon
-// pipeline's e2e suite.
+// keeps a header reference from escaping the script's directory) — and
+// the `*Detailed` variants that say WHICH rule rejected a ref or why a
+// fetch produced no bytes. Those reasons exist so the messages built on
+// them can state a fact instead of listing possibilities, so they are
+// pinned here rather than only through the wording.
+//
+// The http fetch is exercised against a stubbed `globalThis.fetch`;
+// the file:// legs still depend on real I/O and are covered indirectly
+// by the icon pipeline's e2e suite.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isJsResourceUrl, resolveScriptResource } from '../../dist/file-loader.js';
+import {
+  fetchResourceBytes,
+  isJsResourceUrl,
+  resolveScriptResource,
+  resolveScriptResourceDetailed,
+} from '../../dist/file-loader.js';
 
 // ---------- absolute URLs ----------
 
@@ -236,4 +246,145 @@ test('isJsResourceUrl: rejects trailing-slash on a .js path', () => {
 test('isJsResourceUrl: malformed URL returns false', () => {
   assert.equal(isJsResourceUrl('not a url'), false);
   assert.equal(isJsResourceUrl(''), false);
+});
+
+
+// ---------- resolveScriptResourceDetailed: which rule rejected it ----------
+
+const SCRIPT_URL_FILE = 'file:///home/me/scripts/foo.user.js';
+
+test('resolveScriptResourceDetailed: an escaping relative path and a bad scheme are different failures', () => {
+  const escaping = resolveScriptResourceDetailed('../secret.js', SCRIPT_URL_FILE);
+  assert.deepEqual(escaping, { failed: true, reason: 'outside-script-folder' });
+
+  const scheme = resolveScriptResourceDetailed('ftp://example.com/i.png', SCRIPT_URL_FILE);
+  assert.equal(scheme.reason, 'unsupported-scheme');
+  // The scheme travels with the reason so the message can name what
+  // the author actually wrote.
+  assert.equal(scheme.scheme, 'ftp:');
+});
+
+test('resolveScriptResourceDetailed: absolute file:// is a scheme rejection, not a containment one', () => {
+  // It is refused on purpose (see the module header) — but the reason
+  // has to be honest about which rule did it.
+  const r = resolveScriptResourceDetailed('file:///etc/passwd', 'https://example.com/s/foo.user.js');
+  assert.equal(r.reason, 'unsupported-scheme');
+  assert.equal(r.scheme, 'file:');
+});
+
+test('resolveScriptResourceDetailed: empty and malformed refs are distinguished', () => {
+  assert.equal(resolveScriptResourceDetailed('   ', SCRIPT_URL_FILE).reason, 'empty');
+  assert.equal(resolveScriptResourceDetailed('http://', SCRIPT_URL_FILE).reason, 'malformed-url');
+});
+
+test('resolveScriptResourceDetailed: success returns the resource, with no failed flag', () => {
+  const r = resolveScriptResourceDetailed('./icon.png', SCRIPT_URL_FILE);
+  assert.deepEqual(r, { kind: 'file', url: 'file:///home/me/scripts/icon.png' });
+  assert.equal('failed' in r, false);
+});
+
+test('resolveScriptResource: the yes/no wrapper agrees with the detailed form', () => {
+  // One implementation behind both — the wrapper must not drift into a
+  // second copy of the rules.
+  for (const ref of ['../secret.js', 'ftp://x/i.png', '', 'http://', './icon.png', 'https://e.com/a.js']) {
+    const detailed = resolveScriptResourceDetailed(ref, SCRIPT_URL_FILE);
+    const plain = resolveScriptResource(ref, SCRIPT_URL_FILE);
+    assert.deepEqual(plain, 'failed' in detailed ? null : detailed, `mismatch for ${ref}`);
+  }
+});
+
+// ---------- fetchResourceBytes: which failure it was ----------
+
+async function withStubbedFetch(impl, run) {
+  const real = globalThis.fetch;
+  globalThis.fetch = impl;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+const okResponse = (body, headers = {}) => new Response(body, { status: 200, headers });
+
+test('fetchResourceBytes: a non-ok status reports the status', async () => {
+  const res = await withStubbedFetch(
+    async () => new Response(null, { status: 404 }),
+    () => fetchResourceBytes('https://example.com/a.js', { maxBytes: 1000 }),
+  );
+  assert.deepEqual(res, { failed: true, reason: 'http-error', status: 404 });
+});
+
+test('fetchResourceBytes: an empty body is empty, not oversize or missing', async () => {
+  const res = await withStubbedFetch(
+    async () => okResponse(new ArrayBuffer(0)),
+    () => fetchResourceBytes('https://example.com/a.js', { maxBytes: 1000 }),
+  );
+  assert.deepEqual(res, { failed: true, reason: 'empty' });
+});
+
+test('fetchResourceBytes: over the cap is oversize, by body and by Content-Length', async () => {
+  const big = new Uint8Array(50).buffer;
+  const byBody = await withStubbedFetch(
+    async () => okResponse(big),
+    () => fetchResourceBytes('https://example.com/a.js', { maxBytes: 10 }),
+  );
+  assert.deepEqual(byBody, { failed: true, reason: 'oversize' });
+
+  // The Content-Length shortcut refuses before buffering, and has to
+  // report the same reason as the post-buffer check.
+  const byHeader = await withStubbedFetch(
+    async () => okResponse(big, { 'content-length': '50' }),
+    () => fetchResourceBytes('https://example.com/a.js', { maxBytes: 10 }),
+  );
+  assert.deepEqual(byHeader, { failed: true, reason: 'oversize' });
+});
+
+test('fetchResourceBytes: a throwing fetch is no-response', async () => {
+  const res = await withStubbedFetch(
+    async () => { throw new TypeError('network down'); },
+    () => fetchResourceBytes('https://example.com/a.js', { maxBytes: 1000 }),
+  );
+  assert.deepEqual(res, { failed: true, reason: 'no-response' });
+});
+
+test('fetchResourceBytes: our own timeout is reported as a timeout, not a network failure', async () => {
+  // The abort comes from the fetcher's own timer, so `signal.aborted`
+  // identifies it exactly — the two must not collapse into one reason.
+  const res = await withStubbedFetch(
+    (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }),
+    () => fetchResourceBytes('https://example.com/a.js', { maxBytes: 1000, timeoutMs: 10 }),
+  );
+  assert.deepEqual(res, { failed: true, reason: 'timeout' });
+});
+
+test('fetchResourceBytes: a rejected content type is its own reason', async () => {
+  const res = await withStubbedFetch(
+    async () => okResponse(new Uint8Array([1, 2, 3]).buffer, { 'content-type': 'text/html' }),
+    () => fetchResourceBytes('https://example.com/a.png', {
+      maxBytes: 1000,
+      acceptContentType: (ct) => ct.startsWith('image/'),
+    }),
+  );
+  assert.deepEqual(res, { failed: true, reason: 'wrong-content-type' });
+});
+
+test('fetchResourceBytes: a file:// failure never claims an HTTP status', async () => {
+  // Node has no XMLHttpRequest, so this takes the same `fetch` leg the
+  // service worker does. A `file:` URL has no HTTP layer, so a
+  // synthesised non-ok status must not surface as `HTTP <n>` — that is
+  // what made this leg disagree with the page-context XHR leg about a
+  // missing local dependency.
+  const res = await withStubbedFetch(
+    async () => new Response(null, { status: 404 }),
+    () => fetchResourceBytes('file:///home/me/scripts/gone.js', { maxBytes: 1000 }),
+  );
+  assert.deepEqual(res, { failed: true, reason: 'unreadable-file' });
+});
+
+test('fetchResourceBytes: a scheme we do not fetch says so', async () => {
+  const res = await fetchResourceBytes('ftp://example.com/a.js', { maxBytes: 1000 });
+  assert.deepEqual(res, { failed: true, reason: 'unsupported-scheme' });
 });

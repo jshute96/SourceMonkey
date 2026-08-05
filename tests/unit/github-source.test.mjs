@@ -278,7 +278,7 @@ test('normalizeGithubInput rejects a bare repo with no default_branch in the met
     withFetch(fakeFetch, () =>
       normalizeGithubInput('https://github.com/foo/bar'),
     ),
-    /missing default_branch/,
+    /did not report the repo's default branch/,
   );
 });
 
@@ -340,7 +340,7 @@ test('scanGithubDir surfaces a clear error when the API returns a non-array', as
     withFetch(fakeFetch, () =>
       scanGithubDir('https://github.com/foo/bar/tree/main/dir'),
     ),
-    /did not return a directory listing/,
+    /not a folder in the repo/,
   );
 });
 

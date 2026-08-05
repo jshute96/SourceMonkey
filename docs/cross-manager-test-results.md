@@ -22,9 +22,9 @@ Specs that opt out under TM via
 `test.skip(setup.manager === 'tampermonkey', '<reason>')`:
 
 - **`xmlhttp-denied/`** — asserts SM's exact
-  `"blocked by @connect policy"` message. TM has its own `@connect`
-  UX (potentially prompting the user) and its own denial message.
-  Out of scope for cross-manager comparison.
+  `"blocked by this script's @connect rules"` message. TM has its own
+  `@connect` UX (potentially prompting the user) and its own denial
+  message. Out of scope for cross-manager comparison.
 - **`gm-resource/`** — the example uses relative `@resource` refs
   (`./resource.css`, etc.) resolved against the host script's URL,
   which is a SourceMonkey extension over TM/VM. TM accepts absolute

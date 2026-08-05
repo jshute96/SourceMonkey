@@ -590,7 +590,7 @@ Two rough edges are left:
     this supersedes" from an unrelated `sm:error` still in the log.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
-  ordinary browsing appends `checked for updates — no change` per
+  ordinary browsing appends `Checked for updates — no change` per
   script per reload — and two rows for a script that is still failing.
   Dropping the row for non-user-initiated checks would fix it; the
   blocker is that `manual` currently means "not rate-limited", not
@@ -611,43 +611,104 @@ Two rough edges are left:
   `summarizeSourceOutcome` would fix it, but that lives in
   `script-updater.ts`, which imports `script-store.ts`.
 
+## Registration rejections — follow-ups
+
+REJECTED is in (see
+[docs/injection.md](docs/injection.md#rejected-registrations)): a script
+Chrome refuses shows the state, keeps the reason in its Log, and clears
+itself once a sync places it. What's missing:
+
+- **The match-pattern check is narrower than Chrome's parser.**
+  `matchPatternProblem` (`src/url-match.ts`) covers the shapes Chrome
+  names — no path, bad scheme, empty host, misplaced host wildcard —
+  and stops there, because a false positive would drop a pattern that
+  works. A malformed port and anything Chrome tightens next still land
+  as REJECTED. Widening it means owning more of a grammar that drifts,
+  so each addition wants a probe against a real Chrome first (the one
+  in `tests/e2e/rejected-registration.spec.ts`'s header is the record
+  of the last such run).
+- **Chrome-refused shapes other managers run are common in the wild.**
+  Measured over `tests/greasyfork-examples/corpus.db` (1,991 scripts,
+  9,003 `@match` patterns): 1,035 patterns fail the check, and 81
+  scripts have nothing usable left, so they load INVALID. They can't
+  run today either — Chrome refuses the registration — but the patterns
+  exist because managers with their own matchers are more forgiving
+  than Chrome's parser. The two shapes that account for nearly all of
+  it:
+    - `*.example.com/*` — no scheme at all (710 patterns).
+    - `http*://example.com/*` — a scheme glob Chrome won't take (206).
+  Both have an obvious reading (`*://*.example.com/*` and
+  `*://example.com/*`), and we already own a wrapper-side matcher for
+  the regex `@include` case — register `<all_urls>` and decide in the
+  prelude. Doing that would need `matchPattern` to accept the shapes
+  too, so it is a matching-semantics change, not just a validation one.
+  Measure what TM actually runs for each shape before deciding —
+  `npm run test:e2e:tm` already drives a real TM.
+- **The install preview doesn't show parse-time warnings.**
+  `checkPreviewSource` builds the row and reports header errors and
+  syntax errors, but drops `startupLogs` — so an unsupported `@grant`
+  or a dropped `@match` is only visible after installing.
+- **The message is Chrome's, so it speaks Chrome's coordinates.**
+  `matches[1]: Invalid port` counts within the spec we built, not the
+  lines of the file. Deliberate — the alternative is inventing a
+  mapping that could point at the wrong tag — but it means REJECTED is
+  the one user-visible verdict with no clickable location.
+
 ## Log and error message quality
 
 The Source labels are written for users (`manual-refresh`,
 `extension-startup`, `script-wrapper` — see
-[docs/script-log.md](docs/script-log.md#source-labels)), and the
-messages a **script validation** failure produces have now had the same
-pass (the rules they follow are in
+[docs/script-log.md](docs/script-log.md#source-labels)), and both the
+**script validation** messages and the ones reporting on the
+extension's **own machinery** have now had the same pass (the rules
+they follow are in
 [docs/diagnostics.md](docs/diagnostics.md#wording)). What's left:
 
-- **The messages that aren't about script content.** The pass covered
-  `errorMessage` / the header and dependency wording. Not yet audited:
-  anything reporting on the extension's own machinery, where
-  implementation jargon leaks — "SW" for the service worker is the
-  known example — plus the viewer's `setMessage` copy for states that
-  aren't diagnostics.
+- **`handleXhrStart` fails silently when it can't identify the tab.**
+  `background.ts` returns without sending anything, so the calling
+  script dangles until the page-side 5-minute TTL fires and reports a
+  timeout — a misleading account of what happened. The other two GM
+  handlers with the same guard reply with `NO_ORIGINATOR_TAB`; this one
+  can't, because the reply path it would use *is* the tab. Needs a
+  different route, not a different string.
+- **`sm:abandoned` has no real reasons to report.** The Log row says
+  `Did not run on this page (<reason>)`, but the SW's
+  `{action: 'skip', reason}` branch is unused, so the only value that
+  reaches it is the wrapper's own `"skip"` fallback. Either give the
+  skip decision real reasons or drop the parenthetical.
 - **The version-probe rows keep their own wording.**
   `version-probe-fetch.ts` still says `no metadata block` where the
-  viewer now says `no // ==UserScript== metadata block, so this is not a
+  viewer now says `No // ==UserScript== metadata block, so this is not a
   userscript`. Deliberate — `probe.error` renders as a value in a
   definition-list cell (`script-details.ts`), beside `could not fetch`
   and `no @version`, so a full message doesn't fit. Revisit if that row
   ever gets room, or if the split starts confusing people.
-- **Say which fetch failure it was.** `FETCH_FAILED`
-  (`external-files.ts`) lists three possibilities because
-  `fetchResourceBytes` returns `null` for all of them: no response, a
-  non-ok status, and over the size cap. Every one of those is known at
-  the point it returns. Making it report a reason would let the message
-  state the fact, and would retire the fetch-log reconstruction the
-  offline validator does to recover it (`REASON_TEXT` in
-  `scripts/validate-userscripts.mjs`).
-- **Split "not a usable reference".** `resolveScriptResource` returns
-  `null` both for an unsupported scheme and for a relative path that
-  climbs out of the script's folder — two different mistakes with
-  different fixes. The message states the rule instead of naming the
-  problem, because the resolver doesn't say which.
+  - Same condition covers `fetchResourceText`, which still returns
+    `string | null`: the bytes fetcher knows which failure it was, and
+    the probe is the only caller that throws that away.
 
 ## Testing and example TOODs
+
+- **Three specs flake under full-suite load, never in isolation.** All
+  pass standalone (`refresh-failed.spec.ts` went 35/35 under
+  `--repeat-each=5`), and each has failed at more than one assertion
+  across runs, which points at a race rather than one wrong
+  expectation:
+  - `refresh-failed.spec.ts:100` — seen with the first `Refresh
+    failed` row absent, and separately with `Loaded new content`
+    absent.
+  - `version-probe.spec.ts:262` — the status cell reads `ERROR` where
+    the test expects `OK`, i.e. something logged an error-level row
+    during the check.
+  - `log-stack-mapping.spec.ts:139` — the Log pane's table never
+    appears, i.e. the `sm:error` report hadn't landed within the fixed
+    500 ms the test waits after navigating. Passed 9/9 in isolation
+    immediately after. The fixed wait is the suspect here, but the
+    other two have no such wait, so it may be the same underlying
+    contention.
+  - Worth finding before it hides a regression: a real race between a
+    refresh's storage write and the log read would be a product bug,
+    not a test-only timing bug.
 
 - API explorer page with forms to call any GM API with any args
 - examples for all supported GM APIs, all headers

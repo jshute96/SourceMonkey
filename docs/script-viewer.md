@@ -165,17 +165,20 @@ One page, one set of panels, two query strings:
        URL gets captured — see the Link rendering section below.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
        preview, the byte length of the fetched text.
-     - `Status` — installed mode only. `OK` / `INVALID` / `MISSING` / `REFRESH FAILED` /
-       `OUTDATED` / `WARNING` / `ERROR`
+     - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
+       `MISSING` / `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
        (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
-       color-coded; the row's `title` carries the `refreshError` reason
-       for a `REFRESH FAILED` row, the newer upstream version for an
+       color-coded; the row's `title` carries Chrome's refusal reason
+       for a `REJECTED` row, the `refreshError` reason for a
+       `REFRESH FAILED` one, the newer upstream version for an
        `OUTDATED` one, else `errorMessage` when present.
        Rendered as an `<a href="#Log">` so clicking switches
        to the Log tab via the same hashchange listener as a manual
        tab click. The level promotes live as new log entries arrive
        — the `storage.session.onChanged` listener for
-       `loglevel:<scriptId>` repaints just this row.
+       `loglevel:<scriptId>` repaints just this row, and the same
+       listener repaints it (plus the message bar) when the injector's
+       `injector-rejections` map changes.
 5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
    Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`

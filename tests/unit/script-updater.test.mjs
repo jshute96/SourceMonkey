@@ -219,7 +219,7 @@ async function seedSingleScriptThenReplay(scriptId = 'sc-1') {
   sessionStore.clear();
   seedScript({
     scriptId,
-    startupLogs: [{ level: 'warn', message: 'ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
   });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests(scriptId);
@@ -266,13 +266,13 @@ test('replayScriptLogsAtBoot: replays diagnostics even if a refresh got there fi
   sessionStore.clear();
   seedScript({
     scriptId: 'sc-race',
-    startupLogs: [{ level: 'warn', message: 'ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
   });
   // Pre-seed the log with what a refresh path would have written.
   await (await import('../../dist/script-log.js')).appendScriptLog('sc-race', {
     level: 'warning',
     source: 'parser',
-    message: 'ignoring @grant GM_audio — unsupported APIs',
+    message: 'Ignoring @grant GM_audio — unsupported APIs',
   });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-race');
@@ -339,7 +339,7 @@ test('replayScriptLogsAtBoot: restates a stale refresh at warning level', async 
   const log = await getScriptLog('sc-stale');
   assert.equal(log.length, 1);
   assert.equal(log[0].level, 'warning');
-  assert.equal(log[0].message, 'refresh failed: HTTP 503');
+  assert.equal(log[0].message, 'Refresh failed: HTTP 503');
 });
 
 test('replayScriptLogsAtBoot: restates a load error even if a refresh already logged it', async () => {
@@ -381,12 +381,12 @@ async function emitFull(steps, mode = 'manual') {
   return await getScriptLog(id);
 }
 
-// Same, minus the `checking for updates` preamble a reportable check
+// Same, minus the `Checking for updates` preamble a reportable check
 // writes ahead of its outcome. Most tests here are about WHAT gets
 // reported; the framing itself has its own block below.
 async function emitAll(steps, mode = 'manual') {
   const log = await emitFull(steps, mode);
-  return log.filter((e) => e.message !== 'checking for updates');
+  return log.filter((e) => e.message !== 'Checking for updates');
 }
 
 test('emitScriptOutcomeLog: an invalid row logs its errorMessage at error level', async () => {
@@ -414,7 +414,7 @@ test('emitScriptOutcomeLog: a repeated identical failure is logged every check',
 // ---------- how a check frames itself ----------
 //
 // An uneventful check is ONE row naming both the check and its result.
-// A check with something to report writes `checking for updates` and
+// A check with something to report writes `Checking for updates` and
 // then the outcome, which carries its own severity and is what the
 // status badge links to.
 
@@ -423,7 +423,7 @@ async function framing(prior, next, mode = 'manual') {
 }
 
 test('framing: an uneventful check is a single self-describing row', async () => {
-  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['checked for updates — no change']);
+  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['Checked for updates — no change']);
 });
 
 test('framing: an uneventful background check says nothing at all', async () => {
@@ -435,7 +435,7 @@ test('framing: a failing check is announced, then reported', async () => {
   const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
   assert.deepEqual(
     await framing(OK_ROW, bad),
-    ['checking for updates', 'no metadata block'],
+    ['Checking for updates', 'no metadata block'],
   );
 });
 
@@ -445,7 +445,7 @@ test('framing: a still-failing check is announced again', async () => {
   const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'no metadata block' };
   assert.deepEqual(
     await framing(bad, bad),
-    ['checking for updates', 'no metadata block'],
+    ['Checking for updates', 'no metadata block'],
   );
 });
 
@@ -453,15 +453,15 @@ test('framing: a recovery is announced, then reported', async () => {
   const stale = { ...OK_ROW, refreshError: 'HTTP 404' };
   assert.deepEqual(
     await framing(stale, OK_ROW),
-    ['checking for updates', 'refresh succeeded again (source is reachable)'],
+    ['Checking for updates', 'Refresh succeeded again (source is reachable)'],
   );
 });
 
 test('framing: new content is announced, then reported', async () => {
   const fresh = { ...OK_ROW, loadedAt: OK_ROW.loadedAt + 1 };
   const log = await framing(OK_ROW, fresh);
-  assert.equal(log[0], 'checking for updates');
-  assert.match(log[1], /^loaded new content/);
+  assert.equal(log[0], 'Checking for updates');
+  assert.match(log[1], /^Loaded new content/);
 });
 
 test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one does', async () => {
@@ -472,7 +472,7 @@ test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one do
   const healthy = await emitAll([[OK_ROW, OK_ROW]]);
   const broken = await emitAll([[bad, bad]]);
   assert.equal(healthy.length, 1);
-  assert.equal(healthy[0].message, 'checked for updates — no change');
+  assert.equal(healthy[0].message, 'Checked for updates — no change');
   assert.equal(broken.length, 1, 'a broken script must not go quiet');
   assert.equal(broken[0].message, 'no metadata block');
 });
@@ -490,7 +490,7 @@ test('emitScriptOutcomeLog: a vanished file logs at error level, on every check'
   assert.equal(log.length, 2, 'the second check re-looked and it is still gone');
   for (const entry of log) {
     assert.equal(entry.level, 'error');
-    assert.equal(entry.message, 'source file is missing');
+    assert.equal(entry.message, 'Source file is missing');
   }
 });
 
@@ -503,7 +503,7 @@ test('emitScriptOutcomeLog: a refresh failure is a warning, on every check', asy
   assert.equal(log.length, 2, 'a source that is still down still says so');
   for (const entry of log) {
     assert.equal(entry.level, 'warning');
-    assert.equal(entry.message, 'refresh failed: HTTP 404');
+    assert.equal(entry.message, 'Refresh failed: HTTP 404');
   }
 });
 
@@ -513,8 +513,8 @@ test('emitScriptOutcomeLog: a recovered refresh logs an info entry', async () =>
   const log = await emitAll([[OK_ROW, stale], [stale, recovered]]);
   assert.equal(log.length, 3);
   assert.equal(log[1].level, 'info');
-  assert.match(log[1].message, /refresh succeeded again/);
-  assert.match(log[2].message, /loaded new content/);
+  assert.match(log[1].message, /Refresh succeeded again/);
+  assert.match(log[2].message, /Loaded new content/);
 });
 
 test('emitScriptOutcomeLog: recovery from invalid is logged even when the bytes are unchanged', async () => {
@@ -526,7 +526,7 @@ test('emitScriptOutcomeLog: recovery from invalid is logged even when the bytes 
   const log = await emitAll([[OK_ROW, bad], [bad, OK_ROW]]);
   assert.equal(log.length, 2);
   assert.equal(log[1].level, 'info');
-  assert.match(log[1].message, /loads cleanly again/);
+  assert.match(log[1].message, /Loads cleanly again/);
 });
 
 test('emitScriptOutcomeLog: a broken row with no prior still logs', async () => {
@@ -542,7 +542,7 @@ test('emitScriptOutcomeLog: a row that vanished mid-refresh is reported', async 
   const log = await emitAll([[OK_ROW, null]]);
   assert.equal(log.length, 1);
   assert.equal(log[0].level, 'warning');
-  assert.equal(log[0].message, 'row vanished during refresh');
+  assert.equal(log[0].message, 'This script was removed while it was being refreshed');
 });
 
 test('emitScriptOutcomeLog: a cleared log gets its explanation back on the next check', async () => {
@@ -561,7 +561,7 @@ test('emitScriptOutcomeLog: a cleared log gets its explanation back on the next 
   const after = (await getScriptLog(id)).map((e) => e.message);
   assert.deepEqual(
     after,
-    ['checking for updates', 'no metadata block'],
+    ['Checking for updates', 'no metadata block'],
     'the reason must come back after the log lost it',
   );
 });
@@ -571,7 +571,7 @@ test('emitScriptOutcomeLog: fail → recover → fail again tells the whole stor
   const good = { ...OK_ROW, loadedAt: 200 };
   const log = await emitAll([[OK_ROW, stale], [stale, good], [good, stale]]);
   assert.deepEqual(log.map((e) => e.level), ['warning', 'info', 'info', 'warning']);
-  assert.equal(log[3].message, 'refresh failed: HTTP 404');
+  assert.equal(log[3].message, 'Refresh failed: HTTP 404');
 });
 
 test('emitScriptOutcomeLog: opportunistic checks log failures but not "no change"', async () => {
@@ -611,7 +611,7 @@ test('summarizeSourceOutcome: a scan failure lands in every script log, not "no 
   const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
   const [log] = await summarize(SOURCE_OK, [script], failed);
   assert.equal(log.length, 1);
-  assert.match(log[0].message, /source scan failed: ENOENT/);
+  assert.match(log[0].message, /This source did not load: ENOENT/);
 });
 
 test('summarizeSourceOutcome: a scan failure stays at info so it cannot badge every script', async () => {
@@ -652,8 +652,8 @@ test('summarizeSourceOutcome: a readable-again source logs the recovery', async 
     { source: SOURCE_OK, scripts: [script] },
   );
   assert.deepEqual(log.map((e) => e.message), [
-    'source scan succeeded again (source is readable)',
-    'checked for updates — no change',
+    'This source is readable again',
+    'Checked for updates — no change',
   ]);
   assert.equal(log[0].level, 'info');
 });
@@ -670,9 +670,9 @@ test('summarizeSourceOutcome: a broad refresh frames each script for itself', as
     [healthy, broken],
     { source: SOURCE_OK, scripts: [healthy, broken] },
   );
-  assert.deepEqual(healthyLog.map((e) => e.message), ['checked for updates — no change']);
+  assert.deepEqual(healthyLog.map((e) => e.message), ['Checked for updates — no change']);
   assert.deepEqual(
     brokenLog.map((e) => e.message),
-    ['checking for updates', 'no metadata block'],
+    ['Checking for updates', 'no metadata block'],
   );
 });

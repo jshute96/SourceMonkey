@@ -111,6 +111,42 @@ test('validateHeader complains about a null header', async () => {
   assert.deepEqual(validateHeader(null), { message: NO_METADATA_BLOCK });
 });
 
+// A `@match` Chrome's grammar refuses is dropped, not run — so a script
+// with nothing else to match on is in the same position as one that
+// declared no pattern at all. Unlike the failures above, the offending
+// text IS in the file, so this one points at its own line.
+test('validateHeader rejects a script whose every @match is unusable', async () => {
+  const problem = validateHeader(parseHeader(`// ==UserScript==
+// @name  X
+// @match https://example.com
+// @match https://other.example
+// ==/UserScript==
+`));
+  assert.match(problem.message, /@match https:\/\/example\.com has no path/);
+  assert.match(problem.message, /never run on any page/);
+  assert.equal(problem.line, 3);
+});
+
+test('validateHeader accepts a script with one good @match beside a bad one', async () => {
+  // The bad pattern is a warning (see extractStartupLogs); the script
+  // still runs everywhere the good one says.
+  assert.equal(validateHeader(parseHeader(`// ==UserScript==
+// @name  X
+// @match https://example.com
+// @match https://example.com/*
+// ==/UserScript==
+`)), null);
+});
+
+test('validateHeader accepts unusable @match when an @include can still match', async () => {
+  assert.equal(validateHeader(parseHeader(`// ==UserScript==
+// @name    X
+// @match   https://example.com
+// @include https://example.com/*
+// ==/UserScript==
+`)), null);
+});
+
 // ---------- extractStartupLogs ----------
 
 test('extractStartupLogs returns [] for a null header', () => {
@@ -150,7 +186,7 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
+      message: 'Ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -170,7 +206,34 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'ignoring @grant GM_typo — unsupported APIs',
+      message: 'Ignoring @grant GM_typo — unsupported APIs',
+      location: { file: 'x.user.js', line: 5 },
+    },
+  ]);
+});
+
+test('extractStartupLogs warns once per unusable @match, each on its own line', () => {
+  // One row per bad pattern rather than one naming them all: each has a
+  // different reason and a different line, and a single row could only
+  // point at one of them.
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://good.example/*
+// @match https://bare.example
+// @match nonsense
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
+    {
+      level: 'warn',
+      message: 'Ignoring @match https://bare.example — it has no path; '
+        + 'add a trailing "/*" to match every page on that host',
+      location: { file: 'x.user.js', line: 4 },
+    },
+    {
+      level: 'warn',
+      message: 'Ignoring @match nonsense — it has no "://" between its scheme and its host; '
+        + 'add a scheme — "*://" covers http and https, as in *://example.com/*',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -224,7 +287,7 @@ console.log('hi');
   assert.deepEqual(entry.startupLogs, [
     {
       level: 'warn',
-      message: 'ignoring @grant GM_typoName — unsupported APIs',
+      message: 'Ignoring @grant GM_typoName — unsupported APIs',
       location: { file: 'a.user.js', line: 5 },
     },
   ]);
@@ -1021,7 +1084,7 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
 test('loadStateLogEntry falls back to a generic message when an invalid row has none', () => {
   assert.deepEqual(
     loadStateLogEntry({ status: 'invalid' }),
-    { level: 'error', message: 'unknown error' },
+    { level: 'error', message: 'Unknown error' },
   );
 });
 
@@ -1032,7 +1095,7 @@ test('loadStateLogEntry reports a missing row as an error', async () => {
   });
   assert.deepEqual(
     loadStateLogEntry(applyMissing(ok)),
-    { level: 'error', message: 'source file is missing' },
+    { level: 'error', message: 'Source file is missing' },
   );
 });
 
@@ -1048,7 +1111,7 @@ test('loadStateLogEntry reports a refreshError as a warning: the script still ru
   assert.equal(stale.status, 'ok');
   assert.deepEqual(
     loadStateLogEntry(stale),
-    { level: 'warning', message: 'refresh failed: HTTP 404' },
+    { level: 'warning', message: 'Refresh failed: HTTP 404' },
   );
 });
 

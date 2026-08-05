@@ -56,6 +56,12 @@ import {
   type LogEntry,
   type LogLevel,
 } from './script-log.js';
+import {
+  REJECTIONS_KEY,
+  coerceRejectionMap,
+  describeRejection,
+  readRejections,
+} from './script-rejection.js';
 import { updateScript } from './script-updater.js';
 import {
   decodeForDisplay,
@@ -82,6 +88,7 @@ import {
   fetchHttpText,
   isFileUrl,
   isHttpUrl,
+  LOCATION_SHAPES,
   normalizeSourceInput,
   scriptAbsolutePath,
   sourceCanonicalUrl,
@@ -267,6 +274,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         : undefined;
       if (currentScript) repaintStatusRow(currentScript);
     }
+    // Same for the injector's rejection map: a sync that finally places
+    // this script (or newly refuses it) has to move the Status row and
+    // the message bar, both of which are visible from every tab.
+    if (REJECTIONS_KEY in changes) {
+      currentRejection = coerceRejectionMap(changes[REJECTIONS_KEY]?.newValue)[scriptId];
+      if (currentScript) {
+        repaintStatusRow(currentScript);
+        paintScriptMessage(currentScript);
+      }
+    }
     // Repaint the log pane only when THIS script's log changed and the
     // user is currently looking at it — the pane is hidden behind a
     // code tab the rest of the time, so we'd just be doing work the
@@ -314,7 +331,7 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   // If THIS script was removed, drop into the not-found state.
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage. Open it from the sources page.');
+    showMissing('Script not found in storage — open it from the sources page');
     return;
   }
   // Re-read the parent source too: its enabled state greys the Enable
@@ -380,21 +397,27 @@ let currentScript: StoredScript | null = null;
 // load and from the storage.session.onChanged listener so the Status
 // row tracks the Log pane without a full re-render.
 let currentLogLevel: LogLevel | undefined;
+// Chrome's reason for refusing to register THIS script, while it is
+// refusing — the script loaded fine but never runs. Drives the REJECTED
+// status and the message bar. Undefined in the normal case; kept fresh
+// from the same storage.session listener as `currentLogLevel`.
+let currentRejection: string | undefined;
 
 async function loadStored(): Promise<void> {
   if (!scriptId) return;
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage. Open it from the sources page.');
+    showMissing('Script not found in storage — open it from the sources page');
     return;
   }
   cacheSource(await getSource(script.sourceId));
   await refreshLogId();
-  // Hydrate the max log level before render() so the first paint of
-  // the Status row already reflects WARNING / ERROR. Without this the
-  // row would briefly show OK and then flip when the storage listener
-  // fires.
+  // Hydrate the max log level and any registration rejection before
+  // render() so the first paint of the Status row already reflects
+  // WARNING / ERROR / REJECTED. Without this the row would briefly
+  // show OK and then flip when the storage listener fires.
   currentLogLevel = await getMaxLogLevel(scriptId);
+  currentRejection = (await readRejections())[scriptId];
 
   render(script);
   // The tab view seeds its own selection from `location.hash` on the
@@ -542,18 +565,35 @@ function render(script: StoredScript): void {
 
   tabsView.setTabs(storedTabs(script));
 
-  // The message shows the load error for `invalid` rows, and the
-  // refresh-failure reason for a still-running `refresh-failed` row
-  // (status `ok` + `refreshError`) — so opening a flagged script always
-  // explains why. `errorMessage` takes precedence (it means the script
-  // can't run at all); `refreshError` is the softer "running on a cached
-  // copy, last update failed" case.
-  //
   // Painted AFTER the tabs, not with the rest of the header fields: a
   // location can only become a link once there are tabs to resolve it
   // against, and `setTabs` is what installs them.
+  paintScriptMessage(script);
+}
+
+// The message bar for an installed script: whichever "here is what's
+// wrong" line applies, in severity order, so opening a flagged script
+// always explains why.
+//
+//   errorMessage   — the load failed; the script can't run at all.
+//   rejection      — the load was fine but Chrome refused the
+//                    registration, so the script never runs either.
+//                    Ranked below `errorMessage` only because the two
+//                    can't co-occur (an INVALID script is never offered
+//                    to Chrome), so the order is a formality.
+//   refreshError   — the softer "running on a cached copy, last update
+//                    failed" case.
+//
+// Split out of `render` so the storage listener can repaint the bar
+// when a rejection appears or clears without re-rendering the page.
+function paintScriptMessage(script: StoredScript): void {
   if (script.errorMessage) {
     setDiagnosticMessage(script.errorMessage, script.errorLocation, 'error');
+  } else if (currentRejection) {
+    // No location: Chrome names the offending value in its own words
+    // (`matches[1]: Invalid port`), and we have no mapping from that
+    // back to a line in the file. See docs/diagnostics.md.
+    setMessage(describeRejection(currentRejection), 'error');
   } else if (script.refreshError) {
     // No location: `refreshError` means the fetch failed, so there is
     // no new content to point into, and the running copy is fine.
@@ -661,31 +701,34 @@ function requireBasename(url: string, ref: string): string {
 // Build the Status row content: an anchor whose href is `#Log` so
 // clicking switches the viewer to the Log tab via the regular
 // hashchange listener. Labeled with the effective status (INVALID /
-// MISSING / OUTDATED / ERROR / WARNING / OK) computed against the
-// current log level.
+// REJECTED / MISSING / OUTDATED / ERROR / WARNING / OK) computed
+// against the current log level and registration verdict.
 function buildStatusCell(script: StoredScript): Node {
   const outdated = scriptOutdatedProbe(script);
   const effective = effectiveScriptStatus(
     { status: script.status, refreshError: script.refreshError },
     currentLogLevel,
     outdated !== null,
+    currentRejection !== undefined,
   );
   const link = document.createElement('a');
   link.href = '#Log';
   link.textContent = formatScriptStatusLabel(effective);
   link.className = `meta-status status-${effective}`;
-  // Hover text follows whatever the cell is showing: the refresh-failure
-  // reason, the newer version found upstream, or the load errorMessage.
-  // A `title` is plain text, so the location is flattened in rather
-  // than linked — the clickable form of the same verdict is in the
-  // message bar this row sits above.
-  const title = effective === 'refresh-failed'
-    ? script.refreshError
-    : effective === 'outdated' && outdated
-      ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
-      : script.errorMessage
-        ? describeDiagnostic(script.errorMessage, script.errorLocation)
-        : undefined;
+  // Hover text follows whatever the cell is showing: Chrome's rejection
+  // reason, the refresh-failure reason, the newer version found
+  // upstream, or the load errorMessage. A `title` is plain text, so the
+  // location is flattened in rather than linked — the clickable form of
+  // the same verdict is in the message bar this row sits above.
+  const title = effective === 'rejected' && currentRejection
+    ? currentRejection
+    : effective === 'refresh-failed'
+      ? script.refreshError
+      : effective === 'outdated' && outdated
+        ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
+        : script.errorMessage
+          ? describeDiagnostic(script.errorMessage, script.errorLocation)
+          : undefined;
   if (title) link.title = title;
   return link;
 }
@@ -736,13 +779,22 @@ async function loadPreview(): Promise<void> {
   await githubTokenReady;
 
   let text: string;
+  // Set only for an input we rejected on shape. The catch below is
+  // shared with the real fetch failures, and reporting a malformed
+  // location as one of those would send the reader looking at their
+  // network for a problem that is in the address bar.
+  let badInput = false;
   try {
     // Check the shape before canonicalizing: `sourceCanonicalUrl`
     // turns anything that isn't already http(s)/file:// into a
     // file:// URL, so an `ftp://…` param would otherwise fail with a
     // baffling `file:///ftp%3A//…` error instead of being named.
     if (!isPreviewableInput(input)) {
-      throw new Error('not an http(s):// or file:// URL, or an absolute path');
+      badInput = true;
+      // A whole sentence, not a fragment: the catch renders it as-is
+      // rather than under the `Could not fetch this script: ` prefix
+      // the other failures there take.
+      throw new Error(`This is not a script location — it ${LOCATION_SHAPES}`);
     }
     // Same canonicalization `addSource` runs, so what the
     // already-installed check compares is exactly what installing
@@ -761,7 +813,10 @@ async function loadPreview(): Promise<void> {
       fileUrl: previewFileUrl || input,
     });
     document.title = `${displayLocation(previewLocation || input)} — SourceMonkey`;
-    setMessage(`Could not fetch this script: ${describeError(err)}`, 'error');
+    setMessage(
+      badInput ? describeError(err) : `Could not fetch this script: ${describeError(err)}`,
+      'error',
+    );
     // The likeliest reason a local file wouldn't read. `previewFileUrl`
     // is still '' if normalizeSourceInput is what threw, which is
     // correctly not a file:// URL — we never got as far as a read.
@@ -798,7 +853,7 @@ async function fetchPreviewText(url: string): Promise<string> {
   // `unchanged` needs a conditional request to happen, and we send
   // none — but the type includes it, so fail loudly rather than
   // rendering an empty page if that ever changes.
-  if (result.kind !== 'ok') throw new Error('no content returned');
+  if (result.kind !== 'ok') throw new Error('No content returned');
   return result.text;
 }
 
@@ -1160,7 +1215,7 @@ async function wireInstallButtons(): Promise<void> {
   const existing = await findInstalled();
 
   if (!existing) {
-    renderBanner('This script is not installed yet.', 'preview');
+    renderBanner('This script is not installed yet', 'preview');
     installBtn.hidden = false;
     installBtn.disabled = false;
     installBtn.onclick = () => void doInstall();
@@ -1211,7 +1266,7 @@ async function doInstall(): Promise<void> {
       // that normalizes to an already-installed one). Re-run the button
       // wiring so the page converges on the Open / Update pair instead
       // of offering an Install that can only repeat this message.
-      setMessage('This script is already installed.');
+      setMessage('This script is already installed');
       await wireInstallButtons();
       return;
     }
@@ -1281,7 +1336,7 @@ function openRawSource(): void {
   if (!previewText && !isHttp && !previewFileUrl) {
     // Nothing fetched and nothing to navigate to — normalizeSourceInput
     // threw before we ever resolved a URL.
-    setMessage('There is no source to open for this location.', 'error');
+    setMessage('There is no source to open for this location', 'error');
     return;
   }
   if (!previewText) {
@@ -1384,7 +1439,7 @@ function showFileAccessBannerIfBlocked(fileUrl: string, retry?: string): void {
 // unrelated setting as the explanation.
 //
 // Told apart by the URL: every fetch helper in `directories.ts` names
-// the thing it couldn't read (`could not read <url>: …`), and no parse
+// the thing it couldn't read (`Could not read <url>: …`), and no parse
 // or validation message does. Still true of rows persisted under the
 // older wording, which named the URL too. Deliberately
 // matched against this script's own `fileUrl`, so a failed `@require`
@@ -1417,7 +1472,7 @@ interface PreviewWarning {
   location?: DiagnosticLocation;
   // Anything to say AFTER the location. Kept separate rather than
   // glued onto `message` so the location stays in the middle of the
-  // sentence where it reads naturally — "…syntax error: X (in f, line
+  // sentence where it reads naturally — "…Syntax error: X (in f, line
   // 3). Installing it will store it as INVALID."
   trailing?: string;
 }
@@ -1447,7 +1502,6 @@ function renderInstalledBanner(existing: StoredScript, header: ParsedHeader | nu
   } else if (installedVersion) {
     text += ` (version ${installedVersion})`;
   }
-  text += '.';
   renderBanner(text, 'installed');
 }
 

@@ -97,8 +97,10 @@ The runtime keeps a per-script box of:
 Same conservative policy as `@require`. Any of these flips the parent
 script to `status: 'invalid'` with a message naming the resource name:
 
-- Resolution rejection (traversal, disallowed scheme, …).
-- Fetch failure (404, oversize, timeout).
+- Resolution rejection, naming which rule refused it.
+- Fetch failure, naming which one — see
+  [requires.md](requires.md#failure-handling); both kinds share
+  `describeFetchFailure` / `describeResolveFailure`.
 - `data:` URLs.
 
 A partial resource list isn't useful — if one resource is broken the

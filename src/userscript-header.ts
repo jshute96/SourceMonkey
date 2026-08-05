@@ -75,17 +75,17 @@ function stripLeadingBom(source: string): string {
 //
 // Phrased to read correctly in all three places they appear: alone in
 // the viewer's message bar, alone in the Log tab, and after the
-// preview's `This script cannot be installed: ` prefix. That rules out
-// both a capitalized sentence and a bare fragment like `no metadata
-// block`.
+// preview's `This file cannot be installed: ` prefix. Capitalized and
+// unpunctuated per docs/diagnostics.md#wording; that still rules out a
+// bare fragment like `No metadata block`, which needs a subject.
 export const NO_METADATA_BLOCK =
-  'no // ==UserScript== metadata block, so this is not a userscript';
+  'No // ==UserScript== metadata block, so this is not a userscript';
 // The fix is phrased as a need rather than an instruction ("it needs",
 // not "add"): this message carries a location, so it renders as
 // `… — add a … line (in f.user.js, line 1)`, where the parenthetical
 // reads as *where to add it*. Line 1 is where the block opened.
 export const UNTERMINATED_METADATA_BLOCK =
-  'the // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line';
+  'The // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line';
 
 export type SplitError = typeof NO_METADATA_BLOCK | typeof UNTERMINATED_METADATA_BLOCK;
 

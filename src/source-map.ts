@@ -26,9 +26,9 @@
 //     that actually binds is whether `chrome.userScripts.register()`
 //     accepts the payload, and that failure is already visible:
 //     `registerWithFallback` in src/injector.ts drops from batch to
-//     per-script registration on rejection and records the reason in
-//     `perScriptErrors`, so an oversized script fails loudly and by
-//     name. A preemptive cap would trade that for silently degrading
+//     per-script registration on rejection and records the reason
+//     against that script (which then reads REJECTED, with Chrome's
+//     wording), so an oversized script fails loudly and by name. A preemptive cap would trade that for silently degrading
 //     the feature the map exists to provide. The map does NOT touch
 //     our `chrome.storage.local` quota — it's generated at
 //     registration time from sources already stored.

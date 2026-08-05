@@ -89,9 +89,15 @@ canonical URL in the same refresh pass share one fetch.
 
 Any of these is a dependency failure, named by the offending URL:
 
-- Resolution rejection (traversal, disallowed scheme, etc.).
+- Resolution rejection — the message names *which* rule refused it: a
+  path climbing out of the script's folder and an unsupported scheme
+  are different mistakes with different fixes.
 - Non-`.js` suffix.
-- Fetch failure (404, oversize, timeout).
+- Fetch failure — likewise named: `HTTP 404`, over the size limit, an
+  empty body, a timeout, or no response at all. A `file://` ref that
+  won't read says so rather than blaming the network, and both
+  `file://` legs (page XHR, service-worker `fetch`) report it the same
+  way.
 - HTML `Content-Type` — see [below](#content-type-gate). Checked after
   the fetch, not as part of it.
 - `data:` URLs (resolution accepts them; the require gate rejects).

@@ -110,11 +110,13 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 }
 
 // Effective status shown to the user. Combines the persisted load
-// status (`ok` / `invalid` / `missing`) and the `refreshError`
-// annotation with the highest log level observed in the per-script Log
-// so far. Priority order:
+// status (`ok` / `invalid` / `missing`), the `refreshError` annotation,
+// and the live registration verdict with the highest log level observed
+// in the per-script Log so far. Priority order:
 //
 //   invalid        — the script can't run (parse / fetch / dep failure)
+//   rejected       — the script loaded fine, but Chrome refused the
+//                    registration, so it never runs (script-rejection.ts)
 //   missing        — the source file vanished from its listing
 //   refresh-failed — running fine on its cached copy, but the latest
 //                    refresh failed (unreachable source, or a fetched
@@ -126,29 +128,38 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 //   warning        — script loaded fine but its Log has a warning entry
 //   ok             — no logs, or only info-level logs
 //
-// `invalid` / `missing` always win because "can't run" is the most
-// actionable surface. `refresh-failed` and `outdated` rank above the
-// Log-derived levels for the same reason: both are specific facts about
-// the update pipeline that have no other surface in the sources list,
-// whereas the running script's own runtime errors still show up in the
-// Log tab regardless. `refresh-failed` outranks `outdated` because a
-// source we can't reach at all subsumes "some other copy is ahead".
+// `invalid` / `rejected` / `missing` always win because "can't run" is
+// the most actionable surface. `rejected` sits between the two: like
+// `invalid` it means nothing runs at all, whereas a `missing` row is
+// still injecting its last-known-good copy. (`invalid` and `rejected`
+// can't co-occur — an invalid script is never offered to Chrome.)
+// `refresh-failed` and `outdated` rank above the Log-derived levels for
+// the same reason: both are specific facts about the update pipeline
+// that have no other surface in the sources list, whereas the running
+// script's own runtime errors still show up in the Log tab regardless.
+// `refresh-failed` outranks `outdated` because a source we can't reach
+// at all subsumes "some other copy is ahead".
 export type DisplayStatus =
-  | 'ok' | 'invalid' | 'missing' | 'refresh-failed' | 'outdated' | 'warning' | 'error';
+  | 'ok' | 'invalid' | 'rejected' | 'missing'
+  | 'refresh-failed' | 'outdated' | 'warning' | 'error';
 
 export type LogLevelForStatus = 'info' | 'warning' | 'error';
 
-// `outdated` comes in as a caller-computed boolean rather than being
-// derived here, because the sources page's repaint path rebuilds status
-// cells from DOM datasets and no longer has the script row in hand.
-// Both callers get the value from `scriptOutdatedProbe` below, so the
-// two surfaces can't drift on what counts as behind.
+// `outdated` and `rejected` come in as caller-computed flags rather
+// than being derived here: neither lives on the script row (one is a
+// version probe, the other is session state the injector writes), and
+// the sources page's repaint path rebuilds status cells from DOM
+// datasets with no script row in hand. Both callers read `outdated`
+// from `scriptOutdatedProbe` below and `rejected` from the shared
+// rejection map, so the two surfaces can't drift.
 export function effectiveScriptStatus(
   script: Pick<StoredScript, 'status' | 'refreshError'>,
   maxLogLevel: LogLevelForStatus | undefined,
   outdated = false,
+  rejected = false,
 ): DisplayStatus {
   if (script.status === 'invalid') return 'invalid';
+  if (rejected) return 'rejected';
   if (script.status === 'missing') return 'missing';
   if (script.refreshError) return 'refresh-failed';
   if (outdated) return 'outdated';
@@ -169,7 +180,8 @@ export function scriptOutdatedProbe(
 
 // Text shown in the "Status" cell. Distinguishes 'missing' from
 // 'invalid' so the label matches the size cell — previously a missing
-// script showed "MISSING" for size but "ERROR" for status. REFRESH
+// script showed "MISSING" for size but "ERROR" for status. REJECTED
+// means the script is fine but Chrome refused to register it. REFRESH
 // FAILED means the script still runs from its cached copy but the last
 // update attempt failed. OUTDATED means a newer version exists at a URL
 // we deliberately don't update from. WARNING / ERROR mean the script
@@ -180,6 +192,7 @@ export function formatScriptStatusLabel(status: DisplayStatus): string {
     case 'ok': return 'OK';
     case 'missing': return 'MISSING';
     case 'invalid': return 'INVALID';
+    case 'rejected': return 'REJECTED';
     case 'refresh-failed': return 'REFRESH FAILED';
     case 'outdated': return 'OUTDATED';
     case 'warning': return 'WARNING';

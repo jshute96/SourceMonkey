@@ -84,6 +84,14 @@ non-GitHub sources stay quiet.
 
 ## Message catalog
 
+These are **service-worker console** lines, and they deliberately stay
+lowercase — the capitalization rule in
+[diagnostics.md](diagnostics.md#wording) governs strings a *user* reads,
+and none of these reach a surface. They are separate literals from the
+Log-tab rows they resemble, so the two can be worded for their own
+audience. The one shared string is the version-probe line, which
+interpolates the same `message` the Log row uses.
+
 | Message | Gated by debug flag? | Level |
 |---|---|---|
 | `N matching script(s) for <url> (doc=…): [<logIds>]` | yes | log |
@@ -96,7 +104,7 @@ non-GitHub sources stay quiet.
 | `update check: <logId>: row vanished` | no | info |
 | `update check: <logId>: invalid — <msg>` | no | info |
 | `refresh failed: <logId>: <reason>` (transition / reason change only) | no | info |
-| `<logId>: newer version <v> at <kind> URL (running <v>) — <url>` (version change only) | no | info |
+| `<logId>: Newer version <v> at <kind> URL (running <v>) — <url>` (version change only) | no | info |
 | `source refresh (mode): <path>` | no | log |
 | `source refresh: <path>: <summary>` | no | log |
 | `source refresh failed: <path>: <err>` | no | info |
@@ -106,7 +114,7 @@ non-GitHub sources stay quiet.
 | `abandoned <logId> tab=<n> <url> (reason=…)` | no | log |
 | `error <logId> tab=<n> <url>: <msg>` | no | info |
 
-Per-script `parser`-source rows (e.g. `ignoring @grant <names> — unsupported APIs`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
+Per-script `parser`-source rows (e.g. `Ignoring @grant <names> — unsupported APIs`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
 
 **No `console.warn` / `console.error` anywhere in the extension** —
 not the SW, not extension pages, and not injected wrapper / prelude /
@@ -160,12 +168,12 @@ still drives the Log-tab mirror.
   next navigation has no registration and stays quiet.
 - Updated content (loadedAt bumps) re-runs `extractStartupLogs`, so
   fixing a typo'd `@grant` and saving silences both the page console
-  (on next sync) and the Log tab (on the next "loaded new content"
+  (on next sync) and the Log tab (on the next "Loaded new content"
   event — see below).
 
 ### Mirror to the Log tab
 
-When the refresh pipeline records a "loaded new content" entry for a
+When the refresh pipeline records a "Loaded new content" entry for a
 script (see `emitScriptOutcomeLog` in `src/script-updater.ts`), it
 also walks `script.startupLogs` and appends one Log-tab entry per
 diagnostic, with `source: 'parser'`. Result: every persisted version

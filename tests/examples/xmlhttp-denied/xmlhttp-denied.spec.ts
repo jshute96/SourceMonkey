@@ -20,8 +20,9 @@ test.describe('examples / xmlhttp-denied', () => {
   }) => {
     // Tampermonkey's @connect UX differs from SourceMonkey: TM may
     // prompt the user interactively before allowing the request, and
-    // its denial message is its own — the "blocked by @connect
-    // policy" substring this test asserts is a SM-only string. Skip
+    // its denial message is its own — the "blocked by this script's
+    // @connect rules" substring this test asserts is a SM-only
+    // string. Skip
     // under TM and treat the TM behaviour as out-of-scope here.
     test.skip(setup.manager === 'tampermonkey', 'TM uses its own @connect UX (prompts, different message)');
 
@@ -39,17 +40,17 @@ test.describe('examples / xmlhttp-denied', () => {
     // block message.
     const noConnect = page.locator('#log li[data-script="no-connect"]');
     await expect(noConnect).toHaveAttribute('data-outcome', 'onerror');
-    await expect(noConnect).toContainText('blocked by @connect policy');
+    await expect(noConnect).toContainText("blocked by this script's @connect rules");
 
     const mismatch = page.locator('#log li[data-script="connect-mismatch"]');
     await expect(mismatch).toHaveAttribute('data-outcome', 'onerror');
-    await expect(mismatch).toContainText('blocked by @connect policy');
+    await expect(mismatch).toContainText("blocked by this script's @connect rules");
 
     // The allowed script must NOT see a policy block. It may onload
     // (network reachable) or onerror with a non-policy error
     // (network unreachable in CI), but the substring must not appear.
     const allowed = page.locator('#log li[data-script="connect-allowed"]');
-    await expect(allowed).not.toContainText('blocked by @connect policy');
+    await expect(allowed).not.toContainText("blocked by this script's @connect rules");
 
     await page.close();
   });

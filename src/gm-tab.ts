@@ -96,14 +96,17 @@ export async function openGmTab(
     });
     if (created.id == null) {
       requestState.delete(payload.requestId);
-      return { ok: false, error: 'chrome.tabs.create returned no id' };
+      return { ok: false, error: 'internal error: the tab opened but Chrome reported no id for it' };
     }
     const entry = requestState.get(payload.requestId);
     if (!entry) {
       // Request was already aborted; close the tab we just opened so
       // we don't leak it.
       try { await chrome.tabs.remove(created.id); } catch { /* gone */ }
-      return { ok: false, error: 'request abandoned before creation' };
+      return {
+        ok: false,
+        error: 'internal error: the tab request was dropped before the tab opened',
+      };
     }
     entry.tabId = created.id;
     tabIdToRequest.set(created.id, payload.requestId);
