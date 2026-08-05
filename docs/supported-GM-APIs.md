@@ -53,7 +53,27 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_info` / `GM.info` | ✅ | ✓ | ✓ | ✓ | Implicit — exposed in every script regardless of `@grant` (including `@grant none` and scripts with no `@grant` line), and in both MAIN and USER_SCRIPT worlds. Also spliced into every `@require` entry. Baked into the wrapper at registration time. Surface: `script.{name, version, namespace, description, matches, includes, excludes, grant, runAt}`, `scriptHandler: "SourceMonkey"`, `version: <extension version>`, `scriptMetaStr` (raw `==UserScript==` block), `uuid` (stored script id). `script.grant` is the **canonicalized** set we emitted bindings for, not the raw `@grant` lines — `@grant GM.setValue` shows up as `GM_setValue`. Matches VM. |
-| `unsafeWindow` | 🟡 | ✓ | ✓ |   | Currently a passthrough to USER_SCRIPT world's own `window`, **not** the page's. Userscripts that wanted to poke `window.jQuery` etc. should use `@inject-into page` (MAIN world) instead; a cross-world bridge could land later. |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Granting it puts the script in MAIN world (see below), where `unsafeWindow === window` — same as TM/VM on Chrome. Reads, writes, and calls all reach the page's realm. **Exception:** `@inject-into content` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
+
+### `unsafeWindow` and the execution world
+
+- `unsafeWindow` is defined as *the page's* window. In Chrome that
+  object exists only in MAIN world, and property access on it is
+  synchronous — there is no async bridge that could stand in.
+- So the grant is a **world request**: `@grant unsafeWindow` resolves
+  the script to MAIN world, exactly as `@inject-into page` does.
+  Tampermonkey and Violentmonkey make the same trade.
+- The rest of the script's `@grant`s follow it there. The shared
+  `__SM_GM__` runtime is registered in MAIN as well, and routes its
+  service-worker traffic over the existing postMessage bridge.
+- `@inject-into content` still wins — it's an explicit request for
+  isolation. The binding stays (matching VM's content mode) but every
+  page global reads as `undefined`, so SourceMonkey emits a
+  `warning`-level startup log rather than letting that be silent.
+- Running in MAIN world has costs the isolated world doesn't: the page
+  can see and interfere with the script, and DOM injection is subject
+  to the page's CSP. See
+  [injection.md](injection.md#gm_-in-main-world).
 
 ---
 
@@ -218,6 +238,14 @@ returns script B's keys. See
 USER_SCRIPT world's DOM mutations are CSP-exempt (the same
 dispensation content scripts get), so these work even on pages with
 strict `Content-Security-Policy: script-src 'self'`.
+
+**Not so in MAIN world.** A script that granted `unsafeWindow` (or
+declared `@inject-into page`) runs in the page's realm, where its
+`<style>` / `<script>` elements are the page's own and the page's CSP
+applies. On a site with a `style-src` that omits `'unsafe-inline'`,
+`GM_addStyle` will insert the element and the rules simply won't take
+effect. TM/VM have the same limitation for page-context scripts. See
+[TODO.md](../TODO.md) for the detect-and-fall-back idea.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|

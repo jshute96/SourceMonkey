@@ -28,12 +28,19 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
+import { resolveWorld, type InjectionWorld } from './injector.js';
 
 export interface MatchedScript {
   id: string;
   name: string;       // @name, or the readable relativePath as a fallback
   matching: ScriptMatching;
   collectionId: string;
+  // Which execution world the script would be injected into. Cached
+  // here because the SW's bridge gate (`bridgeMayActAs` in
+  // background.ts) has to answer "does this script run in MAIN world on
+  // this URL?" synchronously per GM_* call; re-reading the header from
+  // chrome.storage.local on every call would put I/O on that path.
+  world: InjectionWorld;
 }
 
 const SCRIPT_PREFIX = 'script:';
@@ -108,6 +115,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
     name,
     matching: script.matching,
     collectionId: script.collectionId,
+    world: resolveWorld(script.header),
     enabled: isScriptEnabled(script),
   };
 }
@@ -271,6 +279,7 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
         name: entry.name,
         matching: entry.matching,
         collectionId: entry.collectionId,
+        world: entry.world,
       });
     }
   }

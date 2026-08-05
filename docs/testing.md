@@ -341,6 +341,12 @@ fetch via the SW). Highlights:
   the SW driver's `chrome.tabs` / `chrome.windows` calls. Also pins the
   known per-document (rather than per-script) grant leak: an ungranted
   sibling script in the same document gets the working override.
+- `tests/e2e/gm-unsafe-window.spec.ts` — `@grant unsafeWindow` reads,
+  calls, and writes real page globals; storage and XHR keep working
+  from MAIN world over the bridge; `@grant none` pages stay free of
+  `__SM_GM__`; `@inject-into content` is isolated and warns; a
+  page-forged bridge GM call for a USER_SCRIPT-world script is
+  refused.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

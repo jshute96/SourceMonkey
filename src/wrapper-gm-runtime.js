@@ -1,14 +1,19 @@
-/* SourceMonkey GM_* shared runtime. Registered once per page in
-   USER_SCRIPT world at document_start, ahead of every userscript.
+/* SourceMonkey GM_* shared runtime. Registered once per page per
+   execution world at document_start, ahead of every userscript — in
+   USER_SCRIPT world, in MAIN world, or both, depending on which worlds
+   have a script granting a runtime-backed API (see buildGmRuntimeSpecs
+   in src/injector.ts). One source, two transports; see the transport
+   section below.
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
    for every API the script @grants. Two delegation modes:
      - SYNC API bodies call into methods on `window.__SM_GM__` defined
        here. The runtime is shared across all userscripts in this
-       document (USER_SCRIPT world is one realm per extension per
-       document), so per-script state lives in keyed sub-objects.
-     - ASYNC API bodies don't go through here; they send messages
-       straight to the SW via chrome.runtime.sendMessage.
+       document and world (each world is one realm per document), so
+       per-script state lives in keyed sub-objects.
+     - ASYNC API bodies route through `__SM_GM__.sendAsync`, which
+       reaches the SW directly in USER_SCRIPT world and via
+       wrapper-bridge.js in MAIN.
 
    Build rules match userscript-prelude.js — block comments only, no
    `//` sequences in strings, the build minifies to one physical line.
@@ -17,11 +22,13 @@
    Shim cache. See docs/GM-API-strategy.md "Recommendation: a tiny
    'shim cache', not a full vault". We capture a small set of native
    references at runtime-init time so a sibling userscript that
-   monkey-patches builtins later can't break our GM_* impls. The
-   USER_SCRIPT world is isolated from the page so the page itself
-   can't reach in; the threat we mitigate here is "userscript A
-   stomps on Array.prototype.forEach and userscript B's GM_* call
-   then sees the stomped version." */
+   monkey-patches builtins later can't break our GM_* impls. In
+   USER_SCRIPT world that is the whole threat, since the page can't
+   reach in. In MAIN world the page CAN — but this runs at
+   document_start, before any page script, so the captures are still
+   pristine natives. What the cache does not (and cannot) buy in MAIN
+   is protection from a page that calls `window.__SM_GM__` itself; see
+   the transport section's trust note. */
 (function () {
   "use strict";
   if (typeof window === "undefined") return;
@@ -79,6 +86,146 @@
       _sendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
     }
   } catch (_e) {}
+  var _extensionId = null;
+  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
+
+  /* ---------- transport ----------
+
+     This one runtime source is registered in BOTH execution worlds
+     (see buildGmRuntimeSpecs in src/injector.ts). Everything above and
+     below this block is world-agnostic; only the two primitives here
+     differ:
+
+       transportSend(payload) -> Promise<reply>
+         USER_SCRIPT: chrome.runtime.sendMessage, straight to the SW.
+         MAIN:        window.postMessage to wrapper-bridge.js (which
+                      runs in USER_SCRIPT world on the same document),
+                      keyed on a per-call requestId nonce so concurrent
+                      calls don't cross replies.
+
+       onPush(handler)  — SW-originated messages we didn't ask for
+                          (value-update broadcasts, XHR events, tab /
+                          notification / menu callbacks).
+         USER_SCRIPT: chrome.runtime.onMessage, filtered to messages
+                      from our own SW.
+         MAIN:        the bridge re-posts those same messages into the
+                      page with a push marker; we read them here.
+
+     Why MAIN world needs this at all: `@grant unsafeWindow` forces a
+     script into MAIN (only there is `window` the page's window), and
+     such scripts routinely also @grant storage / XHR / menus. Without
+     a MAIN transport they'd trade one broken API for six.
+
+     Trust: in MAIN world the page can both READ our postMessages and
+     FORGE both directions. That is inherent — the page shares the realm
+     with the script and with this runtime. The SW-side gate is what
+     bounds the damage: it honors bridge-relayed, script-scoped requests
+     only for scripts that actually run in MAIN world on the sending
+     page. See docs/injection.md#gm_-in-main-world. */
+  var BRIDGE_MARKER = "sourcemonkey-bridge";
+  var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
+  var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
+  /* How long a MAIN-world request waits for the bridge before we give
+     up and reject. The bridge always replies (even when the SW call
+     fails), so hitting this means the bridge never registered — a
+     rejected Promise is what each caller's own error path expects. */
+  var BRIDGE_TIMEOUT_MS = 30000;
+  var _bridgePending = null;   /* requestId -> {resolve, reject, timer} */
+  var _bridgeSeq = 1;
+  var _pushHandlers = [];
+
+  function dispatchPush(msg) {
+    for (var i = 0; i < _pushHandlers.length; i++) {
+      try { _pushHandlers[i](msg); } catch (_phE) {}
+    }
+  }
+
+  /* One window listener serves both the reply and push paths in MAIN
+     world, so a page with many in-flight GM calls doesn't accumulate
+     listeners. Installed only in MAIN — in USER_SCRIPT world we have
+     the real chrome.runtime channels. */
+  function installBridgeListener() {
+    _bridgePending = _ObjectCreate(null);
+    try {
+      window.addEventListener("message", function (ev) {
+        try {
+          if (!ev || ev.source !== window) return;
+          var d = ev.data;
+          if (!d) return;
+          if (d.__sm === BRIDGE_PUSH_MARKER) {
+            if (d.payload && typeof d.payload === "object") dispatchPush(d.payload);
+            return;
+          }
+          if (d.__sm !== BRIDGE_REPLY_MARKER) return;
+          if (typeof d.requestId !== "string") return;
+          var entry = _bridgePending[d.requestId];
+          if (!entry) return;
+          delete _bridgePending[d.requestId];
+          try { clearTimeout(entry.timer); } catch (_tE) {}
+          entry.resolve(d.reply);
+        } catch (_e) {}
+      }, true);
+    } catch (_lE) {}
+  }
+  if (!_sendMessage) installBridgeListener();
+
+  function bridgeSend(payload) {
+    if (!_bridgePending) {
+      return _Promise.reject(new _Error("[SourceMonkey] GM bridge unavailable"));
+    }
+    var requestId = "gm-" + (_bridgeSeq++) + "-" + Math.random().toString(36).slice(2, 10);
+    return new _Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        delete _bridgePending[requestId];
+        reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
+      }, BRIDGE_TIMEOUT_MS);
+      _bridgePending[requestId] = { resolve: resolve, reject: reject, timer: timer };
+      try {
+        window.postMessage({ __sm: BRIDGE_MARKER, requestId: requestId, payload: payload }, "*");
+      } catch (e) {
+        delete _bridgePending[requestId];
+        try { clearTimeout(timer); } catch (_tE2) {}
+        reject(e);
+      }
+    });
+  }
+
+  /* The single send primitive every subsystem uses. */
+  function transportSend(payload) {
+    if (_sendMessage) {
+      try {
+        var p = _sendMessage(payload);
+        if (p && typeof p.then === "function") return p;
+        return _Promise.resolve(p);
+      } catch (e) {
+        return _Promise.reject(e);
+      }
+    }
+    return bridgeSend(payload);
+  }
+
+  /* Register a handler for SW-originated pushes. */
+  function onPush(handler) {
+    _pushHandlers.push(handler);
+  }
+  if (_sendMessage) {
+    /* Sender filter. A naive listener would happily process a forged
+       push from another userscript inside the same extension —
+       chrome.runtime.sendMessage from one USER_SCRIPT world fires
+       onMessage in every other context (incl. other tabs). We require:
+         - sender.id === chrome.runtime.id  (our extension only)
+         - sender.tab is undefined          (came from the SW, not a tab)
+       The combination ensures only the SW's own messages reach us. */
+    try {
+      if (chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+        chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
+          if (!sender || sender.id !== _extensionId || sender.tab) return;
+          if (!msg || typeof msg !== "object") return;
+          dispatchPush(msg);
+        });
+      }
+    } catch (_pE) {}
+  }
 
   /* ---------- Storage subsystem ----------
 
@@ -194,14 +341,8 @@
         wireWrites.push({ key: w.key, value: w.value });
       }
     }
-    if (!_sendMessage) {
-      /* Defensive — should never happen in USER_SCRIPT world. Surface
-         to console so the user can spot the lost writes. */
-      try { console.info("[SourceMonkey] storage flush dropped: chrome.runtime unavailable", scriptId, reason, wireWrites.length); } catch (_e) {}
-      return;
-    }
     try {
-      var p = _sendMessage({ type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites });
+      var p = transportSend({ type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites });
       if (p && typeof p.catch === "function") {
         p.catch(function (err) {
           try { console.info("[SourceMonkey] storage flush rejected", scriptId, err && err.message); } catch (_e) {}
@@ -221,6 +362,12 @@
     var keys = _ObjectKeys(stores);
     for (var i = 0; i < keys.length; i++) flushStore(keys[i], "pagehide");
   }
+  /* Delivery caveat in MAIN world: the flush leaves here as a
+     postMessage, which the bridge picks up in a LATER task. During
+     `pagehide` the document may be torn down before that task runs, so
+     a MAIN-world script's last ~150ms of writes are more likely to be
+     lost than a USER_SCRIPT one's (whose sendMessage goes straight to
+     the SW). See docs/GM-APIs-storage.md and TODO.md. */
   try {
     window.addEventListener("pagehide", flushAll, { capture: true });
     /* visibilitychange → hidden is a softer signal that also tends to
@@ -394,29 +541,17 @@
     }
   }
 
-  /* Sender filter. A naive listener would happily process a forged
-     `sm:gm-value-update` from another userscript inside the same
-     extension — chrome.runtime.sendMessage from one USER_SCRIPT
-     world fires onMessage in every other context (incl. other tabs).
-     We require:
-       - sender.id === chrome.runtime.id  (our extension only)
-       - sender.tab is undefined          (came from the SW, not a tab)
-     The combination ensures only the SW's broadcast reaches us. */
-  var _extensionId = null;
-  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
-      chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
-        if (!sender || sender.id !== _extensionId || sender.tab) return;
-        if (!msg || typeof msg !== "object") return;
-        if (msg.type === "sm:gm-resync-hint") { resyncListeningStores(); return; }
-        if (msg.type !== "sm:gm-value-update") return;
-        if (typeof msg.scriptId !== "string") return;
-        if (!msg.writes || typeof msg.writes.length !== "number") return;
-        applyRemoteUpdate(msg.scriptId, msg.writes);
-      });
-    }
-  } catch (_lE) {}
+  /* The SW's own messages, over whichever transport this world has —
+     `chrome.runtime.onMessage` in USER_SCRIPT, the bridge's re-post in
+     MAIN. `onPush` applies the sender filter for us; see the transport
+     section at the top of this file. */
+  onPush(function (msg) {
+    if (msg.type === "sm:gm-resync-hint") { resyncListeningStores(); return; }
+    if (msg.type !== "sm:gm-value-update") return;
+    if (typeof msg.scriptId !== "string") return;
+    if (!msg.writes || typeof msg.writes.length !== "number") return;
+    applyRemoteUpdate(msg.scriptId, msg.writes);
+  });
 
   var storage = {
     /* Called from the GM prelude spliced into the main-body wrap
@@ -736,11 +871,8 @@
 
      Per-script state: an `activeRequests` map keyed by request id,
      holding the user's onload/onerror/etc. callbacks. The runtime
-     installs a chrome.runtime.onMessage listener that routes
-     `sm:gm-xhr-event` messages back to the originating request.
-
-     Same sender filter as the value-update listener so a sibling
-     userscript can't forge a load event. */
+     registers an `onPush` handler that routes `sm:gm-xhr-event`
+     messages back to the originating request. */
   var activeRequests = _ObjectCreate(null);
   var _xhrNextId = 1;
 
@@ -822,16 +954,11 @@
      onerror has a shot at handling it. Per-request, refreshed when
      the entry is created. */
   var XHR_PAGE_SIDE_TTL_MS = 5 * 60 * 1000; /* 5 minutes */
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
-      chrome.runtime.onMessage.addListener(function (msg, sender) {
-        if (!sender || sender.id !== _extensionId || sender.tab) return;
-        if (!msg || typeof msg !== "object" || msg.type !== "sm:gm-xhr-event") return;
-        if (typeof msg.id !== "string" || !msg.event) return;
-        dispatchXhrEvent(msg.id, msg.event);
-      });
-    }
-  } catch (_xhrE) {}
+  onPush(function (msg) {
+    if (msg.type !== "sm:gm-xhr-event") return;
+    if (typeof msg.id !== "string" || !msg.event) return;
+    dispatchXhrEvent(msg.id, msg.event);
+  });
 
   var xhr = {
     /* GM_xmlhttpRequest(details) — kicks off the request, returns
@@ -1840,28 +1967,23 @@
   };
 
   /* Wire the SW-originated tab-close, notification-event, menu-fire,
-     download-event, and url-change messages into the same dispatcher we
-     already use for value-update and xhr. Sender filter logic identical
-     to the earlier listeners. */
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
-      chrome.runtime.onMessage.addListener(function (msg, sender) {
-        if (!sender || sender.id !== _extensionId || sender.tab) return;
-        if (!msg || typeof msg !== "object") return;
-        if (msg.type === "sm:gm-tab-closed" && typeof msg.requestId === "string") {
-          dispatchTabClose(msg.requestId);
-        } else if (msg.type === "sm:gm-notification-event" && typeof msg.requestId === "string" && typeof msg.event === "string") {
-          dispatchNotificationEvent(msg.requestId, msg.event);
-        } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
-          dispatchMenuFire(msg.scriptId, msg.commandId);
-        } else if (msg.type === "sm:gm-download-event" && typeof msg.requestId === "string" && msg.event) {
-          dispatchDownloadEvent(msg.requestId, msg.event);
-        } else if (msg.type === "sm:url-change" && typeof msg.url === "string") {
-          noteUrlChanged(msg.url);
-        }
-      });
+     download-event, and url-change messages into the same push channel
+     as value-update and xhr. */
+  onPush(function (msg) {
+    if (msg.type === "sm:gm-tab-closed" && typeof msg.requestId === "string") {
+      dispatchTabClose(msg.requestId);
+    } else if (msg.type === "sm:gm-notification-event" && typeof msg.requestId === "string" && typeof msg.event === "string") {
+      dispatchNotificationEvent(msg.requestId, msg.event);
+    } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
+      dispatchMenuFire(msg.scriptId, msg.commandId);
+    } else if (msg.type === "sm:gm-download-event" && typeof msg.requestId === "string" && msg.event) {
+      dispatchDownloadEvent(msg.requestId, msg.event);
+    } else if (msg.type === "sm:url-change" && typeof msg.url === "string") {
+      noteUrlChanged(msg.url);
     }
-  } catch (_evE3) {}
+  });
+    }
+  });
 
   var api = {
     /* Placeholder for sync APIs still not wired. */
@@ -1869,19 +1991,12 @@
       throw new _Error("[SourceMonkey] " + name + " is not implemented yet");
     },
     /* Exposed for compile-in async bindings to route through. Returns
-       a Promise that resolves with the SW's reply (or rejects if
-       messaging is unavailable). */
+       a Promise that resolves with the SW's reply (or rejects if the
+       transport is unavailable). Picks chrome.runtime.sendMessage or
+       the postMessage bridge depending on the world — see the
+       transport section at the top of this file. */
     sendAsync: function (payload) {
-      if (!_sendMessage) {
-        return _Promise.reject(new _Error("[SourceMonkey] chrome.runtime.sendMessage unavailable"));
-      }
-      try {
-        var p = _sendMessage(payload);
-        if (p && typeof p.then === "function") return p;
-        return _Promise.resolve(p);
-      } catch (e) {
-        return _Promise.reject(e);
-      }
+      return transportSend(payload);
     },
     storage: storage,
     dom: dom,
@@ -1918,10 +2033,15 @@
     },
   };
 
-  /* Object.defineProperty with writable:false + configurable:false so a
-     sibling userscript can't replace the runtime out from under other
-     scripts after init. We accept that the page can't see us (USER_SCRIPT
-     world) so we don't need to hide the global. */
+  /* Object.defineProperty with writable:false + configurable:false so
+     neither a sibling userscript nor (in MAIN world) the page can
+     replace the runtime out from under other scripts after init.
+     We don't try to HIDE the global: in USER_SCRIPT world the page
+     can't see it anyway, and in MAIN world there is nowhere to hide it
+     — separate chrome.userScripts registrations can only hand each
+     other references through a shared global, and any secret baked
+     into MAIN-world source is readable by the page. Bounding what a
+     page can do with it is the SW-side gate's job instead. */
   try {
     Object.defineProperty(window, "__SM_GM__", {
       value: api,

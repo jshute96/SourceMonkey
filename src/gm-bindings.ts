@@ -166,11 +166,22 @@ function emitGmInfo(info: GmInfoInput): string {
 // __SM_GM__.sendAsync. The call-site shape is stable across phases —
 // landing a new API only changes the SW-side dispatch.
 function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
-  // unsafeWindow is a passthrough binding, not a function. In
-  // USER_SCRIPT world there's no direct page-window access; expose
-  // `window` for now (Phase X will handle the real cross-world bridge
-  // if it ever lands). This matches "ungated" behavior — calling code
-  // gets a usable object — but it does NOT reach the page's globals.
+  // unsafeWindow is a passthrough binding, not a function — the same
+  // `const unsafeWindow = window;` in both worlds, because what makes
+  // it correct is the WORLD, not the binding.
+  //
+  //   - MAIN world: `window` IS the page's window, so this is the real
+  //     thing. `resolveWorld` sends every `@grant unsafeWindow` script
+  //     here for exactly that reason.
+  //   - USER_SCRIPT world: reachable only when the script also declared
+  //     `@inject-into content`, i.e. explicitly asked for isolation.
+  //     `window` is then the isolated realm's, NOT the page's — matching
+  //     Violentmonkey's content mode. `extractStartupLogs` emits a
+  //     warning for that combination so it isn't a silent wrong answer.
+  //
+  // No cross-world proxy is possible: property access on unsafeWindow is
+  // synchronous and Chrome exposes no synchronous channel between an
+  // isolated world and the page's realm.
   if (spec.subsystem === 'unsafe-window') {
     return `const unsafeWindow = window;`;
   }

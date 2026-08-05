@@ -20,20 +20,27 @@ SourceMonkey actually does today.
   each granted legacy name; emits a `const GM = Object.freeze({...})`
   GM4 namespace covering the granted APIs with `gmDotName` plus
   `GM.info`.
-- **`src/wrapper-gm-runtime.js`** — USER_SCRIPT-world shared runtime
-  (`window.__SM_GM__`). Registered once per page at `document_start`
-  like the MAIN-world bridge. Provides:
+- **`src/wrapper-gm-runtime.js`** — shared runtime (`window.__SM_GM__`),
+  registered once per page **per execution world** at `document_start`.
+  The same source runs in USER_SCRIPT and in MAIN; it picks its
+  transport at init (direct `chrome.runtime` vs. the postMessage
+  bridge). Provides:
   - Shim cache of native references (Promise, Error, JSON.parse/
     stringify, etc.) — defends against sibling userscripts that
     monkey-patch builtins.
-  - `sendAsync(payload)` — chrome.runtime.sendMessage helper that
-    routes through a captured `bind`-ed reference.
+  - `sendAsync(payload)` — SW round-trip helper. In USER_SCRIPT world
+    it routes through a captured `bind`-ed
+    `chrome.runtime.sendMessage`; in MAIN world it posts to
+    `wrapper-bridge.js` keyed on a per-call `requestId`.
+  - `onPush(handler)` — SW-originated events (XHR settling, value
+    broadcasts, menu fires). `chrome.runtime.onMessage` in USER_SCRIPT
+    world; `sourcemonkey-bridge-push` postMessages in MAIN.
   - `notImplemented(name)` — Phase 2 placeholder; later phases
     replace per-subsystem methods.
 - **`src/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
-  per-script collection; `buildGmRuntimeSpec` returns the runtime
-  registration alongside `buildBridgeSpec`.
+  per-script collection; `buildGmRuntimeSpecs` returns one runtime
+  registration per world that needs it, alongside `buildBridgeSpec`.
 - **`src/gm-url-change.ts`** — SW-side driver for
   `@grant window.onurlchange`. Forwards
   `chrome.webNavigation.onHistoryStateUpdated` to the document that
@@ -107,20 +114,24 @@ Scope notes:
 
 ## World gating
 
-- `GM_info` is emitted in **every** world (USER_SCRIPT and MAIN) and
-  for every script regardless of `@grant`. It's a baked literal with
-  no runtime dependency, so it works in MAIN with no `__SM_GM__`
-  needed. Matches TM/VM (both expose GM_info implicitly).
-- The rest of the GM_* surface — including the `window.onurlchange`
-  event surface and the `window.close` / `window.focus` overrides — is
-  emitted ONLY in `USER_SCRIPT` world.
-  Scripts with an explicit `@inject-into page` or otherwise running
-  in MAIN don't get the non-info bindings — they'd be unable to reach
-  `__SM_GM__` (different world) or `chrome.runtime` (undefined in
-  MAIN). Calls to any non-info GM_* name in such a script throw a
-  natural `ReferenceError`. This is a known limitation; the TODO in
-  [GM-API-strategy.md](GM-API-strategy.md#things-to-revisit-later)
-  tracks bridging the rest of the surface into MAIN.
+Binding emission is world-independent — the same `emitGmBindings`
+output ships whether the script lands in USER_SCRIPT or MAIN.
+
+- `GM_info` is emitted for every script regardless of `@grant`. It's a
+  baked literal with no runtime dependency. Matches TM/VM (both expose
+  GM_info implicitly).
+- `unsafeWindow` is a plain `const unsafeWindow = window;` in both
+  worlds. What makes it correct is the world, not the binding — see
+  [injection.md](injection.md#unsafewindow-forces-main-world).
+- Everything else — including the `window.onurlchange` event surface
+  and the `window.close` / `window.focus` overrides — delegates to
+  `window.__SM_GM__`, which is registered in whichever worlds have a
+  script granting a runtime-backed API (`buildGmRuntimeSpecs`). A
+  `@grant none` MAIN-world script needs none of it, so its page stays
+  free of `__SM_GM__`.
+- MAIN-world SW traffic rides `wrapper-bridge.js` in both directions,
+  and script-scoped requests are gated SW-side by `bridgeMayActAs`.
+  See [`GM_*` in MAIN world](injection.md#gm_-in-main-world).
 
 ## `@grant` resolution
 
@@ -147,14 +158,13 @@ Scope notes:
 
 ## Caveats and Phase-2 limitations
 
-- **`unsafeWindow` is the USER_SCRIPT world's `window`, not the
-  page's.** Userscripts in MAIN world (`@inject-into page` or
-  `@grant none`) get the page's `window` directly anyway, so they
-  don't need (and don't get) `unsafeWindow`. Scripts in USER_SCRIPT
-  world that grant `unsafeWindow` currently receive a passthrough to
-  the local isolated `window` — no cross-world reach into page
-  globals. A future phase can bridge to MAIN via postMessage if
-  needed.
+- **`unsafeWindow` is real, and it moves the script.** Granting it
+  resolves the script to MAIN world, where `window` already is the
+  page's. The only case where it can't be the page's window is
+  `@inject-into content`, which pins the script to the isolated world;
+  that combination gets a startup-log warning instead of a silent
+  wrong answer. See
+  [injection.md](injection.md#unsafewindow-forces-main-world).
 - **Runtime ordering safety rests on the wrap function, not on
   laziness.** Everything the emitter produces — the `const GM_X = ...`
   declarations, the eager `urlchange.enable` /
@@ -522,11 +532,17 @@ its own dispatch doesn't corrupt iteration.
     added in USER_SCRIPT world) and can't reach the SW any other way
     (no `chrome.runtime` in MAIN world), so any potentially-page-forged
     request carries it.
-  - The check-pending handler refuses to attach `gmValues` to a
-    `__viaBridge` request. Storage scripts are always USER_SCRIPT world
-    and request values over their own direct `chrome.runtime` path (no
-    marker), so nothing legitimate is withheld.
-  - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts`.
+  - The check-pending handler runs every `__viaBridge` request through
+    `bridgeMayActAs` before attaching `gmValues`: only a script that
+    actually runs in MAIN world on the sending page gets its snapshot.
+    That set is exactly the scripts whose values the page can already
+    read out of the MAIN-world `__SM_GM__`, so the gate concedes
+    nothing — and a USER_SCRIPT-world script is never in it.
+  - USER_SCRIPT-world scripts request values over their own direct
+    `chrome.runtime` path (no marker) and skip the gate entirely, so
+    nothing legitimate is withheld.
+  - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts` and
+    the forged-GM-call case in `tests/e2e/gm-unsafe-window.spec.ts`.
 
 ## Clipboard (`GM_setClipboard`)
 

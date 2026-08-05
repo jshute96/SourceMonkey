@@ -1,0 +1,324 @@
+// End-to-end tests for `@grant unsafeWindow`.
+//
+// `unsafeWindow` means "the page's real window". Chrome's isolated
+// worlds cannot reach it — property access is synchronous and there is
+// no synchronous channel between worlds — so the grant is honored by
+// running the script in MAIN world instead, where `window` already IS
+// the page's window.
+//
+// That move only works if the rest of the GM_* surface follows the
+// script into MAIN, which it does: the shared `__SM_GM__` runtime is
+// registered in MAIN too and routes its SW traffic over
+// wrapper-bridge.js. These tests cover both halves plus the SW-side
+// gate that keeps the page from abusing the widened bridge.
+//
+// See docs/injection.md#unsafewindow-forces-main-world.
+
+import { test, expect } from '../fixtures/extension';
+import { ScriptsDir } from '../fixtures/scripts-dir';
+import { UserscriptServer } from '../fixtures/userscript-server';
+
+const PAGE = 'page-globals.html';
+
+test.describe('@grant unsafeWindow', () => {
+  let scriptsDir: ScriptsDir;
+
+  test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
+  test.afterEach(() => { scriptsDir.cleanup(); });
+
+  test('reaches real page globals, and window === unsafeWindow in MAIN world', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'UnsafeWindow',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow'],
+      },
+      body: `
+        const b = document.body.dataset;
+        b.smAppName = String(unsafeWindow.__PAGE_APP__ && unsafeWindow.__PAGE_APP__.name);
+        b.smFnResult = String(unsafeWindow.__PAGE_FN__ ? unsafeWindow.__PAGE_FN__('x') : 'no-fn');
+        // In MAIN world the two are the same object. A script that
+        // tests this (several real ones do) must not be misled.
+        b.smSameAsWindow = String(unsafeWindow === window);
+        // Writes must land where the page can see them.
+        unsafeWindow.__FROM_SCRIPT__ = 'hello-page';
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-fn-result', 'page-fn:x');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'true');
+
+    // page.evaluate runs in the page's MAIN world, so it sees both the
+    // side effect of the page function AND what the script wrote.
+    const fromPage = await page.evaluate(() => ({
+      written: (window as unknown as { __FROM_SCRIPT__?: string }).__FROM_SCRIPT__,
+      calls: (window as unknown as { __PAGE_APP__: { calls: number } }).__PAGE_APP__.calls,
+    }));
+    expect(fromPage).toEqual({ written: 'hello-page', calls: 1 });
+    await page.close();
+  });
+
+  test('GM storage keeps working alongside unsafeWindow (round-trips through the bridge)', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The motivating combination: 96 of the 213 unsafeWindow-granting
+    // scripts in the top-2000 GreasyFork corpus also @grant GM_getValue.
+    // Moving them to MAIN world would be a net loss if storage broke.
+    // In MAIN the initial snapshot arrives over the bridge and writes
+    // flush back over it too.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'UnsafeWindowStorage',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow', 'GM_setValue', 'GM_getValue'],
+      },
+      body: `
+        const b = document.body.dataset;
+        b.smAppName = String(unsafeWindow.__PAGE_APP__ && unsafeWindow.__PAGE_APP__.name);
+        const seen = GM_getValue('visits', 0);
+        b.smVisits = String(seen);
+        GM_setValue('visits', seen + 1);
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const first = await extensionContext.newPage();
+    await first.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    // Page access and storage both work in the same script.
+    await expect(first.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
+    await expect(first.locator('body')).toHaveAttribute('data-sm-visits', '0');
+    // Let the debounced write flush to the SW.
+    await first.waitForTimeout(500);
+    await first.close();
+
+    // A fresh document must be seeded from the SW snapshot — which is
+    // the part that only works if the bridge-relayed check-pending is
+    // allowed to carry `gmValues` for a MAIN-world script.
+    const second = await extensionContext.newPage();
+    await second.goto(`${fixtureServer.baseUrl}/${PAGE}?n=2`);
+    await expect(second.locator('body')).toHaveAttribute('data-sm-visits', '1');
+    await second.close();
+  });
+
+  test('GM_xmlhttpRequest works from MAIN world (request out and event back over the bridge)', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Exercises both bridge directions in one call: the request is a
+    // page->SW relay, and the terminal load event is an SW push that
+    // MAIN world can only receive because the bridge re-posts it.
+    const dataServer = await UserscriptServer.start();
+    try {
+      dataServer.setRoute('/hello', 'hello from server', {
+        contentType: 'text/plain; charset=utf-8',
+      });
+      scriptsDir.write({
+        relativePath: 'a.user.js',
+        meta: {
+          name: 'UnsafeWindowXhr',
+          match: [`${fixtureServer.baseUrl}/*`],
+          runAt: 'document-end',
+          grant: ['unsafeWindow', 'GM_xmlhttpRequest'],
+          connect: ['127.0.0.1'],
+        },
+        body: `
+          document.body.dataset.smAppName = String(unsafeWindow.__PAGE_APP__.name);
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: '${dataServer.baseUrl}/hello',
+            onload: (res) => {
+              document.body.dataset.smStatus = String(res.status);
+              document.body.dataset.smText = String(res.responseText);
+            },
+            onerror: (e) => {
+              document.body.dataset.smError = String((e && e.error) || e);
+            },
+          });
+        `,
+      });
+      await sm.addSource(scriptsDir.path);
+      await sm.syncNow();
+
+      const page = await extensionContext.newPage();
+      await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+      await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
+      await expect(page.locator('body')).toHaveAttribute('data-sm-status', '200');
+      await expect(page.locator('body')).toHaveAttribute('data-sm-text', 'hello from server');
+      await page.close();
+    } finally {
+      await dataServer.stop();
+    }
+  });
+
+  test('@grant none MAIN-world scripts do not put __SM_GM__ on the page', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The GM runtime is registered per world only when some script in
+    // that world grants a runtime-backed API. A `@grant none` script is
+    // an explicit "no extension APIs" declaration, so the page it runs
+    // on must stay clean.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'PlainMain',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['none'],
+      },
+      body: `document.body.dataset.smRan = '1';`,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-ran', '1');
+    const hasRuntime = await page.evaluate(
+      () => typeof (window as unknown as { __SM_GM__?: unknown }).__SM_GM__,
+    );
+    expect(hasRuntime).toBe('undefined');
+    await page.close();
+  });
+
+  test('@inject-into content keeps the script isolated and says so out loud', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The one combination that cannot work. `@inject-into content` is an
+    // explicit request for isolation, so we honor it and keep VM's
+    // content-mode binding (`unsafeWindow` === the isolated realm's
+    // window) — but a script silently reading `undefined` off every page
+    // global is exactly the failure this work exists to remove, so the
+    // mismatch is reported as a parse-time warning.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'IsolatedUnsafeWindow',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow'],
+        injectInto: 'content',
+      },
+      body: `
+        document.body.dataset.smAppName = String(unsafeWindow.__PAGE_APP__);
+        document.body.dataset.smSameAsWindow = String(unsafeWindow === window);
+      `,
+    });
+    const added = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    // Isolated: the page global is not visible.
+    await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'undefined');
+    // Still a real window (VM's content-mode contract), just not the page's.
+    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'true');
+    await page.close();
+
+    // ...and the user is told why, on the stored script and in the Log.
+    const detail = await sm.getSourceWithScripts(added!.id);
+    const script = detail!.scripts[0];
+    const warning = (script.startupLogs ?? []).find(
+      (l) => l.message.includes('unsafeWindow'),
+    );
+    expect(warning, 'expected a startup-log warning for the isolated unsafeWindow').toBeTruthy();
+    expect(warning!.level).toBe('warn');
+  });
+
+  test('a page cannot drive GM_* for a USER_SCRIPT-world script through the widened bridge', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The bridge now relays GM_* calls so MAIN-world scripts can reach
+    // the SW. That channel is page-observable and page-forgeable, so the
+    // SW only honors a bridge-relayed, script-scoped request when the
+    // named script actually runs in MAIN world on the sending page —
+    // i.e. when the page could already have called its `__SM_GM__`
+    // directly. A USER_SCRIPT-world script is never in that set.
+    scriptsDir.write({
+      relativePath: 'victim.user.js',
+      meta: {
+        name: 'Victim',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue', 'GM_getValue'],   // no unsafeWindow → USER_SCRIPT world
+      },
+      body: `
+        if (GM_getValue('secret', '') === '') GM_setValue('secret', 'original');
+        document.body.dataset.smVictim = String(GM_getValue('secret', '_NONE_'));
+      `,
+    });
+    // A MAIN-world script so the bridge is registered at all.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: {
+        name: 'MainSide',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow'],
+      },
+      body: `document.documentElement.dataset.smMain = '1';`,
+    });
+    const added = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const seed = await extensionContext.newPage();
+    await seed.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(seed.locator('body')).toHaveAttribute('data-sm-victim', 'original');
+    await seed.waitForTimeout(500);
+    await seed.close();
+
+    const detail = await sm.getSourceWithScripts(added!.id);
+    const victimId = detail!.scripts.find((s) => s.relativePath === 'victim.user.js')!.id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}?n=2`);
+    await expect(page.locator('html')).toHaveAttribute('data-sm-main', '1');
+
+    // Forge a storage write as the victim.
+    const reply = await page.evaluate((id) => {
+      return new Promise<unknown>((resolve) => {
+        const rid = 'forge-' + Math.random().toString(36).slice(2);
+        const onMsg = (ev: MessageEvent): void => {
+          const d = ev.data as { __sm?: string; requestId?: string; reply?: unknown };
+          if (ev.source !== window || !d || d.__sm !== 'sourcemonkey-bridge-reply' || d.requestId !== rid) return;
+          window.removeEventListener('message', onMsg, true);
+          resolve(d.reply ?? null);
+        };
+        window.addEventListener('message', onMsg, true);
+        window.postMessage({
+          __sm: 'sourcemonkey-bridge',
+          requestId: rid,
+          payload: {
+            type: 'sm:gm-batch-write',
+            scriptId: id,
+            writes: [{ key: 'secret', value: 'pwned' }],
+          },
+        }, '*');
+        setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
+      });
+    }, victimId);
+
+    // The bridge relayed it (so we know we tested the real path) and the
+    // SW refused.
+    expect(reply, 'bridge should reply to the forged GM call').not.toBeNull();
+    expect((reply as { ok?: unknown }).ok).toBe(false);
+    await page.waitForTimeout(300);
+    await page.close();
+
+    // The victim's value is untouched on the next load.
+    const after = await extensionContext.newPage();
+    await after.goto(`${fixtureServer.baseUrl}/${PAGE}?n=3`);
+    await expect(after.locator('body')).toHaveAttribute('data-sm-victim', 'original');
+    await after.close();
+  });
+});

@@ -328,12 +328,13 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
   };
 }
 
-// Derive parse-time diagnostics from the metadata block. Today this
-// only flags unknown `@grant` names; add other producers here as
-// they come up (e.g. deprecated header tags, soft `@resource`
-// failures, `@grant`-but-never-called dead grants). Anything that
-// blocks `validateHeader` belongs in there instead — error rows skip
-// the startup-logs attachment in `buildScriptFromText`.
+// Derive parse-time diagnostics from the metadata block. Producers so
+// far: unknown `@grant` names, and `@grant unsafeWindow` combined with
+// `@inject-into content`. Add others here as they come up (e.g.
+// deprecated header tags, soft `@resource` failures,
+// `@grant`-but-never-called dead grants). Anything that blocks
+// `validateHeader` belongs in there instead — error rows skip the
+// startup-logs attachment in `buildScriptFromText`.
 export function extractStartupLogs(
   header: ParsedHeader | null,
   relativePath: string,
@@ -355,6 +356,25 @@ export function extractStartupLogs(
       const line = headerTagLine(header, 'grant', resolved.unknown[0]);
       if (line !== undefined) log.location = { file: relativePath, line };
       logs.push(log);
+    }
+    // `unsafeWindow` means "the page's real window". That only exists
+    // in MAIN world, and `@inject-into content` pins the script to the
+    // isolated USER_SCRIPT world, where `unsafeWindow` can only be the
+    // isolated realm's own `window` — page globals read as `undefined`.
+    // We keep the binding (matching Violentmonkey's content mode) but
+    // say so out loud, because the alternative is a script that quietly
+    // does nothing. See docs/injection.md#unsafewindow-forces-main-world.
+    if (
+      resolved.granted.has('unsafeWindow') &&
+      (getValue(header, 'inject-into') ?? '').trim().toLowerCase() === 'content'
+    ) {
+      logs.push({
+        level: 'warn',
+        message:
+          '@grant unsafeWindow with @inject-into content: unsafeWindow is the isolated ' +
+          "world's window, NOT the page's — page globals will read as undefined. " +
+          'Drop @inject-into content to reach the page.',
+      });
     }
   }
   // A `@match` Chrome's grammar refuses. One of these would take the

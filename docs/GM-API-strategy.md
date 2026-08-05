@@ -576,18 +576,11 @@ spec that drives the API from a userscript on the fixture server.
   e.g., when scripts use `*://*/*`, do we still let them touch any
   cookie? VM does; TM doesn't appear to. We can pick the safer
   default.
-- **GM_\* in MAIN world (`@inject-into page` + `@grant …`).** Today
-  we hard-skip binding emission for MAIN-world scripts (see
-  `buildRegistrationSpec` in `src/injector.ts`) — the combination
-  produces a `ReferenceError` at first GM_* call. TM/VM both support
-  it: they install MAIN-world stubs that proxy to the content-world
-  implementation via `postMessage`. We already have a postMessage
-  bridge for `sm:start` / `sm:error` telemetry; closing this gap
-  would mean (a) registering a MAIN-world flavor of
-  `wrapper-gm-runtime.js` (or a thin shim that postMessages requests
-  to the USER_SCRIPT-world runtime), (b) letting the injector emit
-  bindings in MAIN world too, and (c) making the sync GM_* APIs that
-  need SW data (just storage today) work synchronously via a
-  pre-warmed page-side cache, with the rest going async through the
-  bridge. Scripts that need both page-realm access (touching SPA
-  framework globals) and persistence are the motivating use case.
+- ~~**GM_\* in MAIN world (`@inject-into page` + `@grant …`).**~~
+  **Done** — landed with the `unsafeWindow` work.
+  - `wrapper-gm-runtime.js` is registered in MAIN as well as
+    USER_SCRIPT and picks its transport at init; the injector emits the
+    same bindings in both worlds.
+  - Storage stays synchronous via the pre-warmed page-side cache,
+    seeded off the `sm:check-pending` reply the bridge relays.
+  - See [injection.md](injection.md#gm_-in-main-world).

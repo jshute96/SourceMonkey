@@ -346,11 +346,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
-- **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
-  USER_SCRIPT world's own `window`, not the page's. A real bridge
-  would need a MAIN-world helper + postMessage protocol, or a
-  per-call DOM-event ferry à la VM's `MouseEvent.relatedTarget`
-  trick.
 - **`window.close` / `window.focus` failures are filed under the
   first granting script.** The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
@@ -374,13 +369,20 @@ Adding any of these is a catalog entry + a body — nothing structural.
   for the same reason and now has that e2e
   (`reload-fast-path.spec.ts`), so these are the eager calls whose
   swap behaviour is unasserted.
-- **`window.onurlchange` in MAIN world.** `@inject-into page` +
-  `@grant window.onurlchange` gets nothing, since MAIN-world scripts
-  get no bindings at all. Folded into the general "GM_* in MAIN
-  world" item in
-  [docs/GM-API-strategy.md](docs/GM-API-strategy.md#things-to-revisit-later),
-  but note this one is harder: installing the event surface in MAIN
-  means patching the *page's* `window.addEventListener`.
+- **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
+  `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
+  MAIN, so a `@grant unsafeWindow` script on a site with a strict
+  `style-src` inserts a `<style>` whose rules never apply. A
+  `styleEl.sheet === null` check after append is a reliable
+  blocked-detector; the fallback would be an async bridge request
+  asking the USER_SCRIPT-world runtime to insert a CSP-exempt copy,
+  at the cost of the returned element no longer being the live one.
+  TM/VM have the same limitation today.
+- **MAIN-world storage flush at teardown.** A MAIN-world
+  `GM_setValue` batch leaves as a postMessage the bridge relays in a
+  later task, so a `pagehide` flush can be dropped where a
+  USER_SCRIPT-world one wouldn't be. Options: shorten the debounce in
+  MAIN, or have the bridge hold a mirror of pending writes.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
 - **`GM_download` follow-ups.**
@@ -555,11 +557,14 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Worth one line in `supported-GM-APIs.md` calling out
   `src=javascript:`, event-handler attributes, and `<script src>`
   as deliberately un-sanitized sinks.
-- **`unsafeWindow` USER_SCRIPT-world clarity.** Currently a quiet
-  passthrough to USER_SCRIPT-world `window`. Either throw with a
-  "use `@inject-into page`" hint on access, or document the
-  passthrough more loudly so the gotcha is obvious. Today
-  `unsafeWindow.<page-global>` returns undefined with no signal.
+- **`@grant none` mixed with real grants.** `resolveGrants` says a
+  `none` line anywhere wins (so the script gets no bindings), but
+  `resolveWorld` only takes the MAIN branch when EVERY line is
+  `none` — so `@grant none` + `@grant unsafeWindow` lands isolated
+  with nothing at all. Only 4 of the top-2000 GreasyFork scripts mix
+  `none` with anything, and none of those pair it with
+  `unsafeWindow`, so this is documented rather than changed. Pick one
+  rule and apply it in both places.
 - **Listener-id contract.** `addValueChangeListener` returns the id
   as a `String(numericCounter)`. TM returns numeric IDs. Pin the
   contract in `GM-APIs.md` — id should be opaque to callers, but

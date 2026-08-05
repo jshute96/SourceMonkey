@@ -1553,7 +1553,7 @@ function makeCollection(over = {}) {
 
 test('collectActiveSpecs: invalid scripts never run; missing scripts run only when explicitly enabled', async () => {
   const collections = new Map([['collection-1', makeCollection()]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1', status: 'invalid', errorMessage: 'x' }),
     makeScript({ id: 's2', status: 'missing', enabled: false }),
     makeScript({ id: 's3', status: 'missing', enabled: true }),
@@ -1564,7 +1564,7 @@ test('collectActiveSpecs: invalid scripts never run; missing scripts run only wh
 
 test('collectActiveSpecs: skips disabled scripts', async () => {
   const collections = new Map([['collection-1', makeCollection()]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1', enabled: false }),
     makeScript({ id: 's2' }),
   ], collections);
@@ -1573,7 +1573,7 @@ test('collectActiveSpecs: skips disabled scripts', async () => {
 
 test('collectActiveSpecs: skips every script under a disabled collection', async () => {
   const collections = new Map([['collection-1', makeCollection({ enabled: false })]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1' }),
     makeScript({ id: 's2' }),
   ], collections);
@@ -1582,7 +1582,7 @@ test('collectActiveSpecs: skips every script under a disabled collection', async
 
 test('collectActiveSpecs: skips scripts whose collection is missing entirely', async () => {
   const collections = new Map();
-  const specs = await collectActiveSpecs([makeScript()], collections);
+  const { specs } = await collectActiveSpecs([makeScript()], collections);
   assert.deepEqual(specs, []);
 });
 
@@ -1591,7 +1591,7 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
   delete script.enabled;
   const collection = makeCollection();
   delete collection.enabled;
-  const specs = await collectActiveSpecs([script], new Map([['collection-1', collection]]));
+  const { specs } = await collectActiveSpecs([script], new Map([['collection-1', collection]]));
   assert.equal(specs.length, 1);
 });
 

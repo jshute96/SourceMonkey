@@ -160,13 +160,15 @@ details live in the topic-specific docs linked below.
   as a fall-through for future catalog additions whose bodies
   haven't landed yet.
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
-  USER_SCRIPT-world helper registered once per page (alongside the
-  MAIN-world bridge). Installs `window.__SM_GM__` with per-subsystem
-  helpers: storage cache + batched writes, DOM injection, clipboard,
-  XHR start/abort with terminal-event dispatch, value-change
-  listener registry. Captures a small shim cache of native
-  references at init time so sibling userscripts that monkey-patch
-  builtins can't subvert GM calls.
+  helper registered once per page **per execution world** that needs
+  it. Installs `window.__SM_GM__` with per-subsystem helpers: storage
+  cache + batched writes, DOM injection, clipboard, XHR start/abort
+  with terminal-event dispatch, value-change listener registry.
+  Captures a small shim cache of native references at init time so
+  sibling userscripts that monkey-patch builtins can't subvert GM
+  calls. In MAIN world (where `@grant unsafeWindow` scripts run) its
+  service-worker traffic rides `src/wrapper-bridge.js` in both
+  directions.
 - **GM_* SW storage** (`src/gm-values.ts`) — persistent
   `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, with
   batched apply (last-write-wins) and a per-script wipe helper.

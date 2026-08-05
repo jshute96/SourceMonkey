@@ -1622,10 +1622,8 @@ interface CheckPendingPayload {
   // cannot call chrome.runtime.sendMessage itself, so the only way it
   // reaches us is through the bridge — meaning a request WITHOUT this
   // flag came over a USER_SCRIPT-world script's own direct channel and
-  // is trustworthy. We use it to refuse handing back another script's
-  // gmValues snapshot (the read-leak fix). storage-granting scripts
-  // are always USER_SCRIPT world and always use the direct path, so
-  // legitimate value reads never carry it.
+  // is trustworthy. Flagged requests go through `bridgeMayActAs` before
+  // we hand back a `gmValues` snapshot (the read-leak fix).
   __viaBridge?: boolean;
 }
 
@@ -2736,6 +2734,95 @@ async function nudgeGmResyncAfterWorkerStart(): Promise<void> {
   await nudgeGmResync();
 }
 
+// ---------- bridge gate ----------
+//
+// `wrapper-bridge.js` stamps `__viaBridge: true` on everything it
+// relays for a MAIN-world wrapper. MAIN world shares its realm with the
+// page, so any such message MAY have been forged by the page: it can
+// see our postMessages, learn script ids, and post its own.
+//
+// The gate: a bridge-relayed, script-scoped request is honored only
+// when that script actually runs in MAIN world on the sending frame's
+// URL. That is exactly the set of scripts whose GM surface the page can
+// already drive directly — their `window.__SM_GM__` is a global in the
+// page's own realm, and no secret can be hidden from MAIN world (a
+// token baked into the registered source is readable via
+// `Function.prototype.toString` once the page steals a reference to the
+// wrap function). So the gate concedes nothing new, and it still
+// refuses:
+//
+//   - every USER_SCRIPT-world script (isolated; page can't touch it), and
+//   - every MAIN-world script that doesn't match this page (a script
+//     scoped to bank.example can't be driven from evil.example).
+//
+// Direct (non-bridge) requests skip the gate entirely — they can only
+// come from USER_SCRIPT world, which the page cannot reach.
+//
+// Fails CLOSED: an unknown id, an unmatched URL, or a missing sender
+// URL all deny.
+async function bridgeMayActAs(
+  scriptId: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<boolean> {
+  if (typeof scriptId !== 'string' || scriptId === '') return false;
+  // `sender.url` is the URL of the frame that sent the message — the
+  // page the bridge is running on, not the tab's top-level URL.
+  const url = sender.url ?? sender.tab?.url;
+  if (!url) return false;
+  await ensureLoaded();
+  return findMatchesForUrl(url).some((m) => m.id === scriptId && m.world === 'MAIN');
+}
+
+const BRIDGE_DENIED = 'blocked: not a MAIN-world script running on this page';
+
+function viaBridge(msg: unknown): boolean {
+  return (msg as { __viaBridge?: unknown } | null)?.__viaBridge === true;
+}
+
+// Run `work` for a fire-and-forget message that may have come through
+// the bridge, applying `bridgeMayActAs` first when it did. Keeps the
+// common USER_SCRIPT-world path fully synchronous (no extra turn on the
+// document-start critical path) while making the bridge path await the
+// gate. Mirrors the sync-ack handlers' contract: returns false when the
+// reply already went out, true when it will go out later.
+//
+// No log on the refused branch on purpose: a legitimate script never
+// reaches it, and a page can spam forged requests — logging each would
+// be a page-triggerable console flood with no diagnostic value.
+function guardBridgeCall(
+  msg: unknown,
+  scriptId: unknown,
+  sender: chrome.runtime.MessageSender,
+  work: () => void,
+  sendResponse: (reply: unknown) => void,
+): boolean {
+  if (!viaBridge(msg)) {
+    work();
+    try { sendResponse({ ok: true }); } catch { /* receiver gone */ }
+    return false;
+  }
+  void bridgeMayActAs(scriptId, sender).then((allowed) => {
+    if (allowed) work();
+    try {
+      sendResponse(allowed ? { ok: true } : { ok: false, error: BRIDGE_DENIED });
+    } catch { /* receiver gone */ }
+  });
+  return true;
+}
+
+// Same gate for the handlers whose reply carries real data (the
+// assigned tab id, the notification id), so they can't just ack.
+async function guardBridgeAsync<T>(
+  msg: unknown,
+  scriptId: unknown,
+  sender: chrome.runtime.MessageSender,
+  work: () => Promise<T>,
+): Promise<T | { ok: false; error: string }> {
+  if (!viaBridge(msg)) return work();
+  if (!(await bridgeMayActAs(scriptId, sender))) return { ok: false, error: BRIDGE_DENIED };
+  return work();
+}
+
 // Shared async-reply plumbing for the onUserScriptMessage handlers that
 // dispatch a promise and reply with its result. Sends the resolved
 // value, or an `{ok:false,error}` envelope on throw, swallowing the
@@ -2792,21 +2879,21 @@ function installScriptMessageListener(): void {
       // above for the snapshot's role.
       const payload = msg as CheckPendingPayload;
       const decisionP = handleCheckPending(sender, payload);
-      // Only attach the GM_setValue snapshot for a DIRECT request — one
-      // that did NOT come through the page-facing bridge. A bridge-
-      // relayed request (`__viaBridge`) may be a hostile page forging
-      // another script's id to read its values back through the reply;
-      // refuse it. Legit storage scripts are USER_SCRIPT world and use
-      // the direct path, so this never withholds values they're owed.
-      // No log on the refused branch on purpose: a legit script never
-      // reaches it (it's only hit by forged/misused bridge requests),
-      // and a page can spam forged requests — logging each would be a
-      // page-triggerable console flood with no diagnostic value.
-      const valueReadAllowed = payload.needsValues && payload.__viaBridge !== true;
+      // A DIRECT request (no `__viaBridge`) can only have come from
+      // USER_SCRIPT world, which the page cannot reach — attach the
+      // snapshot unconditionally. A bridge-relayed one may be a hostile
+      // page forging another script's id to read its values back
+      // through the reply, so it goes through the gate: values are
+      // handed over only for a MAIN-world script that runs on this
+      // page, whose values that page can already read out of its own
+      // `window.__SM_GM__`. See `bridgeMayActAs`.
+      const valueReadAllowed: Promise<boolean> = payload.needsValues
+        ? (payload.__viaBridge === true
+            ? bridgeMayActAs(payload.id, sender)
+            : Promise.resolve(true))
+        : Promise.resolve(false);
       const snapshotP: Promise<Record<string, unknown> | undefined> =
-        valueReadAllowed
-          ? loadSnapshotForCheckPending(payload.id)
-          : Promise.resolve(undefined);
+        valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined));
       Promise.all([decisionP, snapshotP]).then(
         ([reply, gmValues]) => {
           const enriched: CheckPendingReply =
@@ -2823,18 +2910,25 @@ function installScriptMessageListener(): void {
       return true;
     }
     if (type === 'sm:gm-xhr-start') {
-      // GM_xmlhttpRequest dispatch. Ack the start synchronously so
-      // the message channel doesn't stay pinned open for the entire
-      // request (a long XHR would otherwise hold the port for
-      // minutes). The actual load/error/abort event arrives later
-      // via chrome.tabs.sendMessage. Fire-and-forget the SW work.
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      void handleXhrStart(sender, msg as XhrStartPayload).catch((err) => {
-        console.info('[SourceMonkey] gm-xhr-start handler threw:', err);
-      });
-      return false;
+      // GM_xmlhttpRequest dispatch. Ack the start without waiting for
+      // the request so the message channel doesn't stay pinned open
+      // for its whole lifetime (a long XHR would otherwise hold the
+      // port for minutes). The actual load/error/abort event arrives
+      // later via chrome.tabs.sendMessage. Fire-and-forget the SW work.
+      const xhrPayload = msg as XhrStartPayload;
+      return guardBridgeCall(msg, xhrPayload.scriptId, sender, () => {
+        void handleXhrStart(sender, xhrPayload).catch((err) => {
+          console.info('[SourceMonkey] gm-xhr-start handler threw:', err);
+        });
+      }, sendResponse);
     }
     if (type === 'sm:gm-xhr-abort') {
+      // Deliberately ungated: the payload names a request id, not a
+      // script, and those ids are per-call random strings the SW never
+      // publishes. A page would have to guess one to cancel a request,
+      // and cancelling a request it can already observe (it shares the
+      // realm with the script that made it) gains it nothing.
+      // `sm:gm-tab-close` is ungated for the same reason.
       const payload = msg as { id?: string };
       if (typeof payload.id === 'string') abortXhr(payload.id);
       // Synchronous ack — no async reply follows, so return false to
@@ -2845,7 +2939,12 @@ function installScriptMessageListener(): void {
     if (type === 'sm:gm-tab-open') {
       // Async dispatch — page side awaits the reply (need the assigned
       // chrome tab id back to populate the control object).
-      return respondAsync('gm-tab-open', handleTabOpen(sender, msg as GmTabOpenPayload), sendResponse);
+      const tabPayload = msg as GmTabOpenPayload;
+      return respondAsync(
+        'gm-tab-open',
+        guardBridgeAsync(msg, tabPayload.scriptId, sender, () => handleTabOpen(sender, tabPayload)),
+        sendResponse,
+      );
     }
     if (type === 'sm:gm-tab-close') {
       const payload = msg as { requestId?: string };
@@ -2883,9 +2982,13 @@ function installScriptMessageListener(): void {
       return false;
     }
     if (type === 'sm:gm-notification-show') {
+      const notifPayload = msg as GmNotificationShowPayload;
       return respondAsync(
         'gm-notification-show',
-        handleNotificationShow(sender, msg as GmNotificationShowPayload),
+        guardBridgeAsync(
+          msg, notifPayload.scriptId, sender,
+          () => handleNotificationShow(sender, notifPayload),
+        ),
         sendResponse,
       );
     }
@@ -2894,7 +2997,15 @@ function installScriptMessageListener(): void {
       // doesn't actually await the reply today (fire-and-forget), but
       // returning a real {ok} keeps the channel honest for future error
       // surfacing.
-      return respondAsync('gm-batch-write', handleBatchWrite(msg as BatchWritePayload, sender), sendResponse);
+      const writePayload = msg as BatchWritePayload;
+      return respondAsync(
+        'gm-batch-write',
+        guardBridgeAsync(
+          msg, writePayload.scriptId, sender,
+          () => handleBatchWrite(writePayload, sender),
+        ),
+        sendResponse,
+      );
     }
     if (type === 'sm:gm-resync') {
       // Recovery path for a document that missed a value broadcast.
@@ -2924,44 +3035,44 @@ function installScriptMessageListener(): void {
       // registry is keyed by document: we pass the sender's documentId
       // and the navigation clear only drops another document's state.
       const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
-      if (
-        typeof payload.scriptId === 'string' &&
-        typeof payload.commandId === 'string' &&
-        typeof payload.name === 'string'
-      ) {
-        const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
-        if (changed && tabId === activeTabId) void refreshActiveTabMenu();
-      }
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return false;
+      return guardBridgeCall(msg, payload.scriptId, sender, () => {
+        if (
+          typeof payload.scriptId === 'string' &&
+          typeof payload.commandId === 'string' &&
+          typeof payload.name === 'string'
+        ) {
+          const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
+          if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+        }
+      }, sendResponse);
     }
     if (type === 'sm:gm-menu-unregister') {
       const payload = msg as { scriptId?: unknown; commandId?: unknown };
-      if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
-        const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
-        // Unknown ids (silent no-op contract) don't change visible
-        // state; skip the rebuild so a noisy unregister loop doesn't
-        // churn chrome.contextMenus.
-        if (changed && tabId === activeTabId) void refreshActiveTabMenu();
-      }
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return false;
+      return guardBridgeCall(msg, payload.scriptId, sender, () => {
+        if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
+          const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
+          // Unknown ids (silent no-op contract) don't change visible
+          // state; skip the rebuild so a noisy unregister loop doesn't
+          // churn chrome.contextMenus.
+          if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+        }
+      }, sendResponse);
     }
     if (type === SM_GM_LOG_MSG) {
       // Fan-out from the page-side GM_log helper. Fire-and-forget; the
       // wrapper doesn't await this. We still ack so the message channel
       // doesn't stay pinned open.
       const payload = msg as { scriptId?: unknown; message?: unknown };
-      if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
-        logScriptEvent(payload.scriptId, {
-          level: 'info',
-          source: 'gm-log',
-          tabId,
-          message: payload.message,
-        });
-      }
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return false;
+      return guardBridgeCall(msg, payload.scriptId, sender, () => {
+        if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
+          logScriptEvent(payload.scriptId, {
+            level: 'info',
+            source: 'gm-log',
+            tabId,
+            message: payload.message,
+          });
+        }
+      }, sendResponse);
     }
     if (
       type !== SM_START_MSG &&

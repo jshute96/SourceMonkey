@@ -80,7 +80,7 @@ import {
   WRAPPER_GM_RUNTIME,
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
-import { resolveGrants } from './gm-api-catalog.js';
+import { findApi, resolveGrants } from './gm-api-catalog.js';
 import { scanAllStorage } from './storage-scan.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
@@ -144,8 +144,22 @@ export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
 // global is in place before any userscript wrapper runs.
 export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 
+// MAIN-world flavor of the same runtime source. Needed whenever an
+// active MAIN-world script grants a runtime-backed API — which now
+// includes every `@grant unsafeWindow` script, since that grant forces
+// MAIN world. Its SW traffic rides `wrapper-bridge.js`.
+export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
+
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
 export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
+
+// What one pass of `collectActiveSpecs` produced.
+export interface ActiveSpecs {
+  specs: RegistrationSpec[];
+  // Script ids whose world needs the shared `__SM_GM__` runtime. See
+  // `collectActiveSpecs`.
+  needsRuntime: Set<string>;
+}
 
 // Normalize the script's declared `@run-at` header to one of the four
 // recognized values. The prelude gates body execution on the matching
@@ -165,6 +179,18 @@ export function normalizeDeclaredRunAt(value: string | undefined): string {
   }
 }
 
+// True iff the script's `@grant` lines ask for `unsafeWindow`.
+// `unsafeWindow` is defined as "the page's real window object", which in
+// Chrome is only reachable from MAIN world — an isolated world's
+// `window` is a different realm and no synchronous bridge to the page's
+// can exist. So this grant is a world request, not just a binding
+// request. See docs/injection.md#unsafewindow-forces-main-world.
+export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boolean {
+  if (!header) return false;
+  const { granted } = resolveGrants(getValues(header, 'grant'));
+  return granted.has('unsafeWindow');
+}
+
 // Decide which execution world a script should run in. Mirrors
 // Violentmonkey's `@inject-into` semantics (and Tampermonkey's default
 // for `@grant none`):
@@ -173,18 +199,28 @@ export function normalizeDeclaredRunAt(value: string | undefined): string {
 //                                          window.X globals)
 //   - `@inject-into content`     → USER_SCRIPT (isolated)
 //   - default / `auto` / unset   → MAIN when there are no @grant entries
-//                                  (or every @grant is `none`); otherwise
-//                                  USER_SCRIPT.
+//                                  (or every @grant is `none`), and MAIN
+//                                  when `unsafeWindow` is granted;
+//                                  otherwise USER_SCRIPT.
 //
-// Why this default: scripts that opt out of GM_* (the `@grant none`
-// convention) expect direct page access — `window.map`, `window.jQuery`,
-// page-defined functions. Putting them in USER_SCRIPT silently breaks
-// any script that touches a page global. Tampermonkey runs `@grant none`
-// scripts in page context for the same reason.
+// Why `@grant none` defaults to MAIN: scripts that opt out of GM_* (the
+// `@grant none` convention) expect direct page access — `window.map`,
+// `window.jQuery`, page-defined functions. Putting them in USER_SCRIPT
+// silently breaks any script that touches a page global. Tampermonkey
+// runs `@grant none` scripts in page context for the same reason.
 //
-// Limitation: MAIN-world scripts cannot call `chrome.runtime.sendMessage`,
-// so the wrapper's `sm:start` / `sm:error` reports route through the
-// bridge instead. See docs/injection.md.
+// Why `@grant unsafeWindow` also defaults to MAIN: same reason, one
+// level down. The whole point of the grant is reaching the page's
+// globals, and USER_SCRIPT world cannot do that at all. Running such a
+// script isolated hands it a `window` that merely *looks* right, so the
+// failure is silent. GM_* still works in MAIN — the runtime is
+// registered there too and routes SW traffic over `wrapper-bridge.js`.
+//
+// `@inject-into content` still wins, because it is an explicit request
+// for isolation. Such a script gets `unsafeWindow === window` (the
+// isolated realm's), matching Violentmonkey's content mode, plus a
+// startup-log warning so the mismatch is visible rather than silent —
+// see `extractStartupLogs` in script-store.ts.
 export function resolveWorld(header: ParsedHeader | null | undefined): InjectionWorld {
   if (!header) return 'MAIN';
   const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
@@ -193,7 +229,25 @@ export function resolveWorld(header: ParsedHeader | null | undefined): Injection
   const grants = getValues(header, 'grant').map((g) => g.trim().toLowerCase());
   if (grants.length === 0) return 'MAIN';
   if (grants.every((g) => g === 'none' || g === '')) return 'MAIN';
+  if (grantsUnsafeWindow(header)) return 'MAIN';
   return 'USER_SCRIPT';
+}
+
+// True iff the script needs the shared `__SM_GM__` runtime registered in
+// its world. `GM_info` is a baked-in literal and `unsafeWindow` is a
+// plain `window` alias, so a script granting only those (or nothing at
+// all) needs no runtime — which is what keeps `window.__SM_GM__` off the
+// page in the overwhelmingly common `@grant none` MAIN-world case.
+export function needsGmRuntime(header: ParsedHeader | null | undefined): boolean {
+  if (!header) return false;
+  const { granted } = resolveGrants(getValues(header, 'grant'));
+  for (const name of granted) {
+    const spec = findApi(name);
+    if (!spec) continue;
+    if (spec.subsystem === 'info' || spec.subsystem === 'unsafe-window') continue;
+    return true;
+  }
+  return false;
 }
 
 function isRegexLiteral(s: string): boolean {
@@ -466,8 +520,8 @@ export function wrapSealEntry(scriptId: string, logLabel: string): string {
 // real bindings to emit lives in emitGmBindings.
 //
 // Precondition: callers must check `script.header != null` before
-// calling this. Production callers (`buildGmBindingsForScript`,
-// `buildMainWorldGmInfoOnly`) early-return for headerless scripts.
+// calling this. The one production caller (`buildGmBindingsForScript`)
+// early-returns for headerless scripts.
 function buildGmInfoInput(
   script: StoredScript,
   scriptHandlerVersion: string,
@@ -501,13 +555,18 @@ function buildGmInfoInput(
   };
 }
 
-// Build the full GM-binding source string for one USER_SCRIPT-world
-// script: a const declaration per granted API plus the implicit
-// `GM_info`. Async because we may eventually need to read persisted
-// values at register time (not today; the storage snapshot path
-// runs through the check-pending reply). For MAIN-world scripts use
-// `buildMainWorldGmInfoOnly` — most of the GM_* surface delegates
-// to `window.__SM_GM__`, which only exists in USER_SCRIPT world.
+// Build the full GM-binding source string for one script: a const
+// declaration per granted API plus the implicit `GM_info`. Async
+// because we may eventually need to read persisted values at register
+// time (not today; the storage snapshot path runs through the
+// check-pending reply).
+//
+// World-independent. The emitted bodies delegate to
+// `window.__SM_GM__`, and the shared runtime that installs it is
+// registered in BOTH worlds now (see `buildGmRuntimeSpecs`), with the
+// MAIN-world copy routing its SW traffic over `wrapper-bridge.js`. So
+// a `@grant unsafeWindow` + `@grant GM_setValue` script gets a real
+// page `window` AND working storage.
 export async function buildGmBindingsForScript(
   script: StoredScript,
   scriptHandlerVersion: string,
@@ -525,19 +584,6 @@ export async function buildGmBindingsForScript(
   // reflected here.
   const grantedNames = resolved.hasNone ? [] : [...resolved.granted];
   return emitGmBindings(grantedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
-}
-
-// MAIN-world variant: emit ONLY GM_info — the other GM_* bindings
-// can't work because `window.__SM_GM__` lives in USER_SCRIPT world.
-// (See the TODO in docs/GM-API-strategy.md for the work to bridge
-// the rest into MAIN.) This is what makes `GM_info` available to
-// every script regardless of world / grants, matching TM/VM.
-function buildMainWorldGmInfoOnly(
-  script: StoredScript,
-  scriptHandlerVersion: string,
-): GmBindingEmit {
-  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
-  return emitGmBindings([], buildGmInfoInput(script, scriptHandlerVersion, []));
 }
 
 // The exact text the registered entry compiles as a function body,
@@ -672,10 +718,9 @@ export async function buildSwapEvalBody(
   scriptHandlerVersion: string,
   logLabel: string = scriptBasename(script.relativePath),
 ): Promise<SwapEval> {
-  const world = resolveWorld(script.header);
-  const gmEmit = world === 'USER_SCRIPT'
-    ? await buildGmBindingsForScript(script, scriptHandlerVersion)
-    : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
+  // World-independent now: the shared runtime is registered in whichever
+  // worlds need it, so a MAIN-world script gets the same bindings.
+  const gmEmit = await buildGmBindingsForScript(script, scriptHandlerVersion);
   const sourceUrl = buildSourceUrl(logLabel);
   const requires = script.requires ?? [];
   // gmEmit.js is single-line and ends with a space (or is empty), so
@@ -786,16 +831,11 @@ export async function buildRegistrationSpec(
 
   const world = resolveWorld(script.header);
   // GM_info is implicit in TM/VM — available in every world, with or
-  // without an `@grant` line. We mirror that. The rest of the GM_*
-  // surface only makes sense in USER_SCRIPT world today (the
-  // `window.__SM_GM__` runtime is registered there): a script that
-  // mixes `@grant something` with `@inject-into page` lands in MAIN
-  // and gets only GM_info — its other GM_* calls produce a natural
-  // ReferenceError. This is a documented limitation (see
-  // docs/GM-API-strategy.md).
-  const gmEmit = world === 'USER_SCRIPT'
-    ? await buildGmBindingsForScript(script, scriptHandlerVersion)
-    : buildMainWorldGmInfoOnly(script, scriptHandlerVersion);
+  // without an `@grant` line — and the rest of the granted surface is
+  // emitted the same way in both worlds. The shared `__SM_GM__` runtime
+  // is registered in whichever worlds need it (`buildGmRuntimeSpecs`),
+  // and its MAIN-world copy routes SW traffic over `wrapper-bridge.js`.
+  const gmEmit = await buildGmBindingsForScript(script, scriptHandlerVersion);
 
   const requires = script.requires ?? [];
   // Synthetic sourceURLs per require — these are what stack frames
@@ -880,6 +920,14 @@ export function isRegistrationCandidate(
 // the map itself — computed from the whole library, because a `#N`
 // suffix that depends on which rows this sync happened to read would
 // disagree with every other surface that shows the label.
+//
+// `needsRuntime` names the scripts that need the shared `__SM_GM__`
+// runtime registered in their world — derived from grants, not from the
+// specs, because a `RegistrationSpec` is a plain Chrome type and an
+// extra field on it would be handed to `chrome.userScripts.register`.
+// Carried per script rather than per world so an incremental sync keeps
+// the answer for the rows it isn't rebuilding. See
+// `buildGmRuntimeSpecs`.
 export async function collectActiveSpecs(
   scripts: StoredScript[],
   collections: Map<string, StoredCollection>,
@@ -887,17 +935,28 @@ export async function collectActiveSpecs(
   logIds: Map<string, string> = computeLogIds(scripts.map((s): LogIdInput => ({
     id: s.id, relativePath: s.relativePath,
   }))),
-): Promise<RegistrationSpec[]> {
+): Promise<ActiveSpecs> {
+  const eligible: StoredScript[] = [];
   const promises: Array<Promise<RegistrationSpec | null>> = [];
   for (const s of scripts) {
     if (!isRegistrationCandidate(s, collections)) continue;
     const label = logIds.get(s.id) ?? scriptBasename(s.relativePath);
+    eligible.push(s);
     promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label));
   }
   const results = await Promise.all(promises);
-  const out: RegistrationSpec[] = [];
-  for (const r of results) if (r) out.push(r);
-  return out;
+  const specs: RegistrationSpec[] = [];
+  const needsRuntime = new Set<string>();
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    // A null spec means the script has nothing Chrome can match on, so
+    // it isn't registered — and a script that never runs must not drag
+    // the GM runtime onto the page either.
+    if (!r) continue;
+    specs.push(r);
+    if (needsGmRuntime(eligible[i].header)) needsRuntime.add(eligible[i].id);
+  }
+  return { specs, needsRuntime };
 }
 
 // Pure: build the registration spec for the MAIN-world bridge, or
@@ -946,23 +1005,38 @@ function bridgeSpec(): RegistrationSpec {
 }
 
 
-// Pure: build the registration spec for the USER_SCRIPT-world GM_*
-// shared runtime, or return null when no USER_SCRIPT-world script is
-// active. See the original module-level comment in src/wrapper-gm-runtime.js
-// for the runtime's design.
-export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
-  return hasWorld(activeSpecs.map((s) => s.world), 'USER_SCRIPT') ? gmRuntimeSpec() : null;
+// Pure: build the registration specs for the shared `__SM_GM__` GM_*
+// runtime — one per world in `worlds`. See the module-level comment in
+// src/wrapper-gm-runtime.js for the runtime's design.
+//
+// The SAME source is registered in both worlds; the runtime detects at
+// init time whether `chrome.runtime` is reachable and picks its
+// transport accordingly (direct `sendMessage` in USER_SCRIPT, the
+// postMessage bridge in MAIN). One implementation, two transports —
+// rather than a second MAIN-only copy that would drift.
+export function buildGmRuntimeSpecs(worlds: ReadonlySet<InjectionWorld>): RegistrationSpec[] {
+  return GM_RUNTIME_WORLDS.filter((w) => worlds.has(w)).map((w) => gmRuntimeSpec(w));
+}
+
+// The worlds the runtime can be registered in, in registration order.
+const GM_RUNTIME_WORLDS: readonly InjectionWorld[] = ['USER_SCRIPT', 'MAIN'];
+
+// The id the runtime carries in a given world. `chrome.userScripts`
+// namespaces ids globally rather than per world, so the two
+// registrations can't share one.
+function gmRuntimeIdFor(world: InjectionWorld): string {
+  return world === 'MAIN' ? GM_RUNTIME_MAIN_SCRIPT_ID : GM_RUNTIME_SCRIPT_ID;
 }
 
 // See `bridgeSpec` for why the spec and the "is it wanted?" question
 // are separate.
-function gmRuntimeSpec(): RegistrationSpec {
+function gmRuntimeSpec(world: InjectionWorld): RegistrationSpec {
   return {
-    id: GM_RUNTIME_SCRIPT_ID,
+    id: gmRuntimeIdFor(world),
     matches: ['<all_urls>'],
     js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }],
     runAt: 'document_start',
-    world: 'USER_SCRIPT',
+    world,
   };
 }
 
@@ -1027,6 +1101,11 @@ interface Placement {
   // Which pattern fields it carries — see `PlacedPatterns` for why an
   // update has to know.
   patterns: PlacedPatterns;
+  // Whether this script needs the shared `__SM_GM__` runtime in its
+  // world. Tracked so an incremental sync can decide which worlds the
+  // runtime belongs in from the WHOLE registration set, not just the
+  // slice it is rebuilding. Always false for our own two registrations.
+  gmRuntime: boolean;
 }
 
 interface RegistrationState {
@@ -1173,7 +1252,33 @@ async function readRows(
 // USER_SCRIPT world, so counting it would keep the GM runtime
 // registered forever once a MAIN-world script had ever been active.
 function userWorlds(registered: Map<string, Placement>): InjectionWorld[] {
-  return [...registered].filter(([id]) => isUserScriptId(id)).map(([, p]) => p.world);
+  return userPlacements(registered).map((p) => p.world);
+}
+
+// The placements for user scripts only — our own registrations are the
+// thing being decided, so they can't be part of the input.
+function userPlacements(registered: Map<string, Placement>): Placement[] {
+  return [...registered].filter(([id]) => isUserScriptId(id)).map(([, p]) => p);
+}
+
+// Which worlds need the shared `__SM_GM__` runtime registered. A world
+// earns it only from a script that actually grants a runtime-backed API
+// — which is what keeps `window.__SM_GM__` off the page on the very
+// common "MAIN world, `@grant none` only" page.
+function gmRuntimeWorldsOf(placements: Iterable<Placement>): Set<InjectionWorld> {
+  const out = new Set<InjectionWorld>();
+  for (const p of placements) if (p.gmRuntime) out.add(p.world);
+  return out;
+}
+
+// Same question against a freshly built spec list, where the answer
+// lives beside the specs rather than on them.
+function gmRuntimeWorldsOfSpecs(active: ActiveSpecs): Set<InjectionWorld> {
+  const out = new Set<InjectionWorld>();
+  for (const spec of active.specs) {
+    if (active.needsRuntime.has(spec.id)) out.add((spec.world ?? 'MAIN') as InjectionWorld);
+  }
+  return out;
 }
 
 // ---------- Serializing registration work ----------
@@ -1481,7 +1586,8 @@ async function runFullSync(): Promise<RegistrationState> {
   const logIds = computeLogIds(scripts.map((s): LogIdInput => ({
     id: s.id, relativePath: s.relativePath,
   })));
-  const userSpecs = await collectActiveSpecs(effective, collections, handlerVersion, logIds);
+  const active = await collectActiveSpecs(effective, collections, handlerVersion, logIds);
+  const userSpecs = active.specs;
   // Covers the revalidation too — it is per-script work on the same
   // critical path, and splitting it out would imply the two can be
   // acted on separately when the sync always does both.
@@ -1495,7 +1601,7 @@ async function runFullSync(): Promise<RegistrationState> {
   const specs = orderWithOwnSpecs(
     userSpecs,
     hasWorld(userSpecs.map((s) => s.world), 'MAIN'),
-    hasWorld(userSpecs.map((s) => s.world), 'USER_SCRIPT'),
+    gmRuntimeWorldsOfSpecs(active),
     // Empty rather than `present`: a full sync re-places the bridge and
     // the GM runtime even when Chrome already holds them, because their
     // code ships with the extension and an update changes it. Skipping
@@ -1519,7 +1625,7 @@ async function runFullSync(): Promise<RegistrationState> {
   timer.done();
   reportSyncResult(applied.placed.length, specs.length);
   return {
-    registered: placementsOf(specs, applied),
+    registered: placementsOf(specs, applied, active.needsRuntime),
     scriptIndex: new Map(scripts.map((s) => [
       s.id, { relativePath: s.relativePath, collectionId: s.collectionId },
     ])),
@@ -1613,9 +1719,10 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   }
   const handlerVersion = chrome.runtime.getManifest().version;
   const effective = await revalidateCandidates(scripts, state.collections);
-  const userSpecs = await collectActiveSpecs(
+  const active = await collectActiveSpecs(
     effective, state.collections, handlerVersion, logIds,
   );
+  const userSpecs = active.specs;
   timer.mark('build-specs');
 
   const wanted = new Set(userSpecs.map((s) => s.id));
@@ -1638,17 +1745,24 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   const projected = new Map(state.registered);
   for (const id of removeIds) projected.delete(id);
   for (const spec of userSpecs) {
-    projected.set(spec.id, { world: (spec.world ?? 'MAIN') as InjectionWorld, patterns: patternsOf(spec) });
+    projected.set(spec.id, {
+      world: (spec.world ?? 'MAIN') as InjectionWorld,
+      patterns: patternsOf(spec),
+      gmRuntime: active.needsRuntime.has(spec.id),
+    });
   }
   const needBridge = hasWorld(userWorlds(projected), 'MAIN');
-  const needGmRuntime = hasWorld(userWorlds(projected), 'USER_SCRIPT');
+  const gmRuntimeWorlds = gmRuntimeWorldsOf(userPlacements(projected));
   if (!needBridge && state.registered.has(BRIDGE_SCRIPT_ID)) removeIds.push(BRIDGE_SCRIPT_ID);
-  if (!needGmRuntime && state.registered.has(GM_RUNTIME_SCRIPT_ID)) {
-    removeIds.push(GM_RUNTIME_SCRIPT_ID);
+  // One runtime registration per world, dropped independently: a page
+  // can end up wanting the MAIN copy and not the USER_SCRIPT one.
+  for (const world of GM_RUNTIME_WORLDS) {
+    const id = gmRuntimeIdFor(world);
+    if (!gmRuntimeWorlds.has(world) && state.registered.has(id)) removeIds.push(id);
   }
 
   const present = new Map([...state.registered].map(([id, p]) => [id, p.patterns] as const));
-  const specs = orderWithOwnSpecs(userSpecs, needBridge, needGmRuntime, present);
+  const specs = orderWithOwnSpecs(userSpecs, needBridge, gmRuntimeWorlds, present);
   const applied = await applyPlan({
     specs,
     removeIds,
@@ -1663,7 +1777,9 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   timer.note(`incremental; ${specs.length} specs, ${removeIds.length} dropped`);
   timer.done();
   for (const id of removeIds) state.registered.delete(id);
-  for (const [id, placement] of placementsOf(specs, applied)) state.registered.set(id, placement);
+  for (const [id, placement] of placementsOf(specs, applied, active.needsRuntime)) {
+    state.registered.set(id, placement);
+  }
   for (const id of applied.refused) state.registered.delete(id);
   state.labels = nextLabels;
   reportSyncResult(applied.placed.length, specs.length);
@@ -1705,11 +1821,13 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
 function orderWithOwnSpecs(
   userSpecs: RegistrationSpec[],
   needBridge: boolean,
-  needGmRuntime: boolean,
+  gmRuntimeWorlds: ReadonlySet<InjectionWorld>,
   alreadyPlaced: { has(id: string): boolean },
 ): RegistrationSpec[] {
   const specs: RegistrationSpec[] = [];
-  if (needGmRuntime && !alreadyPlaced.has(GM_RUNTIME_SCRIPT_ID)) specs.push(gmRuntimeSpec());
+  for (const spec of buildGmRuntimeSpecs(gmRuntimeWorlds)) {
+    if (!alreadyPlaced.has(spec.id)) specs.push(spec);
+  }
   if (needBridge && !alreadyPlaced.has(BRIDGE_SCRIPT_ID)) specs.push(bridgeSpec());
   specs.push(...userSpecs);
   return specs;
@@ -1719,6 +1837,7 @@ function orderWithOwnSpecs(
 function placementsOf(
   specs: readonly RegistrationSpec[],
   applied: AppliedPlan,
+  needsRuntime: ReadonlySet<string>,
 ): Map<string, Placement> {
   const out = new Map<string, Placement>();
   for (const spec of specs) {
@@ -1726,6 +1845,7 @@ function placementsOf(
     out.set(spec.id, {
       world: (spec.world ?? 'MAIN') as InjectionWorld,
       patterns: patternsOf(spec),
+      gmRuntime: needsRuntime.has(spec.id),
     });
   }
   return out;
@@ -2116,8 +2236,12 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // Built through collectActiveSpecs rather than buildRegistrationSpec
   // directly so the retry can't drift from the sync on eligibility or
   // on dedup-aware log labels.
-  const specs = (await collectActiveSpecs(scripts, collections, handlerVersion))
-    .filter((s) => wanted.has(s.id));
+  // Only the user specs: the shared GM runtime and bridge registrations
+  // belong to the last full sync, which built them for this same script
+  // set — a targeted retry re-offers the refused script, not the
+  // scaffolding already installed around it.
+  const active = await collectActiveSpecs(scripts, collections, handlerVersion);
+  const specs = active.specs.filter((s) => wanted.has(s.id));
   // `owned: wanted` is what makes this targeted: the rejection map is
   // re-read inside `applyPlan` and only these ids are touched, so a full
   // sync that landed while we were registering keeps every other entry.
@@ -2137,7 +2261,9 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
     const spec = specs.find((s) => s.id === id);
     if (syncState && spec) {
       syncState.registered.set(id, {
-        world: (spec.world ?? 'MAIN') as InjectionWorld, patterns: patternsOf(spec),
+        world: (spec.world ?? 'MAIN') as InjectionWorld,
+        patterns: patternsOf(spec),
+        gmRuntime: active.needsRuntime.has(id),
       });
     }
   }

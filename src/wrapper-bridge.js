@@ -7,15 +7,22 @@
    bridge runs in USER_SCRIPT world on the same page, listens for
    those messages, and forwards them to the SW.
 
-   Two flavors of forwarded message:
+   Three flavors of traffic:
      - Fire-and-forget reports (sm:start / sm:error / sm:swapped /
        sm:abandoned). The bridge calls chrome.runtime.sendMessage and
        silently swallows the returned promise.
-     - Request/reply for sm:check-pending. The MAIN wrapper attaches
-       a requestId; the bridge forwards to the SW, awaits the reply,
-       and posts it back as a "sourcemonkey-bridge-reply" message keyed
-       on the same requestId. The MAIN wrapper's listener matches on
-       requestId and resolves its awaiter.
+     - Request/reply, used by sm:check-pending and by every GM_* call
+       the MAIN-world copy of wrapper-gm-runtime.js makes. The sender
+       attaches a requestId; the bridge forwards to the SW, awaits the
+       reply, and posts it back as a "sourcemonkey-bridge-reply"
+       message keyed on the same requestId. The sender's listener
+       matches on requestId and resolves its awaiter. The presence of
+       `requestId` — not the payload type — is what selects this path.
+     - SW-originated pushes (sm:gm-value-update, sm:gm-xhr-event,
+       sm:gm-tab-closed, sm:gm-notification-event, sm:gm-menu-fire).
+       Those arrive on chrome.runtime.onMessage, which MAIN world
+       can't listen on, so we re-post them into the page as
+       "sourcemonkey-bridge-push" for the MAIN runtime to dispatch.
 
    Build rules match userscript-prelude.js — only /* block * /
    comments, strings must not start a line with //, the build minifies
@@ -51,34 +58,64 @@
        privilege gain — the cost is attribution (errors blamed on our
        script's sourceURL) and a one-navigation delay for the real
        update.
-     - forge `sm:check-pending` with `needsValues:true` and another
-       script's `id`. The SW would otherwise attach that script's
-       GM_setValue snapshot (`gmValues`) to the reply, which the bridge
-       posts back where the page can read it. THIS read leak is closed:
-       every message the bridge forwards is stamped `__viaBridge:true`
-       (see `stamp` below), and the SW refuses to attach `gmValues` to
-       any `__viaBridge` request (see the check-pending handler in
-       background.ts). The stamp is trustworthy because the page CANNOT
-       call chrome.runtime.sendMessage itself (no chrome.runtime in
-       MAIN world), so the only way a page-influenced message reaches
-       the SW is through here — and we set the marker last, ignoring any
-       page-supplied copy. Legitimate value reads come from USER_SCRIPT-
-       world scripts over their own direct chrome.runtime path (never
-       this bridge), so they carry no `__viaBridge` and are unaffected.
+     - forge a script-scoped request (`sm:check-pending` with
+       `needsValues:true`, or any `sm:gm-*` call) carrying another
+       script's id, to read that script's GM_setValue snapshot back out
+       of the reply or to act as it. This is bounded, not open: every
+       message the bridge forwards is stamped `__viaBridge:true` (see
+       `stamp` below), and the SW honors a `__viaBridge` script-scoped
+       request ONLY for a script that runs in MAIN world on the sending
+       page (see `bridgeMayActAs` in background.ts). Such a script's
+       GM surface is reachable from the page anyway — its
+       `window.__SM_GM__` is a global in the page's own realm — so the
+       gate hands out nothing the page couldn't already take, while
+       still refusing every USER_SCRIPT-world script and every
+       MAIN-world script that doesn't match this page.
+       The stamp is trustworthy because the page CANNOT call
+       chrome.runtime.sendMessage itself (no chrome.runtime in MAIN
+       world), so the only way a page-influenced message reaches the SW
+       is through here — and we set the marker last, ignoring any
+       page-supplied copy. USER_SCRIPT-world scripts talk to the SW over
+       their own direct chrome.runtime path (never this bridge), so they
+       carry no `__viaBridge` and are never gated.
+     - forge a `sourcemonkey-bridge-push` into MAIN world, faking an
+       XHR load / menu fire / value update for a MAIN-world script.
+       Same footing: the page shares the realm with that script and can
+       already call its callbacks directly.
    None grant script execution or SW privilege beyond what the page
    already has. */
 (function () {
   "use strict";
   var MARKER = "sourcemonkey-bridge";
   var REPLY_MARKER = "sourcemonkey-bridge-reply";
-  var ALLOWED = ["sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending"];
+  var PUSH_MARKER = "sourcemonkey-bridge-push";
+  /* Payload types we relay page -> SW. Telemetry + the reload
+     fast-path handshake, plus the SW-backed half of the GM_* surface
+     that the MAIN-world runtime needs. Anything not listed is dropped,
+     so a page can't reach message handlers we never meant to expose. */
+  var ALLOWED = [
+    "sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending",
+    "sm:gm-batch-write",
+    "sm:gm-xhr-start", "sm:gm-xhr-abort",
+    "sm:gm-tab-open", "sm:gm-tab-close",
+    "sm:gm-notification-show",
+    "sm:gm-menu-register", "sm:gm-menu-unregister",
+    "sm:gm-log"
+  ];
+  /* Message types we relay SW -> page. These are pushes the SW sends
+     unprompted via chrome.tabs.sendMessage; MAIN world has no
+     chrome.runtime to receive them on. */
+  var PUSHED = [
+    "sm:gm-value-update", "sm:gm-xhr-event", "sm:gm-tab-closed",
+    "sm:gm-notification-event", "sm:gm-menu-fire"
+  ];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
   /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
      the page can't pre-set it false. The SW treats __viaBridge as
-     "this request may be page-forged" and withholds another script's
-     gmValues snapshot from the reply. See the file header. We skip
-     __proto__ so a page-supplied key can't retarget fwd's prototype
-     during the copy. */
+     "this request may be page-forged" and refuses to act on behalf of
+     any script that isn't a MAIN-world script running on the sending
+     page. See the file header. We skip __proto__ so a page-supplied
+     key can't retarget fwd's prototype during the copy. */
   function stamp(payload) {
     var fwd = {};
     for (var k in payload) {
@@ -96,13 +133,17 @@
       var payload = data.payload;
       if (!payload || typeof payload !== "object") return;
       if (ALLOWED.indexOf(payload.type) === -1) return;
-      if (payload.type === "sm:check-pending") {
-        /* Request/reply path. The MAIN wrapper expects a postMessage
-           back with the matching requestId. We always reply, even on
-           SW failure, so the wrapper's awaiter resolves quickly
-           rather than running out its 2s safety timeout. */
-        var requestId = data.requestId;
-        if (typeof requestId !== "string") return;
+      var requestId = data.requestId;
+      if (typeof requestId === "string") {
+        /* Request/reply path — selected by the presence of a
+           requestId, so both sm:check-pending and every GM_* call use
+           it. The sender expects a postMessage back with the matching
+           requestId. We always reply, even on SW failure, so the
+           awaiter resolves quickly rather than running out its own
+           timeout. The fallback reply is `{action:"run"}` because the
+           only caller that acts on the reply's SHAPE is the prelude's
+           check-pending awaiter; GM_* callers treat any reply without
+           `ok:true` as a failure, which is the right reading here. */
         var post = function (reply) {
           try {
             window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { action: "run" } }, "*");
@@ -123,4 +164,29 @@
       if (p && typeof p.catch === "function") p.catch(function () {});
     } catch (_e) {}
   }, true);
+
+  /* SW -> MAIN relay. The SW pushes GM_* events (an XHR settling, a
+     cross-tab value update, a menu entry being picked) with
+     chrome.tabs.sendMessage, which only USER_SCRIPT world can receive.
+     Re-post them into the page so the MAIN-world copy of
+     wrapper-gm-runtime.js can dispatch to the userscript's callbacks.
+
+     Sender filter matches the runtime's own: our extension id, and no
+     sender.tab (i.e. it came from the SW, not from another tab's
+     content). Type allowlist keeps unrelated internal traffic — the
+     sources page's own messages, say — out of the page. */
+  var _extensionId = null;
+  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
+  try {
+    if (chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+      chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
+        try {
+          if (!sender || sender.id !== _extensionId || sender.tab) return;
+          if (!msg || typeof msg !== "object") return;
+          if (PUSHED.indexOf(msg.type) === -1) return;
+          window.postMessage({ __sm: PUSH_MARKER, payload: msg }, "*");
+        } catch (_e3) {}
+      });
+    }
+  } catch (_e4) {}
 })();
