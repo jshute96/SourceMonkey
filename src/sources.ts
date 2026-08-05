@@ -148,6 +148,27 @@ if (chrome.storage?.session?.onChanged) {
   });
 }
 
+// `chrome.storage.local` key spaces this page watches (see docs/storage.md).
+const SOURCES_INDEX_KEY = 'sources';
+const SOURCE_KEY_PREFIX = 'source:';
+const SCRIPT_KEY_PREFIX = 'script:';
+
+// Keep the page current with `chrome.storage.local` writes from ANY
+// origin — the viewer's Refresh, a background opportunistic refresh, an
+// Install captured in another tab, a second Sources tab. Before this the
+// page only ever reflected the state it wrote itself, so a script that
+// recovered elsewhere kept a stale badge until a manual reload (issue
+// #10). The page's own flow handlers still mutate the DOM directly; this
+// listener catches everything else. Its updates are idempotent and
+// preserve row highlights / spinners, so the echo of one of our own
+// writes is a harmless repaint rather than a fight with the handler that
+// made it.
+if (chrome.storage?.local?.onChanged) {
+  chrome.storage.local.onChanged.addListener((changes) => {
+    void onLocalStorageChange(changes);
+  });
+}
+
 // Page-wide map of {scriptId → log ID}, refreshed whenever scripts are
 // added / removed / refreshed. Renders the `#N` dupe suffix in the
 // filename cell. Empty until `refreshLogIds()` runs.
@@ -277,6 +298,235 @@ function applyLogIdSuffixesToDom(): void {
     if (!span) continue;
     span.textContent = logIdDupeSuffix(currentLogIds.get(id) ?? '');
   }
+}
+
+// ---------- Live storage watcher ----------
+
+// React to a `chrome.storage.local` delta from any origin. Three kinds
+// of change matter, applied in an order that keeps the DOM consistent
+// within one batch:
+//   1. the `sources` index changed → add / remove / reorder sections;
+//   2. a `source:*` row changed → update that section (enabled state,
+//      scan error, script set, display name);
+//   3. a `script:*` row changed → repaint that row in place.
+// Sections are reconciled before rows so a script row added alongside a
+// new source lands in a section that already exists. Dedup `#N`
+// suffixes are recomputed up front (before anything renders) whenever a
+// script appeared or vanished, since that shifts the suffixes of its
+// same-basename siblings across the whole page.
+async function onLocalStorageChange(
+  changes: { [key: string]: chrome.storage.StorageChange },
+): Promise<void> {
+  const changedSources: { id: string; change: chrome.storage.StorageChange }[] = [];
+  const changedScripts: { id: string; change: chrome.storage.StorageChange }[] = [];
+  let indexChange: chrome.storage.StorageChange | undefined;
+  let scriptSetChanged = false;
+  for (const [key, change] of Object.entries(changes)) {
+    if (key === SOURCES_INDEX_KEY) {
+      indexChange = change;
+    } else if (key.startsWith(SOURCE_KEY_PREFIX)) {
+      changedSources.push({ id: key.slice(SOURCE_KEY_PREFIX.length), change });
+    } else if (key.startsWith(SCRIPT_KEY_PREFIX)) {
+      changedScripts.push({ id: key.slice(SCRIPT_KEY_PREFIX.length), change });
+      if (change.oldValue === undefined || change.newValue === undefined) {
+        scriptSetChanged = true;
+      }
+    }
+  }
+  if (!indexChange && changedSources.length === 0 && changedScripts.length === 0) {
+    return;
+  }
+
+  // Recompute dedup suffixes first so any section / row rendered below
+  // draws with the correct `#N` instead of a stale one that a later
+  // repaint would have to correct.
+  if (scriptSetChanged) await refreshLogIds();
+
+  if (indexChange) {
+    await reconcileSectionsToIndex(
+      Array.isArray(indexChange.newValue) ? (indexChange.newValue as string[]) : [],
+    );
+  }
+
+  for (const { id, change } of changedSources) {
+    await applySourceChange(id, change);
+  }
+
+  // Additions / removals of a script row are structural — the parent
+  // source's `scriptIds` change drives the section rebuild above. Here we
+  // only repaint rows whose stored value changed and that are on screen.
+  for (const { id, change } of changedScripts) {
+    if (change.newValue === undefined) continue;
+    updateScriptRowInPlace(id, change.newValue as StoredScript);
+  }
+}
+
+// Bring the rendered section list into agreement with the `sources`
+// index: drop sections whose source is gone, build sections for sources
+// that appeared, and reorder to match. Existing section elements are
+// reused (so their highlights / spinners survive) — appendChild in index
+// order re-seats them. Used for index changes from another origin; the
+// page's own add / remove / move already mutate the DOM, and re-running
+// here converges on the same result.
+async function reconcileSectionsToIndex(ids: readonly string[]): Promise<void> {
+  const wanted = new Set(ids);
+  for (const section of [
+    ...directoriesEl.querySelectorAll<HTMLElement>('section.directory'),
+  ]) {
+    const sid = section.dataset.sourceId;
+    if (!sid || !wanted.has(sid)) section.remove();
+  }
+  if (ids.length === 0) {
+    if (!directoriesEl.querySelector('.empty-placeholder')) {
+      directoriesEl.appendChild(emptyPlaceholder());
+    }
+    refreshMoveButtons();
+    return;
+  }
+  removeEmptyPlaceholder();
+  const ordered: HTMLElement[] = [];
+  for (const id of ids) {
+    let section = findSection(id);
+    if (!section) {
+      const source = await getSource(id);
+      if (!source) continue; // index/row write race — a later delta fixes it
+      section = await renderSourceSection(source);
+    }
+    ordered.push(section);
+  }
+  // appendChild moves an already-attached node, so appending each section
+  // in index order lays them out in that order without a full rebuild.
+  for (const section of ordered) directoriesEl.appendChild(section);
+  refreshMoveButtons();
+}
+
+// Reflect a single `source:*` delta on its still-present section. Removal
+// is handled by the index reconcile (the section is already gone), so a
+// missing section here means the row was written without an index change
+// we've processed yet — a later index delta will place it, so skip. The
+// cheapest correct action depends on what changed:
+//   - enabled flipped            → grey / ungrey in place (keeps rows).
+//   - scriptIds / displayName /
+//     scanError changed           → rebuild the section (row set, heading,
+//                                    or error line changed), preserving
+//                                    row highlights.
+//   - anything else (only
+//     lastRefreshedAt, say)       → nothing; script rows carry their own
+//                                    updates via updateScriptRowInPlace.
+async function applySourceChange(
+  id: string,
+  change: chrome.storage.StorageChange,
+): Promise<void> {
+  const next = change.newValue as StoredSource | undefined;
+  if (!next) return;
+  const section = findSection(id);
+  if (!section) return;
+  const prev = change.oldValue as StoredSource | undefined;
+  const structural =
+    !prev ||
+    !sameStringList(prev.scriptIds, next.scriptIds) ||
+    (prev.displayName ?? '') !== (next.displayName ?? '') ||
+    (prev.scanError ?? '') !== (next.scanError ?? '');
+  if (structural) {
+    await reRenderSectionPreservingHighlights(next);
+    return;
+  }
+  if (prev && isSourceEnabled(prev) !== isSourceEnabled(next)) {
+    applySourceEnabledToDom(section, isSourceEnabled(next));
+  }
+}
+
+// Rebuild one section from a fresh source row, carrying its rows' refresh
+// highlights (`row-updated` / `row-failed`) onto the new rows so a
+// storage echo of a refresh we just rendered doesn't wipe the
+// what-changed color. Other per-row state a rebuild can't preserve
+// (in-flight toggle spinners) belongs to a page-own op that has already
+// finished by the time an external delta lands here.
+async function reRenderSectionPreservingHighlights(source: StoredSource): Promise<void> {
+  const old = findSection(source.id);
+  if (!old) return;
+  const highlights = new Map<string, string[]>();
+  for (const row of old.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
+    const rid = row.dataset.scriptId;
+    if (!rid) continue;
+    const cls = [...row.classList].filter(
+      (c) => c === 'row-updated' || c === 'row-failed',
+    );
+    if (cls.length) highlights.set(rid, cls);
+  }
+  const fresh = await renderSourceSection(source);
+  for (const [rid, cls] of highlights) {
+    const row = fresh.querySelector<HTMLTableRowElement>(
+      `tr[data-script-id="${cssEscape(rid)}"]`,
+    );
+    if (row) row.classList.add(...cls);
+  }
+  old.replaceWith(fresh);
+  refreshMoveButtons();
+}
+
+// Repaint one already-rendered script row from a fresh stored value
+// WITHOUT recreating the <tr>, so any refresh highlight, in-flight
+// spinner, or favicon on the row survives. This is the heart of the
+// issue-#10 fix: the row's datasets are refreshed from the new value —
+// and the ones that no longer apply are DELETED — so a cleared
+// `refreshError` finally reaches the repaint instead of a stale
+// `data-script-refresh-error` pinning the cell to REFRESH FAILED. A row
+// that isn't on screen (its section not built yet) is left to the
+// structural paths.
+function updateScriptRowInPlace(id: string, script: StoredScript): void {
+  const row = directoriesEl.querySelector<HTMLTableRowElement>(
+    `.script-table tr[data-script-id="${cssEscape(id)}"]`,
+  );
+  if (!row) return;
+
+  row.dataset.scriptStatus = script.status;
+  if (script.errorMessage) row.dataset.scriptError = script.errorMessage;
+  else delete row.dataset.scriptError;
+  if (script.refreshError) row.dataset.scriptRefreshError = script.refreshError;
+  else delete row.dataset.scriptRefreshError;
+
+  // Keep the outdated-probe lookup the status paint reads by id in sync.
+  const outdated = scriptOutdatedProbe(script);
+  if (outdated) currentOutdated.set(id, outdated);
+  else currentOutdated.delete(id);
+
+  const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
+  if (cell) {
+    paintStatusCell(cell, id, script.status, script.errorMessage, script.refreshError);
+  }
+
+  const sizeCell = row.querySelector<HTMLTableCellElement>('td.size-cell');
+  if (sizeCell) sizeCell.textContent = formatScriptSize(script);
+
+  // Enabled toggle + row greying. The parent source's enabled state is
+  // read from the section class (kept current by applySourceChange /
+  // applySourceEnabledToDom), so no storage round-trip is needed for it.
+  const section = row.closest<HTMLElement>('.directory');
+  const sourceOn = section ? !section.classList.contains('disabled') : true;
+  const scriptOn = isScriptEnabled(script);
+  const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
+  if (cb) {
+    cb.checked = scriptOn;
+    cb.disabled = !sourceOn;
+  }
+  row.classList.toggle('disabled', !sourceOn || !scriptOn);
+  if (section) refreshBulkToggle(section);
+}
+
+// Order-sensitive equality for two `scriptIds` lists (a reorder is a
+// structural change too, since rows are rendered in list order).
+function sameStringList(
+  a: readonly string[] | undefined,
+  b: readonly string[] | undefined,
+): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] !== y[i]) return false;
+  }
+  return true;
 }
 
 // `?refresh` in the URL triggers a refresh-all as soon as the initial

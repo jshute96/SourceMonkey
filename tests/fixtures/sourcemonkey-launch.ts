@@ -96,17 +96,36 @@ export async function launchSourceMonkeyContext(opts: {
  * falling back to `waitForEvent` for a fresh spawn if nothing is live.
  */
 export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker> {
+  // The worker is "ready" only once its top-level module has run far
+  // enough to expose the `self.SourceMonkey` test surface. Playwright's
+  // `serviceworker` event (and a live `serviceWorkers()` entry) can both
+  // precede that assignment — a bare `evaluate(() => true)` succeeds
+  // against a worker whose module body hasn't finished — so every method
+  // on the `sm` proxy would race the surface into existence. Poll for it.
+  const apiReady = async (worker: Worker): Promise<boolean> => {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      // A `true` result means the surface is live; a throw means the CDP
+      // target went away (stale handle) — bail so the caller tries the
+      // next candidate or waits for a fresh spawn.
+      const has = await worker.evaluate(
+        () => typeof (self as unknown as { SourceMonkey?: unknown }).SourceMonkey !== 'undefined',
+      );
+      if (has) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  };
   return async () => {
     for (const candidate of ctx.serviceWorkers()) {
       try {
-        await candidate.evaluate(() => true);
-        return candidate;
+        if (await apiReady(candidate)) return candidate;
       } catch {
         // stale; try the next one
       }
     }
     const sw = await ctx.waitForEvent('serviceworker', { timeout: 5000 });
-    await sw.evaluate(() => true);
+    await apiReady(sw);
     return sw;
   };
 }

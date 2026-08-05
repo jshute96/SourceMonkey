@@ -687,6 +687,35 @@ bulk-toggle's glyph is replaced via `.bulk-toggle.busy`). The rest of
 the page — banners, other directories, scroll position — is
 undisturbed.
 
+### Live storage watcher (changes from any origin)
+
+The in-place mutators above cover the page's **own** actions. A
+`chrome.storage.local.onChanged` listener covers everything else — a
+Refresh from the viewer, a background opportunistic refresh, an Install
+captured in another tab, or a second Sources tab — so the page always
+shows the current stored state without a manual reload.
+
+- **`script:*` changed** → the row is repainted **in place** (status
+  cell, size, enabled toggle, row greying) from the new value, and its
+  `data-script-*` snapshot datasets are refreshed — the ones that no
+  longer apply (`data-script-error`, `data-script-refresh-error`) are
+  **deleted**. This is the core of the issue-#10 fix: a stale
+  `data-script-refresh-error` used to pin the recompute to REFRESH
+  FAILED forever, and there was no local listener at all.
+- **`source:*` changed** → the cheapest correct action: grey/ungrey in
+  place on an `enabled` flip; rebuild the section (preserving row
+  highlights) on a `scriptIds` / `displayName` / `scanError` change;
+  nothing when only metadata like `lastRefreshedAt` moved.
+- **`sources` index changed** → sections are added / removed / reordered
+  to match, reusing existing section elements.
+
+The listener is idempotent and preserves row highlights and in-flight
+spinners, so the echo of one of the page's own writes is a harmless
+repaint rather than a fight with the handler that made it. Row-level
+repaints never recreate the `<tr>`, so a refresh's `row-updated` /
+`row-failed` highlight survives; section rebuilds carry those classes
+onto the new rows explicitly.
+
 ### Background-SW sync coalescing
 
 `onCacheChanged` (in `match-index.ts`) fires for every

@@ -229,9 +229,18 @@ async function load(): Promise<void> {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (!scriptId) return;
   if (areaName === 'local') {
+    // Repaint on any script:* mutation (this script, or a sibling whose
+    // add/remove shifts our dedup `#N`) AND on a change to THIS script's
+    // parent source. A source enable/disable or rename done on the
+    // sources page or in another tab has to reach the viewer's Enable
+    // toggle and Source row, not just this script's own Refresh.
+    const sourceKey = currentScript ? `source:${currentScript.sourceId}` : null;
     let touched = false;
     for (const key of Object.keys(changes)) {
-      if (key.startsWith('script:')) { touched = true; break; }
+      if (key.startsWith('script:') || (sourceKey && key === sourceKey)) {
+        touched = true;
+        break;
+      }
     }
     if (touched) void rehydrateAfterStorageChange();
     return;
@@ -284,6 +293,14 @@ async function rehydrateAfterStorageChange(): Promise<void> {
     showMissing('Script not found in storage. Open it from the sources page.');
     return;
   }
+  // Re-read the parent source too: its enabled state greys the Enable
+  // toggle and its display name shows in the Source row, and either can
+  // change from the sources page or another tab while this viewer is
+  // open. render() reads these from the cached values below.
+  const source = await getSource(script.sourceId);
+  sourceEnabled = source ? isSourceEnabled(source) : true;
+  sourcePath = source?.path ?? '';
+  sourceRow = source ?? null;
   await refreshLogId();
   render(script);
   // render() wipes the flash overlay via `textContent =` and may

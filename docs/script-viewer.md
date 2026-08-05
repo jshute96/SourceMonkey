@@ -227,6 +227,26 @@ gains an error-level entry carrying the same message (see
 content stays visible so the user can still read the last successful
 load.
 
+### Live sync (changes from any origin)
+
+An installed viewer stays current with state written elsewhere — the
+sources page, a background opportunistic refresh, another tab — not just
+its own Refresh. A `chrome.storage.onChanged` listener re-hydrates and
+re-renders when:
+
+- a **`script:*`** row changes — this script (status, content, size,
+  enabled), or a sibling whose add/remove shifts this script's dedup
+  `#N` log ID;
+- **this script's parent `source:*`** row changes — a source
+  enable/disable greys the Enable toggle, and a rename updates the
+  Source row. The re-hydrate re-reads the source alongside the script,
+  so both reach the panel without a reload.
+
+If the re-read finds the script gone (its source was removed), the
+viewer drops into the not-found state. Session-storage changes
+(`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
+repaint separately, as described above.
+
 ### Not-found
 
 If the URL has neither a `script` nor a `preview` param, or the ID
