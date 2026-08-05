@@ -37,6 +37,12 @@
         actually controls. The <code>blob:</code>/<code>data:</code>
         path is handed straight to the browser, so aborting it after
         the fact does nothing.</li>
+      <li>Opening this page from disk (a <code>file://</code> URL)
+        makes the buttons that fetch <code>sample.txt</code> resolve to
+        <code>file://</code> too, which SourceMonkey refuses for the
+        same reason as the deliberate-failure button. Serve the page
+        over http(s) to see those succeed; the <code>data:</code> and
+        <code>blob:</code> buttons work either way.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>

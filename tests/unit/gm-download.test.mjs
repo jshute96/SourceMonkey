@@ -5,7 +5,7 @@
 // machine by hand: start a download, then feed it the onChanged deltas
 // Chrome would send.
 
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 const downloads = [];   // every chrome.downloads.download() options object
@@ -14,6 +14,10 @@ let nextDownloadId = 1;
 let downloadShouldFail = null;
 // id -> {bytesReceived, totalBytes, filename, finalUrl}
 const items = new Map();
+// When set, the next download() call registers an item in this state
+// *before* it hands the id back — the "it finished before we could
+// register the id" race the immediate first poll exists for.
+let preseedItem = null;
 
 globalThis.chrome = {
   downloads: {
@@ -30,6 +34,10 @@ globalThis.chrome = {
       }
       const id = nextDownloadId++;
       downloads.push({ id, options });
+      if (preseedItem) {
+        items.set(id, { id, ...preseedItem });
+        preseedItem = null;
+      }
       setTimeout(() => callback(id), 0);
     },
     cancel: (id, callback) => { canceled.push(id); setTimeout(callback, 0); },
@@ -71,6 +79,13 @@ function collector() {
 }
 
 const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+// Every started download keeps a poll interval alive until it settles
+// (that interval is the SW keep-alive + terminal-event backstop), so a
+// test that leaves one in flight would hold node's event loop open.
+// Shed every tab this file uses at the end.
+const TAB_IDS = [7, 50, 60];
+after(() => { for (const tabId of TAB_IDS) dropOriginator(tabId); });
 
 // ---------- URL gating ----------
 
@@ -137,13 +152,15 @@ test('startGmDownload calls chrome.downloads.download and reports the id', async
 test('headers object is converted to chrome downloads name/value pairs', async () => {
   downloads.length = 0;
   const { emit } = collector();
+  // Only headers XHR is allowed to set survive Chrome's own filter, so
+  // the fixture uses ones a script can actually send.
   await startGmDownload(payloadOf({
     requestId: 'r-headers',
-    headers: { Authorization: 'Bearer x', Referer: 'https://example.test/' },
+    headers: { Authorization: 'Bearer x', 'X-Requested-With': 'SourceMonkey' },
   }), 7, emit);
   assert.deepEqual(downloads[0].options.headers, [
     { name: 'Authorization', value: 'Bearer x' },
-    { name: 'Referer', value: 'https://example.test/' },
+    { name: 'X-Requested-With', value: 'SourceMonkey' },
   ]);
 });
 
@@ -232,6 +249,50 @@ test('a user cancel from Chrome\'s UI reports details.current USER_CANCELED', as
   assert.equal(events[0].details.current, 'USER_CANCELED');
 });
 
+test('a download that finished before its id was registered still reports load', async () => {
+  // The onChanged delta fires against the download id, which we only
+  // learn when download() resolves. A tiny/cached file can settle in
+  // that window, and the delta for an unregistered id is dropped — the
+  // poll's first tick is what keeps the script from waiting forever.
+  preseedItem = {
+    state: 'complete',
+    filename: '/home/u/Downloads/instant.png',
+    finalUrl: 'https://example.test/instant.png',
+    totalBytes: 9,
+    bytesReceived: 9,
+  };
+  const { events, emit } = collector();
+  await startGmDownload(payloadOf({ requestId: 'r-instant' }), 7, emit);
+  await tick(20);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'load');
+  assert.equal(events[0].filename, '/home/u/Downloads/instant.png');
+});
+
+test('a download that failed before its id was registered still reports the error', async () => {
+  preseedItem = { state: 'interrupted', error: 'SERVER_FORBIDDEN' };
+  const { events, emit } = collector();
+  await startGmDownload(payloadOf({ requestId: 'r-instant-fail' }), 7, emit);
+  await tick(20);
+  assert.deepEqual(events, [{
+    kind: 'error',
+    error: 'not_succeeded',
+    details: { current: 'SERVER_FORBIDDEN' },
+  }]);
+});
+
+test('the poll does not double-report a download the delta already settled', async () => {
+  preseedItem = {
+    state: 'complete', filename: 'dupe.png', finalUrl: 'u', totalBytes: 1, bytesReceived: 1,
+  };
+  const { events, emit } = collector();
+  const res = await startGmDownload(payloadOf({ requestId: 'r-dupe' }), 7, emit);
+  // The real delta lands in the same turn as the poll's search.
+  handleDownloadChanged({ id: res.downloadId, state: { previous: 'in_progress', current: 'complete' } });
+  await tick(20);
+  assert.equal(events.length, 1);
+});
+
 test('non-terminal deltas (paused, filename) emit nothing', async () => {
   const { events, emit } = collector();
   const res = await startGmDownload(payloadOf({ requestId: 'r-noop' }), 7, emit);
@@ -314,6 +375,32 @@ test('abortGmDownload on an unknown request is a no-op', async () => {
   assert.ok(true);
 });
 
+test('a tab closing mid-start does not re-register the request or its timers', async () => {
+  // dropOriginator can land while chrome.downloads.download is still in
+  // flight. Re-registering the entry afterwards would leave a poll
+  // interval nobody can ever clear (and a stale byDownloadId row).
+  const { events, emit } = collector();
+  const started = startGmDownload(payloadOf({
+    requestId: 'r-tab-closed-mid-start', wantsProgress: true,
+  }), 50, emit);
+  const dropped = dropOriginator(50);
+  assert.deepEqual(dropped, ['r-tab-closed-mid-start']);
+  const res = await started;
+  // The transfer itself keeps running (we don't cancel downloads a tab
+  // close orphans) — we just stop tracking it, so nothing is emitted...
+  assert.equal(res.ok, true);
+  await tick(700);
+  assert.equal(events.length, 0);
+  // ...and the delta for it finds no entry.
+  handleDownloadChanged({
+    id: res.downloadId, state: { previous: 'in_progress', current: 'complete' },
+  });
+  await tick();
+  assert.equal(events.length, 0);
+  // A second sweep finds nothing left over.
+  assert.deepEqual(dropOriginator(50), []);
+});
+
 // ---------- progress ----------
 
 test('progress polling emits loaded/total while the download runs', async () => {
@@ -338,7 +425,7 @@ test('progress polling emits loaded/total while the download runs', async () => 
   assert.equal(events.length, afterComplete, 'no progress events after the terminal event');
 });
 
-test('no progress polling when the caller supplied no onprogress', async () => {
+test('no progress EVENTS when the caller supplied no onprogress', async () => {
   const { events, emit } = collector();
   const res = await startGmDownload(payloadOf({ requestId: 'r-no-progress' }), 7, emit);
   items.set(res.downloadId, {

@@ -651,12 +651,26 @@ Why the split:
   `chrome.downloads.search` for filename + size), `'interrupted'` →
   `error`/`not_succeeded` with `delta.error` passed through as
   `{current, previous}`.
-- Progress has to be **polled** (`chrome.downloads.search`, 500 ms):
-  the onChanged delta doesn't carry `bytesReceived`. Only started when
-  the caller supplied `onprogress`.
+- The poll (`chrome.downloads.search`, 500 ms) runs for every in-flight
+  download, not just the ones that asked for progress. It has three
+  jobs: byte counts for `onprogress` (the onChanged delta doesn't carry
+  `bytesReceived`), a backstop for a missed terminal delta, and
+  keep-alive — each API call postpones the SW's ~30 s idle shutdown,
+  which a minutes-long download would otherwise hit, taking the
+  in-memory routing tables with it.
 - Terminal handlers release the entry *before* emitting, so a callback
   that immediately starts another download can't collide with the one
   it just settled.
+- **Terminal-state catch-up.** The onChanged delta is keyed by download
+  id, which we only learn when `chrome.downloads.download` resolves —
+  a small or cached file can settle inside that window and its delta
+  is dropped. The poll's first tick fires immediately for that reason.
+  Racing the real delta is harmless: the first one through releases the
+  entry, the loser finds nothing.
+- **The timeout is armed before the download is created**, not after.
+  Chrome doesn't return a download id until the server answers, so a
+  timer armed after the await could never fire for the case that most
+  needs it — a host that accepts the connection and then stalls.
 
 ### Cancellation
 
@@ -667,7 +681,12 @@ Why the split:
   double-report.
 - `abort()` racing the initial `chrome.downloads.download` sets
   `cancelRequested`; the start path cancels as soon as it has an id
-  (same shape as `gm-tab.ts`'s `closeRequested`).
+  (same shape as `gm-tab.ts`'s `closeRequested`). A timeout that fires
+  in the same window takes the same handoff.
+- A tab that closes mid-start is checked for explicitly: the start path
+  re-reads the entry after the await, because `dropOriginator` may have
+  swept it, and re-registering would leave a poll timer nobody can
+  clear.
 
 ### Safety gates
 

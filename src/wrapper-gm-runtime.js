@@ -1055,9 +1055,14 @@
       throw new _Error("[SourceMonkey] GM_download: url required");
     }
     return {
-      url: d.url,
+      /* Resolve against the document like TM does, so a relative
+         `GM_download("/files/a.zip", ...)` works. Resolving also
+         normalizes the scheme's case and strips stray whitespace, which
+         is what the transport check below keys off. An unparseable URL
+         falls through unchanged and is refused SW-side. */
+      url: resolveDownloadUrl(d.url),
       name: d.name != null ? String(d.name) : "",
-      headers: (d.headers && typeof d.headers === "object") ? d.headers : undefined,
+      headers: plainHeaders(d.headers),
       saveAs: !!d.saveAs,
       timeout: typeof d.timeout === "number" ? d.timeout : 0,
       onload: typeof d.onload === "function" ? d.onload : null,
@@ -1072,15 +1077,49 @@
     };
   }
 
+  function resolveDownloadUrl(url) {
+    try {
+      return new URL(url, location.href).href;
+    } catch (_re) {
+      return url;
+    }
+  }
+
+  /* Flatten the caller's headers into a plain {string: string} map.
+     Anything else (functions, DOM nodes, symbols as values) would make
+     chrome.runtime.sendMessage throw "could not be cloned" and the
+     script would be told the API isn't supported when the real problem
+     is its own `details`. */
+  function plainHeaders(headers) {
+    if (!headers || typeof headers !== "object") return undefined;
+    var out = null;
+    var keys = _ObjectKeys(headers);
+    for (var i = 0; i < keys.length; i++) {
+      var v = headers[keys[i]];
+      if (typeof v === "function" || (v !== null && typeof v === "object")) continue;
+      if (!out) out = {};
+      out[keys[i]] = String(v);
+    }
+    return out || undefined;
+  }
+
+  /* blob: and data: go through the page. Compares against the parsed
+     scheme (not a string prefix) so `DATA:` / a leading-space URL isn't
+     misrouted to the SW, which would refuse it. */
   function isInPageDownloadUrl(url) {
-    return url.slice(0, 5) === "blob:" || url.slice(0, 5) === "data:";
+    var scheme = "";
+    try { scheme = new URL(url).protocol; } catch (_pe) { return false; }
+    return scheme === "blob:" || scheme === "data:";
   }
 
   /* blob: / data: transport. Appends a hidden anchor, clicks it, and
-     removes it. Returns null on success or an error message string. */
+     removes it. Returns null on success or an error message string.
+     Falls back to the live DOM methods when the shim cache came up
+     empty (it can, on exotic hosts) rather than throwing an unhelpful
+     "_docCreateElement is not a function" at the script. */
   function downloadViaAnchor(url, name) {
     try {
-      var a = _docCreateElement("a");
+      var a = _docCreateElement ? _docCreateElement("a") : document.createElement("a");
       a.href = url;
       /* An empty `download` still forces a download (rather than a
          navigation); the browser derives the name itself. */
@@ -1088,9 +1127,10 @@
       a.style.display = "none";
       var parent = document.body || document.documentElement;
       if (!parent) return "no document to append the download anchor to";
-      _Node_appendChild.call(parent, a);
+      if (_Node_appendChild) _Node_appendChild.call(parent, a);
+      else parent.appendChild(a);
       try { a.click(); } finally {
-        try { parent.removeChild(a); } catch (_re) {}
+        try { parent.removeChild(a); } catch (_re2) {}
       }
       return null;
     } catch (e) {
@@ -1102,6 +1142,7 @@
     start: function (scriptId, detailsOrUrl, name) {
       var d = normalizeDownloadArgs(detailsOrUrl, name);
       var requestId = "dl-" + (_downloadNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      var inPage = isInPageDownloadUrl(d.url);
       activeDownloads[requestId] = {
         onload: d.onload,
         onerror: d.onerror,
@@ -1109,18 +1150,23 @@
         onprogress: d.onprogress,
         onabort: d.onabort,
         /* "page" downloads have nothing to cancel in the SW. */
-        transport: isInPageDownloadUrl(d.url) ? "page" : "sw",
-        url: d.url,
-        name: d.name,
+        transport: inPage ? "page" : "sw",
       };
-      if (isInPageDownloadUrl(d.url)) {
+      if (inPage) {
         var failure = downloadViaAnchor(d.url, d.name);
         if (failure !== null) {
-          dispatchDownloadEvent(requestId, {
-            kind: "error",
-            error: "not_succeeded",
-            details: { message: failure },
-          });
+          /* Deferred, not inline: firing onerror during the
+             GM_download(...) call would run the handler before the
+             caller has the control object, breaking the common
+             `var ctl = GM_download({onerror: function () { ctl.abort(); }})`
+             shape. Every other path here settles asynchronously. */
+          setTimeout(function () {
+            dispatchDownloadEvent(requestId, {
+              kind: "error",
+              error: "not_succeeded",
+              details: { message: failure },
+            });
+          }, 0);
         } else {
           setTimeout(function () {
             /* The anchor path has no completion signal — the browser

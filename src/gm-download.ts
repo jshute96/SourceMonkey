@@ -26,6 +26,7 @@
 // elsewhere would burn memory for a strictly worse result.
 
 import { dropEntriesForOriginator } from './gm-originator-map.js';
+import { hasAllowedScheme, WEB_SCHEMES } from './gm-url-scheme.js';
 
 // TM's documented `onerror` reason set (`{error, details}`). We emit a
 // subset — see docs/supported-GM-APIs.md for which ones can actually
@@ -59,8 +60,9 @@ export interface GmDownloadStartPayload {
   saveAs: boolean;
   // Milliseconds. 0 = no timeout.
   timeout: number;
-  // Only poll `chrome.downloads.search` when the caller actually
-  // supplied an `onprogress`; polling is pure overhead otherwise.
+  // Whether the caller supplied an `onprogress`. Gates progress
+  // EVENTS only — the poll behind them runs either way (it doubles as
+  // the terminal-state backstop and the SW keep-alive).
   wantsProgress: boolean;
 }
 
@@ -101,8 +103,8 @@ export interface GmDownloadStartResult {
 
 interface DownloadEntry {
   originatorTabId: number;
-  scriptId: string;
-  requestId: string;
+  // The requested URL, kept only as the `finalUrl` fallback for a
+  // completed download whose item lookup came back empty.
   url: string;
   // Assigned once chrome.downloads.download resolves.
   downloadId: number | null;
@@ -111,6 +113,9 @@ interface DownloadEntry {
   // `closeRequested`.
   cancelRequested: boolean;
   emit: GmDownloadEmit;
+  // Whether to emit progress events from the poll. The poll itself runs
+  // either way — see the call site in `startGmDownload`.
+  wantsProgress: boolean;
   timeoutTimer: ReturnType<typeof setTimeout> | null;
   progressTimer: ReturnType<typeof setInterval> | null;
 }
@@ -118,11 +123,12 @@ interface DownloadEntry {
 const byRequestId = new Map<string, DownloadEntry>();
 const byDownloadId = new Map<number, string>();
 
-// How often we ask the download manager for byte counts when the
-// caller supplied `onprogress`. `chrome.downloads.onChanged` does NOT
-// carry `bytesReceived` (the delta only reports state/filename/error/
-// totalBytes changes), so progress has to be polled. 500 ms is fine
-// for a progress bar and cheap enough to leave running.
+// How often we ask the download manager about an in-flight download.
+// `chrome.downloads.onChanged` does NOT carry `bytesReceived` (the
+// delta only reports state/filename/error/totalBytes changes), so
+// progress has to be polled — and the same tick doubles as the
+// terminal-state backstop and the service worker's keep-alive. 500 ms
+// is fine for a progress bar and cheap enough to leave running.
 const PROGRESS_POLL_MS = 500;
 
 // Schemes we hand to the download manager. The URL comes from a
@@ -131,12 +137,7 @@ const PROGRESS_POLL_MS = 500;
 // resource) onto disk under a name of its choosing. `blob:` / `data:`
 // never reach here — the page-side runtime handles those itself.
 export function isAllowedDownloadUrl(url: string): boolean {
-  try {
-    const scheme = new URL(url).protocol;
-    return scheme === 'http:' || scheme === 'https:';
-  } catch {
-    return false;
-  }
+  return hasAllowedScheme(url, WEB_SCHEMES);
 }
 
 // Validate the caller's `name` and turn it into the `filename` we pass
@@ -230,18 +231,42 @@ export async function startGmDownload(
   }
   const entry: DownloadEntry = {
     originatorTabId,
-    scriptId: payload.scriptId,
-    requestId: payload.requestId,
     url: payload.url,
     downloadId: null,
     cancelRequested: false,
     emit,
+    wantsProgress: false,
     timeoutTimer: null,
     progressTimer: null,
   };
   // Register before awaiting so an abort() that arrives while
   // chrome.downloads.download is still resolving finds the entry.
   byRequestId.set(payload.requestId, entry);
+  // Arm the timeout BEFORE creating the download, not after. Chrome
+  // doesn't hand back a download id until the server has answered, so
+  // a timer armed after the await could never fire for the case that
+  // needs it most — a host that accepts the connection and then sits
+  // there. `timeoutFired` below is what keeps it from double-settling.
+  if (payload.timeout > 0) {
+    entry.timeoutTimer = setTimeout(() => {
+      const live = byRequestId.get(payload.requestId);
+      if (!live) return;
+      if (live.downloadId == null) {
+        // No id yet: tell the page now and leave the entry for the
+        // start path, which cancels the download the moment it exists
+        // (same handoff as `cancelRequested`).
+        live.cancelRequested = true;
+        live.emit({ kind: 'timeout' });
+        return;
+      }
+      // Drop the entry before cancelling so the `interrupted` delta
+      // that follows finds nothing — the script sees exactly one
+      // terminal event.
+      releaseEntry(payload.requestId);
+      void cancelViaChrome(live.downloadId);
+      live.emit({ kind: 'timeout' });
+    }, payload.timeout);
+  }
   const headers = headerPairs(payload.headers);
   let downloadId: number;
   try {
@@ -263,33 +288,49 @@ export async function startGmDownload(
       details: { message: err instanceof Error ? err.message : String(err) },
     };
   }
-  // The page aborted while we were starting. Cancel the download we
-  // just created and report nothing — the page already settled its
-  // callbacks locally when it sent the abort.
+  // The request was abandoned while we were starting — the page called
+  // abort() (it settled its own callbacks locally) or our timeout fired
+  // (it emitted `timeout` already). Either way: cancel the download we
+  // just created and report nothing more.
   if (entry.cancelRequested) {
-    byRequestId.delete(payload.requestId);
+    releaseEntry(payload.requestId);
     await cancelViaChrome(downloadId);
     return { ok: false, error: 'download_canceled', details: {} };
   }
+  // The originating tab closed while we were starting: `dropOriginator`
+  // already swept the entry, so re-registering it here would leave a
+  // poll timer nobody can ever clear. The transfer itself keeps going
+  // (a download the user started is theirs to keep) — we simply stop
+  // tracking it. Same window `gm-tab.ts` guards after `tabs.create`.
+  if (byRequestId.get(payload.requestId) !== entry) {
+    return { ok: true, downloadId };
+  }
   entry.downloadId = downloadId;
   byDownloadId.set(downloadId, payload.requestId);
-  if (payload.timeout > 0) {
-    entry.timeoutTimer = setTimeout(() => {
-      // Timed out. Cancel the transfer, tell the page, and drop the
-      // entry — the `interrupted` delta that follows finds no entry
-      // and is ignored, so the script sees exactly one terminal event.
-      const live = byRequestId.get(payload.requestId);
-      if (!live) return;
-      releaseEntry(payload.requestId);
-      void cancelViaChrome(downloadId);
-      live.emit({ kind: 'timeout' });
-    }, payload.timeout);
-  }
-  if (payload.wantsProgress) {
-    entry.progressTimer = setInterval(() => {
-      void pollProgress(payload.requestId);
-    }, PROGRESS_POLL_MS);
-  }
+  // Poll for as long as the download is in flight — unconditionally,
+  // not just when the caller wants progress. Two jobs beyond progress:
+  //
+  //   - It is the backstop for the terminal event. A delta can be
+  //     missed (it fires against the download id, which we only learn
+  //     when `download()` resolves — a small or cached file CAN settle
+  //     inside that window) and a script left without a terminal event
+  //     stalls forever.
+  //   - Each `chrome.downloads.search` is an API call, which keeps the
+  //     service worker from idle-terminating (~30 s) out from under a
+  //     minutes-long download. If the SW died, its in-memory maps would
+  //     go with it and the completion delta would arrive with nothing
+  //     to route it to.
+  //
+  // `wantsProgress` only gates whether progress EVENTS are emitted, so
+  // the failure modes don't differ between callers who passed an
+  // `onprogress` and callers who didn't.
+  entry.wantsProgress = payload.wantsProgress;
+  entry.progressTimer = setInterval(() => {
+    void pollDownload(payload.requestId);
+  }, PROGRESS_POLL_MS);
+  // First poll immediately rather than one interval later, so a
+  // download that already settled reports without a 500 ms delay.
+  void pollDownload(payload.requestId);
   return { ok: true, downloadId };
 }
 
@@ -321,26 +362,53 @@ async function cancelViaChrome(downloadId: number): Promise<void> {
   } catch { /* already gone */ }
 }
 
-// Look up byte counts for one in-flight download and emit a progress
-// event. Fires only while the entry is live.
-async function pollProgress(requestId: string): Promise<void> {
-  const entry = byRequestId.get(requestId);
-  if (!entry || entry.downloadId == null) return;
-  const id = entry.downloadId;
-  let items: chrome.downloads.DownloadItem[] = [];
+// One download item by id, or undefined if the download manager
+// doesn't know it (already erased, or a stubbed API in tests). Shared
+// by the progress poll, the completion path, and the catch-up probe so
+// the lastError handling can't drift.
+async function searchOne(
+  downloadId: number,
+): Promise<chrome.downloads.DownloadItem | undefined> {
   try {
-    items = await new Promise<chrome.downloads.DownloadItem[]>((resolve) => {
-      chrome.downloads.search({ id }, (found) => {
+    return await new Promise<chrome.downloads.DownloadItem | undefined>((resolve) => {
+      chrome.downloads.search({ id: downloadId }, (found) => {
         void chrome.runtime.lastError;
-        resolve(found ?? []);
+        resolve(found?.[0]);
       });
     });
-  } catch { return; }
+  } catch {
+    return undefined;
+  }
+}
+
+// One poll tick for an in-flight download: settle it if the download
+// manager says it's already done, otherwise report progress. See the
+// call site in `startGmDownload` for why this runs unconditionally.
+async function pollDownload(requestId: string): Promise<void> {
+  const entry = byRequestId.get(requestId);
+  if (!entry || entry.downloadId == null) return;
+  const downloadId = entry.downloadId;
+  const item = await searchOne(downloadId);
   // Re-check liveness: the search is async and the download may have
-  // completed (and released the entry) while it was in flight.
-  if (!byRequestId.has(requestId)) return;
-  const item = items[0];
+  // settled through the delta (releasing the entry) while it was in
+  // flight. Whichever path gets here first wins; the loser finds
+  // nothing and emits nothing, so the script sees one terminal event.
+  if (byRequestId.get(requestId) !== entry) return;
   if (!item) return;
+  if (item.state === 'complete' || item.state === 'interrupted') {
+    releaseEntry(requestId);
+    entry.emit(
+      item.state === 'complete'
+        ? loadEventFor(entry, downloadId, item)
+        : {
+            kind: 'error',
+            error: 'not_succeeded',
+            details: item.error ? { current: item.error } : {},
+          },
+    );
+    return;
+  }
+  if (!entry.wantsProgress) return;
   const total = typeof item.totalBytes === 'number' ? item.totalBytes : 0;
   entry.emit({
     kind: 'progress',
@@ -374,7 +442,7 @@ export function handleDownloadChanged(delta: chrome.downloads.DownloadDelta): vo
         // USER_CANCELED, FILE_ACCESS_DENIED, …). Passing it through as
         // `{current, previous}` is what TM does and what real scripts
         // branch on.
-        ...(delta.error?.current !== undefined ? { current: delta.error.current } : {}),
+        ...(delta.error?.current != null ? { current: delta.error.current } : {}),
         ...(delta.error?.previous != null ? { previous: delta.error.previous } : {}),
       },
     });
@@ -386,22 +454,25 @@ export function handleDownloadChanged(delta: chrome.downloads.DownloadDelta): vo
 // the download manager. A failed lookup still emits `load` — the
 // download DID complete and the script shouldn't be told otherwise.
 async function emitComplete(entry: DownloadEntry, downloadId: number): Promise<void> {
-  let item: chrome.downloads.DownloadItem | undefined;
-  try {
-    item = await new Promise<chrome.downloads.DownloadItem | undefined>((resolve) => {
-      chrome.downloads.search({ id: downloadId }, (found) => {
-        void chrome.runtime.lastError;
-        resolve(found?.[0]);
-      });
-    });
-  } catch { /* fall through with no item */ }
-  entry.emit({
+  const item = await searchOne(downloadId);
+  entry.emit(loadEventFor(entry, downloadId, item));
+}
+
+// The `load` event for a completed download. `item` is optional
+// because the lookup can come back empty (download erased, stubbed
+// API); the request URL is the fallback for `finalUrl`.
+function loadEventFor(
+  entry: DownloadEntry,
+  downloadId: number,
+  item: chrome.downloads.DownloadItem | undefined,
+): GmDownloadEvent {
+  return {
     kind: 'load',
     downloadId,
     filename: item?.filename ?? '',
     finalUrl: item?.finalUrl ?? item?.url ?? entry.url,
     totalBytes: typeof item?.totalBytes === 'number' ? item.totalBytes : 0,
-  });
+  };
 }
 
 // Cancel an in-flight download on the script's behalf. The page has

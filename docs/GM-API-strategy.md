@@ -9,7 +9,7 @@ recommends a path.
 > `GM_addStyle` / `GM_addElement`, `GM_setClipboard`,
 > `GM_xmlhttpRequest` text + binary, `@connect` URL gating). Post-
 > phase add-ons `GM_log`, `GM_openInTab`, `GM_notification`,
-> `GM_registerMenuCommand`, and `@resource`-backed
+> `GM_registerMenuCommand`, `GM_download`, and `@resource`-backed
 > `GM_getResourceText` / `GM_getResourceURL` are also live. XHR
 > header surgery is still deferred. See
 > [GM-APIs.md](GM-APIs.md) for the implementation status and known
@@ -324,7 +324,10 @@ What it looks like:
     / `chrome.tabs` wrappers.
   - `gm-xhr.ts` — the hairy one; see below.
 - Offscreen document (new `src/offscreen.html` + `src/offscreen.ts`)
-  for the binary-response XHR path, blobs/object URLs, downloads.
+  for the binary-response XHR path and blobs/object URLs. (Downloads
+  were on this list; they turned out not to need it — `GM_download`
+  drives `chrome.downloads`, which fetches the URL itself. See
+  [GM-APIs.md](GM-APIs.md#rejected-alternatives).)
 
 Realistic effort: **medium**. The per-API bodies are short; the
 hard pieces (XHR, values broadcast) need attention either way.

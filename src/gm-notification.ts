@@ -11,6 +11,7 @@
 // page-side and avoids collisions between userscripts.
 
 import { dropEntriesForOriginator } from './gm-originator-map.js';
+import { hasAllowedScheme, WEB_SCHEMES } from './gm-url-scheme.js';
 
 export interface GmNotificationDetails {
   text: string;
@@ -57,12 +58,7 @@ export const NOTIFICATIONS_UNAVAILABLE =
 // local files / packaged resources through the extension; reject those
 // and fall back to the default icon.
 function isAllowedIconUrl(image: string): boolean {
-  try {
-    const scheme = new URL(image).protocol;
-    return scheme === 'http:' || scheme === 'https:' || scheme === 'data:';
-  } catch {
-    return false;
-  }
+  return hasAllowedScheme(image, [...WEB_SCHEMES, 'data:']);
 }
 
 // Pick the icon URL chrome.notifications wants. The user-supplied

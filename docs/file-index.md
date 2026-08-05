@@ -117,6 +117,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
 | `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
+| `src/gm-url-scheme.ts` | Shared URL-scheme gate for the SW-side GM_* dispatchers (parse + allowlist check for tabs / notifications / downloads) |
 | `src/gm-originator-map.ts` | Shared shed-on-tab-close helper for the gm-tab / gm-notification / gm-download per-request maps (drop entries by originator tab) |
 | `src/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, script) command registry feeding the action menu |
 | `src/action-menu.ts` | Action context-menu planner — packs script + command groups into Chrome's 6-item cap with a "More" overflow submenu |
@@ -213,6 +214,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
 | `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching exact allowed, `*` wildcard, subdomain match, mismatched host blocked |
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
+| `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
 | `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, install-page URL, Chrome-version gate, one-shot bypass |
@@ -221,7 +223,6 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |
 | `tests/e2e/gm-log.spec.ts` | E2E tests for `GM_log` (per-script prefix, GM4 alias, gating) |
 | `tests/e2e/gm-open-in-tab.spec.ts` | E2E tests for `GM_openInTab` (URL, call shapes, onclose, gating) |
-| `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
 | `tests/e2e/gm-download.spec.ts` | E2E tests for `GM_download` (http(s) transfer, in-page blob/data path, refusals + Log entry, abort, no `@connect` gating) |
 | `tests/e2e/gm-notification.spec.ts` | E2E tests for `GM_notification` (call shapes, Promise return, empty-text rejection, gating) |
 | `tests/e2e/gm-menu.spec.ts` | SM-only E2E for `GM_registerMenuCommand` via the SW test surface |

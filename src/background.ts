@@ -1685,6 +1685,10 @@ function installDownloadListeners(): void {
     console.info('[SourceMonkey] chrome.downloads not available; GM_download will report not_permitted');
     return;
   }
+  // Note this listener sees EVERY download in the browser, not just
+  // ours — the API has no per-extension filter. `handleDownloadChanged`
+  // ignores ids it didn't start, and we never read or store anything
+  // about a download a userscript didn't ask for.
   chrome.downloads.onChanged.addListener((delta) => {
     handleDownloadChanged(delta);
   });

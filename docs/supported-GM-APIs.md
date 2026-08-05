@@ -299,14 +299,20 @@ the script's header isn't what refused the call:
 | URL scheme | Path | Consequences |
 |------------|------|--------------|
 | `http:` / `https:` | `chrome.downloads` in the service worker | Real download-manager entry: `saveAs` dialog, `headers`, progress, resume, Chrome's own dangerous-file prompts. |
-| `blob:` / `data:` | An `<a download>` click in the page | No `saveAs`, no progress, no completion signal — `onload` fires once the click is handed to the browser. |
+| `blob:` / `data:` | An `<a download>` click in the page | `saveAs`, `headers`, `timeout` and progress are all ignored, and there's no completion signal — `onload` fires once the click is handed to the browser. |
 | anything else | refused | `onerror` with `not_permitted`. |
 
-`blob:` matters because most media-downloader scripts build their bytes
-in the page and pass `URL.createObjectURL(...)`. A page-minted blob URL
-can't be resolved from the extension's own context, so it has to stay
-in the page — which is also exactly what such a script would do with no
-`@grant` at all, so nothing new is granted.
+Why `blob:` gets its own path:
+
+- Most media-downloader scripts build their bytes in the page and pass
+  `URL.createObjectURL(...)`.
+- A page-minted blob URL can't be resolved from the extension's own
+  context, so the download has to start in the page.
+- That anchor click is exactly what the script could do with no
+  `@grant` at all — the path grants nothing new.
+
+`details.url` is resolved against the page first, so relative URLs
+(`GM_download('/files/a.zip', …)`) work like they do in TM.
 
 ### Download callbacks
 
@@ -320,11 +326,14 @@ in the page — which is also exactly what such a script would do with no
 
 ### Download error values
 
-TM's documented reason set. `details` mirrors the `chrome.downloads`
-interrupt shape (`{current, previous}`) because that's what TM passes
-through and what real scripts branch on (e.g. Twitter Media Downloader
-checks `err.details.current === 'USER_CANCELED'` to stop retrying).
-Failures we surface also add `details.message`.
+TM's documented reason set, with `{error, details}` on `onerror`:
+
+- `details` mirrors the `chrome.downloads` interrupt shape
+  (`{current, previous}`) — that's what TM passes through.
+- Real scripts branch on it (Twitter Media Downloader checks
+  `err.details.current === 'USER_CANCELED'` to stop retrying).
+- Failures that never reached the download manager add
+  `details.message` instead.
 
 | `error` | When SourceMonkey emits it |
 |---------|----------------------------|
@@ -354,11 +363,19 @@ What guards the API instead: the scheme allowlist, the filename check,
 the visible entry in Chrome's download UI, and Chrome's own
 Safe-Browsing prompt for dangerous file types.
 
+Worth stating plainly, since `@connect` isn't in the way: `GM_download`
+is a way for a script to issue a cookie-bearing GET to any host with
+headers of its choosing. The script can't read the response — so it's
+not an exfiltration channel — but it *is* a request-side-effect
+primitive, and any host that acts on a plain GET is reachable.
+
 ### Download caveats
 
 - **Chrome's `downloads` permission is required** and declared in the
   manifest. Existing installs see a new "Manage your downloads"
-  permission on update.
+  permission on update. The `chrome.downloads.onChanged` listener that
+  comes with it sees every download in the browser (the API has no
+  per-extension filter); SourceMonkey ignores any id it didn't start.
 - **`abort()` settles the call locally, immediately** (matching
   `GM_xmlhttpRequest`), then asks the SW to cancel. On the in-page
   `blob:` / `data:` path there is nothing to cancel — the browser
@@ -374,9 +391,13 @@ Safe-Browsing prompt for dangerous file types.
 - **Downloads outlive their tab.** Closing the originating tab stops
   event routing (the callbacks can't fire anywhere) but does not
   cancel the transfer.
-- **SW restart loses in-flight tracking**, exactly like
-  `GM_xmlhttpRequest` and `GM_notification`: the file keeps
-  downloading, the script just stops hearing about it.
+- **A dead service worker loses in-flight tracking.** While a download
+  runs, SourceMonkey polls the download manager, which keeps the SW
+  alive; but if it dies anyway (browser restart, crash) the file keeps
+  downloading and the script simply stops hearing about it. Unlike
+  `GM_xmlhttpRequest` there's no page-side timeout that eventually
+  synthesizes an error — a download can legitimately run for hours, so
+  there's no honest deadline to pick.
 - **Failures land on the script's Log tab** (`gm-download` source, at
   `warning` level) so a "nothing downloaded" report has somewhere to
   look. Successful downloads are not logged — a batch downloader would

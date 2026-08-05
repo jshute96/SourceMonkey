@@ -29,12 +29,18 @@
   // nothing at all), so the return is treated as optional.
   function download(label, details, expectation) {
     append(`-> ${label}`);
+    // Log the callback AND still run whatever the caller passed —
+    // `btn-blob` relies on its own onload to revoke the object URL.
+    const also = (name) => (arg) => {
+      if (typeof details[name] === 'function') details[name](arg);
+    };
     const withLogging = Object.assign({}, details, {
-      onload: (r) => append(`   onload ${describe(r)}  -- ${expectation}`),
-      onerror: (e) => append(`   onerror ${describe(e)}  -- ${expectation}`),
-      ontimeout: () => append(`   ontimeout  -- ${expectation}`),
+      onload: (r) => { append(`   onload ${describe(r)}  -- ${expectation}`); also('onload')(r); },
+      onerror: (e) => { append(`   onerror ${describe(e)}  -- ${expectation}`); also('onerror')(e); },
+      ontimeout: (t) => { append(`   ontimeout  -- ${expectation}`); also('ontimeout')(t); },
       onprogress: (p) => {
         if (p && p.lengthComputable) append(`   onprogress ${p.loaded}/${p.total}`);
+        also('onprogress')(p);
       },
     });
     try {

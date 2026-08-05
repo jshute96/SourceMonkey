@@ -60,11 +60,16 @@ test.describe('GM_download', () => {
     await page.close();
   });
 
-  test('the (url, name) positional form works too', async ({
+  test('the (url, name) positional form starts a real download', async ({
     extensionContext,
     fixtureServer,
     sm,
   }) => {
+    // The shorthand has no callbacks, so the only thing the page can
+    // observe is the control object. To prove the download actually
+    // ran, the script re-requests the SAME url through the details form
+    // afterwards and reports THAT onload — a broken positional path
+    // would have thrown before either call.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
@@ -74,11 +79,14 @@ test.describe('GM_download', () => {
         grant: ['GM_download'],
       },
       body: `${REPORTER}
-        // No details object at all — TM's two-argument shorthand. The
-        // control object is still returned synchronously.
         const ctl = GM_download('${fixtureServer.baseUrl}/target.html', 'sm-positional.html');
         document.body.dataset.smCtl = String(ctl && typeof ctl.abort === 'function');
-        report('started');
+        GM_download({
+          url: '${fixtureServer.baseUrl}/target.html',
+          name: 'sm-positional-2.html',
+          onload: () => report('load'),
+          onerror: (e) => report('error:' + (e && e.error)),
+        });
       `,
     });
     await sm.addSource(scriptsDir.path);
@@ -87,7 +95,128 @@ test.describe('GM_download', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-ctl', 'true');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'started');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load', {
+      timeout: 15000,
+    });
+    await page.close();
+  });
+
+  test('a relative url resolves against the page', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // TM resolves `details.url` against the document; a manager that
+    // didn't would refuse this as an unsupported scheme.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadRelative',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        GM_download({
+          url: '/target.html',
+          name: 'sm-relative.html',
+          onload: () => report('load'),
+          onerror: (e) => report('error:' + (e && e.error)),
+        });
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load', {
+      timeout: 15000,
+    });
+    await page.close();
+  });
+
+  test('a successful download leaves the script Log clean', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Deliberate contract: only failures are logged. A batch downloader
+    // firing hundreds of successes would otherwise push everything else
+    // past the log cap.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadQuietLog',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        GM_download({
+          url: '${fixtureServer.baseUrl}/target.html',
+          name: 'sm-quiet.html',
+          onload: () => report('load'),
+          onerror: (e) => report('error:' + (e && e.error)),
+        });
+      `,
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load', {
+      timeout: 15000,
+    });
+
+    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const entries = await sm.getScriptLog(withScripts!.scripts[0].id);
+    expect(entries.filter((e) => e.source === 'gm-download')).toEqual([]);
+    await page.close();
+  });
+
+  test('timeout cancels the transfer and fires ontimeout', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadTimeout',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        GM_download({
+          // The fixture server holds this response for 4s; the timeout
+          // fires long before the bytes arrive.
+          url: '${fixtureServer.baseUrl}/__slow/target.html?ms=4000',
+          name: 'sm-timeout.html',
+          timeout: 300,
+          onload: () => report('unexpected-load'),
+          onerror: (e) => report('error:' + (e && e.error)),
+          ontimeout: () => report('timeout'),
+        });
+      `,
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'timeout', {
+      timeout: 15000,
+    });
+    // A timeout is a failure, so it DOES reach the Log.
+    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const scriptId = withScripts!.scripts[0].id;
+    await expect.poll(async () => {
+      const entries = await sm.getScriptLog(scriptId);
+      return entries.filter((e) => e.source === 'gm-download').map((e) => e.message).join('\n');
+    }).toMatch(/timed out/);
     await page.close();
   });
 

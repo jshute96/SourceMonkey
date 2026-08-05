@@ -278,7 +278,21 @@ Adding any of these is a catalog entry + a body — nothing structural.
     heuristic (nothing ties the download to the requesting script).
   - **Progress polling interval is fixed at 500 ms.** Fine for a
     progress bar; a per-request interval (or a rate proportional to
-    file size) would be nicer for very large files.
+    file size) would be nicer for very large files. The poll is also
+    what keeps the SW alive across a long download, so a slower rate
+    needs to stay under the ~30 s idle shutdown.
+  - **No recovery after the SW really dies** (browser restart, crash).
+    The `requestId → downloadId → tab` mapping is in-memory, so a
+    download in flight at that moment never reports back. Persisting it
+    in `chrome.storage.session` and re-attaching on SW startup would
+    fix it. Deliberately NOT solved with a page-side TTL the way
+    `GM_xmlhttpRequest` does it — a download can legitimately run for
+    hours, so there's no honest deadline.
+  - **`interrupted` is treated as terminal even when `item.canResume`
+    is true.** Chrome's UI would offer "Resume", and a download the
+    user resumes to completion still reported `not_succeeded` (plus a
+    Log warning). Waiting instead would risk never settling the script
+    at all, so this stays until someone hits it in practice.
 - **Page-side TTL for XHR active requests.** Currently 5 min. Fine
   for now; revisit if real workloads hit it.
 - **Abort-after-response narrow race.** A SW round-trip on abort
