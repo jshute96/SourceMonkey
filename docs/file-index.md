@@ -161,8 +161,11 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
+| `tests/fixtures/pages/frames.html` | Fixture page embedding same-origin, nested, `about:blank` and `srcdoc` frames for the frame-targeting tests |
+| `tests/fixtures/pages/nested-frame.html` | Fixture page embedded by `frames.html` that itself embeds a frame, giving the tests a depth-2 document |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
+| `tests/e2e/frames.spec.ts` | End-to-end frame targeting: default all-frames injection, `@noframes`, and the badge/Log coalescing |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
@@ -232,6 +235,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from; clicks and the CSV export follow that mapping |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
+| `tests/unit/injector-frames.test.mjs` | Unit tests for `@noframes` → `allFrames` resolution and the helper registrations that follow it |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
@@ -293,6 +297,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
+| `tests/examples/headers-noframes/` | `@noframes` header example: a page with an embedded frame plus one userscript per frame-targeting choice |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |

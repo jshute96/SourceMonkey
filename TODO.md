@@ -15,14 +15,9 @@ A backlog of **candidates**, not a list of obligations.
 ## Skeleton
 
 - Injection follow-ups — see the **Limitations / future work**
-  section of [docs/injection.md](docs/injection.md): `@noframes` /
-  `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
-  all implemented; per-area follow-ups below.)
-  - `allFrames` is no longer a self-contained change: `src/gm-menu.ts`
-    keys menu commands by one `documentId` per tab, which only works
-    while every wrapper shares the top-level document. Re-key it by
-    (tabId, documentId) first, or subframe and top-frame scripts will
-    wipe each other's menu commands.
+  section of [docs/injection.md](docs/injection.md). (`@grant` /
+  `GM_*`, `@require`, `@resource` and `@noframes` are all
+  implemented; per-area follow-ups below.)
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -142,6 +137,36 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
   `revalidateCandidates` — expected, and off the user-visible path, but
   it means the fresh body is re-registered a beat later than the log
   suggests.
+
+## Frames
+
+`@noframes` is honored and everything else runs in every matching
+frame (see [docs/injection.md](docs/injection.md#frames)). What's
+left:
+
+- **Frames with no URL of their own.** `about:blank`, `srcdoc` and
+  `data:` frames match no pattern, so nothing is injected — TM/VM
+  inherit the parent's URL for these. `chrome.scripting` has
+  `matchOriginAsFallback`; `chrome.userScripts` has no equivalent, so
+  closing this means matching in-page (register at `<all_urls>` +
+  `allFrames`, then have the prelude walk up to the nearest ancestor
+  with a real URL and re-check). Worth doing only if real scripts turn
+  out to need it — the widened registration is a real cost.
+- **`GM_registerMenuCommand` from a sub-frame is dropped.** The
+  command id is minted page-side, so N frames register N
+  indistinguishable rows in one per-tab menu. Deduping by
+  (scriptId, name) and firing into every frame that registered it
+  would let frame-only scripts contribute a command.
+- **A frame-only script is invisible in the badge until it errors.**
+  Expected is computed from the top-frame URL, so a script that
+  matches only an iframe shows no row (an error still turns the badge
+  red). Fixing it means tracking sub-frame navigations in the expected
+  set, which brings its own false-MISSING problem for frames Chrome
+  can't inject into.
+- **Per-frame `sm:check-pending` round trips.** Every frame's wrapper
+  round-trips the SW on the document-start critical path. Fine at
+  normal frame counts; a page with dozens of matching frames pays it
+  per frame.
 
 ## Parse check — follow-ups
 

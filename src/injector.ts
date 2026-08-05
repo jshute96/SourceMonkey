@@ -74,7 +74,7 @@ import {
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
-import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
+import { getValue, getValues, hasTag, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -194,6 +194,26 @@ export function resolveWorld(header: ParsedHeader | null | undefined): Injection
   if (grants.length === 0) return 'MAIN';
   if (grants.every((g) => g === 'none' || g === '')) return 'MAIN';
   return 'USER_SCRIPT';
+}
+
+// Decide whether a script runs in sub-frames as well as the top frame,
+// i.e. what to pass as `allFrames` to chrome.userScripts.register.
+//
+// TM/VM/GM all inject into every frame whose URL matches, and offer
+// `@noframes` as the opt-out ("only run on main page, not in iframes").
+// So the default is `true` and the tag flips it off — the inverse of
+// Chrome's own `allFrames` default, which is why we always set the
+// field explicitly rather than letting it default.
+//
+// `@noframes` is a flag tag: TM documents it with no value, and the
+// header parser gives flag tags `value: ""`. We therefore test for
+// *presence* — `@noframes false` still disables frames, matching TM
+// (which likewise never parses a value here). A headerless script
+// (unit-test-only; validateHeader rejects these upstream) gets the
+// default.
+export function resolveAllFrames(header: ParsedHeader | null | undefined): boolean {
+  if (!header) return true;
+  return !hasTag(header, 'noframes');
 }
 
 function isRegexLiteral(s: string): boolean {
@@ -842,6 +862,9 @@ export async function buildRegistrationSpec(
     }),
     runAt: 'document_start',
     world,
+    // Always explicit: our default (run in frames) is the opposite of
+    // Chrome's, so an omitted field would silently mean top-frame-only.
+    allFrames: resolveAllFrames(script.header),
   };
   if (matches.length > 0) spec.matches = matches;
   if (includeGlobs.length > 0) spec.includeGlobs = includeGlobs;
@@ -915,6 +938,10 @@ export async function collectActiveSpecs(
 // patterns would save the addEventListener call on unrelated pages
 // but complicates the spec (especially with regex includes) for a
 // negligible runtime cost.
+//
+// Frames: see `helperAllFrames` — a MAIN-world script running in a
+// sub-frame postMessages into THAT frame's window, so the relay has to
+// be in the same frame or every report from it is lost.
 export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
   return hasWorld(activeSpecs.map((s) => s.world), 'MAIN') ? bridgeSpec() : null;
 }
@@ -942,7 +969,24 @@ function bridgeSpec(): RegistrationSpec {
     js: [{ code: WRAPPER_BRIDGE + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
+    allFrames: helperAllFrames(activeSpecs),
   };
+}
+
+// Pure: should the page-wide helper registrations (bridge, GM runtime)
+// run in sub-frames?
+//
+// Both helpers install per-frame globals (`window.__SM_GM__`, the
+// bridge's `message` listener), so a userscript that runs in a
+// sub-frame needs its helper in that same frame — otherwise every
+// `GM_*` call is a ReferenceError and every MAIN-world report is
+// dropped on the floor.
+//
+// Gated on the active set rather than hardcoded to `true` so a user
+// whose scripts are all `@noframes` doesn't pay helper injection in
+// every ad iframe on every page (they register at `<all_urls>`).
+function helperAllFrames(activeSpecs: RegistrationSpec[]): boolean {
+  return activeSpecs.some((s) => s.allFrames === true);
 }
 
 
@@ -963,6 +1007,7 @@ function gmRuntimeSpec(): RegistrationSpec {
     js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
+    allFrames: helperAllFrames(activeSpecs),
   };
 }
 

@@ -1147,7 +1147,9 @@ async function dispatchActionMenuCommand(
 // our expected/actual model honest.
 //
 // We only care about the main frame (frameId === 0). Sub-frame events
-// would add noise we don't currently render.
+// would add noise we don't currently render — see
+// `isSubFrameSender` for how sub-frame *wrapper reports* are folded
+// into the top document's state instead of getting rows of their own.
 function installNavigationListeners(): void {
   // `@grant window.onurlchange` feeds off the same-document navigation
   // events too, but needs `onReferenceFragmentUpdated` as well and
@@ -1188,6 +1190,9 @@ function installNavigationListeners(): void {
     if (d.transitionType === 'reload' && d.documentId) {
       setupReloadFastPath(d.tabId, d.documentId, d.url, batch);
     }
+    // A new top-level document means a new set of sub-frames, so the
+    // "already logged this" guard starts over.
+    clearSubFrameLogGuard(d.tabId);
     enqueueTabWork(
       d.tabId,
       () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation', batch),
@@ -1201,6 +1206,7 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  clearSubFrameLogGuard(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
   // document, so the SW-side mapping is dead weight after close. Drop
   // before the menu rebuild below so a stale list can't reappear.
@@ -2923,8 +2929,17 @@ function installScriptMessageListener(): void {
       // way (nothing would re-register the lost command), so the
       // registry is keyed by document: we pass the sender's documentId
       // and the navigation clear only drops another document's state.
+      //
+      // Top frame only. `commandId` is minted page-side, so the same
+      // script running in five frames registers five distinct ids with
+      // the same visible name — five identical, indistinguishable rows
+      // in the action context menu, which would also blow the 6-item
+      // cap and push real entries into the "More" submenu. A script
+      // that runs ONLY in sub-frames therefore can't add a menu
+      // command; see TODO.md.
       const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
       if (
+        !isSubFrameSender(sender) &&
         typeof payload.scriptId === 'string' &&
         typeof payload.commandId === 'string' &&
         typeof payload.name === 'string'
@@ -3040,6 +3055,66 @@ function composeWrapperErrorMessage(
   return st;
 }
 
+// ---------- sub-frame report handling ----------
+//
+// Scripts run in every matching frame unless they declare `@noframes`
+// (see docs/injection.md#frames), so one page load can produce one
+// `sm:start` per frame. A news site with twenty ad iframes would
+// otherwise write twenty rows into the script's Log tab (cap 500 —
+// twenty-five page loads and the rest of the log is gone) and twenty
+// per-frame pseudo-documents into the tab's document LRU (cap 5),
+// evicting the real bfcache entries.
+//
+// So sub-frame reports are deliberately treated as second-class:
+//   - the per-script Log gets ONE row per script per top-level
+//     document (plus one per *distinct* error message, since two
+//     different failures are two different things to fix),
+//   - the badge ignores sub-frame `sm:start` entirely (our expected
+//     set is computed from the top-frame URL only, so merging them in
+//     would manufacture UNEXPECTED rows for any script that legitimately
+//     matches only a frame),
+//   - but a sub-frame `sm:error` IS merged into the top document's
+//     state, because a red badge is the only signal the user gets that
+//     something is broken and `computeBadge` classifies an error row as
+//     ERROR regardless of whether it was expected.
+
+// True when the message came from a sub-frame rather than the tab's
+// top-level document. `frameId` is 0 for the main frame. Chrome has
+// set it on `onUserScriptMessage` senders since the API shipped; if a
+// future/older build ever omits it we fall back to treating the sender
+// as the top frame, which is the pre-`allFrames` behavior.
+function isSubFrameSender(sender: chrome.runtime.MessageSender): boolean {
+  const frameId = (sender as { frameId?: number }).frameId;
+  return typeof frameId === 'number' && frameId !== 0;
+}
+
+// tabId → set of sub-frame log keys already written for the current
+// top-level document. Reset on every top-frame commit and on tab close.
+const subFrameLogGuard = new Map<number, Set<string>>();
+// Bound per tab so a page that mints frames in a loop (or throws a
+// fresh error message each time) can't grow this without limit. Past
+// the cap we stop logging sub-frame events for this document rather
+// than evicting — the first N are the informative ones.
+const SUB_FRAME_LOG_KEY_CAP = 32;
+
+function clearSubFrameLogGuard(tabId: number): void {
+  subFrameLogGuard.delete(tabId);
+}
+
+// True the first time `key` is seen for this tab's current document.
+// Callers use it to emit one log row and stay silent for the repeats.
+function shouldLogSubFrameEvent(tabId: number, key: string): boolean {
+  let seen = subFrameLogGuard.get(tabId);
+  if (!seen) {
+    seen = new Set<string>();
+    subFrameLogGuard.set(tabId, seen);
+  }
+  if (seen.has(key)) return false;
+  if (seen.size >= SUB_FRAME_LOG_KEY_CAP) return false;
+  seen.add(key);
+  return true;
+}
+
 async function recordScriptReport(
   tabId: number,
   sender: chrome.runtime.MessageSender,
@@ -3070,8 +3145,12 @@ async function recordScriptReport(
   // chrome.webNavigation reports, so we can use it to tell which
   // document the wrapper belongs to.
   const senderDocId = (sender as { documentId?: string }).documentId ?? '';
+  // Sub-frame reports are logged once per document and never create a
+  // document of their own — see the block comment above.
+  const subFrame = isSubFrameSender(sender);
 
   const tabPart = ` tab=${tabId}`;
+  const framePart = subFrame ? ' frame' : '';
   const label = getScriptLogLabel(id);
   // GM_* cross-tab broadcast openers table: register the
   // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
@@ -3080,19 +3159,34 @@ async function recordScriptReport(
   if (type === SM_START_MSG || type === SM_SWAPPED_MSG) {
     registerOpener(id, tabId);
   }
-  if (type === SM_START_MSG) {
-    console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
+
+  // Sub-frame de-dup key. Everything but an error collapses to one row
+  // per script per top-level document; errors keep their message in the
+  // key so two different failures still both get logged, while the same
+  // failure repeated across twenty frames gets logged once.
+  const shouldLog = !subFrame || shouldLogSubFrameEvent(
+    tabId,
+    type === SM_ERROR_MSG ? `${type} ${id} ${payload.message ?? ''}` : `${type} ${id}`,
+  );
+
+  if (!shouldLog) {
+    // Nothing to say. Fall through to the badge merge below, which is
+    // idempotent for a repeat report.
+  } else if (type === SM_START_MSG) {
+    console.log(`[SourceMonkey] start${framePart} ${label}${tabPart} ${senderUrl}`);
     logScriptEvent(id, {
       level: 'info',
       source: 'script-wrapper',
       tabId,
-      message: `Started at ${senderUrl}`,
+      message: subFrame
+        ? `Started in sub-frame ${senderUrl}`
+        : `Started at ${senderUrl}`,
     });
   } else if (type === SM_SWAPPED_MSG) {
     // The reload swap path. Log alongside sm:start so the SW console
     // tells the full story when reading a transcript.
     console.log(
-      `[SourceMonkey] swapped ${label}${tabPart} ${senderUrl} ` +
+      `[SourceMonkey] swapped${framePart} ${label}${tabPart} ${senderUrl} ` +
       `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
     );
     logScriptEvent(id, {
@@ -3108,7 +3202,7 @@ async function recordScriptReport(
     // SW told the wrapper to skip. Warning, not error — a script that
     // was asked not to run is worth surfacing, but nothing failed.
     console.log(
-      `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
+      `[SourceMonkey] abandoned${framePart} ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
     logScriptEvent(id, {
       level: 'warning',
@@ -3129,7 +3223,7 @@ async function recordScriptReport(
     // SW into the Errors panel; only .info / .log stay out of it. The
     // badge already surfaces the failure to the user; the Errors panel
     // should be reserved for actual extension bugs.
-    console.info(`[SourceMonkey] error ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
+    console.info(`[SourceMonkey] error${framePart} ${label}${tabPart} ${senderUrl}: ${payload.message ?? ''}`);
     // The stack (when present) typically starts with a line that already
     // contains the message (e.g. "Error: foo\n    at HTMLBtn..."), so
     // we prefer it as-is. Fall back to message-only when the engine
@@ -3153,6 +3247,15 @@ async function recordScriptReport(
   // and no badge change. Returning here keeps the rest of the function
   // focused on the run / error / swapped reports.
   if (type === SM_ABANDONED_MSG) return;
+
+  // A sub-frame that merely STARTED tells the badge nothing it can use:
+  // the expected set comes from the top-frame URL only, so a script
+  // matching just the frame would land as UNEXPECTED (orange) on a page
+  // where everything is in fact working. A sub-frame ERROR is the
+  // opposite — it's the only signal the user gets, and `computeBadge`
+  // ranks an error row as ERROR whether or not it was expected — so
+  // that one is merged, into the top-level document's state.
+  if (subFrame && type !== SM_ERROR_MSG) return;
 
   // Closes the race where storage updates land BEFORE sm:start arrives.
   // See docs/matching.md#closing-the-report-after-change-race.
@@ -3178,8 +3281,20 @@ async function recordScriptReport(
   }
 
   const record = await getTabRecord(tabId);
-  let state = getDocState(record, senderDocId);
+  // A frame's `documentId` is its own, not the top document's, so a
+  // sub-frame error is recorded against whatever document the tab is
+  // currently showing — that's the one whose badge the user is looking
+  // at. Frames never get a slot of their own in the per-tab document
+  // LRU (cap 5): twenty ad iframes would evict every bfcache entry.
+  const targetDocId = subFrame ? (record?.currentDocId ?? '') : senderDocId;
+  let state = subFrame ? getCurrentState(record) : getDocState(record, senderDocId);
   if (!state) {
+    // No top-level document to attach a frame error to (the tab record
+    // hasn't been written yet). Dropping it is the honest answer — we
+    // can't synthesise the top document's URL or expected set from a
+    // frame's sender, and inventing a document keyed on the frame is
+    // exactly what the LRU note above rules out.
+    if (subFrame) return;
     // Bootstrap: sm:start arrived before webNavigation.onCommitted
     // landed (SW cold start, or simple ordering race), or the
     // wrapper's document was evicted from the per-tab LRU. Synthesise
@@ -3210,9 +3325,9 @@ async function recordScriptReport(
   // writeDocState (not setCurrentDoc) — a late sm:* from a doc we've
   // already navigated away from updates its stored state but doesn't
   // steal the badge from the doc currently on screen.
-  const nextRecord = writeDocState(record, senderDocId, next);
+  const nextRecord = writeDocState(record, targetDocId, next);
   await setTabRecord(tabId, nextRecord);
-  if (nextRecord.currentDocId === senderDocId) {
+  if (nextRecord.currentDocId === targetDocId) {
     await renderBadge(tabId, next);
   }
 }

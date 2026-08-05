@@ -463,6 +463,8 @@ collection's `enabled` flag are both true, we build a
 - `world` — `'MAIN'` (the page's own world) or `'USER_SCRIPT'`
   (Chrome's isolated user-script world), resolved per script — see
   [Execution world](#execution-world) below.
+- `allFrames` — `true` unless the script declares `@noframes`. Always
+  set explicitly; see [Frames](#frames) below.
 
 ### `@run-at` gating
 
@@ -503,6 +505,74 @@ via the per-script config blob (`buildConfigBlob` in
 
 This wait runs alongside the `sm:check-pending` round-trip rather than
 after it — see [Concurrent gates](#concurrent-gates).
+
+### Frames
+
+`allFrames` decides whether a script runs only in the tab's top-level
+document or in every frame of the page whose **own** URL matches.
+
+Resolution (`resolveAllFrames` in `src/injector.ts`):
+
+- `// @noframes` present → `allFrames: false` (top frame only).
+- Tag absent → `allFrames: true`.
+
+Why that default: TM, VM and GM all inject into matching sub-frames
+and document `@noframes` as the opt-out. Chrome's `allFrames` defaults
+to `false`, i.e. the opposite, so the field is **always** set
+explicitly — an omitted one would silently mean top-frame-only.
+
+`@noframes` is a flag tag. TM parses no value for it, so
+`@noframes false` still disables frames.
+
+#### Matching is per frame
+
+- A sub-frame is checked against `@match` / `@include` / `@exclude`
+  using its own URL, not its parent's. A script can therefore run in a
+  frame on a page whose top-level URL it doesn't match at all.
+- Nesting depth is irrelevant — a frame inside a frame is matched on
+  its own terms.
+- A frame with **no URL of its own** (`about:blank`, `srcdoc`,
+  `data:`) matches nothing and gets no script. Content scripts have
+  `matchOriginAsFallback` for this; `chrome.userScripts` has no
+  equivalent, so TM/VM reach these frames and we don't. See
+  [TODO.md](../TODO.md).
+- Sandboxed frames (`<iframe sandbox>` without `allow-scripts`) run no
+  JavaScript at all, so nothing runs there under any manager.
+
+#### The shared helpers follow the scripts
+
+`wrapper-bridge.js` and `wrapper-gm-runtime.js` install **per-frame**
+globals (a `message` listener, `window.__SM_GM__`). A script running
+in a sub-frame therefore needs its helper in that same frame,
+otherwise every MAIN-world report is dropped and every `GM_*` call is
+a `ReferenceError`.
+
+- `buildBridgeSpec` / `buildGmRuntimeSpec` set `allFrames: true` iff at
+  least one **active** script does.
+- Gated on the active set rather than hardcoded, because the helpers
+  register at `<all_urls>`: a user whose scripts are all `@noframes`
+  shouldn't pay helper injection in every ad iframe on the web.
+
+#### What runs once per frame, and what doesn't
+
+Injection is per frame, so the wrapper runs per frame. Three things
+are deliberately *not*:
+
+- **Startup logs** (parse-time diagnostics from the load pipeline) are
+  emitted to the page console in the top frame only — they describe
+  the stored script, not the document, and the viewer's Log tab holds
+  the authoritative copy either way.
+- **The badge** ignores sub-frame `sm:start`; a sub-frame `sm:error`
+  still surfaces. See
+  [matching.md](matching.md#sub-frame-reports).
+- **`GM_registerMenuCommand`** is honored from the top frame only. The
+  command id is minted page-side, so N frames would register N
+  indistinguishable rows in one per-tab menu. See
+  [TODO.md](../TODO.md).
+
+Everything else — the `sm:check-pending` round trip, the `@run-at`
+gate, the regex matcher recheck, GM storage — runs independently in
+each frame, which is what TM/VM do too.
 
 ### Execution world
 
@@ -1214,18 +1284,9 @@ timeout remains the hard ceiling for every `@run-at`.
 
 ## Limitations / future work
 
-- **No frame control.** We don't set `allFrames`, so scripts only run
-  in the top frame. Adding `@noframes` parsing + a `allFrames` flip
-  is straightforward.
-  - **What it would break:** the menu-command registry
-    (`src/gm-menu.ts`) holds ONE `documentId` per tab, and a register
-    naming a different document replaces the state. That is safe only
-    because every wrapper in a tab shares the top-level document
-    today. With scripts in subframes, a subframe register and a
-    top-frame register name different documents and would clobber
-    each other's commands, alternating as each fires.
-  - Whoever flips `allFrames` needs to key that registry by
-    (tabId, documentId) and merge across a tab's live documents for
-    the menu render — and to decide what a navigation clear means
-    when only one frame navigated. See
-    [GM-APIs.md](GM-APIs.md#lifecycle).
+- **Frames with no URL of their own.** `about:blank`, `srcdoc` and
+  `data:` frames are never injected into — `chrome.userScripts` has no
+  `matchOriginAsFallback`. TM/VM do reach them. See
+  [Frames](#frames).
+- **Menu commands from sub-frames** are dropped. See
+  [Frames](#frames).

@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>nested frame</title>
+  </head>
+  <body>
+    <main id="target">original content</main>
+    <!-- A grandchild frame of frames.html, so the spec can assert that
+         injection isn't limited to depth 1. -->
+    <iframe name="grandkid" src="target.html"></iframe>
+  </body>
+</html>

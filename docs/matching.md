@@ -341,6 +341,33 @@ synchronous throw. The SW listens on
 map keyed by script ID. See [injection.md](injection.md#message-flow)
 for the wrapper-side payloads.
 
+### Sub-frame reports
+
+Scripts run in every matching frame unless they declare `@noframes`
+(see [injection.md](injection.md#frames)), so one page load can produce
+one `sm:*` report per frame. The badge is deliberately a **top-frame
+view**, and sub-frame reports are second-class:
+
+- **Expected** (`matches`) is computed from the top-frame URL only —
+  `webNavigation` sub-frame events are ignored.
+- **`sm:start` from a sub-frame is dropped.** Merging it would
+  manufacture an `UNEXPECTED` row (orange) for any script that
+  legitimately matches only a frame, on a page where everything is in
+  fact working.
+- **`sm:error` from a sub-frame IS merged**, into the tab's *current*
+  document. A red badge is the only signal the user gets that a script
+  is broken, and `computeBadge` ranks an error row `ERROR` whether or
+  not it was expected.
+- **Frames never get their own slot** in the per-tab document LRU. A
+  frame's `documentId` is its own, so twenty ad iframes would evict
+  every real bfcache entry from a five-slot cache.
+
+The per-script Log is coalesced the same way: one row per script per
+top-level document for starts, plus one row per *distinct* error
+message (two different failures are two different things to fix, the
+same failure in twenty frames is one). The guard resets on every
+top-frame commit and on tab close.
+
 ### documentId is the lifecycle key
 
 `chrome.userScripts` injects exactly once per document. Fragment

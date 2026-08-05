@@ -90,6 +90,16 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 
+`script-wrapper` rows from **sub-frames** are coalesced, because a
+script runs once per matching frame (see
+[injection.md](injection.md#frames)) and `LOG_CAP` is 500:
+
+- One `started in sub-frame <url>` row per script per top-level
+  document, however many frames ran.
+- Errors key on their message, so twenty frames failing the same way
+  log once but two different failures still both appear.
+- The guard resets on every top-frame commit and on tab close.
+
 Two naming notes worth keeping:
 
 - **`extension-startup`, not `startup`.** Bare "startup" would read as

@@ -289,6 +289,12 @@ script with no `@grant` (or `@grant none`) shares the page's world and
 can read its globals, like `window.jQuery`; anything else is isolated.
 Set `@inject-into page` or `@inject-into content` to pick explicitly.
 
+Scripts run in **every frame** whose own URL matches, at any nesting
+depth — the same default as Tampermonkey and Violentmonkey. Add
+`@noframes` to keep a script in the top-level document only. Frames
+with no URL of their own (`about:blank`, `srcdoc`) are never injected
+into.
+
 Whatever a script throws is caught and reported against that script —
 including failures that happen later, from timers, event listeners, and
 promises. They show up in the script's **Log** tab with a clickable

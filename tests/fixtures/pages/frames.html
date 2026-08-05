@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>frames</title>
+  </head>
+  <body>
+    <main id="target">original content</main>
+    <!-- Real same-origin sub-frames. Each serves target.html, so a
+         script matching the fixture server's origin matches them too. -->
+    <iframe name="kid1" src="target.html"></iframe>
+    <iframe name="kid2" src="target.html"></iframe>
+    <!-- Nested one level deeper: frames.html inside frames.html would
+         recurse, so this one points at a page that itself embeds a
+         frame. -->
+    <iframe name="nested" src="nested-frame.html"></iframe>
+    <!-- No URL of its own. chrome.userScripts has no
+         `matchOriginAsFallback`, so nothing is injected here — pinned
+         by a test so the limitation is visible if Chrome ever changes. -->
+    <iframe name="blank" src="about:blank"></iframe>
+    <!-- Same story as about:blank, via srcdoc. -->
+    <iframe name="srcdoc" srcdoc="<main id='target'>original content</main>"></iframe>
+  </body>
+</html>

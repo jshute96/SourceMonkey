@@ -399,12 +399,30 @@
 
   /* ---------- startup logs (page-console diagnostics) ---------- */
 
+  /* Is this the tab's top-level document, or a sub-frame? Scripts run
+     in every matching frame unless they declare `@noframes`, and the
+     prelude runs once per frame, so anything that describes the SCRIPT
+     (rather than this frame's activation) has to be emitted once.
+     Comparing window references is safe cross-origin — reading `top`
+     never throws, only dereferencing its properties would. */
+  function isTopFrame() {
+    try { return self === self.top; } catch (_e) { return false; }
+  }
+
   /* Fire the script's startupLogs to the page console exactly once on
      activation. Same try/catch wrap as the old wrapper splice — pages
-     that clobber console can't break us. */
+     that clobber console can't break us.
+
+     Top frame only. These are diagnostics about the script's stored
+     content (a `@require` that failed to fetch, a dropped `@grant`),
+     not about this document — repeating them once per frame would
+     print the same line N times on a page full of ad iframes. The
+     authoritative copy is in the viewer's Log tab either way, which is
+     also where a script that runs ONLY in sub-frames still shows them. */
   function emitStartupLogs(cfg) {
     var logs = cfg.startupLogs;
     if (!logs || !logs.length) return;
+    if (!isTopFrame()) return;
     for (var i = 0; i < logs.length; i++) {
       var l = logs[i];
       /* Always console.info regardless of l.level: console.warn /
