@@ -561,7 +561,7 @@
        <all_urls>, filtered in-page) would log an error and turn the
        badge red on every page the user visits. */
     if (!entry.matched) return;
-    var msg = "script source failed to parse (a @require or the script body has a syntax error); nothing was run";
+    var msg = "Script source failed to parse (a @require or the script body has a syntax error); nothing was run";
     try { console.info("[SourceMonkey]", entry.cfg.name + ":", msg); } catch (_e) {}
     send({
       type: "sm:error",

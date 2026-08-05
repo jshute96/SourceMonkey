@@ -12,7 +12,7 @@ anywhere in that program makes the *whole* entry fail to parse.
 Before this check, that was only discoverable at injection time:
 
 - The seal entry noticed `__smRun` was never called and logged
-  "script source failed to parse (a `@require` or the script body has a
+  "Script source failed to parse (a `@require` or the script body has a
   syntax error); nothing was run".
 - It fired only on a page the script actually matched, so a broken
   script looked fine on the sources page until you happened to visit
@@ -196,7 +196,7 @@ Skipping doesn't leave a row *unverified*:
 
 - The rebuild resets `status` to `ok`, so an unchecked page refresh
   **cleared** a prior `invalid` verdict.
-- It then reported "loads cleanly again (was invalid)" for a script
+- It then reported "Loads cleanly again (was invalid)" for a script
   that still didn't parse.
 - The next background refresh flagged it again, so the Log alternated
   between the two.

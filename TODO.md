@@ -585,7 +585,7 @@ Two rough edges are left:
     this supersedes" from an unrelated `sm:error` still in the log.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
-  ordinary browsing appends `checked for updates — no change` per
+  ordinary browsing appends `Checked for updates — no change` per
   script per reload — and two rows for a script that is still failing.
   Dropping the row for non-user-initiated checks would fix it; the
   blocker is that `manual` currently means "not rate-limited", not
@@ -644,13 +644,13 @@ they follow are in
   can't, because the reply path it would use *is* the tab. Needs a
   different route, not a different string.
 - **`sm:abandoned` has no real reasons to report.** The Log row says
-  `did not run on this page (<reason>)`, but the SW's
+  `Did not run on this page (<reason>)`, but the SW's
   `{action: 'skip', reason}` branch is unused, so the only value that
   reaches it is the wrapper's own `"skip"` fallback. Either give the
   skip decision real reasons or drop the parenthetical.
 - **The version-probe rows keep their own wording.**
   `version-probe-fetch.ts` still says `no metadata block` where the
-  viewer now says `no // ==UserScript== metadata block, so this is not a
+  viewer now says `No // ==UserScript== metadata block, so this is not a
   userscript`. Deliberate — `probe.error` renders as a value in a
   definition-list cell (`script-details.ts`), beside `could not fetch`
   and `no @version`, so a full message doesn't fit. Revisit if that row
@@ -666,8 +666,8 @@ they follow are in
   `--repeat-each=5`), and each has failed at more than one assertion
   across runs, which points at a race rather than one wrong
   expectation:
-  - `refresh-failed.spec.ts:100` — seen with the first `refresh
-    failed` row absent, and separately with `loaded new content`
+  - `refresh-failed.spec.ts:100` — seen with the first `Refresh
+    failed` row absent, and separately with `Loaded new content`
     absent.
   - `version-probe.spec.ts:262` — the status cell reads `ERROR` where
     the test expects `OK`, i.e. something logged an error-level row

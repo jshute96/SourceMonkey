@@ -419,7 +419,7 @@ export function emitGmBindings(
     // drifted — the Log copy lost the "reload" half, which is the only
     // part the reader can act on.
     const gmValuesFailure =
-      "failed reading this script's stored GM values during setup, " +
+      "Failed reading this script's stored GM values during setup, " +
       'so the script did not run — reload the page to retry';
     preludeLines.push(
       `var __smGmSnap = (typeof __smDecision === "object" && __smDecision && __smDecision.gmValues);`,

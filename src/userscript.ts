@@ -298,7 +298,7 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   // If THIS script was removed, drop into the not-found state.
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage. Open it from the sources page.');
+    showMissing('Script not found in storage — open it from the sources page');
     return;
   }
   await refreshLogId();
@@ -360,7 +360,7 @@ async function loadStored(): Promise<void> {
   if (!scriptId) return;
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage. Open it from the sources page.');
+    showMissing('Script not found in storage — open it from the sources page');
     return;
   }
   const source = await getSource(script.sourceId);
@@ -750,7 +750,7 @@ async function loadPreview(): Promise<void> {
       // A whole sentence, not a fragment: the catch renders it as-is
       // rather than under the `Could not fetch this script: ` prefix
       // the other failures there take.
-      throw new Error(`This is not a script location — it ${LOCATION_SHAPES}.`);
+      throw new Error(`This is not a script location — it ${LOCATION_SHAPES}`);
     }
     // Same canonicalization `addSource` runs, so what the
     // already-installed check compares is exactly what installing
@@ -809,7 +809,7 @@ async function fetchPreviewText(url: string): Promise<string> {
   // `unchanged` needs a conditional request to happen, and we send
   // none — but the type includes it, so fail loudly rather than
   // rendering an empty page if that ever changes.
-  if (result.kind !== 'ok') throw new Error('no content returned');
+  if (result.kind !== 'ok') throw new Error('No content returned');
   return result.text;
 }
 
@@ -1171,7 +1171,7 @@ async function wireInstallButtons(): Promise<void> {
   const existing = await findInstalled();
 
   if (!existing) {
-    renderBanner('This script is not installed yet.', 'preview');
+    renderBanner('This script is not installed yet', 'preview');
     installBtn.hidden = false;
     installBtn.disabled = false;
     installBtn.onclick = () => void doInstall();
@@ -1222,7 +1222,7 @@ async function doInstall(): Promise<void> {
       // that normalizes to an already-installed one). Re-run the button
       // wiring so the page converges on the Open / Update pair instead
       // of offering an Install that can only repeat this message.
-      setMessage('This script is already installed.');
+      setMessage('This script is already installed');
       await wireInstallButtons();
       return;
     }
@@ -1292,7 +1292,7 @@ function openRawSource(): void {
   if (!previewText && !isHttp && !previewFileUrl) {
     // Nothing fetched and nothing to navigate to — normalizeSourceInput
     // threw before we ever resolved a URL.
-    setMessage('There is no source to open for this location.', 'error');
+    setMessage('There is no source to open for this location', 'error');
     return;
   }
   if (!previewText) {
@@ -1395,7 +1395,7 @@ function showFileAccessBannerIfBlocked(fileUrl: string, retry?: string): void {
 // unrelated setting as the explanation.
 //
 // Told apart by the URL: every fetch helper in `directories.ts` names
-// the thing it couldn't read (`could not read <url>: …`), and no parse
+// the thing it couldn't read (`Could not read <url>: …`), and no parse
 // or validation message does. Still true of rows persisted under the
 // older wording, which named the URL too. Deliberately
 // matched against this script's own `fileUrl`, so a failed `@require`
@@ -1428,7 +1428,7 @@ interface PreviewWarning {
   location?: DiagnosticLocation;
   // Anything to say AFTER the location. Kept separate rather than
   // glued onto `message` so the location stays in the middle of the
-  // sentence where it reads naturally — "…syntax error: X (in f, line
+  // sentence where it reads naturally — "…Syntax error: X (in f, line
   // 3). Installing it will store it as INVALID."
   trailing?: string;
 }
@@ -1458,7 +1458,6 @@ function renderInstalledBanner(existing: StoredScript, header: ParsedHeader | nu
   } else if (installedVersion) {
     text += ` (version ${installedVersion})`;
   }
-  text += '.';
   renderBanner(text, 'installed');
 }
 

@@ -307,7 +307,7 @@ test.describe('GM_* storage freshness across documents', () => {
       const log = await sm.getScriptLog(scriptIds[0]);
       const errors = log.filter((e) => e.level === 'error');
       expect(errors.length).toBeGreaterThanOrEqual(1);
-      expect(errors[0].message).toMatch(/failed reading this script's stored GM values/i);
+      expect(errors[0].message).toMatch(/Failed reading this script's stored GM values/i);
       // The recovery half is the point of the message — it used to be
       // dropped from this copy while the console kept it.
       expect(errors[0].message).toMatch(/reload the page to retry/i);

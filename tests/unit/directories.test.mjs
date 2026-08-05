@@ -511,7 +511,7 @@ test('parseManifest trims entries and skips empty strings', () => {
 test('parseManifest rejects non-JSON input with a helpful message', () => {
   assert.throws(
     () => parseManifest('not json'),
-    /manifest is not valid JSON/,
+    /Manifest is not valid JSON/,
   );
 });
 
@@ -635,7 +635,7 @@ test('fetchHttpText: a thrown fetch surfaces with the underlying message', async
   const fakeFetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(
     withFetch(fakeFetch, () => fetchHttpText('https://x/foo.user.js')),
-    /could not read .*: Failed to fetch/,
+    /Could not read .*: Failed to fetch/,
   );
 });
 

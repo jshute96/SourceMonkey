@@ -5,7 +5,7 @@
 // viewer execute in that PAGE, not in the service worker. A page with
 // no checker installed silently skipped the check — which didn't
 // merely leave the row unverified, it CLEARED a previous `invalid`
-// verdict and reported "loads cleanly again" for a script that still
+// verdict and reported "Loads cleanly again" for a script that still
 // doesn't parse.
 //
 // A page has a DOM, so it embeds its own `parse-sandbox.html` and

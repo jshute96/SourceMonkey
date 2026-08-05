@@ -72,7 +72,7 @@ test.describe('parse check on page-driven paths', () => {
       .toBe('invalid');
     // ...and it must not have claimed a recovery on the way.
     const log = await sm.getScriptLog(script.id);
-    expect(log.map((e) => e.message).join('\n')).not.toMatch(/loads cleanly again/);
+    expect(log.map((e) => e.message).join('\n')).not.toMatch(/Loads cleanly again/);
     await page.close();
   });
 

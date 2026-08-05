@@ -56,8 +56,21 @@ export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
   ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
   : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
 
-// Why a dependency wouldn't load, as a predicate that follows the
-// subject: `@require ./lib.js: ` + one of these.
+// Split out so `isFetchFailureMessage` can recognize the one message
+// whose text isn't fixed at module load, without either side spelling
+// the prefix twice.
+const HTTP_STATUS_PREFIX = 'The server returned HTTP ';
+
+// Why a dependency wouldn't load, as a sentence of its own that lands
+// after the subject: `@require ./lib.js: ` + one of these.
+//
+// These used to be bare predicates (`is empty`, `could not be fetched:
+// HTTP 404`) that only parsed as English once the subject was glued on.
+// Each now carries its own subject so it reads as a sentence wherever
+// it lands, and takes the capital every message takes — see
+// [docs/diagnostics.md](../docs/diagnostics.md#wording). Dropping the
+// `could not be fetched: ` half also drops a second colon from a string
+// that already arrives after one.
 //
 // These read as facts rather than as a list of possibilities because
 // the fetcher now reports which case it hit. It used to return a bare
@@ -71,48 +84,94 @@ export function describeFetchFailure(failure: FetchFailure): string {
       // Unreachable for a dependency — resolution rejects anything
       // that isn't http(s) or a contained relative path long before
       // the fetch. Kept for totality.
-      return 'could not be fetched: that URL scheme cannot be fetched';
+      return 'That URL scheme cannot be fetched';
     case 'no-response':
-      return 'could not be fetched: no response from the server';
+      return 'No response from the server';
     case 'timeout':
-      return 'could not be fetched: the request timed out';
+      return 'The request timed out';
     case 'unreadable-file':
       // The one fetch failure that still names two causes, because a
       // file:// read has no HTTP layer: "isn't there" and "can't be
       // read" arrive identically. Not a network problem either way,
       // which is what this case used to be reported as.
-      return 'could not be read: the file may not exist, or may not be readable';
+      return 'The file may not exist, or may not be readable';
     case 'http-error':
-      return `could not be fetched: HTTP ${failure.status}`;
+      return `${HTTP_STATUS_PREFIX}${failure.status}`;
     case 'wrong-content-type':
       // Only reachable through the icon fetcher, which discards the
       // reason — no user reads this today.
-      return 'could not be fetched: the response was the wrong content type';
+      return 'The response was the wrong content type';
     case 'empty':
-      return 'is empty';
+      return 'The file is empty';
     case 'oversize':
-      return `is larger than the ${CAP_TEXT} limit`;
+      return `The file is larger than the ${CAP_TEXT} limit`;
   }
 }
 
+// Every `FetchFailReason`, so the predicate below can't silently stop
+// covering one. `FetchFailure` is a discriminated union, not an enum,
+// so there is no runtime list to derive this from.
+//
+// A `Record` keyed by the union rather than an array: a `Record` is
+// missing-key-checked, so adding a `FetchFailReason` without a line
+// here fails the build. An array — even `as const satisfies
+// readonly FetchFailure['reason'][]` — only checks that each entry IS a
+// reason, never that none is missing, which is the direction that
+// matters. A missed reason wouldn't throw; it would quietly stop being
+// recognized, and the validator would mislabel that bucket.
+const FETCH_FAILURE_REASONS: Record<FetchFailure['reason'], true> = {
+  'unsupported-scheme': true,
+  'no-response': true,
+  'timeout': true,
+  'unreadable-file': true,
+  'http-error': true,
+  'wrong-content-type': true,
+  'empty': true,
+  'oversize': true,
+};
+
+// Did this text come out of `describeFetchFailure`?
+//
+// Exists for `scripts/validate-userscripts.mjs`, which substitutes its
+// own wording when the offline mirror's 404 is an artifact of the
+// mirror rather than a real server answer — it has to recognize a
+// fetch-layer failure to know when that substitution applies.
+//
+// A predicate rather than a regex over the wording: these strings are
+// user-facing and get reworded, and a pattern living in the validator
+// would go stale silently (it did — it matched a `could not be
+// fetched: ` prefix that no longer exists).
+export function isFetchFailureMessage(text: string): boolean {
+  // `http-error` first and separately: its text carries the status, so
+  // it's the one case that can't be compared against a fixed string.
+  if (text.startsWith(HTTP_STATUS_PREFIX)) return true;
+  const reasons = Object.keys(FETCH_FAILURE_REASONS) as (keyof typeof FETCH_FAILURE_REASONS)[];
+  return reasons.some((reason) => {
+    if (reason === 'http-error') return false;
+    return describeFetchFailure({ failed: true, reason }) === text;
+  });
+}
+
 // Why a ref couldn't be resolved to something fetchable. Same shape:
-// a predicate that follows the subject.
+// a sentence that follows the subject, not a predicate glued to it.
 export function describeResolveFailure(failure: ResolveFailure): string {
   switch (failure.reason) {
     case 'empty':
       // Unreachable — `distillRequires` / `distillResources` drop empty
       // refs before a loader sees one. Kept for totality.
-      return 'has no reference after the tag';
+      return 'The tag has no reference after it';
     case 'malformed-url':
-      return 'is not a valid URL';
+      return 'The reference is not a valid URL';
     case 'unsupported-scheme':
       // Names what the author actually wrote. `file:` reaches this on
       // purpose — an absolute local path is not accepted even from a
-      // local script (see file-loader.ts's module header).
-      return `${failure.scheme} URLs are not supported — ` +
+      // local script (see file-loader.ts's module header). The scheme
+      // is parenthesized rather than leading, so the sentence can open
+      // with a capital of ours instead of a verbatim value.
+      return `That URL scheme (${failure.scheme}) is not supported — ` +
         'use an http(s) URL, or a relative path inside the script\'s folder';
     case 'outside-script-folder':
-      return 'points outside the script\'s own folder — a relative path has to stay inside it';
+      return 'That path points outside the script\'s own folder — a relative path has to stay inside it';
   }
 }
 
@@ -385,7 +444,7 @@ export async function fetchRequireForPreview(
   // when it skipped the fetch (a URL already seen this pass, or a
   // preserved prior), and this call can do neither — fresh `seenUrls`,
   // empty `prior`, `recheck: 'all'`. So it says nothing about the file.
-  if (!res.entry) throw new Error(`@require ${ref}: internal error: no content and no reason`);
+  if (!res.entry) throw new Error(`@require ${ref}: Internal error: no content and no reason`);
   return res.entry;
 }
 
@@ -412,10 +471,10 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
     return { errorMessage: `@require ${args.ref}: ${describeResolveFailure(resolved)}` };
   }
   if (resolved.kind === 'data') {
-    return { errorMessage: `@require ${args.ref}: data: URLs are not supported` };
+    return { errorMessage: `@require ${args.ref}: URLs with the data: scheme are not supported` };
   }
   if (!isJsResourceUrl(resolved.url)) {
-    return { errorMessage: `@require ${args.ref}: filename must end in .js` };
+    return { errorMessage: `@require ${args.ref}: The filename must end in .js` };
   }
   if (args.seenUrls.has(resolved.url)) return {};
   args.seenUrls.add(resolved.url);
@@ -438,7 +497,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // XHR case) is accepted by the predicate like any other non-markup
   // type.
   if (!requireAcceptContentType(got.contentType)) {
-    return { errorMessage: `@require ${args.ref}: the server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login` };
+    return { errorMessage: `@require ${args.ref}: The server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login` };
   }
   // Strict UTF-8 decode: catches binary regardless of what the server
   // claimed the type was (a misconfigured CDN serving a PNG, or the
@@ -450,7 +509,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   try {
     source = new TextDecoder('utf-8', { fatal: true }).decode(got.bytes);
   } catch {
-    return { errorMessage: `@require ${args.ref}: response is not valid UTF-8 (binary or wrong-encoding file)` };
+    return { errorMessage: `@require ${args.ref}: The response is not valid UTF-8 (binary or wrong-encoding file)` };
   }
   const u8 = new Uint8Array(got.bytes);
   const contentHash = await sha256Hex(got.bytes);
@@ -521,7 +580,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
     return { errorMessage: `${subject}: ${describeResolveFailure(resolved)}` };
   }
   if (resolved.kind === 'data') {
-    return { errorMessage: `${subject}: data: URLs are not supported` };
+    return { errorMessage: `${subject}: URLs with the data: scheme are not supported` };
   }
   // No suffix gate — resources can be any media type.
   // No URL-level dedup either: two `@resource` lines with different
@@ -591,7 +650,17 @@ async function fetchFileBytes(url: string): Promise<FetchedFile | FileFailure> {
   } catch (err) {
     return {
       failed: true,
-      errorMessage: `could not be fetched: ${err instanceof Error ? err.message : String(err)}`,
+      // NOT a `describeFetchFailure` string, deliberately.
+      // `fetchResourceBytes` reports every fetch outcome as a
+      // `FetchFailure` return and does not throw, so reaching here means
+      // our own code broke its contract — which is what the reader is
+      // being told, and why `isFetchFailureMessage` correctly declines
+      // it. Phrasing it as one of the fetch failures would both invite
+      // the offline validator to substitute mirror wording for a bug of
+      // ours, and put a second `could not be fetched: ` colon into a
+      // string that already lands after `@require <ref>: `.
+      errorMessage: `Internal error: the file fetcher failed unexpectedly (${
+        err instanceof Error ? err.message : String(err)})`,
     };
   }
 }

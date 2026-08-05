@@ -16,6 +16,7 @@ import {
   describeResolveFailure,
   distillRequires,
   distillResources,
+  isFetchFailureMessage,
 } from '../../dist/external-files.js';
 
 const SCRIPT_URL = 'file:///home/me/scripts/foo.user.js';
@@ -227,7 +228,7 @@ test('attachFiles: rejects @require absolute file:// ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /file: URLs are not supported/);
+  assert.match(r.errorMessage, /That URL scheme \(file:\) is not supported/);
 });
 
 test('attachFiles: rejects @require data: ref', async () => {
@@ -240,7 +241,7 @@ test('attachFiles: rejects @require data: ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /data: URLs/);
+  assert.match(r.errorMessage, /URLs with the data: scheme are not supported/);
 });
 
 test('attachFiles: @require relative resolves against script URL', async () => {
@@ -654,9 +655,42 @@ test('describeFetchFailure: an HTTP failure states the status', () => {
   assert.match(describeFetchFailure({ failed: true, reason: 'http-error', status: 500 }), /HTTP 500/);
 });
 
-test('describeFetchFailure: size and emptiness read as predicates of the file', () => {
-  assert.equal(describeFetchFailure({ failed: true, reason: 'empty' }), 'is empty');
-  assert.match(describeFetchFailure({ failed: true, reason: 'oversize' }), /^is larger than the /);
+test('describeFetchFailure: size and emptiness name the file as their subject', () => {
+  assert.equal(describeFetchFailure({ failed: true, reason: 'empty' }), 'The file is empty');
+  assert.match(describeFetchFailure({ failed: true, reason: 'oversize' }), /^The file is larger than the /);
+});
+
+// `scripts/validate-userscripts.mjs` asks this instead of matching the
+// wording, because it used to match the wording and went stale silently
+// when these messages were recased. If a reason ever stops being
+// recognized, the validator quietly mislabels that whole bucket rather
+// than failing — so the coverage has to be pinned here.
+test('isFetchFailureMessage: recognizes every message describeFetchFailure can produce', () => {
+  const reasons = [
+    'unsupported-scheme', 'no-response', 'timeout', 'unreadable-file',
+    'wrong-content-type', 'empty', 'oversize',
+  ];
+  for (const reason of reasons) {
+    const text = describeFetchFailure({ failed: true, reason });
+    assert.ok(isFetchFailureMessage(text), `unrecognized: ${reason} -> ${text}`);
+  }
+  // The templated one, whose text isn't fixed at module load.
+  for (const status of [404, 500]) {
+    const text = describeFetchFailure({ failed: true, reason: 'http-error', status });
+    assert.ok(isFetchFailureMessage(text), `unrecognized: http-error ${status}`);
+  }
+});
+
+test('isFetchFailureMessage: rejects messages from the resolve half and from elsewhere', () => {
+  // A resolve failure is a different bucket in the validator's survey;
+  // admitting one here would let the offline mirror's wording override
+  // a message about the ref itself, which the mirror knows nothing about.
+  assert.equal(
+    isFetchFailureMessage(describeResolveFailure({ failed: true, reason: 'malformed-url' })),
+    false,
+  );
+  assert.equal(isFetchFailureMessage('No @name in the metadata block'), false);
+  assert.equal(isFetchFailureMessage(''), false);
 });
 
 test('describeResolveFailure: the two mistakes that used to share a message now differ', () => {
@@ -665,7 +699,7 @@ test('describeResolveFailure: the two mistakes that used to share a message now 
   assert.notEqual(outside, scheme);
   assert.match(outside, /outside the script's own folder/);
   // Names the scheme the author wrote rather than restating the rule.
-  assert.match(scheme, /^ftp: URLs are not supported/);
+  assert.match(scheme, /^That URL scheme \(ftp:\) is not supported/);
 });
 
 // ---------- the whole path, message included ----------
@@ -689,7 +723,7 @@ test('attachFiles: an http dependency that 404s reports the status, through the 
     });
     assert.equal(
       r.errorMessage,
-      '@require https://example.com/lib.js: could not be fetched: HTTP 404',
+      '@require https://example.com/lib.js: The server returned HTTP 404',
     );
   } finally {
     globalThis.fetch = realFetch;
@@ -712,7 +746,7 @@ test('attachFiles: an oversize dependency names the limit, not a generic failure
       fetchCache: new Map(),
       now: 2000,
     });
-    assert.match(r.errorMessage, /^@require https:\/\/example\.com\/big\.js: is larger than the /);
+    assert.match(r.errorMessage, /^@require https:\/\/example\.com\/big\.js: The file is larger than the /);
   } finally {
     globalThis.fetch = realFetch;
   }

@@ -51,6 +51,7 @@ import {
   setParseChecker,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
+  SYNTAX_ERROR_PREFIX,
 } from '../dist/script-store.js';
 import { buildParseCheckSource } from '../dist/injector.js';
 import { attachParseLocation } from '../dist/parse-location.js';
@@ -59,6 +60,7 @@ import { resolveScriptResource } from '../dist/file-loader.js';
 import {
   distillRequires,
   distillResources,
+  isFetchFailureMessage,
   MAX_FILE_BYTES,
 } from '../dist/external-files.js';
 import {
@@ -370,17 +372,6 @@ const OFFLINE_REASON_TEXT = {
   'not-found': 'file not found',
 };
 
-// The pipeline's own prefixes for "we tried to read it and got nothing
-// usable" — see `describeFetchFailure` in external-files.ts. Both
-// spellings: an http URL says "fetched", a file:// one says "read".
-//
-// A loose gate on purpose. It also admits failures the log can say
-// nothing about (a timeout, a rejected content type), which is
-// harmless: those never coincide with a `not-downloaded` / `not-found`
-// entry, so the lookup simply misses and the pipeline's own message
-// stands.
-const FETCH_FAILURE_RE = /^could not be (fetched|read)/;
-
 function classify(script) {
   if (script.status !== 'invalid') {
     const note = parseNotes.get(script.id);
@@ -391,13 +382,12 @@ function classify(script) {
   }
   const message = script.errorMessage ?? '(no message)';
 
-  const syntax = /^syntax error: (.*)$/s.exec(message);
-  if (syntax) {
+  if (message.startsWith(SYNTAX_ERROR_PREFIX)) {
     // No position to strip: `errorMessage` carries the message alone and
     // the location travels beside it in `errorLocation` (see
     // docs/diagnostics.md). That is what we want here anyway — the
     // position is per script, the message is what groups.
-    return { category: 'syntax error', detail: syntax[1] };
+    return { category: 'syntax error', detail: message.slice(SYNTAX_ERROR_PREFIX.length) };
   }
 
   const dep = /^@(require|resource) (.*?): ([\s\S]*)$/.exec(message);
@@ -408,7 +398,18 @@ function classify(script) {
     // oversize or empty dependency is exactly as worth locating as an
     // unreachable one.
     const url = depUrl(script, kind, subject);
-    if (FETCH_FAILURE_RE.test(reason)) {
+    // "We tried to read it and got nothing usable", asked of the
+    // pipeline via `isFetchFailureMessage` rather than pattern-matched
+    // here. This was a regex over the wording (`/^could not be
+    // (fetched|read)/`) and went stale silently the first time those
+    // messages were reworded — the whole point of the import rule above.
+    //
+    // A loose gate on purpose. It also admits failures the log can say
+    // nothing about (a timeout, a rejected content type), which is
+    // harmless: those never coincide with a `not-downloaded` /
+    // `not-found` entry, so the lookup simply misses and the pipeline's
+    // own message stands.
+    if (isFetchFailureMessage(reason)) {
       const offline = OFFLINE_REASON_TEXT[fetchLog.get(url)?.reason];
       // No log entry, or one we have no better wording for: the
       // pipeline's own message is already specific.

@@ -110,7 +110,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     await sm.syncNow();
     await sm.updateSource(source!.id, 'manual');
     const afterFirst = await sm.getScriptLog(scriptId);
-    const failures = afterFirst.filter((e) => /refresh failed/.test(e.message));
+    const failures = afterFirst.filter((e) => /Refresh failed/.test(e.message));
     expect(failures.length).toBe(1);
     expect(failures[0].level).toBe('warning');
 
@@ -120,7 +120,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     await sm.updateSource(source!.id, 'manual');
     await sm.updateSource(source!.id, 'manual');
     const afterRepeats = await sm.getScriptLog(scriptId);
-    expect(afterRepeats.filter((e) => /refresh failed/.test(e.message)).length).toBe(3);
+    expect(afterRepeats.filter((e) => /Refresh failed/.test(e.message)).length).toBe(3);
 
     // 3. Source comes back → an info entry says so, and the log's
     //    highest level stops being the last word on the script.
@@ -128,10 +128,10 @@ test.describe('refresh failed (keep prior good copy)', () => {
     server.setRoute('/app.user.js', userscriptText('App', ' /* v2 */'));
     await sm.updateSource(source!.id, 'manual');
     const afterRecovery = await sm.getScriptLog(scriptId);
-    const recovery = afterRecovery.filter((e) => /refresh succeeded again/.test(e.message));
+    const recovery = afterRecovery.filter((e) => /Refresh succeeded again/.test(e.message));
     expect(recovery.length).toBe(1);
     expect(recovery[0].level).toBe('info');
-    expect(afterRecovery.some((e) => /loaded new content/.test(e.message))).toBe(true);
+    expect(afterRecovery.some((e) => /Loaded new content/.test(e.message))).toBe(true);
   });
 
   test('a soft failure (200 login page) is explained in the Log too', async ({ sm }) => {
@@ -147,7 +147,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     await sm.updateSource(source!.id, 'manual');
 
     const log = await sm.getScriptLog(scriptId);
-    const failures = log.filter((e) => /refresh failed/.test(e.message));
+    const failures = log.filter((e) => /Refresh failed/.test(e.message));
     expect(failures.length).toBe(1);
     expect(failures[0].level).toBe('warning');
     expect(failures[0].message).toMatch(/not a valid userscript/);

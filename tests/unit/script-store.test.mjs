@@ -150,7 +150,7 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
+      message: 'Ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -170,7 +170,7 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'ignoring @grant GM_typo — unsupported APIs',
+      message: 'Ignoring @grant GM_typo — unsupported APIs',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -224,7 +224,7 @@ console.log('hi');
   assert.deepEqual(entry.startupLogs, [
     {
       level: 'warn',
-      message: 'ignoring @grant GM_typoName — unsupported APIs',
+      message: 'Ignoring @grant GM_typoName — unsupported APIs',
       location: { file: 'a.user.js', line: 5 },
     },
   ]);
@@ -1021,7 +1021,7 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
 test('loadStateLogEntry falls back to a generic message when an invalid row has none', () => {
   assert.deepEqual(
     loadStateLogEntry({ status: 'invalid' }),
-    { level: 'error', message: 'unknown error' },
+    { level: 'error', message: 'Unknown error' },
   );
 });
 
@@ -1032,7 +1032,7 @@ test('loadStateLogEntry reports a missing row as an error', async () => {
   });
   assert.deepEqual(
     loadStateLogEntry(applyMissing(ok)),
-    { level: 'error', message: 'source file is missing' },
+    { level: 'error', message: 'Source file is missing' },
   );
 });
 
@@ -1048,7 +1048,7 @@ test('loadStateLogEntry reports a refreshError as a warning: the script still ru
   assert.equal(stale.status, 'ok');
   assert.deepEqual(
     loadStateLogEntry(stale),
-    { level: 'warning', message: 'refresh failed: HTTP 404' },
+    { level: 'warning', message: 'Refresh failed: HTTP 404' },
   );
 });
 

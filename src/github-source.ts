@@ -138,7 +138,7 @@ export function githubRawToBlobUrl(rawUrl: string): string | null {
 // `scriptFileUrl` dispatch.
 export function githubDirScriptFileUrl(sourcePath: string, relativePath: string): string {
   const p = parseGithubUrl(sourcePath);
-  if (!p) throw new Error(`not a GitHub URL: ${sourcePath}`);
+  if (!p) throw new Error(`Not a GitHub URL: ${sourcePath}`);
   const full = p.path ? `${p.path}/${relativePath}` : relativePath;
   return `https://raw.githubusercontent.com/${p.owner}/${p.repo}/${p.ref}/${full}`;
 }
@@ -149,7 +149,7 @@ export function githubDirScriptFileUrl(sourcePath: string, relativePath: string)
 // dispatch.
 export function githubDirScriptDisplayUrl(sourcePath: string, relativePath: string): string {
   const p = parseGithubUrl(sourcePath);
-  if (!p) throw new Error(`not a GitHub URL: ${sourcePath}`);
+  if (!p) throw new Error(`Not a GitHub URL: ${sourcePath}`);
   const full = p.path ? `${p.path}/${relativePath}` : relativePath;
   return `https://github.com/${p.owner}/${p.repo}/blob/${p.ref}/${full}`;
 }
@@ -181,16 +181,16 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
       },
     });
   } catch (err) {
-    throw new Error(`could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
-  // Every failure below shares the `could not read <url>: <reason>`
+  // Every failure below shares the `Could not read <url>: <reason>`
   // shape the rest of the fetch pipeline uses (`directories.ts`), so a
   // GitHub failure and a plain HTTP one read the same way. "Repo
   // metadata" was our name for this request, not something the reader
   // asked for.
   if (!response.ok) {
     throw new Error(
-      `could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
+      `Could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
     );
   }
   let json: unknown;
@@ -201,13 +201,13 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
     // captive portal or proxy error page announces itself, and dropping
     // it would leave "not valid JSON" with nothing to act on.
     throw new Error(
-      `could not read ${apiUrl}: the response is not valid JSON (${
+      `Could not read ${apiUrl}: the response is not valid JSON (${
         err instanceof Error ? err.message : String(err)})`,
     );
   }
   const branch = (json as { default_branch?: unknown } | null)?.default_branch;
   if (typeof branch !== 'string' || !branch) {
-    throw new Error(`could not read ${apiUrl}: GitHub did not report the repo's default branch`);
+    throw new Error(`Could not read ${apiUrl}: GitHub did not report the repo's default branch`);
   }
   return branch;
 }
@@ -302,7 +302,7 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
       },
     });
   } catch (err) {
-    throw new Error(`could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Could not read ${apiUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!response.ok) {
     // 403 with rate-limit headers is the common failure mode for
@@ -311,7 +311,7 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
     // status for both unauthenticated). Surface the status plus the
     // private-repo hint so the user has something concrete to act on.
     throw new Error(
-      `could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
+      `Could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
     );
   }
   let json: unknown;
@@ -322,14 +322,14 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
     // captive portal or proxy error page announces itself, and dropping
     // it would leave "not valid JSON" with nothing to act on.
     throw new Error(
-      `could not read ${apiUrl}: the response is not valid JSON (${
+      `Could not read ${apiUrl}: the response is not valid JSON (${
         err instanceof Error ? err.message : String(err)})`,
     );
   }
   if (!Array.isArray(json)) {
     // GitHub answers a file path with an object rather than a listing,
     // so this is the "you pointed at a file" case, not a broken API.
-    throw new Error(`could not read ${apiUrl}: that path is not a folder in the repo`);
+    throw new Error(`Could not read ${apiUrl}: that path is not a folder in the repo`);
   }
   return json as GithubContentsEntry[];
 }
@@ -348,7 +348,7 @@ export async function scanGithubDir(
   prefix = '',
 ): Promise<FoundScript[]> {
   const p = parseGithubUrl(source);
-  if (!p) throw new Error(`not a GitHub URL: ${source}`);
+  if (!p) throw new Error(`Not a GitHub URL: ${source}`);
   // `prefix` carries a trailing slash on every recursive call
   // (`prefix + entry.name + '/'`); strip it so the Contents-API path
   // ends in the directory name without an extra `/`.

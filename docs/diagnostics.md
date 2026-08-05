@@ -32,9 +32,9 @@ it, shared with the header diagnostics.
 | Diagnostic | Where it points |
 |------------|-----------------|
 | syntax error (parse check) | the offending token, in the file it was written in |
-| "the … metadata block is never closed" | the `// ==UserScript==` line that opened it |
-| "no `// ==UserScript==` metadata block" | the file, with no line — there is nothing to point at |
-| "no `@name`" / "no `@match` or `@include`" | the `// ==UserScript==` marker |
+| "The … metadata block is never closed" | the `// ==UserScript==` line that opened it |
+| "No `// ==UserScript==` metadata block" | the file, with no line — there is nothing to point at |
+| "No `@name`" / "No `@match` or `@include`" | the `// ==UserScript==` marker |
 | unknown `@grant` (a warning) | the first offending `@grant` line |
 | `@require` / `@resource` that won't load | the header line that declared it |
 
@@ -44,7 +44,15 @@ so a rewording can't quietly stop matching what compares against them:
 | Constant | Module |
 |----------|--------|
 | `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
-| `NO_NAME`, `NO_MATCH_OR_INCLUDE` | `script-store.ts` |
+| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-store.ts` |
+
+The same rule covers anything that *recognizes* a message rather than
+prints it. `scripts/validate-userscripts.mjs` groups its survey by
+message, and used to do it with regexes over the wording — which went
+stale silently the first time these were recased, mislabelling whole
+buckets without failing. It now imports `SYNTAX_ERROR_PREFIX` and calls
+`isFetchFailureMessage` (`external-files.ts`), which is derived from
+`describeFetchFailure` itself and pinned by a unit test.
 
 Rules that run through that table:
 
@@ -170,26 +178,35 @@ for the registration path that produces it.
 
 One message per problem, phrased to survive every place it lands.
 
-- **Lowercase, no trailing period, subject included.** The same string
-  appears alone in the message bar and the Log tab, *and* after the
-  preview's `This file cannot be installed: ` prefix. A capitalized
-  sentence breaks the second; a bare fragment (`missing @name`) reads
-  badly in all three.
-  - A period would also land in the wrong place: surfaces render
+- **Capitalized, no trailing period, subject included.** The same
+  string appears alone in the message bar and the Log tab, *and* after
+  the preview's `This file cannot be installed: ` prefix. A capital
+  after that colon is fine — what isn't is a bare fragment (`Missing
+  @name`), which reads badly in all three.
+  - A period would land in the wrong place: surfaces render
     `<message> (in <where>)`, so it would sit before the parenthetical.
   - For the same reason, a message carrying a location shouldn't end
     with an instruction — `… — add a // ==/UserScript== line (in f, line
     1)` reads as *where to add it*, which is not what line 1 is.
+  - **Anything after a `: ` is a message too, so give it a subject.**
+    `describeFetchFailure` / `describeResolveFailure` used to return
+    predicates (`is empty`, `is not a valid URL`) that only parsed as
+    English once `@require lib.js` was glued on the front. They now
+    return sentences — `The file is empty`, `The reference is not a
+    valid URL` — so the capital is grammatical rather than a capital
+    dropped onto a verb.
+    - Dropping the old `could not be fetched: ` half also removed a
+      second colon from a string that already lands after one.
 - **No prefix the location already carries.** The parse check says
-  `syntax error: …`, not `script source has a syntax error: …` — the
+  `Syntax error: …`, not `Script source has a syntax error: …` — the
   location names the file, which is routinely a `@require`.
 - **Name the thing that failed.** `@require` names its ref; `@resource`
   names both its name and its ref, because the name alone doesn't say
   what wouldn't load.
 - **Friendly is not vague.** Dropping our vocabulary can't also drop the
   facts. Name the *step* that failed, not just the subsystem it was in —
-  `failed reading this script's stored GM values during setup` leaves
-  somewhere to start; `could not load your settings` doesn't.
+  `Failed reading this script's stored GM values during setup` leaves
+  somewhere to start; `Could not load your settings` doesn't.
 - **Don't guess between causes.** Say which. Where a helper knows the
   cause but its return type doesn't carry it, widen the return type
   rather than writing a message that lists possibilities — that is
@@ -202,7 +219,9 @@ One message per problem, phrased to survive every place it lands.
     identically and share one message. A timeout does *not* qualify:
     our own abort sets `signal.aborted`, so it gets its own reason.
 - **Say when it's ours.** A failure the user can't act on is prefixed
-  `internal error:` rather than phrased as an accusation.
+  `Internal error:` rather than phrased as an accusation. The GM-API
+  errors below are the exception: they keep the lowercase prefix,
+  because they are spliced into a `[SourceMonkey] GM_*: ` line.
 
 Two consequences worth stating outright:
 
@@ -213,8 +232,10 @@ Two consequences worth stating outright:
 - **The version-probe rows are the deliberate exception.**
   `version-probe-fetch.ts` keeps its own terse set (`could not fetch`,
   `no @version`, `no metadata block`) because they render as a value in
-  a definition-list cell, where a full message doesn't fit. Listed in
-  TODO.md so the exception stays a decision rather than a leftover.
+  a definition-list cell, where a full message doesn't fit. Lowercase
+  for the same reason: they sit in a table cell beside `same` and
+  `unknown`, as values rather than sentences. Listed in TODO.md so the
+  exception stays a decision rather than a leftover.
 
 ### Beyond diagnostics
 
@@ -222,27 +243,51 @@ The same rules govern every string a user can read, not just the
 verdicts about a script's content:
 
 - **Log rows about our own machinery** (`script-updater.ts`,
-  `background.ts`, `injector.ts`) — `could not check for updates`, not
-  `update check threw`; `this script was removed while it was being
+  `background.ts`, `injector.ts`) — `Could not check for updates`, not
+  `update check threw`; `This script was removed while it was being
   refreshed`, not `row vanished`.
-- **Source-level failures** — `this source did not load`, not `scan
+- **Source-level failures** — `This source did not load`, not `scan
   failed`. "Scan" is the pipeline stage's name; the sources page never
   shows it.
   - Phrased so it doesn't echo what follows it. `scanError` values
-    usually open with their own `could not read <url>: …`, so a
+    usually open with their own `Could not read <url>: …`, so a
     `could not …:` wrapper would say "could not" twice running.
 - **Errors GM APIs throw back into script code** — the audience is the
   script's author, so `GM_openInTab: url required` stays as it is. Only
   *our* internals get rewritten, and a failure in our plumbing gets the
   `internal error:` prefix so it doesn't read as the script's fault.
 
-Two capitalization conventions coexist, and both are correct:
+One capitalization convention, with carve-outs:
 
-- **Diagnostics and Log rows are lowercase fragments** — they get
-  wrapped by prefixes and `(in <where>)` suffixes.
-- **The viewer's `setMessage` copy is a standalone sentence**
-  (`Install failed: …`, `This script is already installed.`) — nothing
-  wraps it, and it sits alone in the message bar.
+- **Every message a user reads starts with a capital and ends without
+  a period** — diagnostics, Log rows, banners, and the viewer's
+  `setMessage` copy alike (`Install failed: …`, `This script is already
+  installed`, `Checked for updates — no change`).
+  - "No period" is about a *single-sentence* message. Copy that is
+    genuinely two sentences punctuates all of them, last one included —
+    `Syntax error: … (in a.user.js, line 12). Installing it will store
+    it as INVALID.` Prefer an em-dash and one sentence where that works
+    (`Script not found in storage — open it from the sources page`).
+  - Wrapping doesn't change that. `This file cannot be installed: No
+    @name in the metadata block` is the intended reading: the prefix is
+    its own clause, and the message keeps its capital wherever it lands.
+- **The carve-out is mid-*sentence* splices, not post-colon tails.**
+  `LOCATION_SHAPES` stays lowercase because it completes a sentence we
+  wrote — `A source must be an http(s):// or file:// URL…`. A capital
+  there would land inside the sentence. A tail after `: ` is not that
+  case: it starts its own clause, so it gets a capital, and if it can't
+  take one grammatically it wants rewriting rather than exempting.
+- **Some surfaces stay lowercase for reasons of their own**, each
+  documented where it lives: the service-worker console lines
+  ([logging.md](logging.md#message-catalog)), the version-probe table
+  values above, and the errors GM APIs hand back to script code. None
+  of them is a message a user reads in our UI.
+- **Static page copy is not a message.** Headings and empty-state prose
+  (`No sources yet. Add one above.`, `File access is disabled.`) are
+  layout text, not a report of an outcome, and punctuate as ordinary
+  writing. The line is whether the string tells the user what just
+  happened: a banner does and follows the message rule, a heading that
+  is always on screen does not.
 
 ### One string, one place
 
@@ -258,6 +303,7 @@ constant, so the copies can't drift:
 | `LOCATION_SHAPES` (`directories.ts`) | the add-source and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
+| `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |
 
 The last one is the cautionary case: it was two literals, and the Log
 copy had already lost the "reload the page to retry" half — the only

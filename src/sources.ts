@@ -547,7 +547,7 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
     // "Scan" is the name of our pipeline stage, not something the page
     // ever shows — what the reader sees is a source that didn't load.
     // Phrased to avoid echoing what follows: most `scanError` values
-    // already open with `could not read <url>: …`, so a
+    // already open with `Could not read <url>: …`, so a
     // `Could not …:` prefix would say "could not" twice in a row.
     section.appendChild(makeMessage('error', `This source did not load: ${source.scanError}`));
   }
@@ -798,7 +798,7 @@ async function onAddDirectory(
   if (!path) return false;
 
   if (!isValidSourceInput(path)) {
-    showAddError(`A source ${LOCATION_SHAPES}.`);
+    showAddError(`A source ${LOCATION_SHAPES}`);
     return false;
   }
   showAddError(null);
@@ -844,8 +844,8 @@ async function onAddDirectory(
       if (existing) {
         showAddError(
           isContainerSource(existing.path)
-            ? 'This script is already in its container.'
-            : 'This source is already registered.',
+            ? 'This script is already in its container'
+            : 'This source is already registered',
         );
         if (jump) jumpToSource(existing.id);
       }
@@ -1442,6 +1442,11 @@ function cssEscape(value: string): string {
 // Returns the raw error message so the banner can surface anything
 // that isn't the routine "toggle is off" case.
 async function probeUserScriptsApi(): Promise<{ usable: true } | { usable: false; error?: string }> {
+  // Deliberately NOT recased to a message of ours. This value shares a
+  // slot with Chrome's verbatim `err.message` below and renders as
+  // `Chrome reported: <it>`, so it is written to read as Chrome's own
+  // report rather than as SourceMonkey's sentence — the API-flavoured
+  // wording is the point. See docs/diagnostics.md#wording.
   if (!chrome.userScripts) return { usable: false, error: 'chrome.userScripts is not available' };
   try {
     await chrome.userScripts.getScripts();

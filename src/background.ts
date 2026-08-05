@@ -888,6 +888,10 @@ async function dispatchActionMenuCommand(
   commandId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!findMenuCommand(tabId, scriptId, commandId)) {
+    // Not user-facing today, so not recased: the real click path
+    // (`dispatchActionMenuCommand` in the context-menu handler) discards
+    // this reply, and only the test surface reads it. If it ever reaches
+    // a person, it takes a capital like any other message.
     return { ok: false, error: 'this menu command is no longer registered' };
   }
   try {
@@ -2002,7 +2006,7 @@ function composeWrapperErrorMessage(
 ): string {
   const msg = message ?? '';
   const st = stack ?? '';
-  if (!st) return msg || 'unknown runtime error';
+  if (!st) return msg || 'Unknown runtime error';
   const firstLine = st.split('\n', 1)[0];
   if (msg && !firstLine.includes(msg)) return `${msg}\n${st}`;
   return st;
@@ -2054,7 +2058,7 @@ async function recordScriptReport(
       level: 'info',
       source: 'script-wrapper',
       tabId,
-      message: `started at ${senderUrl}`,
+      message: `Started at ${senderUrl}`,
     });
   } else if (type === SM_SWAPPED_MSG) {
     // The reload swap path. Log alongside sm:start so the SW console
@@ -2070,7 +2074,7 @@ async function recordScriptReport(
       // The two `loadedAt` values stay on the console line above: they
       // are epoch milliseconds, which identify a content version when
       // reading a transcript but say nothing to someone reading the Log.
-      message: 'page reloaded — swapped in the newer copy of this script',
+      message: 'Page reloaded — swapped in the newer copy of this script',
     });
   } else if (type === SM_ABANDONED_MSG) {
     // SW told the wrapper to skip. Warning, not error — a script that
@@ -2087,7 +2091,7 @@ async function recordScriptReport(
       // the explanation. Today the wrapper's own fallback (`skip`) is
       // the only value that gets here — see the `{action: 'skip'}`
       // note on `CheckPendingReply`.
-      message: `did not run on this page (${payload.reason ?? 'no reason given'})`,
+      message: `Did not run on this page (${payload.reason ?? 'no reason given'})`,
     });
   } else {
     // console.info (not console.warn / .error) so a userscript runtime

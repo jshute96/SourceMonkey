@@ -324,7 +324,7 @@ baked into the per-script wrapper. See
 
 ## Not in the catalog at all
 
-Granting any of these names logs an "ignoring @grant … — unsupported
+Granting any of these names logs an "Ignoring @grant … — unsupported
 APIs" warning. Detection happens at parse time; the diagnostic is persisted
 on the stored script and surfaces two ways:
 
@@ -333,7 +333,7 @@ on the stored script and surfaces two ways:
   matching page load (`console.info`, not `.warn` — injected warn/error
   leak into chrome://extensions/?errors), and
 - a `warning`-level row in the viewer's Log tab, emitted once per
-  loaded content version right after the "loaded new content" line.
+  loaded content version right after the "Loaded new content" line.
 
 The script's call sites get a `ReferenceError`. Adding any of these
 is a catalog entry + a body — nothing structural.

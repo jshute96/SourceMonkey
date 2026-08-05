@@ -139,6 +139,17 @@ come from the pipeline now.
 Strings shared with the pipeline are imported, never copied — a copy
 would go stale the next time the wording improves.
 
+- That covers *recognizing* a message as well as printing one. The
+  classifier used to detect a syntax error and a fetch failure with
+  regexes over the wording (`/^syntax error: /`, `/^could not be
+  (fetched|read)/`), and both went stale silently when those messages
+  were recased and reworded — a stale regex mislabels a whole bucket
+  instead of failing.
+- It now imports `SYNTAX_ERROR_PREFIX` (`script-store.ts`) and calls
+  `isFetchFailureMessage` (`external-files.ts`), which is derived from
+  `describeFetchFailure` itself so it cannot disagree with it. A unit
+  test pins that every `FetchFailReason` stays recognized.
+
 `--json FILE` writes one record per script — name, status, category,
 message, the structured `location` when the verdict has one, and the
 dependency URL when one failed.

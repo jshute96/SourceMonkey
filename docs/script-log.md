@@ -143,8 +143,8 @@ a row's persisted state to the entry it warrants:
 | Row state | Level | Message |
 | --- | --- | --- |
 | `status: 'invalid'` | error | the row's `errorMessage` |
-| `status: 'missing'` | error | `source file is missing` |
-| `refreshError` (status still `ok`) | warning | `refresh failed: <reason>` |
+| `status: 'missing'` | error | `Source file is missing` |
+| `refreshError` (status still `ok`) | warning | `Refresh failed: <reason>` |
 | otherwise | — | nothing to say |
 
 Why those levels:
@@ -197,12 +197,12 @@ source. They are always **info**, never warning/error:
 What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — `this source did not load: <reason> — still running the
+  URL) — `This source did not load: <reason> — still running the
   cached copy`. `refreshSource` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
 - **A throw out of `refreshSource` / `refreshAllSources`** —
-  `could not refresh this source: <reason>`. Both entry points use the same
+  `Could not refresh this source: <reason>`. Both entry points use the same
   helper so a Refresh All that dies on one source still explains
   itself in every affected script's Log.
 
@@ -215,7 +215,7 @@ stops being one.
 
 One thing stays quiet, and it is about **whether anything happened**:
 
-- **A no-op refresh on a valid script.** `checked for updates — no
+- **A no-op refresh on a valid script.** `Checked for updates — no
   change` is manual-only, so background polling doesn't announce that a
   healthy script is still healthy.
 
@@ -269,8 +269,8 @@ path goes through `emitScriptOutcomeLog`, which writes both.
 
 | Outcome | Rows |
 | --- | --- |
-| Nothing to report | `checked for updates — no change` |
-| Anything else | `checking for updates`, then the outcome |
+| Nothing to report | `Checked for updates — no change` |
+| Anything else | `Checking for updates`, then the outcome |
 
 - The uneventful case is **one self-describing line**, so a routine
   poll costs a single row rather than a start/outcome pair.
@@ -284,7 +284,7 @@ path goes through `emitScriptOutcomeLog`, which writes both.
   SW console is where a check is bracketed live (`update check
   (<mode>): <label>` before, outcome after); the Log tab is the record
   of what happened.
-- `could not check for updates: <reason>` stands alone — it names the
+- `Could not check for updates: <reason>` stands alone — it names the
   check and its failure in one line.
 
 ## Recovery is logged too
@@ -293,16 +293,16 @@ Without this the last word on a script would be a failure that is no
 longer true. So the transition back to healthy gets an info entry
 naming what recovered:
 
-- `loads cleanly again (was invalid)`
-- `source file is back`
-- `refresh succeeded again (source is reachable)`
-- `this source is readable again`
+- `Loads cleanly again (was invalid)`
+- `Source file is back`
+- `Refresh succeeded again (source is reachable)`
+- `This source is readable again`
 - `Chrome accepted this script's registration — it runs again`
   (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
 
 This matters most when the bytes didn't change — e.g. a `@require`
 host that starts answering again clears the failure without bumping
-`loadedAt`, so there's no `loaded new content` row to explain the
+`loadedAt`, so there's no `Loaded new content` row to explain the
 badge going green.
 
 A recovery row does not pull the Status cell back to OK by itself:
@@ -316,52 +316,52 @@ Both trigger modes log failures. A background check exists precisely to
 notice a failure the user hasn't gone looking for, so a badge that
 turns amber on its own must come with a matching Log line.
 
-Trigger mode still gates the **non**-events: `checked for updates — no
+Trigger mode still gates the **non**-events: `Checked for updates — no
 change` is manual-only.
 
 Caveat on what "manual" means: it is "not rate-limited as a refresh",
 not "the user clicked". The
 [reload fast-path](injection.md#reload-fast-path) runs in `manual`
 mode for every matched script on every tab reload, so a healthy script
-*does* accumulate `checked for updates — no change` rows from ordinary
+*does* accumulate `Checked for updates — no change` rows from ordinary
 browsing. That is the remaining source of poll noise in the cap —
 tracked in `TODO.md`.
 
 ## What gets logged today
 
 - **Refresh paths** (`src/script-updater.ts`):
-  - `checking for updates` (info) — ahead of any outcome worth
+  - `Checking for updates` (info) — ahead of any outcome worth
     reporting; omitted when the check has nothing to say (see
     [How a check frames itself](#how-a-check-frames-itself)).
-  - `loaded new content (<size>)` (info) — when the new build has a
+  - `Loaded new content (<size>)` (info) — when the new build has a
     different `loadedAt` from the prior.
-  - `checked for updates — no change` (info) — only on manual refresh,
+  - `Checked for updates — no change` (info) — only on manual refresh,
     to mirror the SW console behaviour. Opportunistic background checks
     stay silent to keep the log from filling with poll noise.
   - Load failures (error) — the row's `errorMessage` when it lands
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
     `@require` / `@resource` resolve or fetch failures.
-  - `source file is missing` (error) — the file vanished from its
+  - `Source file is missing` (error) — the file vanished from its
     source's listing.
-  - `refresh failed: <reason>` (warning) — a script that's still
+  - `Refresh failed: <reason>` (warning) — a script that's still
     running from its cached copy but whose latest refresh failed
     (`status: ok` + `refreshError`; see
     [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
-  - `this source did not load: <reason> — still running the cached
-    copy` (info) and `could not refresh this source: <reason>` (info) — a
+  - `This source did not load: <reason> — still running the cached
+    copy` (info) and `Could not refresh this source: <reason>` (info) — a
     source-level failure, fanned out to every script under it. See
     [Source-level failures](#source-level-failures) for why info.
-  - `could not check for updates: <reason>` (error) — `refreshScript`
+  - `Could not check for updates: <reason>` (error) — `refreshScript`
     itself threw (a storage failure, not a load failure).
   - Recovery entries (info) — see
     [Recovery is logged too](#recovery-is-logged-too).
   - All of the rows above are outcomes of a real check, so they are
     appended unconditionally — see
     [When the log stays quiet](#when-the-log-stays-quiet).
-  - `this script was removed while it was being refreshed` (warning) —
+  - `This script was removed while it was being refreshed` (warning) —
     the script row was deleted while its refresh was in flight. Can
     only happen once per row.
   - Source / refresh-all paths route per-script outcomes through the
@@ -392,7 +392,7 @@ tracked in `TODO.md`.
     long-broken script would show a red badge over an empty Log.
 - **Update probes** (`src/script-updater.ts`, source
   `probe-manual` / `probe-opportunistic`):
-  - `newer version <v> at <update|download> URL (running <v>) — <url>`
+  - `Newer version <v> at <update|download> URL (running <v>) — <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version
     *changes*, so an upstream that's been ahead for a month doesn't
@@ -401,9 +401,9 @@ tracked in `TODO.md`.
     [updates.md](updates.md).
 - **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
   by `emitScriptOutcomeLog` in `src/script-updater.ts`):
-  - `ignoring @grant <names> — unsupported APIs` (warning) — emitted
+  - `Ignoring @grant <names> — unsupported APIs` (warning) — emitted
     once per loaded content version, immediately after the
-    `loaded new content` row. Detection happens at parse time and is
+    `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't
     re-fire the row. A refresh that doesn't change the bytes adds
     nothing. Also mirrored into the page DevTools console via the
@@ -445,7 +445,7 @@ tracked in `TODO.md`.
   patch global console in the injected world; the user can open
   DevTools on the host page if they want that.
 - Per-tab badge transitions. Those are noisy and already visible.
-- `checked for updates — no change` on opportunistic checks
+- `Checked for updates — no change` on opportunistic checks
   (manual-only, as above).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.

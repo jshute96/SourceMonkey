@@ -8,7 +8,7 @@
 // Before this existed, a `@require` with a syntax error (a truncated
 // CDN response, an HTML error page that squeaked past the content-type
 // gate) made the whole concatenated entry fail to parse. The seal
-// entry caught it and logged "script source failed to parse (a
+// entry caught it and logged "Script source failed to parse (a
 // @require or the script body has a syntax error); nothing was run" —
 // but only on a page the script matched. Checking up front turns that
 // into an `invalid` status on the sources page, next to the script,
