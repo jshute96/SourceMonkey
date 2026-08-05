@@ -77,6 +77,23 @@ test('getLocalized returns locale → value, excluding the unlocalized form', ()
   assert.deepEqual(getLocalized(h, 'description'), {});
 });
 
+test('locale suffixes are case-folded so @name:ZH-CN and @name:zh-CN collide', () => {
+  // TM normalizes the suffix (`zh-CN` and `ZH-cn` both become `zh_CN`)
+  // and VM lowercases it, so a manager never treats the two as
+  // separate entries. We follow. Both spellings occur in published
+  // GreasyFork scripts.
+  const h = parseHeader(`// ==UserScript==
+// @name Hello
+// @name:ZH-CN 你好
+// @description:zh-tw 哈囉
+// ==/UserScript==
+`);
+  assert.deepEqual(getLocalized(h, 'name'), { 'zh-cn': '你好' });
+  assert.deepEqual(getLocalized(h, 'description'), { 'zh-tw': '哈囉' });
+  // The unlocalized form is still separate.
+  assert.equal(getValue(h, 'name'), 'Hello');
+});
+
 test('hasTag detects flag tags without values', () => {
   const h = parseHeader(SAMPLE);
   assert.equal(hasTag(h, 'noframes'), true);

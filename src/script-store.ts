@@ -76,7 +76,7 @@ import {
 } from './external-files.js';
 import { localSearchRoots, localRootsReady } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
-import { resolveGrants } from './gm-api-catalog.js';
+import { resolveGrants, suggestGrant } from './gm-api-catalog.js';
 import {
   ignoredMatchMessage,
   matchPatternProblem,
@@ -344,9 +344,18 @@ export function extractStartupLogs(
   if (grants.length > 0) {
     const resolved = resolveGrants(grants);
     if (resolved.unknown.length > 0) {
+      // Name the near miss when the only thing wrong is capitalization
+      // (`GM_xmlHttpRequest` → `GM_xmlhttpRequest`). Grant matching itself
+      // stays byte-exact, matching TM/VM; without the hint the author's
+      // only signal is a `ReferenceError` at call time, which says
+      // nothing about the header.
+      const described = resolved.unknown.map((name) => {
+        const near = suggestGrant(name);
+        return near ? `${name} (did you mean ${near}?)` : name;
+      });
       const log: StartupLog = {
         level: 'warn',
-        message: `Ignoring @grant ${resolved.unknown.join(', ')} — unsupported APIs`,
+        message: `Ignoring @grant ${described.join(', ')} — unsupported APIs`,
       };
       // One message can name several bad grants, and they may be spread
       // over several `@grant` lines — so the location is the FIRST one,

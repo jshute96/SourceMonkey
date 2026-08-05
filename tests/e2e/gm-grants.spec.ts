@@ -302,4 +302,86 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
     await expect(page.locator('body')).toHaveAttribute('data-dot', 'function');
     await page.close();
   });
+
+  test('granting GM.xmlhttpRequest (prefix-rewrite spelling) binds both GM. spellings', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // `GM.xmlhttpRequest` is the legacy name's suffix moved onto the
+    // `GM.` namespace — VM resolves it that way and published scripts
+    // call it. It must resolve to GM_xmlhttpRequest, and both `GM.`
+    // spellings must be present on the GM object.
+    scriptsDir.write({
+      relativePath: 'rewrite.user.js',
+      meta: {
+        name: 'Rewrite Grant',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM.xmlhttpRequest'],
+      },
+      body: `
+        document.body.dataset.probe = JSON.stringify({
+          legacy: typeof GM_xmlhttpRequest,
+          lower: typeof (GM && GM.xmlhttpRequest),
+          gm4: typeof (GM && GM.xmlHttpRequest),
+          grants: GM_info.script.grant.join(','),
+        });
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-probe', /legacy/);
+    const probe = JSON.parse((await page.locator('body').getAttribute('data-probe'))!);
+    expect(probe.legacy).toBe('function');
+    expect(probe.lower).toBe('function');
+    expect(probe.gm4).toBe('function');
+    // GM_info.script.grant reports the canonical legacy name.
+    expect(probe.grants).toBe('GM_xmlhttpRequest');
+    await page.close();
+  });
+
+  test('mis-cased GM_ grant binds nothing and logs a did-you-mean hint', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Grant matching is byte-exact (TM and VM both compare exactly),
+    // so `GM_xmlHttpRequest` stays unknown. The startup-log
+    // diagnostic is what tells the author why.
+    scriptsDir.write({
+      relativePath: 'miscased.user.js',
+      meta: {
+        name: 'Miscased Grant',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_xmlHttpRequest'],
+      },
+      body: `
+        document.body.dataset.probe = JSON.stringify({
+          legacy: typeof GM_xmlhttpRequest,
+          miscased: typeof GM_xmlHttpRequest,
+        });
+      `,
+    });
+    await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const logged: string[] = [];
+    page.on('console', (msg) => { logged.push(msg.text()); });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-probe', /legacy/);
+    const probe = JSON.parse((await page.locator('body').getAttribute('data-probe'))!);
+    expect(probe.legacy).toBe('undefined');
+    expect(probe.miscased).toBe('undefined');
+
+    await expect.poll(() =>
+      logged.find((l) => l.includes('did you mean GM_xmlhttpRequest?')) ?? null
+    ).not.toBeNull();
+    await page.close();
+  });
 });

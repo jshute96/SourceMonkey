@@ -193,6 +193,38 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   ]);
 });
 
+test('extractStartupLogs names the near miss when a @grant is only mis-cased', () => {
+  // Matching stays byte-exact (TM/VM both do), so `GM_xmlHttpRequest`
+  // is still dropped — but the warning says what the author meant.
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_xmlHttpRequest
+// @grant GM_audio
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header), [
+    {
+      level: 'warn',
+      message:
+        'unknown @grant entries dropped: GM_xmlHttpRequest (did you mean GM_xmlhttpRequest?), GM_audio',
+    },
+  ]);
+});
+
+test('extractStartupLogs is silent for the rewrite-form GM. spellings', () => {
+  // `GM.xmlhttpRequest` / `GM.getResourceURL` are accepted names, not
+  // near misses — nothing to warn about.
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM.xmlhttpRequest
+// @grant GM.getResourceURL
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header), []);
+});
+
 test('extractStartupLogs surfaces unknown names even when @grant none also appears', () => {
   // `@grant none` plus a typo is a useful case to flag — the script
   // author probably meant to grant the typo'd API, and @grant none is
