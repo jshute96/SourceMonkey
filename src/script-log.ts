@@ -210,6 +210,12 @@ export function logScriptEvent(scriptId: string, input: AppendLogInput): void {
 // `getScriptLog` accessor — both would otherwise race `logScriptEvent`,
 // which returns before its write lands.
 export async function _flushScriptLogQueueForTests(scriptId: string): Promise<void> {
-  const inFlight = queues.get(scriptId);
-  if (inFlight) await inFlight.catch(() => {});
+  // Loop rather than awaiting once: an append that chains on while we
+  // wait becomes the new tail, and returning after the old one would
+  // leave exactly the entry the caller is about to read still unwritten.
+  let awaited: unknown;
+  for (let tail = queues.get(scriptId); tail && tail !== awaited; tail = queues.get(scriptId)) {
+    awaited = tail;
+    await tail.catch(() => {});
+  }
 }

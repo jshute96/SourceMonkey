@@ -61,7 +61,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
 | `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
-| `src/sources.ts` | Sources page controller — render, in-place updates, live `storage.local` watcher, `?refresh`/`?add_source`/`?first_run` triggers |
+| `src/sources.ts` | Sources page controller — render, in-place updates, repaint-from-storage on change, `?refresh`/`?add_source`/`?first_run` triggers |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle, GitHub auth token) plus a link back to the sources page |
 | `src/options.ts` | Options page controller — binds the boolean setting checkboxes (link capture, debug logging) + GitHub-token controls (save / clear / reveal) |
 | `src/userscript.html` | Userscript viewer markup: controls row, banner slot + preview actions, details panel, tab strip, code box, log pane |

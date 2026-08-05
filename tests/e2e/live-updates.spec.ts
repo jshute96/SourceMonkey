@@ -107,6 +107,37 @@ test.describe('sources page live updates', () => {
     await page.close();
   });
 
+  test('an edited @description reaches the filename tooltip', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The Filename cell is only rebuilt when one of its inputs moved, so
+    // the skip has to be able to tell "moved" from "didn't" — a repaint
+    // that never rebuilds leaves the old tooltip and the old favicon on
+    // screen for good.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'], extra: ['// @description first'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const nameLink = page.locator(`tr[data-script-id="${script.id}"] td.name-cell a:not(.site-icon-inner)`);
+    await expect(nameLink).toHaveAttribute('title', 'first');
+
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'], extra: ['// @description second'] },
+      body: '',
+    });
+    await sm.updateSource(source!.id, 'manual');
+    await expect(nameLink).toHaveAttribute('title', 'second');
+
+    await page.close();
+  });
+
   test('enabled toggles flipped elsewhere grey the row and section', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -193,6 +224,52 @@ test.describe('sources page live updates', () => {
     await page.close();
   });
 
+  test('a later refresh clears the previous refresh highlights', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Rows survive a refresh now (updated in place, not rebuilt), so the
+    // highlights have to be cleared explicitly — a section rebuild used
+    // to do it implicitly by throwing the old rows away. Without that,
+    // a row that changed once stays coloured through every later
+    // refresh and the "what changed" signal stops meaning anything.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+    const a = scripts.find((s) => s.relativePath === 'a.user.js')!;
+    const b = scripts.find((s) => s.relativePath === 'b.user.js')!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    const rowA = page.locator(`tr[data-script-id="${a.id}"]`);
+    const rowB = page.locator(`tr[data-script-id="${b.id}"]`);
+    const refresh = section.locator('button', { hasText: 'Refresh' });
+
+    // Only a changed → only a is highlighted.
+    scriptsDir.rewriteBody('a.user.js', '/* v2 */\n');
+    await refresh.click();
+    await expect(rowA).toHaveClass(/row-updated/);
+    await expect(rowB).not.toHaveClass(/row-updated/);
+
+    // Now only b changes. a's colour is from the previous refresh and
+    // has to go.
+    scriptsDir.rewriteBody('b.user.js', '/* v2 */\n');
+    await refresh.click();
+    await expect(rowB).toHaveClass(/row-updated/);
+    await expect(rowA).not.toHaveClass(/row-updated/);
+
+    await page.close();
+  });
+
   test('a source removed elsewhere drops its section', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -254,8 +331,9 @@ test.describe('sources page live updates', () => {
   // and the flow handler don't BOTH insert the same structural node.
 
   test("adding a source via the page's own form yields exactly one section", async ({
-    extensionContext, extensionId,
+    extensionContext, extensionId, sm,
   }) => {
+    void sm;   // taken for its per-test resetAllState, not called directly
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
@@ -365,6 +443,39 @@ test.describe('viewer live updates', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
+
+  test('a source write that changes nothing on screen does not re-render', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The viewer only re-renders for the source fields it displays. A
+    // refresh rewrites `lastRefreshedAt` whether or not it achieved
+    // anything, so without the filter a source retrying a failing scan
+    // would re-render every viewer open on it, forever. Proven by way of
+    // the code pane's scroll position, which a re-render resets.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: `// ${'x'.repeat(60)}\n`.repeat(200),
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    const codeBox = page.locator('#code-pane');
+    await expect(codeBox).toBeVisible();
+    await codeBox.evaluate((el) => { el.scrollTop = 400; });
+    expect(await codeBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+    // Nothing about the file changed, so this refresh only bumps the
+    // source's `lastRefreshedAt`.
+    await sm.updateSource(source!.id, 'manual');
+    // Give a re-render the chance to happen before declaring it didn't.
+    await page.waitForTimeout(300);
+    expect(await codeBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+    await page.close();
+  });
 
   test('disabling the parent source elsewhere greys the viewer toggle', async ({
     extensionContext, extensionId, sm,

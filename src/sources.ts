@@ -23,7 +23,6 @@ import {
   backfillSourceDisplayNames,
   DEFAULT_SOURCES,
   getAllScripts,
-  getSource,
   getSourceWithScripts,
   getSources,
   isFirstRunComplete,
@@ -36,6 +35,7 @@ import {
   setScriptEnabled,
   setScriptsEnabled,
   setSourceEnabled,
+  touchesStructuralRows,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
@@ -124,12 +124,24 @@ openOptionsBtn.addEventListener('click', () => {
   location.href = 'options.html';
 });
 
-// Kept so the live storage watcher below can queue its first delta
-// behind the initial render. `render()` empties the container and then
-// appends sections across several awaits; a delta landing inside that
-// window would otherwise build sections for ids the render loop hasn't
-// reached yet and the two would each append their own.
-const bootstrapDone = bootstrap();
+// Resolved once the first render has finished painting, which is what
+// repaints wait for. `render()` empties the container and refills it
+// across several awaits, and a repaint inside that window would build
+// sections the render loop hasn't reached yet — each would append its
+// own copy.
+//
+// Deliberately the RENDER, not all of `bootstrap()`. Bootstrap goes on
+// to run first-run seeding, `?refresh` and `?add_source`, all of which
+// go through handlers that repaint — waiting for bootstrap here would
+// have those handlers waiting on themselves.
+let resolveInitialRender!: () => void;
+const initialRenderDone = new Promise<void>((resolve) => {
+  resolveInitialRender = resolve;
+});
+
+void bootstrap().catch((err: unknown) => {
+  console.info('[SourceMonkey] sources page failed to start', err);
+});
 
 // Repaint Status cells when the per-script max-log-level row changes
 // on the SW side (a fresh error / warning was appended, or the log
@@ -153,52 +165,21 @@ if (chrome.storage?.session?.onChanged) {
   });
 }
 
-// `chrome.storage.local` key spaces this page watches (see docs/storage.md).
-const SOURCES_INDEX_KEY = 'sources';
-const SOURCE_KEY_PREFIX = 'source:';
-const SCRIPT_KEY_PREFIX = 'script:';
-
 // Keep the page current with `chrome.storage.local` writes from ANY
 // origin — the viewer's Refresh, a background opportunistic refresh, an
 // Install captured in another tab, a second Sources tab. Before this the
 // page only ever reflected the state it wrote itself, so a script that
 // recovered elsewhere kept a stale badge until a manual reload (issue
-// #10). The page's own flow handlers still mutate the DOM directly; this
-// listener catches everything else.
+// #10).
 //
-// chrome.storage fires in the writing context too, so a page-own write
-// echoes back into this watcher. That is fine only because BOTH sides are
-// idempotent: the watcher's row/section repaints preserve highlights and
-// spinners and never recreate a `<tr>`, AND the flow handlers'
-// structural inserts are guarded (add replaces-if-present, remove checks
-// for an existing placeholder, refresh re-finds the live section) so the
-// echo can't duplicate a section/placeholder or drop a highlight.
-//
-// Deltas are handled ONE AT A TIME through a promise chain. The handler
-// awaits storage reads, and Chrome fires the listener again without
-// waiting for the previous call to settle — two interleaved runs can
-// each build a section for the same source and append both, or let an
-// older render win by replacing a node the newer one already detached.
-// Serializing is the same guard `moveInFlight` gives the index writes.
-// The chain starts at the initial render so the first delta is applied
-// to a fully built page.
-let watcherChain: Promise<void> = bootstrapDone.catch((err: unknown) => {
-  console.info('[SourceMonkey] sources page failed to start', err);
-});
+// The change event is treated as a bare "something you display moved"
+// signal — what it says changed is ignored. The repaint re-reads storage
+// and makes the DOM match, which is idempotent by construction: no
+// snapshot to go stale, no per-key handler to keep in step with the
+// store, and any number of events collapse into one pass.
 if (chrome.storage?.local?.onChanged) {
   chrome.storage.local.onChanged.addListener((changes) => {
-    // Both arms run the next delta: one failure must not stall the chain.
-    watcherChain = watcherChain
-      .then(
-        () => onLocalStorageChange(changes),
-        () => onLocalStorageChange(changes),
-      )
-      // Nothing here is worth failing the page over, but an unhandled
-      // rejection would land in chrome://extensions/?errors and read as
-      // a broken extension — swallow it into the page console instead.
-      .catch((err: unknown) => {
-        console.info('[SourceMonkey] live storage update failed', err);
-      });
+    if (touchesStructuralRows(Object.keys(changes))) markPageDirty();
   });
 }
 
@@ -366,99 +347,69 @@ function applyLogIdSuffixesToDom(): void {
 
 // ---------- Live storage watcher ----------
 
-// React to a `chrome.storage.local` delta from any origin. Three kinds
-// of change matter, applied in an order that keeps the DOM consistent
-// within one batch:
-//   1. the `sources` index changed → add / remove / reorder sections;
-//   2. a `source:*` row changed → update that section (enabled state,
-//      scan error, script set, display name);
-//   3. a `script:*` row changed → repaint that row in place.
-// Sections are reconciled before rows so a script row added alongside a
-// new source lands in a section that already exists. Dedup `#N`
-// suffixes are recomputed up front (before anything renders) whenever a
-// script appeared or vanished, since that shifts the suffixes of its
-// same-basename siblings across the whole page.
-async function onLocalStorageChange(
-  changes: { [key: string]: chrome.storage.StorageChange },
-): Promise<void> {
-  const changedSources: { id: string; change: chrome.storage.StorageChange }[] = [];
-  const changedScripts: { id: string; change: chrome.storage.StorageChange }[] = [];
-  let indexChange: chrome.storage.StorageChange | undefined;
-  let scriptSetChanged = false;
-  for (const [key, change] of Object.entries(changes)) {
-    if (key === SOURCES_INDEX_KEY) {
-      indexChange = change;
-    } else if (key.startsWith(SOURCE_KEY_PREFIX)) {
-      changedSources.push({ id: key.slice(SOURCE_KEY_PREFIX.length), change });
-    } else if (key.startsWith(SCRIPT_KEY_PREFIX)) {
-      changedScripts.push({ id: key.slice(SCRIPT_KEY_PREFIX.length), change });
-      if (change.oldValue === undefined || change.newValue === undefined) {
-        scriptSetChanged = true;
-      }
-    }
-  }
-  if (!indexChange && changedSources.length === 0 && changedScripts.length === 0) {
-    return;
-  }
+// The page is repainted from storage whenever anything it displays may
+// have moved, rather than by interpreting individual change events.
+//
+// Every repaint re-reads the world and makes the DOM match it, so the
+// pass is idempotent: running it twice changes nothing, running it after
+// a burst of writes lands on the final state, and the echo of the page's
+// own write is a no-op rather than a fight with the handler that made
+// it. Events only decide WHEN to repaint, never what to paint — a
+// change event carries a snapshot, and a snapshot acted on later is a
+// lie about the present.
+let pageDirty = false;
+let repaintChain: Promise<void> = Promise.resolve();
 
-  // Recompute dedup suffixes first so any section / row rendered below
-  // draws with the correct `#N` instead of a stale one that a later
-  // repaint would have to correct.
-  if (scriptSetChanged) await refreshLogIds();
-
-  if (indexChange) {
-    await reconcileSectionsToIndex(
-      Array.isArray(indexChange.newValue) ? (indexChange.newValue as string[]) : [],
-    );
-  }
-
-  for (const { id, change } of changedSources) {
-    await applySourceChange(id, change);
-  }
-
-  // Additions / removals of a script row are structural — the parent
-  // source's `scriptIds` change drives the section rebuild above. Here we
-  // only repaint rows whose stored value changed and that are on screen.
-  for (const { id, change } of changedScripts) {
-    if (change.newValue === undefined) continue;
-    updateScriptRowInPlace(
-      id,
-      change.newValue as StoredScript,
-      change.oldValue as StoredScript | undefined,
-    );
-  }
+function markPageDirty(): void {
+  void repaintPage();
 }
 
-// Bring the rendered section list into agreement with the `sources`
-// index: drop sections whose source is gone, build sections for sources
-// that appeared, and reorder to match. Existing section elements are
-// reused (so their highlights / spinners survive) — appendChild in index
-// order re-seats them. Used for index changes from another origin; the
-// page's own add / remove / move already mutate the DOM, and re-running
-// here converges on the same result.
-async function reconcileSectionsToIndex(ids: readonly string[]): Promise<void> {
-  const wanted = new Set(ids);
+// Mark the page stale and resolve once a repaint has covered it. Passes
+// are serialized, and a burst of events collapses: the first link to run
+// clears the flag and does the work, and the rest find nothing to do.
+// Awaiting the returned promise is enough for a caller to know the DOM
+// matches storage as of its own call — its link runs no earlier than the
+// repaint that covered it.
+//
+// Deliberately not debounced. The repaint is cheap, and a delay would
+// only put lag between a user's click and the page agreeing with it.
+function repaintPage(): Promise<void> {
+  pageDirty = true;
+  repaintChain = repaintChain
+    .then(async () => {
+      if (!pageDirty) return;
+      pageDirty = false;
+      await initialRenderDone;
+      await repaintFromStorage();
+    })
+    .catch((err: unknown) => {
+      // Nothing here is worth failing the page over, but an unhandled
+      // rejection would land in chrome://extensions/?errors and read as
+      // a broken extension — keep it in the page console.
+      console.info('[SourceMonkey] live update failed', err);
+    });
+  return repaintChain;
+}
+
+// Make the rendered sections match the stored sources: drop the ones
+// that are gone, build the ones that appeared, update the rest in place,
+// and re-seat them into index order. Existing elements are reused so
+// refresh highlights, in-flight spinners, and focus survive.
+async function repaintFromStorage(): Promise<void> {
+  const sources = await getSources();
+  // Dedup `#N` suffixes shift across the whole page when any script is
+  // added or removed, so recompute before anything draws.
+  await refreshLogIds();
+
+  const wanted = new Set(sources.map((s) => s.id));
   for (const section of [
     ...directoriesEl.querySelectorAll<HTMLElement>('section.directory'),
   ]) {
-    const sid = section.dataset.sourceId;
-    if (!sid || !wanted.has(sid)) section.remove();
+    const id = section.dataset.sourceId;
+    if (!id || !wanted.has(id)) section.remove();
   }
-  const ordered: HTMLElement[] = [];
-  for (const id of ids) {
-    let section = findSection(id);
-    if (!section) {
-      const source = await getSource(id);
-      if (!source) continue; // index/row write race — a later delta fixes it
-      section = await renderSourceSection(source);
-    }
-    ordered.push(section);
-  }
-  // The placeholder goes when there is something to show in its place —
-  // not merely because the index is non-empty. An index whose rows are
-  // all unreadable (the write race above) would otherwise leave the page
-  // blank with no message and nothing scheduled to fix it.
-  if (ordered.length === 0) {
+
+  if (sources.length === 0) {
     if (!directoriesEl.querySelector('.empty-placeholder')) {
       directoriesEl.appendChild(emptyPlaceholder());
     }
@@ -466,203 +417,190 @@ async function reconcileSectionsToIndex(ids: readonly string[]): Promise<void> {
     return;
   }
   removeEmptyPlaceholder();
-  // appendChild moves an already-attached node, so appending each section
-  // in index order lays them out in that order without a full rebuild.
-  // Only done when the order actually differs: re-seating an attached
-  // node detaches it first, and Chrome blurs anything focused inside it,
-  // so an unconditional pass would steal focus on every index write.
+
+  const ordered: HTMLElement[] = [];
+  for (const source of sources) {
+    const section = findSection(source.id);
+    if (section) await syncSectionFromStorage(section, source);
+    ordered.push(section ?? await renderSourceSection(source));
+  }
+  // appendChild moves an already-attached node, so appending each in
+  // index order re-seats them. Only done when the order actually
+  // differs: re-seating detaches the node first, and Chrome blurs
+  // anything focused inside it.
   if (!sameNodeOrder(directoriesEl, ordered)) {
     for (const section of ordered) directoriesEl.appendChild(section);
   }
   refreshMoveButtons();
 }
 
-// Reflect a single `source:*` delta on its still-present section. Removal
-// is handled by the index reconcile (the section is already gone), so a
-// missing section here means the row was written without an index change
-// we've processed yet — a later index delta will place it, so skip. The
-// cheapest correct action depends on what changed:
-//   - enabled flipped            → grey / ungrey in place (keeps rows).
-//   - scriptIds / displayName /
-//     scanError changed           → rebuild the section (row set, heading,
-//                                    or error line changed), preserving
-//                                    row highlights.
-//   - anything else (only
-//     lastRefreshedAt, say)       → nothing; script rows carry their own
-//                                    updates via updateScriptRowInPlace.
-async function applySourceChange(
-  id: string,
-  change: chrome.storage.StorageChange,
+// Update one already-rendered section from its stored source row. The
+// section element itself is never replaced — that would take the
+// Refresh button's busy state and every row's spinner with it.
+async function syncSectionFromStorage(
+  section: HTMLElement,
+  source: StoredSource,
 ): Promise<void> {
-  const next = change.newValue as StoredSource | undefined;
-  if (!next) return;
-  // A missing section here means this `source:*` row was written without
-  // (or before) the `sources`-index entry that reconcileSectionsToIndex
-  // builds sections from. The store always writes a new source row and
-  // the index together in one `set` (script-store.ts addSource), so
-  // within a batch the reconcile above has already built the section by
-  // the time this runs — this early return only skips a row with no
-  // section yet, which a later index delta will place. If the store ever
-  // splits those writes, a new source could render one batch late.
-  const section = findSection(id);
-  if (!section) return;
-  const prev = change.oldValue as StoredSource | undefined;
-  const structural =
-    !prev ||
-    !sameStringList(prev.scriptIds, next.scriptIds) ||
-    (prev.displayName ?? '') !== (next.displayName ?? '') ||
-    (prev.scanError ?? '') !== (next.scanError ?? '');
-  if (structural) {
-    await reRenderSectionPreservingHighlights(next);
+  const sourceOn = isSourceEnabled(source);
+  applySourceEnabledToDom(section, sourceOn);
+
+  // The type bubble is derived from `source.path`, which is the source's
+  // identity and never rewritten, so only the display name can move.
+  const nameEl = section.querySelector<HTMLElement>('.source-display-name');
+  const displayName = effectiveDisplayName(source);
+  if (nameEl && nameEl.textContent !== displayName) {
+    nameEl.textContent = '';
+    appendWithSlashBreaks(nameEl, displayName);
+  }
+
+  const priorError = section.querySelector<HTMLElement>(':scope > p.error');
+  const errorText = source.scanError ? `Scan failed: ${source.scanError}` : '';
+  if (!errorText) {
+    priorError?.remove();
+  } else if (priorError) {
+    priorError.textContent = errorText;
+  } else {
+    // The error line sits between the header and the script list.
+    section.querySelector('.directory-header')
+      ?.after(makeMessage('error', errorText));
+  }
+
+  await syncScriptRowsFromStorage(section, source, sourceOn);
+}
+
+// Update the section's script list in place: reuse the `<tr>` for a
+// script that is still there, build one for a script that appeared, drop
+// the rows whose scripts are gone, and re-seat into stored order.
+async function syncScriptRowsFromStorage(
+  section: HTMLElement,
+  source: StoredSource,
+  sourceOn: boolean,
+): Promise<void> {
+  const scripts = (await getSourceWithScripts(source.id))?.scripts ?? [];
+  const inContainer = isContainerSource(source.path);
+  const block = section.querySelector<HTMLElement>(':scope > .script-block');
+  const tbody = block?.querySelector('tbody');
+
+  // A source with no scripts shows a message instead of a table, so the
+  // two shapes have to be swapped whole. Everything else is in place.
+  if (scripts.length === 0 || !tbody) {
+    if (scripts.length === 0 && !tbody) return;   // already the message
+    const fresh = await renderScriptBlock(source, sourceOn);
+    if (block) block.replaceWith(fresh);
+    else section.appendChild(fresh);
     return;
   }
-  if (prev && isSourceEnabled(prev) !== isSourceEnabled(next)) {
-    applySourceEnabledToDom(section, isSourceEnabled(next));
+
+  const existing = new Map<string, HTMLTableRowElement>();
+  for (const row of tbody.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
+    if (row.dataset.scriptId) existing.set(row.dataset.scriptId, row);
   }
+  const ordered: HTMLTableRowElement[] = [];
+  for (const script of scripts) {
+    const row = existing.get(script.id);
+    if (row) {
+      syncScriptRow(row, script, sourceOn, inContainer);
+      existing.delete(script.id);
+    }
+    ordered.push(row ?? renderScriptRow(script, sourceOn, inContainer));
+  }
+  // Whatever is left in `existing` is a row whose script is gone.
+  for (const [id, row] of existing) {
+    forgetScript(id);
+    row.remove();
+  }
+  if (!sameNodeOrder(tbody, ordered)) {
+    for (const row of ordered) tbody.appendChild(row);
+  }
+  refreshBulkToggle(section);
 }
 
-// Rebuild one section from a fresh source row, carrying its rows' refresh
-// highlights (`row-updated` / `row-failed`) onto the new rows so a
-// storage echo of a refresh we just rendered doesn't wipe the
-// what-changed color. Other per-row state a rebuild can't preserve
-// (in-flight toggle spinners) belongs to a page-own op that has already
-// finished by the time an external delta lands here.
-async function reRenderSectionPreservingHighlights(source: StoredSource): Promise<void> {
-  const old = findSection(source.id);
-  if (!old) return;
-  const highlights = new Map<string, string[]>();
-  for (const row of old.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
-    const rid = row.dataset.scriptId;
-    if (!rid) continue;
-    const cls = [...row.classList].filter(
-      (c) => c === 'row-updated' || c === 'row-failed',
-    );
-    if (cls.length) highlights.set(rid, cls);
-  }
-  const fresh = await renderSourceSection(source);
-  for (const [rid, cls] of highlights) {
-    const row = fresh.querySelector<HTMLTableRowElement>(
-      `tr[data-script-id="${cssEscape(rid)}"]`,
-    );
-    if (row) row.classList.add(...cls);
-  }
-  // Re-find rather than reusing `old`: rendering awaited, and a flow
-  // handler can have swapped the section out underneath us in that
-  // window. `replaceWith` on a node with no parent is a silent no-op, so
-  // reusing a detached `old` would throw this newer render away and
-  // leave the older one on screen. Nothing left to replace means the
-  // source is gone — drop the render rather than resurrect the section.
-  const live = findSection(source.id);
-  if (!live) return;
-  live.replaceWith(fresh);
-  refreshMoveButtons();
-}
-
-// Repaint one already-rendered script row from a fresh stored value
-// WITHOUT recreating the <tr>, so any refresh highlight or in-flight
-// spinner on the row survives. This is the heart of the issue-#10 fix:
-// the row's datasets are refreshed from the new value — and the ones
-// that no longer apply are DELETED — so a cleared `refreshError`
-// finally reaches the repaint instead of a stale
-// `data-script-refresh-error` pinning the cell to REFRESH FAILED.
-//
-// `prev` is the pre-change stored value (absent when the row was just
-// added), used to leave alone the parts that didn't move. A row that
-// isn't on screen (its section not built yet) is left to the structural
-// paths.
-function updateScriptRowInPlace(
-  id: string,
+// Repaint one already-rendered script row from its stored value WITHOUT
+// recreating the <tr>, so any refresh highlight or in-flight spinner on
+// the row survives. This is the heart of the issue-#10 fix: the row's
+// datasets are rewritten from the stored value — and the ones that no
+// longer apply are DELETED — so a cleared `refreshError` finally reaches
+// the repaint instead of a stale `data-script-refresh-error` pinning the
+// cell to REFRESH FAILED.
+function syncScriptRow(
+  row: HTMLTableRowElement,
   script: StoredScript,
-  prev: StoredScript | undefined,
+  sourceOn: boolean,
+  inContainer: boolean,
 ): void {
-  const row = directoriesEl.querySelector<HTMLTableRowElement>(
-    `.script-table tr[data-script-id="${cssEscape(id)}"]`,
-  );
-  if (!row) return;
-
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
   const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
-  if (cell) paintStatusCell(cell, id, script.status, errorMessage, script.refreshError);
+  if (cell) paintStatusCell(cell, script.id, script.status, errorMessage, script.refreshError);
 
   const sizeCell = row.querySelector<HTMLTableCellElement>('td.size-cell');
   if (sizeCell) sizeCell.textContent = formatScriptSize(script);
 
   // The Filename cell is only rebuilt when something it shows actually
   // moved. Rebuilding unconditionally would re-run the favicon fetch and
-  // flash the globe placeholder on every unrelated refresh.
+  // flash the globe placeholder on every unrelated repaint.
   const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
-  if (nameCell && nameCellChanged(prev, script)) {
-    fillNameCell(nameCell, script, row.dataset.inContainer === '1');
+  if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script)) {
+    fillNameCell(nameCell, script, inContainer);
   }
 
-  // Enabled toggle + row greying. The parent source's enabled state is
-  // read from the section class (kept current by applySourceChange /
-  // applySourceEnabledToDom), so no storage round-trip is needed for it.
-  const section = row.closest<HTMLElement>('.directory');
-  const sourceOn = section ? !section.classList.contains('disabled') : true;
   const scriptOn = isScriptEnabled(script);
   const label = row.querySelector<HTMLLabelElement>('.toggle');
   const cb = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-  // Skip the toggle sync while THIS row's toggle is mid-flight (a
+  // Skip the checkbox while THIS row's toggle is mid-flight (a
   // `.busy-spinner` sibling means an onToggleScript on this page holds
-  // the checkbox disabled with its intended value shown). The echo of
-  // that very write must not re-enable the checkbox under the spinner;
-  // the handler's `finally` restores the final state. Everything else
-  // (status, size) still updates.
+  // it disabled with its intended value shown). The echo of that very
+  // write must not re-enable it under the spinner; the handler's
+  // `finally` restores the final state. Everything else (status, size)
+  // still updates.
   const busy = !!label?.querySelector('.busy-spinner');
   if (cb && !busy) {
     cb.checked = scriptOn;
     cb.disabled = !sourceOn;
   }
-  // Mirror applySourceEnabledToDom's label upkeep so the two parallel
-  // paths agree on the greyed styling + tooltip when a `script:*` delta
-  // lands on a row under a disabled source.
-  if (label && !busy) {
+  // Mirror applySourceEnabledToDom's label upkeep, spinner or not: this
+  // is the parent source's state, not the user's click, and the restore
+  // in setToggleBusy reads `toggle-disabled` back to settle the
+  // checkbox.
+  if (label) {
     label.classList.toggle('toggle-disabled', !sourceOn);
     label.title = sourceOn ? 'Enable this script' : 'Source is disabled';
   }
   row.classList.toggle('disabled', !sourceOn || !scriptOn);
-  if (section) refreshBulkToggle(section);
 }
 
-// Are `wanted` already the container's section children, in that order?
-function sameNodeOrder(container: HTMLElement, wanted: readonly HTMLElement[]): boolean {
-  const current = [...container.querySelectorAll<HTMLElement>(':scope > section.directory')];
+// Are `wanted` already the container's element children, in that order?
+function sameNodeOrder(container: Element, wanted: readonly Element[]): boolean {
+  const current = [...container.children];
   return (
     current.length === wanted.length && current.every((node, i) => node === wanted[i])
   );
 }
 
-// Does anything the Filename cell renders differ between two versions
-// of the same script row? Compares the rendered inputs (name text,
-// description tooltip, favicon target) rather than the whole row, so an
-// ordinary content refresh that left the header alone doesn't re-run the
-// favicon fetch and flash the globe placeholder.
-function nameCellChanged(prev: StoredScript | undefined, next: StoredScript): boolean {
-  if (!prev) return true;
-  return (
-    prev.relativePath !== next.relativePath ||
-    prev.fileUrl !== next.fileUrl ||
-    scriptDescription(prev) !== scriptDescription(next) ||
-    iconRefFromHeader(prev.header) !== iconRefFromHeader(next.header) ||
-    JSON.stringify(prev.matching) !== JSON.stringify(next.matching)
-  );
+// Everything the Filename cell renders, as one comparable string: the
+// name text, the description tooltip, and the favicon's inputs
+// (`renderSiteIconInto` reads `matching`, the header's `@icon`, and
+// `fileUrl` for resolving a relative one). Recorded per row by
+// `fillNameCell` so a repaint can tell a cell that needs rebuilding from
+// one that would only flash its favicon for nothing.
+const nameCellKeys = new Map<string, string>();
+
+function nameCellKey(script: StoredScript): string {
+  return JSON.stringify([
+    script.relativePath,
+    script.fileUrl,
+    scriptDescription(script),
+    iconRefFromHeader(script.header),
+    script.matching,
+  ]);
 }
 
-// Order-sensitive equality for two `scriptIds` lists (a reorder is a
-// structural change too, since rows are rendered in list order).
-function sameStringList(
-  a: readonly string[] | undefined,
-  b: readonly string[] | undefined,
-): boolean {
-  const x = a ?? [];
-  const y = b ?? [];
-  if (x.length !== y.length) return false;
-  for (let i = 0; i < x.length; i++) {
-    if (x[i] !== y[i]) return false;
-  }
-  return true;
+// Drop the per-script bookkeeping that outlives a removed row. Both maps
+// are keyed by script id and would otherwise grow for the life of the
+// page.
+function forgetScript(id: string): void {
+  nameCellKeys.delete(id);
+  currentOutdated.delete(id);
 }
 
 // `?refresh` in the URL triggers a refresh-all as soon as the initial
@@ -681,7 +619,13 @@ async function bootstrap(): Promise<void> {
   // Otherwise a `?refresh` query-param can race the chrome.storage.local
   // read and the first refresh-on-load runs unauthenticated.
   await githubTokenReady;
-  await render();
+  // Released even if render() throws: a repaint is the recovery from a
+  // half-built page, so it must never be the thing left waiting.
+  try {
+    await render();
+  } finally {
+    resolveInitialRender();
+  }
   // Re-trigger any `#source-<id>` hash scroll after the async render.
   // The browser's initial jump fires immediately on page load, before
   // our render() finishes building the sections, so it finds no
@@ -819,16 +763,20 @@ async function render(): Promise<void> {
   }
 
   const sources = await getSources();
-  if (sources.length === 0) {
-    directoriesEl.appendChild(emptyPlaceholder());
-    return;
-  }
 
   await refreshLogIds();
   // Pre-populate log levels so the very first paint of each row's
   // Status cell already reflects WARNING / ERROR, rather than briefly
-  // showing OK and then flipping when the async listener fires.
+  // showing OK and then flipping when the async listener fires. Seeded
+  // even with no sources to render: a repaint can add sections to a page
+  // that started empty, and those rows would otherwise paint from an
+  // empty map with no later event to correct them.
   currentLogLevels = await getAllMaxLogLevels();
+
+  if (sources.length === 0) {
+    directoriesEl.appendChild(emptyPlaceholder());
+    return;
+  }
   for (const source of sources) {
     directoriesEl.appendChild(await renderSourceSection(source));
   }
@@ -905,8 +853,21 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   if (source.scanError) {
     section.appendChild(makeMessage('error', `Scan failed: ${source.scanError}`));
   }
-  section.appendChild(await renderScriptTable(source, sourceOn));
+  section.appendChild(await renderScriptBlock(source, sourceOn));
   return section;
+}
+
+// The section's script list: a table, or the message that stands in for
+// it when the source has no scripts. Both carry `.script-block` so a
+// repaint can find whichever is present and swap one shape for the
+// other without disturbing the header above it.
+async function renderScriptBlock(
+  source: StoredSource,
+  sourceOn: boolean,
+): Promise<HTMLElement> {
+  const block = await renderScriptTable(source, sourceOn);
+  block.classList.add('script-block');
+  return block;
 }
 
 async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promise<HTMLElement> {
@@ -1079,6 +1040,9 @@ function fillNameCell(
   suffix.className = 'log-id-suffix';
   suffix.textContent = logIdDupeSuffix(currentLogIds.get(script.id) ?? '');
   nameCell.appendChild(suffix);
+  // Record what this cell was drawn from, so the next repaint can skip
+  // it unless one of those inputs moved.
+  nameCellKeys.set(script.id, nameCellKey(script));
 }
 
 // Tooltip text for a script row: the parsed `@description` value, or
@@ -1109,8 +1073,13 @@ async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButto
     );
     const table = section?.querySelector<HTMLTableElement>('.script-table');
     if (table && table.querySelectorAll('tbody tr').length === 0) {
-      table.replaceWith(makeMessage('empty', 'No *.user.js files found.'));
+      const empty = makeMessage('empty', 'No *.user.js files found.');
+      // Same marker the table carried, so a later repaint still finds
+      // the script block and can swap a table back in.
+      empty.classList.add('script-block');
+      table.replaceWith(empty);
     }
+    forgetScript(scriptId);
     await refreshLogIds();
   } catch (err) {
     // Surface the failure rather than swallowing it — if storage rejects
@@ -1201,27 +1170,11 @@ async function onAddDirectory(
       }
       return true;
     }
-    // refreshSource ran inside addSource; re-read the source row so
-    // the render sees post-refresh scriptIds in sync with storage.
-    const latest = (await getSource(result.source.id)) ?? result.source;
-    await refreshLogIds();
-    // Replace-if-present, append otherwise — for BOTH the new-source and
-    // existing-container cases. `addSource` writes the `sources` index
-    // early, then spends a while in `refreshSource`; during that await
-    // the live storage watcher can already have built and appended this
-    // section (from the index-change echo). An unconditional append here
-    // would then produce a second section for the same source. See the
-    // watcher's reconcileSectionsToIndex.
-    removeEmptyPlaceholder();
-    const fresh = await renderSourceSection(latest);
-    // Look the section up AFTER the render await, not before: the
-    // watcher can append it during that window, and an append decided on
-    // a stale lookup would leave two sections for the same source.
-    const section = findSection(latest.id);
-    if (section) section.replaceWith(fresh);
-    else directoriesEl.appendChild(fresh);
-    refreshMoveButtons();
-    if (jump) jumpToSource(latest.id);
+    // The add wrote storage; a repaint builds the new section (or, for
+    // an existing container, folds the new row into the section already
+    // on screen) and puts everything in index order.
+    await repaintPage();
+    if (jump) jumpToSource(result.source.id);
     return true;
   } finally {
     setAddFormBusy(false);
@@ -1402,20 +1355,9 @@ async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButt
   btn.disabled = true;
   try {
     await removeSource(id);
-    section.remove();
-    // Guard against an existing placeholder, not just the last `.directory`
-    // going away: `removeSource` writes `sources: []` early, and the live
-    // storage watcher's reconcileSectionsToIndex may already have appended
-    // the placeholder from that echo. Appending a second here is the
-    // duplicate the watcher's own guard was written to avoid.
-    if (
-      directoriesEl.querySelector('.directory') == null &&
-      directoriesEl.querySelector('.empty-placeholder') == null
-    ) {
-      directoriesEl.appendChild(emptyPlaceholder());
-    }
-    refreshMoveButtons();
-    await refreshLogIds();
+    // The repaint drops the section and, if that was the last source,
+    // puts the empty placeholder back.
+    await repaintPage();
   } catch (err) {
     section.classList.remove('removing');
     btn.disabled = false;
@@ -1437,32 +1379,17 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     // of doing redundant work.
     await updateSource(id, 'manual');
     // Refresh may have added/removed scripts, flipped statuses, etc.
-    // Rebuild just this one section so the rest of the page (other
-    // directories, banners, scroll position) is undisturbed.
+    // The repaint brings this section's rows in line with what was just
+    // written; then the rows that actually changed get their highlight.
+    // Rows are updated in place, so the highlight goes onto the same
+    // `<tr>` the user was already looking at.
+    await repaintPage();
     const section = findSection(id);
-    const latest = await getSource(id);
-    if (section && latest) {
-      await refreshLogIds();
-      const fresh = await renderSourceSection(latest);
-      const after = await getSourceWithScripts(id);
-      // Paint the change-highlights onto `fresh` BEFORE it's attached, so
-      // they survive regardless of what else touched the DOM. On a
-      // structural refresh (script set changed) the live storage watcher
-      // can replace — and detach — the section we captured above; re-find
-      // the section that's actually live now so our highlighted rebuild
-      // always lands instead of no-oping against a detached node.
-      applyChangeHighlights(fresh, priorScripts, after?.scripts ?? []);
-      (findSection(id) ?? section).replaceWith(fresh);
-      refreshMoveButtons();
-    } else {
-      // Section gone or source disappeared — fall back to button reset.
-      btn.disabled = false;
-      btn.textContent = prevText;
-    }
-  } catch (err) {
+    const after = await getSourceWithScripts(id);
+    if (section) applyChangeHighlights(section, priorScripts, after?.scripts ?? []);
+  } finally {
     btn.disabled = false;
     btn.textContent = prevText;
-    throw err;
   }
 }
 
@@ -1483,23 +1410,15 @@ async function onRefreshAll(): Promise<void> {
 
     await updateAllSources('manual');
 
-    await refreshLogIds();
-    // Re-render each section in place. We don't blow away the whole
-    // directories list so scroll position + un-refreshed sections (if
-    // any new ones were added concurrently) stay put.
+    // One repaint brings the whole page in line with what was written;
+    // then each section's changed rows get their highlight.
+    await repaintPage();
     for (const s of sources) {
       const section = findSection(s.id);
-      const latest = await getSource(s.id);
-      if (!section || !latest) continue;
-      const fresh = await renderSourceSection(latest);
+      if (!section) continue;
       const after = await getSourceWithScripts(s.id);
-      // Highlight before attaching, and replace whatever section is live
-      // now — the storage watcher may have rebuilt (and detached) the one
-      // captured above on a structural refresh. See onRefreshDirectory.
-      applyChangeHighlights(fresh, priorsBySource.get(s.id) ?? [], after?.scripts ?? []);
-      (findSection(s.id) ?? section).replaceWith(fresh);
+      applyChangeHighlights(section, priorsBySource.get(s.id) ?? [], after?.scripts ?? []);
     }
-    refreshMoveButtons();
   } finally {
     setRefreshAllBusy(false);
   }
@@ -1527,6 +1446,12 @@ function applyChangeHighlights(
   prior: StoredScript[],
   next: StoredScript[],
 ): void {
+  // Clear the last refresh's colors first. Rows survive a refresh now
+  // (they're updated in place, not rebuilt), so without this a row that
+  // changed once would stay highlighted through every later refresh.
+  for (const row of section.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
+    row.classList.remove('row-updated', 'row-failed');
+  }
   const priorById = new Map(prior.map((s) => [s.id, s]));
   for (const n of next) {
     const cls = classifyChange(priorById.get(n.id), n);
@@ -1644,12 +1569,15 @@ function findSection(sourceId: string): HTMLElement | null {
 // `enabled` values are preserved in storage, so the row classes
 // recompute from each checkbox's current `checked`.
 //
-// Every checkbox here is skipped while its own label carries a
-// `.busy-spinner`: that label belongs to a click this page is still
-// awaiting, and the handler's `finally` writes the settled state. When
-// the caller is the live storage watcher the write being echoed IS that
-// click, so touching the checkbox would undo the optimistic value the
-// user is looking at.
+// A checkbox whose label carries a `.busy-spinner` belongs to a click
+// this page is still awaiting, and is left alone: it shows the value the
+// user just picked, and the handler's `finally` settles it. The label's
+// styling and tooltip are updated anyway — they say what the SOURCE is,
+// not what the user clicked, and `setToggleBusy`'s restore reads
+// `toggle-disabled` back to decide the checkbox's final disabled state.
+// Skipping the label too would leave a checkbox enabled under a source
+// that was disabled while its spinner was up, with nothing left to
+// repaint it.
 function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
   section.classList.toggle('disabled', !enabled);
 
@@ -1667,11 +1595,9 @@ function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
     const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
     const lab = row.querySelector<HTMLLabelElement>('.toggle');
     if (!cb || !lab) continue;
-    if (!lab.querySelector('.busy-spinner')) {
-      cb.disabled = !enabled;
-      lab.classList.toggle('toggle-disabled', !enabled);
-      lab.title = enabled ? 'Enable this script' : 'Source is disabled';
-    }
+    lab.classList.toggle('toggle-disabled', !enabled);
+    lab.title = enabled ? 'Enable this script' : 'Source is disabled';
+    if (!lab.querySelector('.busy-spinner')) cb.disabled = !enabled;
     row.classList.toggle('disabled', !enabled || !cb.checked);
   }
 

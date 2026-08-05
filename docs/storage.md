@@ -674,12 +674,10 @@ on every interaction. Each user action mutates only the affected DOM:
   bulk-toggle symbol.
 - Bulk +/− → one `setScriptsEnabled(updates)` write (one
   `storage.onChanged`, one background re-sync), then flips every row.
-- Add directory → appends one new section.
-- Remove → removes that section (and re-shows the placeholder if it
-  was the last one).
-- Refresh → rebuilds just that one section in place.
-- Refresh All → rebuilds every section in place (one at a time, after
-  one parallel `refreshAllSources()`).
+- Add directory, Remove, Refresh, Refresh All → write, then repaint
+  from storage (see [Live repaint](#live-repaint-changes-from-any-origin)).
+  The section list, the empty placeholder, and each row follow from what
+  was stored rather than from a hand-rendered result.
 
 While the async work is in flight the triggering control shows a small
 inline spinner (toggle labels get a `.busy-spinner` sibling; the
@@ -687,7 +685,7 @@ bulk-toggle's glyph is replaced via `.bulk-toggle.busy`). The rest of
 the page — banners, other directories, scroll position — is
 undisturbed.
 
-### Live storage watcher (changes from any origin)
+### Live repaint (changes from any origin)
 
 The in-place mutators above cover the page's **own** actions.
 A `chrome.storage.local.onChanged` listener covers everything else:
@@ -698,84 +696,86 @@ A `chrome.storage.local.onChanged` listener covers everything else:
 The page therefore always shows the current stored state without a
 manual reload.
 
-- **`script:*` changed** → the row is repainted **in place** (status
-  cell, size, enabled toggle, row greying) from the new value, and its
-  `data-script-*` snapshot datasets are refreshed — the ones that no
-  longer apply (`data-script-error`, `data-script-refresh-error`) are
-  **deleted**. This is the core of the issue-#10 fix: a stale
-  `data-script-refresh-error` used to pin the recompute to REFRESH
-  FAILED forever, and there was no local listener at all.
-  - The datasets are written by `applyScriptRowDatasets`, shared with
-    the initial render, so the two can't disagree on what goes in them
-    — notably the `(in <file>, line N)` the hover text depends on.
-  - The Filename cell (favicon, `@description` tooltip, name) is
-    rebuilt only when one of those inputs actually moved. It is a
-    separate check because rebuilding re-runs the favicon fetch and
-    flashes the globe placeholder.
-- **`source:*` changed** → the cheapest correct action: grey/ungrey in
-  place on an `enabled` flip; rebuild the section (preserving row
-  highlights) on a `scriptIds` / `displayName` / `scanError` change;
-  nothing when only metadata like `lastRefreshedAt` moved.
-  - Greying syncs the source's **own** header toggle as well as the
-    per-script ones. `onToggleSource` arrives with it already flipped by
-    the click; the watcher does not, and a greyed-out section under a
-    checked "on" toggle takes two clicks to undo.
-- **`sources` index changed** → sections are added / removed / reordered
-  to match, reusing existing section elements. Re-seating is skipped
-  when the DOM order already matches: moving an attached node detaches
-  it first, which blurs anything focused inside it.
+#### The event is only a hint
 
-**Deltas are handled one at a time**, through a promise chain seeded
-with the initial render. The handler awaits storage reads, and Chrome
-re-fires the listener without waiting for the previous call to settle.
+What the event says changed is ignored. It sets a dirty flag; the
+repaint then re-reads storage and makes the DOM match it.
 
-- Two interleaved runs could each build a section for the same source
-  and append both, or let an older render replace a node the newer one
-  had already detached (`replaceWith` on a detached node is a silent
-  no-op, so the newer render would just be dropped).
-- Chaining behind the initial render matters for the same reason:
-  `render()` empties the container and refills it across several awaits.
+- **Idempotent by construction.** Running it twice changes nothing, and
+  running it after a burst lands on the final state.
+- **Nothing to go stale.** A change event carries a snapshot of one key;
+  acting on that snapshot later paints a state that has since moved on.
+- **Nothing to keep in step.** There is no per-key handler that has to
+  be taught about a new field, and no second opinion about which fields
+  matter — `repaintFromStorage` reads the same rows `render()` does.
 
-The listener is idempotent, so the echo of one of the page's own writes
-is a harmless repaint rather than a fight with the handler that made it:
+Passes are serialized on a promise chain, and a burst collapses: the
+first link to run clears the flag and does the work, and the rest find
+nothing to do. Awaiting `repaintPage()` is therefore enough for a caller
+to know the DOM matches storage as of its own call, which is how the
+flow handlers below sequence their own work.
 
-- Row-level repaints never recreate the `<tr>`, so a refresh's
-  `row-updated` / `row-failed` highlight and any in-flight spinner
-  survive.
-- Section rebuilds carry those highlight classes onto the new rows
-  explicitly. They cannot preserve an in-flight spinner — a rebuild
-  replaces every `<tr>` — but the page-own op that owns one has already
-  finished its DOM work by then.
+#### What a repaint touches
 
-**Coordination with the page's own handlers.** `chrome.storage` fires in
-the writing context too, so a page-driven Add / Remove / Refresh echoes
-back into this watcher while the handler is still running. Both sides are
-therefore idempotent:
+Nothing is rebuilt that doesn't have to be, so a repaint is safe to run
+at any moment — including while the user is mid-interaction.
 
-- **Add** replaces-if-present instead of blindly appending its new
-  section — `addSource` writes the `sources` index early, so the watcher
-  can already have built the section from that echo before the handler
-  finishes its scan.
-- **Remove (last source)** guards its empty-placeholder append against an
-  existing placeholder, since the watcher's index reconcile adds one too.
-- **Refresh** paints its change-highlights onto the rebuilt section
-  *before* attaching it and replaces whichever section is live at that
-  moment, so a structural refresh whose section the watcher rebuilt
-  mid-flight still lands its highlights.
+- **Sections** are matched to the stored source list: gone ones are
+  removed, new ones built, the rest updated in place. The section
+  element is never replaced, so the Refresh button's busy state and
+  every row's spinner survive.
+- **Rows** are matched to the source's scripts the same way: a `<tr>`
+  that is still wanted is updated in place, never recreated, so refresh
+  highlights and in-flight toggles survive.
+- **Re-seating** into stored order happens only when the order actually
+  differs — moving an attached node detaches it first, and Chrome blurs
+  anything focused inside it.
+- **The Filename cell** (favicon, `@description` tooltip, name) is
+  rebuilt only when one of its inputs moved, tracked per row by
+  `nameCellKeys`. Rebuilding re-runs the favicon fetch and flashes the
+  globe placeholder, so it must not happen on an unrelated repaint.
+- **`data-script-*` datasets** are written by `applyScriptRowDatasets`,
+  shared with the initial render so the two cannot disagree — notably
+  about the `(in <file>, line N)` the hover text depends on. Fields that
+  no longer apply are **deleted**: a stale `data-script-refresh-error`
+  used to pin the recompute to REFRESH FAILED forever, which is the
+  issue-#10 bug.
 
-**Busy affordances win over the echo.** A control the page is still
-awaiting shows the value the user just chose; the echo of that very
-write must not overwrite it, or the operation appears to undo itself
-mid-flight. Every busy state is therefore checked before it's touched:
+#### Coordination with the page's own handlers
 
-- **Per-script and per-source toggles** — skipped while their label
-  carries a `.busy-spinner`. The handler's `finally` writes the settled
-  state.
+`chrome.storage` fires in the writing context too, so a page-driven Add
+/ Remove / Refresh echoes back as a repaint. Since a repaint only ever
+converges the DOM onto storage, that echo is harmless — the handlers do
+not need to defend against it. They use the same repaint themselves
+rather than hand-rendering their result:
+
+- **Add / Remove** write, then `await repaintPage()`. The section
+  appears or disappears, and the empty placeholder comes and goes, as a
+  consequence of the stored source list.
+- **Refresh** writes, awaits the repaint, and then paints its
+  change-highlights onto the live rows. Because rows are updated in
+  place, the highlight lands on the same `<tr>` the user was already
+  looking at. `applyChangeHighlights` clears the previous refresh's
+  colors first, which a section rebuild used to do implicitly.
+
+#### Busy affordances win over the echo
+
+A control the page is still awaiting shows the value the user just
+chose; a repaint must not overwrite it, or the operation appears to undo
+itself mid-flight.
+
+- **Per-script and per-source toggle checkboxes** — left alone while
+  their label carries a `.busy-spinner`. The handler's `finally` writes
+  the settled state.
+  - The label's `toggle-disabled` class and tooltip are updated anyway.
+    They say what the parent source is, not what the user clicked, and
+    `setToggleBusy`'s restore reads the class back to settle the
+    checkbox — skip it and a source disabled mid-click leaves an
+    enabled checkbox with nothing left to repaint it.
 - **The bulk `+`/`−` button** — its `disabled` is left alone while
-  `.busy` is set. One bulk write echoes back once per row, so without
-  this each repaint would re-enable it mid-operation.
+  `.busy` is set.
 - **The Up / Down arrows** — `refreshMoveButtons()` no-ops while a move
-  is in flight, since the watcher's index reconcile ends in one.
+  is in flight, since a repaint ends in one.
 
 ### Background-SW sync coalescing
 

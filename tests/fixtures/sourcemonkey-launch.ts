@@ -103,8 +103,8 @@ export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker>
   // precede that assignment — a bare `evaluate(() => true)` succeeds
   // against a worker whose module body hasn't finished — so every method
   // on the `sm` proxy would race the surface into existence. Poll for it.
-  const apiReady = async (worker: Worker): Promise<boolean> => {
-    const deadline = Date.now() + 5000;
+  const apiReady = async (worker: Worker, budgetMs: number): Promise<boolean> => {
+    const deadline = Date.now() + budgetMs;
     while (Date.now() < deadline) {
       // A `true` result means the surface is live; a throw means the CDP
       // target went away (stale handle) — bail so the caller tries the
@@ -123,10 +123,15 @@ export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker>
     // fails the test on `SourceMonkey.<method> is not a function`, which
     // names the real problem. Discarding it in favour of `waitForEvent`
     // would report a spawn timeout instead and hide the cause.
+    // Short budget per already-listed candidate: a live worker answers on
+    // the first poll, so the only thing a long wait here buys is a delay
+    // on EVERY proxy call once some worker is permanently surfaceless.
+    // The long budget is spent only on a freshly spawned worker, which
+    // genuinely needs time to evaluate its module.
     let answered: Worker | null = null;
     for (const candidate of ctx.serviceWorkers()) {
       try {
-        if (await apiReady(candidate)) return candidate;
+        if (await apiReady(candidate, 1000)) return candidate;
         answered ??= candidate;
       } catch {
         // stale; try the next one
@@ -134,7 +139,7 @@ export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker>
     }
     if (answered) return answered;
     const sw = await ctx.waitForEvent('serviceworker', { timeout: 5000 });
-    await apiReady(sw);
+    await apiReady(sw, 5000);
     return sw;
   };
 }

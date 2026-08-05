@@ -1115,6 +1115,24 @@ const SOURCES_INDEX_KEY = 'sources';
 const sourceKey = (id: string) => `source:${id}`;
 const scriptKey = (id: string) => `script:${id}`;
 
+// Does a `chrome.storage.local` change touch the structural rows — the
+// source index, a source, or a script? Exported so pages watching for
+// "something I display moved" ask the module that owns the key layout
+// instead of re-deriving the prefixes, where a rename here would leave
+// them silently watching keys that no longer exist.
+export function touchesStructuralRows(keys: Iterable<string>): boolean {
+  for (const key of keys) {
+    if (
+      key === SOURCES_INDEX_KEY ||
+      key.startsWith(sourceKey('')) ||
+      key.startsWith(scriptKey(''))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Serialize every read-modify-write of the structural rows (the source
 // index, source rows, script rows). chrome.storage.local has no
 // compare-and-swap, so two operations that each read a row, derive a
