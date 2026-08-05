@@ -207,6 +207,34 @@ gates, or the emitted wrap — the rate is the regression signal.
   generated copy of the script before TM installs it. Until then the
   TM-compatibility claim for `@require` — the whole premise of the
   concatenated arrangement — rests on unit and SM-only e2e coverage.
+- **`tests/examples/grant-case/` has not been run under TM.** The
+  spec is written manager-agnostically and should pass there, but the
+  TM verdicts it encodes (byte-exact grant matching, `GM.xmlhttpRequest`
+  rejected) come from static analysis of TM 5.5.0.0's shipped
+  `page.js`, not an observed run. Run
+  `npm run test:e2e:tm -- tests/examples/grant-case/` to confirm.
+
+## Header / `@grant` name-case divergences
+
+Places where our tolerance differs from TM and VM. None of them
+breaks a real script today; all three are recorded so a later
+tightening pass is a decision, not a discovery.
+
+- **Tag names.** We lowercase (`@Match` works); TM and VM both match
+  the tag exactly and silently ignore anything else. Tightening
+  would break scripts that work under SourceMonkey today, and the
+  GreasyFork top-2000 corpus has no mis-cased tag names, so we kept
+  the looser behavior. See
+  [docs/supported-headers.md](docs/supported-headers.md#tag-name-case).
+- **`@grant none`.** We accept `NONE` / `None`; TM and VM both
+  require lower-case `none`. Under TM a script writing `@grant NONE`
+  is sandboxed with an unknown grant rather than unsandboxed — a
+  meaningful behavioral difference, so matching them is arguably
+  worth doing.
+- **Locale suffix `-` vs `_`.** We case-fold the suffix (matching
+  both managers) but don't treat `@name:zh_CN` and `@name:zh-CN` as
+  the same entry the way TM does. Moot until something consumes
+  localized values.
 
 ## `GM_*` — deferred surface
 
@@ -474,7 +502,9 @@ during cumulative review of the GM_* phases:
   (`*.example.com:8443`), forbidden-request-header strip surfacing,
   GET / HEAD with `data` body (silent drop vs. surfaced).
 - **`@grant`**: `GM.GM_setValue` typo lands in `unknown` and
-  ReferenceError at runtime + SW logs dropped name.
+  ReferenceError at runtime + SW logs dropped name. (`suggestGrant`
+  won't hint on this one — it only recognises case-only misses, not
+  a doubled prefix. Worth extending if the shape shows up.)
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
 - **Live repaint** (collections page): a `collections`-index reorder arriving

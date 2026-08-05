@@ -11,11 +11,19 @@
 // order so callers can decide which tags are single-valued (@name,
 // @version) and which can repeat (@match, @grant, @require, …) without
 // the parser baking that policy in. Tag names are lowercased so lookups
-// are case-insensitive; locales like `@name:de` are kept on the side.
+// are case-insensitive; locales like `@name:de` are kept on the side,
+// also lowercased.
+//
+// Case policy vs. the other managers (see docs/supported-headers.md):
+//   - Tag names: TM and VM are both case-SENSITIVE (`@Match` is
+//     silently ignored by both). We lowercase, so we accept a
+//     superset. Deliberate — see the TODO about tightening it.
+//   - Locale suffixes: TM and VM both fold case (`@name:ZH-cn` and
+//     `@name:zh-CN` land on the same entry). We match that.
 
 export interface HeaderTag {
   tag: string;       // canonical lowercase, no locale suffix (e.g. "name")
-  locale?: string;   // present for i18n forms like "@name:de" → "de"
+  locale?: string;   // lowercased; present for i18n forms like "@name:de" → "de"
   value: string;     // text after the tag, trimmed; "" for flag tags
   // 1-based line in the WHOLE source (not within the block), so a
   // diagnostic about this tag can point at the line the viewer shows.
@@ -196,7 +204,13 @@ export function parseHeader(source: string): ParsedHeader | null {
       value: value ?? '',
       line: startLine + i,
     };
-    if (locale) entry.locale = locale;
+    // Lowercase the locale for the same reason we lowercase the tag:
+    // `@description:ZH-CN` and `@description:zh-CN` are the same entry
+    // in both TM (which normalizes to `zh_CN` on write and on lookup)
+    // and VM (which lowercases on write and matches case-insensitively
+    // against navigator.languages). Both spellings occur in published
+    // scripts.
+    if (locale) entry.locale = locale.toLowerCase();
     tags.push(entry);
   }
   return { tags, startLine };

@@ -33,7 +33,7 @@
 // tests written against earlier phases keep passing.
 
 import type { GmApiSpec } from './gm-api-catalog.js';
-import { findApi, GM_APIS } from './gm-api-catalog.js';
+import { findApi, gmDotSpellings, GM_APIS } from './gm-api-catalog.js';
 
 // Minimal info we bake into GM_info. Keep this stable — exposed to
 // every userscript. Mirrors the relevant subset of TM/VM's GM_info
@@ -317,9 +317,18 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
 }
 
 // Build the GM4 namespace object — `const GM = Object.freeze({ ... })`.
-// For each granted API with a `gmDotName`, expose a property on `GM`.
-// When `gmDotPromised` is true, wrap the GM_x return value in
-// Promise.resolve so the GM4 caller can `await` it uniformly.
+// For each granted API, expose every `GM.` spelling it answers to
+// (usually one; two for the APIs GM4 re-cased — see
+// `gmDotSpellings`). When `gmDotPromised` is true, wrap the GM_x
+// return value in Promise.resolve so the GM4 caller can `await` it
+// uniformly.
+//
+// Emitting every spelling rather than only the one the script wrote
+// is deliberate, and matches how TM models grants: one boolean per
+// API gates every name in that API's alias group. (VM instead
+// defines only the exact spelling granted.) A script that grants one
+// spelling and calls another is a pattern that actually occurs in
+// published scripts.
 function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
   const props: string[] = [];
   for (const spec of grantedSpecs) {
@@ -329,16 +338,18 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
       props.push(`info: GM_info`);
       continue;
     }
-    if (spec.gmDotPromised) {
-      // The legacy GM_x can be sync (storage reads from cache) or
-      // throw (sync stub). Wrap in a Promise so the GM4 alias
-      // matches its documented signature unconditionally.
-      props.push(
-        `${spec.gmDotName}: function () { try { return Promise.resolve(${spec.name}.apply(null, arguments)); } catch (e) { return Promise.reject(e); } }`,
-      );
-    } else {
-      // Pass-through: same call shape, same return.
-      props.push(`${spec.gmDotName}: function () { return ${spec.name}.apply(null, arguments); }`);
+    for (const dot of gmDotSpellings(spec)) {
+      if (spec.gmDotPromised) {
+        // The legacy GM_x can be sync (storage reads from cache) or
+        // throw (sync stub). Wrap in a Promise so the GM4 alias
+        // matches its documented signature unconditionally.
+        props.push(
+          `${dot}: function () { try { return Promise.resolve(${spec.name}.apply(null, arguments)); } catch (e) { return Promise.reject(e); } }`,
+        );
+      } else {
+        // Pass-through: same call shape, same return.
+        props.push(`${dot}: function () { return ${spec.name}.apply(null, arguments); }`);
+      }
     }
   }
   if (props.length === 0) return '';

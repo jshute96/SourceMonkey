@@ -46,6 +46,52 @@ like `GM_setvalue`) are silently dropped from the binding set —
 the script sees a `ReferenceError` at call time, and the SW logs a
 `console.info` with the dropped names.
 
+### Name matching is byte-exact
+
+`@grant` names are compared exactly. `GM_xmlHttpRequest` (capital
+`H`) and `GM_Log` are **not** `GM_xmlhttpRequest` and `GM_log`; they
+resolve to nothing.
+
+- This is what TM and VM both do. TM's grant table is a set of exact
+  name strings tested with `Array.prototype.indexOf`; VM does plain
+  property lookup on a null-prototype object. Neither case-folds.
+- We deliberately do not case-fold either. A `@grant` that differs
+  only in case is a bug in the script; silently accepting it would
+  make SourceMonkey the only manager the script runs under.
+- What we do instead: the "unknown @grant" warning names the near
+  miss — `unknown @grant entries dropped: GM_xmlHttpRequest (did you
+  mean GM_xmlhttpRequest?)`. TM's built-in editor lints the same
+  mistake as `'X' is not a valid @grant argument`.
+
+### The two `GM.` spellings
+
+Two APIs answer to a second `GM.` name, because GM4 re-cased them:
+
+| API | GM4 spelling | Prefix-rewrite spelling |
+|-----|--------------|-------------------------|
+| `GM_xmlhttpRequest` | `GM.xmlHttpRequest` | `GM.xmlhttpRequest` |
+| `GM_getResourceURL` | `GM.getResourceUrl` | `GM.getResourceURL` |
+
+Why we accept the right-hand column:
+
+- VM resolves `GM.foo` by consulting a two-entry alias table and
+  otherwise rewriting the name to `'GM_' + foo` verbatim, so both
+  spellings work there. TM accepts only the GM4 spelling.
+- Real scripts rely on it. In the GreasyFork top-2000 corpus three
+  scripts grant `GM.xmlhttpRequest`, and one of them grants nothing
+  else — under exact-GM4-only matching it is dead on arrival.
+- Every other API's GM4 name is just its legacy name minus `GM_`, so
+  the two columns collapse and there is only ever one spelling.
+
+Granting either spelling exposes both, along with the legacy `GM_x`.
+That mirrors TM, where one boolean gates an API's whole alias group;
+VM instead defines only the exact spelling the script wrote. We also
+don't reproduce VM's quirk where the rewrite spelling loses its
+Promise wrapper — our spellings behave identically.
+
+`tests/examples/grant-case/` demonstrates all of this against a live
+page, and runs under other managers for comparison.
+
 ---
 
 ## Compile-in metadata
@@ -127,7 +173,7 @@ strict `Content-Security-Policy: script-src 'self'`.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; events (`load`, `error`, `timeout`, `abort`) are shipped back to the originating tab. |
+| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Also answers to `GM.xmlhttpRequest` (see [Granting](#the-two-gm-spellings)). Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; events (`load`, `error`, `timeout`, `abort`) are shipped back to the originating tab. |
 
 ### XHR details object
 
@@ -460,7 +506,7 @@ baked into the per-script wrapper. See
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_getResourceText` / `GM.getResourceText` | ✅ | ✓ | ✓ | ✓ | UTF-8 decode on demand. Returns `undefined` for an unknown name. Binary resources still decode (mojibake-tolerant); use `GM_getResourceURL` instead. |
-| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type. Same URL on repeat calls for one name. GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form. |
+| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type. Same URL on repeat calls for one name. GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form; `GM.getResourceURL` also resolves (see [Granting](#the-two-gm-spellings)). |
 
 ---
 
@@ -479,6 +525,12 @@ on the stored script and surfaces two ways:
 
 The script's call sites get a `ReferenceError`. Adding any of these
 is a catalog entry + a body — nothing structural.
+
+When the dropped name differs from a known one only in
+capitalization, the warning names the near miss: `GM_xmlHttpRequest
+(did you mean GM_xmlhttpRequest?)`. The suggestion is diagnostic
+only — matching itself stays byte-exact (see
+[Granting](#name-matching-is-byte-exact)).
 
 [logging]: logging.md#page-console-startup-logs
 

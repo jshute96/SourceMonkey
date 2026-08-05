@@ -36,9 +36,9 @@ status per file + byte-for-byte viewer round-trip).
 
 ### Multi-script directories
 
-Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
-and negative-case pages (`xmlhttp-denied/`) follow a small variant
-of the layout above:
+Header-variation pages (`headers-run-at/`, `headers-inject-into/`,
+`grant-case/`) and negative-case pages (`xmlhttp-denied/`) follow a
+small variant of the layout above:
 
 - Still **one** `<dir>.html` and **one** `<dir>.spec.ts`.
 - **Multiple** sibling `*.user.js` files, one per variant being
