@@ -35,7 +35,9 @@
 import {
   fetchResourceBytes,
   isJsResourceUrl,
-  resolveScriptResource,
+  resolveScriptResourceDetailed,
+  type FetchFailure,
+  type ResolveFailure,
 } from './file-loader.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64 } from './bytes.js';
@@ -54,21 +56,65 @@ export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
   ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
   : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
 
-// One message for three outcomes, because `fetchResourceBytes` returns
-// null for all of them and doesn't say which. Still a list of
-// possibilities rather than the fact — see TODO.md, "Say which fetch
-// failure it was"; the fix is in the fetcher, not here. Exported so the
-// offline validator matches on this string rather than a copy of it.
-export const FETCH_FAILED =
-  `could not be fetched (no response, an HTTP error, or over the ${CAP_TEXT} limit)`;
+// Why a dependency wouldn't load, as a predicate that follows the
+// subject: `@require ./lib.js: ` + one of these.
+//
+// These read as facts rather than as a list of possibilities because
+// the fetcher now reports which case it hit. It used to return a bare
+// `null`, so a single message had to cover "no response", "an HTTP
+// error", and "over the limit" at once — and the offline validator
+// reconstructed the real cause from a fetch log to make its report
+// useful.
+export function describeFetchFailure(failure: FetchFailure): string {
+  switch (failure.reason) {
+    case 'unsupported-scheme':
+      // Unreachable for a dependency — resolution rejects anything
+      // that isn't http(s) or a contained relative path long before
+      // the fetch. Kept for totality.
+      return 'could not be fetched: that URL scheme cannot be fetched';
+    case 'no-response':
+      return 'could not be fetched: no response from the server';
+    case 'timeout':
+      return 'could not be fetched: the request timed out';
+    case 'unreadable-file':
+      // The one fetch failure that still names two causes, because a
+      // file:// read has no HTTP layer: "isn't there" and "can't be
+      // read" arrive identically. Not a network problem either way,
+      // which is what this case used to be reported as.
+      return 'could not be read: the file may not exist, or may not be readable';
+    case 'http-error':
+      return `could not be fetched: HTTP ${failure.status}`;
+    case 'wrong-content-type':
+      // Only reachable through the icon fetcher, which discards the
+      // reason — no user reads this today.
+      return 'could not be fetched: the response was the wrong content type';
+    case 'empty':
+      return 'is empty';
+    case 'oversize':
+      return `is larger than the ${CAP_TEXT} limit`;
+  }
+}
 
-// `resolveScriptResource` returns null for two different reasons — an
-// unsupported scheme, and a relative path that climbs out of the
-// script's own folder — so the message states the rule rather than
-// guessing which was meant. Splitting it needs the resolver to say
-// which; see TODO.md.
-const UNUSABLE_REF =
-  'not a usable reference — must be an http(s) URL, or a relative path inside the script\'s folder';
+// Why a ref couldn't be resolved to something fetchable. Same shape:
+// a predicate that follows the subject.
+export function describeResolveFailure(failure: ResolveFailure): string {
+  switch (failure.reason) {
+    case 'empty':
+      // Unreachable — `distillRequires` / `distillResources` drop empty
+      // refs before a loader sees one. Kept for totality.
+      return 'has no reference after the tag';
+    case 'malformed-url':
+      return 'is not a valid URL';
+    case 'unsupported-scheme':
+      // Names what the author actually wrote. `file:` reaches this on
+      // purpose — an absolute local path is not accepted even from a
+      // local script (see file-loader.ts's module header).
+      return `${failure.scheme} URLs are not supported — ` +
+        'use an http(s) URL, or a relative path inside the script\'s folder';
+    case 'outside-script-folder':
+      return 'points outside the script\'s own folder — a relative path has to stay inside it';
+  }
+}
 
 interface SharedFileFields {
   // Verbatim ref from the metadata line (post-trim). Kept so error
@@ -361,9 +407,9 @@ interface LoadRequireArgs {
 }
 
 async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequire>> {
-  const resolved = resolveScriptResource(args.ref, args.scriptFileUrl);
-  if (!resolved) {
-    return { errorMessage: `@require ${args.ref}: ${UNUSABLE_REF}` };
+  const resolved = resolveScriptResourceDetailed(args.ref, args.scriptFileUrl);
+  if ('failed' in resolved) {
+    return { errorMessage: `@require ${args.ref}: ${describeResolveFailure(resolved)}` };
   }
   if (resolved.kind === 'data') {
     return { errorMessage: `@require ${args.ref}: data: URLs are not supported` };
@@ -470,9 +516,9 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // doesn't say what failed to load. `@require` names its ref because
   // that is all it has; this names both.
   const subject = `@resource ${args.decl.name} (${args.decl.ref})`;
-  const resolved = resolveScriptResource(args.decl.ref, args.scriptFileUrl);
-  if (!resolved) {
-    return { errorMessage: `${subject}: ${UNUSABLE_REF}` };
+  const resolved = resolveScriptResourceDetailed(args.decl.ref, args.scriptFileUrl);
+  if ('failed' in resolved) {
+    return { errorMessage: `${subject}: ${describeResolveFailure(resolved)}` };
   }
   if (resolved.kind === 'data') {
     return { errorMessage: `${subject}: data: URLs are not supported` };
@@ -538,8 +584,8 @@ function ensureFetch(
 async function fetchFileBytes(url: string): Promise<FetchedFile | FileFailure> {
   try {
     const res = await fetchResourceBytes(url, { maxBytes: MAX_FILE_BYTES });
-    if (!res) {
-      return { failed: true, errorMessage: FETCH_FAILED };
+    if ('failed' in res) {
+      return { failed: true, errorMessage: describeFetchFailure(res) };
     }
     return { bytes: res.body, contentType: res.contentType };
   } catch (err) {

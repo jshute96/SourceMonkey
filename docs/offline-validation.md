@@ -126,12 +126,18 @@ measuring:
 - **`parse check errored`** — composing the checked text threw. The
   script stays `ok`.
 
-Dependency failures are split further than the pipeline can split
-them: `FETCH_FAILED` (`external-files.ts`) is one message covering
-three different offline outcomes, so the fetch shim's log is consulted
-for which one it actually was. The validator imports that string, and
-the header messages, rather than keeping copies that would go stale the
-next time the wording improves.
+Dependency failures mostly report themselves now: the pipeline names
+which fetch failure it hit, so the validator passes the message
+straight through.
+
+The fetch shim's log is consulted for one case only — the offline
+mirror answers a URL it doesn't hold with a `404`, and "not in the
+offline tree" is a different fact from a server that really replied
+404. Size and empty-file outcomes used to come from the log too; they
+come from the pipeline now.
+
+Strings shared with the pipeline are imported, never copied — a copy
+would go stale the next time the wording improves.
 
 `--json FILE` writes one record per script — name, status, category,
 message, the structured `location` when the verdict has one, and the

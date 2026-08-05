@@ -655,19 +655,9 @@ they follow are in
   definition-list cell (`script-details.ts`), beside `could not fetch`
   and `no @version`, so a full message doesn't fit. Revisit if that row
   ever gets room, or if the split starts confusing people.
-- **Say which fetch failure it was.** `FETCH_FAILED`
-  (`external-files.ts`) lists three possibilities because
-  `fetchResourceBytes` returns `null` for all of them: no response, a
-  non-ok status, and over the size cap. Every one of those is known at
-  the point it returns. Making it report a reason would let the message
-  state the fact, and would retire the fetch-log reconstruction the
-  offline validator does to recover it (`REASON_TEXT` in
-  `scripts/validate-userscripts.mjs`).
-- **Split "not a usable reference".** `resolveScriptResource` returns
-  `null` both for an unsupported scheme and for a relative path that
-  climbs out of the script's folder — two different mistakes with
-  different fixes. The message states the rule instead of naming the
-  problem, because the resolver doesn't say which.
+  - Same condition covers `fetchResourceText`, which still returns
+    `string | null`: the bytes fetcher knows which failure it was, and
+    the probe is the only caller that throws that away.
 
 ## Testing and example TOODs
 

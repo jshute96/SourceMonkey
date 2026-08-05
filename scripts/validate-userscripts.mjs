@@ -57,10 +57,8 @@ import { attachParseLocation } from '../dist/parse-location.js';
 import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { resolveScriptResource } from '../dist/file-loader.js';
 import {
-  CAP_TEXT,
   distillRequires,
   distillResources,
-  FETCH_FAILED,
   MAX_FILE_BYTES,
 } from '../dist/external-files.js';
 import {
@@ -353,22 +351,35 @@ function scriptUrlFor(file, offlineRoot) {
 // ---------- Classifying the outcome ----------
 //
 // Every failure arrives as `status: 'invalid'` plus a human-readable
-// `errorMessage`, which is all the extension itself has. For a report
-// we want the messages bucketed, and dependency failures split further
-// than the pipeline can split them: `FETCH_FAILED` is one message
-// covering three very different offline outcomes, so we ask the fetch
-// log which one it actually was.
+// `errorMessage`, which is all the extension itself has. That message
+// now says which fetch failure it was, so the report mostly just passes
+// it through.
 //
-// The strings themselves are imported rather than copied — they are
-// user-facing wording, and a copy here would go stale the next time
-// somebody improves one.
+// One thing the harness still knows better than the pipeline: the
+// offline mirror answers a URL it doesn't hold with a 404, which is a
+// different fact from a server that really replied 404. So the fetch
+// log is consulted for that case alone — the size and empty-file
+// outcomes it used to supply are reported by the pipeline itself now.
+//
+// Strings that ARE shared with the pipeline get imported, never copied:
+// they are user-facing wording, and a copy here would go stale the next
+// time somebody improves one.
 
-const REASON_TEXT = {
+const OFFLINE_REASON_TEXT = {
   'not-downloaded': 'not in the offline tree (dead link or never downloaded)',
   'not-found': 'file not found',
-  oversize: `over the ${CAP_TEXT} per-file limit`,
-  empty: 'empty file',
 };
+
+// The pipeline's own prefixes for "we tried to read it and got nothing
+// usable" — see `describeFetchFailure` in external-files.ts. Both
+// spellings: an http URL says "fetched", a file:// one says "read".
+//
+// A loose gate on purpose. It also admits failures the log can say
+// nothing about (a timeout, a rejected content type), which is
+// harmless: those never coincide with a `not-downloaded` / `not-found`
+// entry, so the lookup simply misses and the pipeline's own message
+// stands.
+const FETCH_FAILURE_RE = /^could not be (fetched|read)/;
 
 function classify(script) {
   if (script.status !== 'invalid') {
@@ -392,15 +403,20 @@ function classify(script) {
   const dep = /^@(require|resource) (.*?): ([\s\S]*)$/.exec(message);
   if (dep) {
     const [, kind, subject, reason] = dep;
-    if (reason === FETCH_FAILED) {
-      const url = depUrl(script, kind, subject);
-      const logged = fetchLog.get(url);
-      const why = logged ? REASON_TEXT[logged.reason] ?? logged.reason : 'fetch failed';
-      return { category: `@${kind}`, detail: why, url };
+    // Resolved for every dependency failure, not just the fetch ones:
+    // it is the only source of the record's `url` field, and an
+    // oversize or empty dependency is exactly as worth locating as an
+    // unreachable one.
+    const url = depUrl(script, kind, subject);
+    if (FETCH_FAILURE_RE.test(reason)) {
+      const offline = OFFLINE_REASON_TEXT[fetchLog.get(url)?.reason];
+      // No log entry, or one we have no better wording for: the
+      // pipeline's own message is already specific.
+      return { category: `@${kind}`, detail: offline ?? reason, url };
     }
     // Everything else is already a specific message; strip embedded
     // content-type values so near-identical failures group together.
-    return { category: `@${kind}`, detail: reason.replace(/"[^"]*"/g, '"…"') };
+    return { category: `@${kind}`, detail: reason.replace(/"[^"]*"/g, '"…"'), url };
   }
 
   if (HEADER_MESSAGES.has(message)) return { category: 'header', detail: message };

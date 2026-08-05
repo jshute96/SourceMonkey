@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 
 import {
   attachFiles,
+  describeFetchFailure,
+  describeResolveFailure,
   distillRequires,
   distillResources,
 } from '../../dist/external-files.js';
@@ -210,7 +212,9 @@ test('attachFiles: rejects @require traversal-bearing ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /not a usable reference/);
+  // The two rejections below are different mistakes with different
+  // fixes, so they must not share a message.
+  assert.match(r.errorMessage, /points outside the script's own folder/);
 });
 
 test('attachFiles: rejects @require absolute file:// ref', async () => {
@@ -223,7 +227,7 @@ test('attachFiles: rejects @require absolute file:// ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /not a usable reference/);
+  assert.match(r.errorMessage, /file: URLs are not supported/);
 });
 
 test('attachFiles: rejects @require data: ref', async () => {
@@ -365,7 +369,7 @@ test('attachFiles: @resource rejects traversal-bearing ref', async () => {
     now: 2000,
   });
   assert.match(r.errorMessage, /@resource bad \(\.\.\/secret\.css\)/);
-  assert.match(r.errorMessage, /not a usable reference/);
+  assert.match(r.errorMessage, /points outside the script's own folder/);
 });
 
 test('attachFiles: @resource fetch failure surfaces name + error', async () => {
@@ -593,4 +597,123 @@ test('attachFiles: @resource at same URL succeeds even when @require would rejec
   });
   assert.equal(r2.errorMessage, undefined);
   assert.equal(r2.resources[0].contentType, 'text/html');
+});
+
+
+// ---------- describeFetchFailure / describeResolveFailure ----------
+//
+// These are the only place a structured reason becomes words. Every
+// one of them is appended to a subject (`@require ./lib.js: `), so
+// each has to read as a predicate of the dependency.
+
+test('describeFetchFailure: each reason produces a distinct, specific message', () => {
+  const seen = new Set();
+  for (const failure of [
+    { failed: true, reason: 'unsupported-scheme' },
+    { failed: true, reason: 'no-response' },
+    { failed: true, reason: 'timeout' },
+    { failed: true, reason: 'unreadable-file' },
+    { failed: true, reason: 'http-error', status: 404 },
+    { failed: true, reason: 'wrong-content-type' },
+    { failed: true, reason: 'empty' },
+    { failed: true, reason: 'oversize' },
+  ]) {
+    const text = describeFetchFailure(failure);
+    assert.ok(typeof text === 'string' && text.length > 0, `${failure.reason} produced nothing`);
+    assert.equal(seen.has(text), false, `${failure.reason} duplicates another message`);
+    seen.add(text);
+    // The message this replaced listed three possibilities at once.
+    // `unreadable-file` is the only one still allowed to name more than
+    // one cause — see the test below for why.
+    if (failure.reason !== 'unreadable-file') {
+      assert.doesNotMatch(text, / or /, `${failure.reason} hedges between causes`);
+    }
+  }
+});
+
+test('describeFetchFailure: a timeout is not folded in with a network failure', () => {
+  // Our own abort is identifiable (`controller.signal.aborted`), so
+  // these must not share a message.
+  const timeout = describeFetchFailure({ failed: true, reason: 'timeout' });
+  const network = describeFetchFailure({ failed: true, reason: 'no-response' });
+  assert.match(timeout, /timed out/);
+  assert.doesNotMatch(network, /timed out/);
+});
+
+test('describeFetchFailure: a missing local file is not reported as a network problem', () => {
+  const text = describeFetchFailure({ failed: true, reason: 'unreadable-file' });
+  assert.match(text, /may not exist/);
+  assert.doesNotMatch(text, /network/);
+  // The one legitimate hedge: a file:// read has no HTTP layer, so
+  // "absent" and "unreadable" arrive identically.
+  assert.match(text, /may not be readable/);
+});
+
+test('describeFetchFailure: an HTTP failure states the status', () => {
+  assert.match(describeFetchFailure({ failed: true, reason: 'http-error', status: 403 }), /HTTP 403/);
+  assert.match(describeFetchFailure({ failed: true, reason: 'http-error', status: 500 }), /HTTP 500/);
+});
+
+test('describeFetchFailure: size and emptiness read as predicates of the file', () => {
+  assert.equal(describeFetchFailure({ failed: true, reason: 'empty' }), 'is empty');
+  assert.match(describeFetchFailure({ failed: true, reason: 'oversize' }), /^is larger than the /);
+});
+
+test('describeResolveFailure: the two mistakes that used to share a message now differ', () => {
+  const outside = describeResolveFailure({ failed: true, reason: 'outside-script-folder' });
+  const scheme = describeResolveFailure({ failed: true, reason: 'unsupported-scheme', scheme: 'ftp:' });
+  assert.notEqual(outside, scheme);
+  assert.match(outside, /outside the script's own folder/);
+  // Names the scheme the author wrote rather than restating the rule.
+  assert.match(scheme, /^ftp: URLs are not supported/);
+});
+
+// ---------- the whole path, message included ----------
+
+test('attachFiles: an http dependency that 404s reports the status, through the real fetch path', async () => {
+  // Not a seeded cache entry: this drives `fetchResourceBytes` itself,
+  // so it pins the one thing the two halves of this feature exist for —
+  // that a known cause survives all the way into the sentence a user
+  // reads.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 404 });
+  try {
+    const r = await attachFiles({
+      scriptFileUrl: 'https://example.com/scripts/foo.user.js',
+      header: header(['require', 'https://example.com/lib.js']),
+      priorRequires: new Map(),
+      priorResources: new Map(),
+      recheck: 'all',
+      fetchCache: new Map(),
+      now: 2000,
+    });
+    assert.equal(
+      r.errorMessage,
+      '@require https://example.com/lib.js: could not be fetched: HTTP 404',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('attachFiles: an oversize dependency names the limit, not a generic failure', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new Uint8Array(2 * 1024 * 1024).buffer, {
+    status: 200,
+    headers: { 'content-type': 'application/javascript' },
+  });
+  try {
+    const r = await attachFiles({
+      scriptFileUrl: 'https://example.com/scripts/foo.user.js',
+      header: header(['require', 'https://example.com/big.js']),
+      priorRequires: new Map(),
+      priorResources: new Map(),
+      recheck: 'all',
+      fetchCache: new Map(),
+      now: 2000,
+    });
+    assert.match(r.errorMessage, /^@require https:\/\/example\.com\/big\.js: is larger than the /);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

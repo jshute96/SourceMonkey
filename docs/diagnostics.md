@@ -190,10 +190,17 @@ One message per problem, phrased to survive every place it lands.
   facts. Name the *step* that failed, not just the subsystem it was in —
   `failed reading this script's stored GM values during setup` leaves
   somewhere to start; `could not load your settings` doesn't.
-- **Don't guess between causes.** Where the pipeline genuinely can't
-  tell (`FETCH_FAILED`), the message states the possibilities and
-  TODO.md tracks the plumbing that would narrow it. Where it can, it
-  says which.
+- **Don't guess between causes.** Say which. Where a helper knows the
+  cause but its return type doesn't carry it, widen the return type
+  rather than writing a message that lists possibilities — that is
+  what `FetchFailReason` and `ResolveFailReason` (`file-loader.ts`)
+  exist for, and `describeFetchFailure` / `describeResolveFailure`
+  (`external-files.ts`) are the only place they become words.
+  - Genuinely indistinguishable causes stay merged, and say so — but
+    only where they really are. A `file://` read has no HTTP layer, so
+    "the file isn't there" and "the file can't be read" arrive
+    identically and share one message. A timeout does *not* qualify:
+    our own abort sets `signal.aborted`, so it gets its own reason.
 - **Say when it's ours.** A failure the user can't act on is prefixed
   `internal error:` rather than phrased as an accusation.
 

@@ -67,7 +67,12 @@ export const BAD_CASES = [
   { file: 'blank-lines.user.js',           expectedStatus: 'ok' },
   // The file that failed has no content to point into, so the location
   // is the `@require` line that named it.
-  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js: could not be fetched/,
+  //
+  // One exact string, not an alternation: both `file://` legs (the
+  // page's XHR and the service worker's / Node's `fetch`) report an
+  // unreadable local file the same way, so the browser and the CLI
+  // must agree here.
+  { file: 'missing-require.user.js',       expectedStatus: 'invalid', errorMatcher: /@require \.\/does-not-exist\.js: could not be read/,
     errorIn: 'missing-require.user.js' },
   // Both require cases below fetch their `@require` fine — the failure
   // is in the code, not the load. They differ in WHEN we can see it:

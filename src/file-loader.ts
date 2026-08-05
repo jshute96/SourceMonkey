@@ -49,12 +49,45 @@ export interface ResolvedResource {
 
 const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:/i;
 
+// Why a ref couldn't be resolved. The distinctions exist because they
+// have different fixes: a wrong scheme is a typo in the URL, a path
+// that climbs out of the folder is a layout the loader won't allow.
+// `external-files.ts` turns these into the text the user reads.
+export type ResolveFailReason =
+  | 'empty'
+  | 'malformed-url'
+  | 'unsupported-scheme'
+  | 'outside-script-folder';
+
+// A discriminated union for the same reason `FetchFailure` is one: the
+// scheme is always known where it belongs, so making it optional would
+// only buy an unreachable — and ungrammatical — fallback in the message.
+export type ResolveFailure =
+  | { failed: true; reason: Exclude<ResolveFailReason, 'unsupported-scheme'> }
+  // Carried rather than re-derived so the message names what the
+  // author actually wrote.
+  | { failed: true; reason: 'unsupported-scheme'; scheme: string };
+
+// Yes/no form, for the callers that only need a URL or nothing —
+// syntax highlighting's link detection, the icon resolver, the offline
+// validator. A thin wrapper rather than a second implementation: the
+// two used to be one function and the rules must not drift.
 export function resolveScriptResource(
   ref: string,
   scriptFileUrl: string,
 ): ResolvedResource | null {
+  const result = resolveScriptResourceDetailed(ref, scriptFileUrl);
+  return 'failed' in result ? null : result;
+}
+
+// Same rules, but says which one rejected the ref. Used where the
+// answer becomes a message a user reads.
+export function resolveScriptResourceDetailed(
+  ref: string,
+  scriptFileUrl: string,
+): ResolvedResource | ResolveFailure {
   const trimmed = ref.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return { failed: true, reason: 'empty' };
 
   if (trimmed.startsWith('data:')) {
     return { kind: 'data', url: trimmed };
@@ -68,12 +101,12 @@ export function resolveScriptResource(
     try {
       parsed = new URL(trimmed);
     } catch {
-      return null;
+      return { failed: true, reason: 'malformed-url' };
     }
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
       return { kind: 'http', url: parsed.toString() };
     }
-    return null;
+    return { failed: true, reason: 'unsupported-scheme', scheme: parsed.protocol };
   }
 
   // Relative path. Resolve against the script's parent directory and
@@ -87,11 +120,13 @@ export function resolveScriptResource(
     resolved = new URL(trimmed, scriptFileUrl);
     parentBase = new URL('./', scriptFileUrl);
   } catch {
-    return null;
+    return { failed: true, reason: 'malformed-url' };
   }
   const parentStr = parentBase.toString();
   const resolvedStr = resolved.toString();
-  if (!resolvedStr.startsWith(parentStr)) return null;
+  if (!resolvedStr.startsWith(parentStr)) {
+    return { failed: true, reason: 'outside-script-folder' };
+  }
 
   if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
     return { kind: 'http', url: resolvedStr };
@@ -99,7 +134,10 @@ export function resolveScriptResource(
   if (resolved.protocol === 'file:') {
     return { kind: 'file', url: resolvedStr };
   }
-  return null;
+  // A relative ref that lands on some other scheme — only reachable
+  // when the script's own URL has one, which the source pipeline
+  // doesn't produce today.
+  return { failed: true, reason: 'unsupported-scheme', scheme: resolved.protocol };
 }
 
 // ---------- Bounded byte fetch ----------
@@ -130,19 +168,51 @@ export interface FetchedBytes {
   finalUrl: string;
 }
 
+// Why a fetch produced no bytes. Each is known at the point the fetcher
+// gives up. `external-files.ts` turns them into text —
+// `describeFetchFailure`.
+//
+// `timeout` is separate from `no-response` because we can tell: our own
+// abort sets `controller.signal.aborted`. Without that split both would
+// have to share a message naming two causes, which is the thing these
+// reasons exist to avoid.
+export type FetchFailReason =
+  | 'unsupported-scheme'
+  | 'no-response'
+  | 'timeout'
+  | 'unreadable-file'
+  | 'http-error'
+  | 'wrong-content-type'
+  | 'empty'
+  | 'oversize';
+
+// A discriminated union, not one shape with optional extras: `status`
+// is always known where it belongs and never meaningful elsewhere, so
+// making it optional would only buy an unreachable "the request failed"
+// fallback in the message layer.
+export type FetchFailure =
+  | { failed: true; reason: Exclude<FetchFailReason, 'http-error'> }
+  | { failed: true; reason: 'http-error'; status: number };
+
+const fetchFailed = (reason: Exclude<FetchFailReason, 'http-error'>): FetchFailure =>
+  ({ failed: true, reason });
+
+const httpError = (status: number): FetchFailure =>
+  ({ failed: true, reason: 'http-error', status });
+
 export async function fetchResourceBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | null> {
+): Promise<FetchedBytes | FetchFailure> {
   if (isHttpUrl(url)) return fetchHttpBytes(url, opts);
   if (isFileUrl(url)) return fetchFileBytes(url, opts);
-  return null;
+  return fetchFailed('unsupported-scheme');
 }
 
 async function fetchHttpBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | null> {
+): Promise<FetchedBytes | FetchFailure> {
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -162,26 +232,30 @@ async function fetchHttpBytes(
       headers: { ...githubAuthHeaders(url) },
     });
   } catch {
-    return null;
+    // Our own timer is the only thing that aborts this request, so an
+    // aborted signal identifies the timeout exactly rather than
+    // leaving it merged with a network failure.
+    return controller.signal.aborted ? fetchFailed('timeout') : fetchFailed('no-response');
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) return null;
+  if (!response.ok) return httpError(response.status);
 
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
   if (opts.acceptContentType && contentType && !opts.acceptContentType(contentType)) {
-    return null;
+    return fetchFailed('wrong-content-type');
   }
   const cl = response.headers.get('content-length');
-  if (cl && Number(cl) > opts.maxBytes) return null;
+  if (cl && Number(cl) > opts.maxBytes) return fetchFailed('oversize');
 
   let body: ArrayBuffer;
   try {
     body = await response.arrayBuffer();
   } catch {
-    return null;
+    return fetchFailed('no-response');
   }
-  if (body.byteLength === 0 || body.byteLength > opts.maxBytes) return null;
+  if (body.byteLength === 0) return fetchFailed('empty');
+  if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
 
   return { body, contentType, finalUrl: response.url || url };
 }
@@ -189,7 +263,7 @@ async function fetchHttpBytes(
 async function fetchFileBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | null> {
+): Promise<FetchedBytes | FetchFailure> {
   // Page contexts: XHR avoids the chrome-extension → file:// CORS
   // opaque-response trap that bites `fetch()`. SW contexts: no XHR,
   // but `fetch()` is permitted for file:// when host_permissions
@@ -203,18 +277,20 @@ async function fetchFileBytes(
 function fetchFileBytesXhr(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | null> {
+): Promise<FetchedBytes | FetchFailure> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     let settled = false;
-    const finish = (value: FetchedBytes | null) => {
+    const finish = (value: FetchedBytes | FetchFailure) => {
       if (settled) return;
       settled = true;
       resolve(value);
     };
+    // The one branch here that knows its cause with certainty: we are
+    // inside our own timer.
     const timer = setTimeout(() => {
       try { xhr.abort(); } catch { /* ignore */ }
-      finish(null);
+      finish(fetchFailed('timeout'));
     }, opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS);
 
     xhr.open('GET', url);
@@ -222,8 +298,20 @@ function fetchFileBytesXhr(
     xhr.onload = () => {
       clearTimeout(timer);
       const body = xhr.response as ArrayBuffer | null;
-      if (!body || body.byteLength === 0 || body.byteLength > opts.maxBytes) {
-        finish(null);
+      // Defensive: `onload` with no body shouldn't happen — a failed
+      // load fires `onerror`, and a 0-byte file yields an empty buffer,
+      // not null. Guarded so that if it ever does, it isn't mistaken
+      // for an empty file.
+      if (!body) {
+        finish(fetchFailed('unreadable-file'));
+        return;
+      }
+      if (body.byteLength === 0) {
+        finish(fetchFailed('empty'));
+        return;
+      }
+      if (body.byteLength > opts.maxBytes) {
+        finish(fetchFailed('oversize'));
         return;
       }
       // file:// XHRs don't carry an HTTP layer, so Content-Type is
@@ -233,20 +321,23 @@ function fetchFileBytesXhr(
       // filename / bytes.
       const ct = (xhr.getResponseHeader('content-type') ?? '').toLowerCase();
       if (opts.acceptContentType && ct && !opts.acceptContentType(ct)) {
-        finish(null);
+        finish(fetchFailed('wrong-content-type'));
         return;
       }
       finish({ body, contentType: ct, finalUrl: url });
     };
+    // A file:// XHR carries no HTTP layer, so a file that isn't there
+    // and one we're not allowed to read arrive identically — hence one
+    // reason covering both, rather than a guess between them.
     xhr.onerror = () => {
       clearTimeout(timer);
-      finish(null);
+      finish(fetchFailed('unreadable-file'));
     };
     try {
       xhr.send();
     } catch {
       clearTimeout(timer);
-      finish(null);
+      finish(fetchFailed('unreadable-file'));
     }
   });
 }
@@ -254,7 +345,7 @@ function fetchFileBytesXhr(
 async function fetchFileBytesFetch(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | null> {
+): Promise<FetchedBytes | FetchFailure> {
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -264,40 +355,56 @@ async function fetchFileBytesFetch(
   try {
     response = await fetch(url, { signal: controller.signal });
   } catch {
-    return null;
+    return controller.signal.aborted ? fetchFailed('timeout') : fetchFailed('unreadable-file');
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok && response.status !== 0) return null;
-  if (response.type === 'opaque') return null;
+  // `status === 0` is normal for a successful file:// read. A non-ok
+  // status is NOT reported as an HTTP error: a `file:` URL has no HTTP
+  // layer, and whatever status this leg's `fetch` synthesises means the
+  // same thing the XHR leg's `onerror` does — the file wouldn't read.
+  // Reporting it as `HTTP <n>` would make the two legs describe one
+  // situation differently, which is what the offline validator's fetch
+  // shim exposed.
+  if (!response.ok && response.status !== 0) return fetchFailed('unreadable-file');
+  // Answered, but we aren't allowed to look.
+  if (response.type === 'opaque') return fetchFailed('unreadable-file');
 
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
   if (opts.acceptContentType && contentType && !opts.acceptContentType(contentType)) {
-    return null;
+    return fetchFailed('wrong-content-type');
   }
   let body: ArrayBuffer;
   try {
     body = await response.arrayBuffer();
   } catch {
-    return null;
+    // Same leg, same file — matches the `unreadable-file` above rather
+    // than blaming the network for a local read.
+    return fetchFailed('unreadable-file');
   }
-  if (body.byteLength === 0 || body.byteLength > opts.maxBytes) return null;
+  if (body.byteLength === 0) return fetchFailed('empty');
+  if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
 
   return { body, contentType, finalUrl: response.url || url };
 }
 
 // ---------- Text + suffix helpers ----------
 
-// Convenience for text-shaped consumers (e.g. `@require`). Wraps
-// fetchResourceBytes and decodes UTF-8. Returns null on any failure
-// the bytes-fetcher reports, plus null on a decode failure (rare —
-// `fatal: false` rules out throws).
+// Convenience for text-shaped consumers. Wraps fetchResourceBytes and
+// decodes UTF-8. Returns null on any failure the bytes-fetcher
+// reports, plus null on a decode failure (rare — `fatal: false` rules
+// out throws).
+//
+// Still yes/no: its one caller is the version probe, whose row renders
+// in a definition-list cell with no space for a reason. Switch it to
+// the failure shape if that row ever gets room — the same condition
+// TODO.md attaches to the probe's own wording.
 export async function fetchResourceText(
   url: string,
   opts: FetchBytesOptions,
 ): Promise<string | null> {
   const res = await fetchResourceBytes(url, opts);
-  if (!res) return null;
+  if ('failed' in res) return null;
   try {
     return new TextDecoder('utf-8', { fatal: false }).decode(res.body);
   } catch {

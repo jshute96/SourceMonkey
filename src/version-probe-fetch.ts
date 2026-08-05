@@ -40,10 +40,12 @@ export async function runProbe(
     error,
     ...(prior?.version ? { version: prior.version } : {}),
   });
-  // `fetchResourceText` reports every failure — network error, non-2xx,
-  // timeout, over-cap, empty body, bad decode — as a null return, with
-  // no way to tell them apart. Hence the one coarse message; the row's
-  // job is "we couldn't check", not diagnosis.
+  // The bytes fetcher does report which failure it was, but
+  // `fetchResourceText` drops that on purpose: `probe.error` renders as
+  // a value in a definition-list cell (`script-details.ts`) with no room
+  // for a sentence, so this row's job is "we couldn't check", not
+  // diagnosis. Tracked in TODO.md with the rest of the version-probe
+  // wording exception.
   const text = await fetchResourceText(target.url, {
     maxBytes: PROBE_MAX_BYTES,
     timeoutMs: PROBE_TIMEOUT_MS,
