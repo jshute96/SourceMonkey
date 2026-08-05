@@ -30,13 +30,23 @@ Returns `{leadingText, headerText, bodyText, error?}`:
 - `error` — `'no metadata block'` or `'unterminated metadata
   block'`. On error, `leadingText = ''`, `headerText = ''`, and
   `bodyText = source`.
+- `headerStartLine` — 1-based line of the `// ==UserScript==` marker,
+  when there is one. Set even for `unterminated metadata block`, which
+  is precisely the error whose one useful destination is the line that
+  opened the block that never closed.
 
 ### `parseHeader(source)`
 
 Returns `ParsedHeader | null` (null when no block is found).
-`ParsedHeader` is `{tags: HeaderTag[]}` and `HeaderTag` is
-`{tag, locale?, value}` — flat list of every metadata line in source
-order, tag names lowercased.
+`ParsedHeader` is `{tags: HeaderTag[], startLine?}` and `HeaderTag` is
+`{tag, locale?, value, line?}` — flat list of every metadata line in
+source order, tag names lowercased.
+
+- `line` and `startLine` are 1-based in the **whole source**, so they
+  match the viewer's gutter. They exist so a diagnostic about a tag can
+  be clicked through to it — see [diagnostics.md](diagnostics.md).
+- Both are optional because `header` is persisted: rows stored before
+  the fields existed come back without them, and a refresh re-parses.
 
 Lookup helpers (callers pick the one that matches the tag they want):
 
@@ -88,6 +98,14 @@ One page, one set of panels, two query strings:
    (`status: ok` + `refreshError`). Hidden when neither is set.
    Accompanied by the file-access banner when the toggle explains it
    (see [When a local file won't read](#when-a-local-file-wont-read)).
+   - When the row carries an `errorLocation`, the `(in <file>, line N,
+     column M)` part is a **link** into the tab it names. See
+     [diagnostics.md](diagnostics.md).
+   - Painted after `setTabs`, not with the rest of the header fields: a
+     location can only become a link once there are tabs to resolve it
+     against.
+   - `refreshError` never gets one — the fetch failed, so there is no
+     new content to point into.
 4. **Details panel** (`#header-summary` → `<dl>`) — built by
    `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
@@ -341,7 +359,10 @@ Banner (`#banner-slot`) states what this file is; the action row
   — the same pair `buildScriptFromText` runs. A preview that offered
   Install for something that would land as an `invalid` row would be
   lying about what installing does.
-- Install and Update are both hidden; the banner carries the reason.
+- Install and Update are both hidden; the banner carries the reason —
+  including a link to the line it is about, which for a header problem
+  is the `// ==UserScript==` marker and for a file with no block at all
+  is the file itself. See [diagnostics.md](diagnostics.md).
 - The source is still rendered. Seeing what actually came back is the
   whole point when a URL returns a login page instead of a script.
 - **Continue to page** loads the location itself, with the capture
@@ -362,11 +383,15 @@ clicking Install.
 - **Warns, doesn't block.** Install stays live. A missing `@match`
   means the file isn't an installable userscript at all; a syntax error
   is a property of code the user may well intend to install and fix.
-- **Says where**, when it can: the message is followed by the file the
-  error is in — a `@require`'s URL or the script's own path — plus a
-  line and column within that file. Same wording as the `invalid` row's
-  message, via `describeParseError`, so the preview and the row can't
+- **Says where**, when it can, and the "where" is a **link** into the
+  tab it names — a `@require`'s or the script's own. See
+  [diagnostics.md](diagnostics.md). Same wording as the `invalid` row's
+  message, via `describeDiagnostic`, so the preview and the row can't
   describe one verdict two ways.
+- The warning is held as a `PreviewWarning` (message, location,
+  trailing sentence), not as rendered text: `replaceBanner` rebuilds
+  each warning's DOM, and a location flattened into a string on the way
+  in could never come back as a link.
 - The warning is appended below the install/installed banner rather
   than replacing it — both facts are true and belong on screen
   together. It renders after `wireInstallButtons` resolves, because

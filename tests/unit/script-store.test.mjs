@@ -83,25 +83,32 @@ test('validateHeader is OK for @name + @include', async () => {
   assert.equal(validateHeader(header), null);
 });
 
+// Each of these is about a tag that ISN'T in the block, so none has a
+// line of its own — they all point at the `// ==UserScript==` marker,
+// which is the block the missing tag belongs in.
 test('validateHeader complains about a missing @name', async () => {
-  assert.equal(validateHeader(parseHeader(MISSING_NAME)), 'missing @name');
+  assert.deepEqual(validateHeader(parseHeader(MISSING_NAME)), {
+    message: 'missing @name',
+    line: 1,
+  });
 });
 
 test('validateHeader complains about no matching patterns', async () => {
-  assert.equal(
-    validateHeader(parseHeader(NO_MATCH)),
-    'missing @match or @include',
-  );
+  assert.deepEqual(validateHeader(parseHeader(NO_MATCH)), {
+    message: 'missing @match or @include',
+    line: 1,
+  });
 });
 
 test('validateHeader complains about a null header', async () => {
-  assert.equal(validateHeader(null), 'no metadata block');
+  // No block at all: the whole file is the answer, so no line.
+  assert.deepEqual(validateHeader(null), { message: 'no metadata block' });
 });
 
 // ---------- extractStartupLogs ----------
 
 test('extractStartupLogs returns [] for a null header', () => {
-  assert.deepEqual(extractStartupLogs(null), []);
+  assert.deepEqual(extractStartupLogs(null, 'x.user.js'), []);
 });
 
 test('extractStartupLogs returns [] when every @grant is in the catalog', () => {
@@ -112,7 +119,7 @@ test('extractStartupLogs returns [] when every @grant is in the catalog', () => 
 // @grant GM_getValue
 // ==/UserScript==
 `);
-  assert.deepEqual(extractStartupLogs(header), []);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), []);
 });
 
 test('extractStartupLogs returns [] when there are no @grant lines at all', () => {
@@ -120,7 +127,7 @@ test('extractStartupLogs returns [] when there are no @grant lines at all', () =
   // fires when at least one @grant line was declared, so a script
   // without any grants is silent.
   const header = parseHeader(VALID_SCRIPT);
-  assert.deepEqual(extractStartupLogs(header), []);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), []);
 });
 
 test('extractStartupLogs emits a warn entry naming each unknown @grant in declaration order', () => {
@@ -132,8 +139,14 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
 // @grant GM_audio
 // ==/UserScript==
 `);
-  assert.deepEqual(extractStartupLogs(header), [
-    { level: 'warn', message: 'unknown @grant entries dropped: GM_webRequest, GM_audio' },
+  // Located at the FIRST unknown grant's line (@grant GM_webRequest on
+  // line 5), not at the first @grant line — that one is fine.
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
+    {
+      level: 'warn',
+      message: 'unknown @grant entries dropped: GM_webRequest, GM_audio',
+      location: { file: 'x.user.js', line: 5 },
+    },
   ]);
 });
 
@@ -148,8 +161,12 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
 // @grant GM_typo
 // ==/UserScript==
 `);
-  assert.deepEqual(extractStartupLogs(header), [
-    { level: 'warn', message: 'unknown @grant entries dropped: GM_typo' },
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
+    {
+      level: 'warn',
+      message: 'unknown @grant entries dropped: GM_typo',
+      location: { file: 'x.user.js', line: 5 },
+    },
   ]);
 });
 
@@ -199,7 +216,11 @@ console.log('hi');
   const entry = await buildScriptFromText({ ...COMMON, source: src });
   assert.equal(entry.status, 'ok');
   assert.deepEqual(entry.startupLogs, [
-    { level: 'warn', message: 'unknown @grant entries dropped: GM_typoName' },
+    {
+      level: 'warn',
+      message: 'unknown @grant entries dropped: GM_typoName',
+      location: { file: 'a.user.js', line: 5 },
+    },
   ]);
 });
 
@@ -982,7 +1003,13 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
     fileUrl: 'file:///a.user.js', source: MISSING_NAME, now: 1,
   });
   assert.equal(bad.status, 'invalid');
-  assert.deepEqual(loadStateLogEntry(bad), { level: 'error', message: 'missing @name' });
+  // The location rides as its own field rather than being baked into
+  // the text, so the Log tab can render it as a link.
+  assert.deepEqual(loadStateLogEntry(bad), {
+    level: 'error',
+    message: 'missing @name',
+    location: { file: 'a.user.js', line: 1 },
+  });
 });
 
 test('loadStateLogEntry falls back to a generic message when an invalid row has none', () => {

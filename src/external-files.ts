@@ -190,6 +190,33 @@ export interface AttachFilesResult {
   // to status:'invalid' with this message. Partial lists aren't
   // useful for injection so we return empty arrays alongside.
   errorMessage?: string;
+  // Line in the SCRIPT's own source that declared the file that failed.
+  // The file itself never loaded, so it has no content to point into —
+  // the `@require` / `@resource` line is the only place the reader can
+  // actually go and act on. Absent when the declaration can't be
+  // located (a header parsed before line numbers were recorded).
+  errorLine?: number;
+}
+
+// Find the header line that declared a file, so a load failure can
+// point at it. Matching is on the declaration's own text rather than
+// on the resolved URL: resolution is exactly what may have failed, and
+// the line the user has to edit is the one they wrote.
+//
+// Localized forms (`@require:de`) are skipped for the same reason
+// `getValues` skips them — they are not the declarations that were
+// loaded.
+function declarationLine(
+  header: ParsedHeader | null,
+  tag: 'require' | 'resource',
+  matches: (value: string) => boolean,
+): number | undefined {
+  if (!header) return undefined;
+  for (const t of header.tags) {
+    if (t.tag !== tag || t.locale) continue;
+    if (matches(t.value.trim())) return t.line;
+  }
+  return undefined;
 }
 
 export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesResult> {
@@ -216,7 +243,12 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       seenUrls: seenRequireUrls,
     });
     if (res.errorMessage) {
-      return { requires: [], resources: [], errorMessage: res.errorMessage };
+      return {
+        requires: [],
+        resources: [],
+        errorMessage: res.errorMessage,
+        errorLine: declarationLine(args.header, 'require', (v) => v === ref),
+      };
     }
     if (res.entry) requires.push(res.entry);
   }
@@ -231,7 +263,19 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       now: args.now,
     });
     if (res.errorMessage) {
-      return { requires: [], resources: [], errorMessage: res.errorMessage };
+      return {
+        requires: [],
+        resources: [],
+        errorMessage: res.errorMessage,
+        // Matched on NAME, which is what `distillResources` dedups on,
+        // so the line found is the declaration that was actually
+        // loaded rather than a later one the loader ignored.
+        errorLine: declarationLine(
+          args.header,
+          'resource',
+          (v) => splitResourceValue(v)?.prefix.trim() === decl.name,
+        ),
+      };
     }
     if (res.entry) resources.push(res.entry);
   }

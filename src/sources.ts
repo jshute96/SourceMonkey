@@ -46,6 +46,7 @@ import {
   sourceAnchorId,
 } from './source-display.js';
 import { getValue } from './userscript-header.js';
+import { describeDiagnostic } from './diagnostic-location.js';
 import {
   updateAllSources,
   updateSource,
@@ -592,7 +593,14 @@ function renderScriptRow(
   tr.dataset.scriptStatus = script.status;
   tr.dataset.sourceId = script.sourceId;
   if (inContainer) tr.dataset.inContainer = '1';
-  if (script.errorMessage) tr.dataset.scriptError = script.errorMessage;
+  // Stashed already-described (message + `(in file, line …)`) because
+  // the dataset is a string channel and the repaint path has no access
+  // to the structured location. The hover text is the only consumer, so
+  // flattening here loses nothing — the clickable form of the same
+  // location lives in the viewer, which this row's link opens.
+  if (script.errorMessage) {
+    tr.dataset.scriptError = describeDiagnostic(script.errorMessage, script.errorLocation);
+  }
   if (script.refreshError) tr.dataset.scriptRefreshError = script.refreshError;
   // The outdated verdict needs the parsed header and the stored probes,
   // neither of which survives as a dataset attribute — record it here
@@ -661,7 +669,13 @@ function renderScriptRow(
   tr.appendChild(sizeCell);
 
   const statusCell = document.createElement('td');
-  paintStatusCell(statusCell, script.id, script.status, script.errorMessage, script.refreshError);
+  paintStatusCell(
+    statusCell,
+    script.id,
+    script.status,
+    tr.dataset.scriptError,
+    script.refreshError,
+  );
   tr.appendChild(statusCell);
 
   // Container rows always offer a remove button (every script inside a

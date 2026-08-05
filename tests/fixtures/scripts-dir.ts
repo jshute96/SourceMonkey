@@ -97,6 +97,21 @@ export class ScriptsDir {
     return fullPath;
   }
 
+  // Write a file verbatim — no metadata block rendered around it.
+  //
+  // For the cases `write` can't express: a `@require` library (not a
+  // userscript at all), and the malformed scripts whose whole point is
+  // a header the renderer would never produce. Shares `write`'s mtime
+  // bump so the two behave the same on a rewrite.
+  writeRaw(relativePath: string, content: string): string {
+    const fullPath = path.join(this.path, relativePath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content);
+    const now = Date.now();
+    fs.utimesSync(fullPath, now / 1000, now / 1000 + 1);
+    return fullPath;
+  }
+
   // Rewrite an existing file with new body content. The metadata block
   // stays the same (preserves @match etc. so the matcher's view of the
   // script doesn't change). Bumps mtime so the next refresh sees it.

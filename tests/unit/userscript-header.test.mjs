@@ -36,9 +36,13 @@ test('parseHeader extracts tags in source order', () => {
   const h = parseHeader(SAMPLE);
   assert.ok(h);
   assert.equal(h.tags.length, 13);
-  assert.deepEqual(h.tags[0], { tag: 'name', value: 'Hello World' });
-  assert.deepEqual(h.tags[1], { tag: 'name', locale: 'de', value: 'Hallo Welt' });
-  assert.deepEqual(h.tags[h.tags.length - 1], { tag: 'noframes', value: '' });
+  // `line` is 1-based in the WHOLE source, so it is the number the
+  // viewer's gutter shows — SAMPLE opens with `// ==UserScript==` on
+  // line 1, putting @name on line 2 and the last tag, @noframes, on 14.
+  assert.deepEqual(h.tags[0], { tag: 'name', value: 'Hello World', line: 2 });
+  assert.deepEqual(h.tags[1], { tag: 'name', locale: 'de', value: 'Hallo Welt', line: 3 });
+  assert.deepEqual(h.tags[h.tags.length - 1], { tag: 'noframes', value: '', line: 14 });
+  assert.equal(h.startLine, 1);
 });
 
 test('getValue returns first non-localized value', () => {
@@ -107,7 +111,9 @@ test('parseHeader ignores non-tag lines inside the block', () => {
 // ==/UserScript==
 `;
   const h = parseHeader(src);
-  assert.deepEqual(h.tags, [{ tag: 'name', value: 'Foo' }]);
+  // Skipped lines still advance the count: @name is on source line 3
+  // even though line 2 produced no tag.
+  assert.deepEqual(h.tags, [{ tag: 'name', value: 'Foo', line: 3 }]);
 });
 
 test('parseHeader stops at the end marker and ignores body tags', () => {
@@ -279,4 +285,76 @@ test('splitHeaderBody returns empty bodyText when nothing follows the block', ()
   assert.equal(result.error, undefined);
   assert.equal(result.leadingText, '');
   assert.equal(result.bodyText, '');
+});
+
+// ---------- line numbers ----------
+//
+// Every header diagnostic ("missing @name", "unknown @grant …", a
+// `@require` that won't load) is turned into a clickable jump by the
+// viewer, and the line it jumps to comes from here. The number has to
+// be counted in the WHOLE source, because that is what the viewer's
+// gutter shows — not within the metadata block.
+
+test('tag lines are numbered from the top of the file, not the top of the block', () => {
+  const src = `'use strict';
+// a stray comment
+// ==UserScript==
+// @name        Offset
+// @match       https://example.com/*
+// ==/UserScript==
+body();
+`;
+  const h = parseHeader(src);
+  assert.equal(h.startLine, 3);
+  assert.deepEqual(
+    h.tags.map((t) => [t.tag, t.line]),
+    [['name', 4], ['match', 5]],
+  );
+  // The split agrees with the parse — they find the marker with the
+  // same regex, and a diagnostic about an unterminated block would
+  // otherwise land a different line than one about a tag.
+  assert.equal(splitHeaderBody(src).headerStartLine, 3);
+});
+
+for (const [name, nl] of [['LF', '\n'], ['CRLF', '\r\n'], ['CR', '\r']]) {
+  test(`${name} line endings produce the same tag line numbers`, () => {
+    // Counting and splitting have to use one rule. If they diverge,
+    // every header diagnostic in a DOS or classic-Mac file is off by
+    // the number of lines above it.
+    const src = [
+      '// ==UserScript==',
+      '// @name        Endings',
+      '// @match       https://example.com/*',
+      '// ==/UserScript==',
+      'body();',
+    ].join(nl);
+    const h = parseHeader(src);
+    assert.deepEqual(h.tags.map((t) => t.line), [2, 3]);
+  });
+}
+
+test('an unterminated block still reports the line that opened it', () => {
+  // The one diagnostic whose only useful destination is the marker
+  // itself — there is no closing line to point at, by definition.
+  const src = 'lead\nlead\n// ==UserScript==\n// @name Nope\n';
+  const split = splitHeaderBody(src);
+  assert.equal(split.error, 'unterminated metadata block');
+  assert.equal(split.headerStartLine, 3);
+  // parseHeader gives up entirely on an unterminated block, so the
+  // split is the only source for this one.
+  assert.equal(parseHeader(src), null);
+});
+
+test('a file with no metadata block offers no line at all', () => {
+  const split = splitHeaderBody("console.log('nothing here');\n");
+  assert.equal(split.error, 'no metadata block');
+  assert.equal(split.headerStartLine, undefined);
+});
+
+test('a BOM does not shift the line numbering', () => {
+  // The BOM is stripped before the markers are found, and it lives at
+  // file position 0 — inside line 1, not before it.
+  const h = parseHeader('﻿// ==UserScript==\n// @name B\n// @match https://e/*\n// ==/UserScript==\n');
+  assert.equal(h.startLine, 1);
+  assert.deepEqual(h.tags.map((t) => t.line), [2, 3]);
 });

@@ -192,15 +192,3 @@ export function attachParseLocation(
     location: { file: origin.url, line: origin.line, column: hit.column },
   };
 }
-
-// ---------- Saying it ----------
-
-// One phrasing of "what's wrong and where", shared by the store's
-// `invalid` message and the install preview's warning so the two can
-// never describe the same verdict differently.
-export function describeParseError(verdict: ParseVerdict): string {
-  const message = verdict.message ?? 'unknown';
-  const at = verdict.location;
-  if (!at) return message;
-  return `${message} (in ${at.file}, line ${at.line}, column ${at.column})`;
-}

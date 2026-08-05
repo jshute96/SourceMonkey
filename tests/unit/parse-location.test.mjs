@@ -12,7 +12,6 @@ import assert from 'node:assert/strict';
 
 import {
   attachParseLocation,
-  describeParseError,
   selectParseLocation,
 } from '../../dist/parse-location.js';
 
@@ -280,20 +279,4 @@ test('never invents a verdict, and drops the wire-only probes', () => {
     { segments: SEGMENTS, lineCount: 8 },
   );
   assert.deepEqual(unplaced, { status: 'syntax-error', message: 'm' });
-});
-
-test('describeParseError says where, when it knows', () => {
-  assert.equal(
-    describeParseError({
-      status: 'syntax-error',
-      message: "Unexpected token ';'",
-      location: { file: 'https://cdn.example/lib.js', line: 2, column: 31 },
-    }),
-    "Unexpected token ';' (in https://cdn.example/lib.js, line 2, column 31)",
-  );
-  assert.equal(
-    describeParseError({ status: 'syntax-error', message: "Unexpected token ';'" }),
-    "Unexpected token ';'",
-  );
-  assert.equal(describeParseError({ status: 'syntax-error' }), 'unknown');
 });

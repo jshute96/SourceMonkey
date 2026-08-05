@@ -43,11 +43,19 @@ interface LogEntry {
   source: string;          // origin label, e.g. 'manual-refresh', 'script-wrapper'
   tabId?: number;          // present when the event originated from injected code
   message: string;         // human-readable; multiline OK
+  location?: DiagnosticLocation;  // a place in the script's own files
 }
 ```
 
 The viewer's table renders `tabId · source` together when `tabId` is
 present, and just `source` otherwise.
+
+`location` is a place SourceMonkey *derived* — a bad header line, a
+syntax error — and the Log tab renders it as a link into the matching
+code tab. Distinct from the `sourcemonkey://…:L:C` refs that appear
+inside a runtime stack trace: those are text the script itself
+produced and are found by scanning the message. See
+[diagnostics.md](diagnostics.md).
 
 ### Source labels
 

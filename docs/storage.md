@@ -72,6 +72,13 @@ Key spaces in `chrome.storage.local`:
 - `errorMessage?` — set when `status === 'invalid'`. Cleared on the
   transition to `missing` (the row's body is preserved, but the prior
   error reason is dropped — the file is simply gone).
+- `errorLocation?` — where in the script's own files `errorMessage` is
+  about, when it was derived from their content. Absent when the script
+  itself couldn't be fetched; a `@require` that wouldn't load still gets
+  the header line that declared it. Written
+  only via `setScriptError`, which writes the pair — see
+  [diagnostics.md](diagnostics.md). The message carries no `(in …)`
+  suffix; surfaces pair the two through `describeDiagnostic`.
 - `refreshError?` — set when the latest refresh of a previously-good
   script failed but we kept the cached good copy running. Distinct
   from `errorMessage`: a row with `refreshError` keeps `status: 'ok'`
@@ -136,7 +143,8 @@ update-probe verdict to render the Status column.
   script can't run. `errorMessage` carries the reason:
   `'no metadata block'`, `'unterminated metadata block'`,
   `'missing @name'`, `'missing @match or @include'`, a
-  fetch-failure message, or the offending dep URL.
+  fetch-failure message, or the offending dep URL. The content-derived
+  ones also carry an `errorLocation`.
 - `'missing'` — file was in the scan listing previously but no
   longer is. Behavior:
   - On the **ok → missing** transition (and only then), `enabled`

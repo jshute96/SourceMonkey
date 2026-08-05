@@ -8,6 +8,8 @@
 // page, and any import would make tsc emit an ES module. It mirrors
 // these shapes inline instead; they are small and change together.
 
+import type { DiagnosticLocation } from './diagnostic-location.js';
+
 export const PARSE_CHECK_MSG = 'sm:parse-check';
 export const PARSE_CHECK_RESULT_MSG = 'sm:parse-check-result';
 // Posted by the sandbox to its embedder once its listener is live.
@@ -49,7 +51,13 @@ export interface ParseProbes {
 
 // Where the error is, once a probe has been chosen and its line mapped
 // back through the segment list to the file that line was written in.
-export interface ParseLocation {
+//
+// The general `DiagnosticLocation` with both optional fields pinned
+// present: unlike a header diagnostic, a parse verdict either knows the
+// line AND the column (V8 reports both) or has no location at all.
+// Narrowing here keeps that guarantee where it is true without asking
+// every other producer to invent a column.
+export interface ParseLocation extends DiagnosticLocation {
   // The `@require` URL, or the script's own path.
   file: string;
   line: number;

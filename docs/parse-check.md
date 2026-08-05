@@ -345,6 +345,19 @@ file anyone can open. `buildParseCheckSource` returns the same
 - A position outside the checked text is the sentinel — the source ends
   mid-construct — so it is reported as the message alone.
 
+### What the caller gets
+
+The verdict's `location` is a `DiagnosticLocation`, the shape every
+content-derived verdict in the extension carries — see
+[diagnostics.md](diagnostics.md). The parse check is the only producer that always
+knows a column, so `ParseLocation` pins both coordinates present.
+
+- The store writes it to `StoredScript.errorLocation` beside the
+  message, rather than formatting it into the text. That is what lets
+  the viewer render it as a link.
+- `errorMessage` therefore has no `(in …)` suffix; anything showing it
+  as plain text pairs the two through `describeDiagnostic`.
+
 ## Limits
 
 - **A brace imbalance is placed at the brace, not always at its
@@ -379,7 +392,9 @@ See [offline-validation.md](offline-validation.md).
   The expectations live in `tests/fixtures/bad-script-cases.mjs` and
   are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
   `tests/unit/validate-userscripts.test.mjs` under Node, which is what
-  keeps the two engines' answers verified against each other.
+  keeps the two engines' answers verified against each other. The same
+  directory covers the header diagnostics — see
+  [diagnostics.md](diagnostics.md).
 - `tests/unit/parse-check-node.test.mjs` — the Node port of the compile
   and its `vm.Script` location probes.
 - `tests/e2e/parse-check-install.spec.ts` — what a user sees.

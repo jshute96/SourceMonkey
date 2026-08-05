@@ -366,6 +366,21 @@
         cursor: pointer;
       }
       .log-pane .log-stack-link:hover { color: #2563eb; }
+      /* The `(in <file>, line N, column M)` part of a diagnostic we
+         derived ourselves — a header problem, a bad `@require`, a
+         syntax error. Appears in three places with three different
+         surrounding colours (the red `.message` bar, an amber banner,
+         a Log row), so it inherits the surrounding weight and marks
+         itself only with an underline and the monospace face the file
+         name deserves. `color: inherit` keeps the red error bar red
+         rather than half red and half blue. */
+      .diagnostic-link {
+        color: inherit;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      .diagnostic-link:hover { text-decoration-thickness: 2px; }
       /* The line-numbers plugin makes <code> position: relative but
          leaves it inline; without an explicit display:block the
          absolute .line-flash overlay below sizes to the line box

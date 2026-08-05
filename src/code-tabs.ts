@@ -157,13 +157,21 @@ export class CodeTabsView {
   // `col` (1-based) positions the vertical accent bar at the character
   // column from the stack ref. Pass `undefined` (e.g. line-number
   // gutter clicks) to place the bar at the start of the line.
-  goToTabLine(tabIndex: number, tabLine: number, col?: number): void {
+  //
+  // `tabLine` is optional because not every navigation has a line to
+  // offer: a diagnostic about a file as a whole (`no metadata block`)
+  // knows which file to open and nothing more. Omitting it selects the
+  // tab and leaves no highlight behind — including when the tab was
+  // already active and carrying one from a previous jump, which would
+  // otherwise read as this navigation's answer.
+  goToTabLine(tabIndex: number, tabLine?: number, col?: number): void {
     if (this.activeIdx !== tabIndex) {
       this.activeIdx = tabIndex;
       this.resetHighlight();
       this.paint();
     }
-    this.scrollToAndHighlightLine(tabLine, col);
+    if (tabLine === undefined) this.clearLineHighlight();
+    else this.scrollToAndHighlightLine(tabLine, col);
     this.updateUrlHash();
   }
 

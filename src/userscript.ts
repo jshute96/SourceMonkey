@@ -96,7 +96,13 @@ import {
 import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
-import { describeParseError } from './parse-location.js';
+import {
+  describeDiagnostic,
+  locationLabel,
+  validLocation,
+  type DiagnosticLocation,
+} from './diagnostic-location.js';
+import { buildHash } from './script-url-hash.js';
 import { dlog } from './debug-log.js';
 import { dropRawView, putRawView } from './raw-view.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
@@ -434,19 +440,9 @@ function render(script: StoredScript): void {
     ? 'Enable this script'
     : 'Source is disabled';
 
-  // The banner shows the load error for `invalid` rows, and the
-  // refresh-failure reason for a still-running `refresh-failed` row
-  // (status `ok` + `refreshError`) — so opening a flagged script always
-  // explains why. `errorMessage` takes precedence (it means the script
-  // can't run at all); `refreshError` is the softer "running on a cached
-  // copy, last update failed" case.
-  if (script.errorMessage) {
-    setMessage(script.errorMessage, 'error');
-  } else if (script.refreshError) {
-    setMessage(`Refresh failed: ${script.refreshError}`, 'refresh-failed');
-  } else {
-    setMessage('');
-  }
+  // Identity the script's own diagnostics name it by. Set before the
+  // tabs so `appendDiagnostic` below can resolve a location to tab 0.
+  mainDiagFile = script.relativePath;
 
   // Same question the preview asks after a failed fetch, for the same
   // reason: a local script we couldn't read has most likely hit the
@@ -501,6 +497,26 @@ function render(script: StoredScript): void {
   });
 
   tabsView.setTabs(storedTabs(script));
+
+  // The message shows the load error for `invalid` rows, and the
+  // refresh-failure reason for a still-running `refresh-failed` row
+  // (status `ok` + `refreshError`) — so opening a flagged script always
+  // explains why. `errorMessage` takes precedence (it means the script
+  // can't run at all); `refreshError` is the softer "running on a cached
+  // copy, last update failed" case.
+  //
+  // Painted AFTER the tabs, not with the rest of the header fields: a
+  // location can only become a link once there are tabs to resolve it
+  // against, and `setTabs` is what installs them.
+  if (script.errorMessage) {
+    setDiagnosticMessage(script.errorMessage, script.errorLocation, 'error');
+  } else if (script.refreshError) {
+    // No location: `refreshError` means the fetch failed, so there is
+    // no new content to point into, and the running copy is fine.
+    setMessage(`Refresh failed: ${script.refreshError}`, 'refresh-failed');
+  } else {
+    setMessage('');
+  }
 }
 
 // Tab strip for an installed script: main + one per `@require`, then
@@ -616,11 +632,16 @@ function buildStatusCell(script: StoredScript): Node {
   link.className = `meta-status status-${effective}`;
   // Hover text follows whatever the cell is showing: the refresh-failure
   // reason, the newer version found upstream, or the load errorMessage.
+  // A `title` is plain text, so the location is flattened in rather
+  // than linked — the clickable form of the same verdict is in the
+  // message bar this row sits above.
   const title = effective === 'refresh-failed'
     ? script.refreshError
     : effective === 'outdated' && outdated
       ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
-      : script.errorMessage;
+      : script.errorMessage
+        ? describeDiagnostic(script.errorMessage, script.errorLocation)
+        : undefined;
   if (title) link.title = title;
   return link;
 }
@@ -739,6 +760,10 @@ async function fetchPreviewText(url: string): Promise<string> {
 
 function renderPreview(text: string): void {
   previewHeader = parseHeader(text);
+  // Identity this file's own diagnostics name it by — the same one
+  // `checkPreviewSource` passes as `relativePath`, so a header problem
+  // and a syntax error both resolve to the main tab.
+  mainDiagFile = previewLocation;
 
   renderHeading(displayLocation(previewLocation), {
     matching: distillMatching(previewHeader),
@@ -865,9 +890,12 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
     // of its way not to disable a working script over one — an Update
     // keeps the prior copy running and records a refresh failure. So
     // say what we couldn't do, not what will happen.
-    appendPreviewWarning(
-      `This script's code could not be checked: ${files.errorMessage}`,
-    );
+    appendPreviewWarning({
+      message: `This script's code could not be checked: ${files.errorMessage}`,
+      // The file that wouldn't load has no tab and no content, so the
+      // location is the `@require` / `@resource` line that named it.
+      location: locationIn(files.errorLine),
+    });
     return;
   }
   if (files.requires.length > 0) script.requires = files.requires;
@@ -878,10 +906,21 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
   // Only V8 answering SyntaxError may accuse a script — see
   // [docs/parse-check.md].
   if (verdict?.status !== 'syntax-error') return;
-  appendPreviewWarning(
-    `This script's code has a syntax error, so none of it would run: ` +
-    `${describeParseError(verdict)}. ${syntaxErrorOutcome()}`,
-  );
+  appendPreviewWarning({
+    message:
+      `This script's code has a syntax error, so none of it would run: ` +
+      `${verdict.message ?? 'unknown'}`,
+    // Points into the `@require` tab when the error is in a library —
+    // the preview builds a tab per declared `@require`, so those are
+    // reachable even though nothing is installed yet.
+    //
+    // Validated here because this is the one path where numbers from
+    // the sandbox reach the DOM without passing through the store or
+    // the log: `isParseVerdict` checks only `status`, and a malformed
+    // probe would otherwise render `line NaN` and scroll to it.
+    location: validLocation(verdict.location),
+    trailing: `. ${syntaxErrorOutcome()}`,
+  });
 }
 
 // What actually happens if the user goes ahead — which is not one
@@ -921,32 +960,60 @@ let previewInstalledStatus: StoredScript['status'] | null = null;
 // Warnings the parse check has reported, so `renderBanner` can put them
 // back after it replaces the slot. Preview-only; empty for an
 // installed script.
-const previewWarnings: string[] = [];
+//
+// Held structurally rather than as rendered text: a replaced banner
+// rebuilds each warning's DOM from scratch, and a location that had
+// been flattened to a string on the way in could never come back as a
+// link.
+const previewWarnings: PreviewWarning[] = [];
 
 // Add a warning box below whatever the banner slot already says, rather
 // than replacing it — the install/installed banner is still true, and
 // the two facts belong on screen together.
-function appendPreviewWarning(text: string): void {
-  previewWarnings.push(text);
-  bannerSlotEl.append(makeBanner(text));
+function appendPreviewWarning(warning: PreviewWarning): void {
+  previewWarnings.push(warning);
+  bannerSlotEl.append(makeBanner(warning));
 }
 
 // The reason this file can't be installed, or null. Deliberately the
 // same pair of checks `buildScriptFromText` runs — a preview that
 // offers Install for something that would land as an `invalid` row
 // would be lying.
-function previewValidationError(text: string, header: ParsedHeader | null): string | null {
+function previewValidationError(
+  text: string,
+  header: ParsedHeader | null,
+): PreviewWarning | null {
   const split = splitHeaderBody(text);
   if (split.error) {
-    return split.error === 'no metadata block'
-      ? 'This file has no // ==UserScript== metadata block, so it is not an installable userscript.'
-      : 'This file has an unterminated // ==UserScript== metadata block, so it is not an installable userscript.';
+    return {
+      message: split.error === 'no metadata block'
+        ? 'This file has no // ==UserScript== metadata block, so it is not an installable userscript.'
+        : 'This file has an unterminated // ==UserScript== metadata block, so it is not an installable userscript.',
+      // An unterminated block has one useful place to point: the line
+      // that opened it. A file with no block at all has none, so the
+      // location is the file itself — clicking still gets the reader to
+      // the source, which is where they have to start.
+      location: locationIn(split.headerStartLine),
+    };
   }
-  const invalid = validateHeader(header);
-  return invalid ? `This script cannot be installed: ${invalid}` : null;
+  const problem = validateHeader(header);
+  if (!problem) return null;
+  return {
+    message: `This script cannot be installed: ${problem.message}`,
+    location: locationIn(problem.line),
+  };
 }
 
-function renderInvalidPreview(error: string): void {
+// A location in the previewed script's own source. `previewLocation` is
+// the identity `checkPreviewSource` gives it when composing the checked
+// text, so a header diagnostic and a syntax error name the same file.
+function locationIn(line: number | undefined): DiagnosticLocation {
+  return line === undefined
+    ? { file: previewLocation }
+    : { file: previewLocation, line };
+}
+
+function renderInvalidPreview(error: PreviewWarning): void {
   renderBanner(error);
   installBtn.hidden = true;
   updateBtn.hidden = true;
@@ -1267,8 +1334,8 @@ function readFailed(script: StoredScript): boolean {
   return message !== undefined && message.includes(script.fileUrl);
 }
 
-function renderBanner(text: string, extraClass = ''): void {
-  replaceBanner(makeBanner(text, extraClass));
+function renderBanner(content: BannerContent, extraClass = ''): void {
+  replaceBanner(makeBanner(content, extraClass));
 }
 
 // The one way to replace what the banner slot says. Every caller
@@ -1282,11 +1349,31 @@ function replaceBanner(banner: HTMLElement): void {
   for (const warning of previewWarnings) bannerSlotEl.append(makeBanner(warning));
 }
 
-function makeBanner(text: string, extraClass = ''): HTMLElement {
+// A banner's text, optionally with somewhere in the script to point at.
+// Plain strings stay plain strings — most banners ("already installed",
+// "not installed yet") aren't about the content at all.
+interface PreviewWarning {
+  message: string;
+  location?: DiagnosticLocation;
+  // Anything to say AFTER the location. Kept separate rather than
+  // glued onto `message` so the location stays in the middle of the
+  // sentence where it reads naturally — "…syntax error: X (in f, line
+  // 3). Installing it will store it as INVALID."
+  trailing?: string;
+}
+
+type BannerContent = string | PreviewWarning;
+
+function makeBanner(content: BannerContent, extraClass = ''): HTMLElement {
   const div = document.createElement('div');
   div.className = extraClass ? `banner ${extraClass}` : 'banner';
   const p = document.createElement('p');
-  p.textContent = text;
+  if (typeof content === 'string') {
+    p.textContent = content;
+  } else {
+    appendDiagnostic(p, content.message, content.location);
+    if (content.trailing) p.append(content.trailing);
+  }
   div.append(p);
   return div;
 }
@@ -1334,6 +1421,83 @@ function renderHeading(
 function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {
   messageEl.textContent = text;
   messageEl.className = kind ? `message ${kind}` : 'message';
+}
+
+// ---------- Clickable diagnostics ----------
+//
+// Everything SourceMonkey concludes from a script's *content* — a
+// metadata block that never closes, a missing `@match`, a `@require`
+// that won't load, a syntax error — arrives with a `DiagnosticLocation`
+// naming the file and usually the line. This is the half that turns
+// that into a place the reader can click through to.
+
+// The file identity a diagnostic uses for the script's OWN body: its
+// `relativePath` when installed, the previewed location otherwise.
+//
+// Only the main script needs recording. A `@require` is named by its
+// resolved URL in both a diagnostic and its tab's `fileUrl`, so those
+// match directly — but the main tab's `fileUrl` is the script's
+// *fetchable* URL (absolute `file://` / `https://`), which is not what
+// the source map calls it.
+let mainDiagFile = '';
+
+function findTabForLocation(file: string): number {
+  if (file && file === mainDiagFile) return 0;
+  return tabsView.tabs.findIndex((t) => t.kind === 'code' && t.fileUrl === file);
+}
+
+// Paint `<message> (in <where>)` into `el`, with the "where" a link
+// that selects the tab and highlights the line.
+//
+// Falls back to exactly the string `describeDiagnostic` produces
+// whenever there is no tab for the file. That is a real case rather
+// than a defensive one: a `@require` whose fetch failed never gets a
+// tab, and telling the reader which declaration is at fault is worth
+// having even when we can't take them to it.
+function appendDiagnostic(
+  el: HTMLElement,
+  message: string,
+  location: DiagnosticLocation | undefined,
+): void {
+  const tabIndex = location ? findTabForLocation(location.file) : -1;
+  const tab = tabIndex >= 0 ? tabsView.tabs[tabIndex] : undefined;
+  if (!location || !tab || tab.kind !== 'code') {
+    el.append(describeDiagnostic(message, location));
+    return;
+  }
+  el.append(`${message} (in `);
+  const a = document.createElement('a');
+  a.className = 'diagnostic-link';
+  // A real fragment rather than `href="#"`, so the link is copyable and
+  // shows where it goes. It names the same place the click handler
+  // navigates to — `goToTabLine` rebuilds this exact hash afterwards.
+  const fragment = buildHash({
+    tab: tabIndex === 0 ? 'main' : 'require',
+    filename: tab.label,
+    line: location.line,
+    col: location.column,
+  });
+  a.href = fragment ? `#${fragment}` : '#';
+  a.textContent = locationLabel(location);
+  a.addEventListener('click', (ev) => {
+    // Navigating in the handler rather than letting the fragment do it:
+    // clicking a link whose hash already matches the URL fires no
+    // `hashchange`, so a second click after scrolling away would sit
+    // there doing nothing.
+    ev.preventDefault();
+    tabsView.goToTabLine(tabIndex, location.line, location.column);
+  });
+  el.append(a, ')');
+}
+
+// `setMessage` for a diagnostic that knows where it came from.
+function setDiagnosticMessage(
+  message: string,
+  location: DiagnosticLocation | undefined,
+  kind: 'error' | 'refresh-failed',
+): void {
+  setMessage('', kind);
+  appendDiagnostic(messageEl, message, location);
 }
 
 function showMissing(message: string): void {
@@ -1427,7 +1591,16 @@ function paintLog(entries: LogEntry[]): void {
 
     const tdMsg = document.createElement('td');
     tdMsg.className = 'log-msg';
-    appendLogMessageContent(tdMsg, e.message, e.timestamp);
+    if (e.location) {
+      // A location SourceMonkey derived (a bad header line, a syntax
+      // error) rather than one scraped out of a stack trace. It is
+      // already structured, so it needs none of the remapping the ref
+      // scanner below does — and the message it belongs to is our own
+      // prose, which has no refs in it to scan for.
+      appendDiagnostic(tdMsg, e.message, e.location);
+    } else {
+      appendLogMessageContent(tdMsg, e.message, e.timestamp);
+    }
     tr.appendChild(tdMsg);
 
     tbody.appendChild(tr);

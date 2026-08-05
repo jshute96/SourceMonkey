@@ -52,6 +52,7 @@ import {
 } from '../dist/script-store.js';
 import { buildParseCheckSource } from '../dist/injector.js';
 import { attachParseLocation } from '../dist/parse-location.js';
+import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { resolveScriptResource } from '../dist/file-loader.js';
 import { distillRequires, distillResources, MAX_FILE_BYTES } from '../dist/external-files.js';
 import { checkParseNode } from './parse-check-node.mjs';
@@ -373,9 +374,11 @@ function classify(script) {
 
   const syntax = /^script source has a syntax error: (.*)$/s.exec(message);
   if (syntax) {
-    // Drop the "(in <file>, line N, column N)" tail — the position is
-    // per script, the message is what groups.
-    return { category: 'syntax error', detail: syntax[1].replace(/ \(in .*\)$/s, '') };
+    // No position to strip: `errorMessage` carries the message alone and
+    // the location travels beside it in `errorLocation` (see
+    // docs/diagnostics.md). That is what we want here anyway — the
+    // position is per script, the message is what groups.
+    return { category: 'syntax error', detail: syntax[1] };
   }
 
   const dep = /^@(require|resource) (.*?): ([\s\S]*)$/.exec(message);
@@ -528,7 +531,15 @@ async function main() {
       try {
         const script = await checkScript(files[i], opts.offlineRoot, now);
         record = { name, status: script.status, ...classify(script) };
-        if (script.errorMessage) record.message = script.errorMessage;
+        // Rendered the way every in-browser surface renders it, so the
+        // report reads as `<message> (in <file>, line N, column N)`
+        // rather than losing the position that `errorLocation` now
+        // carries separately. `classify` above deliberately works off
+        // the bare message, which is what groups.
+        if (script.errorMessage) {
+          record.message = describeDiagnostic(script.errorMessage, script.errorLocation);
+          if (script.errorLocation) record.location = script.errorLocation;
+        }
       } catch (err) {
         // The pipeline itself threw — a read error, or a bug. Reported
         // as its own category so it can never be mistaken for a

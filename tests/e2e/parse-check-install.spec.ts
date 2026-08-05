@@ -30,6 +30,7 @@ test.describe('parse check at install time', () => {
     getSources: () => Promise<{ id: string }[]>;
     getSourceWithScripts: (id: string) => Promise<{ scripts: {
       id: string; status: string; errorMessage?: string; relativePath: string;
+      errorLocation?: { file: string; line?: number; column?: number };
     }[] } | null>;
   }) {
     await sm.addSource(scriptsDir.path);
@@ -98,8 +99,12 @@ test.describe('parse check at install time', () => {
     });
     const scripts = await installAndRead(sm);
     expect(scripts[0].status).toBe('invalid');
-    expect(scripts[0].errorMessage).toMatch(/lib\.js/);
-    expect(scripts[0].errorMessage).toMatch(/line 4\b/);
+    // The location is its own field rather than text inside the
+    // message: the viewer turns it into a link, so it has to survive as
+    // structure. Asserting on it is also stricter than a regex over
+    // prose — `line 4` can't accidentally match a column.
+    expect(scripts[0].errorLocation?.file).toMatch(/lib\.js$/);
+    expect(scripts[0].errorLocation?.line).toBe(4);
   });
 
   test('the error names the script itself when the body is at fault', async ({ sm }) => {
@@ -115,13 +120,13 @@ test.describe('parse check at install time', () => {
     });
     const scripts = await installAndRead(sm);
     expect(scripts[0].status).toBe('invalid');
-    expect(scripts[0].errorMessage).toMatch(/main\.user\.js/);
+    expect(scripts[0].errorLocation?.file).toMatch(/main\.user\.js$/);
     // Header + body: the `let c = ;` line, counted in the file the
     // user opens rather than in the program we built.
     const source = fs.readFileSync(path.join(scriptsDir.path, 'main.user.js'), 'utf8');
     const expected = source.split('\n').findIndex((l) => l.includes('let c = ;')) + 1;
     expect(expected).toBeGreaterThan(1);
-    expect(scripts[0].errorMessage).toMatch(new RegExp(`line ${expected}\\b`));
+    expect(scripts[0].errorLocation?.line).toBe(expected);
   });
 
   test('a collision is blamed on the file that redeclares, not the first one', async ({ sm }) => {
@@ -141,9 +146,9 @@ test.describe('parse check at install time', () => {
     });
     const scripts = await installAndRead(sm);
     expect(scripts[0].status).toBe('invalid');
-    expect(scripts[0].errorMessage).toMatch(/b\.js/);
-    expect(scripts[0].errorMessage).not.toMatch(/a\.js/);
-    expect(scripts[0].errorMessage).toMatch(/line 2\b/);
+    expect(scripts[0].errorLocation?.file).toMatch(/b\.js$/);
+    expect(scripts[0].errorLocation?.file).not.toMatch(/a\.js$/);
+    expect(scripts[0].errorLocation?.line).toBe(2);
   });
 
   test('a healthy script with @requires stays ok', async ({ sm }) => {

@@ -28,6 +28,8 @@
 //     rather than O(scripts × entries) — the sources page needs this
 //     to render the Status column cheaply.
 
+import { validLocation, type DiagnosticLocation } from './diagnostic-location.js';
+
 export type LogLevel = 'info' | 'warning' | 'error';
 
 // Ordinal compare for LogLevel: error > warning > info. Used to decide
@@ -55,6 +57,15 @@ export interface LogEntry {
   // Human-readable message. Multiline is fine; the log pane preserves
   // newlines.
   message: string;
+  // Where in the script's own files the entry is about, when it was
+  // derived from their content (a bad header line, a syntax error).
+  // The log pane renders it as a link into the matching code tab.
+  //
+  // Distinct from the `sourcemonkey://…:L:C` refs that appear INSIDE a
+  // runtime stack trace: those are text the script itself produced and
+  // are linkified by scanning the message, whereas this is a location
+  // SourceMonkey derived and knows structurally.
+  location?: DiagnosticLocation;
 }
 
 // Hard cap on retained entries per script. Older entries are dropped
@@ -92,6 +103,10 @@ export interface AppendLogInput {
   source: string;
   message: string;
   tabId?: number;
+  // See `LogEntry.location`. Validated on the way in: entries are
+  // persisted and later turned into click targets, so a malformed line
+  // number is dropped here rather than discovered at render time.
+  location?: DiagnosticLocation;
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
@@ -126,6 +141,8 @@ async function writeEntry(
     message: input.message,
   };
   if (input.tabId !== undefined) entry.tabId = input.tabId;
+  const location = validLocation(input.location);
+  if (location) entry.location = location;
   const next = prior.length >= LOG_CAP
     ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
     : [...prior, entry];

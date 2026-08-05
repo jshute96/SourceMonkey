@@ -231,7 +231,14 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     needsGmValues: cfg.needsGmValues,
   };
   if (cfg.matching) wire.matching = cfg.matching;
-  if (cfg.startupLogs && cfg.startupLogs.length > 0) wire.startupLogs = cfg.startupLogs;
+  if (cfg.startupLogs && cfg.startupLogs.length > 0) {
+    // Level and message only. A `StartupLog` also carries the header
+    // `location` the diagnostic is about, and that is for the Log tab
+    // — the prelude just echoes these to the page console. Passing it
+    // would put the script's path (an absolute local path, for a
+    // single-file source) into code the page can read.
+    wire.startupLogs = cfg.startupLogs.map((l) => ({ level: l.level, message: l.message }));
+  }
   const call =
     `(function(c){` +
     `if(self.__smPrelude){self.__smPrelude.init(c);}else{(self.__smCfgQueue=self.__smCfgQueue||[]).push(c);}})(${jsLit(wire)});`;

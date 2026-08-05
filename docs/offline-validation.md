@@ -39,7 +39,10 @@ a script performs:
    was written in.
 
 Each script comes out `ok` or `invalid` with the extension's own
-`errorMessage`.
+`errorMessage`, plus the `errorLocation` naming the file and line it is
+about — see [diagnostics.md](diagnostics.md). The report renders the two
+together through `describeDiagnostic`, so a line in the CLI's output
+reads exactly as the same verdict does in the viewer.
 
 ## Why it is the production code
 
@@ -129,7 +132,8 @@ covering three different offline outcomes, so the fetch shim's log is
 consulted for which one it actually was.
 
 `--json FILE` writes one record per script — name, status, category,
-message, and the dependency URL when one failed.
+message, the structured `location` when the verdict has one, and the
+dependency URL when one failed.
 
 ## Testing
 

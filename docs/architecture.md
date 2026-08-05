@@ -211,6 +211,10 @@ details live in the topic-specific docs linked below.
   to the script instead of at injection time; why it needs a sandboxed
   page, why it fails open, and how the error is traced back to a line
   of the `@require` or body it was written in.
+- [diagnostics.md](diagnostics.md) — the shared shape every
+  content-derived verdict carries (header problems, bad `@require`s,
+  syntax errors): which file and line it names, who produces one, and
+  how each surface turns it into a click through to the code.
 - [offline-validation.md](offline-validation.md) — the install-time
   checks as a command-line tool: how it runs the production pipeline
   outside a browser, the offline dependency root, and what the report

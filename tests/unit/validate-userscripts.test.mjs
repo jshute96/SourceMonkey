@@ -27,6 +27,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BAD_CASES,
+  expectedErrorLine,
+  expectedFilePattern,
   badScriptFilesOnDisk,
   locationPattern,
 } from '../fixtures/bad-script-cases.mjs';
@@ -93,9 +95,13 @@ test('tests/bad-examples produces the same verdicts the browser records', async 
       assert.equal(r.message ?? '', '', `expected no message for ${c.file}`);
     }
     if (c.errorIn) {
-      // The same line assertion the e2e spec makes, read off the
+      // The same location assertion the e2e spec makes, read off the
       // example's own `>>> the error` marker rather than written down.
-      assert.match(r.message ?? '', locationPattern(c.errorIn), `wrong location for ${c.file}`);
+      // The CLI renders it through `describeDiagnostic`, exactly as the
+      // extension's own surfaces do, so one pattern checks both.
+      assert.match(r.message ?? '', locationPattern(c), `wrong location for ${c.file}`);
+      assert.match(r.location?.file ?? '', expectedFilePattern(c), `wrong file for ${c.file}`);
+      assert.equal(r.location?.line, expectedErrorLine(c), `wrong line for ${c.file}`);
     }
   }
 

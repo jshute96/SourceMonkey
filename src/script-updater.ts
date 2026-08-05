@@ -58,7 +58,8 @@ import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
 import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
-import { appendScriptLog, logScriptEvent } from './script-log.js';
+import { appendScriptLog, logScriptEvent, type AppendLogInput } from './script-log.js';
+import { describeDiagnostic } from './diagnostic-location.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -420,7 +421,10 @@ function logScriptOutcome(
     return;
   }
   if (next.status === 'invalid') {
-    console.info(`[SourceMonkey] update check: ${label}: invalid — ${next.errorMessage ?? 'unknown'}`);
+    console.info(
+      `[SourceMonkey] update check: ${label}: invalid — ` +
+      `${describeDiagnostic(next.errorMessage ?? 'unknown', next.errorLocation)}`,
+    );
     return;
   }
   // Refresh failed but the cached good copy keeps running. Log once on
@@ -536,11 +540,7 @@ export function emitScriptOutcomeLog(
     // version the warning belongs to. One entry per content version —
     // a refresh that doesn't change content adds nothing.
     for (const entry of next.startupLogs ?? []) {
-      logScriptEvent(scriptId, {
-        level: startupLogLevelToLogLevel(entry.level),
-        source: 'parser',
-        message: entry.message,
-      });
+      logScriptEvent(scriptId, startupLogEntry(entry));
     }
     return;
   }
@@ -635,6 +635,20 @@ function startupLogLevelToLogLevel(level: StartupLog['level']): 'info' | 'warnin
   return 'info';
 }
 
+// A `StartupLog` as the Log tab's own entry shape. Both replay paths —
+// the new-content one in `emitScriptOutcomeLog` and the once-per-session
+// one in `ensureStartupLogsInLogTab` — go through here so a field added
+// to StartupLog can't reach one of them and not the other. `location`
+// is exactly such a field.
+function startupLogEntry(sl: StartupLog): AppendLogInput {
+  return {
+    level: startupLogLevelToLogLevel(sl.level),
+    source: 'parser',
+    message: sl.message,
+    ...(sl.location ? { location: sl.location } : {}),
+  };
+}
+
 // Sentinel key in chrome.storage.session that records "we've already
 // replayed the persisted per-script state for THIS Chrome session."
 // session storage is cleared on Chrome shutdown, so a fresh Chrome
@@ -712,11 +726,7 @@ async function ensureLoadStateInLogTab(script: StoredScript): Promise<void> {
 // problem than a rule that has to explain when a line is dropped.
 async function ensureStartupLogsInLogTab(script: StoredScript): Promise<void> {
   for (const sl of script.startupLogs ?? []) {
-    await appendScriptLog(script.id, {
-      level: startupLogLevelToLogLevel(sl.level),
-      source: 'parser',
-      message: sl.message,
-    });
+    await appendScriptLog(script.id, startupLogEntry(sl));
   }
 }
 

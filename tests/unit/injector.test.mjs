@@ -140,6 +140,28 @@ test('buildConfigBlob: serializes matching and startupLogs when present', () => 
   assert.match(blob, /"startupLogs":\[\{"level":"warn","message":"hi"\}\]/);
 });
 
+test('buildConfigBlob: a startup log\'s location never reaches the page', () => {
+  // The blob is injected as code the page can read. A `StartupLog` also
+  // carries the header location the diagnostic is about, and for a
+  // single-file source that `file` is an absolute local path — so the
+  // prelude, which only echoes level + message to the console, must not
+  // be handed it.
+  const blob = buildConfigBlob({
+    id: 'x', logLabel: 'x.user.js', name: 'X',
+    sourceUrl: 'sourcemonkey://SourceMonkey/x/x.user.js',
+    loadedAt: 0, runAt: 'document-idle', needsGmValues: false,
+    matching: null,
+    startupLogs: [{
+      level: 'warn',
+      message: 'unknown @grant entries dropped: GM_nope',
+      location: { file: '/home/someone/private/x.user.js', line: 4 },
+    }],
+  });
+  assert.match(blob, /"message":"unknown @grant entries dropped: GM_nope"/);
+  assert.doesNotMatch(blob, /"location"/);
+  assert.doesNotMatch(blob, /home\/someone/);
+});
+
 // ---------- wrapCombinedEntry ----------
 
 const COMBINED_ARGS = {

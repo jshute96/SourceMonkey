@@ -46,6 +46,12 @@ What is still unmapped:
   `@require` with CR-only endings maps to a line the gutter numbers
   differently. Fixing it means teaching the code view V8's rule, which
   also affects gutter clicks and the `#file:line` deep link.
+  - Header diagnostics are a third rule again: `parseHeader` counts
+    `\r`, `\r\n` and `\n`, matching the regex it splits the block by
+    (see [docs/diagnostics.md](docs/diagnostics.md)). It agrees with
+    the gutter for everything except CR-only files, which is the same
+    population as above — so all three converge if the code view
+    learns V8's rule.
 - **A stale log entry can't be mapped at all.** Entries older than the
   current `loadedAt` are left unmapped, because the layout they were
   generated against is gone. A tab still running the previous body

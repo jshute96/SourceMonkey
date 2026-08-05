@@ -180,6 +180,12 @@ update channel to a site you didn't approve.
       at the library rather than at the script that pulled it in. Some
       errors can't be pinned to a line (a file that just ends
       mid-construct, say); those still report what's wrong.
+    - Every problem SourceMonkey finds by reading a script says where,
+      not just what — a header field that's missing or malformed, an
+      `@require` that won't load, an unsupported `@grant`. In the
+      viewer the location is a **link**: click it to jump to that file
+      and line, whether the script is installed or you're looking at
+      the install preview for one you haven't added yet.
   - `MISSING` — the script's file is no longer in the scan listing
     (deleted on disk, manifest entry removed). The Size column still
     shows the cached body's byte count, and a small trash-can button
@@ -227,7 +233,9 @@ update channel to a site you didn't approve.
 - The viewer's **Log** tab lists what the script did and anything it
   threw. Stack traces are clickable and land on the exact line — in
   the `@require`'d library file when that's where the error came
-  from, not in the script that pulled it in.
+  from, not in the script that pulled it in. Warnings SourceMonkey
+  raises itself, like an unsupported `@grant`, are clickable the same
+  way and land on the header line they're about.
 - As you browse, the SourceMonkey toolbar icon shows a per-tab badge
   with the number of scripts involved on the current page (expected
   by the matcher OR actually started by the injected wrapper). The

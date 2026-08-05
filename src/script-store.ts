@@ -74,7 +74,11 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import type { VersionProbe } from './version-probe.js';
 import type { ParseVerdict } from './parse-check-protocol.js';
-import { describeParseError } from './parse-location.js';
+import {
+  describeDiagnostic,
+  validLocation,
+  type DiagnosticLocation,
+} from './diagnostic-location.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
@@ -108,6 +112,13 @@ export interface ScriptMatching {
 export interface StartupLog {
   level: 'log' | 'info' | 'warn' | 'error';
   message: string;
+  // The header line the diagnostic is about, so the Log tab can link
+  // to it. Every producer here reads the metadata block, so the file is
+  // always the script's own — but it is stored in full rather than
+  // implied, because the Log tab resolves locations from every source
+  // through one path and a special case would be the only entry that
+  // couldn't name a `@require`.
+  location?: DiagnosticLocation;
 }
 
 export interface StoredScript {
@@ -117,6 +128,19 @@ export interface StoredScript {
   fileUrl: string;
   status: ScriptStatus;
   errorMessage?: string;
+  // Where in the script's own files `errorMessage` is about, when it
+  // was derived from their content — a bad `@require` line, an
+  // unterminated metadata block, the token a syntax error stopped on.
+  // Absent when there is nothing to point at — including a failure to
+  // load the SCRIPT itself, where we never got the bytes. A `@require`
+  // that wouldn't load is the exception: the file has no content to
+  // point into, but the line that declared it does, and that is the
+  // line the reader has to change.
+  //
+  // Never written on its own: `setScriptError` writes the pair, because
+  // a location that outlives the message it belongs to would send the
+  // reader to a line that has nothing to do with what the row now says.
+  errorLocation?: DiagnosticLocation;
   // Set when the latest refresh attempt failed but we still hold a
   // last-known-good copy that's running. Distinct from `errorMessage`
   // (which pairs with `status: 'invalid'` and means "can't run"):
@@ -274,33 +298,79 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
 // failures, `@grant`-but-never-called dead grants). Anything that
 // blocks `validateHeader` belongs in there instead — error rows skip
 // the startup-logs attachment in `buildScriptFromText`.
-export function extractStartupLogs(header: ParsedHeader | null): StartupLog[] {
+export function extractStartupLogs(
+  header: ParsedHeader | null,
+  relativePath: string,
+): StartupLog[] {
   if (!header) return [];
   const logs: StartupLog[] = [];
   const grants = getValues(header, 'grant');
   if (grants.length > 0) {
     const resolved = resolveGrants(grants);
     if (resolved.unknown.length > 0) {
-      logs.push({
+      const log: StartupLog = {
         level: 'warn',
         message: `unknown @grant entries dropped: ${resolved.unknown.join(', ')}`,
-      });
+      };
+      // One message can name several bad grants, and they may be spread
+      // over several `@grant` lines — so the location is the FIRST one,
+      // which is where a reader fixing them starts. The others are named
+      // in the message and are a line or two away.
+      const line = headerTagLine(header, 'grant', resolved.unknown[0]);
+      if (line !== undefined) log.location = { file: relativePath, line };
+      logs.push(log);
     }
   }
   return logs;
 }
 
+// The line of the `@<tag>` declaration whose value is `value`.
+//
+// No "near enough" fallback to the first `@<tag>` line: that line is
+// usually a perfectly good declaration, and pointing at valid code is
+// worse than pointing at nothing — it sends the reader somewhere with
+// nothing wrong with it. `HeaderTag.value` is trimmed by `TAG_LINE`
+// and the caller reports the trimmed text, so the match holds.
+function headerTagLine(
+  header: ParsedHeader,
+  tag: string,
+  value: string,
+): number | undefined {
+  for (const t of header.tags) {
+    if (t.tag !== tag || t.locale) continue;
+    if (t.value.trim() === value) return t.line;
+  }
+  return undefined;
+}
+
+// A header problem, and the line worth pointing at.
+//
+// `line` is in the script's own source; the caller pairs it with the
+// file, since this function is deliberately ignorant of which script it
+// is looking at. Absent when nothing in the file is the answer.
+export interface HeaderProblem {
+  message: string;
+  line?: number;
+}
+
 // Verify the parsed header has the fields we require to consider a
 // script `ok`. Returns null on success, otherwise a human-readable
-// error message. Required: an `@name` plus at least one of
+// problem. Required: an `@name` plus at least one of
 // `@match` / `@include` (otherwise the script can never match a page).
-export function validateHeader(header: ParsedHeader | null): string | null {
-  if (!header) return 'no metadata block';
-  if (!getValue(header, 'name')) return 'missing @name';
+//
+// Every failure here is about a tag that ISN'T there, so none of them
+// has a line of its own. They point at the `// ==UserScript==` marker
+// instead: that's the block the missing tag belongs in, and where the
+// reader has to go to add it.
+export function validateHeader(header: ParsedHeader | null): HeaderProblem | null {
+  // No block at all — the whole file is the answer, so no line.
+  if (!header) return { message: 'no metadata block' };
+  const line = header.startLine;
+  if (!getValue(header, 'name')) return { message: 'missing @name', line };
   const matches = getValues(header, 'match');
   const includes = getValues(header, 'include');
   if (matches.length === 0 && includes.length === 0) {
-    return 'missing @match or @include';
+    return { message: 'missing @match or @include', line };
   }
   return null;
 }
@@ -342,14 +412,20 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
 
   let status: ScriptStatus = 'ok';
   let errorMessage: string | undefined;
+  let errorLine: number | undefined;
   if (split.error) {
     status = 'invalid';
     errorMessage = split.error;
+    // `unterminated metadata block` gets the line that opened the block
+    // that never closed. `no metadata block` gets nothing — there is no
+    // marker to point at, and the answer is the file as a whole.
+    errorLine = split.headerStartLine;
   } else {
-    const validationError = validateHeader(header);
-    if (validationError) {
+    const problem = validateHeader(header);
+    if (problem) {
       status = 'invalid';
-      errorMessage = validationError;
+      errorMessage = problem.message;
+      errorLine = problem.line;
     }
   }
 
@@ -378,7 +454,9 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
     // value via the merge in rebuildSource / refreshScript.
     enabled: true,
   };
-  if (errorMessage) entry.errorMessage = errorMessage;
+  if (errorMessage) {
+    setScriptError(entry, errorMessage, locationIn(args.relativePath, errorLine));
+  }
   if (args.httpEtag) entry.httpEtag = args.httpEtag;
   if (args.httpLastModified) entry.httpLastModified = args.httpLastModified;
   // Only persist leadingText when non-empty so the vast majority of
@@ -390,7 +468,7 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   // would just be dead bytes in storage. Same shape filter for the
   // empty case keeps the persisted row free of empty arrays.
   if (status === 'ok') {
-    const startupLogs = extractStartupLogs(header);
+    const startupLogs = extractStartupLogs(header, args.relativePath);
     if (startupLogs.length > 0) entry.startupLogs = startupLogs;
   }
   return entry;
@@ -415,7 +493,45 @@ export function applyFetchError(
   if (existing.status === 'ok') {
     return { ...existing, refreshError: errorMessage };
   }
-  return { ...existing, status: 'invalid', errorMessage };
+  const next: StoredScript = { ...existing, status: 'invalid' };
+  // No location: we never got the bytes, so there is no content this
+  // message is about. Routed through the setter so the prior row's
+  // location can't survive into a message it has nothing to do with.
+  setScriptError(next, errorMessage, undefined);
+  return next;
+}
+
+// Write a row's error message and its location together. They are one
+// fact stored in two fields, and every path that changes one has to
+// change the other: a location left behind by a previous failure would
+// point the reader at a line that has nothing to do with what the row
+// now says. Passing `undefined` for the message clears both.
+//
+// The location is validated on the way in rather than at each of the
+// surfaces that renders it — these rows are persisted and reloaded, and
+// a click target is not the place to discover a malformed line number.
+export function setScriptError(
+  entry: StoredScript,
+  message: string | undefined,
+  location: DiagnosticLocation | undefined,
+): void {
+  if (message === undefined) delete entry.errorMessage;
+  else entry.errorMessage = message;
+  const valid = validLocation(location);
+  if (valid) entry.errorLocation = valid;
+  else delete entry.errorLocation;
+}
+
+// A place in the script's own source. `file` is the relative path
+// because that is the identity the source map gives a script's own body
+// (`buildParseCheckSource` passes it as `mainUrl`) and what the viewer
+// matches its main tab against — see `DiagnosticLocation`.
+//
+// Returns a location even with no line: "this file" is still somewhere
+// to go, and it is the honest answer for a file with no metadata block
+// at all.
+function locationIn(file: string, line: number | undefined): DiagnosticLocation {
+  return line === undefined ? { file } : { file, line };
 }
 
 // Build an `invalid` entry for a brand-new (never-loaded-successfully)
@@ -468,7 +584,7 @@ export function buildInitialInvalidEntry(args: {
 export function applyMissing(existing: StoredScript): StoredScript {
   const next: StoredScript = { ...existing, status: 'missing' };
   if (existing.status === 'ok') next.enabled = false;
-  delete next.errorMessage;
+  setScriptError(next, undefined, undefined);
   // A confirmed-vanished file subsumes any prior "refresh failed"
   // annotation — the row is now MISSING, not "running but stale".
   delete next.refreshError;
@@ -498,12 +614,21 @@ export function applyMissing(existing: StoredScript): StoredScript {
 //     `effectiveScriptStatus` returns REFRESH FAILED before it ever
 //     consults the max log level — see src/script-display.ts.)
 export function loadStateLogEntry(
-  script: Pick<StoredScript, 'status' | 'errorMessage' | 'refreshError'>,
-): { level: LogLevel; message: string } | null {
+  script: Pick<StoredScript, 'status' | 'errorMessage' | 'refreshError' | 'errorLocation'>,
+): { level: LogLevel; message: string; location?: DiagnosticLocation } | null {
   if (script.status === 'invalid') {
-    return { level: 'error', message: script.errorMessage ?? 'unknown error' };
+    // The location travels as its own field rather than being baked
+    // into the text, so the Log tab can link it — and so this entry
+    // says exactly what the status badge's hover text says.
+    return {
+      level: 'error',
+      message: script.errorMessage ?? 'unknown error',
+      ...(script.errorLocation ? { location: script.errorLocation } : {}),
+    };
   }
   if (script.status === 'missing') {
+    // Deliberately no location: a vanished file has no content, and
+    // `applyMissing` clears any location the row used to carry.
     return { level: 'error', message: script.errorMessage ?? 'source file is missing' };
   }
   if (script.refreshError) {
@@ -598,7 +723,14 @@ export async function applyFiles(
       return { ...prior, refreshError: result.errorMessage };
     }
     built.status = 'invalid';
-    built.errorMessage = result.errorMessage;
+    // The file that failed has no content to point into, so the
+    // location is the `@require` / `@resource` line that named it —
+    // which is the line the reader has to change anyway.
+    setScriptError(
+      built,
+      result.errorMessage,
+      locationIn(built.relativePath, result.errorLine),
+    );
     delete built.requires;
     delete built.resources;
     return built;
@@ -733,7 +865,16 @@ async function applyParseCheck(
     return built;
   }
   built.status = 'invalid';
-  built.errorMessage = `script source has a syntax error: ${describeParseError(verdict)}`;
+  // The message carries no `(in …)` suffix any more — the location
+  // rides alongside it so surfaces can make it clickable, and each of
+  // them appends the suffix itself via `describeDiagnostic`. Anything
+  // reading `errorMessage` on its own therefore has to pair it with
+  // `errorLocation` to say the whole thing.
+  setScriptError(
+    built,
+    `script source has a syntax error: ${verdict.message ?? 'unknown'}`,
+    verdict.location,
+  );
   // Don't record the fingerprint: the row is invalid, and a future
   // refresh that produces the same bytes should re-derive that rather
   // than inherit a stale pass. (`prior` above only short-circuits on a
@@ -852,7 +993,16 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         ) {
           return {
             ...prior,
-            refreshError: `fetched copy is not a valid userscript (${withFiles.errorMessage ?? 'parse failed'})`,
+            // Described, not bare: `refreshError` is a plain string
+            // with no location field of its own, so flattening the
+            // location into the text is the only way "where" survives
+            // — and where in the fetched copy it went wrong is the
+            // useful half of this message.
+            refreshError: `fetched copy is not a valid userscript (${
+              withFiles.errorMessage
+                ? describeDiagnostic(withFiles.errorMessage, withFiles.errorLocation)
+                : 'parse failed'
+            })`,
           };
         }
         return withFiles;
