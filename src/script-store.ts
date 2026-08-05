@@ -527,7 +527,12 @@ export function loadStateLogEntry(
 // shared across all scripts in a single refresh pass so two scripts
 // referencing the same canonical URL share one fetch — and a require
 // + a resource pointing at the same URL also share a single fetch.
-async function applyFiles(
+//
+// Exported for `scripts/validate-userscripts.mjs`, which runs this
+// half of the pipeline over a corpus of files on disk — the point of
+// that tool is to exercise the production path, so it calls this
+// rather than restating the sequence.
+export async function applyFiles(
   built: StoredScript,
   prior: StoredScript | undefined,
   recheck: 'all' | 'preserve',

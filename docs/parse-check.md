@@ -355,6 +355,13 @@ file anyone can open. `buildParseCheckSource` returns the same
 - **Parse errors only.** A library that parses and throws when it runs
   is unaffected; running it is exactly what this must not do.
 
+## Outside the browser
+
+The same check runs as a CLI over files on disk — `new Function` under
+Node, with `vm.Script` standing in for the `<script>` location probes.
+Everything from `selectParseLocation` onward is this code, unchanged.
+See [offline-validation.md](offline-validation.md).
+
 ## Testing
 
 - `tests/e2e/parse-check.spec.ts` — the mechanism, including
@@ -368,8 +375,13 @@ file anyone can open. `buildParseCheckSource` returns the same
 - `tests/bad-examples/` — installable by hand, one file per route
   through the location logic (body, `@require`, swallowed brace,
   swallowed brace at end of file, join-only collision, unterminated
-  construct). Add the directory as a source to see the real messages;
-  `bad-scripts.spec.ts` pins them.
+  construct). Add the directory as a source to see the real messages.
+  The expectations live in `tests/fixtures/bad-script-cases.mjs` and
+  are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
+  `tests/unit/validate-userscripts.test.mjs` under Node, which is what
+  keeps the two engines' answers verified against each other.
+- `tests/unit/parse-check-node.test.mjs` — the Node port of the compile
+  and its `vm.Script` location probes.
 - `tests/e2e/parse-check-install.spec.ts` — what a user sees.
 - `tests/e2e/parse-check-pages.spec.ts` — the page-driven paths, via
   the real Install / Refresh / Refresh All buttons.

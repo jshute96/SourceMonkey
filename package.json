@@ -20,6 +20,8 @@
     "test:headed": "playwright test --project=sourcemonkey --headed",
     "pretest:unit": "node scripts/build.mjs",
     "test:unit": "node --test 'tests/unit/*.test.mjs'",
+    "prevalidate": "node scripts/build.mjs",
+    "validate": "node scripts/validate-userscripts.mjs",
     "clean": "rm -rf dist test-results playwright-report"
   },
   "devDependencies": {

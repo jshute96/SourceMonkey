@@ -74,6 +74,12 @@ What is still unmapped:
   run. Renaming our internals (or moving the preamble reads onto
   `__smE`, which would also fix the `self` / `window` TDZ case) would
   make it work instead.
+  - Measured over the GreasyFork top 2000: this is the *only* thing
+    that made a real-world script fail to compile — 3 scripts, all of
+    them fine under Tampermonkey (`var …, GM;`, the
+    `if (typeof GM_setValue === 'undefined') { var GM_setValue = … }`
+    polyfill, and a script shipping its own `function GM_addStyle`).
+    See [docs/corpus-validation-results.md](docs/corpus-validation-results.md).
 
 ## Parse check — follow-ups
 
@@ -121,6 +127,53 @@ The compile-only check is in (see
   so every `@require` / `@resource` is fetched again. Bridging the two
   caches (or handing the preview's typed entries to the install) would
   halve the third-party traffic that eager fetching introduced.
+
+## GreasyFork corpus findings
+
+Running the install-time checks over the top-2000 GreasyFork scripts
+(`npm run validate`, see
+[docs/offline-validation.md](docs/offline-validation.md)) turns
+"scripts SourceMonkey would refuse" into a measured list. Full results,
+with the evidence behind each item, are in
+[docs/corpus-validation-results.md](docs/corpus-validation-results.md);
+what follows is the fix list it implies.
+
+Worth re-running after any change to the header parser, the `@require`
+gates, or the emitted wrap — the rate is the regression signal.
+
+- **`@require` URLs with no `.js` suffix.** `isJsResourceUrl` gates on
+  the URL path, and the CDN shorthand forms
+  (`cdn.jsdelivr.net/npm/sweetalert2@11`, `unpkg.com/file-saver`,
+  `bundle.run/p-queue@6.3.0`) carry no extension at all. Every
+  rejection in the corpus was one of these — no case where the gate
+  caught something that wasn't JavaScript. Tampermonkey does no suffix
+  gating. Either drop the gate in favour of the content-type + UTF-8
+  checks that already run on the response, or extend it to accept
+  extension-less paths.
+- **The 1 MB per-file cap.** `MAX_FILE_BYTES` rejects `opencv.js`,
+  `babylon.min.js`, MathJax's `tex-mml-chtml.js`, `video.js` and
+  `babel-standalone` — libraries a script legitimately pins. Splitting
+  the cap per kind is the obvious first move: a `@require` becomes part
+  of the registered `js[]`, while a `@resource` becomes a
+  `chrome.storage.local` row, and those have different budgets. Pairs
+  with "Find the real `chrome.userScripts.register()` size limit"
+  above, which is what a `@require` cap should actually be derived
+  from.
+- **Metadata-block markers are matched more strictly than the
+  ecosystem's.** `BLOCK_START` / `BLOCK_END` anchor to end-of-line, so
+  `// ==/UserScript==////` and `// ==/UserScript==vvvvar thisUrl = …`
+  read as unterminated, and `/// ==UserScript==` reads as no block at
+  all. GreasyFork serves all three, so something upstream accepts them.
+  Decide whether to match loosely (TM matches the marker anywhere on
+  the line) or to keep the strictness and say so in the error.
+- **Wrap-identifier collisions are real, not theoretical.** Every
+  parse failure in the corpus was one — see the item under "Injection
+  payload" above, which now has a measured rate behind it.
+- **`data:` URL `@require`.** Rejected outright today. One corpus
+  script inlines a shim that way
+  (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
+  support for the `application/javascript` form, since the bytes are
+  in the ref and no fetch is involved.
 
 ## Cross-manager coverage
 

@@ -158,6 +158,23 @@ Files already on disk are skipped, so re-running resumes where it left off.
 Counts, dead links, blocked hosts, and every failed URL land in
 `download-report.json`.
 
+## Validating the corpus
+
+Once the scripts are downloaded, SourceMonkey's install-time checks
+(header validation, `@require` / `@resource` loading, syntax check) can
+run over all of them without a browser:
+
+```sh
+npm run validate -- --offline-root tests/greasyfork-examples/files \
+                    tests/greasyfork-examples/files
+```
+
+`--offline-root` serves every dependency URL out of `files/` instead of
+the network, so the run is reproducible and makes no requests. See
+[docs/offline-validation.md](../../docs/offline-validation.md) for the
+tool and [docs/corpus-validation-results.md](../../docs/corpus-validation-results.md)
+for the last run's findings.
+
 ## Analysis database
 
 ```sh

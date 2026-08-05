@@ -434,10 +434,29 @@ the one-time TM profile setup and the diagnostic helpers, plus
 [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
 for known TM-specific divergences.
 
+### Validate userscripts from the command line
+
+The install-time checks — header validation, `@require` / `@resource`
+loading, and the compile-only syntax check — also run as a CLI, over
+files on disk and with no browser involved:
+
+```sh
+npm run validate -- path/to/scripts/          # a directory, or single files
+npm run validate -- --offline-root DIR PATH   # dependencies from a local tree
+npm run validate -- --json out.json PATH      # per-script results
+```
+
+It reports each script as `ok` or `invalid` with the same message the
+extension would show, grouped by failure type. `--offline-root` serves
+every `@require` / `@resource` URL out of a downloaded tree instead of
+the network, which is how the GreasyFork corpus
+(`tests/greasyfork-examples/`) gets checked in bulk.
+
 ### Code layout
 
 - `src/` — extension source (TypeScript + manifest + HTML).
 - `scripts/build.mjs` — bundler-free build script.
+- `scripts/validate-userscripts.mjs` — offline validator CLI (above).
 - `tests/unit/` — Node `--test` unit tests.
 - `tests/e2e/` — Playwright tests that load the unpacked extension.
 - `tests/examples/` — interactive GM API example pages with paired

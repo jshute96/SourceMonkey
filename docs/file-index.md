@@ -36,6 +36,8 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/e2e-tm-preflight.mjs` | Pretest gate for `test:e2e:tm` / `:headed` — checks CDP 9223 and either launches the TM browser or asks the user to close it |
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
+| `scripts/validate-userscripts.mjs` | CLI that runs the install-time checks (header, `@require`/`@resource`, parse) over files on disk, with an offline dependency root |
+| `scripts/parse-check-node.mjs` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 
 ## Extension Source (`src/`)
 
@@ -124,6 +126,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay-route handler + static content-types, shared by the Playwright fixture server and `scripts/serve-examples.mjs` |
 | `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: parses local `*.user.js` headers, lists installed scripts off the dashboard, installs/updates via the import-from-file flow |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
+| `tests/fixtures/bad-script-cases.mjs` | Expected status / message / error line for every `tests/bad-examples/` file, shared by the e2e spec and the CLI test |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes and conditional-GET handling |
 | `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus a generic `waitFor` polling helper |
@@ -172,6 +175,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache TTLs, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
+| `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
+| `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
 | `tests/unit/file-loader.test.mjs` | Unit tests for `resolveScriptResource` — accepted schemes, relative-path resolution, and traversal rejection |
 | `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) |
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
@@ -276,6 +281,8 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/GM-APIs.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |
 | `docs/GM-APIs-storage.md` | Storage subsystem in depth: why values live in-document, how the cache is seeded, freshness mechanisms after `GM_setValue`, wire format |
 | `docs/supported-GM-APIs.md` | User-facing per-API inventory: which `GM_*` names work, which are stubbed, and how they map to TM / VM / GM4 |
+| `docs/offline-validation.md` | The install-time checks as a CLI: what it shares with production, the two pieces it can't, offline dependency roots |
+| `docs/corpus-validation-results.md` | Snapshot of the validator's findings over the example suites and the GreasyFork top-2000 |
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
 | `docs/cross-manager-testing.md` | How the examples-suite-against-Tampermonkey framework works: persistent profile, CDP attach, dashboard-driven script install, fragile bits |
 | `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey today, with triage notes for each divergence |
