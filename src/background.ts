@@ -35,6 +35,7 @@ import {
   loadGithubAuthToken,
 } from './github-auth.js';
 import { installDeepLinkRedirect } from './deep-link.js';
+import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { installUserJsCapture } from './install-capture.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
@@ -53,6 +54,7 @@ import {
 import {
   buildSwapEvalBody,
   isUserScriptsAvailable,
+  resetRejectionRetryGate,
   syncRegistrations,
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
@@ -83,6 +85,7 @@ import {
   updateScript,
   updateSource,
 } from './script-updater.js';
+import type { ProbePolicy } from './version-probe.js';
 import {
   addSource,
   getScript,
@@ -183,7 +186,16 @@ interface SourceMonkeyApi {
   setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
   updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
-  updateScript: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  // `probe` mirrors the production signature: `'force'` is what a real
+  // Refresh click passes, and several behaviors key off it (upstream
+  // version probes, and retrying a refused registration immediately
+  // rather than under the rate limit). Tests modelling a click have to
+  // be able to say so.
+  updateScript: (
+    id: string,
+    mode: 'manual' | 'opportunistic',
+    probe?: ProbePolicy,
+  ) => Promise<unknown>;
   updateAllSources: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // Inspect the per-tab badge state Chrome would render. We pull
   // text/title back from chrome.action and the structured TabRecord
@@ -219,6 +231,10 @@ interface SourceMonkeyApi {
   // failures and wrapper errors are surfaced through the log pane.
   getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
   appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
+  // Registrations chrome.userScripts refused on the last sync, keyed by
+  // script id — the state the UI renders as REJECTED. Empty unless
+  // something is broken, which is what most tests assert.
+  getRejections: () => Promise<RejectionMap>;
   // Compile-only parse check (src/parse-check.ts). Null means the
   // check could not run, which callers must not read as failure.
   checkParses: (sources: string[]) => Promise<ParseVerdict[] | null>;
@@ -295,6 +311,7 @@ const api: SourceMonkeyApi = {
   },
   getScriptLog,
   appendScriptLog,
+  getRejections: readRejections,
   clearScriptLog,
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
@@ -313,7 +330,7 @@ const api: SourceMonkeyApi = {
   getActionContextMenuPlan: async (tabId: number) => {
     const record = await getTabRecord(tabId);
     const state = getCurrentState(record);
-    return buildActionMenuPlan(state, tabId);
+    return buildActionMenuPlan(state, tabId, await rejectedScriptIds());
   },
   fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
     // Goes through the same dispatchActionMenuCommand helper the real
@@ -357,6 +374,9 @@ const api: SourceMonkeyApi = {
     // check off for every later test in this worker.
     parseCheckRuns = 0;
     resetParseCheckFailures();
+    // Same reason: a retry from the previous test would otherwise
+    // rate-limit the next one's out of existence.
+    resetRejectionRetryGate();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -588,6 +608,13 @@ async function updateTabMatches(
   await renderBadge(tabId, state);
 }
 
+// The scripts Chrome is currently refusing to register, as a set for
+// the badge. Read per paint rather than cached: it changes rarely and
+// a stale copy would keep painting REJECTED after a fix landed.
+async function rejectedScriptIds(): Promise<ReadonlySet<string>> {
+  return new Set(Object.keys(await readRejections()));
+}
+
 async function renderBadge(tabId: number, state: TabMatchState | null): Promise<void> {
   // Each setX call can reject if the tab closed between our query and
   // here; swallow that rather than spamming the SW console.
@@ -596,7 +623,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
       await chrome.action.setBadgeText({ tabId, text: '' });
       await chrome.action.setTitle({ tabId, title: 'SourceMonkey' });
     } else {
-      const view = computeBadge(state);
+      const view = computeBadge(state, await rejectedScriptIds());
       await chrome.action.setBadgeText({ tabId, text: String(view.count) });
       await chrome.action.setBadgeBackgroundColor({ tabId, color: view.color });
       await chrome.action.setTitle({ tabId, title: view.title });
@@ -708,8 +735,9 @@ async function runMenuRebuildLoop(): Promise<void> {
 function buildActionMenuPlan(
   state: TabMatchState | null,
   tabId: number | null,
+  rejected: ReadonlySet<string>,
 ): ActionMenuPlan {
-  const rows = state ? computeBadge(state).rows : [];
+  const rows = state ? computeBadge(state, rejected).rows : [];
   const cmdsByScript: ReadonlyMap<string, readonly MenuCommandEntry[]> =
     tabId != null ? getMenuCommandsForTab(tabId) : new Map();
   const groups: ActionMenuScript[] = rows.map((row) => ({
@@ -729,7 +757,7 @@ async function doRebuildActionContextMenu(
   tabId: number | null,
 ): Promise<void> {
   if (!chrome.contextMenus) return;
-  const plan = buildActionMenuPlan(state, tabId);
+  const plan = buildActionMenuPlan(state, tabId, await rejectedScriptIds());
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
   menuItemToCommand.clear();
   erroredScriptRows.clear();
@@ -981,6 +1009,20 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 onCacheChanged(() => {
   scheduleSync();
 });
+
+// Repaint open tabs when the set of refused registrations changes, so a
+// REJECTED badge clears the moment a retry places the script (and
+// appears the moment one stops registering). Without this the badge
+// would keep its old label until the next navigation, contradicting the
+// sources page beside it.
+//
+// Session area only: this is the injector's rejection map, and script
+// content changes come through `onCacheChanged` above.
+if (chrome.storage.session.onChanged) {
+  chrome.storage.session.onChanged.addListener((changes) => {
+    if (REJECTIONS_KEY in changes) void refreshAllOpenTabs();
+  });
+}
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleSync(): void {

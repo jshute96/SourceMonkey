@@ -70,6 +70,56 @@ test('computeBadge: expected but no report → MISSING, ORANGE', () => {
   assert.equal(beta.status, 'MISSING');
 });
 
+test('computeBadge: a refused registration → REJECTED, RED', () => {
+  // MISSING is provisional (the wrapper may still be on its way);
+  // REJECTED is settled — Chrome refused the spec, so nothing is
+  // coming. Same word the sources page and viewer use, and red because
+  // it is as final as a thrown error.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+  }, new Set(['b']));
+  assert.equal(view.color, BADGE_RED);
+  assert.equal(view.rows.find((r) => r.name === 'Beta').status, 'REJECTED');
+  assert.equal(view.rows.find((r) => r.name === 'Alpha').status, 'OK');
+  assert.match(view.title, /Beta \| REJECTED/);
+});
+
+test('computeBadge: rejection only refines the never-reported case', () => {
+  // A script that DID report is described by its report, not by a
+  // rejection record that must predate it.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+  }, new Set(['a']));
+  assert.equal(view.rows[0].status, 'OK');
+  assert.equal(view.color, BADGE_GREEN);
+});
+
+test('computeBadge: an unrelated rejection leaves the tab alone', () => {
+  // The map is global; a script refused elsewhere must not colour a tab
+  // that never expected it.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+  }, new Set(['somebody-else']));
+  assert.equal(view.color, BADGE_GREEN);
+  assert.equal(view.count, 1);
+});
+
+test('computeBadge: no rejection set → unchanged behavior', () => {
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+  });
+  assert.equal(view.rows[0].status, 'MISSING');
+  assert.equal(view.color, BADGE_ORANGE);
+});
+
 test('computeBadge: actual without expected → UNEXPECTED, ORANGE', () => {
   const view = computeBadge({
     documentId: DOC, url: 'https://x',

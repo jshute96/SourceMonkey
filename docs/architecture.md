@@ -113,8 +113,9 @@ details live in the topic-specific docs linked below.
   [matching.md](matching.md).
 - **Injector** (`src/injector.ts`) — keeps `chrome.userScripts`'s
   registration set in sync with the enabled-`ok` script set, and wraps
-  every body with an activation/error shim. See
-  [injection.md](injection.md).
+  every body with an activation/error shim. Specs Chrome refuses are
+  recorded in `src/script-rejection.ts`, which is what the UI renders
+  as REJECTED. See [injection.md](injection.md).
 - **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
   — per-script page with two modes: an installed script rendered from
   the store, and a preview of one that isn't installed yet (the landing

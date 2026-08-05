@@ -67,6 +67,12 @@ import {
   getAllMaxLogLevels,
   type LogLevel,
 } from './script-log.js';
+import {
+  REJECTIONS_KEY,
+  coerceRejectionMap,
+  readRejections,
+  type RejectionMap,
+} from './script-rejection.js';
 import { renderSiteIconInto } from './site-icon.js';
 import {
   canonicalSourceInput,
@@ -129,12 +135,20 @@ void bootstrap();
 
 // Repaint Status cells when the per-script max-log-level row changes
 // on the SW side (a fresh error / warning was appended, or the log
-// was cleared). Filtering on the `loglevel:` prefix keeps unrelated
+// was cleared), or when the injector rewrites the set of registrations
+// Chrome refused. Filtering on those two keys keeps unrelated
 // session-storage writes from kicking off pointless DOM walks.
 if (chrome.storage?.session?.onChanged) {
   chrome.storage.session.onChanged.addListener((changes) => {
     let touched = false;
     for (const key of Object.keys(changes)) {
+      if (key === REJECTIONS_KEY) {
+        // Whole-map key: the injector rewrites it as one authoritative
+        // set per sync, so we replace ours rather than merging.
+        currentRejections = coerceRejectionMap(changes[key]?.newValue);
+        touched = true;
+        continue;
+      }
       if (!key.startsWith(LOG_LEVEL_KEY_PREFIX)) continue;
       const scriptId = key.slice(LOG_LEVEL_KEY_PREFIX.length);
       const next = changes[key]?.newValue;
@@ -170,6 +184,12 @@ let currentLogLevels = new Map<string, LogLevel>();
 // only ever appear for scripts whose `@updateURL` / `@downloadURL`
 // points somewhere we don't fetch from — see src/version-probe.ts.
 const currentOutdated = new Map<string, VersionProbe>();
+
+// Page-wide {scriptId → why Chrome refused its registration}, mirroring
+// the injector's session-storage map. Drives the REJECTED status; empty
+// on a healthy profile. Seeded in `render()` and kept fresh by the
+// `chrome.storage.session.onChanged` listener above.
+let currentRejections: RejectionMap = {};
 
 async function refreshLogIds(): Promise<void> {
   const all = await getAllScripts();
@@ -215,8 +235,10 @@ function paintStatusCell(
   cell.className = 'status-cell';
   const level = currentLogLevels.get(scriptId);
   const outdated = currentOutdated.get(scriptId);
+  const rejection = currentRejections[scriptId];
   const effective = effectiveScriptStatus(
     { status: storedStatus, refreshError }, level, outdated !== undefined,
+    rejection !== undefined,
   );
   cell.classList.add(`status-${effective}`);
   // Anchor that takes the user straight to the script viewer's Log
@@ -227,14 +249,16 @@ function paintStatusCell(
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = formatScriptStatusLabel(effective);
-  // Hover text follows whatever the cell is actually showing: the
-  // refresh-failure reason, the newer version we found upstream, or
-  // otherwise the load errorMessage.
-  const title = effective === 'refresh-failed'
-    ? refreshError
-    : effective === 'outdated' && outdated
-      ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
-      : errorMessage;
+  // Hover text follows whatever the cell is actually showing: Chrome's
+  // rejection reason, the refresh-failure reason, the newer version we
+  // found upstream, or otherwise the load errorMessage.
+  const title = effective === 'rejected' && rejection
+    ? rejection
+    : effective === 'refresh-failed'
+      ? refreshError
+      : effective === 'outdated' && outdated
+        ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
+        : errorMessage;
   if (title) link.title = title;
   cell.appendChild(link);
   // Trash-can affordance only on persisted-missing rows (the file
@@ -440,10 +464,12 @@ async function render(): Promise<void> {
   }
 
   await refreshLogIds();
-  // Pre-populate log levels so the very first paint of each row's
-  // Status cell already reflects WARNING / ERROR, rather than briefly
-  // showing OK and then flipping when the async listener fires.
+  // Pre-populate log levels and rejections so the very first paint of
+  // each row's Status cell already reflects WARNING / ERROR / REJECTED,
+  // rather than briefly showing OK and then flipping when the async
+  // listener fires.
   currentLogLevels = await getAllMaxLogLevels();
+  currentRejections = await readRejections();
   for (const source of sources) {
     directoriesEl.appendChild(await renderSourceSection(source));
   }

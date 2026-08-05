@@ -74,11 +74,95 @@ The sync strategy is **full wipe + re-register** every time:
    per-script `register([spec])` calls so a single bad script can't
    take down every other script.
 
-Per-script failures land in `getPerScriptErrors()` keyed by script ID
-so the UI can eventually surface them next to the offending script.
-
 This is dramatically simpler than diffing and is cheap at our scale
 (tens of scripts, not thousands).
+
+### Rejected registrations
+
+A spec Chrome refuses is a state of its own — REJECTED — not a load
+failure and not an error the script produced. See
+[diagnostics.md](diagnostics.md#rejected-registrations) for the wording
+rules and why it carries no location.
+
+- **Where it lives.** `src/script-rejection.ts` keeps
+  `{script id → reason}` in `chrome.storage.session`, written only by
+  the injector and read by the sources page, the viewer, and the tab
+  badge in `background.ts`.
+- **It describes the current registration set.** Every sync rewrites
+  the map wholesale, so a script that has since been disabled, deleted,
+  or flipped to INVALID stops being REJECTED instead of stranding a
+  badge nobody can clear.
+- **A refresh has to force the retry.** `retryRejectedRegistrations`
+  (called from every path in `script-updater.ts`) re-offers the specs
+  for whichever of the scripts it just checked are rejected.
+  - Without it a rejected script is never retried by a Refresh that
+    finds no new content. The normal trigger is `onCacheChanged`, which
+    rides on `chrome.storage.onChanged` — and Chrome raises **no change
+    event when a `set` writes a value identical to the stored one**. So
+    the refresh rewrites the same row, nothing fires, and the spec is
+    never re-offered. For a healthy script that's correct (its
+    registration already matches); for a rejected one it stranded the
+    row.
+  - **Targeted, not a full `syncRegistrations()`.** A re-sync wipes and
+    re-registers everything, which is far too heavy per navigation and
+    would briefly deregister *healthy* scripts while a page is
+    committing — an unrelated script could miss its injection. A
+    rejected script is by definition not registered, so re-offering
+    just its own spec is cheaper and safe for everything else. The
+    specs still come from `collectActiveSpecs`, so the retry can't
+    drift from the sync on eligibility or log labels.
+  - The per-script call is deliberately **not awaited** — it must not
+    sit in the reload fast-path's 500 ms window. Same reasoning as the
+    version probe beside it.
+- **Everything that re-checks a script retries it**: the viewer's and
+  sources page's Refresh, refresh-source, refresh-all, and the
+  opportunistic check a navigation to a matching page fires. That last
+  one matters because the page in front of the user is where the script
+  visibly didn't run.
+- **At most one automatic attempt per `REJECTION_RETRY_MIN_INTERVAL_MS`
+  (10 s).** One navigation fans out into many checks of the same script
+  — the reload fast-path plus an opportunistic check per commit event,
+  per frame — so without a floor a single page load re-offered the spec
+  ten times and wrote ten identical Log rows.
+  - A genuine Refresh click bypasses the floor: `probe === 'force'` is
+    the only signal the updater has for "the user clicked" (`mode:
+    'manual'` just means "not rate-limited", and the fast-path uses it
+    for every matched script on every reload). The user asked, so they
+    get an answer every time.
+  - The floor limits **attempts**, not reporting. Every attempt that is
+    refused still writes its row; the answer to a burst is to try less
+    often, not to hide what happened.
+  - It's module state, and **per JS context**: the sources page and the
+    viewer import `script-updater.ts` directly, so their Refresh runs
+    the retry — and its own copy of the floor — in the page rather than
+    the worker. Each context rate-limits its own automatic retries.
+    Harmless, because a click bypasses the floor anyway and the
+    rejection map they all read is shared, but it is not one global
+    counter.
+  - `resetAllState` clears the worker's copy
+    (`resetRejectionRetryGate`) — otherwise one e2e test's retry
+    silently suppresses the next one's.
+- **A fix needs no extra user action**, and is logged: the retry that
+  succeeds drops the script from the map, so REJECTED clears, and
+  `logRecoveries` writes the matching info row.
+  - The row does **not** go back to OK on its own. `loglevel:` is
+    monotonic within a session, so the refusal's error rows keep the
+    status at ERROR until the log is cleared. That is the same residual
+    badge every recovered failure leaves here — see
+    [storage.md](storage.md#displayed-status-ui-level) and the sentinel
+    note in TODO.md — not something specific to REJECTED.
+- **Every refused attempt gets a Log row**, including a re-sync that
+  gets the same reason for the same content. The retry is what's being
+  reported: a suppressed retry looks exactly like no retry, and a
+  "Clear log" followed by a Refresh would otherwise leave a REJECTED
+  row with nothing explaining it. See
+  [script-log.md](script-log.md#when-the-log-stays-quiet) for the cost
+  (a persistently refused script fills its own log) and why it's
+  accepted.
+- **Not predictable earlier.** The install preview and the early stages
+  of a refresh can't show REJECTED: nothing has been offered to Chrome
+  yet. `validateHeader` checks that a script *has* a `@match` /
+  `@include`, not that Chrome's grammar accepts the pattern.
 
 ## What gets registered
 

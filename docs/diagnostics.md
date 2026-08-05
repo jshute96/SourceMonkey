@@ -140,6 +140,32 @@ what the row now says.
   so the message is flattened there; the row's link opens the viewer,
   which has the clickable form.
 
+## Rejected registrations
+
+Chrome refusing `chrome.userScripts.register` is the one verdict about
+a script that **we don't author and can't locate**. It belongs here as
+the exception that shapes the rules above.
+
+- **Not a load failure.** The row is `status: 'ok'` — the file was
+  read, the header parsed, the code compiled. It just never runs. That
+  is its own display status, `rejected` / REJECTED, ranked directly
+  under `invalid` in `effectiveScriptStatus`.
+- **Not a diagnostic.** It carries no `DiagnosticLocation`: Chrome
+  names the offending value in its own coordinates (`matches[1]: Empty
+  path`), and we have no mapping from that back to a header line.
+- **Chrome's wording is passed through verbatim.** It names the tag and
+  the index, which is what the reader has to fix. Rewriting it in our
+  own voice would lose that and risk drifting from what Chrome
+  actually objected to. Only the framing around it is ours, and it
+  lives in one place — `describeRejection` in `script-rejection.ts`,
+  listed under [One string, one place](#one-string-one-place).
+
+Why the gap exists at all: `validateHeader` checks that a script *has*
+a `@match`/`@include`, not that Chrome's stricter match-pattern grammar
+accepts it — see [file-index](file-index.md) for `src/script-rejection.ts`,
+which holds the state, and [injection.md](injection.md#rejected-registrations)
+for the registration path that produces it.
+
 ## Wording
 
 One message per problem, phrased to survive every place it lands.
@@ -224,6 +250,7 @@ constant, so the copies can't drift:
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
 | `LOCATION_SHAPES` (`directories.ts`) | the add-source and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
+| `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 
 The last one is the cautionary case: it was two literals, and the Log
 copy had already lost the "reload the page to retry" half — the only
@@ -247,6 +274,9 @@ names a culprit has to be reachable only when that culprit is real:
 
 - `tests/unit/diagnostic-location.test.mjs` — the label and the
   validator, especially what they do with a partial location.
+- `tests/e2e/rejected-registration.spec.ts` — the REJECTED state end to
+  end, driven by a `@match` with an empty path (valid to us, invalid to
+  Chrome).
 - `tests/unit/userscript-header.test.mjs` — header line numbers across
   leading text, all three line-ending shapes, and a BOM.
 - `tests/e2e/diagnostic-links.spec.ts` — clicking through, in both

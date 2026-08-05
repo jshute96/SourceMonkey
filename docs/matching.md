@@ -130,7 +130,9 @@ For each tab we:
 
 - **Count** — size of the union of expected and actual script IDs.
 - **Color**:
-  - **RED** (`#d32f2f`) — any script reported an error.
+  - **RED** (`#d32f2f`) — any script reported an error, or is one
+    Chrome refuses to register (see
+    [injection.md](injection.md#rejected-registrations)).
   - **PURPLE** (`#d500f9`) — no errors, but at least one running
     script's source file on disk has changed since the wrapper for
     this document ran. Reload the page to pick up the new version.
@@ -143,6 +145,12 @@ For each tab we:
   of:
   - `OK` — expected and the wrapper sent `sm:start` with no error.
   - `ERROR` — wrapper sent `sm:error` (regardless of expected).
+  - `REJECTED` — expected by the matcher, no `sm:start`, and Chrome
+    refused the registration, so none is coming. A refinement of
+    `MISSING`: both mean "expected here, never reported", but `MISSING`
+    is provisional (the wrapper may still be in flight) while this is
+    settled, which is why it takes the error colour. Same word the
+    sources page and the viewer use for the row.
   - `MISSING` — expected by the matcher but no `sm:start` yet.
   - `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
     predict it (e.g. Chrome's matching disagrees with ours, or a race

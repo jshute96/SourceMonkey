@@ -176,8 +176,11 @@ Beyond the load pipeline:
 
 - **Rejected registration** (`registerWithFallback` in
   `src/injector.ts`, source `chrome-injector`) — Chrome refused the
-  script's spec, so it silently never runs even though its row reads
-  OK. Error level; the Log is the only surface that says so.
+  script's spec, so it never runs even though its row loaded fine.
+  Error level. The status cell says REJECTED for as long as the
+  refusal stands; the Log is where the reason gets a timestamp and a
+  permanent home. See
+  [injection.md](injection.md#rejected-registrations).
 
 ### Source-level failures
 
@@ -210,24 +213,36 @@ dropped for repeating an earlier message — the Log tab is a transcript,
 and a line that vanishes because the same sentence appeared before
 stops being one.
 
-Two things stay quiet, and both are about **whether anything happened**:
+One thing stays quiet, and it is about **whether anything happened**:
 
 - **A no-op refresh on a valid script.** `checked for updates — no
   change` is manual-only, so background polling doesn't announce that a
   healthy script is still healthy.
-- **A re-sync that gets the same registration rejection.**
-  `syncRegistrations` re-runs on every script-storage change, so the
-  injector records the rejection each script was last logged for and
-  writes a row only on the transition. The record is dropped when the
-  script registers cleanly — including via a clean *batch* register,
-  which is how a fixed script comes back — so break → fix → break logs
-  twice.
-  - It lives in `chrome.storage.session` (`injector-logged-rejections`)
-    rather than in a module-scope Map, so it outlives the service
-    worker. MV3 evicts the SW freely and `syncRegistrations` runs again
-    on every wake-up; an in-memory guard would re-log once per SW
-    lifetime. Session storage gives it exactly the lifetime of the log
-    it guards.
+
+A **registration rejection is not** one of those, and used to be. Every
+refused attempt writes a row, including a re-sync that gets the same
+reason for the same content:
+
+- The retry is the thing being reported. A suppressed retry looks
+  exactly like no retry, and "Clear log" followed by a Refresh left a
+  REJECTED row with an empty Log explaining it.
+- Every path that re-checks a script also **re-attempts the
+  registration** (`retryRejectedRegistrations`), so each row records a
+  real attempt rather than a replayed memory. Without that forcing
+  step a Refresh finding no new content wouldn't reach Chrome at all —
+  see [injection.md](injection.md#rejected-registrations).
+- **Volume is controlled by attempting less, not by logging less.** One
+  navigation fans out into many checks of the same script, so the retry
+  itself is rate-limited to one automatic attempt per 10 s (a Refresh
+  click bypasses that). A page load produces one row, not ten.
+  - Not literally one row per action: a Refresh that **changes the
+    script's content** also triggers a full sync through
+    `onCacheChanged`, and that sync makes its own attempt. Two real
+    attempts, two rows.
+- The remaining cost is that a script Chrome keeps refusing accumulates
+  rows in its own log, and `LOG_CAP` rotation will eventually evict that
+  script's other entries. Only that script's log is affected, and every
+  row in it says the same actionable thing.
 
 Everything else emits, including:
 
@@ -282,11 +297,18 @@ naming what recovered:
 - `source file is back`
 - `refresh succeeded again (source is reachable)`
 - `this source is readable again`
+- `Chrome accepted this script's registration — it runs again`
+  (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
 
 This matters most when the bytes didn't change — e.g. a `@require`
 host that starts answering again clears the failure without bumping
 `loadedAt`, so there's no `loaded new content` row to explain the
 badge going green.
+
+A recovery row does not pull the Status cell back to OK by itself:
+`loglevel:` is monotonic within a session, so the earlier error rows
+hold it at ERROR until "Clear log". That applies to every entry in the
+list above, and is tracked in TODO.md.
 
 ## Opportunistic vs manual
 
@@ -347,10 +369,16 @@ tracked in `TODO.md`.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source
   `chrome-injector`):
   - `Chrome rejected this script's registration, so it will not
-    run: <reason>` (error) —
-    the spec was refused, so the script silently never runs. Its row
-    still reads OK because nothing about the *load* failed, which
-    makes the Log the only place this surfaces.
+    run: <reason>` (error) — the spec was refused, so the script never
+    runs even though nothing about its *load* failed. `<reason>` is
+    Chrome's own wording, verbatim, because it names the offending
+    header value.
+    - The sentence is built by `describeRejection`
+      (`src/script-rejection.ts`), shared with the viewer's message
+      bar so one problem keeps one wording.
+    - Written on every refused attempt, not just when the state
+      changes — see
+      [injection.md](injection.md#rejected-registrations).
 - **Add source** (`emitInitialLoadLogIfBroken` in
   `src/script-store.ts`, source `add-source`):
   - The same load-failure entry, for a script that lands broken on its
@@ -419,8 +447,6 @@ tracked in `TODO.md`.
 - Per-tab badge transitions. Those are noisy and already visible.
 - `checked for updates — no change` on opportunistic checks
   (manual-only, as above).
-- A re-sync that gets the same registration rejection — see
-  [When the log stays quiet](#when-the-log-stays-quiet).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.
 - Anything for a source with **no scripts under it**. A source whose

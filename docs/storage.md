@@ -26,6 +26,18 @@ Key spaces in `chrome.storage.local`:
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default sources; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 
+Key spaces in `chrome.storage.session` — everything here is dropped on
+browser shutdown, which is the point: each row describes the *current*
+browsing session, not the user's configuration.
+
+| Key                      | Type                    | Purpose |
+|--------------------------|-------------------------|---------|
+| `"log:<scid>"`           | `LogEntry[]`            | Per-script event log (see [script-log.md](script-log.md)). |
+| `"loglevel:<scid>"`      | `LogLevel`              | Highest level that log has carried; drives WARNING / ERROR in the Status column. |
+| `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
+| `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
+| `"rawview:<key>"`        | `string`                | Hand-off of a fetched script from the viewer's preview to its raw-source tab. |
+
 ### `StoredSource`
 
 - `id` — UUID.
@@ -214,10 +226,17 @@ script when its own *fetch* fails.
 ### Displayed status (UI-level)
 
 `src/script-display.ts` exports `effectiveScriptStatus(script,
-maxLogLevel, outdated)` which is what the sources page + viewer render.
-Priority order (highest wins):
+maxLogLevel, outdated, rejected)` which is what the sources page +
+viewer render. Priority order (highest wins):
 
 - `INVALID` — `status === 'invalid'`.
+- `REJECTED` — `status === 'ok'`, but Chrome refused the registration,
+  so the script never runs. Not stored on the row: it comes from the
+  injector's session-storage map (`src/script-rejection.ts`, and
+  [injection.md](injection.md#rejected-registrations)). Ranks under
+  `INVALID` — both mean "can't run", and the two can't co-occur since
+  an invalid script is never offered to Chrome — and above `MISSING`,
+  which still injects its cached copy. Rendered in red.
 - `MISSING` — `status === 'missing'`.
 - `REFRESH FAILED` — `status === 'ok'` but `refreshError` is set (the
   script runs from its cached copy; the last update failed). Ranks
@@ -237,8 +256,8 @@ Priority order (highest wins):
 
 The Status cell is a link to the script's viewer Log tab in both
 pages, and every non-OK state above (except OUTDATED, which the probe
-logs separately) has a matching entry in that Log — INVALID / MISSING
-at error level, REFRESH FAILED at warning. Recoveries are logged too,
+logs separately) has a matching entry in that Log — INVALID / MISSING /
+REJECTED at error level, REFRESH FAILED at warning. Recoveries are logged too,
 so a badge going green has a matching line; see
 [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 

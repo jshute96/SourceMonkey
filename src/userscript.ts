@@ -56,6 +56,12 @@ import {
   type LogEntry,
   type LogLevel,
 } from './script-log.js';
+import {
+  REJECTIONS_KEY,
+  coerceRejectionMap,
+  describeRejection,
+  readRejections,
+} from './script-rejection.js';
 import { updateScript } from './script-updater.js';
 import {
   decodeForDisplay,
@@ -250,6 +256,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         : undefined;
       if (currentScript) repaintStatusRow(currentScript);
     }
+    // Same for the injector's rejection map: a sync that finally places
+    // this script (or newly refuses it) has to move the Status row and
+    // the message bar, both of which are visible from every tab.
+    if (REJECTIONS_KEY in changes) {
+      currentRejection = coerceRejectionMap(changes[REJECTIONS_KEY]?.newValue)[scriptId];
+      if (currentScript) {
+        repaintStatusRow(currentScript);
+        paintScriptMessage(currentScript);
+      }
+    }
     // Repaint the log pane only when THIS script's log changed and the
     // user is currently looking at it — the pane is hidden behind a
     // code tab the rest of the time, so we'd just be doing work the
@@ -334,6 +350,11 @@ let currentScript: StoredScript | null = null;
 // load and from the storage.session.onChanged listener so the Status
 // row tracks the Log pane without a full re-render.
 let currentLogLevel: LogLevel | undefined;
+// Chrome's reason for refusing to register THIS script, while it is
+// refusing — the script loaded fine but never runs. Drives the REJECTED
+// status and the message bar. Undefined in the normal case; kept fresh
+// from the same storage.session listener as `currentLogLevel`.
+let currentRejection: string | undefined;
 
 async function loadStored(): Promise<void> {
   if (!scriptId) return;
@@ -347,11 +368,12 @@ async function loadStored(): Promise<void> {
   sourcePath = source?.path ?? '';
   sourceRow = source ?? null;
   await refreshLogId();
-  // Hydrate the max log level before render() so the first paint of
-  // the Status row already reflects WARNING / ERROR. Without this the
-  // row would briefly show OK and then flip when the storage listener
-  // fires.
+  // Hydrate the max log level and any registration rejection before
+  // render() so the first paint of the Status row already reflects
+  // WARNING / ERROR / REJECTED. Without this the row would briefly
+  // show OK and then flip when the storage listener fires.
   currentLogLevel = await getMaxLogLevel(scriptId);
+  currentRejection = (await readRejections())[scriptId];
 
   render(script);
   // The tab view seeds its own selection from `location.hash` on the
@@ -499,18 +521,35 @@ function render(script: StoredScript): void {
 
   tabsView.setTabs(storedTabs(script));
 
-  // The message shows the load error for `invalid` rows, and the
-  // refresh-failure reason for a still-running `refresh-failed` row
-  // (status `ok` + `refreshError`) — so opening a flagged script always
-  // explains why. `errorMessage` takes precedence (it means the script
-  // can't run at all); `refreshError` is the softer "running on a cached
-  // copy, last update failed" case.
-  //
   // Painted AFTER the tabs, not with the rest of the header fields: a
   // location can only become a link once there are tabs to resolve it
   // against, and `setTabs` is what installs them.
+  paintScriptMessage(script);
+}
+
+// The message bar for an installed script: whichever "here is what's
+// wrong" line applies, in severity order, so opening a flagged script
+// always explains why.
+//
+//   errorMessage   — the load failed; the script can't run at all.
+//   rejection      — the load was fine but Chrome refused the
+//                    registration, so the script never runs either.
+//                    Ranked below `errorMessage` only because the two
+//                    can't co-occur (an INVALID script is never offered
+//                    to Chrome), so the order is a formality.
+//   refreshError   — the softer "running on a cached copy, last update
+//                    failed" case.
+//
+// Split out of `render` so the storage listener can repaint the bar
+// when a rejection appears or clears without re-rendering the page.
+function paintScriptMessage(script: StoredScript): void {
   if (script.errorMessage) {
     setDiagnosticMessage(script.errorMessage, script.errorLocation, 'error');
+  } else if (currentRejection) {
+    // No location: Chrome names the offending value in its own words
+    // (`matches[1]: Empty path`), and we have no mapping from that back
+    // to a line in the file. See docs/diagnostics.md.
+    setMessage(describeRejection(currentRejection), 'error');
   } else if (script.refreshError) {
     // No location: `refreshError` means the fetch failed, so there is
     // no new content to point into, and the running copy is fine.
@@ -618,31 +657,34 @@ function requireBasename(url: string, ref: string): string {
 // Build the Status row content: an anchor whose href is `#Log` so
 // clicking switches the viewer to the Log tab via the regular
 // hashchange listener. Labeled with the effective status (INVALID /
-// MISSING / OUTDATED / ERROR / WARNING / OK) computed against the
-// current log level.
+// REJECTED / MISSING / OUTDATED / ERROR / WARNING / OK) computed
+// against the current log level and registration verdict.
 function buildStatusCell(script: StoredScript): Node {
   const outdated = scriptOutdatedProbe(script);
   const effective = effectiveScriptStatus(
     { status: script.status, refreshError: script.refreshError },
     currentLogLevel,
     outdated !== null,
+    currentRejection !== undefined,
   );
   const link = document.createElement('a');
   link.href = '#Log';
   link.textContent = formatScriptStatusLabel(effective);
   link.className = `meta-status status-${effective}`;
-  // Hover text follows whatever the cell is showing: the refresh-failure
-  // reason, the newer version found upstream, or the load errorMessage.
-  // A `title` is plain text, so the location is flattened in rather
-  // than linked — the clickable form of the same verdict is in the
-  // message bar this row sits above.
-  const title = effective === 'refresh-failed'
-    ? script.refreshError
-    : effective === 'outdated' && outdated
-      ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
-      : script.errorMessage
-        ? describeDiagnostic(script.errorMessage, script.errorLocation)
-        : undefined;
+  // Hover text follows whatever the cell is showing: Chrome's rejection
+  // reason, the refresh-failure reason, the newer version found
+  // upstream, or the load errorMessage. A `title` is plain text, so the
+  // location is flattened in rather than linked — the clickable form of
+  // the same verdict is in the message bar this row sits above.
+  const title = effective === 'rejected' && currentRejection
+    ? currentRejection
+    : effective === 'refresh-failed'
+      ? script.refreshError
+      : effective === 'outdated' && outdated
+        ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
+        : script.errorMessage
+          ? describeDiagnostic(script.errorMessage, script.errorLocation)
+          : undefined;
   if (title) link.title = title;
   return link;
 }

@@ -121,11 +121,17 @@ tests:
 - Source mgmt: `addSource(path)`, `removeSource(id)`, `getSources()`,
   `getSourceWithScripts(id)`, `setSourceEnabled(id, on)`,
   `setScriptEnabled(id, on)`.
-- Updates: `updateScript(id, mode)`, `updateSource(id, mode)`,
+- Updates: `updateScript(id, mode, probe?)`, `updateSource(id, mode)`,
   `updateAllSources(mode)`. `mode` is `'manual'` or `'opportunistic'`.
+  `probe` is `'force'` for a genuine Refresh **click** — `mode:
+  'manual'` only means "not rate-limited" and the reload fast-path uses
+  it too, so behaviours that key off a real click (upstream version
+  probes, retrying a refused registration immediately) need `'force'`.
 - Inspection: `getTabState(tabId)` returns the current badge text,
   background color, tooltip, and the structured `TabRecord` from
   session storage. `debugMatchIndex(url)` returns the matcher cache.
+  `getRejections()` returns the registrations Chrome refused on the
+  last attempt — what the UI renders as REJECTED.
 - Lifecycle: `syncNow()` cancels the debounced sync timer and runs
   `syncRegistrations` synchronously, returning the post-sync
   registration list. `resetAllState()` clears storage and unregisters
@@ -146,6 +152,28 @@ The contract is: **always call `await sm.syncNow()` after any
 state-changing operation and before the navigation that depends on
 it.** `syncNow()` cancels the pending debounce so no late-firing sync
 can paint over the test's expected state.
+
+#### …and where `syncNow()` is the wrong tool
+
+`syncNow()` forces the registration step. That is exactly what you want
+before a navigation — and exactly what you must **not** do when the
+behaviour under test *is* whether production reaches that step on its
+own.
+
+- A test asserting "a Refresh re-offers the script to Chrome" that
+  calls `syncNow()` afterwards passes whether or not the production
+  path works, because the test performed the missing step itself.
+- This is not hypothetical: the first version of
+  `rejected-registration.spec.ts` did exactly that, and passed for
+  several full-suite runs while a Refresh silently never retried
+  anything. (Chrome fires no `storage.onChanged` when a `set` writes an
+  identical value, so a no-op refresh never reaches `scheduleSync` —
+  see [injection.md](injection.md#rejected-registrations).)
+- Rule of thumb: if the assertion is about *state after* a change, seed
+  it with `syncNow()`. If the assertion is about *the trigger itself*,
+  don't — poll (`expect.poll`) and let production get there.
+- Worth confirming either way: break the production path on purpose and
+  re-run. A test that still passes is testing the test.
 
 ### Writing tests
 

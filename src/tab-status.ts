@@ -49,7 +49,7 @@ export interface TabMatchState {
   staleScriptIds?: string[];
 }
 
-export type RowStatus = 'OK' | 'ERROR' | 'MISSING' | 'UNEXPECTED' | 'RELOAD';
+export type RowStatus = 'OK' | 'ERROR' | 'REJECTED' | 'MISSING' | 'UNEXPECTED' | 'RELOAD';
 
 export interface BadgeRow {
   id: string;
@@ -88,17 +88,35 @@ const RELOAD_LABEL = 'Reload to update';
 //   - Per script, status is one of:
 //       OK         — expected AND actually started (no error reported)
 //       ERROR      — actual reported `error` (regardless of expected)
+//       REJECTED   — expected, never started, and Chrome is refusing to
+//                    register it (so it never will) — see
+//                    src/script-rejection.ts
 //       MISSING    — expected but no `actual` entry yet
 //       UNEXPECTED — actual `started` but not in our expected set
 //       RELOAD     — a script that's started here, but its on-disk
 //                    content has changed since (would be OK otherwise)
 //   - Badge color:
-//       RED    if any script reported ERROR
+//       RED    if any script reported ERROR or is REJECTED
 //       PURPLE else, if any RELOAD row
 //       ORANGE else, if any MISSING or UNEXPECTED
 //       GREEN  otherwise
 //   - Badge text is the size of the union of expected ∪ actual IDs.
-export function computeBadge(state: TabMatchState): BadgeView {
+//
+// REJECTED is a refinement of MISSING, not a new axis: both mean
+// "expected here, never reported". MISSING is provisional — the wrapper
+// may still be on its way, or the user may have loaded the page before
+// installing the script — so it earns amber. A rejected registration is
+// settled: Chrome refused it, so nothing is coming, and red says so.
+// It reads the same word as the sources page and the viewer.
+//
+// `rejected` is passed in rather than stored on TabMatchState because
+// it's global (one refusal applies to every tab) while the state is
+// per-document. Persisting a copy per tab would need a fan-out to keep
+// them all honest.
+export function computeBadge(
+  state: TabMatchState,
+  rejected: ReadonlySet<string> = new Set(),
+): BadgeView {
   const expectedById = new Map<string, MatchedScript>();
   for (const m of state.matches) expectedById.set(m.id, m);
 
@@ -132,6 +150,11 @@ export function computeBadge(state: TabMatchState): BadgeView {
     } else if (actual?.state === 'error') {
       status = 'ERROR';
       message = actual.message;
+      anyError = true;
+    } else if (expected && !actual && rejected.has(id)) {
+      // Settled, not provisional: Chrome refused the registration, so
+      // no wrapper is coming. Red, like an error.
+      status = 'REJECTED';
       anyError = true;
     } else if (expected && !actual) {
       status = 'MISSING';

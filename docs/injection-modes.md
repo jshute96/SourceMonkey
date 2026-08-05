@@ -124,8 +124,9 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
   - Deliberately uncapped. The binding constraint is whether
     `chrome.userScripts.register()` accepts the payload, and that
     already fails loudly: `registerWithFallback` drops to per-script
-    registration on rejection and names the offender in
-    `perScriptErrors`.
+    registration on rejection, and the offender's row reads REJECTED
+    with Chrome's reason (see
+    [injection.md](injection.md#rejected-registrations)).
   - It does not touch our `chrome.storage.local` quota — the map is
     generated at registration time from sources already stored. It
     does land in Chrome's own persisted registration store, which

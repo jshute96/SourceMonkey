@@ -60,6 +60,7 @@ import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
 import { appendScriptLog, logScriptEvent, type AppendLogInput } from './script-log.js';
 import { describeDiagnostic } from './diagnostic-location.js';
+import { retryRejectedRegistrations } from './injector.js';
 
 export type UpdateMode = 'manual' | 'opportunistic';
 
@@ -241,6 +242,18 @@ async function runScriptCheck(
   // the old body. The probe's own storage write repaints any open
   // viewer via storage.onChanged when it lands.
   if (next) void runVersionProbes([next], probe);
+  // Not awaited, same as the probe above: it must not sit in the
+  // fast-path window. No-ops unless this script is currently rejected,
+  // in which case a refresh that changed nothing would otherwise never
+  // re-offer it to Chrome. See `retryRejectedRegistrations`.
+  //
+  // `probe === 'force'` is the only signal we have for "the user
+  // clicked Refresh" — `mode: 'manual'` means "not rate-limited" and
+  // the reload fast-path uses it for every matched script on every
+  // reload. A click retries immediately; a navigation-driven check
+  // takes the rate limit, so one page load can't produce a burst of
+  // identical rows.
+  void retryRejectedRegistrations([scriptId], { userInitiated: probe === 'force' });
   return next;
 }
 
@@ -280,6 +293,12 @@ async function runSourceCheck(
   if (result) {
     summarizeSourceOutcome(label, prior, result, mode);
     await runVersionProbes(result.scripts, probe);
+    // Retry any script under this source that Chrome is refusing —
+    // refreshing a source is one of the places a user goes to say "try
+    // again". See `retryRejectedRegistrations`.
+    await retryRejectedRegistrations(
+      result.scripts.map((s) => s.id), { userInitiated: probe === 'force' },
+    );
   }
   return result;
 }
@@ -318,7 +337,14 @@ async function runAllSourcesCheck(
       mode,
     );
   }
-  await runVersionProbes([...result.values()].flatMap((r) => r.scripts), probe);
+  const allScripts = [...result.values()].flatMap((r) => r.scripts);
+  await runVersionProbes(allScripts, probe);
+  // Refresh All is the other "try again" button, so it retries every
+  // refused registration it just re-read. See
+  // `retryRejectedRegistrations`.
+  await retryRejectedRegistrations(
+    allScripts.map((s) => s.id), { userInitiated: probe === 'force' },
+  );
   return result;
 }
 

@@ -77,6 +77,7 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import { dlog } from './debug-log.js';
 import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
 import {
   buildSourceMap,
@@ -101,6 +102,12 @@ import {
 import { computeLogIds, type LogIdInput } from './script-log-id.js';
 import { scriptBasename, scriptDisplayName } from './script-display.js';
 import { logScriptEvent } from './script-log.js';
+import {
+  describeRejection,
+  readRejections,
+  writeRejections,
+  type RejectionMap,
+} from './script-rejection.js';
 
 const SCRIPT_PREFIX = 'script:';
 const SOURCE_PREFIX = 'source:';
@@ -882,59 +889,6 @@ export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): Registratio
 // once per service-worker lifetime rather than once per sync.
 let loggedUserScriptsUnavailable = false;
 
-// Per-script registration errors from the last sync. Populated when the
-// batch register() rejects and we fall back to per-script registration
-// (see syncRegistrations). Cleared at the start of each sync.
-const perScriptErrors = new Map<string, string>();
-export function getPerScriptErrors(): Map<string, string> {
-  return new Map(perScriptErrors);
-}
-
-// The rejection each script was last *logged* for, so the Log tab gets
-// one row per transition instead of one per sync.
-//
-// In `chrome.storage.session` rather than a module-scope Map because it
-// has to outlive the service worker: MV3 evicts the SW freely, and
-// `syncRegistrations` runs again on every wake-up, so an in-memory
-// guard would re-log a persistently-rejected script once per SW
-// lifetime. Session storage gives it exactly the lifetime of the log it
-// is guarding — both are dropped on Chrome shutdown.
-//
-// Entries are removed when a script registers cleanly, so a script that
-// breaks, is fixed, and breaks again logs twice. (A script deleted
-// while rejected leaves its entry behind until Chrome shuts down —
-// harmless, and bounded by the number of scripts ever rejected.)
-const REJECTION_KEY = 'injector-logged-rejections';
-
-async function readLoggedRejections(): Promise<Record<string, string>> {
-  try {
-    const got = await chrome.storage.session.get(REJECTION_KEY);
-    const value = got[REJECTION_KEY];
-    return value && typeof value === 'object' ? value as Record<string, string> : {};
-  } catch {
-    return {};
-  }
-}
-
-// Forget the recorded rejections for `ids`. Reads first and writes only
-// when something changes, so the common case — nothing has ever been
-// rejected — costs one session-storage read per sync and no write.
-async function forgetLoggedRejections(ids: readonly string[]): Promise<void> {
-  const logged = await readLoggedRejections();
-  let changed = false;
-  for (const id of ids) {
-    if (logged[id] !== undefined) {
-      delete logged[id];
-      changed = true;
-    }
-  }
-  if (changed) {
-    try {
-      await chrome.storage.session.set({ [REJECTION_KEY]: logged });
-    } catch { /* best-effort: the log isn't load-bearing */ }
-  }
-}
-
 // True if the API surface is present at all. The permission is required
 // for chrome.userScripts to exist; if it's missing the sync no-ops.
 export function isUserScriptsAvailable(): boolean {
@@ -990,9 +944,14 @@ export async function syncRegistrations(): Promise<void> {
       loggedUserScriptsUnavailable = true;
       console.info('[SourceMonkey] chrome.userScripts is unavailable — nothing was registered');
     }
+    // Drop any rejections recorded while the API still worked. The map
+    // describes the current registration set, and "nothing is
+    // registered" is a complete answer — leaving entries would strand
+    // REJECTED badges blaming a `@match` pattern for a turned-off
+    // toggle, which the sources page's own banner already explains.
+    await writeRejections(await readRejections(), {});
     return;
   }
-  perScriptErrors.clear();
   try {
     await ensureWorldConfigured();
     const { scripts, sources } = await readAll();
@@ -1037,67 +996,276 @@ export async function syncRegistrations(): Promise<void> {
   }
 }
 
+// ---------- Retrying a refused registration ----------
+
+// Shortest gap between two automatic retries. A navigation fans out
+// into several checks of the same script — the reload fast-path plus an
+// opportunistic check per commit event, per frame — and without a floor
+// each one would re-offer the spec and write its own Log row, so a
+// single page load produced a burst of identical entries.
+//
+// A genuine Refresh click ignores the floor on the way in (see
+// `userInitiated`): the user asked, so they get an answer every time.
+// It still resets it on the way out, so a click also postpones the next
+// automatic attempt by 10 s — which is right, since the click just did
+// that work.
+export const REJECTION_RETRY_MIN_INTERVAL_MS = 10_000;
+
+let lastAutoRetryAt = 0;
+let retryInFlight: Promise<void> | null = null;
+// Ids waiting for an attempt. A caller that arrives while one is
+// running adds to this and rides the same promise; the running attempt
+// drains it before finishing, so nobody's ids are dropped just because
+// somebody else got there first.
+const pendingRetryIds = new Set<string>();
+
+// Swappable clock, so the rate limit is testable without sleeping.
+let retryNow: () => number = () => Date.now();
+export function _setRetryNowForTests(fn: () => number): void {
+  retryNow = fn;
+  resetRejectionRetryGate();
+}
+
+// Forget that we retried recently.
+//
+// The rate limit is module state, so it outlives a storage wipe — which
+// means one e2e test's retry would silently suppress the next test's,
+// exactly the kind of cross-test bleed `resetAllState` exists to
+// prevent. Same category as the parse check's circuit breaker, and
+// reset from the same place.
+//
+// Leaves `retryInFlight` alone: nulling it while an attempt is still
+// running would let a second one start concurrently, which is the
+// opposite of a clean slate. The running attempt clears it itself.
+export function resetRejectionRetryGate(): void {
+  lastAutoRetryAt = 0;
+  pendingRetryIds.clear();
+}
+
+// Re-attempt registration for whichever of `scriptIds` Chrome is
+// currently refusing. No-op when none of them is.
+//
+// Why the refresh paths need this at all: `syncRegistrations` is
+// normally driven by `onCacheChanged`, which rides on
+// `chrome.storage.onChanged` — and Chrome raises no change event when a
+// `set` writes a value identical to what's already stored. A Refresh
+// that finds nothing new therefore rewrites the same row, fires
+// nothing, and never re-offers the spec. For a healthy script that's
+// right (its registration already matches); for a rejected one it left
+// the row reading REJECTED with nothing retrying it.
+//
+// Deliberately NOT `syncRegistrations()`. That wipes and re-registers
+// everything, which (a) is far too heavy to run per navigation and (b)
+// would briefly deregister healthy scripts while a page is committing,
+// so an unrelated script could miss its injection. A rejected script is
+// by definition not registered, so re-offering just its own spec is
+// both cheaper and safe for everything else.
+export async function retryRejectedRegistrations(
+  scriptIds: readonly string[],
+  opts: { userInitiated?: boolean } = {},
+): Promise<void> {
+  if (scriptIds.length === 0) return;
+  // Nothing to register into. Without this the register call below
+  // throws a raw TypeError, which the catch would then write into the
+  // user's Log as Chrome's reason for refusing the script.
+  if (!isUserScriptsAvailable()) return;
+  if (!opts.userInitiated && retryNow() - lastAutoRetryAt < REJECTION_RETRY_MIN_INTERVAL_MS) {
+    return;
+  }
+  for (const id of scriptIds) pendingRetryIds.add(id);
+  // One attempt at a time — concurrent register() calls for the same id
+  // would race each other. Late callers ride this promise, and the
+  // running attempt drains whatever they queued before it resolves, so
+  // riding it is not the same as being dropped.
+  if (retryInFlight) return retryInFlight;
+  retryInFlight = (async () => {
+    try {
+      // Drain: a caller that queued ids while we were mid-attempt gets
+      // them offered in this same run rather than waiting for whatever
+      // triggers the next one (which, under the rate limit, could be
+      // 10 s away — or never, for a script nothing else checks).
+      while (pendingRetryIds.size > 0) {
+        const ids = [...pendingRetryIds];
+        pendingRetryIds.clear();
+        const rejections = await readRejections();
+        const refused = ids.filter((id) => rejections[id] !== undefined);
+        if (refused.length === 0) continue;
+        lastAutoRetryAt = retryNow();
+        await reregisterScripts(refused);
+      }
+    } catch (err) {
+      // Contained like the version probe beside it in script-updater:
+      // this is incidental work hanging off a refresh, and a failure
+      // here must not fail the Refresh the user actually asked for (the
+      // source paths await us) or surface as an unhandled rejection
+      // (the per-script path does not).
+      console.info('[SourceMonkey] registration retry failed:', describeError(err));
+    } finally {
+      retryInFlight = null;
+    }
+  })();
+  return retryInFlight;
+}
+
+// Rebuild and re-offer the specs for `ids`, updating the rejection map
+// and the Log with whatever Chrome says this time.
+async function reregisterScripts(ids: readonly string[]): Promise<void> {
+  // Same precondition as the sync: `configureWorld` must precede
+  // `register`. Guarded and idempotent, and `worldConfigured` is
+  // per-JS-context — the sources page and the viewer reach this without
+  // ever running a sync — so the retry can't assume someone else did it.
+  await ensureWorldConfigured();
+  const { scripts, sources } = await readAll();
+  const handlerVersion = chrome.runtime.getManifest().version;
+  const wanted = new Set(ids);
+  // Built through collectActiveSpecs rather than buildRegistrationSpec
+  // directly so the retry can't drift from the sync on eligibility or
+  // on dedup-aware log labels.
+  const specs = (await collectActiveSpecs(scripts, sources, handlerVersion))
+    .filter((s) => wanted.has(s.id));
+  const placed: string[] = [];
+  const refused = new Map<string, string>();
+  for (const spec of specs) {
+    // Drop any stale registration under this id first. It should not
+    // exist (the id is rejected, so nothing was placed), but a stale
+    // rejection record would otherwise turn this into a duplicate-id
+    // failure and report the wrong reason.
+    try {
+      await chrome.userScripts.unregister({ ids: [spec.id] });
+    } catch { /* nothing registered under that id, which is the norm */ }
+    try {
+      await chrome.userScripts.register([spec]);
+      placed.push(spec.id);
+      dlog(`[SourceMonkey] script ${spec.id} registered on retry`);
+    } catch (err) {
+      const msg = describeError(err);
+      refused.set(spec.id, msg);
+      logRejection(spec.id, msg);
+    }
+  }
+  // Re-read rather than mutating the snapshot this attempt started
+  // from, and touch only the ids we handled. A full syncRegistrations
+  // that landed while we were registering owns every other entry; a
+  // whole-snapshot write-back would resurrect the ones it just cleared.
+  const prior = await readRejections();
+  const next = { ...prior };
+  for (const id of placed) delete next[id];
+  for (const [id, msg] of refused) next[id] = msg;
+  // A script that is rejected but no longer eligible (disabled or gone
+  // since the map was written) produces no spec here; drop it so its
+  // row stops reading REJECTED.
+  for (const id of ids) if (!specs.some((s) => s.id === id)) delete next[id];
+  await writeRejections(prior, next);
+  logRecoveries(placed.filter((id) => prior[id] !== undefined));
+}
+
+// The one place the rejection row is worded. Shared by the sync and the
+// targeted retry so the two can't drift.
+//
+// Written on EVERY refused attempt, not just when the state changes. A
+// suppressed retry is indistinguishable from no retry: the Log would go
+// quiet while we were still trying, and "Clear log" followed by a
+// Refresh would leave the row explaining nothing. Each entry is a real
+// event — we offered the spec, Chrome said no. The retry rate limit
+// above is what keeps that from becoming a burst; the answer is to make
+// fewer attempts, not to hide the ones we make.
+function logRejection(scriptId: string, reason: string): void {
+  logScriptEvent(scriptId, {
+    level: 'error',
+    source: 'chrome-injector',
+    message: describeRejection(reason),
+  });
+}
+
+// The other half: a script Chrome had been refusing that just went in.
+//
+// Required by the rule that every surfaced failure has a matching
+// recovery line — see
+// [docs/script-log.md](../docs/script-log.md#recovery-is-logged-too).
+// Without it the Log's last word on a fixed script is the refusal, and
+// the user has no confirmation their fix took.
+//
+// Info level, like every other recovery row. Note this does NOT pull
+// the row's badge back to OK on its own: `loglevel:` is monotonic
+// within a session, so the earlier error rows keep it at ERROR until
+// the log is cleared. That limitation is shared with every other
+// recovered failure and is tracked in TODO.md.
+function logRecoveries(scriptIds: readonly string[]): void {
+  for (const id of scriptIds) {
+    logScriptEvent(id, {
+      level: 'info',
+      source: 'chrome-injector',
+      message: 'Chrome accepted this script\'s registration — it runs again',
+    });
+  }
+}
+
 // Register a list of specs, falling back from batch to per-script on a
 // batch failure so one malformed pattern doesn't take everything down.
 // Returns the count of specs that actually registered. Per-spec failure
-// reasons are recorded in `perScriptErrors`.
+// reasons go into the session-storage rejection map, which is what the
+// UI renders as REJECTED — see script-rejection.ts.
+//
+// `specs` is the complete set the current sync wants registered, so the
+// rejection map is rewritten wholesale: a script that has since been
+// disabled, deleted, or flipped to INVALID drops out of the map instead
+// of leaving a stale REJECTED badge on a row nobody tried to register.
 //
 // Exported for unit tests — reaching it through `syncRegistrations`
 // would mean stubbing the whole store + userScripts surface.
 export async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> {
-  if (specs.length === 0) return 0;
+  const prior = await readRejections();
+  if (specs.length === 0) {
+    await writeRejections(prior, {});
+    return 0;
+  }
   try {
     await chrome.userScripts.register(specs);
     // The whole batch registered, so nothing here is rejected any more.
     // This is the path a previously-broken script recovers through —
-    // without it, a script that breaks, is fixed, and breaks again the
-    // same way would never log the second failure.
-    await forgetLoggedRejections(specs.map((s) => s.id));
+    // the usual one, in fact: fixing the file changes its content, which
+    // triggers a sync. Without it, a script that breaks, is fixed, and
+    // breaks again the same way would never log the second failure.
+    await writeRejections(prior, {});
+    logRecoveries(specs.filter((s) => prior[s.id] !== undefined).map((s) => s.id));
     return specs.length;
   } catch {
     // Batch rejected — at least one spec is bad. Find the good ones.
   }
-  const logged = await readLoggedRejections();
-  let loggedChanged = false;
+  const next: RejectionMap = {};
+  const placed: string[] = [];
   let ok = 0;
   for (const spec of specs) {
     try {
       await chrome.userScripts.register([spec]);
       ok++;
-      // Registered cleanly — arm the log for a future rejection.
-      if (logged[spec.id] !== undefined) {
-        delete logged[spec.id];
-        loggedChanged = true;
-      }
+      placed.push(spec.id);
     } catch (err) {
       const msg = describeError(err);
-      perScriptErrors.set(spec.id, msg);
       console.info(`[SourceMonkey] script ${spec.id} rejected: ${msg}`);
-      // A rejected registration means the script silently never runs —
-      // its row still reads OK because nothing about its *load* failed.
-      // The Log is the only place that can say so, so put it there.
-      //
-      // Logged on the transition, not on every sync. Unlike a refresh —
-      // which is a discrete thing the user or a navigation asked for —
-      // `syncRegistrations` re-runs on every script-storage change, so a
-      // spec Chrome keeps rejecting would add a row per browsing write
-      // and evict the rest of the log. A re-sync that gets the same
-      // rejection is a no-op, and no-ops stay silent.
-      if (logged[spec.id] !== msg) {
-        logged[spec.id] = msg;
-        loggedChanged = true;
-        logScriptEvent(spec.id, {
-          level: 'error',
-          source: 'chrome-injector',
-          message: `Chrome rejected this script's registration, so it will not run: ${msg}`,
-        });
-      }
+      // Our own bridge / GM-runtime specs get the console line above and
+      // nothing else. They are not scripts: no row can render REJECTED
+      // for them, no Log tab exists to read the entry, and
+      // `retryRejectedRegistrations` could never clear the map entry
+      // because `collectActiveSpecs` never produces their ids. A failure
+      // here is ours to fix, not something to file against a script.
+      if (!isUserScriptId(spec.id)) continue;
+      next[spec.id] = msg;
+      // A rejected registration means the script silently never runs.
+      // Its status cell says so for as long as the rejection stands
+      // (REJECTED, from the map we're building here); the Log is where
+      // the reason gets a timestamp and a permanent home. See
+      // `logRejection` for why every attempt gets a row.
+      logRejection(spec.id, msg);
     }
   }
-  if (loggedChanged) {
-    try {
-      await chrome.storage.session.set({ [REJECTION_KEY]: logged });
-    } catch { /* best-effort: the log isn't load-bearing */ }
-  }
+  await writeRejections(prior, next);
+  logRecoveries(placed.filter((id) => prior[id] !== undefined));
   return ok;
+}
+
+// True for a stored script's registration id, false for the two
+// reserved ids we register for our own plumbing.
+function isUserScriptId(id: string): boolean {
+  return id !== BRIDGE_SCRIPT_ID && id !== GM_RUNTIME_SCRIPT_ID;
 }

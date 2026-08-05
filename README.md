@@ -157,13 +157,13 @@ update channel to a site you didn't approve.
   losing each script's own choice. The table header has a small **+** /
   **−** button that bulk-enables or bulk-disables every script in
   that source.
-- Status is one of `OK | INVALID | MISSING | REFRESH FAILED |
+- Status is one of `OK | INVALID | REJECTED | MISSING | REFRESH FAILED |
   OUTDATED | WARNING | ERROR` and is a link to the script's Log tab in
   the viewer. Whatever the badge says, the reason is in that Log — a
   failure is written there when it happens, restated after a browser
   restart if it's still true, and followed by an entry saying so once
   it clears. A problem that persists is logged once, not once per
-  check.
+  check — `REJECTED` is the deliberate exception, see below.
   - `INVALID` — metadata block missing/malformed, required fields
     (`@name` plus `@match`/`@include`) missing, a `@require` /
     `@resource` dependency couldn't be loaded, or the script's code
@@ -186,6 +186,23 @@ update channel to a site you didn't approve.
       viewer the location is a **link**: click it to jump to that file
       and line, whether the script is installed or you're looking at
       the install preview for one you haven't added yet.
+  - `REJECTED` — the script itself is fine, but Chrome refused to
+    register it, so it never runs. Almost always a `@match` pattern
+    Chrome's stricter grammar won't take (`https://example.com` with
+    no path, say — other userscript managers accept it). Hover for
+    Chrome's own wording, which names the offending value.
+    - Nothing else is affected: the other scripts in the same source
+      still run.
+    - Refresh really does retry it — as does loading a page the script
+      matches — and every retry that's refused says so in the Log. This
+      is the one problem that's logged each time rather than once, so a
+      row flagged REJECTED always has a live reason under it, even
+      right after "Clear log". A user action gets you an entry, not a
+      burst.
+    - Fix the pattern and REJECTED clears itself — the Log says so too
+      ("Chrome accepted this script's registration"). The row may keep
+      reading `ERROR` from its earlier Log entries until you click
+      **Clear log**, which is how every recovered failure behaves here.
   - `MISSING` — the script's file is no longer in the scan listing
     (deleted on disk, manifest entry removed). The Size column still
     shows the cached body's byte count, and a small trash-can button
@@ -244,11 +261,12 @@ update channel to a site you didn't approve.
   - **orange** — some scripts are missing or unexpected.
   - **purple** — a running script's source on disk has changed; a
     reload would pick up the new version.
-  - **red** — at least one script reported an error.
+  - **red** — at least one script reported an error, or Chrome
+    refused to register it so it never ran (see `REJECTED` above).
 
   Hovering the icon shows one line per script as
-  `"<name> | <STATUS>"` (`OK` / `ERROR` / `MISSING` / `UNEXPECTED` /
-  `Reload to update`). The state updates on navigation and re-counts
+  `"<name> | <STATUS>"` (`OK` / `ERROR` / `REJECTED` / `MISSING` /
+  `UNEXPECTED` / `Reload to update`). The state updates on navigation and re-counts
   immediately when you flip an enable toggle on the sources page.
 - **Auto-update.** While you browse a page that uses your scripts,
   SourceMonkey checks (in the background, rate-limited, never blocking

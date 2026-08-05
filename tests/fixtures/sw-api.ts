@@ -23,7 +23,10 @@ interface SmApi {
   setSourceEnabled(id: string, enabled: boolean): Promise<unknown>;
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
   updateSource(id: string, mode: Mode): Promise<unknown>;
-  updateScript(id: string, mode: Mode): Promise<unknown>;
+  // `probe: 'force'` is what a genuine Refresh click passes. Pass it
+  // when a test is modelling a click rather than a background check —
+  // it is what bypasses the refused-registration retry rate limit.
+  updateScript(id: string, mode: Mode, probe?: 'force' | 'if-stale'): Promise<unknown>;
   updateAllSources(mode: Mode): Promise<unknown>;
   getTabState(tabId: number): Promise<TabStateSnapshot>;
   resetAllState(): Promise<void>;
@@ -37,6 +40,10 @@ interface SmApi {
     message: string;
   }[]>;
   clearScriptLog(scriptId: string): Promise<void>;
+  // {scriptId → why chrome.userScripts refused its registration} for
+  // the last sync — what the UI renders as REJECTED. Empty when
+  // everything registered.
+  getRejections(): Promise<Record<string, string>>;
   debugMatchIndex(url: string): Promise<{
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledSources: string[] };
@@ -81,6 +88,7 @@ export interface StoredScriptLike {
   relativePath: string;
   status: 'ok' | 'invalid' | 'missing';
   errorMessage?: string;
+  refreshError?: string;
   size: number | null;
   loadedAt: number;
   parseCheckedHash?: string;

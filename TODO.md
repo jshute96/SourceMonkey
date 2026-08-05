@@ -606,6 +606,26 @@ Two rough edges are left:
   `summarizeSourceOutcome` would fix it, but that lives in
   `script-updater.ts`, which imports `script-store.ts`.
 
+## Registration rejections — follow-ups
+
+REJECTED is in (see
+[docs/injection.md](docs/injection.md#rejected-registrations)): a script
+Chrome refuses shows the state, keeps the reason in its Log, and clears
+itself once a sync places it. What's missing:
+
+- **Nothing checks match patterns before Chrome does.**
+  `validateHeader` only asks that a `@match` / `@include` exists, so
+  `@match https://example.com` (no path — Tampermonkey takes it) loads
+  clean and is refused at registration. A pattern check would let the
+  install preview, the offline validator, and the INVALID path catch it
+  where the user is already looking, and would name the header line.
+  The cost is owning a second copy of Chrome's grammar, which drifts.
+- **The message is Chrome's, so it speaks Chrome's coordinates.**
+  `matches[1]: Empty path` counts within the spec we built, not the
+  lines of the file. Deliberate — the alternative is inventing a
+  mapping that could point at the wrong tag — but it means REJECTED is
+  the one user-visible verdict with no clickable location.
+
 ## Log and error message quality
 
 The Source labels are written for users (`manual-refresh`,
@@ -651,7 +671,7 @@ they follow are in
 
 ## Testing and example TOODs
 
-- **Two specs flake under full-suite load, never in isolation.** Both
+- **Three specs flake under full-suite load, never in isolation.** All
   pass standalone (`refresh-failed.spec.ts` went 35/35 under
   `--repeat-each=5`), and each has failed at more than one assertion
   across runs, which points at a race rather than one wrong
@@ -662,6 +682,12 @@ they follow are in
   - `version-probe.spec.ts:262` — the status cell reads `ERROR` where
     the test expects `OK`, i.e. something logged an error-level row
     during the check.
+  - `log-stack-mapping.spec.ts:139` — the Log pane's table never
+    appears, i.e. the `sm:error` report hadn't landed within the fixed
+    500 ms the test waits after navigating. Passed 9/9 in isolation
+    immediately after. The fixed wait is the suspect here, but the
+    other two have no such wait, so it may be the same underlying
+    contention.
   - Worth finding before it hides a regression: a real race between a
     refresh's storage write and the log read would be a product bug,
     not a test-only timing bug.
