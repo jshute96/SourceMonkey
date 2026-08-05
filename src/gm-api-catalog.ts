@@ -42,6 +42,7 @@ export type ApiSubsystem =
   | 'clipboard'
   | 'notification'
   | 'tab'
+  | 'download'
   | 'unsafe-window';
 
 // Extra header tags an API depends on, beyond the bare `@grant` line.
@@ -126,6 +127,14 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   { name: 'GM_setClipboard', gmDotName: 'setClipboard', kind: 'sync', subsystem: 'clipboard' },
   { name: 'GM_notification', gmDotName: 'notification', kind: 'async', subsystem: 'notification' },
   { name: 'GM_openInTab', gmDotName: 'openInTab', kind: 'async', subsystem: 'tab' },
+  // Like GM_xmlhttpRequest, GM_download hands back a sync `{abort}`
+  // control object while the transfer itself runs in the SW — `async`
+  // classifies the SW round-trip, not the return value. It is NOT
+  // `requires: ['connect']`: download URLs are runtime-discovered CDN
+  // hosts that scripts can't enumerate in a header, and the bytes go
+  // to disk rather than back to the script, so the exfiltration risk
+  // `@connect` guards doesn't apply. See docs/GM-APIs.md.
+  { name: 'GM_download', gmDotName: 'download', kind: 'async', subsystem: 'download' },
 ]);
 
 // Quick lookup. Built lazily so unit tests that only import types or

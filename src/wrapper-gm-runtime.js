@@ -1007,6 +1007,224 @@
     }
   }
 
+  /* ---------- GM_download ----------
+
+     Two call shapes (TM):
+       GM_download(details)   details = { url, name, headers, saveAs,
+                                          timeout, onload, onerror,
+                                          onprogress, ontimeout }
+       GM_download(url, name)
+     Returns `{abort}` synchronously — TM's documented return.
+
+     Two transports, chosen by URL scheme:
+       - http(s) -> the SW's chrome.downloads wrapper (real download
+         manager entry: Save-As, progress, resume, danger prompts).
+       - blob: / data: -> an in-page `<a download>` click. A page-minted
+         blob URL isn't resolvable from the extension's context and a
+         data: URL of arbitrary size has no business crossing the
+         message boundary. Popular media-downloader scripts pass
+         `URL.createObjectURL(...)` here, so this path matters. It's
+         also exactly what such a script would do without any @grant,
+         so it grants no new capability.
+
+     Callbacks stay page-side (not serializable) keyed by a per-call
+     request id, same as GM_xmlhttpRequest. */
+  var activeDownloads = _ObjectCreate(null);
+  var _downloadNextId = 1;
+  /* Delay before the anchor path synthesizes its `load` event. The
+     click starts the transfer synchronously, but scripts commonly
+     call URL.revokeObjectURL(...) from onload — revoking in the same
+     task as the click has been known to race the download manager's
+     grab of the blob. A short delay costs nothing perceptible and
+     keeps that pattern working. */
+  var ANCHOR_LOAD_DELAY_MS = 250;
+
+  /* TM's `details` normalized into one shape, plus the per-call
+     callbacks. Throws (synchronously, like GM_xmlhttpRequest) when
+     there's no URL to download. */
+  function normalizeDownloadArgs(detailsOrUrl, name) {
+    var d = null;
+    if (typeof detailsOrUrl === "string") {
+      d = { url: detailsOrUrl, name: name };
+    } else if (detailsOrUrl && typeof detailsOrUrl === "object") {
+      d = detailsOrUrl;
+    } else {
+      throw new _Error("[SourceMonkey] GM_download: details object or url required");
+    }
+    if (typeof d.url !== "string" || !d.url) {
+      throw new _Error("[SourceMonkey] GM_download: url required");
+    }
+    return {
+      url: d.url,
+      name: d.name != null ? String(d.name) : "",
+      headers: (d.headers && typeof d.headers === "object") ? d.headers : undefined,
+      saveAs: !!d.saveAs,
+      timeout: typeof d.timeout === "number" ? d.timeout : 0,
+      onload: typeof d.onload === "function" ? d.onload : null,
+      onerror: typeof d.onerror === "function" ? d.onerror : null,
+      ontimeout: typeof d.ontimeout === "function" ? d.ontimeout : null,
+      onprogress: typeof d.onprogress === "function" ? d.onprogress : null,
+      /* Not part of TM's documented surface — a SourceMonkey extension
+         so abort() can be observed the same way GM_xmlhttpRequest
+         reports it. Scripts written for TM don't set it and get the
+         documented onerror(download_canceled) instead. */
+      onabort: typeof d.onabort === "function" ? d.onabort : null,
+    };
+  }
+
+  function isInPageDownloadUrl(url) {
+    return url.slice(0, 5) === "blob:" || url.slice(0, 5) === "data:";
+  }
+
+  /* blob: / data: transport. Appends a hidden anchor, clicks it, and
+     removes it. Returns null on success or an error message string. */
+  function downloadViaAnchor(url, name) {
+    try {
+      var a = _docCreateElement("a");
+      a.href = url;
+      /* An empty `download` still forces a download (rather than a
+         navigation); the browser derives the name itself. */
+      a.download = name || "";
+      a.style.display = "none";
+      var parent = document.body || document.documentElement;
+      if (!parent) return "no document to append the download anchor to";
+      _Node_appendChild.call(parent, a);
+      try { a.click(); } finally {
+        try { parent.removeChild(a); } catch (_re) {}
+      }
+      return null;
+    } catch (e) {
+      return String((e && e.message) || e);
+    }
+  }
+
+  var download = {
+    start: function (scriptId, detailsOrUrl, name) {
+      var d = normalizeDownloadArgs(detailsOrUrl, name);
+      var requestId = "dl-" + (_downloadNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      activeDownloads[requestId] = {
+        onload: d.onload,
+        onerror: d.onerror,
+        ontimeout: d.ontimeout,
+        onprogress: d.onprogress,
+        onabort: d.onabort,
+        /* "page" downloads have nothing to cancel in the SW. */
+        transport: isInPageDownloadUrl(d.url) ? "page" : "sw",
+        url: d.url,
+        name: d.name,
+      };
+      if (isInPageDownloadUrl(d.url)) {
+        var failure = downloadViaAnchor(d.url, d.name);
+        if (failure !== null) {
+          dispatchDownloadEvent(requestId, {
+            kind: "error",
+            error: "not_succeeded",
+            details: { message: failure },
+          });
+        } else {
+          setTimeout(function () {
+            /* The anchor path has no completion signal — the browser
+               owns the transfer from the click on. We report `load`
+               once the click has been handed off. Documented
+               deviation; see docs/supported-GM-APIs.md. */
+            dispatchDownloadEvent(requestId, {
+              kind: "load",
+              downloadId: -1,
+              filename: d.name,
+              finalUrl: d.url,
+              totalBytes: 0,
+            });
+          }, ANCHOR_LOAD_DELAY_MS);
+        }
+      } else {
+        api.sendAsync({
+          type: "sm:gm-download-start",
+          scriptId: scriptId,
+          requestId: requestId,
+          url: d.url,
+          name: d.name,
+          headers: d.headers,
+          saveAs: d.saveAs,
+          timeout: d.timeout,
+          wantsProgress: !!d.onprogress,
+        }).catch(function (err) {
+          /* Couldn't even reach the SW (no chrome.runtime — e.g. a
+             MAIN-world script). TM calls that `not_supported`. */
+          dispatchDownloadEvent(requestId, {
+            kind: "error",
+            error: "not_supported",
+            details: { message: String((err && err.message) || err) },
+          });
+        });
+      }
+      return {
+        abort: function () {
+          var entry = activeDownloads[requestId];
+          if (!entry) return;
+          if (entry.transport === "sw") {
+            api.sendAsync({ type: "sm:gm-download-abort", requestId: requestId }).catch(function () {});
+          }
+          /* Settle locally right away — matches GM_xmlhttpRequest's
+             abort, which doesn't wait for the SW round-trip. */
+          dispatchDownloadEvent(requestId, {
+            kind: "error",
+            error: "download_canceled",
+            details: { current: "USER_CANCELED" },
+          });
+        },
+      };
+    },
+  };
+
+  function dispatchDownloadEvent(requestId, event) {
+    var entry = activeDownloads[requestId];
+    if (!entry) return;
+    /* Progress is the one non-terminal event — keep the entry. */
+    if (event.kind === "progress") {
+      if (typeof entry.onprogress !== "function") return;
+      try {
+        entry.onprogress({
+          lengthComputable: !!event.lengthComputable,
+          loaded: event.loaded,
+          total: event.total,
+        });
+      } catch (e) {
+        try { console.info("[SourceMonkey] GM_download onprogress threw:", e); } catch (_e) {}
+      }
+      return;
+    }
+    /* Free the slot before invoking the callback so a handler that
+       immediately starts another download can't collide with it. */
+    delete activeDownloads[requestId];
+    var cb = null;
+    var arg = null;
+    if (event.kind === "load") {
+      cb = entry.onload;
+      arg = {
+        downloadId: event.downloadId,
+        filename: event.filename,
+        finalUrl: event.finalUrl,
+        totalBytes: event.totalBytes,
+      };
+    } else if (event.kind === "timeout") {
+      cb = entry.ontimeout;
+      arg = {};
+    } else if (event.kind === "error") {
+      arg = { error: event.error, details: event.details || {} };
+      /* A script-initiated abort prefers `onabort` when the caller
+         supplied one; otherwise it lands on onerror as TM documents. */
+      cb = (event.error === "download_canceled" && typeof entry.onabort === "function")
+        ? entry.onabort
+        : entry.onerror;
+    }
+    if (typeof cb !== "function") return;
+    try {
+      cb(arg);
+    } catch (e) {
+      try { console.info("[SourceMonkey] GM_download callback threw:", e); } catch (_e) {}
+    }
+  }
+
   /* ---------- GM_registerMenuCommand / GM_unregisterMenuCommand ----------
 
      `__SM_GM__` is a singleton per document — every userscript on the
@@ -1093,6 +1311,8 @@
           dispatchNotificationEvent(msg.requestId, msg.event);
         } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
           dispatchMenuFire(msg.scriptId, msg.commandId);
+        } else if (msg.type === "sm:gm-download-event" && typeof msg.requestId === "string" && msg.event) {
+          dispatchDownloadEvent(msg.requestId, msg.event);
         }
       });
     }
@@ -1125,6 +1345,7 @@
     log: log,
     tab: tab,
     notification: notification,
+    download: download,
     menu: menu,
     clipboard: {
       /* GM_setClipboard(text, type?). Returns the Promise from

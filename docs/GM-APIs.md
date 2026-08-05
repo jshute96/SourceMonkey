@@ -599,6 +599,88 @@ Returns `undefined` (matches TM/VM signature).
 - `tag` is parsed but unused today — `chrome.notifications` has
   its own notification id semantics; we don't coalesce by tag.
 
+## `GM_download`
+
+User-facing surface (call shapes, error values, caveats) lives in
+[supported-GM-APIs.md](supported-GM-APIs.md#downloads). This section
+records the implementation and the choices behind it.
+
+### Split transport
+
+The page-side runtime picks by URL scheme:
+
+- `http(s)` → `sm:gm-download-start` to the SW, which drives
+  `chrome.downloads` (`src/gm-download.ts`).
+- `blob:` / `data:` → an `<a download>` click in the page; the SW is
+  never involved.
+
+Why the split:
+
+- A page-minted `blob:` URL is registered against the *page's* origin.
+  The extension's SW can't resolve it, and MV3 service workers have no
+  `URL.createObjectURL` to re-mint one.
+- Streaming a multi-GB video through `chrome.runtime.sendMessage` to
+  re-materialize it elsewhere would burn memory for a worse result.
+- The anchor click is what the same userscript would do with no
+  `@grant` at all, so the in-page path grants no capability the script
+  didn't already have.
+
+### Rejected alternatives
+
+- **Offscreen document + `BLOBS` reason** (the shape TODO.md
+  originally sketched): only needed if the SW had to fetch bytes and
+  hand them to something that can mint a blob URL.
+  `chrome.downloads.download` fetches the URL itself — including
+  `headers` — so the whole detour disappears.
+- **Fetch in the SW, then download from the result**: loses
+  `Content-Disposition` handling, resume, progress accounting and the
+  Save-As dialog, and re-introduces the memory problem.
+- **`@connect` gating** — see
+  [supported-GM-APIs.md](supported-GM-APIs.md#connect-does-not-gate-downloads)
+  for why download URLs can't live in a header allowlist and why the
+  exfiltration threat `@connect` addresses doesn't apply here.
+
+### SW-side state
+
+- `requestId → entry` plus a `downloadId → requestId` index, both
+  in-memory (same lifetime story as `gm-tab` / `gm-notification`).
+- Each entry carries the emit closure the message handler built, the
+  timeout timer, and the progress interval.
+- `chrome.downloads.onChanged` is the terminal-event source:
+  `state.current === 'complete'` → `load` (after a
+  `chrome.downloads.search` for filename + size), `'interrupted'` →
+  `error`/`not_succeeded` with `delta.error` passed through as
+  `{current, previous}`.
+- Progress has to be **polled** (`chrome.downloads.search`, 500 ms):
+  the onChanged delta doesn't carry `bytesReceived`. Only started when
+  the caller supplied `onprogress`.
+- Terminal handlers release the entry *before* emitting, so a callback
+  that immediately starts another download can't collide with the one
+  it just settled.
+
+### Cancellation
+
+- The page settles `abort()` locally and immediately (matching
+  `GM_xmlhttpRequest`), then fires `sm:gm-download-abort`.
+- The SW cancels via `chrome.downloads.cancel` and drops the entry, so
+  the `USER_CANCELED` interrupt that follows finds nothing and can't
+  double-report.
+- `abort()` racing the initial `chrome.downloads.download` sets
+  `cancelRequested`; the start path cancels as soon as it has an id
+  (same shape as `gm-tab.ts`'s `closeRequested`).
+
+### Safety gates
+
+- Scheme allowlist in the SW (`http(s)` only) — the URL is
+  page-supplied, so without it a script could ask the privileged SW to
+  pull `file:///…` onto disk.
+- `validateDownloadName` rejects absolute paths, `..` traversal,
+  control characters and empty segments; relative subdirectories are
+  allowed. Chrome would reject most of these anyway, but doing it here
+  turns an opaque `not_succeeded` into a clean `not_permitted`.
+- Both checks run in the SW (not page-side) so refusals also reach the
+  per-script Log.
+
 ## `GM_registerMenuCommand` / `GM_unregisterMenuCommand`
 
 ### Surface
@@ -701,4 +783,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
-- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu)
+- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `GM_download` (SW-side `chrome.downloads` for http(s), in-page anchor for `blob:` / `data:`)

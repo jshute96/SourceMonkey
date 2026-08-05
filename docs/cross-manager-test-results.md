@@ -85,6 +85,19 @@ specific rule stays enforced in an SM-only spec.
   ordering: `tests/e2e/injection.spec.ts` ("document-start,
   document-end, document-idle inject in @run-at order").
 
+## Not yet run under TM
+
+- **`gm-download/`** — added with `GM_download` and never executed
+  against TM (the TM project needs an exclusive manually-launched
+  browser). The assertions were written loose on purpose:
+  - "some callback fired", not a specific error value — TM applies its
+    own file-extension allowlist and can answer `not_whitelisted`
+    where SM answers `onload`.
+  - The `file://` case asserts only that `onload` did **not** fire.
+  - Expect TM to save real files into your downloads folder when you
+    run it. SM's exact contract lives in
+    `tests/e2e/gm-download.spec.ts`.
+
 ## SM-only invariants (loosened for cross-manager)
 
 Cases where the cross-manager assertion was loosened not because of

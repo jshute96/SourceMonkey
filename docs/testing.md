@@ -286,6 +286,12 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-notification.spec.ts` — `GM_notification` resolves
   with a notification id; details and positional call shapes; the
   GM4 alias returns a Promise; empty `text` rejects.
+- `tests/e2e/gm-download.spec.ts` — `GM_download` over http(s)
+  (a real `chrome.downloads` transfer that completes headlessly),
+  the in-page `blob:` / `data:` path, refusals (`file://` scheme,
+  traversing `name`) including the Log-tab entry, `abort()`, and
+  the deliberate contrast that `@connect` gates `GM_xmlhttpRequest`
+  but not `GM_download`.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

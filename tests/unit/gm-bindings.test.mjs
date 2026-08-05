@@ -182,6 +182,21 @@ test('emitGmBindings: GM_notification routes to __SM_GM__.notification.show with
   assert.match(out.js, /__SM_GM__\.notification\.show\("script-1"/);
 });
 
+test('emitGmBindings: GM_download routes to __SM_GM__.download.start with the scriptId', () => {
+  const out = emitGmBindings(['GM_download'], makeInfo({ grants: ['GM_download'] }));
+  assert.match(out.js, /const GM_download = function \(detailsOrUrl, name\)/);
+  assert.match(out.js, /__SM_GM__\.download\.start\("script-1", detailsOrUrl, name\)/);
+  // Not routed through the generic sendAsync envelope — GM_download
+  // hands back a sync `{abort}` control object like GM_xmlhttpRequest.
+  assert.doesNotMatch(out.js, /"sm:gm-call"[^}]*GM_download/);
+});
+
+test('emitGmBindings: GM.download is a pass-through alias (returns the control object)', () => {
+  const out = emitGmBindings(['GM_download'], makeInfo({ grants: ['GM_download'] }));
+  assert.match(out.js, /download: function [^}]*GM_download\.apply/);
+  assert.doesNotMatch(out.js, /download: function [^}]*Promise\.resolve\(GM_download/);
+});
+
 test('emitGmBindings: GM.log is a pass-through alias (no Promise wrap)', () => {
   // GM_log is kind:sync without gmDotPromised, so the GM4 alias should
   // be a pass-through, not Promise-wrapped.

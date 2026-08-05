@@ -275,6 +275,115 @@ the script's header isn't what refused the call:
 
 ---
 
+## Downloads
+
+| API | Status | TM | VM | GM | Notes |
+|-----|:------:|:--:|:--:|:--:|-------|
+| `GM_download` / `GM.download` | ✅ | ✓ | ✓ |   | Saves a file to the browser's download directory. Returns `{ abort() }` synchronously (TM's documented return). `http(s)` URLs go through `chrome.downloads`; `blob:` / `data:` URLs are downloaded in-page. Requires the extension's `downloads` permission. |
+
+### Download call shape
+
+- `GM_download(details)` — details:
+  `{ url, name, headers, saveAs, timeout, onload, onerror, onprogress, ontimeout, onabort }`.
+- `GM_download(url, name)` — TM's two-argument shorthand.
+- `url` is required; a missing one throws synchronously.
+- `name` is optional (TM requires it). Omit it and the browser
+  derives the filename from the URL / `Content-Disposition`.
+- `name` may contain relative subdirectories (`pics/cat.png`, resolved
+  under the download directory). Absolute paths and `..` traversal are
+  refused.
+- `onabort` is a SourceMonkey extension — see the abort note below.
+
+### Download transports
+
+| URL scheme | Path | Consequences |
+|------------|------|--------------|
+| `http:` / `https:` | `chrome.downloads` in the service worker | Real download-manager entry: `saveAs` dialog, `headers`, progress, resume, Chrome's own dangerous-file prompts. |
+| `blob:` / `data:` | An `<a download>` click in the page | No `saveAs`, no progress, no completion signal — `onload` fires once the click is handed to the browser. |
+| anything else | refused | `onerror` with `not_permitted`. |
+
+`blob:` matters because most media-downloader scripts build their bytes
+in the page and pass `URL.createObjectURL(...)`. A page-minted blob URL
+can't be resolved from the extension's own context, so it has to stay
+in the page — which is also exactly what such a script would do with no
+`@grant` at all, so nothing new is granted.
+
+### Download callbacks
+
+| Callback | Fires when | Argument |
+|----------|-----------|----------|
+| `onload` | The download manager reports `complete` (or, on the in-page path, the click was handed off). | `{ downloadId, filename, finalUrl, totalBytes }` |
+| `onerror` | Refused, or the transfer was interrupted. | `{ error, details }` — see the error table. |
+| `onprogress` | Poll tick while bytes are arriving (http(s) only, and only when you supply the callback). | `{ lengthComputable, loaded, total }` |
+| `ontimeout` | `details.timeout` elapsed; the transfer is canceled. | `{}` |
+| `onabort` | You called `abort()` — **SourceMonkey extension**, not part of TM's surface. | `{ error: 'download_canceled', details }` |
+
+### Download error values
+
+TM's documented reason set. `details` mirrors the `chrome.downloads`
+interrupt shape (`{current, previous}`) because that's what TM passes
+through and what real scripts branch on (e.g. Twitter Media Downloader
+checks `err.details.current === 'USER_CANCELED'` to stop retrying).
+Failures we surface also add `details.message`.
+
+| `error` | When SourceMonkey emits it |
+|---------|----------------------------|
+| `not_permitted` | Non-`http(s)`/`blob:`/`data:` URL, a `name` that escapes the download directory, or the `downloads` permission missing at runtime. |
+| `not_succeeded` | The download manager refused the request, or the transfer was interrupted (`details.current` carries Chrome's reason: `NETWORK_FAILED`, `USER_CANCELED`, `FILE_ACCESS_DENIED`, …). |
+| `not_supported` | No route to the service worker at all (e.g. a MAIN-world script). |
+| `download_canceled` | The script called `abort()`. |
+| `not_enabled` | **Never emitted.** TM's global "downloads off" setting; SourceMonkey has none. |
+| `not_whitelisted` | **Never emitted.** TM's per-extension file-extension allowlist; SourceMonkey relies on Chrome's own dangerous-download prompts instead. |
+
+### `@connect` does NOT gate downloads
+
+Deliberate, and a divergence from how SourceMonkey treats
+`GM_xmlhttpRequest`:
+
+- TM doesn't gate downloads on `@connect` either — it uses a separate
+  file-extension allowlist.
+- Download URLs are runtime-discovered CDN hosts (`*.googlevideo.com`,
+  `pbs.twimg.com`, per-object signed URLs) that a script can't
+  enumerate in its header. Strict-by-default `@connect` would break
+  essentially every script that grants `GM_download`.
+- The threat model differs: the bytes go to the user's disk, not back
+  into the script, so the response-exfiltration risk `@connect` exists
+  to contain doesn't apply.
+
+What guards the API instead: the scheme allowlist, the filename check,
+the visible entry in Chrome's download UI, and Chrome's own
+Safe-Browsing prompt for dangerous file types.
+
+### Download caveats
+
+- **Chrome's `downloads` permission is required** and declared in the
+  manifest. Existing installs see a new "Manage your downloads"
+  permission on update.
+- **`abort()` settles the call locally, immediately** (matching
+  `GM_xmlhttpRequest`), then asks the SW to cancel. On the in-page
+  `blob:` / `data:` path there is nothing to cancel — the browser
+  already owns the transfer — so `abort()` only suppresses the
+  synthetic `onload`.
+- **No completion signal on the in-page path.** `onload` there means
+  "handed to the browser", not "written to disk". It fires ~250 ms
+  after the click so the common `URL.revokeObjectURL` in `onload`
+  doesn't race the download manager.
+- **Progress is polled** (~500 ms) because `chrome.downloads.onChanged`
+  doesn't carry byte counts. Nothing is polled unless you supply
+  `onprogress`.
+- **Downloads outlive their tab.** Closing the originating tab stops
+  event routing (the callbacks can't fire anywhere) but does not
+  cancel the transfer.
+- **SW restart loses in-flight tracking**, exactly like
+  `GM_xmlhttpRequest` and `GM_notification`: the file keeps
+  downloading, the script just stops hearing about it.
+- **Failures land on the script's Log tab** (`gm-download` source, at
+  `warning` level) so a "nothing downloaded" report has somewhere to
+  look. Successful downloads are not logged — a batch downloader would
+  flood the capped log.
+
+---
+
 ## Menu commands
 
 | API | Status | TM | VM | GM | Notes |
@@ -345,7 +454,6 @@ is a catalog entry + a body — nothing structural.
   `GM_getTabs` — TM-specific surface.
 - `window.onurlchange` — SPA navigation hook. Worth prioritising
   because SPA scripts work badly without it.
-- `GM_download` — TM/VM download-to-disk helper.
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.
 
 ---

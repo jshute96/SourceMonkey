@@ -232,9 +232,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   scripts work badly without it. Could be page-side via
   `MutationObserver` on `location.href` + `pushState` / `popstate`
   listeners.
-- `GM_download` — TM/VM download-to-disk helper. Needs `BLOBS` added
-  to the existing offscreen document's `reasons` (see the clipboard
-  entry — there is only one such document).
 - `window.close` / `window.focus` — TM-only surface.
 
 ### GM_* implementation follow-ups
@@ -261,6 +258,27 @@ Adding any of these is a catalog entry + a body — nothing structural.
   trick.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
+- **`GM_download` follow-ups.**
+  - **Make `downloads` an optional permission.** TM's `not_enabled` /
+    `not_permitted` errors exist because its download support is
+    opt-in. We declare `downloads` unconditionally, which adds a
+    "Manage your downloads" prompt for every user including those who
+    run no downloading scripts. `chrome.permissions.request` needs a
+    user gesture on an extension page, so this means an Options-page
+    toggle plus a `not_permitted` path when it's off (already
+    implemented — the SW checks `chrome.downloads` at call time).
+  - **TM-style file-extension allowlist** (`not_whitelisted`). We rely
+    on Chrome's dangerous-download prompts today. Worth revisiting
+    with the optional-permission work, since both want the same
+    Options-page surface.
+  - **Completion signal for the in-page `blob:` / `data:` path.** The
+    anchor click has none, so `onload` fires ~250 ms after the click
+    rather than on completion. Chrome's `downloads.onCreated` could
+    correlate the URL back to a request id, but the mapping is
+    heuristic (nothing ties the download to the requesting script).
+  - **Progress polling interval is fixed at 500 ms.** Fine for a
+    progress bar; a per-request interval (or a rate proportional to
+    file size) would be nicer for very large files.
 - **Page-side TTL for XHR active requests.** Currently 5 min. Fine
   for now; revisit if real workloads hit it.
 - **Abort-after-response narrow race.** A SW round-trip on abort

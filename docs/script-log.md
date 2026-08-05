@@ -87,6 +87,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | --- | --- | --- |
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
+| `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 
 Two naming notes worth keeping:
 
@@ -424,6 +425,18 @@ tracked in `TODO.md`.
     `JSON.stringify`, joined by spaces) because
     `chrome.runtime.sendMessage` can't carry non-cloneable values
     and the Log tab is text-only.
+- **GM_download failures** (`sendDownloadEvent` in
+  `src/background.ts`, source `gm-download`, `tabId` attached):
+  - `GM_download <reason> — <url>` (warning) — a download that was
+    refused (`not_permitted`), interrupted (`not_succeeded`, with
+    Chrome's interrupt reason), or timed out. A file that silently
+    never appears is otherwise invisible to the user, and the reason
+    lives in the SW where no page console can show it.
+  - Warning rather than error: a refused or interrupted download is a
+    script/page-level outcome the script can handle (many retry), not
+    a SourceMonkey malfunction.
+  - Successful downloads are **not** logged — a batch downloader fires
+    hundreds and would push everything else past `LOG_CAP`.
 - **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.

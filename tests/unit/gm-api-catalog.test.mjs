@@ -38,6 +38,7 @@ test('catalog covers the priority surface from GM-API-strategy.md', () => {
     'GM_getResourceURL',
     'GM_addValueChangeListener',
     'GM_removeValueChangeListener',
+    'GM_download',
   ];
   for (const n of priority) {
     assert.ok(findApi(n), `${n} should be in the catalog`);
@@ -53,6 +54,7 @@ test('GM. aliases are GM4-style (camelCase, dropped GM_ prefix)', () => {
     ['GM_xmlhttpRequest', 'xmlHttpRequest'],
     ['GM_getResourceURL', 'getResourceUrl'],
     ['GM_addStyle', 'addStyle'],
+    ['GM_download', 'download'],
   ];
   for (const [gm, dot] of cases) {
     assert.equal(findApi(gm).gmDotName, dot, `${gm} -> GM.${dot}`);
