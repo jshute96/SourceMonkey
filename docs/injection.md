@@ -160,11 +160,14 @@ rules and why it carries no location.
   (a persistently refused script fills its own log) and why it's
   accepted.
 - **Rarer than it was.** The malformed `@match` shapes we are sure
-  about are caught at parse time and never reach a registration (see
-  [matching.md](matching.md#patterns-chrome-refuses)). What still lands
-  here is the rest of Chrome's grammar — a malformed port, a host its
-  canonicalizer rejects — which we don't reproduce because a false
-  positive would drop a working pattern.
+  about are caught at parse time and never reach a registration, and
+  the two Chrome merely can't spell are rewritten into a spelling it
+  takes (see
+  [matching.md](matching.md#lenient-readings-canonicalmatchpatterns)).
+  What
+  still lands here is the rest of Chrome's grammar — a port out of
+  range, a host its canonicalizer rejects — which we don't reproduce
+  because a false positive would drop a working pattern.
 - **Not predictable earlier.** The install preview and the early stages
   of a refresh can't show REJECTED for those: nothing has been offered
   to Chrome yet.
@@ -176,9 +179,11 @@ source's `enabled` flag are both true, we build a
 `RegisteredUserScript`:
 
 - `id` — the stored script UUID.
-- `matches` — `@match` patterns, verbatim, minus any Chrome's grammar
-  would refuse (see [matching.md](matching.md#patterns-chrome-refuses) —
-  one bad pattern would take the whole registration down).
+- `matches` — `@match` patterns in their canonical spelling (see
+  [matching.md](matching.md#lenient-readings-canonicalmatchpatterns);
+  one pattern can expand to more than one), minus any Chrome's grammar
+  would still refuse — one of those would take the whole registration
+  down.
 - `includeGlobs` — `@include` glob patterns.
 - `excludeGlobs` — `@exclude` glob patterns.
 - `js` — the per-script config blob, the inlined prelude, the user

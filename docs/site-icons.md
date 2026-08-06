@@ -70,7 +70,14 @@ Worked examples:
 | `https://x.example/ol.php?type=p*`    | `https://x.example`     | `https://x.example/ol.php?type=p` |
 | `https://example.com/a/b*c`           | `https://example.com`   | `https://example.com/a/`          |
 | `http://localhost:8080/app/*`         | `http://localhost:8080` | `http://localhost:8080/app/`      |
+| `*.example.com/*`                     | `https://example.com`   | `https://example.com/`            |
 | `http://localhost:*/path`             | *(no usable target)*    | *(no usable target)*              |
+
+The scheme-less row is not a special case here: the pattern is read
+through `canonicalMatchPatterns` first, so a site named without a
+scheme gets an icon like any other (see
+[matching.md](matching.md#lenient-readings-canonicalmatchpatterns)).
+A host slot that isn't a host we could navigate to yields no target.
 
 ## Fetch + cache
 

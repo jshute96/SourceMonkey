@@ -615,30 +615,33 @@ itself once a sync places it. What's missing:
 
 - **The match-pattern check is narrower than Chrome's parser.**
   `matchPatternProblem` (`src/url-match.ts`) covers the shapes Chrome
-  names — no path, bad scheme, empty host, misplaced host wildcard —
-  and stops there, because a false positive would drop a pattern that
-  works. A malformed port and anything Chrome tightens next still land
-  as REJECTED. Widening it means owning more of a grammar that drifts,
+  names — no path, bad scheme, empty host, a host holding characters no
+  hostname can, misplaced host wildcard — and stops there, because a
+  false positive would drop a pattern that works. A malformed port and
+  anything Chrome tightens next still land as REJECTED (a port out of
+  range, say — `https://host:65536/*` passes our check and Chrome
+  refuses it). Widening it means owning more of a grammar that drifts,
   so each addition wants a probe against a real Chrome first (the one
   in `tests/e2e/rejected-registration.spec.ts`'s header is the record
   of the last such run).
-- **Chrome-refused shapes other managers run are common in the wild.**
-  Measured over `tests/greasyfork-examples/corpus.db` (1,991 scripts,
-  9,003 `@match` patterns): 1,035 patterns fail the check, and 81
-  scripts have nothing usable left, so they load INVALID. They can't
-  run today either — Chrome refuses the registration — but the patterns
-  exist because managers with their own matchers are more forgiving
-  than Chrome's parser. The two shapes that account for nearly all of
-  it:
-    - `*.example.com/*` — no scheme at all (710 patterns).
-    - `http*://example.com/*` — a scheme glob Chrome won't take (206).
-  Both have an obvious reading (`*://*.example.com/*` and
-  `*://example.com/*`), and we already own a wrapper-side matcher for
-  the regex `@include` case — register `<all_urls>` and decide in the
-  prelude. Doing that would need `matchPattern` to accept the shapes
-  too, so it is a matching-semantics change, not just a validation one.
-  Measure what TM actually runs for each shape before deciding —
-  `npm run test:e2e:tm` already drives a real TM.
+- **Two Chrome-refused shapes are left unread.** The scheme-less and
+  scheme-glob shapes are now rewritten into Chrome's spelling
+  (`canonicalMatchPatterns`, see
+  [docs/matching.md](docs/matching.md#lenient-readings-canonicalmatchpatterns)),
+  which took the corpus from 1,035 refused patterns / 81 dead scripts
+  down to 158 / 34. What still fails, and why neither is as clear-cut:
+    - **A bare origin, no path** (92 patterns: `https://example.com`,
+      `zombs.io`). Chrome says "Empty path". The reading is either
+      "that one page" or "the whole host", and the two differ — TM
+      matches the exact URL. Probe TM before picking.
+    - **A `*` in the middle of a host** (62: `*://*brainly.com/*`,
+      `https://video.sina.*/*`). Chrome's host wildcard is only the
+      whole host or its first label, so a TLD glob or a bare prefix
+      has no Chrome spelling at all. Registering `<all_urls>` and
+      deciding in the prelude is the only route, and it means giving
+      the script every page in exchange.
+  `npm run test:e2e:tm` drives a real TM, which is where "what does TM
+  run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**
   `checkPreviewSource` builds the row and reports header errors and
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`

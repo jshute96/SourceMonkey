@@ -6,6 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 // chrome.storage stub — buildGmBindingsForScript reads chrome.storage.local
 // at register time for storage-granting scripts to bake in the initial
@@ -82,6 +83,7 @@ import {
 import { remapStackRef } from '../../dist/source-map.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
+import { urlMatchesScript } from '../../dist/url-match.js';
 
 // ---------- normalizeDeclaredRunAt ----------
 
@@ -652,6 +654,40 @@ test('buildRegistrationSpec: drops a @match Chrome would refuse, keeping the res
   assert.deepEqual(spec.matches, ['https://example.com/*']);
 });
 
+test('buildRegistrationSpec: registers the canonical spelling of a lenient @match', async () => {
+  // Chrome's parser refuses a scheme-less pattern and a scheme glob,
+  // so what it gets is the `*://…` form that means the same thing —
+  // otherwise the pattern would be dropped and the script would stop
+  // running where its author said it should.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['*.example.com/*', 'http*://other.example/*', '*://other.example/*'],
+      excludes: [],
+      includes: [],
+    },
+  }));
+  // The last two canonicalize to the same pattern; a duplicate is
+  // dropped rather than handed to Chrome twice.
+  assert.deepEqual(spec.matches, ['*://*.example.com/*', '*://other.example/*']);
+});
+
+test('buildRegistrationSpec: a scheme glob naming several schemes registers one pattern each', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['f*://host.example/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, ['file://host.example/*', 'ftp://host.example/*']);
+});
+
+test('buildRegistrationSpec: an expansion Chrome would refuse is dropped, its siblings kept', async () => {
+  // `f*` names file and ftp, and an empty host is legal only for file.
+  // The good form has to survive on its own — and `matchPatternProblem`
+  // agrees the pattern is fine, so nothing warns about it either.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['f*:///*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, ['file:///*']);
+});
+
 test('buildRegistrationSpec: unusable @match with a regex @include still falls back to <all_urls>', async () => {
   // Nothing left for Chrome to match on, but the wrapper-side matcher
   // has a regex to apply — same path as a script that declared no
@@ -1215,52 +1251,29 @@ test('resolveWorld: @inject-into value is case-insensitive', () => {
 // ---------- prelude matcher round-trip ----------
 
 // The prelude's __smMatchScript must agree with urlMatchesScript()
-// from url-match.ts. The prelude file's matcher is the same algorithm
-// (now lives inside src/userscript-prelude.js). We eval just the helpers
-// from the built prelude to drive direct asserts.
+// from url-match.ts — including the lenient readings, since the SW
+// registers a pattern's canonical spelling and a wrapper that didn't
+// know the rewrite would reject a page Chrome injected it on. The
+// prelude file's matcher is the same algorithm (it lives inside
+// src/userscript-prelude.js); we evaluate that block directly.
+
+const MATCHER_BLOCK_START = '/* ---------- matcher (regex-aware URL recheck) ---------- */';
+const MATCHER_BLOCK_END = '/* ---------- startup logs (page-console diagnostics) ---------- */';
 
 async function loadPreludeMatcher() {
-  // The matcher helpers are bundled into WRAPPER_PRELUDE but are
-  // function declarations inside the IIFE, so we can't easily call
-  // them from outside. Re-define them here to exercise the same
-  // algorithm — kept in sync by inspection (and by the e2e tests).
-  const harness = `
-    /* Re-evaluate the matcher helpers in this scope. */
-    function escRx(s) { return s.replace(/[.+?^${"$"}{}()|[\\]\\\\]/g, "\\\\$&"); }
-    function globRx(g) { return new RegExp("^" + escRx(g).replace(/\\*/g, ".*") + "$"); }
-    function includeMatch(pat, url) {
-      if (pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/") {
-        try { return new RegExp(pat.slice(1, -1)).test(url); } catch (_e) { return false; }
-      }
-      try { return globRx(pat).test(url); } catch (_e) { return false; }
-    }
-    function matchPattern(pat, url) {
-      if (pat === "<all_urls>") return /^(https?|file|ftp):/i.test(url);
-      var parts = /^(\\*|https?|file|ftp):\\/\\/([^/]*)(\\/.*)$/i.exec(pat);
-      if (!parts) return false;
-      var scheme = parts[1], host = parts[2], path = parts[3];
-      var u; try { u = new URL(url); } catch (_e) { return false; }
-      if (scheme === "*") {
-        if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-      } else if (u.protocol !== scheme.toLowerCase() + ":") return false;
-      if (host === "*") {
-      } else if (host.indexOf("*.") === 0) {
-        var suffix = host.slice(2).toLowerCase();
-        var h = u.hostname.toLowerCase();
-        if (h !== suffix && h.slice(-(suffix.length + 1)) !== "." + suffix) return false;
-      } else if (host === "") {
-        if (u.hostname !== "") return false;
-      } else if (u.hostname.toLowerCase() !== host.toLowerCase()) return false;
-      var tail = u.pathname + u.search + u.hash;
-      try { return globRx(path).test(tail); } catch (_e) { return false; }
-    }
-    return function matchScript(url, m) {
-      for (var i = 0; i < m.excludes.length; i++) if (includeMatch(m.excludes[i], url)) return false;
-      for (var j = 0; j < m.matches.length; j++) if (matchPattern(m.matches[j], url)) return true;
-      for (var k = 0; k < m.includes.length; k++) if (includeMatch(m.includes[k], url)) return true;
-      return false;
-    };
-  `;
+  // The matcher helpers are function declarations inside the prelude's
+  // IIFE, so they can't be reached from outside it. Slice the block out
+  // of the prelude source and evaluate THAT, rather than keeping a copy
+  // here: a copy is a second implementation to keep in step, and this
+  // one had already drifted (it predated the port handling).
+  const source = await readFile(
+    new URL('../../src/userscript-prelude.js', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf(MATCHER_BLOCK_START);
+  const end = source.indexOf(MATCHER_BLOCK_END);
+  assert.ok(start >= 0 && end > start, 'matcher block markers moved in userscript-prelude.js');
+  const harness = source.slice(start, end) + '\n    return matchScript;';
   // eslint-disable-next-line no-new-func
   return new Function('URL', harness)(URL);
 }
@@ -1282,6 +1295,38 @@ test('prelude matcher: /regex/ @exclude beats a @match', async () => {
   const m = { matches: ['https://example.com/*'], excludes: ['/\\/admin\\//'], includes: [] };
   assert.equal(match('https://example.com/admin/x', m), false);
   assert.equal(match('https://example.com/public/x', m), true);
+});
+
+test('prelude matcher: agrees with url-match.ts on the lenient shapes', async () => {
+  const match = await loadPreludeMatcher();
+  const cases = [
+    ['*.example.com/*', 'https://www.example.com/x'],
+    ['*.example.com/*', 'http://example.com/'],
+    ['example.com/p/*', 'http://example.com/p/1'],
+    ['//example.com/*', 'https://example.com/'],
+    ['http*://example.com/*', 'http://example.com/'],
+    ['*s://example.com/*', 'https://example.com/'],
+    ['f*://example.com/*', 'ftp://example.com/x'],
+  ];
+  for (const [pattern, url] of cases) {
+    const m = { matches: [pattern], excludes: [], includes: [] };
+    assert.equal(match(url, m), true, `${pattern} should match ${url}`);
+    assert.equal(
+      urlMatchesScript(url, m),
+      match(url, m),
+      `prelude and url-match.ts disagree on ${pattern} / ${url}`,
+    );
+  }
+  // And the negative side of the same shapes.
+  for (const [pattern, url] of [
+    ['*.example.com/*', 'https://example.org/'],
+    ['http*://example.com/*', 'ftp://example.com/'],
+    ['*s://example.com/*', 'http://example.com/'],
+  ]) {
+    const m = { matches: [pattern], excludes: [], includes: [] };
+    assert.equal(match(url, m), false, `${pattern} should not match ${url}`);
+    assert.equal(urlMatchesScript(url, m), false);
+  }
 });
 
 test('prelude matcher: <all_urls> matches http/https/file/ftp only', async () => {

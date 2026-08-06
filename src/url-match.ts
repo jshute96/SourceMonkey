@@ -7,6 +7,8 @@
 //             - host:   *, *.domain, exact domain, or empty (for file://)
 //             - path:   glob with `*` (matches any chars including `/`)
 //             Plus the special literal `<all_urls>` (any http/https/file/ftp URL).
+//             Two shapes Chrome's parser refuses are read leniently
+//             first — see `canonicalMatchPatterns`.
 //
 //   @include  Free-form glob over the *whole* URL string. `*` matches any
 //             run of characters. If the pattern is wrapped in `/.../` it
@@ -40,12 +42,103 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp('^' + body + '$');
 }
 
+// ---------- lenient readings ----------
+//
+// The concrete schemes a `@match` may name — `MATCH_SCHEMES` minus the
+// `*` that stands for http-or-https. Also what a scheme glob is
+// expanded against.
+const CONCRETE_SCHEMES = ['http', 'https', 'file', 'ftp'];
+
+// Rewrite the two `@match` shapes Chrome's parser refuses but the other
+// managers run, into the patterns Chrome's grammar spells them with.
+// Returns one pattern per concrete scheme the original names — usually
+// one, and the input verbatim when there is nothing to rewrite.
+//
+//   *.example.com/*        → *://*.example.com/*   (scheme omitted)
+//   //example.com/*        → *://example.com/*     (scheme-relative)
+//   ://example.com/*       → *://example.com/*     (empty scheme)
+//   *//example.com/*       → *://example.com/*     (`*://` less its colon)
+//   http*://example.com/*  → *://example.com/*     (scheme glob)
+//   *s://example.com/*     → https://example.com/*
+//
+// Why: an omitted scheme and `http*` together account for nearly every
+// `@match` in the Greasy Fork corpus that Chrome refuses — the rewrite
+// turns 877 of those 1,035 patterns into ones it takes, across the
+// 1,991 most-installed scripts, which are working scripts under the
+// managers their authors use (see docs/matching.md). Both shapes have
+// one obvious reading; Chrome's parser is the only thing that can't
+// spell it, so we spell it for it.
+//
+// A scheme glob is ENUMERATED, not approximated: `*` comes back only
+// when the glob names exactly the pair `*` stands for, and every other
+// expansion comes back as concrete schemes (`*s://` → `https://`). So
+// no caller has to re-check the scheme afterwards — a rounded-up `*`
+// would have to be filtered somewhere, and Chrome, which does the
+// matching, has nowhere to filter before injecting.
+//
+// A scheme glob matching no supported scheme (`chrome-*://`) is left
+// alone, so `matchPatternProblem` still names it as unsupported rather
+// than silently widening it.
+//
+// This runs ahead of BOTH the matcher and the validator, so what we
+// register with Chrome and what our own matcher says stay the same
+// thing. Keep it in lockstep with the copy in `userscript-prelude.js`.
+export function canonicalMatchPatterns(pattern: string): string[] {
+  if (pattern === '<all_urls>') return [pattern];
+
+  // Supply the scheme the author left out. `//host/…` is the
+  // protocol-relative spelling of the same omission, and `*//host/…` is
+  // a `*://host/…` with the colon dropped — read literally that one
+  // would be "any host, path beginning `//host/`", which names a
+  // different site than the one written.
+  let p = pattern;
+  if (p.startsWith('*//')) p = '*:' + p.slice(1);
+  else if (p.startsWith('//')) p = '*:' + p;
+  else if (!p.includes('://')) p = '*://' + p;
+
+  const sep = p.indexOf('://');
+  const scheme = p.slice(0, sep).toLowerCase();
+  const rest = p.slice(sep); // keeps the `://`
+  if (scheme === '*' || scheme === '') return anyScheme(rest);
+  if (!scheme.includes('*')) return [p];
+
+  let schemeRx: RegExp;
+  try {
+    schemeRx = globToRegExp(scheme);
+  } catch {
+    return [pattern];
+  }
+  const expanded = CONCRETE_SCHEMES.filter((s) => schemeRx.test(s));
+  if (expanded.length === 0) return [pattern];
+  // Exactly the pair `*` already means, so say it the way `*` is said.
+  if (expanded.join() === 'http,https') return anyScheme(rest);
+  return expanded.map((s) => s + rest);
+}
+
+// `*://<rest>` — http-or-https — spelled the way Chrome will take it.
+//
+// Chrome's parser refuses `*` beside a numeric port ("Invalid port"),
+// though it takes the same port after a named scheme and takes
+// `*://host:*/…` as well. Probed against Chrome 148; the e2e case in
+// `tests/e2e/injection.spec.ts` is the standing check.
+// Writing the pair out is the only spelling of those patterns Chrome
+// will register, and means exactly what `*` does.
+function anyScheme(rest: string): string[] {
+  const host = rest.slice(3).split('/')[0];
+  if (!/:\d+$/.test(host)) return ['*' + rest];
+  return ['http' + rest, 'https' + rest];
+}
+
 // Test a single Chrome @match pattern against a URL. Returns false for
 // any malformed input rather than throwing — callers loop over many
 // patterns and a typo in one shouldn't break the others.
 export function matchPattern(pattern: string, url: string): boolean {
   if (pattern === '<all_urls>') return HTTP_LIKE_SCHEMES.test(url);
+  return canonicalMatchPatterns(pattern).some((p) => matchCanonical(p, url));
+}
 
+// `matchPattern` for a pattern already in Chrome's spelling.
+function matchCanonical(pattern: string, url: string): boolean {
   const parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)$/i.exec(pattern);
   if (!parts) return false;
   const [, scheme, host, path] = parts;
@@ -66,6 +159,8 @@ export function matchPattern(pattern: string, url: string): boolean {
   // Chrome's documented match-pattern grammar disallows ports, but
   // Chrome's actual matcher accepts them — `http://host:port/*` will
   // be registered and Chrome will match it against URLs on that port.
+  // (Not beside a `*` scheme, which is why `anyScheme` above writes
+  // that pair out.)
   // Honoring that here keeps OUR matcher in step with Chrome's, which
   // matters because the badge classification uses our matcher and would
   // otherwise show UNEXPECTED for every wrapper Chrome happily injected.
@@ -147,21 +242,35 @@ export interface MatchPatternProblem {
 }
 
 // The problem with a `@match` pattern, or null when Chrome's grammar
-// accepts it.
+// accepts it — after the lenient rewrites in `canonicalMatchPatterns`,
+// which is the same text `buildRegistrationSpec` registers.
+//
+// The problem names the pattern the author WROTE, not its rewritten
+// form: that is the text they have to go and find in the header.
+//
+// A pattern is a problem only when EVERY canonical form is one. A
+// scheme glob can expand into a usable form and an unusable one
+// (`f*:///*` → `file:///*`, legal, plus `ftp:///*`, an empty host for a
+// scheme that needs one), and `buildRegistrationSpec` registers the
+// forms that survive — so reporting on the worst of them would warn
+// about a pattern that is running, or store a script INVALID for
+// having no usable `@match` while one of its forms was registered.
 export function matchPatternProblem(pattern: string): MatchPatternProblem | null {
   if (pattern === '<all_urls>') return null;
-
-  const sep = pattern.indexOf('://');
-  if (sep < 0) {
-    return {
-      pattern,
-      what: 'has no "://" between its scheme and its host',
-      // The shape this catches most often in the wild is a bare
-      // `*.example.com/*`, so the fix names the scheme to put in front
-      // of it rather than restating the grammar.
-      fix: 'add a scheme — "*://" covers http and https, as in *://example.com/*',
-    };
+  let first: MatchPatternProblem | null = null;
+  for (const canonical of canonicalMatchPatterns(pattern)) {
+    const problem = canonicalPatternProblem(canonical);
+    if (!problem) return null;
+    first ??= { ...problem, pattern };
   }
+  return first;
+}
+
+// The check itself, over a pattern already in Chrome's spelling. Every
+// shape that reaches here has a `://` — `canonicalMatchPatterns`
+// supplies one when the author didn't.
+function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
+  const sep = pattern.indexOf('://');
   const scheme = pattern.slice(0, sep);
   if (!MATCH_SCHEMES.includes(scheme.toLowerCase())) {
     return {
@@ -197,6 +306,27 @@ export function matchPatternProblem(pattern: string): MatchPatternProblem | null
       pattern,
       what: 'has no host',
       fix: 'name a host, or "*" for any host',
+    };
+  }
+  // Characters no hostname can hold. Checked because the scheme-less
+  // reading supplies a scheme for ANY text: a regex someone pasted into
+  // an `@match` (`https?:\/\/weibo.com/p/*`, a real one) reads as a
+  // pattern whose host is `https?:\`, which would otherwise pass every
+  // check below and be handed to Chrome — and Chrome refusing it takes
+  // the whole registration down. A reject-list rather than a list of
+  // legal characters, so an internationalized host still passes.
+  //
+  // No `:` in the list, deliberately. A colon that survived the port
+  // strip means a malformed port (`https://host:notaport/*`), and ports
+  // are the part of the grammar this function leaves to Chrome — see
+  // the narrowness note above, and `tests/e2e/rejected-registration.spec.ts`,
+  // which provokes REJECTED with exactly that shape.
+  if (/[\s\\?#@%"<>{}|^`]/.test(bareHost)) {
+    return {
+      pattern,
+      what: `names the invalid host "${bareHost}"`,
+      fix: 'use a host name like example.com, "*" for any host, '
+        + 'or "*.example.com" for a domain and its subdomains',
     };
   }
   // A host wildcard is either the whole host or the leading label —

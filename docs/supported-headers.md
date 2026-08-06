@@ -62,7 +62,7 @@ below can repeat; order doesn't matter.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@match` | ✅ | ✓ | ✓ | ✓ | Passed verbatim to `chrome.userScripts.register({ matches })`. Uses Chrome's match-pattern grammar (`<scheme>://<host><path>`). |
+| `@match` | ✅ | ✓ | ✓ | ✓ | Chrome's match-pattern grammar (`<scheme>://<host><path>`), handed to `chrome.userScripts.register({ matches })`. A scheme-less (`*.example.com/*`) or globbed (`http*://…`) pattern is rewritten into the spelling Chrome takes — see [matching.md](matching.md#lenient-readings-canonicalmatchpatterns). |
 | `@include` | ✅ | ✓ | ✓ | ✓ | Glob form (`*://example.com/*`) goes to `includeGlobs`. Regex form (`/^https:\/\/…$/`) goes to a wrapper-side filter — see [injection.md](injection.md#regex-pattern-forms). At least one `@match` or glob `@include` is required (a script with only regex `@include`s registers as `<all_urls>` and filters at runtime). |
 | `@exclude` | ✅ | ✓ | ✓ | ✓ | Glob form → `excludeGlobs`. Regex form → wrapper-side filter. |
 | `@exclude-match` | ⚪ |   | ✓ |   | VM-specific: the match-pattern-grammar counterpart to `@exclude` (which in VM's model is the legacy glob/regex form). SourceMonkey treats every `@exclude` value as either a glob or a regex regardless of which tag introduced it, so a script written for VM that uses `@exclude-match` will currently be ignored. Easy to add when needed: route both tags into the same `excludes` list. |

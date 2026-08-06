@@ -220,7 +220,7 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
 // @name X
 // @match https://good.example/*
 // @match https://bare.example
-// @match nonsense
+// @match httpx://other.example/*
 // ==/UserScript==
 `);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
@@ -232,8 +232,8 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
     },
     {
       level: 'warn',
-      message: 'Ignoring @match nonsense — it has no "://" between its scheme and its host; '
-        + 'add a scheme — "*://" covers http and https, as in *://example.com/*',
+      message: 'Ignoring @match httpx://other.example/* — it names the unsupported '
+        + 'scheme "httpx"; use one of *, http, https, file, ftp ("*" covers http and https)',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);

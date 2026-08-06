@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  canonicalMatchPatterns,
   matchPattern,
   matchPatternProblem,
   ignoredMatchMessage,
@@ -180,6 +181,118 @@ test('urlMatchesScript: regex-form exclude is honored', () => {
   assert.equal(urlMatchesScript('https://example.com/public', m), true);
 });
 
+// ---------- canonicalMatchPatterns ----------
+//
+// The lenient reading of the shapes Chrome's parser refuses. What it
+// returns is what gets registered, so these are also the strings a
+// registration is built from.
+
+test('canonicalMatchPatterns: supplies an omitted scheme', () => {
+  assert.deepEqual(canonicalMatchPatterns('*.example.com/*'), ['*://*.example.com/*']);
+  assert.deepEqual(canonicalMatchPatterns('example.com/path/*'), ['*://example.com/path/*']);
+  // Protocol-relative and empty-scheme spellings of the same omission.
+  assert.deepEqual(canonicalMatchPatterns('//example.com/*'), ['*://example.com/*']);
+  assert.deepEqual(canonicalMatchPatterns('://example.com/*'), ['*://example.com/*']);
+});
+
+test('canonicalMatchPatterns: expands a scheme glob over the supported schemes', () => {
+  // `http*` names http and https — exactly what `*` already means, so
+  // it comes back as `*` rather than as two patterns.
+  assert.deepEqual(canonicalMatchPatterns('http*://example.com/*'), ['*://example.com/*']);
+  assert.deepEqual(canonicalMatchPatterns('*s://example.com/*'), ['https://example.com/*']);
+  assert.deepEqual(canonicalMatchPatterns('f*://example.com/*'), [
+    'file://example.com/*',
+    'ftp://example.com/*',
+  ]);
+  assert.deepEqual(canonicalMatchPatterns('HTTP*://example.com/*'), ['*://example.com/*']);
+  // A glob naming three of them stays concrete rather than rounding up
+  // to `*` — `*` would mean http + https, which is a different set.
+  assert.deepEqual(canonicalMatchPatterns('*t*://example.com/*'), [
+    'http://example.com/*',
+    'https://example.com/*',
+    'ftp://example.com/*',
+  ]);
+});
+
+test('matchPattern: a scheme glob matches its own schemes and no others', () => {
+  // The enumeration is exact, so nothing re-checks the scheme after the
+  // rewrite. These pin that there is nothing left to re-check.
+  assert.equal(matchPattern('http*://example.com/*', 'ftp://example.com/'), false);
+  assert.equal(matchPattern('http*://example.com/*', 'file://example.com/'), false);
+  assert.equal(matchPattern('*s://example.com/*', 'http://example.com/'), false);
+  assert.equal(matchPattern('*t*://example.com/*', 'ftp://example.com/'), true);
+  assert.equal(matchPattern('*t*://example.com/*', 'file://example.com/'), false);
+});
+
+test('canonicalMatchPatterns: spells `*` out beside a numeric port', () => {
+  // Chrome's parser answers "Invalid port" to `*` next to a numeric
+  // port, but takes the same port after a named scheme — so a
+  // port-pinned pattern has to be written as the pair it means, or the
+  // registration it lands in is refused whole.
+  assert.deepEqual(canonicalMatchPatterns('*://localhost:3000/*'), [
+    'http://localhost:3000/*',
+    'https://localhost:3000/*',
+  ]);
+  assert.deepEqual(canonicalMatchPatterns('localhost:3000/*'), [
+    'http://localhost:3000/*',
+    'https://localhost:3000/*',
+  ]);
+  assert.deepEqual(canonicalMatchPatterns('http*://localhost:3000/*'), [
+    'http://localhost:3000/*',
+    'https://localhost:3000/*',
+  ]);
+  // A wildcard port is fine beside `*` — Chrome takes that one.
+  assert.deepEqual(canonicalMatchPatterns('*://localhost:*/*'), ['*://localhost:*/*']);
+  // A named scheme is left alone, port or no port.
+  assert.deepEqual(canonicalMatchPatterns('http://localhost:3000/*'), ['http://localhost:3000/*']);
+});
+
+test('canonicalMatchPatterns: reads `*//host/…` as the `*://` it is missing a colon from', () => {
+  // Read literally it would be "any host, path beginning `//host/`",
+  // which names a different site than the one written.
+  assert.deepEqual(canonicalMatchPatterns('*//example.com/*'), ['*://example.com/*']);
+  // A single slash after the `*` is a host wildcard and a path, and
+  // stays one.
+  assert.deepEqual(canonicalMatchPatterns('*/foo/*'), ['*://*/foo/*']);
+});
+
+test('matchPatternProblem: a scheme glob is a problem only when every form is', () => {
+  // `f*` names file and ftp; an empty host is legal for file and not
+  // for ftp. buildRegistrationSpec registers the file form, so warning
+  // about the ftp one would describe a pattern that is running — and
+  // would store a script INVALID for having no usable @match while one
+  // of its forms was registered.
+  assert.deepEqual(canonicalMatchPatterns('f*:///*'), ['file:///*', 'ftp:///*']);
+  assert.equal(matchPatternProblem('f*:///*'), null);
+  assert.equal(matchPattern('f*:///*', 'file:///home/me/notes.txt'), true);
+  // Both forms bad — still reported, with the first form's reason.
+  assert.match(matchPatternProblem('f*://host')?.what ?? '', /no path/);
+});
+
+test('canonicalMatchPatterns: leaves everything else verbatim', () => {
+  for (const p of ['<all_urls>', 'https://example.com/*', '*://*/*', 'file:///*']) {
+    assert.deepEqual(canonicalMatchPatterns(p), [p]);
+  }
+  // A glob naming no supported scheme is not widened — it stays wrong,
+  // so matchPatternProblem can say which scheme it named.
+  assert.deepEqual(canonicalMatchPatterns('chrome-*://x/*'), ['chrome-*://x/*']);
+});
+
+test('matchPattern: honors the lenient shapes', () => {
+  // Scheme omitted: both http and https, base domain and subdomains.
+  assert.equal(matchPattern('*.example.com/*', 'https://www.example.com/x'), true);
+  assert.equal(matchPattern('*.example.com/*', 'http://example.com/'), true);
+  assert.equal(matchPattern('*.example.com/*', 'https://example.org/'), false);
+  assert.equal(matchPattern('example.com/p/*', 'http://example.com/p/1'), true);
+  assert.equal(matchPattern('example.com/p/*', 'http://example.com/q'), false);
+  // Scheme glob: the same set `*` covers, and nothing outside it.
+  assert.equal(matchPattern('http*://example.com/*', 'http://example.com/'), true);
+  assert.equal(matchPattern('http*://example.com/*', 'https://example.com/'), true);
+  assert.equal(matchPattern('http*://example.com/*', 'ftp://example.com/'), false);
+  assert.equal(matchPattern('*s://example.com/*', 'http://example.com/'), false);
+  assert.equal(matchPattern('*s://example.com/*', 'https://example.com/'), true);
+});
+
 // ---------- matchPatternProblem ----------
 //
 // The parse-time stand-in for Chrome's match-pattern parser. Two things
@@ -205,6 +318,18 @@ const VALID_PATTERNS = [
   'http://127.0.0.1:8080/*',
   'https://*.example.com:8443/*',
   'https://example.com:*/*',
+  // Shapes Chrome's parser refuses and canonicalMatchPatterns reads
+  // leniently, so nothing downstream should flag them either.
+  '*.example.com/*',
+  '//example.com/*',
+  '://example.com/*',
+  'http*://example.com/*',
+  '*s://example.com/*',
+  // The host check is a reject-list of characters no hostname holds,
+  // so a host Chrome canonicalizes rather than refuses still passes.
+  'https://例え.jp/*',
+  'https://foo_bar.example/*',
+  'http://[::1]:8080/*',
 ];
 
 test('matchPatternProblem: accepts every well-formed pattern', () => {
@@ -222,13 +347,31 @@ test('matchPatternProblem: a bare origin has no path', () => {
 });
 
 test('matchPatternProblem: names the other malformed shapes', () => {
-  assert.match(matchPatternProblem('example.com/*')?.what ?? '', /no ":\/\/"/);
   assert.match(matchPatternProblem('httpx://example.com/*')?.what ?? '', /unsupported scheme "httpx"/);
   assert.match(matchPatternProblem('https:///*')?.what ?? '', /no host/);
   // Chrome takes the port off before judging the host, so this one is
   // "Host can not be empty" to it too — not a host named ":8080".
   assert.match(matchPatternProblem('https://:8080/*')?.what ?? '', /no host/);
-  assert.match(matchPatternProblem('http*://example.com/*')?.what ?? '', /unsupported scheme "http\*"/);
+  // A scheme glob that names no supported scheme stays unsupported —
+  // the leniency in canonicalMatchPatterns only covers globs that do.
+  assert.match(matchPatternProblem('chrome-*://example.com/*')?.what ?? '', /unsupported scheme "chrome-\*"/);
+  // Judged after the lenient rewrite, so the problem is what is left
+  // once the missing scheme is supplied — not the missing scheme.
+  assert.match(matchPatternProblem('example.com')?.what ?? '', /no path/);
+  // A regex pasted into an `@match` reads as a scheme-less pattern
+  // whose "host" is regex syntax. It has to stay flagged: Chrome
+  // refuses it, and a refusal takes the whole registration down, where
+  // a flagged pattern is just dropped.
+  const pastedRegex = matchPatternProblem('https?:\\/\\/weibo.com/p/*');
+  assert.match(pastedRegex?.what ?? '', /invalid host "https\?:\\"/);
+  assert.equal(pastedRegex?.pattern, 'https?:\\/\\/weibo.com/p/*');
+  assert.match(matchPatternProblem('a%zz.example/*')?.what ?? '', /invalid host/);
+  // A colon isn't on the list: it means a malformed port, which is the
+  // part of the grammar left to Chrome (and which
+  // tests/e2e/rejected-registration.spec.ts provokes REJECTED with).
+  assert.equal(matchPatternProblem('https://host:notaport/*'), null);
+  // Nor is it a problem in a bracketed IPv6 literal, which is all colons.
+  assert.equal(matchPatternProblem('*://[::1]:3000/*'), null);
   assert.match(matchPatternProblem('https://www.*.com/*')?.what ?? '', /"\*" inside its host/);
   assert.match(matchPatternProblem('https://*.example.*/*')?.what ?? '', /"\*" inside its host/);
   // `file://` is the one scheme whose URLs have no host, so an empty
@@ -241,12 +384,13 @@ test('matchPatternProblem: everything it flags is unmatchable anyway', () => {
   // without changing which pages a script runs on.
   const flagged = [
     'https://example.com',
-    'example.com/*',
+    'example.com',
     'httpx://example.com/*',
     'https:///*',
     'https://www.*.com/*',
     'https://*.example.*/*',
     'https://:8080/*',
+    'https?:\\/\\/weibo.com/p/*',
   ];
   const urls = [
     'https://example.com/',
@@ -291,7 +435,7 @@ test('unusableMatchGroupKey: elides the pattern, and declines anything else', ()
   // Different mistakes stay apart.
   assert.notEqual(
     unusableMatchGroupKey(a),
-    unusableMatchGroupKey(unusableMatchMessage(matchPatternProblem('nonsense'))),
+    unusableMatchGroupKey(unusableMatchMessage(matchPatternProblem('httpx://example.com/*'))),
   );
   // Not one of ours: the warning form, and the message for a script that
   // declared no pattern at all (which ends with the same clause).

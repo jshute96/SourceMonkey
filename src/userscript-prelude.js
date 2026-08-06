@@ -314,8 +314,50 @@
     }
     try { return globRx(pat).test(url); } catch (_e) { return false; }
   }
+  /* Lenient readings of the two shapes Chrome's parser refuses — an
+     omitted scheme and a scheme glob. Mirrors canonicalMatchPatterns()
+     in src/url-match.ts; see its header for why. Keep the two in
+     lockstep: the SW registers the canonical form, so a wrapper that
+     didn't know the rewrite would reject a page Chrome injected it on. */
+  var CONCRETE_SCHEMES = ["http", "https", "file", "ftp"];
+  function canonicalPatterns(pat) {
+    if (pat === "<all_urls>") return [pat];
+    var p = pat;
+    if (p.indexOf("*//") === 0) p = "*:" + p.slice(1);
+    else if (p.indexOf("//") === 0) p = "*:" + p;
+    else if (p.indexOf("://") < 0) p = "*://" + p;
+    var sep = p.indexOf("://");
+    var scheme = p.slice(0, sep).toLowerCase();
+    var rest = p.slice(sep);
+    if (scheme === "*" || scheme === "") return anyScheme(rest);
+    if (scheme.indexOf("*") < 0) return [p];
+    var expanded = [];
+    for (var i = 0; i < CONCRETE_SCHEMES.length; i++) {
+      try {
+        if (globRx(scheme).test(CONCRETE_SCHEMES[i])) expanded.push(CONCRETE_SCHEMES[i]);
+      } catch (_e) { /* unglobbable scheme — leave the pattern alone */ }
+    }
+    if (expanded.length === 0) return [pat];
+    if (expanded.join() === "http,https") return anyScheme(rest);
+    for (var j = 0; j < expanded.length; j++) expanded[j] += rest;
+    return expanded;
+  }
+  /* http-or-https, spelled out beside a numeric port because Chrome's
+     parser refuses `*` there. Same reasoning as anyScheme() in
+     src/url-match.ts — matching-wise the two spellings are equal, but
+     the SW registers this one, so the wrapper reads it too. */
+  function anyScheme(rest) {
+    var host = rest.slice(3).split("/")[0];
+    if (!/:\d+$/.test(host)) return ["*" + rest];
+    return ["http" + rest, "https" + rest];
+  }
   function matchPattern(pat, url) {
     if (pat === "<all_urls>") return /^(https?|file|ftp):/i.test(url);
+    var cands = canonicalPatterns(pat);
+    for (var i = 0; i < cands.length; i++) if (matchCanonical(cands[i], url)) return true;
+    return false;
+  }
+  function matchCanonical(pat, url) {
     var parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)$/i.exec(pat);
     if (!parts) return false;
     var scheme = parts[1], host = parts[2], path = parts[3];

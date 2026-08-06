@@ -77,7 +77,7 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
-import { matchPatternProblem } from './url-match.js';
+import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
 import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
 import {
@@ -710,14 +710,28 @@ export async function buildRegistrationSpec(
   scriptHandlerVersion: string = '0.0.0',
   logLabel: string = scriptBasename(script.relativePath),
 ): Promise<RegistrationSpec | null> {
-  // Patterns Chrome's match-pattern grammar refuses never go in the
-  // spec: it rejects the registration as a whole, so one bad `@match`
-  // would take the script's good patterns down with it. Dropping them
-  // costs nothing — `matchPattern` can't match them either — and the
-  // reason is already in the script's Log, on the header line that
-  // declared it (see `extractStartupLogs`). A script left with no
-  // pattern at all was already stored `invalid` by `validateHeader`.
-  const matches = script.matching.matches.filter((m) => matchPatternProblem(m) === null);
+  // What Chrome gets is the canonical spelling of each `@match`, not
+  // the author's: a scheme-less `*.example.com/*` or a globbed
+  // `http*://example.com/*` is a pattern Chrome's parser refuses but
+  // our matcher runs, so we hand it the form that means the same thing
+  // in Chrome's own grammar. One `@match` can expand to
+  // more than one pattern when its scheme glob names more than one
+  // scheme; duplicates across patterns collapse.
+  //
+  // Patterns Chrome's grammar refuses even then never go in the spec:
+  // it rejects the registration as a whole, so one bad `@match` would
+  // take the script's good patterns down with it. Dropping them costs
+  // nothing — `matchPattern` can't match them either — and the reason
+  // is already in the script's Log, on the header line that declared
+  // it (see `extractStartupLogs`). A script left with no pattern at all
+  // was already stored `invalid` by `validateHeader`.
+  const matches = [
+    ...new Set(
+      script.matching.matches
+        .flatMap((m) => canonicalMatchPatterns(m))
+        .filter((m) => matchPatternProblem(m) === null),
+    ),
+  ];
   const includeGlobs: string[] = [];
   const excludeGlobs: string[] = [];
   let hasRegexInclude = false;

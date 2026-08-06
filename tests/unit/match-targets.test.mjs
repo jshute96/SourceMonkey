@@ -106,7 +106,30 @@ test('originFromMatchPattern: <all_urls> has no representative site', () => {
 test('originFromMatchPattern: malformed patterns return null', () => {
   assert.equal(originFromMatchPattern(''), null);
   assert.equal(originFromMatchPattern('not a pattern'), null);
-  assert.equal(originFromMatchPattern('://example.com/*'), null);
+});
+
+test('originFromMatchPattern: reads the lenient shapes like the matcher', () => {
+  // A pattern with the scheme left out still names a site, so it gets
+  // an icon and a click-through target like any other. Same reading as
+  // canonicalMatchPatterns (src/url-match.ts).
+  assert.equal(originFromMatchPattern('*.example.com/*'), 'https://example.com');
+  assert.equal(originFromMatchPattern('example.com/app/*'), 'https://example.com');
+  assert.equal(originFromMatchPattern('//example.com/*'), 'https://example.com');
+  assert.equal(originFromMatchPattern('://example.com/*'), 'https://example.com');
+  assert.equal(originFromMatchPattern('http*://example.com/*'), 'https://example.com');
+  assert.equal(originFromMatchPattern('*//example.com/*'), 'https://example.com');
+});
+
+test('originFromMatchPattern: a port-pinned `*` scheme still reads as https', () => {
+  // `*://host:8443/*` canonicalizes to the http + https pair (Chrome
+  // refuses `*` beside a numeric port), and the representative has to
+  // stay the https member — an icon probe over http would fail on a
+  // TLS-only port.
+  assert.equal(originFromMatchPattern('*://example.com:8443/*'), 'https://example.com:8443');
+  assert.deepEqual(representativeMatch({ matches: ['*://example.com:8443/app/*'] }), {
+    origin: 'https://example.com:8443',
+    linkUrl: 'https://example.com:8443/app/',
+  });
 });
 
 test('originFromMatchPattern: lowercases the host', () => {

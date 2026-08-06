@@ -74,6 +74,76 @@ test.describe('injection', () => {
     await page.close();
   });
 
+  // The lenient `@match` readings, end to end: Chrome's parser refuses
+  // a scheme-less pattern and a scheme glob outright, so this proves
+  // the rewrite in `canonicalMatchPatterns` produces something Chrome
+  // takes AND that it still means what the author wrote. A unit test
+  // can only show the strings; only Chrome can say it registered them.
+  for (const [label, pattern] of [
+    ['a scheme-less @match', '{host}/*'],
+    ['a scheme-glob @match', 'http*://{host}/*'],
+  ] as const) {
+    test(`${label} registers and injects`, async ({
+      extensionContext,
+      fixtureServer,
+      sm,
+    }) => {
+      const host = fixtureServer.baseUrl.replace(/^https?:\/\//, '');
+      scriptsDir.write({
+        relativePath: 'lenient.user.js',
+        meta: {
+          name: 'Lenient Match',
+          match: [pattern.replace('{host}', host)],
+          runAt: 'document-end',
+        },
+        body: `
+          const el = document.getElementById('target');
+          if (el) el.textContent = 'injected by SourceMonkey';
+        `,
+      });
+      const source = await sm.addSource(scriptsDir.path);
+      await sm.syncNow();
+
+      // Loaded clean: no warning about a dropped pattern, and no
+      // registration refusal from Chrome.
+      const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+      expect(script.status).toBe('ok');
+      expect(script.startupLogs ?? []).toEqual([]);
+      expect(await sm.getRejections()).toEqual({});
+
+      const page = await extensionContext.newPage();
+      await page.goto(`${fixtureServer.baseUrl}/target.html`);
+      await expect(page.locator('#target')).toHaveText('injected by SourceMonkey');
+      await page.close();
+    });
+  }
+
+  // The negative half of the claim the pair expansion rests on. Nothing
+  // in the pipeline can produce `*://host:PORT/*` any more, so this asks
+  // Chrome directly: if it ever starts accepting that spelling, this
+  // fails and `anyScheme` (src/url-match.ts) can go back to one pattern.
+  test('Chrome still refuses `*` beside a numeric port', async ({
+    fixtureServer,
+    getServiceWorker,
+  }) => {
+    const host = fixtureServer.baseUrl.replace(/^https?:\/\//, '');
+    const sw = await getServiceWorker();
+    const error = await sw.evaluate(async (pattern) => {
+      try {
+        await chrome.userScripts.register([{
+          id: 'port-probe',
+          matches: [pattern],
+          js: [{ code: 'void 0;' }],
+        }]);
+        await chrome.userScripts.unregister({ ids: ['port-probe'] });
+        return null;
+      } catch (e) {
+        return String((e as Error).message);
+      }
+    }, `*://${host}/*`);
+    expect(error).toMatch(/Invalid port/i);
+  });
+
   test('multiple matching scripts all inject', async ({
     extensionContext,
     fixtureServer,

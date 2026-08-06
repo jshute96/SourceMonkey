@@ -13,6 +13,8 @@
 // No fetching, no DOM, no chrome.storage — that all lives in the
 // modules that consume these primitives.
 
+import { canonicalMatchPatterns } from './url-match.js';
+
 export interface MatchTarget {
   // `scheme://host[:port]` — no path. Cache key for the origin-scoped
   // favicon store; also "is this a usable site?" gate for both
@@ -49,7 +51,17 @@ interface ParsedMatch {
 // common case.
 function parseMatchPattern(pattern: string): ParsedMatch | null {
   if (pattern === '<all_urls>') return null;
-  const parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)?$/i.exec(pattern);
+  // Read the pattern the way the matcher and the registration do — a
+  // scheme-less `*.example.com/*` names a site, and should get an icon
+  // and a click-through like any other. An expansion only varies the
+  // scheme, and this picks one representative origin, so prefer a form
+  // that isn't `http://`: `*` is read as https below, and a port-pinned
+  // `*://host:8443/*` (which canonicalizes to the http + https pair)
+  // must keep pointing at the https member — fetching the icon over
+  // http would fail on a TLS-only port.
+  const canonical = canonicalMatchPatterns(pattern);
+  const preferred = canonical.find((p) => !p.startsWith('http://')) ?? canonical[0] ?? pattern;
+  const parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)?$/i.exec(preferred);
   if (!parts) return null;
   const [, rawScheme, rawHost] = parts;
   const scheme = rawScheme === '*' ? 'https' : rawScheme.toLowerCase();
@@ -64,6 +76,16 @@ function parseMatchPattern(pattern: string): ParsedMatch | null {
   if (host === '*' || host === '') return null;
   if (host.startsWith('*.')) host = host.slice(2);
   if (!host || host.includes('*')) return null;
+
+  // The host slot has to hold a host we could actually navigate to.
+  // Worth checking since the scheme-less reading above will supply a
+  // scheme for any text at all (`not a pattern` → `*://not a pattern`),
+  // and this origin becomes a fetch and an href.
+  try {
+    new URL(`${scheme}://${host}${port}/`);
+  } catch {
+    return null;
+  }
 
   return { scheme, host: host + port, path: parts[3] ?? '/' };
 }

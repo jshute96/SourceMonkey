@@ -88,7 +88,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
-| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check |
+| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local` |
 | `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts` and wraps each body with an activation/error shim |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
@@ -137,7 +137,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, sources page renders, fixture server responds |
-| `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, and multiple-script cases |
+| `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |

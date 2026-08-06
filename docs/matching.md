@@ -29,6 +29,86 @@ Three pattern flavours, all implemented in `src/url-match.ts`:
 
 Host comparison is case-insensitive.
 
+#### Lenient readings (`canonicalMatchPatterns`)
+
+Two shapes Chrome's parser refuses have one obvious reading, and real
+scripts are full of them. Both are rewritten into Chrome's spelling
+before anything else looks at them:
+
+| Written | Read as | Why |
+|---------|---------|-----|
+| `*.example.com/*` | `*://*.example.com/*` | Scheme omitted |
+| `//example.com/*` | `*://example.com/*` | Protocol-relative |
+| `://example.com/*` | `*://example.com/*` | Empty scheme |
+| `*//example.com/*` | `*://example.com/*` | `*://` missing its colon |
+| `http*://example.com/*` | `*://example.com/*` | Scheme glob |
+| `*s://example.com/*` | `https://example.com/*` | Scheme glob |
+
+- A scheme containing `*` is **globbed against the supported schemes**
+  (`http`, `https`, `file`, `ftp`), and one pattern comes back per
+  scheme it names — the glob is enumerated, not approximated.
+  - `http*://` names http + https, which is exactly what `*` means, so
+    it comes back as `*://` — the same set said shorter.
+  - Every other expansion comes back as concrete schemes: `*s://` →
+    `https://` alone, `*t*://` → `http://` + `https://` + `ftp://`.
+  - So there is **no scheme re-check afterwards, and none is needed**.
+    Nothing is ever rounded up to `*`: a `*s://` pattern is registered
+    as `https://` and never sees an http page in the first place. That
+    matters because Chrome does the matching — a pattern registered
+    wider than the author's would inject before any wrapper-side
+    filter could run.
+- A glob naming **no** supported scheme (`chrome-*://…`) is left alone,
+  so it is still reported as an unsupported scheme rather than
+  silently widened.
+- The rewrite runs ahead of the matcher, the validator, and the
+  registration, so all three see one pattern. In particular Chrome
+  registers the rewritten form — an unrewritten pattern would be
+  dropped, and the script would stop running where its author said.
+- `userscript-prelude.js` carries the same rewrite, because the
+  wrapper-side matcher has to agree with what the SW registered.
+- A rewritten pattern is honored **as written**, host wildcard and
+  all: `http*://*/forum.php` becomes `*://*/forum.php` and the script
+  runs on every site with that path. It ran nowhere before, so this is
+  a widening — but to the scope its author asked for, and 45 corpus
+  patterns are of that shape.
+- `*//example.com/*` is the one shape read as a typo rather than
+  literally. Taken at face value it means "any host, path beginning
+  `//example.com/`" — a different site from the one written, which the
+  bullet above would then widen to. Chrome refuses it either way.
+
+Why bother:
+
+- Over the Greasy Fork corpus these two shapes are nearly every
+  `@match` Chrome refuses — 710 scheme-less and 202 globbed, out of
+  1,035 (see below). The rewrite makes **877** of them usable; the
+  remainder fail for a second reason as well.
+- Those are the site's most-installed scripts, so they work under
+  whatever manager their authors and users run. Only Chrome's parser
+  can't spell what they wrote.
+- **Not** measured against a real Tampermonkey: that needs the
+  cross-manager browser profile, which is set up by hand (see
+  [cross-manager-testing.md](cross-manager-testing.md)).
+- Safe without that measurement anyway — every pattern the rewrite
+  touches is one Chrome refused outright, so a lenient reading can
+  only add pages a script runs on, never take one away.
+
+#### `*` beside a numeric port
+
+The one place the rewrite has to say `*` the long way. Chrome's parser
+refuses `*://localhost:3000/*` with `Invalid port`, but accepts:
+
+- `http://localhost:3000/*` — a named scheme beside the same port;
+- `*://localhost:*/*` — `*` beside a wildcard port.
+
+So `*://host:3000/*` is registered as the pair `http://host:3000/*` +
+`https://host:3000/*` — what `*` means anyway.
+
+- Applies to patterns written that way, not just to the lenient
+  rewrites: a port-pinned `*://` pattern used to be a
+  [REJECTED](injection.md#rejected-registrations) registration.
+- Probed against Chrome 148; the lenient-match cases in
+  `tests/e2e/injection.spec.ts` pin it against a real browser.
+
 #### Patterns Chrome refuses
 
 `matchPatternProblem` checks each `@match` against the same grammar at
@@ -37,12 +117,20 @@ one malformed pattern — the script's good patterns die with the bad
 one, and the complaint comes back in Chrome's coordinates
 (`matches[1]: Empty path`).
 
+It judges the **canonical** form, so the lenient shapes above are
+accepted, and a problem the rewrite doesn't cure is reported against
+the pattern the author actually wrote.
+
 What it flags, all cases Chrome names in its own refusal:
 
 - no path (`https://example.com`) — the common one, and the one other
   managers accept;
-- no `://`, or a scheme outside `*` / `http` / `https` / `file` / `ftp`;
+- a scheme outside `*` / `http` / `https` / `file` / `ftp` (after glob
+  expansion, so `chrome-*://` is flagged and `http*://` is not);
 - an empty host, for a scheme that has one;
+- a host holding a character no hostname can (`https?:\/\/weibo.com/p/*`
+  — a regex in an `@match`, which the scheme-less reading would
+  otherwise turn into a pattern with a host of `https?:\`);
 - `*` anywhere in the host but as the whole host or its first label.
 
 What happens to one:
@@ -66,12 +154,21 @@ one `matchPattern` could never have matched either, so no page loses a
 script it was getting.
 
 How common this is, measured over the Greasy Fork corpus
-(`tests/greasyfork-examples/corpus.db`, 1,991 scripts): 1,035 of 9,003
-`@match` patterns fail the check, and 81 scripts are left with nothing
-usable. None of them could run before either — Chrome refused their
+(`tests/greasyfork-examples/corpus.db`, 1,991 scripts, 9,003 `@match`
+patterns):
+
+- **158 patterns** still fail the check, and **34 scripts** are left
+  with nothing usable.
+- Before the lenient readings it was 1,035 and 81 — the rewrite is
+  what closed the gap.
+- What is left is mostly a bare origin with no path (92) and a `*` in
+  the middle of a host (62). Neither has a single obvious reading;
+  TODO.md tracks them. The rest is a scheme nothing supports and one
+  regex pasted into an `@match`.
+
+None of these can run under Chrome either way — it refuses their
 registrations — but the patterns exist because other managers match
-with their own engines rather than Chrome's. TODO.md tracks whether to
-grow a lenient reading of the two dominant shapes instead.
+with their own engines rather than Chrome's.
 
 ### `@include` — free-form glob
 
