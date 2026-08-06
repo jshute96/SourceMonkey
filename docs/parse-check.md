@@ -238,9 +238,11 @@ soft-failure rule then applies on top:
 
 MV3 allows exactly **one** offscreen document per extension.
 `src/offscreen.html` is it. Anything else needing a DOM without a tab —
-the clipboard fallback, `GM_download` — must extend this host and its
+the clipboard fallback, for instance — must extend this host and its
 `reasons` array (fixed at creation time in `parse-check.ts`), not
-create a second one.
+create a second one. (`GM_download` was once on that list; it turned
+out not to need a DOM at all — `chrome.downloads` fetches the URL
+itself. See [GM-APIs.md](GM-APIs.md#rejected-alternatives).)
 
 The document is created lazily on the first check and never closed, so
 it holds a renderer process for the session.

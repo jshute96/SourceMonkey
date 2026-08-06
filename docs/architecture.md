@@ -9,8 +9,8 @@ details live in the topic-specific docs linked below.
 > `GM.*` API surface covers storage (with cross-tab broadcast +
 > value-change listeners), DOM injection (`GM_addStyle` /
 > `GM_addElement`), clipboard, `GM_xmlhttpRequest` (text + binary)
-> with `@connect` URL gating, `GM_notification`, `GM_openInTab`,
-> `GM_log`, and `GM_registerMenuCommand` /
+> with `@connect` URL gating, `GM_download`, `GM_notification`,
+> `GM_openInTab`, `GM_log`, and `GM_registerMenuCommand` /
 > `GM_unregisterMenuCommand` (rendered as indented entries under
 > each script in the toolbar action's right-click menu). Deferred:
 > XHR header surgery, `GM_cookie` (bindings stubbed). See
@@ -179,6 +179,11 @@ details live in the topic-specific docs linked below.
   (page-generated id ↔ assigned chrome tab id ↔ originator tab) mapping
   so `chrome.tabs.onRemoved` can route close events back to the
   originating tab's `onclose` callback.
+- **GM_download dispatcher** (`src/gm-download.ts`) — drives
+  `chrome.downloads` on behalf of userscripts for `http(s)` URLs
+  (`blob:` / `data:` downloads stay in the page); tracks the
+  per-request mapping so completion, interrupt, timeout, and polled
+  progress events route back to the originating tab.
 - **GM_notification dispatcher** (`src/gm-notification.ts`) — wraps
   `chrome.notifications.create` and maps the chrome-assigned
   notification id back to the originating tab + request id so

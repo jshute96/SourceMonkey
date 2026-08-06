@@ -146,6 +146,14 @@ import {
   type GmNotificationShowPayload,
 } from './gm-notification.js';
 import {
+  abortGmDownload,
+  dropOriginator as dropOriginatorDownloads,
+  handleDownloadChanged,
+  startGmDownload,
+  type GmDownloadEvent,
+  type GmDownloadStartPayload,
+} from './gm-download.js';
+import {
   clearTab as clearMenuCommandsForTab,
   findMenuCommand,
   getMenuCommandsForTab,
@@ -993,6 +1001,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // notifications back to a tab that no longer exists.
   dropOriginatorTabs(tabId);
   dropOriginatorNotifications(tabId);
+  // GM_download: stop tracking this tab's transfers. They keep running
+  // (a download the user started is theirs to keep) — we just have
+  // nowhere left to route progress / completion events.
+  dropOriginatorDownloads(tabId);
   // GM_openInTab close-event routing: if this tabId was a tab we
   // opened on behalf of a userscript, dispatch sm:gm-tab-closed to
   // the originating tab so its onclose fires. Folded into this
@@ -1607,6 +1619,83 @@ function installNotificationListeners(): void {
   });
 }
 
+// ---------- GM_download dispatch ----------
+
+// Ship one download event to the tab that asked for it, and mirror
+// failures onto the script's Log tab so a user who sees "nothing
+// downloaded" has somewhere to look. Successful downloads are NOT
+// logged: a batch downloader fires hundreds of them and would push
+// every other entry out of the capped log.
+function sendDownloadEvent(
+  tabId: number,
+  scriptId: string,
+  requestId: string,
+  url: string,
+  event: GmDownloadEvent,
+): void {
+  if (event.kind === 'error' || event.kind === 'timeout') {
+    const reason = event.kind === 'timeout'
+      ? 'timed out'
+      : `${event.error}${event.details.current ? ` (${event.details.current})` : ''}${event.details.message ? `: ${event.details.message}` : ''}`;
+    logScriptEvent(scriptId, {
+      // `warning`, not `error`: a refused or interrupted download is a
+      // script/page-level outcome the script can handle (and often
+      // retries), not a SourceMonkey malfunction. `error` would also
+      // be misleading — it doesn't drive the toolbar icon red, so it
+      // only raises the noise floor.
+      level: 'warning',
+      source: 'gm-download',
+      tabId,
+      message: `GM_download ${reason} — ${url}`,
+    });
+  }
+  void chrome.tabs.sendMessage(tabId, {
+    type: 'sm:gm-download-event',
+    requestId,
+    event,
+  }).catch(() => undefined);
+}
+
+async function handleDownloadStart(
+  sender: chrome.runtime.MessageSender,
+  payload: GmDownloadStartPayload,
+): Promise<void> {
+  const tabId = sender.tab?.id;
+  if (tabId == null) {
+    console.info('[SourceMonkey] gm-download-start without tab id; ignoring');
+    return;
+  }
+  const emit = (event: GmDownloadEvent): void => {
+    sendDownloadEvent(tabId, payload.scriptId, payload.requestId, payload.url, event);
+  };
+  const result = await startGmDownload(payload, tabId, emit);
+  if (result.ok) return;
+  // A download that never started still owes the script a terminal
+  // event. `download_canceled` here means the page aborted before the
+  // download manager had an id — the page already settled its own
+  // callbacks, so there's nothing to deliver.
+  if (result.error === 'download_canceled') return;
+  emit({
+    kind: 'error',
+    error: result.error ?? 'not_succeeded',
+    details: result.details ?? {},
+  });
+}
+
+function installDownloadListeners(): void {
+  if (!chrome.downloads) {
+    console.info('[SourceMonkey] chrome.downloads not available; GM_download will report not_permitted');
+    return;
+  }
+  // Note this listener sees EVERY download in the browser, not just
+  // ours — the API has no per-extension filter. `handleDownloadChanged`
+  // ignores ids it didn't start, and we never read or store anything
+  // about a download a userscript didn't ask for.
+  chrome.downloads.onChanged.addListener((delta) => {
+    handleDownloadChanged(delta);
+  });
+}
+
 // ---------- GM_* storage batched writes + cross-tab broadcast ----------
 
 interface BatchWriteEntry {
@@ -1917,6 +2006,23 @@ function installScriptMessageListener(): void {
       if (typeof payload.requestId === 'string') {
         void closeGmTab(payload.requestId);
       }
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return false;
+    }
+    if (type === 'sm:gm-download-start') {
+      // Ack immediately — the transfer can run for minutes and the
+      // message channel shouldn't stay pinned open for it. Terminal +
+      // progress events arrive later via chrome.tabs.sendMessage, the
+      // same shape as GM_xmlhttpRequest.
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      void handleDownloadStart(sender, msg as GmDownloadStartPayload).catch((err) => {
+        console.info('[SourceMonkey] gm-download-start handler threw:', err);
+      });
+      return false;
+    }
+    if (type === 'sm:gm-download-abort') {
+      const payload = msg as { requestId?: string };
+      if (typeof payload.requestId === 'string') void abortGmDownload(payload.requestId);
       try { sendResponse({ ok: true }); } catch { /* gone */ }
       return false;
     }
@@ -2241,6 +2347,7 @@ installScriptMessageListener();
 installDebugLoggingListener();
 installGithubAuthListener();
 installNotificationListeners();
+installDownloadListeners();
 installActionContextMenu();
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync

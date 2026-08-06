@@ -12,8 +12,8 @@
 //
 // This is the extension's ONE offscreen document — MV3 allows no more
 // — so anything else that needs a DOM without a tab (the clipboard
-// fallback, `GM_download`) must be added here rather than creating its
-// own. Adding a consumer means extending the `reasons` array in
+// fallback, say) must be added here rather than creating its own.
+// Adding a consumer means extending the `reasons` array in
 // `parse-check.ts`, which is fixed at creation time.
 
 import { PARSE_CHECK_MSG } from './parse-check-protocol.js';

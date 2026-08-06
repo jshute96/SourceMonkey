@@ -1,5 +1,17 @@
 # TODO
 
+A backlog of **candidates**, not a list of obligations.
+
+- Most entries record a deliberate trade-off and the conditions under
+  which it would be worth revisiting — not a defect awaiting a fix.
+  Shipping without any given item here is a valid outcome.
+- Entries exist so a choice already made and reasoned about isn't
+  re-litigated from scratch later. The reasoning matters more than the
+  proposal.
+- Nothing here is scheduled or prioritized. If something genuinely
+  needs doing before release, it belongs in the relevant design doc or
+  an issue, not buried in this file.
+
 ## Skeleton
 
 - Injection follow-ups — see the **Limitations / future work**
@@ -232,9 +244,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   scripts work badly without it. Could be page-side via
   `MutationObserver` on `location.href` + `pushState` / `popstate`
   listeners.
-- `GM_download` — TM/VM download-to-disk helper. Needs `BLOBS` added
-  to the existing offscreen document's `reasons` (see the clipboard
-  entry — there is only one such document).
 - `window.close` / `window.focus` — TM-only surface.
 
 ### GM_* implementation follow-ups
@@ -261,6 +270,50 @@ Adding any of these is a catalog entry + a body — nothing structural.
   trick.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
+- **`GM_download` follow-ups.**
+  - **Make `downloads` an optional permission.** TM's `not_enabled` /
+    `not_permitted` errors exist because its download support is
+    opt-in. We declare `downloads` unconditionally, which adds a
+    "Manage your downloads" prompt for every user including those who
+    run no downloading scripts. `chrome.permissions.request` needs a
+    user gesture on an extension page, so this means an Options-page
+    toggle plus a `not_permitted` path when it's off (already
+    implemented — the SW checks `chrome.downloads` at call time).
+  - **TM-style file-extension allowlist** (`not_whitelisted`). We rely
+    on Chrome's dangerous-download prompts today. Worth revisiting
+    with the optional-permission work, since both want the same
+    Options-page surface.
+  - **Completion signal for the in-page `blob:` / `data:` path.** The
+    anchor click has none, so `onload` fires ~250 ms after the click
+    rather than on completion — "handed to the browser", not "written
+    to disk". http(s) is unaffected; documented under
+    [download caveats](docs/supported-GM-APIs.md#download-caveats).
+    - The click *does* create a real `chrome.downloads` item and the
+      SW already sees every `onChanged`, so the transfer is
+      observable — we just don't tie it back to a request.
+    - Correlating means matching an unclaimed new download to a
+      pending in-page request by `finalUrl` plus a time window. Two
+      scripts downloading the same blob URL in the same instant are
+      indistinguishable.
+    - The timer would stay as a fallback: a `data:` URL that completes
+      before the SW hears about it must still settle.
+  - **Progress polling interval is fixed at 500 ms.** Fine for a
+    progress bar; a per-request interval (or a rate proportional to
+    file size) would be nicer for very large files. The poll is also
+    what keeps the SW alive across a long download, so a slower rate
+    needs to stay under the ~30 s idle shutdown.
+  - **No recovery after the SW really dies** (browser restart, crash).
+    The `requestId → downloadId → tab` mapping is in-memory, so a
+    download in flight at that moment never reports back. Persisting it
+    in `chrome.storage.session` and re-attaching on SW startup would
+    fix it. Deliberately NOT solved with a page-side TTL the way
+    `GM_xmlhttpRequest` does it — a download can legitimately run for
+    hours, so there's no honest deadline.
+  - **`interrupted` is treated as terminal even when `item.canResume`
+    is true.** Chrome's UI would offer "Resume", and a download the
+    user resumes to completion still reported `not_succeeded` (plus a
+    Log warning). Waiting instead would risk never settling the script
+    at all, so this stays until someone hits it in practice.
 - **Page-side TTL for XHR active requests.** Currently 5 min. Fine
   for now; revisit if real workloads hit it.
 - **Abort-after-response narrow race.** A SW round-trip on abort

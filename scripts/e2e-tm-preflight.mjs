@@ -18,13 +18,17 @@
 //                 and what tests/fixtures/manager.ts reads).
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getTampermonkeyExtensionId } from '../tests/fixtures/tampermonkey-driver.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.TM_CDP_PORT || 9223);
 const MODE = process.argv[2];
+const TM_PROFILE_DIR = path.join(ROOT, '.chrome-tampermonkey-profile');
+const TM_PREFS = path.join(TM_PROFILE_DIR, 'Default', 'Preferences');
 
 if (MODE !== '--need-open' && MODE !== '--need-closed') {
   console.error(`Usage: e2e-tm-preflight.mjs (--need-open | --need-closed)`);
@@ -71,6 +75,102 @@ async function focusExistingBrowser() {
   }
 }
 
+/**
+ * Pre-grant Chrome's `downloads` permission to Tampermonkey in the
+ * test profile.
+ *
+ * `downloads` is an *optional* permission in TM's manifest: the first
+ * `GM_download` call opens TM's own "Browser API Downloads — click OK"
+ * page, whose OK button calls `chrome.permissions.request`. That needs
+ * Chrome's native grant bubble, which a headless run can't show, so the
+ * click does nothing, the GM call never settles, and the spec times out
+ * with an empty log rather than a refusal. Writing the grant straight
+ * into Preferences is the same shortcut `tests/fixtures/extension.ts`
+ * takes for `user_scripts_enabled` on the SourceMonkey profile.
+ *
+ * Only safe with the browser closed — Chrome rewrites Preferences from
+ * memory on exit and would drop the edit. Callers must check.
+ *
+ * Never throws. Silent when there's nothing to do — already granted,
+ * or no profile / no TM in it yet, which is the first-run story
+ * `tests/fixtures/manager.ts` reports better than we could here.
+ * @returns {void}
+ */
+function grantDownloadsPermission() {
+  if (!fs.existsSync(TM_PREFS)) return;
+  const id = getTampermonkeyExtensionId();
+  let prefs;
+  try {
+    prefs = JSON.parse(fs.readFileSync(TM_PREFS, 'utf8'));
+  } catch (err) {
+    console.error(
+      `Could not read the TM profile's Preferences (${TM_PREFS}): ${err?.message ?? err}\n` +
+      `GM_download specs will hang on TM's permission prompt until it's granted.`
+    );
+    return;
+  }
+  const entry = prefs?.extensions?.settings?.[id];
+  if (!entry) return; // TM not installed in this profile yet.
+
+  // Both lists matter: `granted_permissions` is what the user has ever
+  // approved, `active_permissions` is what the extension holds now.
+  let changed = false;
+  let wroteSomewhere = false;
+  for (const key of ['granted_permissions', 'active_permissions']) {
+    const bucket = entry[key];
+    if (!bucket) continue;
+    // An extension holding no optional permissions yet can have the
+    // bucket without the array. Create it rather than skipping: a
+    // `continue` here is indistinguishable from "already granted"
+    // below, and lands us back at the silent hang.
+    if (!Array.isArray(bucket.api)) bucket.api = [];
+    wroteSomewhere = true;
+    if (!bucket.api.includes('downloads')) {
+      bucket.api.push('downloads');
+      changed = true;
+    }
+  }
+  if (!wroteSomewhere) {
+    console.error(
+      `TM's profile entry has no permissions to write to, so GM_download's ` +
+      `"downloads" grant could not be pre-applied. Those specs will time out ` +
+      `on TM's permission prompt; grant Downloads to Tampermonkey by hand.`
+    );
+    return;
+  }
+  if (!changed) return;
+
+  // Keep one pre-edit copy around: this file is the profile's identity,
+  // and a bad write means re-installing TM by hand.
+  const backup = `${TM_PREFS}.pre-sm-downloads-grant`;
+  if (!fs.existsSync(backup)) fs.copyFileSync(TM_PREFS, backup);
+  fs.writeFileSync(TM_PREFS, JSON.stringify(prefs));
+
+  // Read back rather than trusting the write. Chrome keeps extension
+  // state in `Secure Preferences` (HMAC-protected) on some profile
+  // shapes, where editing this copy is a no-op — and the symptom of
+  // that would be the same silent timeout, minus any clue.
+  try {
+    const after = JSON.parse(fs.readFileSync(TM_PREFS, 'utf8'));
+    const api = after?.extensions?.settings?.[id]?.granted_permissions?.api;
+    if (!Array.isArray(api) || !api.includes('downloads')) {
+      console.error(
+        `The "downloads" grant for Tampermonkey did not stick in ${TM_PREFS}. ` +
+        `Chrome may keep this profile's extension state elsewhere. GM_download ` +
+        `specs will time out; grant Downloads to Tampermonkey by hand.`
+      );
+      return;
+    }
+  } catch {
+    // Read-back is a diagnostic, not a gate — the write already
+    // succeeded or threw.
+  }
+  console.log(
+    `Granted Chrome's "downloads" permission to Tampermonkey in the test profile ` +
+    `(needed by GM_download; backup at ${path.relative(ROOT, backup)}).`
+  );
+}
+
 async function waitForCdp(timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -84,7 +184,10 @@ async function main() {
   const isOpen = await probeCdp();
 
   if (MODE === '--need-closed') {
-    if (!isOpen) return;
+    if (!isOpen) {
+      grantDownloadsPermission();
+      return;
+    }
     await focusExistingBrowser();
     console.error(
       `\nThe Tampermonkey test browser is currently OPEN on CDP port ${PORT}.\n` +
@@ -101,6 +204,9 @@ async function main() {
 
   // --need-open
   if (isOpen) return;
+  // Before launching, while the profile is still ours to edit — Chrome
+  // rewrites Preferences from memory on exit, so a later edit is lost.
+  grantDownloadsPermission();
   console.log(`Tampermonkey test browser isn't running — launching it now…`);
   const script = path.join(ROOT, 'scripts/open-test-browser-with-TamperMonkey.sh');
   // Detached + ignore so the child survives after this preflight exits.

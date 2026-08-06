@@ -14,6 +14,7 @@
 // requests in flight; acceptable for v1.
 
 import { dropEntriesForOriginator } from './gm-originator-map.js';
+import { hasAllowedScheme, WEB_SCHEMES } from './gm-url-scheme.js';
 
 interface RequestEntry {
   originatorTabId: number;
@@ -58,12 +59,7 @@ export interface GmTabOpenResult {
 // restricting to http/https matches the realistic use and closes the
 // scheme-smuggling hole.
 function isAllowedTabUrl(url: string): boolean {
-  try {
-    const scheme = new URL(url).protocol;
-    return scheme === 'http:' || scheme === 'https:';
-  } catch {
-    return false;
-  }
+  return hasAllowedScheme(url, WEB_SCHEMES);
 }
 
 // Open a new tab on behalf of a script. Returns the assigned chrome

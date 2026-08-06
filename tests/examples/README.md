@@ -117,6 +117,7 @@ events.
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
+| `gm-download/`             | `GM_download`                                                     | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |

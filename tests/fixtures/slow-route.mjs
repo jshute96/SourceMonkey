@@ -23,6 +23,9 @@ export const CONTENT_TYPES = {
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  // gm-download/sample.txt — served as text so a browser that opens it
+  // instead of downloading it shows something readable.
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 // Smallest valid PNG: 1x1, transparent. Sent by `/__slow/*.png`.

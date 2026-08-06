@@ -248,6 +248,17 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_notification = function () { return window.__SM_GM__.notification.show(${jsLit(scriptId)}, arguments); };`;
     }
   }
+  // Download subsystem: GM_download returns a `{abort}` control object
+  // synchronously (TM's documented return). Both TM call shapes —
+  // `GM_download(details)` and `GM_download(url, name)` — are
+  // normalized by the runtime, so the binding just forwards both
+  // positional slots.
+  if (spec.subsystem === 'download') {
+    switch (spec.name) {
+      case 'GM_download':
+        return `const GM_download = function (detailsOrUrl, name) { return window.__SM_GM__.download.start(${jsLit(scriptId)}, detailsOrUrl, name); };`;
+    }
+  }
   // Menu subsystem: register/unregister context-menu commands. The
   // runtime stashes the callback locally (callbacks aren't
   // serializable) and sends the SW a `{commandId, name}` envelope so
