@@ -24,6 +24,10 @@ import { representativeMatch } from './match-targets.js';
 // doesn't permanently blank the row. The page-URL cache layer is
 // skipped entirely when the page URL is just the origin root — the
 // two would otherwise duplicate the same fetch.
+//
+// Reads go through `usableCacheHit`, which counts a row we wouldn't
+// paint as a miss — so a row written by an older, laxer build heals on
+// the next render instead of waiting out its TTL.
 
 export interface SiteIconEntry {
   dataUrl: string | null;
@@ -59,18 +63,49 @@ const MAX_HTML_BYTES = 1024 * 1024;
 // a few dozen chars; round up and add slack rather than guess.
 const MAX_INLINE_DATA_URL_LEN = Math.ceil((MAX_ICON_BYTES * 4) / 3) + 64;
 
+function isDataUrl(url: string): boolean {
+  return /^data:/i.test(url);
+}
+
+// Does a `data:` URL actually carry bytes? `data:,` (empty) is the
+// standard "this site has no favicon, stop asking" marker —
+// example.com serves exactly that — and painting it yields a blank
+// broken `<img>` where the globe placeholder belongs. A missing comma
+// counts as empty too: that's not a well-formed `data:` URL at all.
+// The one rule; every place an icon can enter or leave applies it.
+function dataUrlHasPayload(url: string): boolean {
+  const comma = url.indexOf(',');
+  return comma >= 0 && url.slice(comma + 1).trim() !== '';
+}
+
 // A `data:` URL is usable as an icon only when it's within the inline
-// cap AND actually carries a payload. `data:,` (empty) is the standard
-// "this site has no favicon, stop asking" marker — example.com serves
-// exactly that — and painting it yields a blank broken `<img>` where
-// the globe placeholder belongs. Shared by both entry points for an
-// inline icon: the `<link href="data:...">` discovery path and a
-// script's own `@icon data:...`.
+// cap AND carries a payload. Shared by both entry points for an inline
+// icon: the `<link href="data:...">` discovery path and a script's own
+// `@icon data:...`. Both check the scheme before calling.
 function usableDataUrl(url: string): string | null {
   if (url.length > MAX_INLINE_DATA_URL_LEN) return null;
-  const comma = url.indexOf(',');
-  if (comma < 0 || !url.slice(comma + 1).trim()) return null;
-  return url;
+  return dataUrlHasPayload(url) ? url : null;
+}
+
+// Would we put this stored string in an `<img src>`? Every icon we
+// store is a payload-bearing `data:` URL, so anything else is a row
+// this build didn't write — and the point of asking is to distrust
+// rows written by other builds. Defaulting closed keeps an unknown
+// shape (say a bare `https:` URL, which an extension page would fetch
+// remotely and most likely have blocked) out of the DOM.
+function paintableIcon(dataUrl: string): boolean {
+  return isDataUrl(dataUrl) && dataUrlHasPayload(dataUrl);
+}
+
+// An `href="data:,"` is the page declaring it HAS no icon, not a
+// candidate. Drop it before scoring, so a page offering both that
+// marker and a real icon doesn't hand the win to the marker — `icon`
+// outscores `apple-touch-icon`, so the marker would take it. Unlike
+// `paintableIcon` this defaults open: most hrefs are ordinary paths,
+// and only the marker shape is disqualifying.
+function emptyDataHref(href: string): boolean {
+  const h = href.trim();
+  return isDataUrl(h) && !dataUrlHasPayload(h);
 }
 
 // ---------- Header-icon extraction ----------
@@ -144,6 +179,19 @@ async function storeUrlIcon(url: string, entry: SiteIconEntry): Promise<void> {
 export function isCacheFresh(entry: SiteIconEntry, now: number = Date.now()): boolean {
   const ttl = entry.dataUrl !== null ? SUCCESS_TTL_MS : NULL_TTL_MS;
   return now - entry.fetchedAt < ttl;
+}
+
+// Read a cache row as a settled answer, or null meaning "go fetch".
+// Stale is a miss, and so is a row holding a dataUrl we would refuse
+// to paint — a build predating the empty-`data:` check stored
+// example.com's `data:,` marker as though it were an icon, and nothing
+// but the 7-day success TTL would ever have cleared it. Treating it as
+// a miss both hides it now and overwrites the row with the correct
+// "no icon" on the refetch.
+export function usableCacheHit(entry: SiteIconEntry | undefined): SiteIconEntry | null {
+  if (!entry || !isCacheFresh(entry)) return null;
+  if (entry.dataUrl !== null && !paintableIcon(entry.dataUrl)) return null;
+  return entry;
 }
 
 // ---------- Favicon fetch ----------
@@ -257,14 +305,17 @@ function parseAttrs(s: string): Record<string, string> {
   return out;
 }
 
-// Pick the candidate most likely to look good at 16x16. mask-icon is
-// dropped entirely — it's a Safari pinned-tab monochrome SVG mask and
-// renders as a black silhouette in <img>.
+// Pick the candidate most likely to look good at 16x16. Two kinds are
+// dropped before scoring rather than ranked low: mask-icon (a Safari
+// pinned-tab monochrome SVG mask, which renders as a black silhouette
+// in <img>) and an empty `data:` href (see `emptyDataHref`).
 export function pickBestIconCandidate(
   candidates: IconCandidate[],
 ): IconCandidate | null {
   if (candidates.length === 0) return null;
-  const viable = candidates.filter((c) => !c.rel.includes('mask-icon'));
+  const viable = candidates.filter(
+    (c) => !c.rel.includes('mask-icon') && !emptyDataHref(c.href),
+  );
   if (viable.length === 0) return null;
   return viable
     .map((c) => ({ c, score: scoreIcon(c) }))
@@ -345,7 +396,13 @@ async function fetchIconAt(url: string): Promise<string | null> {
   // Strip any `; charset=…` parameter; default to image/x-icon when
   // the server omitted Content-Type so the data URL still renders.
   const mime = res.contentType.split(';')[0].trim() || 'image/x-icon';
-  return arrayBufferToDataUrl(res.body, mime);
+  const dataUrl = arrayBufferToDataUrl(res.body, mime);
+  // Keep the stored-icons-are-paintable invariant local. A zero-byte
+  // 200 would encode to a payload-less `data:<mime>;base64,`, which
+  // the read side rejects — so storing it would mean refetching on
+  // every single paint, forever, and silently. `fetchResourceBytes`
+  // already refuses empty bodies, but that lives in another module.
+  return paintableIcon(dataUrl) ? dataUrl : null;
 }
 
 function arrayBufferToDataUrl(buffer: ArrayBuffer, mime: string): string {
@@ -390,8 +447,8 @@ async function ensurePathIcon(pageUrl: string): Promise<string | null> {
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const cached = await loadPathIcon(pageUrl);
-  if (cached && isCacheFresh(cached)) return cached.dataUrl;
+  const cached = usableCacheHit(await loadPathIcon(pageUrl));
+  if (cached) return cached.dataUrl;
 
   // Re-check after the storage await: another caller may have started
   // a fetch while we were reading.
@@ -410,8 +467,8 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const cached = (await loadSiteIcons([origin])).get(origin);
-  if (cached && isCacheFresh(cached)) return cached.dataUrl;
+  const cached = usableCacheHit((await loadSiteIcons([origin])).get(origin));
+  if (cached) return cached.dataUrl;
 
   const racing = inflight.get(key);
   if (racing) return racing;
@@ -434,8 +491,8 @@ export async function ensureIconForUrl(url: string): Promise<string | null> {
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const cached = await loadUrlIcon(url);
-  if (cached && isCacheFresh(cached)) return cached.dataUrl;
+  const cached = usableCacheHit(await loadUrlIcon(url));
+  if (cached) return cached.dataUrl;
 
   const racing = inflight.get(key);
   if (racing) return racing;

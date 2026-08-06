@@ -17,6 +17,7 @@ import {
   parseIconLinks,
   pickBestIconCandidate,
   maxDeclaredSize,
+  usableCacheHit,
 } from '../../dist/site-icon.js';
 
 // ---------- iconRefFromHeader ----------
@@ -120,6 +121,44 @@ test('isCacheFresh: null entries expire after 24h', () => {
   assert.equal(isCacheFresh(stale, now), false);
 });
 
+// ---------- usableCacheHit ----------
+//
+// The read side of the cache. A row we would refuse to paint counts as
+// a miss, so a row written by a build predating the empty-`data:`
+// check is hidden immediately and overwritten by the refetch, instead
+// of painting a broken <img> until its 7-day TTL runs out.
+
+test('usableCacheHit: an empty data: URL in the cache reads as a miss', () => {
+  const fresh = (dataUrl) => ({ dataUrl, fetchedAt: Date.now() });
+  assert.equal(usableCacheHit(fresh('data:,')), null);
+  assert.equal(usableCacheHit(fresh('data:image/png;base64,')), null);
+  assert.equal(usableCacheHit(fresh('data:image/png;base64,   ')), null);
+});
+
+test('usableCacheHit: real icons and cached "no icon" still hit', () => {
+  const icon = { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: Date.now() };
+  assert.equal(usableCacheHit(icon), icon);
+  // A stored null is a real answer — "we looked, there is none" — and
+  // must keep suppressing refetches for its (shorter) TTL.
+  const none = { dataUrl: null, fetchedAt: Date.now() };
+  assert.equal(usableCacheHit(none), none);
+});
+
+test('usableCacheHit: a row holding a non-data: URL is a miss', () => {
+  // Nothing this extension writes stores anything but a data: URL, so
+  // another shape means another build wrote the row — which is exactly
+  // what this check distrusts. Painting an `https:` URL from an
+  // extension page would fetch it remotely, most likely blocked.
+  const row = { dataUrl: 'https://example.com/favicon.ico', fetchedAt: Date.now() };
+  assert.equal(usableCacheHit(row), null);
+});
+
+test('usableCacheHit: missing and stale rows are misses', () => {
+  assert.equal(usableCacheHit(undefined), null);
+  const old = { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: 0 };
+  assert.equal(usableCacheHit(old), null);
+});
+
 // ---------- parseIconLinks ----------
 
 test('parseIconLinks: collects rel="icon" tags', () => {
@@ -219,6 +258,21 @@ test('pickBestIconCandidate: SVG with sizes="any" wins on vector flexibility', (
     { href: '/i.svg',   rel: 'icon', sizes: 'any',     type: 'image/svg+xml' },
   ];
   assert.equal(pickBestIconCandidate(cands).href, '/i.svg');
+});
+
+test('pickBestIconCandidate: an empty data: href never wins', () => {
+  // A page can declare `href="data:,"` to suppress favicon requests
+  // and still offer a real icon elsewhere. `rel="icon"` outscores
+  // `apple-touch-icon`, so without dropping the marker up front it
+  // would take the pick and blank the row.
+  const cands = [
+    { href: 'data:,',     rel: 'icon',            sizes: null,      type: null },
+    { href: '/apple.png', rel: 'apple-touch-icon', sizes: '180x180', type: 'image/png' },
+  ];
+  assert.equal(pickBestIconCandidate(cands).href, '/apple.png');
+  // On its own it leaves nothing viable — the caller falls back to
+  // /favicon.ico and then Google S2.
+  assert.equal(pickBestIconCandidate([cands[0]]), null);
 });
 
 test('pickBestIconCandidate: falls back to apple-touch-icon when nothing else viable', () => {

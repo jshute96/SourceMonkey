@@ -361,4 +361,70 @@ test.describe('site-icon slot', () => {
       fs.rmSync(parent, { recursive: true, force: true });
     }
   });
+
+  test('a cached empty data: URL heals instead of painting a broken img', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // A build predating the empty-`data:` check cached example.com's
+    // `<link rel="icon" href="data:,">` marker as though it were an
+    // icon. Rows keyed on such an entry painted `<img src="data:,">` —
+    // a broken image where the globe belongs — and would have kept
+    // doing so until the 7-day success TTL expired. Reads now treat a
+    // row they wouldn't paint as a miss, which hides it at once and
+    // overwrites it on the refetch.
+    //
+    // Both legs that would leave the machine are cut, so the refetch
+    // lands on "no icon" — a rewritten `dataUrl: null` — no matter
+    // what the test host can reach.
+    await extensionContext.route('https://example.com/**', (route) => route.abort());
+    await extensionContext.route('https://www.google.com/**', (route) => route.abort());
+    try {
+      scriptsDir.write({
+        relativePath: 'poisoned.user.js',
+        meta: { name: 'Poisoned', match: ['https://example.com/*'] },
+        body: '',
+      });
+      const source = await sm.addSource(scriptsDir.path);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/sources.html`);
+      // Seed the poisoned row from the page (extension pages hold the
+      // same chrome.storage.local the icon cache uses), then reload so
+      // the render reads it fresh.
+      const key = 'siteIcon:https://example.com';
+      await page.evaluate(
+        ([k]) => chrome.storage.local.set({ [k]: { dataUrl: 'data:,', fetchedAt: Date.now() } }),
+        [key],
+      );
+      await page.reload();
+
+      // Assert the rewrite FIRST: the poll only settles once the
+      // refetch has finished and replaced the row, which is the point
+      // past which "no img" means the fix worked rather than the paint
+      // simply not having happened yet. `toHaveCount(0)` retries until
+      // it passes, so on its own it would be satisfied by that earlier
+      // state too.
+      await expect
+        .poll(async () => (await page.evaluate(
+          ([k]) => chrome.storage.local.get(k).then(
+            (got) => (k in got ? got[k].dataUrl : 'absent'),
+          ),
+          [key],
+        )))
+        .toBe(null);
+
+      const slot = page
+        .locator(`section.directory[data-source-id="${source!.id}"] tbody tr`)
+        .first()
+        .locator('.site-icon');
+      await expect(slot.locator('a.site-icon-inner'))
+        .toHaveAttribute('href', 'https://example.com/');
+      await expect(slot.locator('svg.site-icon-globe')).toBeVisible();
+      await expect(slot.locator('img')).toHaveCount(0);
+      await page.close();
+    } finally {
+      await extensionContext.unroute('https://example.com/**');
+      await extensionContext.unroute('https://www.google.com/**');
+    }
+  });
 });
