@@ -4,6 +4,8 @@
 // reload. Regression coverage for issue #10 — a script that recovered
 // elsewhere kept its stale failure badge until the page was reloaded.
 
+import fs from 'node:fs';
+
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
@@ -182,14 +184,15 @@ test.describe('sources page live updates', () => {
     await page.close();
   });
 
-  test('a watcher-driven section rebuild keeps the refresh highlights', async ({
+  test('a repaint triggered elsewhere keeps the refresh highlights', async ({
     extensionContext, extensionId, sm,
   }) => {
     // Refresh highlights say what changed on the last refresh and stay
-    // until the next one. A structural change arriving from elsewhere
-    // rebuilds the whole section — every `<tr>` is replaced — so the
-    // classes have to be carried onto the new rows explicitly or the
-    // user's what-changed colour vanishes for an unrelated reason.
+    // until the next one. A script appearing elsewhere repaints this
+    // section; the highlight survives because the repaint reuses the
+    // `<tr>` rather than rebuilding it. If rows were ever recreated on
+    // a repaint, the user's what-changed colour would vanish for a
+    // completely unrelated reason.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
@@ -266,6 +269,70 @@ test.describe('sources page live updates', () => {
     await refresh.click();
     await expect(rowB).toHaveClass(/row-updated/);
     await expect(rowA).not.toHaveClass(/row-updated/);
+
+    await page.close();
+  });
+
+  test("the per-script Remove swaps in the container's own empty message", async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Two things at once. The table and the "no scripts" message are
+    // different elements, so this is the one path a repaint can't update
+    // in place — it swaps the block whole. And the copy has to be the
+    // CONTAINER's ("No scripts in this container yet"), not the
+    // directory-scan one: the per-row Remove button only exists on
+    // container rows, so hand-rolling that message here got it wrong on
+    // every row that has the button.
+    const file = scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(file);
+    expect(source!.path).toBe('container:file');
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await expect(section.locator('tbody tr')).toHaveCount(1);
+
+    page.once('dialog', (dialog) => void dialog.accept());
+    await section.locator('tbody tr .remove-script').click();
+
+    await expect(section.locator('table.script-table')).toHaveCount(0);
+    await expect(section.locator('p.empty'))
+      .toHaveText('No scripts in this container yet — add one above.');
+
+    await page.close();
+  });
+
+  test('a scan failure appearing and clearing elsewhere updates the section', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const source = await sm.addSource(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await expect(section.locator('p.error')).toHaveCount(0);
+
+    // Directory becomes unreadable → the scan fails and the section
+    // grows an error line, with the scripts left in place.
+    const moved = `${scriptsDir.path}-moved`;
+    fs.renameSync(scriptsDir.path, moved);
+    await sm.updateSource(source!.id, 'manual');
+    await expect(section.locator('p.error')).toContainText('This source did not load');
+    await expect(section.locator('tbody tr')).toHaveCount(1);
+
+    // Directory comes back → the error line goes away again.
+    fs.renameSync(moved, scriptsDir.path);
+    await sm.updateSource(source!.id, 'manual');
+    await expect(section.locator('p.error')).toHaveCount(0);
 
     await page.close();
   });

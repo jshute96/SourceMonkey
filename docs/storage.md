@@ -674,7 +674,7 @@ gets a persistent background color:
     flashes green even when the body is unchanged — otherwise the red
     highlight would silently vanish with no "it came back" feedback.
 
-The color stays until the next refresh re-renders the section, so the
+The color stays until the next refresh clears it, so the
 user can leave the page and come back without losing the
 what-changed signal. Rows whose state was unchanged are not
 highlighted — this covers all three "no change" paths uniformly:
@@ -730,29 +730,42 @@ repaint then re-reads storage and makes the DOM match it.
 
 Passes are serialized on a promise chain, and a burst collapses: the
 first link to run clears the flag and does the work, and the rest find
-nothing to do. Awaiting `repaintPage()` is therefore enough for a caller
-to know the DOM matches storage as of its own call, which is how the
-flow handlers below sequence their own work.
+nothing to do.
+
+Awaiting `repaintPage()` is therefore enough for a caller to know the
+DOM matches storage as of its own call — which is how the flow handlers
+below sequence their own work.
 
 #### What a repaint touches
 
-Nothing is rebuilt that doesn't have to be, so a repaint is safe to run
-at any moment — including while the user is mid-interaction.
+A repaint runs on any structural write from anywhere, so it has to be
+safe while the user is mid-interaction. Nothing is rebuilt that doesn't
+have to be.
 
 - **Sections** are matched to the stored source list: gone ones are
   removed, new ones built, the rest updated in place. The section
   element is never replaced, so the Refresh button's busy state and
   every row's spinner survive.
 - **Rows** are matched to the source's scripts the same way: a `<tr>`
-  that is still wanted is updated in place, never recreated, so refresh
-  highlights and in-flight toggles survive.
+  that is still wanted is updated in place rather than recreated, so
+  refresh highlights and in-flight toggles survive.
+  - The exception is a source crossing between "has scripts" and "has
+    none", since a table and the empty message are different elements.
+    That swap discards the block wholesale.
 - **Re-seating** into stored order happens only when the order actually
   differs — moving an attached node detaches it first, and Chrome blurs
   anything focused inside it.
-- **The Filename cell** (favicon, `@description` tooltip, name) is
-  rebuilt only when one of its inputs moved, tracked per row by
-  `nameCellKeys`. Rebuilding re-runs the favicon fetch and flashes the
-  globe placeholder, so it must not happen on an unrelated repaint.
+- **The Filename and Status cells** are rebuilt only when one of their
+  inputs moved, tracked per row by `nameCellKeys` / `statusCellKeys`.
+  Both discard and recreate their contents, which would drop focus off
+  a link the user had tabbed to; the Filename cell would also re-run the
+  favicon fetch and flash the globe placeholder.
+- **Reads are proportionate.** One pass reads the source index and each
+  source's scripts once, and derives the dedup `#N` map from those rows.
+  Going through `getAllScripts()` instead would mean a
+  `storage.local.get(null)` per pass — every script body, every
+  prefetched `@require`, and the base64 favicon cache — on top of the
+  per-section reads.
 - **`data-script-*` datasets** are written by `applyScriptRowDatasets`,
   shared with the initial render so the two cannot disagree — notably
   about the `(in <file>, line N)` the hover text depends on. Fields that
@@ -763,14 +776,15 @@ at any moment — including while the user is mid-interaction.
 #### Coordination with the page's own handlers
 
 `chrome.storage` fires in the writing context too, so a page-driven Add
-/ Remove / Refresh echoes back as a repaint. Since a repaint only ever
-converges the DOM onto storage, that echo is harmless — the handlers do
-not need to defend against it. They use the same repaint themselves
-rather than hand-rendering their result:
+/ Remove / Refresh echoes back as a repaint. That echo is harmless: a
+repaint only ever converges the DOM onto storage.
 
-- **Add / Remove** write, then `await repaintPage()`. The section
-  appears or disappears, and the empty placeholder comes and goes, as a
-  consequence of the stored source list.
+The handlers therefore don't defend against it — they use the repaint
+themselves rather than hand-rendering their result:
+
+- **Add / Remove**, both per-source and per-script, write and then
+  `await repaintPage()`. Sections, rows, and the empty placeholder come
+  and go as a consequence of what is stored.
 - **Refresh** writes, awaits the repaint, and then paints its
   change-highlights onto the live rows. Because rows are updated in
   place, the highlight lands on the same `<tr>` the user was already

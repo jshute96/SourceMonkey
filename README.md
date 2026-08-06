@@ -82,15 +82,9 @@ are usually more details:
 | `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
 | `ERROR` / `WARNING` | Loaded fine, but some errors or warnings have been logged |
 
-An open sources page keeps itself current — a script installed from a
-link, refreshed elsewhere, updated by a background check, or toggled in
-a second tab shows its new state right away, with no page reload.
-
 Clicking a script name opens the **script viewer**, which shows the script's
 headers, content (including the `@require` files it loads), status, and a
-**Log** tab showing errors and other log messages. Viewers follow the
-same way, so enabling or disabling a source reaches every viewer open on
-it.
+**Log** tab showing errors and other log messages.
 
 The **Options** link at the top-left covers `.user.js` link capture,
 debug logging, and a GitHub token (for private repos and a higher API

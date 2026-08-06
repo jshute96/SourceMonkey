@@ -12,11 +12,18 @@
 // the `directories` container id predate http sources — they're just
 // stable selector names now, not a claim that every section is a dir.
 //
-// State changes (toggle, add, remove, refresh) update the DOM in
-// place: only the affected section/row mutates, and the control that
-// triggered the change shows a small spinner while its async work is
-// in flight. The initial `render()` runs once at load to draw banners
-// and seed every section.
+// The initial `render()` runs once at load to draw banners and seed
+// every section. After that the page keeps itself current by REPAINTING
+// FROM STORAGE: any write to the structural rows — by this page, the
+// viewer, the background refresher, or another tab — marks it dirty, and
+// the repaint re-reads storage and makes the DOM match. Sections and
+// rows are reconciled by id and updated in place, so busy spinners,
+// refresh highlights and focus survive. See docs/storage.md.
+//
+// The per-control toggles are the exception: they mutate their own row
+// directly for immediate feedback, and show a small spinner while their
+// write is in flight. The repaint is careful not to overwrite a control
+// whose spinner is up.
 
 import {
   addSource,
@@ -194,7 +201,7 @@ if (chrome.storage?.session?.onChanged) {
 // store, and any number of events collapse into one pass.
 if (chrome.storage?.local?.onChanged) {
   chrome.storage.local.onChanged.addListener((changes) => {
-    if (touchesStructuralRows(Object.keys(changes))) markPageDirty();
+    if (touchesStructuralRows(Object.keys(changes))) void repaintPage();
   });
 }
 
@@ -286,6 +293,29 @@ function applyScriptRowDatasets(
   return { errorMessage };
 }
 
+// Everything a status cell is drawn from, as one comparable string.
+// Recorded per row by `paintStatusCell` so a repaint can tell a cell
+// that needs redrawing from one that would only lose the user's focus.
+// The inputs live in three places: the stored row, the session-storage
+// maps this page mirrors, and the version probes.
+const statusCellKeys = new Map<string, string>();
+
+function statusCellKey(
+  scriptId: string,
+  storedStatus: StoredScript['status'],
+  errorMessage: string | undefined,
+  refreshError: string | undefined,
+): string {
+  return JSON.stringify([
+    storedStatus,
+    errorMessage ?? '',
+    refreshError ?? '',
+    currentLogLevels.get(scriptId) ?? '',
+    currentOutdated.get(scriptId) ?? null,
+    currentRejections[scriptId] ?? '',
+  ]);
+}
+
 // Apply `effectiveScriptStatus` to one status cell: rewrite the link
 // label, classes, and trash-can affordance. Used by both initial
 // render and the post-storage-change repaint so the two paths can't
@@ -297,6 +327,7 @@ function paintStatusCell(
   errorMessage: string | undefined,
   refreshError: string | undefined,
 ): void {
+  statusCellKeys.set(scriptId, statusCellKey(scriptId, storedStatus, errorMessage, refreshError));
   cell.textContent = '';
   cell.className = 'status-cell';
   const level = currentLogLevels.get(scriptId);
@@ -370,7 +401,7 @@ function applyLogIdSuffixesToDom(): void {
   }
 }
 
-// ---------- Live storage watcher ----------
+// ---------- Live repaint from storage ----------
 
 // The page is repainted from storage whenever anything it displays may
 // have moved, rather than by interpreting individual change events.
@@ -385,9 +416,6 @@ function applyLogIdSuffixesToDom(): void {
 let pageDirty = false;
 let repaintChain: Promise<void> = Promise.resolve();
 
-function markPageDirty(): void {
-  void repaintPage();
-}
 
 // Mark the page stale and resolve once a repaint has covered it. Passes
 // are serialized, and a burst of events collapses: the first link to run
@@ -402,9 +430,12 @@ function repaintPage(): Promise<void> {
   pageDirty = true;
   repaintChain = repaintChain
     .then(async () => {
+      // Waited before the flag is read, not after, so everything that
+      // arrives during the initial render collapses into ONE repaint
+      // rather than one per event.
+      await initialRenderDone;
       if (!pageDirty) return;
       pageDirty = false;
-      await initialRenderDone;
       await repaintFromStorage();
     })
     .catch((err: unknown) => {
@@ -422,9 +453,29 @@ function repaintPage(): Promise<void> {
 // refresh highlights, in-flight spinners, and focus survive.
 async function repaintFromStorage(): Promise<void> {
   const sources = await getSources();
+  // Read each source's scripts ONCE, up front, and paint from that.
+  // The obvious shape — `refreshLogIds()` then render each section —
+  // reads the whole store twice per pass: `getAllScripts` is a
+  // `storage.local.get(null)`, which drags back every script body, every
+  // prefetched `@require`, and the base64 favicon cache, and then each
+  // section re-reads its own scripts. A repaint runs on any structural
+  // write from anywhere, so that has to stay proportionate.
+  const scriptsBySource = new Map<string, StoredScript[]>();
+  for (const source of sources) {
+    scriptsBySource.set(source.id, (await getSourceWithScripts(source.id))?.scripts ?? []);
+  }
+  const allScripts = [...scriptsBySource.values()].flat();
+
   // Dedup `#N` suffixes shift across the whole page when any script is
   // added or removed, so recompute before anything draws.
-  await refreshLogIds();
+  currentLogIds = computeLogIds(allScripts);
+  applyLogIdSuffixesToDom();
+  // Forget the per-script bookkeeping of everything no longer stored, in
+  // one place rather than at each of the several points a row can go
+  // away — and keyed off what storage says, so a script that moved
+  // between sources isn't forgotten by its old section after its new one
+  // has already recorded it.
+  forgetScriptsExcept(new Set(allScripts.map((s) => s.id)));
 
   const wanted = new Set(sources.map((s) => s.id));
   for (const section of [
@@ -445,8 +496,9 @@ async function repaintFromStorage(): Promise<void> {
 
   const ordered: HTMLElement[] = [];
   for (const source of sources) {
+    const scripts = scriptsBySource.get(source.id) ?? [];
     const section = findSection(source.id);
-    if (section) await syncSectionFromStorage(section, source);
+    if (section) await syncSectionFromStorage(section, source, scripts);
     ordered.push(section ?? await renderSourceSection(source));
   }
   // appendChild moves an already-attached node, so appending each in
@@ -465,6 +517,7 @@ async function repaintFromStorage(): Promise<void> {
 async function syncSectionFromStorage(
   section: HTMLElement,
   source: StoredSource,
+  scripts: readonly StoredScript[],
 ): Promise<void> {
   const sourceOn = isSourceEnabled(source);
   applySourceEnabledToDom(section, sourceOn);
@@ -490,7 +543,7 @@ async function syncSectionFromStorage(
       ?.after(makeMessage('error', errorText));
   }
 
-  await syncScriptRowsFromStorage(section, source, sourceOn);
+  await syncScriptRowsFromStorage(section, source, sourceOn, scripts);
 }
 
 // Update the section's script list in place: reuse the `<tr>` for a
@@ -500,8 +553,8 @@ async function syncScriptRowsFromStorage(
   section: HTMLElement,
   source: StoredSource,
   sourceOn: boolean,
+  scripts: readonly StoredScript[],
 ): Promise<void> {
-  const scripts = (await getSourceWithScripts(source.id))?.scripts ?? [];
   const inContainer = isContainerSource(source.path);
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
@@ -529,11 +582,10 @@ async function syncScriptRowsFromStorage(
     }
     ordered.push(row ?? renderScriptRow(script, sourceOn, inContainer));
   }
-  // Whatever is left in `existing` is a row whose script is gone.
-  for (const [id, row] of existing) {
-    forgetScript(id);
-    row.remove();
-  }
+  // Whatever is left in `existing` is a row whose script is gone. The
+  // per-script bookkeeping is pruned by the caller, against the whole
+  // stored set.
+  for (const row of existing.values()) row.remove();
   if (!sameNodeOrder(tbody, ordered)) {
     for (const row of ordered) tbody.appendChild(row);
   }
@@ -555,11 +607,20 @@ function syncScriptRow(
 ): void {
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
+  // Like the Filename cell below, the Status cell is only rebuilt when
+  // what it shows moved. `paintStatusCell` discards and recreates the
+  // `<a>` (and the 🗑 on a missing row), so repainting it unconditionally
+  // would drop focus off it — and a repaint runs on any structural write
+  // anywhere, including a background refresh of an unrelated source.
   const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
-  if (cell) paintStatusCell(cell, script.id, script.status, errorMessage, script.refreshError);
+  const wanted = statusCellKey(script.id, script.status, errorMessage, script.refreshError);
+  if (cell && statusCellKeys.get(script.id) !== wanted) {
+    paintStatusCell(cell, script.id, script.status, errorMessage, script.refreshError);
+  }
 
   const sizeCell = row.querySelector<HTMLTableCellElement>('td.size-cell');
-  if (sizeCell) sizeCell.textContent = formatScriptSize(script);
+  const size = formatScriptSize(script);
+  if (sizeCell && sizeCell.textContent !== size) sizeCell.textContent = size;
 
   // The Filename cell is only rebuilt when something it shows actually
   // moved. Rebuilding unconditionally would re-run the favicon fetch and
@@ -620,12 +681,19 @@ function nameCellKey(script: StoredScript): string {
   ]);
 }
 
-// Drop the per-script bookkeeping that outlives a removed row. Both maps
-// are keyed by script id and would otherwise grow for the life of the
-// page.
-function forgetScript(id: string): void {
-  nameCellKeys.delete(id);
-  currentOutdated.delete(id);
+// Drop the per-script bookkeeping for everything that is no longer
+// stored. These maps are keyed by script id and would otherwise grow for
+// the life of the page.
+function forgetScriptsExcept(keep: ReadonlySet<string>): void {
+  for (const id of [...nameCellKeys.keys()]) {
+    if (!keep.has(id)) nameCellKeys.delete(id);
+  }
+  for (const id of [...currentOutdated.keys()]) {
+    if (!keep.has(id)) currentOutdated.delete(id);
+  }
+  for (const id of [...statusCellKeys.keys()]) {
+    if (!keep.has(id)) statusCellKeys.delete(id);
+  }
 }
 
 // `?refresh` in the URL triggers a refresh-all as soon as the initial
@@ -643,10 +711,14 @@ async function bootstrap(): Promise<void> {
   // Ensure the GitHub auth token is hydrated before any refresh fires.
   // Otherwise a `?refresh` query-param can race the chrome.storage.local
   // read and the first refresh-on-load runs unauthenticated.
-  await githubTokenReady;
-  // Released even if render() throws: a repaint is the recovery from a
-  // half-built page, so it must never be the thing left waiting.
+  // Released even if anything above the render throws: every repaint
+  // waits on this, and the flow handlers await a repaint inside a `try`
+  // whose `finally` resets their button — so a deferred left unresolved
+  // would hang the Add form and the Refresh buttons with no way back
+  // short of a reload. A repaint is the recovery from a half-built page,
+  // so it must never be the thing left waiting.
   try {
+    await githubTokenReady;
     await render();
   } finally {
     resolveInitialRender();
@@ -765,6 +837,15 @@ async function render(): Promise<void> {
   bannerSlot.textContent = '';
   directoriesEl.textContent = '';
 
+  // Seed the status maps FIRST, before anything that can throw. Every
+  // Status cell is drawn through them, and a repaint after a failed
+  // render rebuilds the sections but does not re-seed these — so seeding
+  // late would leave a recovered page painting every row without its
+  // WARNING / ERROR / REJECTED promotion until an unrelated session
+  // event happened along.
+  currentLogLevels = await getAllMaxLogLevels();
+  currentRejections = await readRejections();
+
   // One-shot backfill so older source rows (pre-displayName) pick up
   // an inferred label on first view after upgrade. Cheap no-op once
   // every row carries a name.
@@ -790,15 +871,6 @@ async function render(): Promise<void> {
   const sources = await getSources();
 
   await refreshLogIds();
-  // Pre-populate log levels and rejections so the very first paint of
-  // each row's Status cell already reflects WARNING / ERROR / REJECTED,
-  // rather than briefly showing OK and then flipping when the async
-  // listener fires. Seeded even with no sources to render: a repaint can
-  // add sections to a page that started empty, and those rows would
-  // otherwise paint from empty maps with no later event to correct them.
-  currentLogLevels = await getAllMaxLogLevels();
-  currentRejections = await readRejections();
-
   if (sources.length === 0) {
     directoriesEl.appendChild(emptyPlaceholder());
     return;
@@ -973,7 +1045,6 @@ function renderScriptRow(
   const tr = document.createElement('tr');
   tr.dataset.scriptId = script.id;
   tr.dataset.sourceId = script.sourceId;
-  if (inContainer) tr.dataset.inContainer = '1';
   // Stash the persisted status + errorMessage on the row so
   // `applyStatusCellsToDom` can repaint the Status cell after a
   // chrome.storage.session change without re-querying the store.
@@ -1091,34 +1162,18 @@ function scriptDescription(script: StoredScript): string {
   return desc?.trim() || 'No description';
 }
 
-async function onRemoveScript(scriptId: string, sourceId: string, btn: HTMLButtonElement): Promise<void> {
+async function onRemoveScript(scriptId: string, _sourceId: string, btn: HTMLButtonElement): Promise<void> {
   btn.disabled = true;
   try {
     await removeScript(scriptId);
-    // Remove just this row in place. A full-section re-render would
-    // briefly blank out every other row and is the kind of flicker
-    // users read as "everything disappeared". The other rows are
-    // unaffected by removing one script, so there's nothing to redraw.
-    const row = directoriesEl.querySelector<HTMLTableRowElement>(
-      `section.directory[data-source-id="${cssEscape(sourceId)}"] tr[data-script-id="${cssEscape(scriptId)}"]`,
-    );
-    row?.remove();
-    // If this was the last script under the source, swap the table
-    // for the standard "No *.user.js files found." placeholder so the
-    // section doesn't show a dangling empty table.
-    const section = directoriesEl.querySelector<HTMLElement>(
-      `section.directory[data-source-id="${cssEscape(sourceId)}"]`,
-    );
-    const table = section?.querySelector<HTMLTableElement>('.script-table');
-    if (table && table.querySelectorAll('tbody tr').length === 0) {
-      const empty = makeMessage('empty', 'No *.user.js files found.');
-      // Same marker the table carried, so a later repaint still finds
-      // the script block and can swap a table back in.
-      empty.classList.add('script-block');
-      table.replaceWith(empty);
-    }
-    forgetScript(scriptId);
-    await refreshLogIds();
+    // Write, then repaint — the same shape as the other flow handlers.
+    // Hand-rolling the row removal here also meant hand-rolling the
+    // "source is now empty" message, which said "No *.user.js files
+    // found." even on a container source, whose empty state is
+    // "No scripts in this container yet". Only container rows have this
+    // button, so that was the common case, and no later repaint would
+    // correct it.
+    await repaintPage();
   } catch (err) {
     // Surface the failure rather than swallowing it — if storage rejects
     // (quota, disk error), the row stays, the button comes back, and the
@@ -1462,7 +1517,9 @@ async function onRefreshAll(): Promise<void> {
 
 // Decide per script whether it changed in a refresh and tag the
 // corresponding row with the matching highlight class. The color
-// persists on the row until the next refresh re-renders the section.
+// persists on the row until the next refresh, which clears the prior
+// colors before applying its own — rows are reused across a repaint, so
+// nothing else drops them.
 //
 // Classification:
 //   - newly-added         → row-updated (green)  if ok; else row-failed (red)
