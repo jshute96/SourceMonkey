@@ -28,6 +28,14 @@ test.describe('log export', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
+  // The clipboard grant in the Copy test lands on the worker-scoped
+  // context, so without this it would persist for every later test
+  // sharing that worker — and which tests those are is
+  // scheduling-dependent under parallelism.
+  test.afterEach(async ({ extensionContext }) => {
+    await extensionContext.clearPermissions();
+  });
+
   async function installWithLog(sm: SmApi): Promise<string> {
     scriptsDir.write({
       relativePath: 'main.user.js',
