@@ -345,6 +345,7 @@
       .log-toolbar {
         display: flex;
         justify-content: flex-end;
+        gap: 0.4em;
         padding: 0.4em 0.6em;
         border-bottom: 1px solid #eee;
         position: sticky;
@@ -356,6 +357,12 @@
         font: inherit;
         padding: 0.2em 0.7em;
         cursor: pointer;
+      }
+      /* Save/Copy are disabled while the log is empty — there is
+         nothing to hand out but a header row. */
+      .log-toolbar button:disabled {
+        cursor: default;
+        opacity: 0.5;
       }
       /* Clickable `sourcemonkey://…:L:C` refs inside log messages.
          The log table renders with a monospace font, so a regular

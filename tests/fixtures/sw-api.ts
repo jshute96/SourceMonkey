@@ -45,6 +45,8 @@ export interface SmApi {
   // overlay. The wrapper's write is batched, so this is what a test
   // waits on instead of pausing.
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
+  // Seeds an entry directly. For tests that need a specific message,
+  // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {
     level: 'info' | 'warning' | 'error';
     source: string;

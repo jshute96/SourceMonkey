@@ -140,7 +140,9 @@ details live in the topic-specific docs linked below.
 - **Per-script event log** (`src/script-log.ts`) — structured per-
   script log of refresh outcomes and wrapper reports, stored in
   `chrome.storage.session` and surfaced through the viewer's Log
-  tab. See [script-log.md](script-log.md).
+  tab. `src/log-format.ts` renders it — the tab's cells and the CSV
+  its Save / Copy buttons hand out. See
+  [script-log.md](script-log.md).
 - **GM_* catalog** (`src/gm-api-catalog.ts`) — data-only inventory
   of every supported `GM_*` / `GM.*` API: name, alias, sync/async
   kind, subsystem, optional `requires` (e.g. `@connect`).

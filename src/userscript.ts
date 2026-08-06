@@ -57,6 +57,14 @@ import {
   type LogLevel,
 } from './script-log.js';
 import {
+  formatLogCsv,
+  formatLogMessage,
+  formatLogSource,
+  formatLogTimestamp,
+  logFileName,
+  LOG_COLUMNS,
+} from './log-format.js';
+import {
   REJECTIONS_KEY,
   coerceRejectionMap,
   describeRejection,
@@ -1647,15 +1655,35 @@ async function renderLogPane(): Promise<void> {
 function paintLog(entries: LogEntry[]): void {
   logPaneEl.replaceChildren();
 
-  // Toolbar with Clear button. Sticky so the action stays visible as
-  // the user scrolls through a long log.
+  // Toolbar with the log-wide actions. Sticky so they stay visible as
+  // the user scrolls through a long log. Clear stays rightmost — it is
+  // the destructive one, and it was there before Save/Copy joined it,
+  // so its position doesn't move under anyone's cursor.
   const toolbar = document.createElement('div');
   toolbar.className = 'log-toolbar';
+
+  // Both carry over whatever outcome they are still reporting when a
+  // new log entry forces this repaint — see `reportLogAction`.
+  const saveBtn = logActionButton(
+    'save',
+    'Save this log to a CSV file',
+    () => void onSaveLog(entries),
+  );
+  saveBtn.disabled = entries.length === 0;
+
+  const copyBtn = logActionButton(
+    'copy',
+    'Copy this log to the clipboard as CSV',
+    () => void onCopyLog(entries),
+  );
+  copyBtn.disabled = entries.length === 0;
+
   const clearBtn = document.createElement('button');
   clearBtn.type = 'button';
   clearBtn.textContent = 'Clear log';
   clearBtn.addEventListener('click', () => void onClearLog());
-  toolbar.appendChild(clearBtn);
+
+  toolbar.append(saveBtn, copyBtn, clearBtn);
   logPaneEl.appendChild(toolbar);
 
   if (entries.length === 0) {
@@ -1669,7 +1697,7 @@ function paintLog(entries: LogEntry[]): void {
   const table = document.createElement('table');
   const thead = document.createElement('thead');
   const trHead = document.createElement('tr');
-  for (const h of ['Time', 'Level', 'Source', 'Message']) {
+  for (const h of LOG_COLUMNS) {
     const th = document.createElement('th');
     th.textContent = h;
     trHead.appendChild(th);
@@ -1698,9 +1726,7 @@ function paintLog(entries: LogEntry[]): void {
 
     const tdSource = document.createElement('td');
     tdSource.className = 'log-source';
-    tdSource.textContent = e.tabId !== undefined
-      ? `tab ${e.tabId} · ${e.source}`
-      : e.source;
+    tdSource.textContent = formatLogSource(e);
     tr.appendChild(tdSource);
 
     const tdMsg = document.createElement('td');
@@ -1792,21 +1818,19 @@ function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
 // keep here beyond consistency: devtools' Sources tree indexes the file
 // under the ENCODED folder name, so the tooltip is what a user needs to
 // find the same file there.
-function setRefText(el: HTMLElement, raw: string, url: string, stale = false): void {
-  const shown = displayRefText(raw, url);
-  el.textContent = shown;
-  const title = refTitle(raw, shown, stale);
+function setRefText(el: HTMLElement, run: ResolvedRun): void {
+  el.textContent = run.shown;
+  const title = refTitle(run);
   if (title) el.title = title;
 }
 
 // A ref with no tab to link to. Stays a bare text node unless there is
 // a tooltip to carry, which needs an element.
-function refNode(raw: string, url: string, stale = false): Node {
-  const shown = displayRefText(raw, url);
-  const title = refTitle(raw, shown, stale);
-  if (!title) return document.createTextNode(shown);
+function refNode(run: ResolvedRun): Node {
+  const title = refTitle(run);
+  if (!title) return document.createTextNode(run.shown);
   const span = document.createElement('span');
-  span.textContent = shown;
+  span.textContent = run.shown;
   span.title = title;
   return span;
 }
@@ -1814,11 +1838,77 @@ function refNode(raw: string, url: string, stale = false): Node {
 // What a ref's tooltip should say: the wire form when decoding changed
 // what is on screen, and the staleness caveat when the entry predates
 // the layout that mapped it. Empty when there is nothing to add.
-function refTitle(raw: string, shown: string, stale: boolean): string {
+function refTitle(run: ResolvedRun): string {
   const parts: string[] = [];
-  if (shown !== raw) parts.push(raw);
-  if (stale) parts.push(STALE_REF_NOTE);
+  if (run.shown !== run.raw) parts.push(run.raw);
+  if (run.stale) parts.push(STALE_REF_NOTE);
   return parts.join('\n');
+}
+
+// One piece of a log message after the stack refs in it have been
+// resolved: `shown` is the text to display, and the rest says whether
+// it can be clicked and what its tooltip carries.
+//
+// Splitting this out of the painting is what lets the Log tab and the
+// exported CSV say the same thing. A ref is remapped to the file it
+// was written in and decoded for reading, and both of those have to
+// happen before the text exists — so a renderer that starts from the
+// stored message (as an export naturally would) reports the generated
+// coordinate inside our concatenated entry, which names the wrong file
+// at a line the reader has no way to place.
+interface ResolvedRun {
+  // Display text. For a plain-text run this is the text verbatim.
+  shown: string;
+  // Wire form of a ref run, for the tooltip. Equal to `shown` when
+  // nothing was decoded, and unused for text runs.
+  raw: string;
+  // Where a linkable ref points, and the tab it lands in (-1 for text
+  // runs, refs outside this script, and refs into our own wrap).
+  ref?: StackRef;
+  tabIndex: number;
+  stale: boolean;
+}
+
+function resolveLogMessageRuns(message: string, timestamp: number): ResolvedRun[] {
+  return parseStackRefs(message).map((run) => {
+    if (run.kind === 'text') {
+      return { shown: run.text, raw: run.text, tabIndex: -1, stale: false };
+    }
+    // One `raw` and one `tabIndex` for every outcome, so that "every
+    // rendered ref goes through the decode" is structural rather than a
+    // property of remembering to call it on each branch.
+    const resolved = resolveLogRef(run, timestamp);
+    const ref = resolved.kind === 'mapped' ? resolved.ref : run;
+    const raw = resolved.kind === 'mapped'
+      ? `${ref.url}:${ref.line}:${ref.col}`
+      : run.text;
+    // An unmappable ref keeps its text but must never become a link,
+    // even though its URL is this script's and so does match a tab —
+    // the generated line indexes the concatenated program.
+    const tabIndex = resolved.kind === 'unmappable'
+      ? -1
+      : tabsView.findTabBySourceUrl(ref.url);
+    return {
+      shown: displayRefText(raw, ref.url),
+      raw,
+      ref,
+      tabIndex,
+      stale: resolved.kind === 'mapped' && resolved.stale,
+    };
+  });
+}
+
+// A log entry's message as plain text, exactly as the table renders it
+// — the same remapped, decoded refs, minus the links. This is what the
+// CSV export carries; see `ResolvedRun`.
+function logMessageText(entry: LogEntry): string {
+  // An entry carrying a derived location has no refs to scan (the
+  // message is our own prose), and the table appends the location with
+  // the shared phrasing. `formatLogMessage` is that phrasing.
+  if (entry.location) return formatLogMessage(entry);
+  return resolveLogMessageRuns(entry.message, entry.timestamp)
+    .map((run) => run.shown)
+    .join('');
 }
 
 // Paint a log entry's message into a <td>. Each URL:line:col stack
@@ -1834,40 +1924,26 @@ function refTitle(raw: string, shown: string, stale: boolean): string {
 // generated line number is an artifact of our injection and means
 // nothing to someone reading their own script.
 function appendLogMessageContent(td: HTMLElement, message: string, timestamp: number): void {
-  const runs = parseStackRefs(message);
-  if (runs.length === 1 && runs[0].kind === 'text') {
+  const runs = resolveLogMessageRuns(message, timestamp);
+  if (runs.length === 1 && runs[0].ref === undefined) {
     td.textContent = message;
     return;
   }
   td.replaceChildren();
   for (const run of runs) {
-    if (run.kind === 'text') {
-      td.appendChild(document.createTextNode(run.text));
+    if (!run.ref) {
+      td.appendChild(document.createTextNode(run.shown));
       continue;
     }
-    // One `raw` and one `tabIndex` for every outcome, so that "every
-    // painted ref goes through the decode" is structural rather than a
-    // property of remembering to call it on each branch.
-    const resolved = resolveLogRef(run, timestamp);
-    const ref = resolved.kind === 'mapped' ? resolved.ref : run;
-    const raw = resolved.kind === 'mapped'
-      ? `${ref.url}:${ref.line}:${ref.col}`
-      : run.text;
-    // An unmappable ref keeps its text but must never become a link,
-    // even though its URL is this script's and so does match a tab —
-    // the generated line indexes the concatenated program.
-    const tabIndex = resolved.kind === 'unmappable'
-      ? -1
-      : tabsView.findTabBySourceUrl(ref.url);
-    const stale = resolved.kind === 'mapped' && resolved.stale;
-    if (tabIndex < 0) {
-      td.appendChild(refNode(raw, ref.url, stale));
+    if (run.tabIndex < 0) {
+      td.appendChild(refNode(run));
       continue;
     }
+    const { ref, tabIndex } = run;
     const a = document.createElement('a');
     a.className = 'log-stack-link';
     a.href = '#';
-    setRefText(a, raw, ref.url, stale);
+    setRefText(a, run);
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
       tabsView.goToTabLine(tabIndex, ref.line, ref.col);
@@ -1876,9 +1952,167 @@ function appendLogMessageContent(td: HTMLElement, message: string, timestamp: nu
   }
 }
 
+// Save / Copy hand out the same CSV text; only the transport differs,
+// so both go through `formatLogCsv`.
+
+// The File System Access picker, which is what makes Save a real "save
+// as" rather than a silent drop into the downloads folder. Typed here
+// because the extension builds against a DOM lib that doesn't declare
+// it, and because we only use the two calls below.
+interface SaveFilePicker {
+  (options: { suggestedName?: string }): Promise<{
+    createWritable(): Promise<{
+      write(data: string): Promise<void>;
+      close(): Promise<void>;
+    }>;
+  }>;
+}
+
+async function onSaveLog(entries: LogEntry[]): Promise<void> {
+  // The click-time snapshot, deliberately: the dialog can sit open
+  // while new entries land, and the file the user asked for is the log
+  // they were looking at when they asked.
+  const csv = formatLogCsv(entries, logMessageText);
+  const filename = logFileName(currentLogId);
+
+  // Read before anything is awaited, and called in the same turn, so
+  // the click's user activation is still live — the picker refuses to
+  // open without it.
+  const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
+  let handle: Awaited<ReturnType<SaveFilePicker>> | null = null;
+  if (picker) {
+    try {
+      handle = await picker({ suggestedName: filename });
+    } catch (err) {
+      // Closing the dialog is a decision, not a failure — falling back
+      // to a download would write the file they just declined.
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      // Anything else means the API is there but wouldn't open here.
+      // The download below still gets the log onto disk.
+    }
+  }
+
+  if (!handle) {
+    // No dialog: a plain download, which the browser announces itself.
+    downloadLogFile(csv, filename);
+    return;
+  }
+
+  try {
+    const writable = await handle.createWritable();
+    await writable.write(csv);
+    await writable.close();
+    reportLogAction('save', 'Saved');
+  } catch {
+    // The user already chose a destination, so a download into their
+    // downloads folder would be a second file they never asked for —
+    // and would read as the save having worked. Report instead.
+    reportLogAction('save', 'Save failed');
+  }
+}
+
+// Fallback path: a plain download, which lands in the browser's
+// download folder under `filename` with no dialog. Used when the
+// picker isn't available.
+function downloadLogFile(csv: string, filename: string): void {
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  // Chrome reads the blob after the click returns, so revoking inline
+  // can cancel the download. The delay is a courtesy to the page's
+  // memory, not a correctness requirement — the URL dies with the page
+  // either way.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+// ---------- Toolbar action feedback ----------
+//
+// Save and Copy each report their outcome by briefly relabelling their
+// own button. Both are held in module state rather than on the element
+// because the pane repaints whenever a log entry arrives — an entry
+// landing in the second after a click would otherwise replace the
+// button and take the "Copied" the user is still reading with it.
+// `paintLog` re-applies whatever is pending to the buttons it builds.
+
+type LogAction = 'save' | 'copy';
+
+const LOG_ACTION_LABELS: Record<LogAction, string> = { save: 'Save', copy: 'Copy' };
+
+// How long a reported outcome stays on the button.
+const LOG_ACTION_FEEDBACK_MS = 1200;
+
+const logActionFeedback = new Map<LogAction, string>();
+const logActionButtons = new Map<LogAction, HTMLButtonElement>();
+const logActionTimers = new Map<LogAction, ReturnType<typeof setTimeout>>();
+
+function logActionLabel(action: LogAction): string {
+  return logActionFeedback.get(action) ?? LOG_ACTION_LABELS[action];
+}
+
+// Say what just happened, then fall back to the idle label. `label` of
+// null resets immediately.
+function reportLogAction(action: LogAction, label: string | null): void {
+  if (label === null) logActionFeedback.delete(action);
+  else logActionFeedback.set(action, label);
+
+  const btn = logActionButtons.get(action);
+  if (btn) btn.textContent = logActionLabel(action);
+
+  // A fresh timer per report, so rapid clicks reschedule rather than
+  // letting an early one cut the latest feedback short.
+  const pending = logActionTimers.get(action);
+  if (pending !== undefined) clearTimeout(pending);
+  logActionTimers.delete(action);
+  if (label === null) return;
+  logActionTimers.set(action, setTimeout(() => {
+    logActionTimers.delete(action);
+    reportLogAction(action, null);
+  }, LOG_ACTION_FEEDBACK_MS));
+}
+
+// One toolbar button, wearing whatever its action is currently
+// reporting.
+function logActionButton(
+  action: LogAction,
+  title: string,
+  onClick: () => void,
+): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = logActionLabel(action);
+  btn.title = title;
+  // The relabel IS the feedback, and a button's name is not announced
+  // again on its own — so mark it live for a screen reader.
+  btn.setAttribute('aria-live', 'polite');
+  btn.addEventListener('click', onClick);
+  logActionButtons.set(action, btn);
+  return btn;
+}
+
+async function onCopyLog(entries: LogEntry[]): Promise<void> {
+  let label = 'Copied';
+  try {
+    await navigator.clipboard.writeText(formatLogCsv(entries, logMessageText));
+  } catch {
+    // The clipboard write can be refused (no permission, page not
+    // focused). Say so on the button — unlike the Location row, the
+    // log is not selectable text the user can fall back to copying by
+    // hand, so silence would read as a copy that worked.
+    label = 'Copy failed';
+  }
+  reportLogAction('copy', label);
+}
+
 async function onClearLog(): Promise<void> {
   if (!scriptId) return;
   await clearScriptLog(scriptId);
+  // Drop any outcome Save/Copy are still reporting: it is about a log
+  // that no longer exists, and the repaint below disables those
+  // buttons — a greyed-out "Copied" reads as a broken control.
+  reportLogAction('save', null);
+  reportLogAction('copy', null);
   // Paint the empty state immediately for snappy click feedback; the
   // storage.onChanged listener will fire shortly with the same empty
   // state, so the second paint is a visual no-op. Bump the epoch so
@@ -1887,14 +2121,3 @@ async function onClearLog(): Promise<void> {
   paintLog([]);
 }
 
-function formatLogTimestamp(ms: number): string {
-  const d = new Date(ms);
-  const yyyy = String(d.getFullYear());
-  const mo = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const ss = String(d.getSeconds()).padStart(2, '0');
-  const mmm = String(d.getMilliseconds()).padStart(3, '0');
-  return `${yyyy}-${mo}-${dd} ${hh}:${mm}:${ss}.${mmm}`;
-}
