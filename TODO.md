@@ -717,32 +717,15 @@ they follow are in
 
 ## Testing and example TODOs
 
-- **Stop Chromium segfaulting during a full e2e run.** `worker process
-  exited unexpectedly (code=null, signal=SIGSEGV)` kills the Playwright
-  worker roughly one run in two; the next test reports a 0ms failure it
-  never ran. `retries: 1` currently masks it, so a non-zero *flaky*
-  count should be read as this until proven otherwise.
-  - Not a page leak — the suite closes more pages than it opens.
-  - Prime suspect is the worker-scoped persistent context living for all
-    ~330 tests, plus repeated MV3 service-worker teardown/restart.
-    Bounding context lifetime (splitting the suite so each chunk gets a
-    fresh context) is the obvious lever, at the cost of the
-    `--project=sourcemonkey` naming the npm scripts rely on.
-- **Explain `version-probe.spec.ts:236`.** Under full-suite load it
-  timed out with the sources page never reading OUTDATED — an
-  annotation that never arrived. Not root-caused.
-  - Its sibling `:262` (read `ERROR` where `OK` was expected) is most
-    likely the duplicate-id registration race, now fixed — that produced
-    exactly this shape, an error-level row for a healthy script. Worth
-    confirming it stays gone before assuming so.
-  - If either returns, capture what the cell actually said:
-    `--reporter=json` carries the received value, which the `list`
-    reporter buries in a trailing block.
-- **Typecheck the tests.** `tsconfig.json` is `include: ["src/**/*.ts"]`,
-  so `tsc --noEmit` never sees `tests/`; Playwright transpiles specs
-  without checking types, and a type error there surfaces only at
-  runtime, if at all. Wants a second tsconfig and an `npm run typecheck`
-  covering both — expect a batch of pre-existing errors on first run.
+- **Chromium segfaults on shutdown.** A full run can finish with every
+  test passing and still exit 139: the browser dies during teardown,
+  after the last assertion. Seen once in six runs since registration
+  work was serialized — the earlier, more damaging form (the worker
+  dying mid-run, so the next test reported a 0ms failure it never ran)
+  has not recurred.
+  - Invisible in the reporter: stats read 0 unexpected, 0 flaky. Only
+    the process exit code shows it, which is what CI would gate on.
+  - Check `echo $?` after a run, not just the summary.
 
 - API explorer page with forms to call any GM API with any args
 - examples for all supported GM APIs, all headers

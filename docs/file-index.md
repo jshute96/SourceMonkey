@@ -12,6 +12,7 @@ One-line descriptions of every source file, grouped by directory.
 | `LICENSE` | MIT license text |
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
+| `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`npm run typecheck`) |
 | `playwright.config.ts` | Playwright test runner config (e2e suite) |
 | `.gitignore` | Git ignore rules |
 

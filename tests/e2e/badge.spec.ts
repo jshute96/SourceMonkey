@@ -75,7 +75,16 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(sm, tabId, (s) => hasColor(s, RED), 'badge red');
+    // Wait on the tooltip as well as the colour: they are written from
+    // the same record but the colour can land first, and asserting on a
+    // title the wait never checked is a race (see the PURPLE case below,
+    // which already does this).
+    const snap = await waitForTabState(
+      sm,
+      tabId,
+      (s) => hasColor(s, RED) && s.title.includes('Boom | ERROR'),
+      'badge red + ERROR tooltip',
+    );
     expect(snap.title).toContain('Boom | ERROR');
     await page.close();
   });
@@ -180,7 +189,12 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(sm, tabId, (s) => hasColor(s, ORANGE), 'orange MISSING');
+    const snap = await waitForTabState(
+      sm,
+      tabId,
+      (s) => hasColor(s, ORANGE) && s.title.includes('Ghost | MISSING'),
+      'orange + MISSING tooltip',
+    );
     expect(snap.title).toContain('Ghost | MISSING');
     await page.close();
   });

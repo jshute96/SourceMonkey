@@ -34,9 +34,12 @@ const BANNER = 'File access is disabled';
 // load, not per failure.
 async function denyFileAccess(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    chrome.extension.isAllowedFileSchemeAccess = (
+    // Only the callback overload is used by the code under test; the
+    // real signature also has a promise form, so the stub is narrower
+    // than the type it replaces.
+    chrome.extension.isAllowedFileSchemeAccess = ((
       callback: (allowed: boolean) => void,
-    ) => { callback(false); };
+    ) => { callback(false); }) as typeof chrome.extension.isAllowedFileSchemeAccess;
   });
 }
 

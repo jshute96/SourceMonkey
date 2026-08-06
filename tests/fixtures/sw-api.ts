@@ -38,8 +38,27 @@ export interface SmApi {
     source: string;
     tabId?: number;
     message: string;
+    location?: DiagnosticLocationLike;
   }[]>;
   clearScriptLog(scriptId: string): Promise<void>;
+  appendScriptLog(scriptId: string, input: {
+    level: 'info' | 'warning' | 'error';
+    source: string;
+    message: string;
+    tabId?: number;
+    location?: DiagnosticLocationLike;
+    timestamp?: number;
+  }): Promise<void>;
+  // Compile-only parse check. `null` means the check could not run,
+  // which callers must not read as failure. Mirrors `ParseVerdict`
+  // (src/parse-check-protocol.ts).
+  checkParses(sources: string[]): Promise<ParseVerdictLike[] | null>;
+  // Turns the install-time parse check off so a test can drive an
+  // unparseable script all the way to injection.
+  setParseCheckEnabled(enabled: boolean): Promise<void>;
+  // How many source compiles have run this session — lets a test tell a
+  // cached verdict from a fresh one.
+  getParseCheckRuns(): Promise<number>;
   // {scriptId → why chrome.userScripts refused its registration} for
   // the last sync — what the UI renders as REJECTED. Empty when
   // everything registered.
@@ -82,18 +101,65 @@ export interface ActionMenuScriptLike {
   commands: { commandId: string; title: string }[];
 }
 
+// Mirrors the fields of `StoredScript` (src/script-store.ts) that specs
+// read back. Deliberately a subset — it only has to be accurate about
+// what it declares, and it crosses `evaluate()` as plain JSON.
 export interface StoredScriptLike {
   id: string;
   sourceId: string;
   relativePath: string;
   status: 'ok' | 'invalid' | 'missing';
   errorMessage?: string;
+  errorLocation?: DiagnosticLocationLike;
   refreshError?: string;
   size: number | null;
   loadedAt: number;
   parseCheckedHash?: string;
   enabled: boolean;
+  headerText: string;
   bodyText: string;
+  startupLogs?: readonly {
+    level: 'info' | 'warning' | 'error';
+    message: string;
+    location?: DiagnosticLocationLike;
+  }[];
+  requires?: {
+    ref: string;
+    url: string;
+    source: string;
+    size: number;
+    contentHash?: string;
+    loadedAt: number;
+  }[];
+  versionProbes?: {
+    kinds: string[];
+    url: string;
+    version?: string;
+    error?: string;
+    checkedAt: number;
+  }[];
+}
+
+// `DiagnosticLocation` from src/diagnostic-location.ts, restated here so
+// the fixtures don't import extension source into the test build.
+export interface DiagnosticLocationLike {
+  file: string;
+  line?: number;
+  column?: number;
+}
+
+// `ParseVerdict` from src/parse-check-protocol.ts, same reasoning.
+export interface ParseVerdictLike {
+  status: 'ok' | 'syntax-error' | 'unknown';
+  message?: string;
+  probes?: { raw?: ParseProbeResultLike; wrapped?: ParseProbeResultLike };
+  location?: { file: string; line: number; column: number };
+}
+
+export interface ParseProbeResultLike {
+  message: string;
+  line?: number;
+  column?: number;
 }
 
 export interface TabStateSnapshot {

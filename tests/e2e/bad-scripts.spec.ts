@@ -69,7 +69,7 @@ test.describe('bad-examples corpus', () => {
     // Build an actual-by-filename map and assert each expected entry
     // independently. This gives a useful failure message even when
     // multiple cases regress at once.
-    const byFile = new Map<string, typeof got.scripts[number]>();
+    const byFile = new Map<string, NonNullable<typeof got>['scripts'][number]>();
     for (const s of got!.scripts) byFile.set(s.relativePath, s);
 
     for (const c of BAD_CASES) {
@@ -141,7 +141,7 @@ test.describe('bad-examples corpus', () => {
   }) => {
     const source = await sm.addSource(BAD_SCRIPTS_DIR);
     const got = await sm.getSourceWithScripts(source!.id);
-    const byFile = new Map<string, typeof got.scripts[number]>();
+    const byFile = new Map<string, NonNullable<typeof got>['scripts'][number]>();
     for (const s of got!.scripts) byFile.set(s.relativePath, s);
 
     for (const c of BAD_CASES) {
@@ -190,7 +190,7 @@ test.describe('bad-examples corpus', () => {
     // header MUST end its `.userscript-header` span with `\n`.
     const source = await sm.addSource(BAD_SCRIPTS_DIR);
     const got = await sm.getSourceWithScripts(source!.id);
-    const byFile = new Map<string, typeof got.scripts[number]>();
+    const byFile = new Map<string, NonNullable<typeof got>['scripts'][number]>();
     for (const s of got!.scripts) byFile.set(s.relativePath, s);
 
     // The cases that have BOTH markers and a body line after — i.e.
