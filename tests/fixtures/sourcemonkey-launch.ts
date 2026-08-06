@@ -91,22 +91,55 @@ export async function launchSourceMonkeyContext(opts: {
  * Return a function that re-resolves a live SW handle each call. MV3
  * service workers idle out aggressively, and Playwright's
  * `serviceWorkers()` list can hand back a Worker whose underlying CDP
- * target has already been torn down. Don't cache — every call walks
- * the current list and verifies each candidate with a no-op evaluate,
- * falling back to `waitForEvent` for a fresh spawn if nothing is live.
+ * target has already been torn down. Don't cache — every call walks the
+ * current list and polls each candidate for the `self.SourceMonkey` test
+ * surface, falling back to `waitForEvent` for a fresh spawn if the list
+ * is empty.
  */
 export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker> {
+  // The worker is "ready" only once its top-level module has run far
+  // enough to expose the `self.SourceMonkey` test surface. Playwright's
+  // `serviceworker` event (and a live `serviceWorkers()` entry) can both
+  // precede that assignment — a bare `evaluate(() => true)` succeeds
+  // against a worker whose module body hasn't finished — so every method
+  // on the `sm` proxy would race the surface into existence. Poll for it.
+  const apiReady = async (worker: Worker, budgetMs: number): Promise<boolean> => {
+    const deadline = Date.now() + budgetMs;
+    while (Date.now() < deadline) {
+      // A `true` result means the surface is live; a throw means the CDP
+      // target went away (stale handle) — bail so the caller tries the
+      // next candidate or waits for a fresh spawn.
+      const has = await worker.evaluate(
+        () => typeof (self as unknown as { SourceMonkey?: unknown }).SourceMonkey !== 'undefined',
+      );
+      if (has) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  };
   return async () => {
+    // A worker that answers but never exposes the surface (its module
+    // body threw, say) is still the best handle available: returning it
+    // fails the test on `SourceMonkey.<method> is not a function`, which
+    // names the real problem. Discarding it in favour of `waitForEvent`
+    // would report a spawn timeout instead and hide the cause.
+    // Short budget per already-listed candidate: a live worker answers on
+    // the first poll, so the only thing a long wait here buys is a delay
+    // on EVERY proxy call once some worker is permanently surfaceless.
+    // The long budget is spent only on a freshly spawned worker, which
+    // genuinely needs time to evaluate its module.
+    let answered: Worker | null = null;
     for (const candidate of ctx.serviceWorkers()) {
       try {
-        await candidate.evaluate(() => true);
-        return candidate;
+        if (await apiReady(candidate, 1000)) return candidate;
+        answered ??= candidate;
       } catch {
         // stale; try the next one
       }
     }
+    if (answered) return answered;
     const sw = await ctx.waitForEvent('serviceworker', { timeout: 5000 });
-    await sw.evaluate(() => true);
+    await apiReady(sw, 5000);
     return sw;
   };
 }
