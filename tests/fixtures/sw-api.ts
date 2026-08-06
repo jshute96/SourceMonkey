@@ -41,6 +41,10 @@ export interface SmApi {
     location?: DiagnosticLocationLike;
   }[]>;
   clearScriptLog(scriptId: string): Promise<void>;
+  // Every PERSISTED GM value for a script, excluding the SW's in-flight
+  // overlay. The wrapper's write is batched, so this is what a test
+  // waits on instead of pausing.
+  getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   appendScriptLog(scriptId: string, input: {
     level: 'info' | 'warning' | 'error';
     source: string;
@@ -240,6 +244,33 @@ export async function waitFor<T>(
   throw new Error(
     `waitFor(${options.label ?? 'predicate'}) timed out after ${timeoutMs}ms; last value: ${JSON.stringify(last)}`,
   );
+}
+
+// Wait until the single registered script's persisted GM values satisfy
+// `predicate`. `GM_setValue` batches its write 150ms after the last one,
+// so "the page reported the value" is not "storage has it" — a test that
+// needs it durable waits for this rather than pausing.
+//
+// Reads persisted rows only, deliberately excluding the SW's in-flight
+// `gmValueOverlay`: a predicate that passes here has passed against what
+// actually survives, which is stronger than what production needs to
+// answer a check-pending.
+export async function waitForGmValues(
+  api: SmApi,
+  predicate: (values: Record<string, unknown>) => boolean,
+  label = 'GM values',
+): Promise<Record<string, unknown>> {
+  const scriptIds = (await api.getSources()).flatMap((s) => s.scriptIds);
+  // Guarded rather than indexed blindly: with no script registered,
+  // `loadAllValues(undefined)` returns {} quite happily and the caller
+  // burns the full timeout reporting a storage problem, when the real
+  // failure was that nothing registered at all.
+  if (scriptIds.length !== 1) {
+    throw new Error(
+      `waitForGmValues expects exactly one registered script, saw ${scriptIds.length}`,
+    );
+  }
+  return waitFor(() => api.getGmValues(scriptIds[0]), predicate, { label });
 }
 
 // Convenience: wait until a tab's badge state matches `predicate`.

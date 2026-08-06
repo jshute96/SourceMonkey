@@ -16,6 +16,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitForGmValues, type SmApi } from '../fixtures/sw-api';
 
 test.describe('GM_* storage freshness across documents', () => {
   let scriptsDir: ScriptsDir;
@@ -45,6 +46,13 @@ test.describe('GM_* storage freshness across documents', () => {
     }, 50);
   `;
 
+  // The probe reports the value as soon as it writes it, but the write
+  // itself is batched 150ms later — so the navigation below would race
+  // it without this.
+  async function waitForShared(sm: SmApi, expected: string): Promise<void> {
+    await waitForGmValues(sm, (values) => values.shared === expected, `shared = ${expected}`);
+  }
+
   function writeProbe(baseUrl: string): void {
     scriptsDir.write({
       relativePath: 'a.user.js',
@@ -73,9 +81,7 @@ test.describe('GM_* storage freshness across documents', () => {
     await page.evaluate(() => { document.body.dataset.smCmd = 'set:fromA'; });
     await expect(page.locator('body')).toHaveAttribute('data-sm-value', 'fromA');
 
-    // Generous pause so the 150ms debounced flush AND any SW-side
-    // re-register has time to propagate.
-    await page.waitForTimeout(500);
+    await waitForShared(sm, 'fromA');
 
     // Navigate within the same tab.
     await page.goto(`${fixtureServer.baseUrl}/target.html?n=2`);
@@ -95,7 +101,7 @@ test.describe('GM_* storage freshness across documents', () => {
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-initial', '_NONE_');
     await pageA.evaluate(() => { document.body.dataset.smCmd = 'set:fromA'; });
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-value', 'fromA');
-    await pageA.waitForTimeout(500);
+    await waitForShared(sm, 'fromA');
     await pageA.close();
 
     const pageB = await extensionContext.newPage();
@@ -232,8 +238,14 @@ test.describe('GM_* storage freshness across documents', () => {
     ]);
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-state', /fromA/);
     await expect(pageB.locator('body')).toHaveAttribute('data-sm-state', /fromB/);
-    // Let both flushes and cross-broadcast settle.
-    await pageA.waitForTimeout(500);
+    // The assertion below is that BOTH writes survived, so that is the
+    // condition to wait on. (`set:<k>=<v>` writes key <k> — see
+    // writeMultiProbe, which is a different parser from writeProbe's.)
+    await waitForGmValues(
+      sm,
+      (values) => values.fromA === 'valueA' && values.fromB === 'valueB',
+      'both concurrent writes',
+    );
 
     const pageC = await extensionContext.newPage();
     await pageC.goto(`${fixtureServer.baseUrl}/target.html`);

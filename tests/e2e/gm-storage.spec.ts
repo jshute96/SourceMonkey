@@ -15,6 +15,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitForGmValues } from '../fixtures/sw-api';
 
 test.describe('GM_* storage (Phase 3)', () => {
   let scriptsDir: ScriptsDir;
@@ -161,9 +162,9 @@ test.describe('GM_* storage (Phase 3)', () => {
     const page1 = await extensionContext.newPage();
     await page1.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page1.locator('body')).toHaveAttribute('data-sm-probe', '0');
-    // Allow the debounced flush to land. The runtime fires the
-    // sm:gm-batch-write 150ms after the last write; give it ~300ms.
-    await page1.waitForTimeout(300);
+    // The second load below is only meaningful once the first load's
+    // write is on disk, and that write is batched 150ms after the fact.
+    await waitForGmValues(sm, (values) => values.counter === 1, 'counter = 1');
     await page1.close();
 
     // Second load: previous now reads 1 (the value the FIRST load

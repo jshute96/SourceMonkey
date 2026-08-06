@@ -250,6 +250,11 @@ interface SourceMonkeyApi {
   // a cached verdict from a fresh one.
   getParseCheckRuns: () => number;
   clearScriptLog: (scriptId: string) => Promise<void>;
+  // Every PERSISTED GM value for a script, excluding the in-flight
+  // overlay. Tests wait on this for the wrapper's batched write to land
+  // rather than pausing — the batch fires 150ms after the last write and
+  // its timing moves with machine load.
+  getGmValues: (scriptId: string) => Promise<Record<string, unknown>>;
   // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
   // script in a dupe group gets which `#N` is decided by UUID sort, so
   // a test that needs the label cannot predict it — it has to ask.
@@ -324,6 +329,7 @@ const api: SourceMonkeyApi = {
   appendScriptLog,
   getRejections: readRejections,
   clearScriptLog,
+  getGmValues: loadAllValues,
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,

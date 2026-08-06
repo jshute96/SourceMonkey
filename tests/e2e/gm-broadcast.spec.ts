@@ -8,6 +8,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitForGmValues } from '../fixtures/sw-api';
 
 test.describe('GM_* cross-tab broadcast (Phase 6)', () => {
   let scriptsDir: ScriptsDir;
@@ -116,9 +117,13 @@ test.describe('GM_* cross-tab broadcast (Phase 6)', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-readback', 'wrote');
-    // Give the broadcast a chance to fire (and prove it's a no-op
-    // for this tab).
-    await page.waitForTimeout(300);
+    // The broadcast is only decided AFTER the write persists — the SW
+    // awaits `applyBatchValues` and then broadcasts — so waiting for the
+    // value in storage is waiting for the broadcast to have happened.
+    // A fixed pause could expire before the write was even attempted,
+    // which would let the "it's a no-op for this tab" assertion pass
+    // without the broadcast ever running.
+    await waitForGmValues(sm, (values) => values.x === 'wrote', "x = 'wrote'");
     await expect(page.locator('body')).toHaveAttribute('data-sm-readback', 'wrote');
     await page.close();
   });

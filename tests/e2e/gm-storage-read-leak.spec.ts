@@ -23,6 +23,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitFor } from '../fixtures/sw-api';
 
 const SECRET = 'leak-canary-9d3f';
 
@@ -73,16 +74,21 @@ test.describe('GM storage cross-script read leak', () => {
     const seed = await extensionContext.newPage();
     await seed.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(seed.locator('body')).toHaveAttribute('data-sm-victim', SECRET);
-    // Generous pause so the debounced GM_setValue flush reaches
-    // chrome.storage.local before we probe.
-    await seed.waitForTimeout(500);
-    await seed.close();
 
     // Resolve the victim's real scriptId (a v4 UUID — the practical
     // barrier the leak relied on; the test knows it, a real page would
     // have to guess it).
     const detail = await sm.getSourceWithScripts(added!.id);
     const victimId = detail!.scripts.find((s) => s.relativePath === 'victim.user.js')!.id;
+
+    // The probe below is only meaningful once there is something stored
+    // to leak, and GM_setValue's write is batched 150ms after the fact.
+    await waitFor(
+      () => sm.getGmValues(victimId),
+      (values) => values.secret === SECRET,
+      { label: "the victim's secret reaches storage" },
+    );
+    await seed.close();
 
     // Fresh document. Positive control: the victim's OWN direct
     // check-pending still seeds the secret, proving the SW snapshot

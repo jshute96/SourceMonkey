@@ -183,6 +183,11 @@ tests:
   every userscript.
 - Per-script log: `getScriptLog(id)`, `appendScriptLog(id, entry)`,
   `clearScriptLog(id)`, `getScriptLogLabel(id)`.
+- GM values: `getGmValues(id)` returns every **persisted** value for a
+  script, deliberately excluding the SW's in-flight overlay.
+  `GM_setValue` batches its write 150ms after the last one, so a test
+  waits on this rather than pausing — and because it reads only what
+  survived, a predicate that passes has passed against durable state.
 
 These mirror production functions. Two of them wait where production
 deliberately doesn't, so a test can't observe a half-written state:
