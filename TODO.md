@@ -424,6 +424,26 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
+- **Live repaint** (sources page): a `sources`-index reorder arriving
+  from another origin, and the `.busy-spinner` guards that stop a
+  repaint from overwriting a control the user just clicked. The reorder
+  case has no test because nothing on the SW test surface moves a
+  source — `moveSource` would have to be exposed first.
+- **`repaintPage()`'s serialization contract** — that a burst of writes
+  collapses into one pass, and that `await repaintPage()` observes the
+  caller's own write. The add / remove / refresh tests depend on it but
+  only cover it incidentally.
+
+## Sources page — follow-ups
+
+- **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
+  toggle produce overlapping `onToggleScript` calls sharing one spinner
+  element, so the first handler's `finally` removes it while the second
+  write is still in flight. A repaint arriving in that window sees no
+  spinner and paints the first write's value over the user's second
+  click; the second write then lands and corrects it. Pre-existing, but
+  the repaint is what makes the window observable. A refcount on the
+  label would close it.
 
 ## HTTP sources — follow-ups
 

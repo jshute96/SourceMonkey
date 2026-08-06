@@ -106,6 +106,7 @@ import {
   clearScriptLog,
   getScriptLog,
   logScriptEvent,
+  _flushScriptLogQueueForTests,
   type AppendLogInput,
   type LogEntry,
 } from './script-log.js';
@@ -309,7 +310,16 @@ const api: SourceMonkeyApi = {
     ]);
     return { badgeText, badgeColor, title, record };
   },
-  getScriptLog,
+  // Drains this script's in-flight appends before reading. Production
+  // log writes go through `logScriptEvent`, which is deliberately
+  // fire-and-forget — a refresh must not wait on its own transcript —
+  // so `updateSource()` can resolve before the entry it just produced
+  // has landed. A test that reads straight after would be asserting on
+  // a log that is still being written.
+  getScriptLog: async (scriptId: string) => {
+    await _flushScriptLogQueueForTests(scriptId);
+    return getScriptLog(scriptId);
+  },
   appendScriptLog,
   getRejections: readRejections,
   clearScriptLog,

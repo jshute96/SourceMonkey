@@ -156,7 +156,7 @@
       /* While a directory is being removed, dim the whole section and block further clicks. */
       .directory.removing { opacity: 0.5; pointer-events: none; }
       /* Highlight rows that changed during a refresh. The color
-         persists until the next refresh re-renders the section, so the
+         persists until the next refresh clears it, so the
          user can leave the page and come back without losing the
          what-changed signal. */
       .script-table tr.row-updated td { background: #cdebcf; }
