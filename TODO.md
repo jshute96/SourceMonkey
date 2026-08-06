@@ -643,6 +643,17 @@ itself once a sync places it. What's missing:
   `checkPreviewSource` builds the row and reports header errors and
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`
   or a dropped `@match` is only visible after installing.
+- **Registration has no single owner across contexts.** The lock in
+  `src/injector.ts` serializes registration work within one JS context,
+  but the sources page and the viewer call
+  `retryRejectedRegistrations` in theirs, so a page-side registration
+  can still land in the middle of the SW's sync. `registerReplacing`
+  makes that survivable (the id is replaced, not reported as a
+  duplicate) and the end state converges, but the fix in principle is
+  for the SW to be the only context that touches `chrome.userScripts`
+  — which needs a page→SW message channel that doesn't exist yet
+  (`chrome.runtime.onMessage` has no listener in `background.ts`;
+  pages coordinate with the SW through storage today).
 - **The message is Chrome's, so it speaks Chrome's coordinates.**
   `matches[1]: Invalid port` counts within the spec we built, not the
   lines of the file. Deliberate — the alternative is inventing a

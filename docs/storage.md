@@ -715,3 +715,8 @@ The background SW's handler debounces by 50 ms before calling
 collapse into one re-sync. `syncRegistrations` is O(total scripts) and
 issues an `unregister`-all/`register`-all against `chrome.userScripts`,
 so coalescing matters.
+
+The debounce is about *cost*, not correctness — it can't stop the
+startup sync, a refresh's targeted retry, or an extension page from
+asking at the same moment. Ordering those is the injector's own lock;
+see [injection.md](injection.md#one-registration-operation-at-a-time).

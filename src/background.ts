@@ -56,6 +56,7 @@ import {
   isUserScriptsAvailable,
   resetRejectionRetryGate,
   syncRegistrations,
+  unregisterAllRegistrations,
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
   SM_ERROR_MSG,
@@ -400,15 +401,15 @@ const api: SourceMonkeyApi = {
     // storage.onChanged listener will also fire syncRegistrations() in
     // response to the clear, but that races test setup — doing it
     // ourselves here is deterministic.
-    if (chrome.userScripts) {
-      try {
-        const existing = await chrome.userScripts.getScripts();
-        if (existing.length > 0) {
-          await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });
-        }
-      } catch {
-        /* ignore */
-      }
+    //
+    // Through the injector so the teardown queues behind any sync
+    // that's already running rather than wiping the set out from under
+    // it (and then having that sync re-register everything we just
+    // dropped).
+    try {
+      await unregisterAllRegistrations();
+    } catch {
+      /* ignore */
     }
     // Cancel the post-clear scheduled sync that the onChanged listener
     // just armed. Without this it would fire ~50 ms into the next
