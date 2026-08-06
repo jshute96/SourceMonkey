@@ -94,7 +94,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 script runs once per matching frame (see
 [injection.md](injection.md#frames)) and `LOG_CAP` is 500:
 
-- One `started in sub-frame <url>` row per script per top-level
+- One `Started in sub-frame <url>` row per script per top-level
   document, however many frames ran.
 - Errors key on their message, so twenty frames failing the same way
   log once but two different failures still both appear.

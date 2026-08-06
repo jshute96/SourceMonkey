@@ -100,7 +100,7 @@ test.describe('frames', () => {
     expect(snap.record!.docOrder).toHaveLength(1);
     await expect.poll(async () => {
       const log = await sm.getScriptLog(scriptId);
-      return log.filter((e) => e.message.startsWith('started in sub-frame')).length;
+      return log.filter((e) => e.message.startsWith('Started in sub-frame')).length;
     }).toBe(1);
 
     await page.close();
@@ -203,7 +203,7 @@ test.describe('frames', () => {
     // page.on('console') sees messages from every frame of the page.
     const diagnostics: string[] = [];
     page.on('console', (msg) => {
-      if (msg.text().includes('unknown @grant entries dropped')) diagnostics.push(msg.text());
+      if (msg.text().includes('Ignoring @grant')) diagnostics.push(msg.text());
     });
     await page.goto(`${fixtureServer.baseUrl}/frames.html`);
 
@@ -312,8 +312,8 @@ test.describe('frames', () => {
     const countStarts = async (): Promise<[number, number]> => {
       const log = await sm.getScriptLog(scriptId);
       return [
-        log.filter((e) => e.message.startsWith('started at')).length,
-        log.filter((e) => e.message.startsWith('started in sub-frame')).length,
+        log.filter((e) => e.message.startsWith('Started at')).length,
+        log.filter((e) => e.message.startsWith('Started in sub-frame')).length,
       ];
     };
     await expect.poll(async () => (await countStarts())[1]).toBe(1);
