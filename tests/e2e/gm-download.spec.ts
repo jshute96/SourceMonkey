@@ -323,6 +323,67 @@ test.describe('GM_download', () => {
       const entries = await sm.getScriptLog(scriptId);
       return entries.filter((e) => e.source === 'gm-download').map((e) => e.message).join('\n');
     }).toMatch(/not_permitted/);
+    // At `warning`, not `error` — a refused download is an outcome the
+    // script can handle, not an extension malfunction. Assert the
+    // absence too: `toContain('warning')` alone still passes if an
+    // `error` entry is emitted alongside it, which is the regression
+    // this guards.
+    const levels = (await sm.getScriptLog(scriptId))
+      .filter((e) => e.source === 'gm-download')
+      .map((e) => e.level);
+    expect(levels).toContain('warning');
+    expect(levels).not.toContain('error');
+    await page.close();
+  });
+
+  test('a 404 fails in transfer and is logged', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    // Unlike the refusal cases, nothing here is rejected up front: the
+    // scheme and name both validate, chrome.downloads starts, and the
+    // failure arrives as an `interrupted` delta from the download
+    // manager.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadMissing',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        GM_download({
+          url: '${fixtureServer.baseUrl}/no-such-file-here.bin',
+          name: 'missing.bin',
+          onload: () => report('unexpected-load'),
+          onerror: (e) => report('error:' + (e && e.error)),
+        });
+      `,
+    });
+    const source = await sm.addSource(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    // Same 15s margin the other real-download tests use: this waits on
+    // the download manager reporting an interrupt, not on our own code.
+    await expect(page.locator('body')).toHaveAttribute(
+      'data-sm-download',
+      'error:not_succeeded',
+      { timeout: 15000 },
+    );
+
+    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const scriptId = withScripts!.scripts[0].id;
+    await expect.poll(async () => {
+      const entries = await sm.getScriptLog(scriptId);
+      return entries
+        .filter((e) => e.source === 'gm-download' && e.level === 'warning')
+        .map((e) => e.message)
+        .join('\n');
+    }).toMatch(/not_succeeded/);
     await page.close();
   });
 

@@ -94,9 +94,13 @@ export function listUserscriptsRecursive(dir) {
 
 // `@version` ordering comes from the extension's own comparator so the
 // sync tooling and the shipped update-probe agree on which of two
-// versions is newer. Re-exported here because this module is the TM
-// tooling's single import surface.
-export { compareVersions } from '../../dist/version-compare.js';
+// versions is newer. Re-exported because this module is the TM
+// tooling's single import surface — imported first, since a bare
+// `export { x } from …` re-export does NOT bind `x` locally, and
+// `syncTampermonkeyScripts` below calls it.
+import { compareVersions } from '../../dist/version-compare.js';
+
+export { compareVersions };
 
 export class TampermonkeyDriver {
   /**
@@ -120,6 +124,63 @@ export class TampermonkeyDriver {
      * @type {Map<string, string> | null}
      */
     this._installedMap = null;
+    /**
+     * Set by `autoApprovePermissionPrompts()`; kept so a second call
+     * doesn't attach a duplicate listener.
+     * @private
+     * @type {((page: import('@playwright/test').Page) => void) | null}
+     */
+    this._permissionHandler = null;
+  }
+
+  /**
+   * Auto-answer TM's permission prompts so an unattended run doesn't
+   * sit in front of one.
+   *
+   * TM gates some GM APIs behind a confirmation page it opens as a new
+   * tab (`ask.html`), and with nobody to answer it the GM call never
+   * settles — the spec times out on an empty log rather than seeing a
+   * result either way.
+   *
+   * NOT sufficient on its own for `GM_download`. Its prompt ("Browser
+   * API Downloads: Click OK to allow Tampermonkey to start instant
+   * downloads") calls `chrome.permissions.request`, which needs
+   * Chrome's own native grant bubble — headless can't show one, so the
+   * click lands and nothing happens. That permission is pre-granted in
+   * the profile by `scripts/e2e-tm-preflight.mjs`; don't drop that on
+   * the assumption this handler covers it.
+   *
+   * Only `input.button.permission[value="Ok"]` is clicked. The install
+   * confirmation on the same page uses `.button.install`, so this
+   * can't race `installFromFile` into approving an install.
+   * @returns {void}
+   */
+  autoApprovePermissionPrompts() {
+    if (this._permissionHandler) return;
+    const askUrl = new RegExp(`^chrome-extension://${this.extensionId}/ask\\.html`);
+    this._permissionHandler = (page) => {
+      void (async () => {
+        try {
+          // The `page` event fires while the tab is still about:blank,
+          // so a synchronous url() check here always misses. Wait for
+          // the navigation, then for the prompt's own button.
+          await page.waitForURL(askUrl, { timeout: 5000 });
+          const ok = page.locator('input.button.permission[value="Ok"]').first();
+          await ok.waitFor({ state: 'visible', timeout: 5000 });
+          // Never touch a page that also carries an install action.
+          // The class split below is TM 5.5.0's; if a later build ever
+          // labels an install button "Ok", this keeps us from
+          // approving an install out from under `installFromFile`.
+          if (await page.locator('.button.install').count()) return;
+          await ok.click();
+        } catch {
+          // Not a permission prompt (an ordinary test page or an
+          // install confirmation), or it closed on its own. Either way
+          // there's nothing to answer.
+        }
+      })();
+    };
+    this.context.on('page', this._permissionHandler);
   }
 
   /**
@@ -143,8 +204,26 @@ export class TampermonkeyDriver {
     try {
       await page.goto(this.dashboardUrl('dashboard'));
       await page.waitForLoadState('domcontentloaded');
-      // The script list is hydrated from IDB after DOMContentLoaded.
-      await page.waitForTimeout(1000);
+      // The script list is hydrated from IDB after DOMContentLoaded,
+      // and how long that takes varies with the profile's size and the
+      // machine. Wait for the first name cell instead of guessing: a
+      // fixed sleep that expires early reports "nothing installed",
+      // and the sync path then reinstalls every script on every test.
+      //
+      // The timeout is the empty-dashboard cost — a profile with no
+      // scripts waits it out once and correctly returns [].
+      try {
+        await page.locator('td.script_name').first().waitFor({ state: 'attached', timeout: 15000 });
+      } catch {
+        // Say so. An empty list is indistinguishable from "TM renamed
+        // the class", and that mistake reads as "nothing installed" —
+        // which makes every spec reinstall its scripts, silently.
+        console.log(
+          `[tm-driver] No script rows on the TM dashboard after 15s. Either the ` +
+          `profile has no userscripts, or td.script_name changed in this TM build.`
+        );
+        return [];
+      }
 
       return await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('tr.scripttr'))
@@ -223,9 +302,14 @@ export class TampermonkeyDriver {
 
       // Find the import-from-file input. TM hides it behind a styled
       // button — Playwright's setInputFiles works on hidden inputs.
+      //
+      // Wait for it rather than counting once: the dashboard ships an
+      // empty <body> and builds the DOM from JS, so an immediate
+      // count() races the render and reports 0 on a page that is fine.
       const fileInputs = page.locator('input[type="file"]');
-      const inputCount = await fileInputs.count();
-      if (inputCount === 0) {
+      try {
+        await fileInputs.first().waitFor({ state: 'attached', timeout: 10000 });
+      } catch {
         throw new Error(
           `No file input found on TM utils page (${this.dashboardUrl('utils')}). ` +
           `Selector may have changed in this TM build.`
@@ -287,17 +371,32 @@ export class TampermonkeyDriver {
       'button#buttonInstall',
       'input[type="submit"][value*="nstall" i]',
     ];
+    // ask.html is served as an empty <body> and populated by its own
+    // scripts, so `domcontentloaded` fires well before the buttons
+    // exist. Wait on the union of the candidates — probing each with a
+    // one-shot count() finds nothing and throws on a healthy page.
+    const anyButton = page.locator(candidates.join(', ')).first();
+    try {
+      await anyButton.waitFor({ state: 'visible', timeout: 15000 });
+    } catch {
+      throw new Error(
+        `Could not find an Install button on the TM confirmation page. ` +
+        `URL: ${page.url()}. Tried: ${candidates.join(', ')}`
+      );
+    }
+    // Re-probe in candidate order so Install wins over a same-page
+    // Cancel if a build ever renders more than one match. Test
+    // visibility, not existence: `count()` also matches a hidden
+    // element, and clicking one stalls on actionability even though
+    // the wait above was satisfied by a different, visible candidate.
     for (const sel of candidates) {
       const loc = page.locator(sel).first();
-      if (await loc.count()) {
+      if (await loc.isVisible().catch(() => false)) {
         await loc.click();
         return;
       }
     }
-    throw new Error(
-      `Could not find an Install button on the TM confirmation page. ` +
-      `URL: ${page.url()}. Tried: ${candidates.join(', ')}`
-    );
+    await anyButton.click();
   }
 }
 

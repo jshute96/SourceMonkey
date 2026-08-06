@@ -381,10 +381,18 @@ primitive, and any host that acts on a plain GET is reachable.
   `blob:` / `data:` path there is nothing to cancel — the browser
   already owns the transfer — so `abort()` only suppresses the
   synthetic `onload`.
-- **No completion signal on the in-page path.** `onload` there means
-  "handed to the browser", not "written to disk". It fires ~250 ms
-  after the click so the common `URL.revokeObjectURL` in `onload`
-  doesn't race the download manager.
+- **`blob:` / `data:` only: `onload` does not mean "on disk".** Those
+  two schemes never reach the service worker — the wrapper clicks a
+  hidden `<a download>` in the page, and the browser owns the transfer
+  from there with no completion event available to the script.
+  - `onload` on that path means "handed to the browser". It's
+    synthetic, fired ~250 ms after the click so the common
+    `URL.revokeObjectURL` in `onload` doesn't race the download
+    manager.
+  - **http(s) is unaffected**: those go through `chrome.downloads`, and
+    their `onload` is a real transition to `complete`.
+  - Closing the gap is possible — see the entry in
+    [TODO.md](../TODO.md).
 - **Progress is polled** (~500 ms) because `chrome.downloads.onChanged`
   doesn't carry byte counts. Nothing is polled unless you supply
   `onprogress`.
@@ -398,10 +406,14 @@ primitive, and any host that acts on a plain GET is reachable.
   `GM_xmlhttpRequest` there's no page-side timeout that eventually
   synthesizes an error — a download can legitimately run for hours, so
   there's no honest deadline to pick.
-- **Failures land on the script's Log tab** (`gm-download` source, at
-  `warning` level) so a "nothing downloaded" report has somewhere to
-  look. Successful downloads are not logged — a batch downloader would
-  flood the capped log.
+- **Failures land on the script's Log tab**, `gm-download` source, so
+  a "nothing downloaded" report has somewhere to look.
+  - At `warning`, not `error`: a refused or interrupted download is an
+    outcome the script can handle, not a SourceMonkey malfunction.
+    `error` wouldn't turn the toolbar icon red either, so it would
+    only raise the noise floor.
+  - Successful downloads are not logged: a batch downloader would
+    flood the capped log.
 
 ---
 

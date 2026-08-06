@@ -1,13 +1,19 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_download
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.3
 // @description Click buttons to download files with various GM_download call shapes.
 // @match       *://*/gm-download/gm-download.html
 // @match       file:///*/gm-download/gm-download.html
 // @run-at      document-end
 // @grant       GM_download
+// @connect     www.gnu.org
 // ==/UserScript==
+
+// The @connect line covers the cross-origin http:// button. Managers
+// that gate GM_download on @connect (Tampermonkey does) need the host
+// declared; SourceMonkey's download path doesn't consult @connect, so
+// it's there for cross-manager parity.
 
 (function () {
   'use strict';
@@ -39,7 +45,17 @@
       onerror: (e) => { append(`   onerror ${describe(e)}  -- ${expectation}`); also('onerror')(e); },
       ontimeout: (t) => { append(`   ontimeout  -- ${expectation}`); also('ontimeout')(t); },
       onprogress: (p) => {
-        if (p && p.lengthComputable) append(`   onprogress ${p.loaded}/${p.total}`);
+        // Log every tick, not just the ones with a total. A server
+        // that doesn't send Content-Length (or compresses the body)
+        // leaves lengthComputable false, and dropping those events is
+        // what makes a multi-second download look like nothing is
+        // happening.
+        if (p && p.lengthComputable) {
+          const pct = p.total ? ` (${Math.floor((p.loaded / p.total) * 100)}%)` : '';
+          append(`   onprogress ${p.loaded}/${p.total}${pct}`);
+        } else if (p) {
+          append(`   onprogress ${p.loaded ?? 0} bytes (total unknown)`);
+        }
         also('onprogress')(p);
       },
     });
@@ -62,11 +78,47 @@
     return parts.length ? parts.join(' ') : '(no details)';
   }
 
+  // An absolute cross-origin URL, shared by every http(s) button
+  // except `btn-file`. Being absolute is the point: those buttons then
+  // behave the same however this page was opened, leaving `btn-file`
+  // as the only one that inherits the page's scheme. How many
+  // onprogress ticks it produces depends on the link — SourceMonkey
+  // polls every ~500ms, so a fast connection finishes this file inside
+  // the first poll and logs none.
+  const REMOTE_URL = 'https://www.gnu.org/licenses/gpl-3.0.txt';
+  // Same host (so `@connect` still covers it), no such file.
+  const REMOTE_404_URL = 'https://www.gnu.org/licenses/sourcemonkey-no-such-file.txt';
+
+  // `btn-file` resolves its URL against this page, so opened from disk
+  // it becomes a file:// URL — which SourceMonkey refuses. Say that up
+  // front instead of promising a download that can't happen.
+  const localPage = location.protocol === 'file:';
+
   document.getElementById('btn-file').addEventListener('click', () => {
     download('details {url: sample.txt, name}', {
       url: new URL('sample.txt', location.href).href,
       name: 'sourcemonkey-example.txt',
-    }, 'saves sample.txt to your downloads folder');
+    }, localPage
+      ? 'expected to be refused — this page was opened from file://; serve it over http(s) to see it succeed'
+      : 'saves sample.txt to your downloads folder');
+  });
+
+  document.getElementById('btn-http').addEventListener('click', () => {
+    download('details {url: https://www.gnu.org/…}', {
+      url: REMOTE_URL,
+      name: 'sourcemonkey-http.txt',
+    }, 'saves a cross-origin http(s) file to your downloads folder');
+  });
+
+  // A URL that resolves and connects but has nothing behind it. The
+  // scheme and name both pass validation, so this is the one button
+  // whose failure comes from the transfer itself rather than from a
+  // check we made before starting.
+  document.getElementById('btn-404').addEventListener('click', () => {
+    download('details {url: …/sourcemonkey-no-such-file.txt}', {
+      url: REMOTE_404_URL,
+      name: 'sourcemonkey-404.txt',
+    }, 'expected to fail — the server has no such file');
   });
 
   document.getElementById('btn-positional').addEventListener('click', () => {
@@ -75,7 +127,7 @@
     // download UI shows).
     append('-> positional (url, name)');
     try {
-      GM_download(new URL('sample.txt', location.href).href, 'sourcemonkey-positional.txt');
+      GM_download(REMOTE_URL, 'sourcemonkey-positional.txt');
       append('   returned  -- saves sourcemonkey-positional.txt');
     } catch (e) {
       append(`   threw: ${(e && e.message) || e}`);
@@ -103,7 +155,7 @@
 
   document.getElementById('btn-abort').addEventListener('click', () => {
     const control = download('details {...} then abort()', {
-      url: new URL('sample.txt', location.href).href,
+      url: REMOTE_URL,
       name: 'sourcemonkey-aborted.txt',
     }, 'aborted immediately — expect an error/abort callback, or nothing');
     if (control && typeof control.abort === 'function') {
@@ -122,8 +174,11 @@
   });
 
   document.getElementById('btn-traversal').addEventListener('click', () => {
+    // Absolute URL on purpose: the scheme is checked before the name,
+    // so a relative (file:// on a local page) URL would make this
+    // report the scheme refusal instead of the traversal one.
     download('details {name: "../escaped.txt"}', {
-      url: new URL('sample.txt', location.href).href,
+      url: REMOTE_URL,
       name: '../sourcemonkey-escaped.txt',
     }, 'expected to be refused');
   });
@@ -133,5 +188,7 @@
   });
 
   status.classList.add('ran');
-  status.textContent = 'Userscript ran. Click a button to download something.';
+  status.textContent = localPage
+    ? 'Userscript ran. This page was opened from file://, so the "relative filename" button resolves sample.txt to a file:// URL and will be refused — serve the page over http(s) for that one. All other buttons use absolute URLs and work either way.'
+    : 'Userscript ran. Click a button to download something.';
 })();

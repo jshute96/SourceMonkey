@@ -6,6 +6,15 @@
 // a manager applies its own file-extension allowlist) is
 // manager-specific — SourceMonkey's exact contract is asserted in
 // tests/e2e/gm-download.spec.ts.
+//
+// HERMETIC ONLY BY CHOICE OF BUTTON. Most of the example page's
+// buttons fetch from an external host (www.gnu.org) so their behavior
+// doesn't depend on how the page was opened. The specs here click only
+// `btn-file`, `btn-data` and `btn-scheme`, which stay on the fixture
+// server or need no network at all. Don't add assertions that depend
+// on `btn-http`, `btn-404`, `btn-positional`, `btn-abort` or
+// `btn-traversal` completing — that would put the suite on the
+// internet.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

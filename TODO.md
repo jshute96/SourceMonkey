@@ -1,5 +1,17 @@
 # TODO
 
+A backlog of **candidates**, not a list of obligations.
+
+- Most entries record a deliberate trade-off and the conditions under
+  which it would be worth revisiting — not a defect awaiting a fix.
+  Shipping without any given item here is a valid outcome.
+- Entries exist so a choice already made and reasoned about isn't
+  re-litigated from scratch later. The reasoning matters more than the
+  proposal.
+- Nothing here is scheduled or prioritized. If something genuinely
+  needs doing before release, it belongs in the relevant design doc or
+  an issue, not buried in this file.
+
 ## Skeleton
 
 - Injection follow-ups — see the **Limitations / future work**
@@ -273,9 +285,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
     Options-page surface.
   - **Completion signal for the in-page `blob:` / `data:` path.** The
     anchor click has none, so `onload` fires ~250 ms after the click
-    rather than on completion. Chrome's `downloads.onCreated` could
-    correlate the URL back to a request id, but the mapping is
-    heuristic (nothing ties the download to the requesting script).
+    rather than on completion — "handed to the browser", not "written
+    to disk". http(s) is unaffected; documented under
+    [download caveats](docs/supported-GM-APIs.md#download-caveats).
+    - The click *does* create a real `chrome.downloads` item and the
+      SW already sees every `onChanged`, so the transfer is
+      observable — we just don't tie it back to a request.
+    - Correlating means matching an unclaimed new download to a
+      pending in-page request by `finalUrl` plus a time window. Two
+      scripts downloading the same blob URL in the same instant are
+      indistinguishable.
+    - The timer would stay as a fallback: a `data:` URL that completes
+      before the SW hears about it must still settle.
   - **Progress polling interval is fixed at 500 ms.** Fine for a
     progress bar; a per-request interval (or a rate proportional to
     file size) would be nicer for very large files. The poll is also

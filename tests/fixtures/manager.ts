@@ -245,6 +245,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         return;
       }
       const driver = new TampermonkeyDriver(extensionContext, getTampermonkeyExtensionId());
+      // Nobody is watching to click "OK" on TM's GM-permission prompts
+      // (GM_download raises one), and an unanswered prompt means the GM
+      // call never settles.
+      driver.autoApprovePermissionPrompts();
       await use(driver);
     },
     { scope: 'worker' },

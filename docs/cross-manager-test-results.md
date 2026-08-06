@@ -51,9 +51,23 @@ Specs that opt out under TM via
 
 ## Failing specs (untriaged divergences)
 
+Last full TM run: 17 passed, 6 failed, 6 skipped.
+
 - **`headers-inject-into/`** — page-world script doesn't see the
   page's inline-script globals the way it does under SM. Different
   world / context-isolation behaviour. Needs its own triage.
+- **`headers-run-at/`** — each `@run-at` variant logs its `<li>`
+  twice, so the `toHaveCount(1)` assertions see 2.
+- **`gm-dom/`** — every `GM_addElement` case fails.
+- Both of the above surfaced only once the driver's install path was
+  repaired (see below) — before that the whole TM suite died at
+  install, so "not failing" meant "never ran", not "passing". They are
+  not regressions from that repair: they fail identically with the
+  driver's stale-install-cache bug fixed, which rules out the obvious
+  cause of double-running (a script being reinstalled per test).
+  - The duplicate-`<li>` shape suggests two live copies of each
+    script. Worth checking the TM profile for duplicate installs
+    before assuming a real injection divergence.
 
 ## Behavior diffs (SM vs TM)
 
@@ -85,17 +99,43 @@ specific rule stays enforced in an SM-only spec.
   ordering: `tests/e2e/injection.spec.ts` ("document-start,
   document-end, document-idle inject in @run-at order").
 
-## Not yet run under TM
+## Manager-specific setup baked into the harness
 
-- **`gm-download/`** — added with `GM_download` and never executed
-  against TM (the TM project needs an exclusive manually-launched
-  browser). The assertions were written loose on purpose:
-  - "some callback fired", not a specific error value — TM applies its
-    own file-extension allowlist and can answer `not_whitelisted`
-    where SM answers `onload`.
-  - The `file://` case asserts only that `onload` did **not** fire.
-  - Expect TM to save real files into your downloads folder when you
-    run it. SM's exact contract lives in
+Cases where TM needs something arranged for it before a spec can even
+reach its assertions.
+
+- **`GM_download` needs Chrome's `downloads` permission granted to
+  TM.** It's an *optional* permission in TM's manifest, so the first
+  `GM_download` call opens TM's "Browser API Downloads — click OK"
+  page, whose OK button calls `chrome.permissions.request`. That needs
+  Chrome's native grant bubble, which a headless run can't show: the
+  click does nothing, the GM call never settles, and the spec times
+  out on an empty log.
+  - `scripts/e2e-tm-preflight.mjs` writes the grant into the test
+    profile's `Preferences` before the browser starts (browser must be
+    closed — Chrome rewrites that file from memory on exit). Same
+    shortcut `tests/fixtures/extension.ts` uses for
+    `user_scripts_enabled` on the SM profile.
+  - A one-time pre-edit backup is left at
+    `Preferences.pre-sm-downloads-grant`.
+- **TM's permission prompts are auto-answered.** The driver clicks OK
+  on any `ask.html` permission page — see
+  `autoApprovePermissionPrompts` in
+  `tests/fixtures/tampermonkey-driver.mjs`. A prompt we haven't
+  pre-granted then stalls the run for seconds rather than forever.
+
+## Loose-by-design assertions
+
+- **`gm-download/`** — passes under TM (as of TM 5.5.0). The
+  assertions stay at "some
+  callback fired" rather than a specific value, because TM applies its
+  own file-extension allowlist and can answer `not_whitelisted` where
+  SM answers `onload`.
+  - The `file://` case asserts only that `onload` did **not** fire —
+    neither manager should quietly pull a local file onto disk on a
+    userscript's say-so; the refusal shape differs.
+  - Both managers save real files into your downloads folder when you
+    run this. SM's exact contract lives in
     `tests/e2e/gm-download.spec.ts`.
 
 ## SM-only invariants (loosened for cross-manager)

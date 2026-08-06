@@ -24,30 +24,52 @@
     <h2>Details</h2>
     <ul>
       <li>Each button downloads something into your normal downloads
-        folder &mdash; a small text file next to this page, a
-        <code>data:</code> URL, and a <code>blob:</code> URL built in
-        the page.</li>
-      <li>The last two buttons are deliberate failures: a
-        <code>file://</code> URL (refused &mdash; a userscript
-        shouldn&rsquo;t be able to pull local files onto disk) and a
-        <code>name</code> that tries to escape the download directory.
+        folder &mdash; a small text file next to this page, an absolute
+        cross-origin <code>https://</code> URL, a <code>data:</code>
+        URL, and a <code>blob:</code> URL built in the page.</li>
+      <li>Some buttons are deliberate failures, and they fail at
+        different stages:
+        <ul>
+          <li><strong>404</strong> &mdash; passes every check and fails
+            in the transfer, so this is the one that exercises the
+            download manager&rsquo;s own error reporting.</li>
+          <li><strong><code>file://</code> URL</strong> &mdash; refused
+            up front; a userscript shouldn&rsquo;t be able to pull
+            local files onto disk.</li>
+          <li><strong><code>../</code> name</strong> &mdash; refused up
+            front for trying to escape the download directory.</li>
+        </ul>
         Managers differ in the error value they report; the log shows
         whatever yours says.</li>
+      <li>In SourceMonkey, a failed download shows up on the
+        script&rsquo;s Log tab at <em>warning</em> level, so there&rsquo;s
+        somewhere to look when nothing arrives. Successful downloads
+        aren&rsquo;t logged.</li>
+      <li><code>onprogress</code> ticks appear in the log while a
+        transfer runs. SourceMonkey polls the download manager
+        (~500&nbsp;ms) and only does so when the script supplies an
+        <code>onprogress</code>, so a transfer that finishes inside the
+        first poll logs none &mdash; expect ticks only on a slow link
+        or a large file. A server that sends no
+        <code>Content-Length</code> yields ticks with no total.</li>
       <li><code>abort()</code> only reaches transfers the manager
         actually controls. The <code>blob:</code>/<code>data:</code>
         path is handed straight to the browser, so aborting it after
         the fact does nothing.</li>
       <li>Opening this page from disk (a <code>file://</code> URL)
-        makes the buttons that fetch <code>sample.txt</code> resolve to
+        makes the button that fetches <code>sample.txt</code> resolve to
         <code>file://</code> too, which SourceMonkey refuses for the
-        same reason as the deliberate-failure button. Serve the page
-        over http(s) to see those succeed; the <code>data:</code> and
-        <code>blob:</code> buttons work either way.</li>
+        same reason as the <code>file://</code> button. Only the
+        <em>relative filename</em> button does that &mdash; serve the
+        page over http(s) to see it succeed. Every other button uses an
+        absolute URL, so they behave the same either way.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>
     <div class="buttons">
-      <button id="btn-file"      type="button">GM_download (text file)</button>
+      <button id="btn-file"      type="button">GM_download (relative filename)</button>
+      <button id="btn-http"      type="button">GM_download (absolute http(s) URL)</button>
+      <button id="btn-404"       type="button">GM_download (404 &mdash; fails)</button>
       <button id="btn-positional" type="button">GM_download (url, name)</button>
       <button id="btn-data"      type="button">GM_download (data: URL)</button>
       <button id="btn-blob"      type="button">GM_download (blob: URL)</button>

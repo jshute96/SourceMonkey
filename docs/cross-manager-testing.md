@@ -74,6 +74,19 @@ Steps:
 
 The profile persists across runs, so steps 2–4 only happen once.
 
+Nothing else is manual. What TM would otherwise ask a human for is
+handled by the harness:
+
+- **Chrome's `downloads` permission** (optional in TM's manifest, and
+  required by `GM_download`) is written into the profile's
+  `Preferences` by `scripts/e2e-tm-preflight.mjs`, which runs before
+  the browser starts.
+- **TM's own permission prompts** (`ask.html`) are auto-OK'd by the
+  driver.
+
+Both are explained in
+[cross-manager-test-results.md](cross-manager-test-results.md).
+
 ## How TM script-install works
 
 `tests/fixtures/tampermonkey-driver.mjs` drives the TM dashboard:
@@ -87,6 +100,10 @@ The profile persists across runs, so steps 2–4 only happen once.
   Install / Reinstall / Update button on TM's confirmation page
   (`<input type="button" class="button install" value="…">`). TM
   auto-detects existing scripts by `@namespace`+`@name`.
+  - Both pages ship an empty `<body>` and build their DOM from script,
+    so the driver **waits** for each element rather than probing once
+    after `domcontentloaded` — a one-shot check finds nothing on a
+    perfectly healthy page.
 
 `syncTampermonkeyScripts(driver, dir)` walks every `*.user.js` in the
 example directory, parses the local `@name`/`@version`, and (using

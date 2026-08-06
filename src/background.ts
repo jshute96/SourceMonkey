@@ -1640,7 +1640,9 @@ function sendDownloadEvent(
     logScriptEvent(scriptId, {
       // `warning`, not `error`: a refused or interrupted download is a
       // script/page-level outcome the script can handle (and often
-      // retries), not a SourceMonkey malfunction.
+      // retries), not a SourceMonkey malfunction. `error` would also
+      // be misleading — it doesn't drive the toolbar icon red, so it
+      // only raises the noise floor.
       level: 'warning',
       source: 'gm-download',
       tabId,
