@@ -203,11 +203,12 @@ test('extractStartupLogs names the near miss when a @grant is only mis-cased', (
 // @grant GM_audio
 // ==/UserScript==
 `);
-  assert.deepEqual(extractStartupLogs(header), [
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
       message:
-        'unknown @grant entries dropped: GM_xmlHttpRequest (did you mean GM_xmlhttpRequest?), GM_audio',
+        'Ignoring @grant GM_xmlHttpRequest (did you mean GM_xmlhttpRequest?), GM_audio — unsupported APIs',
+      location: { file: 'x.user.js', line: 4 },
     },
   ]);
 });
