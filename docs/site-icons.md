@@ -29,13 +29,21 @@
   host-absolute `/` paths are all rejected uniformly.
 - `data:` URLs are length-capped to the same ~170 KB ceiling we apply
   to inline `<link rel="icon">` hrefs.
-- An *empty* `data:` URL (`data:,`, or a `;base64,` with no payload) is
-  treated as "no icon", not as an icon. It's the standard "this site
-  has no favicon, stop asking" marker — example.com's `<link rel=icon>`
-  is literally `data:,` — and painting it puts a blank broken `<img>`
-  where the globe placeholder belongs. One helper (`usableDataUrl`)
-  applies the cap and the emptiness check to both inline entry points:
-  discovered `<link href="data:…">` and a script's own `@icon data:…`.
+- An *empty* `data:` URL (`data:,`, or a `;base64,` with no payload)
+  is treated as "no icon", not as an icon.
+  - It's the standard "this site has no favicon, stop asking" marker
+    — example.com's `<link rel=icon>` is literally `data:,`.
+  - Painting it puts a blank broken `<img>` where the globe
+    placeholder belongs.
+  - `dataUrlHasPayload` is the single rule, applied everywhere an
+    icon can enter or leave:
+    - the two inline entry points — discovered
+      `<link href="data:…">` and a script's own `@icon data:…`
+      (`usableDataUrl`, which pairs it with the size cap);
+    - the `<link>` candidate filter (see the scoring section);
+    - the fetched-bytes path, so a zero-byte 200 is stored as
+      "no icon" instead of an unpaintable data URL;
+    - the cache read (see below).
 - Fetched URLs (http(s) or file://) go through the same bounded-fetch
   + storage cache the origin-discovery path uses, keyed by the
   resolved URL itself so multiple scripts pointing at the same icon
@@ -112,7 +120,7 @@ the first one discovered for the host.
   server bounces us to an SSO host we still get that page's icon
   tag. Relative hrefs resolve against the final post-redirect URL.
   The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
-  `data:` URLs declared inline are used verbatim.
+  A non-empty `data:` URL declared inline is used verbatim.
 - **`/favicon.ico` fallback**: conventional path. Origin-layer only.
 - **Google S2 fallback**:
   `https://www.google.com/s2/favicons?domain=<host>&sz=64`. The only
@@ -137,6 +145,20 @@ the first one discovered for the host.
   After that the next render triggers a refetch — so sites that swap
   their favicon, or hosts that briefly fell back to Google's globe
   placeholder, self-heal without the user clearing storage.
+- A row is only a cache *hit* if it is fresh **and** holds something
+  we would paint (`usableCacheHit`). Anything other than a
+  payload-bearing `data:` URL counts as a miss, so it is hidden
+  immediately and the refetch overwrites it.
+  - The check exists because rows written before the empty-`data:`
+    rule existed stored example.com's `data:,` as though it were an
+    icon, and only the 7-day TTL would ever have cleared them.
+  - It defaults *closed*: the point is distrusting rows written by
+    other builds, so an unrecognized shape is refetched rather than
+    painted.
+  - A stored `null` is a real answer — "we looked, there is none" —
+    and still suppresses refetches for its own TTL.
+  - Everything the fetch path stores already satisfies the rule, so a
+    miss always converges after one refetch.
 - An in-flight `Map` de-dups concurrent fetches per cache key —
   multiple rows targeting the same page URL or origin share one
   network round trip.
@@ -149,6 +171,10 @@ the first one discovered for the host.
   touch icons are commonly 180px and padded with background colour);
 - `mask-icon` is dropped entirely — it's a monochrome Safari
   pinned-tab SVG mask and renders as a black silhouette in `<img>`;
+- an empty `data:` href is dropped too, before scoring — it is the
+  page saying it has *no* icon, and since `rel="icon"` outscores
+  `apple-touch-icon` it would otherwise beat a real icon on the same
+  page;
 - file types we know render: PNG > SVG > ICO > JPEG/WebP;
 - `sizes` near the 32px target (i.e. 16×16 @ 2x dpi) over both
   smaller and much larger entries; `sizes="any"` (vector) wins.
