@@ -17,8 +17,13 @@ repository. See `README.md` for setup instructions and available commands.
   - When adding a new feature, you can add new sections in the relevant design doc rather than appending to an existing one.
   - **Avoid stating counts of list elements in comments or docs.** If there are more than 2-3 items, don't say the count before listing them. That requires unnecessary edits when the list changes.
 - **Commit Preparation**:
-  - Ensure `README.md` is updated if setup, commands, or user-visible features change.
-    - `README.md` is user-facing documentation. Keep it concise and focus on briefly listing what users can do, without a lot of technical details.
+  - Ensure `README.md` is updated if setup, commands, or high-level user-visible features change.
+    - README contains
+      - A high-level user-facing product overview - what it is, what the main UI pages are, but not every feature or capability on those pages.
+      - Setup instructions for users.
+      - Developer instructions - building, testing, tools, etc.
+    - README should be concise and easy to read, without excessive details. It shouldn't list every feature or behavior, or implementation details of how things work.
+    - Use other `docs/*.md` files for more details.
   - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
   - Include all significant changes in the commit message.
 

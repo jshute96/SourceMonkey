@@ -682,7 +682,7 @@ they follow are in
     `string | null`: the bytes fetcher knows which failure it was, and
     the probe is the only caller that throws that away.
 
-## Testing and example TOODs
+## Testing and example TODOs
 
 - **Three specs flake under full-suite load, never in isolation.** All
   pass standalone (`refresh-failed.spec.ts` went 35/35 under
@@ -710,7 +710,7 @@ they follow are in
 - examples for injection scenarios - main world vs userscript world, etc
 - examples with absolute (TM-compatible) vs relative paths
 
-## Feature TOODs and ideas
+## Feature TODOs and ideas
 
 - nice UI for sources page
 - nice UI for script page and logging
