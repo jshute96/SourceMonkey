@@ -57,15 +57,16 @@ or the GreasyFork corpus. See
   target that never reproduces standalone.
 - It also cost roughly a third of the suite's wall-clock.
 
-**A *flaky* count is not noise.** Chromium segfaults during a full run
-often enough to matter (see TODO.md), killing the worker so the next
-test reports a 0ms failure it never ran.
+**A *flaky* count is worth reading.** The retry exists to capture a
+trace, not to make a run green.
 
-- Until that is fixed, read any flaky result as that bug.
-- The retry's trace won't help with it: the crash kills the worker
-  before a trace exists, and the retry runs in a fresh one and passes.
-- `playwright test` exits 0 when tests are flaky. Anything gating on
+- `playwright test` exits 0 when tests are flaky, so anything gating on
   the exit code needs `--fail-on-flaky-tests`.
+- A test that only passes on retry is usually waiting on a proxy for
+  what it asserts — the badge colour rather than the tooltip, a fixed
+  pause rather than the log entry. Wait on the thing being asserted.
+- If the worker itself dies (`worker process exited unexpectedly`), the
+  retry's trace is of the *passing* run and won't show you anything.
 
 **Diagnosing a failure from a full run**: use `--reporter=json` and read
 `errors[].message`.
