@@ -204,7 +204,9 @@ One page, one set of panels, two query strings:
    - Log tab swaps in a `<table>` view of the script's event log.
      Columns: Time / Level / Source / Message. See
      [script-log.md](script-log.md) for the data model and what gets
-     logged. Sticky toolbar with a "Clear log" button.
+     logged. Sticky toolbar with **Save**, **Copy** and
+     **Clear log** — see [script-log.md](script-log.md#export) for the
+     exported format.
    - Clicking a tab swaps panes (and re-runs Prism on code tabs).
    - Selected index is preserved across re-renders when the new tab
      list still has an entry at that position.

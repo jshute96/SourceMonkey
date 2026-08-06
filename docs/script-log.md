@@ -458,8 +458,8 @@ tracked in `TODO.md`.
 - Always present as the last tab in the tab strip.
 - Selected → swaps the code pane for a log table. Switching back to
   any code tab restores the highlighted code view.
-- Newest entries first. Sticky header row and a sticky "Clear log"
-  toolbar button.
+- Newest entries first. Sticky header row and a sticky toolbar:
+  **Save**, **Copy**, **Clear log** (see [Export](#export)).
 - Live updates: a `chrome.storage.onChanged` listener on the session
   area repaints the table whenever the script's log key changes —
   but only while the Log tab is the currently selected one.
@@ -489,6 +489,71 @@ tracked in `TODO.md`.
     + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.
+
+## Export
+
+The Log tab's **Save** and **Copy** buttons hand out the same CSV text,
+built by `formatLogCsv` in `src/log-format.ts`.
+
+Format:
+
+- Header row `Time,Level,Source,Message`, then one row per entry.
+- **Newest first**, matching the table — an export is a copy of what
+  the reader is looking at.
+- Columns carry the table's cells:
+  - `Time` — local wall clock, `2026-08-05 14:03:22.017`.
+  - `Source` — `tab 17 · script-wrapper` when the entry names a tab.
+  - `Message` — as rendered, not as stored:
+    - a derived `location` is flattened into the text as
+      `… (in file.user.js, line 12)`; in the table that part is a link;
+    - stack refs are **source-mapped and decoded first**, the same way
+      the table shows them (see below). Exporting the stored text would
+      name the `.user.js` at a generated line inside the combined
+      injected entry — the coordinate the Log tab exists to correct.
+  - `Time` / `Source` come from `src/log-format.ts`; the mapped
+    `Message` needs the viewer's tabs and the script's current layout,
+    so `formatLogCsv` takes that renderer as an argument.
+- Quoted when the value contains the separator, a quote, or any
+  whitespace; embedded quotes are doubled.
+- **One entry per line.** A message that spans lines (a stack trace)
+  is folded with `\n` / `\r` escapes rather than left as a quoted
+  multi-line field.
+  - CSV would allow the raw newline and a spreadsheet would read it
+    back, but the file is a `.log`: `grep` should return whole records,
+    `wc -l` should count events not frames, and `tail -n` shouldn't cut
+    an entry in half.
+  - Backslash is escaped too (`\` → `\\`), so the folding is
+    reversible — log messages carry Windows paths and regex sources,
+    where a literal `\n` already appears in the text.
+- Rows are `\n`-separated, with a trailing newline.
+
+Behavior:
+
+- Suggested filename: the script's log ID with its `.user.js` / `.js`
+  extension swapped for `.log`, keeping any `#N` dedup suffix —
+  `bold-on-hover.user.js#2` → `bold-on-hover#2.log`.
+- Save opens a real save dialog (`showSaveFilePicker`) so the user
+  picks the name and folder, rather than dropping a file into the
+  downloads folder behind their back.
+  - Cancelling the dialog writes nothing — a declined save is a
+    decision, not a failure to work around.
+  - A write that fails after the user picked a destination reports
+    `Save failed`. It does **not** fall back to a download: they chose
+    a place, and a second file elsewhere would read as success.
+  - Where the picker isn't available, Save falls back to a plain
+    download (`Blob` + object URL + `<a download>`) under the same
+    name, which the browser announces itself.
+- Nothing leaves the browser on any path.
+- Both buttons report their outcome by relabelling themselves
+  (`Saved` / `Save failed`, `Copied` / `Copy failed`) for ~1.2s.
+  - A clipboard write can be refused, and the log is not selectable
+    text the user could fall back to copying by hand, so silence would
+    read as success.
+  - The label survives a repaint, so an entry arriving mid-feedback
+    doesn't erase it, and is dropped by Clear log.
+- Both are disabled while the log is empty.
+- The exported log is the **click-time snapshot** — entries arriving
+  while a save dialog sits open are not added to it.
 
 ## Stack refs are source-mapped first
 

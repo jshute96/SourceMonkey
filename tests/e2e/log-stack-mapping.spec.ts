@@ -133,6 +133,58 @@ test.describe('log stack mapping', () => {
     await page.close();
   });
 
+  test('the exported CSV carries the mapped ref, not the generated one', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // The Log tab's Save / Copy export is meant to be the rows as
+    // rendered. A stack trace is the entry most worth exporting and the
+    // one where "as stored" and "as rendered" differ most: the stored
+    // frame names the .user.js at a generated line inside the combined
+    // entry, which is exactly what the pane exists to correct.
+    const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
+
+    const target = await extensionContext.newPage();
+    await target.goto(`${fixtureServer.baseUrl}/target.html`);
+    await waitForThrowLogged(sm, scriptId, /boom-from-require/);
+    await target.close();
+
+    const page = await extensionContext.newPage();
+    // Stubbed picker — see log-export.spec.ts for why.
+    await page.addInitScript(() => {
+      (window as unknown as { __written: string[] }).__written = [];
+      (window as unknown as { showSaveFilePicker: unknown }).showSaveFilePicker = async () => ({
+        createWritable: async () => ({
+          write: async (data: string) => {
+            (window as unknown as { __written: string[] }).__written.push(data);
+          },
+          close: async () => {},
+        }),
+      });
+    });
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}#Log`);
+    await expect(page.locator('#log-pane table')).toBeVisible();
+    await page.locator('.log-toolbar button', { hasText: /^Save/ }).click();
+
+    const csv = await page.evaluate(
+      () => (window as unknown as { __written: string[] }).__written.join(''),
+    );
+    expect(csv).toMatch(new RegExp(`/lib\\.js:${THROW_LINE}:\\d+`));
+    // Not just "mapped somehow" — character-for-character the ref the
+    // reader is looking at, which is the fidelity claim itself.
+    const shown = await page
+      .locator('.log-stack-link', { hasText: 'lib.js' }).first().textContent();
+    expect(csv).toContain(shown!);
+
+    // A real multi-frame trace, still one line: header + the entries +
+    // the trailing newline's empty tail. This is the property that
+    // keeps `grep` on the saved file returning whole records.
+    const lines = csv.split('\n');
+    expect(lines.filter((l) => /lib\.js:/.test(l))).toHaveLength(1);
+    expect(lines[lines.length - 1]).toBe('');
+
+    await page.close();
+  });
+
   test('clicking a mapped ref opens the require tab at the throwing line', async ({
     extensionContext, extensionId, fixtureServer, sm,
   }) => {

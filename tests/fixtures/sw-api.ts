@@ -41,6 +41,8 @@ export interface SmApi {
     location?: DiagnosticLocationLike;
   }[]>;
   clearScriptLog(scriptId: string): Promise<void>;
+  // Seeds an entry directly. For tests that need a specific message,
+  // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {
     level: 'info' | 'warning' | 'error';
     source: string;
