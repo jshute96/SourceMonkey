@@ -59,8 +59,8 @@ resolve to nothing.
   only in case is a bug in the script; silently accepting it would
   make SourceMonkey the only manager the script runs under.
 - What we do instead: the "unknown @grant" warning names the near
-  miss — `unknown @grant entries dropped: GM_xmlHttpRequest (did you
-  mean GM_xmlhttpRequest?)`. TM's built-in editor lints the same
+  miss — `Ignoring @grant GM_xmlHttpRequest (did you mean
+  GM_xmlhttpRequest?) — unsupported APIs`. TM's built-in editor lints the same
   mistake as `'X' is not a valid @grant argument`.
 
 ### The re-cased `GM.` spellings
