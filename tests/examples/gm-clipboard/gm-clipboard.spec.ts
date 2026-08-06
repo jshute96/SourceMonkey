@@ -7,6 +7,13 @@ import { test, expect } from '../../fixtures/manager';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-clipboard', () => {
+  // The grant below lands on the worker-scoped context, so without this
+  // it would persist for every later test sharing that worker — and
+  // which tests those are is scheduling-dependent under parallelism.
+  test.afterEach(async ({ extensionContext }) => {
+    await extensionContext.clearPermissions();
+  });
+
   test('clicking copy lands the text on the system clipboard', async ({
     extensionContext, fixtureServer, setup,
   }) => {

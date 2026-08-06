@@ -33,6 +33,10 @@ compliance reference and surface divergences between managers.
     the command "just works" from a cold start.
 - `npx playwright test --project=<name>` works directly too, but
   skips the preflight — make sure the browser state is right yourself.
+  - It also skips the `--workers=1` the npm scripts pass. The
+    tampermonkey project drives one real browser with no per-test
+    reset, so it refuses to start with more than one worker
+    (`tests/fixtures/manager.ts`) rather than corrupt that session.
 
 Each Playwright project carries `metadata.manager` and the manager
 fixture (`tests/fixtures/manager.ts`) reads it. No env var needed for

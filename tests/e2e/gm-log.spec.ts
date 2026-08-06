@@ -37,10 +37,13 @@ test.describe('GM_log', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     // GM_log is defined (compile-in bound).
     await expect(page.locator('body')).toHaveAttribute('data-sm-log', 'function');
-    // Wait briefly for the console event to flush.
-    await page.waitForTimeout(100);
-    const matched = captured.find((line) => line.includes('[SourceMonkey:') && line.includes('hello from gm log'));
-    expect(matched, `expected a prefixed log line; saw: ${captured.join(' | ')}`).toBeTruthy();
+    // Poll for the console event rather than pausing: it arrives over
+    // CDP, and 100ms was the tightest budget in the suite — the first
+    // thing to break when several browsers compete for cores.
+    await expect
+      .poll(() => captured.find((line) => line.includes('[SourceMonkey:') && line.includes('hello from gm log')),
+        { message: `expected a prefixed log line; saw: ${captured.join(' | ')}` })
+      .toBeTruthy();
     await page.close();
   });
 
@@ -70,9 +73,8 @@ test.describe('GM_log', () => {
     page.on('console', (msg) => { captured.push(msg.text()); });
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-log', 'ok');
-    await page.waitForTimeout(100);
-    const matched = captured.find((line) => line.includes('via GM dot'));
-    expect(matched).toBeTruthy();
+    // Same as above: poll the CDP console array, don't race a fixed pause.
+    await expect.poll(() => captured.find((line) => line.includes('via GM dot'))).toBeTruthy();
     await page.close();
   });
 

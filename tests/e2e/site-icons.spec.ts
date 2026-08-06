@@ -312,6 +312,10 @@ test.describe('site-icon slot', () => {
     // reach example.com — which serves `<link rel="icon" href="data:,">`
     // and would otherwise decide the outcome. Both legs that leave the
     // machine are cut: the @match origin and the Google S2 fallback.
+    // Unrouted in the `finally` below. `extensionContext` is
+    // worker-scoped, so a route left installed blackholes these hosts
+    // for every later test that lands in this worker — and which tests
+    // those are is scheduling-dependent now the suite runs in parallel.
     await extensionContext.route('https://example.com/**', (route) => route.abort());
     await extensionContext.route('https://www.google.com/**', (route) => route.abort());
 
@@ -358,6 +362,8 @@ test.describe('site-icon slot', () => {
       }
       await page.close();
     } finally {
+      await extensionContext.unroute('https://example.com/**');
+      await extensionContext.unroute('https://www.google.com/**');
       fs.rmSync(parent, { recursive: true, force: true });
     }
   });
