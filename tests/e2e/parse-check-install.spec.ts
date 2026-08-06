@@ -31,6 +31,7 @@ test.describe('parse check at install time', () => {
     getSourceWithScripts: (id: string) => Promise<{ scripts: {
       id: string; status: string; errorMessage?: string; relativePath: string;
       errorLocation?: { file: string; line?: number; column?: number };
+      parseCheckedHash?: string;
     }[] } | null>;
   }) {
     await sm.addSource(scriptsDir.path);

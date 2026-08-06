@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "watch": "node scripts/build.mjs --watch",
     "test": "npm run test:unit && npm run test:e2e",
     "pretest:e2e": "node scripts/build.mjs",

@@ -1,0 +1,23 @@
+{
+  // Typechecks the test suite, which `tsconfig.json` deliberately does
+  // not: it sets `rootDir`/`outDir` for the extension build and includes
+  // only `src`. Playwright transpiles specs without checking types, so
+  // without this a type error in a test is found at runtime, if at all.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["chrome", "node"],
+    // The fixtures include a few plain `.mjs` helpers that specs import.
+    // Infer their types rather than requiring hand-written declarations;
+    // `checkJs` stays off so the .mjs files themselves aren't policed.
+    "allowJs": true,
+    "checkJs": false,
+    // A Playwright spec routinely takes a fixture for its side effect —
+    // `sm` resets state before the test body runs — without calling it.
+    // That is the framework's idiom, not dead code.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["tests/**/*.ts", "src/**/*.ts"]
+}

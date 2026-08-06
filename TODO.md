@@ -717,11 +717,15 @@ they follow are in
 
 ## Testing and example TODOs
 
-- **Typecheck the tests.** `tsconfig.json` is `include: ["src/**/*.ts"]`,
-  so `tsc --noEmit` never sees `tests/`; Playwright transpiles specs
-  without checking types, and a type error there surfaces only at
-  runtime, if at all. Wants a second tsconfig and an `npm run typecheck`
-  covering both — expect a batch of pre-existing errors on first run.
+- **Chromium segfaults on shutdown.** A full run can finish with every
+  test passing and still exit 139: the browser dies during teardown,
+  after the last assertion. Seen once in six runs since registration
+  work was serialized — the earlier, more damaging form (the worker
+  dying mid-run, so the next test reported a 0ms failure it never ran)
+  has not recurred.
+  - Invisible in the reporter: stats read 0 unexpected, 0 flaky. Only
+    the process exit code shows it, which is what CI would gate on.
+  - Check `echo $?` after a run, not just the summary.
 
 - API explorer page with forms to call any GM API with any args
 - examples for all supported GM APIs, all headers

@@ -38,6 +38,10 @@ or the GreasyFork corpus. See
 - E2E only: `npm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
 - One e2e file: `npx playwright test tests/e2e/<name>.spec.ts`
+- Typecheck: `npm run typecheck` — `tsconfig.json` builds the extension
+  and covers `src/` only, so this runs `tsconfig.tests.json` over the
+  tests as well. Playwright transpiles specs without checking types, so
+  nothing else catches a type error in a test.
 - SW console forwarding (debugging only): set
   `SM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
   stderr. Off by default because it's noisy.
