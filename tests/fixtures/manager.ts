@@ -122,7 +122,28 @@ type TestFixtures = {
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   manager: [
     async ({}, use, workerInfo) => {
-      await use(resolveManager(workerInfo));
+      const name = resolveManager(workerInfo);
+      // The tampermonkey project drives ONE real browser over CDP, with
+      // the developer's own profile and no per-test state reset. Several
+      // workers would install and uninstall userscripts in each other's
+      // way in that single browser, and nothing would put it back.
+      //
+      // `workers` is a global Playwright option — it cannot be set per
+      // project — so the npm scripts pass `--workers=1` and this catches
+      // an invocation that bypassed them. Failing here, before the CDP
+      // attach, beats discovering it halfway through a run against a
+      // browser that is now in an unknown state.
+      // `config.workers`, not `workerIndex`: this fails on the FIRST
+      // worker, before anything attaches, rather than letting worker 0
+      // proceed and only tripping its siblings.
+      if (name === 'tampermonkey' && workerInfo.config.workers > 1) {
+        throw new Error(
+          'The tampermonkey project must run with --workers=1 (it shares one real '
+          + 'browser and does not reset state between tests). Use `npm run test:e2e:tm`, '
+          + 'or pass --workers=1 explicitly.',
+        );
+      }
+      await use(name);
     },
     { scope: 'worker' },
   ],

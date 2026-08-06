@@ -1,8 +1,10 @@
 import { defineConfig } from '@playwright/test';
 
 // Extension e2e tests must run in a persistent Chromium context with the
-// unpacked extension loaded. They are not parallelizable per worker because
-// each worker spins up its own browser context anyway.
+// unpacked extension loaded. Each worker spins up its own context, which
+// is what makes running several at once safe: the fixture server binds
+// to port 0 and every context gets its own `mkdtemp` profile, so two
+// workers share nothing (see tests/fixtures/sourcemonkey-launch.ts).
 //
 // Two spec locations:
 //   - tests/e2e/*.spec.ts          — the main suite, grouped by feature.
@@ -25,8 +27,15 @@ import { defineConfig } from '@playwright/test';
 // reach a TM browser. See docs/cross-manager-testing.md.
 export default defineConfig({
   testDir: './tests',
-  fullyParallel: false,
-  workers: 1,
+  // Half the cores. Each worker runs its own Chromium with the
+  // extension loaded, so this trades memory for wall-clock; leaving
+  // headroom keeps the box usable while a run is going.
+  //
+  // The tampermonkey project must NOT run this way — it drives one real
+  // browser over CDP with no per-test reset — so `npm run test:e2e:tm`
+  // passes `--workers=1`.
+  fullyParallel: true,
+  workers: '50%',
   reporter: 'list',
   // Don't record a trace unless a test is being retried. `retain-on-failure`
   // records one for EVERY test and throws it away on pass, and the suite
@@ -54,6 +63,11 @@ export default defineConfig({
       name: 'tampermonkey',
       testMatch: ['examples/**/*.spec.ts'],
       metadata: { manager: 'tampermonkey' },
+      // Documents intent where the setting lives. It does not by itself
+      // prevent cross-worker parallelism — `workers` is global — which
+      // is why tests/fixtures/manager.ts refuses to run this project
+      // with more than one.
+      fullyParallel: false,
     },
   ],
 });

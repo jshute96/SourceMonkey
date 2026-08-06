@@ -38,6 +38,14 @@ or the GreasyFork corpus. See
 - E2E only: `npm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
 - One e2e file: `npx playwright test tests/e2e/<name>.spec.ts`
+- The `sourcemonkey` project runs **in parallel** (`workers: '50%'`,
+  `fullyParallel: true`). Each worker launches its own Chromium with its
+  own `mkdtemp` profile, and the fixture HTTP server binds to port 0, so
+  workers share nothing.
+  - **The `tampermonkey` project must stay serial.** It attaches over
+    CDP to one real browser with no per-test state reset, so the npm
+    scripts pass `--workers=1`. Invoking `playwright test
+    --project=tampermonkey` directly skips that — pass it yourself.
 - Typecheck: `npm run typecheck` — `tsconfig.json` builds the extension
   and covers `src/` only, so this runs `tsconfig.tests.json` over the
   tests as well. Playwright transpiles specs without checking types, so

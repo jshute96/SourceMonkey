@@ -501,8 +501,15 @@ test.describe('@require', () => {
     // guard didn't just silence the sentinel outright.
     const target = await extensionContext.newPage();
     await target.goto(`${fixtureServer.baseUrl}/target.html`);
-    await target.waitForTimeout(500);
-    const log = await sm.getScriptLog(scriptIds[0]);
+    // Positive case, so wait for the entry rather than pausing: the
+    // sentinel reports from the page and the wait ends as soon as it
+    // lands. (The negative case above has to pause — there is no event
+    // to wait for when the point is that nothing was reported.)
+    const log = await waitFor(
+      () => sm.getScriptLog(scriptIds[0]),
+      (entries) => entries.some((e) => e.level === 'error' && /failed to parse/i.test(e.message)),
+      { label: 'sentinel reports on a matching page' },
+    );
     const errors = log.filter((e) => e.level === 'error');
     expect(errors.length).toBeGreaterThanOrEqual(1);
     expect(errors[0].message).toMatch(/failed to parse/i);
@@ -546,7 +553,14 @@ test.describe('@require', () => {
     const sources = await sm.getSources();
     const scriptIds = sources.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
-    const log = await sm.getScriptLog(scriptIds[0]);
+    // The pause above is for the negative assertion (the body must not
+    // run). This read is a positive one, so wait for the entry — same
+    // shape as the sentinel case earlier in this file.
+    const log = await waitFor(
+      () => sm.getScriptLog(scriptIds[0]),
+      (entries) => entries.some((e) => e.level === 'error' && /lib-exploded/.test(e.message)),
+      { label: 'the require throw reaches the script log' },
+    );
     const errors = log.filter((e) => e.level === 'error');
     expect(errors.length).toBeGreaterThanOrEqual(1);
     expect(errors[0].message).toMatch(/lib-exploded/);
