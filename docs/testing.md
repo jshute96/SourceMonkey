@@ -42,6 +42,38 @@ or the GreasyFork corpus. See
   `SM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
   stderr. Off by default because it's noisy.
 
+### Retries and traces
+
+`retries: 1` (on the `sourcemonkey` project only) with
+`trace: 'on-first-retry'`.
+
+**Don't switch to `retain-on-failure`.**
+
+- It records a trace for every test and discards it on pass.
+- This suite shares one worker-scoped browser context across all its
+  tests, and recording against a context that long-lived stalls the
+  trace fixture past its 30s setup timeout.
+- The victim is whichever test runs next, so the symptom is a moving
+  target that never reproduces standalone.
+- It also cost roughly a third of the suite's wall-clock.
+
+**A *flaky* count is not noise.** Chromium segfaults during a full run
+often enough to matter (see TODO.md), killing the worker so the next
+test reports a 0ms failure it never ran.
+
+- Until that is fixed, read any flaky result as that bug.
+- The retry's trace won't help with it: the crash kills the worker
+  before a trace exists, and the retry runs in a fresh one and passes.
+- `playwright test` exits 0 when tests are flaky. Anything gating on
+  the exit code needs `--fail-on-flaky-tests`.
+
+**Diagnosing a failure from a full run**: use `--reporter=json` and read
+`errors[].message`.
+
+- The `list` reporter puts error detail in a trailing block that is
+  easy to lose to a `tail` or a `grep`.
+- "Expected X" without the received value is rarely enough to act on.
+
 ## Unit tests
 
 - Plain `node:test`. No mocks, no fakes — modules under test are
@@ -136,9 +168,18 @@ tests:
   `syncRegistrations` synchronously, returning the post-sync
   registration list. `resetAllState()` clears storage and unregisters
   every userscript.
+- Per-script log: `getScriptLog(id)`, `appendScriptLog(id, entry)`,
+  `clearScriptLog(id)`, `getScriptLogLabel(id)`.
 
-These mirror production functions — they don't add test-only logic to
-the SW.
+These mirror production functions. Two of them wait where production
+deliberately doesn't, so a test can't observe a half-written state:
+
+- `getScriptLog` drains that script's in-flight appends first.
+  Production logging (`logScriptEvent`) is fire-and-forget — a refresh
+  must not block on writing its own transcript — so `updateSource()`
+  can resolve before the entry it produced has landed.
+- `getScriptLogLabel` is the awaited form, so a test never races the
+  id table and gets a UUID prefix back.
 
 ### The syncNow contract
 

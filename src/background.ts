@@ -56,6 +56,7 @@ import {
   isUserScriptsAvailable,
   resetRejectionRetryGate,
   syncRegistrations,
+  unregisterAllRegistrations,
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
   SM_ERROR_MSG,
@@ -106,6 +107,7 @@ import {
   clearScriptLog,
   getScriptLog,
   logScriptEvent,
+  _flushScriptLogQueueForTests,
   type AppendLogInput,
   type LogEntry,
 } from './script-log.js';
@@ -309,7 +311,16 @@ const api: SourceMonkeyApi = {
     ]);
     return { badgeText, badgeColor, title, record };
   },
-  getScriptLog,
+  // Drains this script's in-flight appends before reading. Production
+  // log writes go through `logScriptEvent`, which is deliberately
+  // fire-and-forget — a refresh must not wait on its own transcript —
+  // so `updateSource()` can resolve before the entry it just produced
+  // has landed. A test that reads straight after would be asserting on
+  // a log that is still being written.
+  getScriptLog: async (scriptId: string) => {
+    await _flushScriptLogQueueForTests(scriptId);
+    return getScriptLog(scriptId);
+  },
   appendScriptLog,
   getRejections: readRejections,
   clearScriptLog,
@@ -400,15 +411,15 @@ const api: SourceMonkeyApi = {
     // storage.onChanged listener will also fire syncRegistrations() in
     // response to the clear, but that races test setup — doing it
     // ourselves here is deterministic.
-    if (chrome.userScripts) {
-      try {
-        const existing = await chrome.userScripts.getScripts();
-        if (existing.length > 0) {
-          await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });
-        }
-      } catch {
-        /* ignore */
-      }
+    //
+    // Through the injector so the teardown queues behind any sync
+    // that's already running rather than wiping the set out from under
+    // it (and then having that sync re-register everything we just
+    // dropped).
+    try {
+      await unregisterAllRegistrations();
+    } catch {
+      /* ignore */
     }
     // Cancel the post-clear scheduled sync that the onChanged listener
     // just armed. Without this it would fire ~50 ms into the next

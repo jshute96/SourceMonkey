@@ -170,6 +170,10 @@ the exception that shapes the rules above.
   names the offending value in its own coordinates (`matches[1]:
   Invalid port`), and we have no mapping from that back to a header
   line.
+- **Not every refusal Chrome gives.** `Duplicate script ID '<id>'` is
+  a fact about our own ordering — the id is already placed — so the
+  registration replaces it rather than filing it against the script.
+  See [injection.md](injection.md#one-registration-operation-at-a-time).
 - **Chrome's wording is passed through verbatim.** It names the tag and
   the index, which is what the reader has to fix. Rewriting it in our
   own voice would lose that and risk drifting from what Chrome

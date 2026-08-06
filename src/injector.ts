@@ -931,6 +931,49 @@ async function readAll(): Promise<{ scripts: StoredScript[]; sources: Map<string
   return { scripts, sources };
 }
 
+// ---------- Serializing registration work ----------
+//
+// `chrome.userScripts` is a single mutable set, and every path that
+// changes it does so with a read-modify-write — `getScripts()`, then
+// `unregister`, then `register` — that Chrome does not make atomic. Two
+// of those interleaving is what produces
+//
+//   Chrome rejected this script's registration, so it will not run:
+//   Duplicate script ID '<uuid>'
+//
+// on a script that is in fact registered and running: one attempt
+// listed the registrations, a second attempt placed the script, and
+// then the first one offered the same id again. It shows up after a
+// restart or an extension update (the SW-startup sync overlapping the
+// one `onCacheChanged` schedules for whatever boot work writes to
+// storage) and after a refresh (the source refresh's targeted retry
+// overlapping the sync its own storage writes triggered).
+//
+// So: one registration operation at a time per JS context. The queue is
+// a promise chain rather than a flag because callers must be able to
+// await their own work; a rejected operation is isolated so it can't
+// break the ones behind it.
+let registrationLock: Promise<unknown> = Promise.resolve();
+
+function withRegistrationLock<T>(run: () => Promise<T>): Promise<T> {
+  // Same callback for fulfil and reject: the previous operation's
+  // outcome is not ours to care about, only its completion. Called
+  // through an arrow rather than passed directly so `run` can never be
+  // handed the previous operation's value — or, on the rejection
+  // branch, its Error — as an argument.
+  const result = registrationLock.then(() => run(), () => run());
+  registrationLock = result.catch(() => {});
+  return result;
+}
+
+// A sync that hasn't started yet, if any. Everything `syncRegistrations`
+// does — including reading storage — happens under the lock, so a sync
+// still waiting there will see any state a later caller wrote and there
+// is nothing to gain by queueing a second one behind it. Callers that
+// arrive while one is *running* do get their own, because that one's
+// storage read already happened.
+let pendingSync: Promise<void> | null = null;
+
 let worldConfigured = false;
 async function ensureWorldConfigured(): Promise<void> {
   if (worldConfigured) return;
@@ -950,10 +993,80 @@ async function ensureWorldConfigured(): Promise<void> {
   worldConfigured = true;
 }
 
+// Drop every registration Chrome currently holds. Caller must already
+// hold the registration lock.
+//
+// Chrome fails the WHOLE `unregister` call when any single id in the
+// list is unknown, and an id can go missing between our `getScripts`
+// and this call — an extension page runs the retry path in its own
+// context, where our lock doesn't reach. So the batch failing is not
+// evidence that the other ids are gone; it usually means one of them
+// already was.
+//
+// Neither of the obvious answers is safe on its own:
+//
+//   - Aborting the sync leaves the whole script set unregistered.
+//   - Swallowing the failure leaves every registration in place. The
+//     ones we're about to re-register are replaced anyway, but a script
+//     that was disabled, deleted, or flipped to INVALID is not in the
+//     new spec list — nothing would replace it, and it would keep
+//     injecting until some later sync's batch happened to succeed.
+//
+// So fall back to unregistering one id at a time, where an id that has
+// already gone takes only itself down.
+async function unregisterAll(): Promise<void> {
+  const existing = await chrome.userScripts.getScripts();
+  if (existing.length === 0) return;
+  const ids = existing.map((e) => e.id);
+  try {
+    await chrome.userScripts.unregister({ ids });
+    return;
+  } catch (err) {
+    // console.info, like the other contained failures in this module:
+    // rare, worth seeing in the SW console, and not something the user
+    // can act on or that any one script is to blame for.
+    console.info(
+      '[SourceMonkey] unregister-all failed as a batch; dropping ids one at a time:',
+      describeError(err),
+    );
+  }
+  for (const id of ids) {
+    try {
+      await chrome.userScripts.unregister({ ids: [id] });
+    } catch { /* already gone, which is what made the batch fail */ }
+  }
+}
+
+// Same, for callers outside this module — today only the test surface's
+// `resetAllState`, which wants a deterministic teardown instead of
+// waiting for the storage-change sync. Exported so that teardown is
+// ordered against any sync already in flight rather than racing it.
+export async function unregisterAllRegistrations(): Promise<void> {
+  if (!isUserScriptsAvailable()) return;
+  await withRegistrationLock(unregisterAll);
+}
+
 // Wipe Chrome's current registration set and replace it with `specs`.
 // Cheap full resync — simpler than a diff and fine at the script counts
 // we expect.
-export async function syncRegistrations(): Promise<void> {
+//
+// Serialized against every other registration operation in this
+// context, and collapsed with any sync that is queued but hasn't begun
+// — see the lock above for what the overlap used to cost.
+export function syncRegistrations(): Promise<void> {
+  if (pendingSync) return pendingSync;
+  const sync = withRegistrationLock(async () => {
+    // We're starting: a caller arriving from here on needs its own sync,
+    // because our storage read is about to happen without whatever they
+    // just wrote.
+    pendingSync = null;
+    await runSync();
+  });
+  pendingSync = sync;
+  return sync;
+}
+
+async function runSync(): Promise<void> {
   if (!isUserScriptsAvailable()) {
     // Nothing to register into. Not stored anywhere — the sources page
     // runs its own probe for the banner — but a sync that can't do
@@ -1000,10 +1113,7 @@ export async function syncRegistrations(): Promise<void> {
     if (gmRuntime) specs.push(gmRuntime);
     if (bridge) specs.push(bridge);
     specs.push(...userSpecs);
-    const existing = await chrome.userScripts.getScripts();
-    if (existing.length > 0) {
-      await chrome.userScripts.unregister({ ids: existing.map((e) => e.id) });
-    }
+    await unregisterAll();
     const registered = await registerWithFallback(specs);
     const failed = specs.length - registered;
     if (failed > 0) {
@@ -1109,11 +1219,25 @@ export async function retryRejectedRegistrations(
       while (pendingRetryIds.size > 0) {
         const ids = [...pendingRetryIds];
         pendingRetryIds.clear();
-        const rejections = await readRejections();
-        const refused = ids.filter((id) => rejections[id] !== undefined);
-        if (refused.length === 0) continue;
-        lastAutoRetryAt = retryNow();
-        await reregisterScripts(refused);
+        // Under the same lock as a full sync: this re-offers ids the
+        // sync also owns, and the two interleaving is precisely how a
+        // registered script ends up reported as a duplicate.
+        //
+        // Which ids are still refused is read INSIDE the lock, because
+        // waiting for it is exactly when that answer goes stale: a sync
+        // that lands in the wait clears the map and places the scripts,
+        // and a retry working from the older answer would then
+        // unregister and re-register healthy ones — the mid-navigation
+        // deregistration this path exists to avoid.
+        await withRegistrationLock(async () => {
+          const rejections = await readRejections();
+          const refused = ids.filter((id) => rejections[id] !== undefined);
+          if (refused.length === 0) return;
+          // Stamped at attempt time, not queue time, for the same
+          // reason: the rate limit counts attempts we actually made.
+          lastAutoRetryAt = retryNow();
+          await reregisterScripts(refused);
+        });
       }
     } catch (err) {
       // Contained like the version probe beside it in script-updater:
@@ -1129,8 +1253,67 @@ export async function retryRejectedRegistrations(
   return retryInFlight;
 }
 
+// Register one spec, replacing whatever registration is already
+// holding its id.
+//
+// Chrome answers a `register` for an id it already knows with
+// "Duplicate script ID '<id>'" rather than replacing it, and there are
+// two ordinary ways it already knows one of ours:
+//
+//   - **Another context placed it.** The sources page and the viewer
+//     run `retryRejectedRegistrations` in their own JS context, so the
+//     lock in this module — which is per-context — cannot order a
+//     page-side retry against the SW's sync. A retry that lands between
+//     the sync's unregister-all and its register-all leaves the sync
+//     offering an id that now exists.
+//   - **A stale rejection record.** We believe the id is unplaced, so
+//     we rebuild and re-offer it; Chrome disagrees.
+//
+// Either way the duplicate is a fact about our own ordering, not about
+// the script: reporting it badged a running script REJECTED and wrote a
+// Log row blaming it for our sequencing. Which of the two specs is
+// newer we can't tell from here, and don't need to — every `script:*` /
+// `source:*` write schedules a sync of its own, so the set converges on
+// the last write either way.
+//
+// Register first, and only on a refusal try to drop the id and place
+// it again. The obvious arrangement — unregister, then register —
+// costs a guaranteed-to-fail unregister on every spec (by the time a
+// sync reaches its per-spec fallback the set is already empty), and
+// turns any register failure into a script that WAS running and now
+// isn't.
+//
+// A refusal isn't necessarily a duplicate: a spec Chrome rejects
+// outright (a malformed `@match` port, say) lands in the same place.
+// Which one it is gets answered by trying the unregister rather than by
+// reading Chrome's wording for the refusal — a string match there would
+// break the moment Chrome rephrases, and Chrome's own error is the one
+// thing here we pass through to the user verbatim. Nothing to drop
+// means nothing was holding the id, so the spec itself is the problem
+// and its original reason is what the caller should report.
+//
+// Shared by the retry path and the sync's per-spec fallback so the two
+// can't drift on this.
+async function registerReplacing(spec: RegistrationSpec): Promise<void> {
+  let refusal: unknown;
+  try {
+    await chrome.userScripts.register([spec]);
+    return;
+  } catch (err) {
+    refusal = err;
+  }
+  try {
+    await chrome.userScripts.unregister({ ids: [spec.id] });
+  } catch {
+    throw refusal;
+  }
+  dlog(`[SourceMonkey] script ${spec.id} was already registered; replacing it`);
+  await chrome.userScripts.register([spec]);
+}
+
 // Rebuild and re-offer the specs for `ids`, updating the rejection map
-// and the Log with whatever Chrome says this time.
+// and the Log with whatever Chrome says this time. Caller must hold the
+// registration lock.
 async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // Same precondition as the sync: `configureWorld` must precede
   // `register`. Guarded and idempotent, and `worldConfigured` is
@@ -1148,15 +1331,8 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   const placed: string[] = [];
   const refused = new Map<string, string>();
   for (const spec of specs) {
-    // Drop any stale registration under this id first. It should not
-    // exist (the id is rejected, so nothing was placed), but a stale
-    // rejection record would otherwise turn this into a duplicate-id
-    // failure and report the wrong reason.
     try {
-      await chrome.userScripts.unregister({ ids: [spec.id] });
-    } catch { /* nothing registered under that id, which is the norm */ }
-    try {
-      await chrome.userScripts.register([spec]);
+      await registerReplacing(spec);
       placed.push(spec.id);
       dlog(`[SourceMonkey] script ${spec.id} registered on retry`);
     } catch (err) {
@@ -1233,6 +1409,8 @@ function logRecoveries(scriptIds: readonly string[]): void {
 // disabled, deleted, or flipped to INVALID drops out of the map instead
 // of leaving a stale REJECTED badge on a row nobody tried to register.
 //
+// Caller must hold the registration lock (`syncRegistrations` does).
+//
 // Exported for unit tests — reaching it through `syncRegistrations`
 // would mean stubbing the whole store + userScripts surface.
 export async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> {
@@ -1259,7 +1437,11 @@ export async function registerWithFallback(specs: RegistrationSpec[]): Promise<n
   let ok = 0;
   for (const spec of specs) {
     try {
-      await chrome.userScripts.register([spec]);
+      // Replacing, not plain register: the batch may have failed
+      // because some id is already placed, and re-offering it as-is
+      // would report a script that runs fine as REJECTED. See
+      // `registerReplacing`.
+      await registerReplacing(spec);
       ok++;
       placed.push(spec.id);
     } catch (err) {

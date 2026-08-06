@@ -424,6 +424,25 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
+- **Live repaint** (sources page): a `sources`-index reorder arriving
+  from another origin, and the `.busy-spinner` guards that stop a
+  repaint from overwriting a control the user just clicked. The reorder
+  case has no test because nothing on the SW test surface moves a
+  source — `moveSource` would have to be exposed first.
+- **`repaintPage()`'s serialization contract** — that a burst of writes
+  collapses into one pass, and that `await repaintPage()` observes the
+  caller's own write. The add / remove / refresh tests depend on it but
+  only cover it incidentally.
+
+## Sources page — follow-ups
+
+- **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
+  toggle produce overlapping `onToggleScript` calls sharing one spinner
+  element, so the first handler's `finally` removes it while the second
+  write is still in flight. A repaint arriving in that window sees no
+  spinner and paints the first write's value over the user's second
+  click; the second write then lands and corrects it. A refcount on the
+  label would close it.
 
 ## HTTP sources — follow-ups
 
@@ -646,6 +665,17 @@ itself once a sync places it. What's missing:
   `checkPreviewSource` builds the row and reports header errors and
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`
   or a dropped `@match` is only visible after installing.
+- **Registration has no single owner across contexts.** The lock in
+  `src/injector.ts` serializes registration work within one JS context,
+  but the sources page and the viewer call
+  `retryRejectedRegistrations` in theirs, so a page-side registration
+  can still land in the middle of the SW's sync. `registerReplacing`
+  makes that survivable (the id is replaced, not reported as a
+  duplicate) and the end state converges, but the fix in principle is
+  for the SW to be the only context that touches `chrome.userScripts`
+  — which needs a page→SW message channel that doesn't exist yet
+  (`chrome.runtime.onMessage` has no listener in `background.ts`;
+  pages coordinate with the SW through storage today).
 - **The message is Chrome's, so it speaks Chrome's coordinates.**
   `matches[1]: Invalid port` counts within the spec we built, not the
   lines of the file. Deliberate — the alternative is inventing a
@@ -687,26 +717,32 @@ they follow are in
 
 ## Testing and example TODOs
 
-- **Three specs flake under full-suite load, never in isolation.** All
-  pass standalone (`refresh-failed.spec.ts` went 35/35 under
-  `--repeat-each=5`), and each has failed at more than one assertion
-  across runs, which points at a race rather than one wrong
-  expectation:
-  - `refresh-failed.spec.ts:100` — seen with the first `Refresh
-    failed` row absent, and separately with `Loaded new content`
-    absent.
-  - `version-probe.spec.ts:262` — the status cell reads `ERROR` where
-    the test expects `OK`, i.e. something logged an error-level row
-    during the check.
-  - `log-stack-mapping.spec.ts:139` — the Log pane's table never
-    appears, i.e. the `sm:error` report hadn't landed within the fixed
-    500 ms the test waits after navigating. Passed 9/9 in isolation
-    immediately after. The fixed wait is the suspect here, but the
-    other two have no such wait, so it may be the same underlying
-    contention.
-  - Worth finding before it hides a regression: a real race between a
-    refresh's storage write and the log read would be a product bug,
-    not a test-only timing bug.
+- **Stop Chromium segfaulting during a full e2e run.** `worker process
+  exited unexpectedly (code=null, signal=SIGSEGV)` kills the Playwright
+  worker roughly one run in two; the next test reports a 0ms failure it
+  never ran. `retries: 1` currently masks it, so a non-zero *flaky*
+  count should be read as this until proven otherwise.
+  - Not a page leak — the suite closes more pages than it opens.
+  - Prime suspect is the worker-scoped persistent context living for all
+    ~330 tests, plus repeated MV3 service-worker teardown/restart.
+    Bounding context lifetime (splitting the suite so each chunk gets a
+    fresh context) is the obvious lever, at the cost of the
+    `--project=sourcemonkey` naming the npm scripts rely on.
+- **Explain `version-probe.spec.ts:236`.** Under full-suite load it
+  timed out with the sources page never reading OUTDATED — an
+  annotation that never arrived. Not root-caused.
+  - Its sibling `:262` (read `ERROR` where `OK` was expected) is most
+    likely the duplicate-id registration race, now fixed — that produced
+    exactly this shape, an error-level row for a healthy script. Worth
+    confirming it stays gone before assuming so.
+  - If either returns, capture what the cell actually said:
+    `--reporter=json` carries the received value, which the `list`
+    reporter buries in a trailing block.
+- **Typecheck the tests.** `tsconfig.json` is `include: ["src/**/*.ts"]`,
+  so `tsc --noEmit` never sees `tests/`; Playwright transpiles specs
+  without checking types, and a type error there surfaces only at
+  runtime, if at all. Wants a second tsconfig and an `npm run typecheck`
+  covering both — expect a batch of pre-existing errors on first run.
 
 - API explorer page with forms to call any GM API with any args
 - examples for all supported GM APIs, all headers

@@ -61,11 +61,11 @@ One-line descriptions of every source file, grouped by directory.
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
 | `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
-| `src/sources.ts` | Sources page controller — render, in-place updates, busy spinners, `?refresh`/`?add_source`/`?first_run` triggers, per-source anchors |
+| `src/sources.ts` | Sources page controller — render, in-place updates, repaint-from-storage on change, `?refresh`/`?add_source`/`?first_run` triggers |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle, GitHub auth token) plus a link back to the sources page |
 | `src/options.ts` | Options page controller — binds the boolean setting checkboxes (link capture, debug logging) + GitHub-token controls (save / clear / reveal) |
 | `src/userscript.html` | Userscript viewer markup: controls row, banner slot + preview actions, details panel, tab strip, code box, log pane |
-| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), and the log pane |
+| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), live `storage` watchers, log pane |
 | `src/script-details.ts` | Builds the viewer's details `<dl>` (header fields, permissions, source/location/size/status) for both viewer modes |
 | `src/code-tabs.ts` | Tabbed code view: tab strip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
@@ -141,6 +141,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
+| `tests/e2e/live-updates.spec.ts` | Live watchers: sources page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
 | `tests/e2e/container-sources.spec.ts` | Container-source lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
 | `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
@@ -188,7 +189,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/parse-check-pages.spec.ts` | The parse check holds on page-driven paths: the install preview's warning, Install, Refresh, Refresh All |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from, and clicks land on that line |
-| `tests/unit/injector.test.mjs` | Unit tests for the pure injector helpers (run-at normalization, spec build, active-spec collection) |
+| `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |

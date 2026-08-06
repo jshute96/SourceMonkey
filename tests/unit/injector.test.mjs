@@ -23,7 +23,13 @@ const localStore = new Map();
 // are loud so an unconfigured caller can't pass by accident.
 const userScripts = {
   register: async () => { throw new Error('userScripts.register not stubbed'); },
-  unregister: async () => {},
+  // Faithful to Chrome: unregistering an id nothing holds is an error,
+  // and `registerReplacing` uses exactly that to tell "another context
+  // already placed this id" from "Chrome refuses this spec". A stub
+  // that resolved for unknown ids would hide the difference.
+  unregister: async ({ ids }) => {
+    throw new Error(`No user script with ID '${(ids ?? [])[0]}' is registered`);
+  },
   // Must precede register(); the retry path calls it via
   // ensureWorldConfigured. Without it here the retry's error
   // containment swallows the TypeError and silently does nothing.
@@ -1896,4 +1902,157 @@ test('retryRejectedRegistrations: a caller is never dropped for arriving late', 
   assert.deepEqual(offered.sort(), ['a', 'b'], 'both callers must get an attempt');
 
   _setRetryNowForTests(() => Date.now());
+});
+
+// ---------- One registration operation at a time ----------
+//
+// chrome.userScripts is a single mutable set, and every path that
+// changes it does so with a getScripts → unregister → register
+// sequence Chrome does not make atomic. Two of those interleaving is
+// what produced "Duplicate script ID '<uuid>'" against a script that
+// was in fact registered and running.
+
+const { syncRegistrations } = await import('../../dist/injector.js');
+
+// Restore the module-wide stubs to the state the rest of the file
+// expects — including `register`'s loud default, so a later test that
+// forgets to stub it can't quietly pass on one of these closures.
+// Registered with `t.after` rather than called at the end of a body, so
+// a failing assertion can't leak a stub (`getScripts` in particular
+// changes what `unregisterAll` does) into every test after it.
+function resetUserScriptStubs() {
+  userScripts.register = async () => { throw new Error('userScripts.register not stubbed'); };
+  userScripts.unregister = async ({ ids }) => {
+    throw new Error(`No user script with ID '${(ids ?? [])[0]}' is registered`);
+  };
+  delete userScripts.getScripts;
+}
+
+test('syncRegistrations: two overlapping syncs never interleave', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  seedStore('a');
+  const events = [];
+  // Every stub yields to the event loop, so an unserialized pair of
+  // syncs would visibly interleave here.
+  const yieldOnce = () => new Promise((r) => setTimeout(r, 0));
+  userScripts.getScripts = async () => { events.push('list'); await yieldOnce(); return [{ id: 'a' }]; };
+  userScripts.unregister = async () => { events.push('unregister'); await yieldOnce(); };
+  userScripts.register = async () => { events.push('register'); await yieldOnce(); };
+
+  const first = syncRegistrations();
+  // Let the first one get past the collapse gate, so the second call is
+  // a genuine second sync rather than a join onto a queued one.
+  await yieldOnce();
+  const second = syncRegistrations();
+  await Promise.all([first, second]);
+
+  assert.deepEqual(events, [
+    'list', 'unregister', 'register',
+    'list', 'unregister', 'register',
+  ], 'one sync must finish before the next one lists the registration set');
+});
+
+test('syncRegistrations: a sync that has not started yet absorbs later callers', async (t) => {
+  // The debounced sync in background.ts plus the SW-startup one plus a
+  // refresh can all ask at once. A sync still waiting its turn reads
+  // storage after they wrote, so queueing a second is pure duplicate
+  // work — and duplicate unregister-all/register-all traffic.
+  //
+  // The complement matters as much: a caller arriving while a sync is
+  // RUNNING must not join it, because that sync's storage read already
+  // happened and would miss what the caller just wrote.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  seedStore('a');
+  const yieldOnce = () => new Promise((r) => setTimeout(r, 0));
+  let lists = 0;
+  userScripts.getScripts = async () => { lists++; await yieldOnce(); return []; };
+  userScripts.register = async () => {};
+
+  // Three simultaneous callers, lock idle: one sync.
+  await Promise.all([syncRegistrations(), syncRegistrations(), syncRegistrations()]);
+  assert.equal(lists, 1, 'three callers, one sync');
+
+  // Now with one already running: the two late callers need a sync that
+  // reads storage after them, and they share it.
+  const running = syncRegistrations();
+  await yieldOnce();
+  const late = Promise.all([syncRegistrations(), syncRegistrations()]);
+  await Promise.all([running, late]);
+  assert.equal(lists, 3, 'a running sync is not joined; a queued one absorbs both late callers');
+});
+
+test('syncRegistrations: a batch unregister that fails drops the ids one at a time', async (t) => {
+  // Chrome fails the whole call when any single id is unknown — an id
+  // another context dropped between our getScripts and the call. The
+  // ids left behind are not all replaceable: a script that has been
+  // disabled or deleted isn't in the new spec list, so nothing would
+  // re-register over it and it would keep injecting.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  const registered = new Set(['stale-1', 'stale-2']);
+  const dropped = [];
+  userScripts.getScripts = async () => [...registered].map((id) => ({ id }));
+  userScripts.unregister = async ({ ids }) => {
+    // 'stale-1' is already gone, so a batch naming it fails whole.
+    if (ids.length > 1) throw new Error(`No script with ID '${ids[0]}' is registered`);
+    dropped.push(ids[0]);
+    registered.delete(ids[0]);
+  };
+  userScripts.register = async () => {};
+
+  await syncRegistrations();
+  assert.deepEqual(dropped.sort(), ['stale-1', 'stale-2'], 'every id must still be dropped');
+});
+
+test('registerWithFallback: an id Chrome already holds is replaced, not reported', async (t) => {
+  t.after(resetUserScriptStubs);
+  // The cross-context race the per-context lock cannot cover: the
+  // sources page and the viewer run the retry in their own JS context,
+  // so a page-side retry can place a script between the SW sync's
+  // unregister-all and its register-all. Chrome then answers the
+  // sync's batch with "Duplicate script ID", and re-offering the spec
+  // unchanged badged a running script REJECTED.
+  sessionStore.clear();
+  const held = new Set(['b']);
+  userScripts.unregister = async ({ ids }) => {
+    for (const id of ids) {
+      if (!held.delete(id)) throw new Error(`No script with ID '${id}' is registered`);
+    }
+  };
+  userScripts.register = async (batch) => {
+    for (const s of batch) {
+      if (held.has(s.id)) throw new Error(`Duplicate script ID '${s.id}'`);
+    }
+    for (const s of batch) held.add(s.id);
+  };
+
+  const ok = await registerWithFallback([SPEC_A, SPEC_B]);
+  assert.equal(ok, 2, 'both specs must end up registered');
+  assert.deepEqual(await readRejections(), {}, 'our own ordering is not the script\'s fault');
+  assert.deepEqual([...held].sort(), ['a', 'b']);
+});
+
+test('registerWithFallback: a spec Chrome genuinely refuses is offered once', async (t) => {
+  // Register-first, replace-on-conflict. The obvious arrangement —
+  // unregister before every per-spec attempt — would drop a script
+  // that IS registered on the way to failing anyway, and re-offering
+  // every refused spec blindly would double the traffic for every
+  // REJECTED script on every sync.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  const offered = [];
+  userScripts.register = async (batch) => {
+    offered.push(batch.map((s) => s.id).join('+'));
+    if (batch.some((s) => s.id === 'a')) throw new Error('bad spec: a');
+  };
+
+  await registerWithFallback([SPEC_A, SPEC_B]);
+  await _flushScriptLogQueueForTests('a');
+  assert.deepEqual(offered, ['a+b', 'a', 'b'], 'the batch, then one attempt per spec');
+  assert.deepEqual(Object.keys(await readRejections()), ['a']);
 });

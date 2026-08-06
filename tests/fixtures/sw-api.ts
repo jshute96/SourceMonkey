@@ -8,7 +8,7 @@ import type { Worker } from '@playwright/test';
 
 type Mode = 'manual' | 'opportunistic';
 
-interface SmApi {
+export interface SmApi {
   // Returns the resulting source row (existing container or new
   // source); the proxy unwraps the `AddSourceResult` discriminant so
   // tests can keep using `result?.id` and `result?.path` directly.

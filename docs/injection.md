@@ -71,11 +71,47 @@ The sync strategy is **full wipe + re-register** every time:
 2. `unregister({ ids: [...] })` — drop them all.
 3. `register([...])` — install the fresh spec list. If the batch
    rejects (e.g. one script has a malformed pattern), we fall back to
-   per-script `register([spec])` calls so a single bad script can't
-   take down every other script.
+   per-script calls so a single bad script can't take down every other
+   script.
 
 This is dramatically simpler than diffing and is cheap at our scale
 (tens of scripts, not thousands).
+
+### One registration operation at a time
+
+Those three steps are a read-modify-write, and Chrome makes no part of
+it atomic.
+
+Two of them interleaving produces `Duplicate script ID '<id>'` against
+a script that is registered and *running*: one attempt listed the set,
+a second placed the script, and the first then offered the id again.
+
+- **Serialized per context.** Every operation that touches
+  `chrome.userScripts` — the sync, the targeted retry, the test
+  surface's teardown — runs through one promise-chain lock in
+  `src/injector.ts`. Overlap used to be easy to hit: the SW-startup
+  sync against the one `onCacheChanged` schedules for boot-time
+  storage writes, or a source refresh's retry against the sync its own
+  writes triggered.
+- **Queued syncs collapse.** A sync waiting on the lock has not read
+  storage yet, so a later caller joins it instead of queueing a second
+  full wipe-and-replace. Callers arriving while one is *running* don't
+  join it — that one's read already happened — but they still share a
+  single new queued sync between them.
+- **Replace, don't re-offer.** `registerReplacing` registers, and only
+  on a refusal unregisters the id and tries once more. The lock is
+  per-JS-context and the sources page and viewer run the retry in
+  theirs, so a page-side registration can still land mid-sync. Which
+  spec is newer isn't knowable from there and doesn't need to be —
+  every `script:*` / `source:*` write schedules its own sync, so the
+  set converges on the last write. What matters is that the duplicate
+  is our sequencing and not something to badge the script for.
+- **A failed unregister-all falls back to one id at a time.** Chrome
+  fails the whole `unregister` call if any id in the list is unknown,
+  which usually means another context already dropped that one. Giving
+  up would leave the set unregistered; ignoring it would leave scripts
+  that are *not* in the new spec list — disabled, deleted, newly
+  INVALID — still injecting, since nothing would replace them.
 
 ### Rejected registrations
 
