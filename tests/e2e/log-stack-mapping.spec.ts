@@ -22,6 +22,28 @@ import path from 'node:path';
 import type { BrowserContext } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitFor, type SmApi } from '../fixtures/sw-api';
+
+// The throw travels page -> service worker -> per-script log, so the
+// entry lands some time after the navigation settles. Waiting for the
+// entry itself beats a fixed pause, which under full-suite load was
+// occasionally short.
+//
+// `expected` matches the message so the wait is as specific as the
+// assertion that follows it — settling for "any error" would let an
+// unrelated entry release the wait, and the test would then fail on a
+// missing link rather than on the throw never arriving.
+async function waitForThrowLogged(
+  sm: SmApi,
+  scriptId: string,
+  expected: RegExp,
+): Promise<void> {
+  await waitFor(
+    () => sm.getScriptLog(scriptId),
+    (log) => log.some((e) => e.level === 'error' && expected.test(e.message)),
+    { label: `thrown error matching ${expected} reaches the script log` },
+  );
+}
 
 // A library whose throw is on a line we can name exactly. `boom` is
 // declared on line 3 and throws on line 4, and the call that reaches
@@ -87,7 +109,7 @@ test.describe('log stack mapping', () => {
 
     const target = await extensionContext.newPage();
     await target.goto(`${fixtureServer.baseUrl}/target.html`);
-    await target.waitForTimeout(500);
+    await waitForThrowLogged(sm, scriptId, /boom-from-require/);
     await target.close();
 
     // The raw stack really does name the .user.js — that's the thing
@@ -118,7 +140,7 @@ test.describe('log stack mapping', () => {
 
     const target = await extensionContext.newPage();
     await target.goto(`${fixtureServer.baseUrl}/target.html`);
-    await target.waitForTimeout(500);
+    await waitForThrowLogged(sm, scriptId, /boom-from-require/);
     await target.close();
 
     const page = await openLogTab(extensionContext, extensionId, scriptId);
@@ -147,7 +169,7 @@ test.describe('log stack mapping', () => {
 
     const target = await extensionContext.newPage();
     await target.goto(`${fixtureServer.baseUrl}/target.html`);
-    await target.waitForTimeout(500);
+    await waitForThrowLogged(sm, scriptId, /boom-from-require/);
     await target.close();
 
     const page = await openLogTab(extensionContext, extensionId, scriptId);
@@ -323,7 +345,7 @@ test.describe('log stack mapping', () => {
 
       const target = await extensionContext.newPage();
       await target.goto(`${fixtureServer.baseUrl}/target.html`);
-      await target.waitForTimeout(500);
+      await waitForThrowLogged(sm, scriptId, /boom-from-require/);
       await target.close();
 
       // The raw log still carries the encoded form — that is correct on
@@ -419,7 +441,7 @@ test.describe('log stack mapping', () => {
 
     const target = await extensionContext.newPage();
     await target.goto(`${fixtureServer.baseUrl}/target.html`);
-    await target.waitForTimeout(500);
+    await waitForThrowLogged(sm, scriptId, /plain-boom/);
     await target.close();
 
     const page = await openLogTab(extensionContext, extensionId, scriptId);

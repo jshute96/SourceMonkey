@@ -28,14 +28,27 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: 'list',
+  // Don't record a trace unless a test is being retried. `retain-on-failure`
+  // records one for EVERY test and throws it away on pass, and the suite
+  // shares a single worker-scoped browser context across all its tests
+  // (tests/fixtures/extension.ts) — recording against a context that
+  // long-lived eventually stalls the trace fixture past its own 30s
+  // setup timeout, failing whichever test is next. See docs/testing.md.
   use: {
-    trace: 'retain-on-failure',
+    trace: 'on-first-retry',
   },
   projects: [
     {
       name: 'sourcemonkey',
       testMatch: ['e2e/**/*.spec.ts', 'examples/**/*.spec.ts'],
       metadata: { manager: 'sourcemonkey' },
+      // Scoped to this project on purpose: a retry here starts from a
+      // fresh browser (Playwright discards the crashed worker and its
+      // context), which is what makes it safe. The tampermonkey project
+      // drives the developer's own long-lived profile over CDP with no
+      // per-test reset, where re-running a half-finished install is not
+      // the same proposition.
+      retries: 1,
     },
     {
       name: 'tampermonkey',

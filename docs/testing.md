@@ -42,6 +42,38 @@ or the GreasyFork corpus. See
   `SM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
   stderr. Off by default because it's noisy.
 
+### Retries and traces
+
+`retries: 1` (on the `sourcemonkey` project only) with
+`trace: 'on-first-retry'`.
+
+**Don't switch to `retain-on-failure`.**
+
+- It records a trace for every test and discards it on pass.
+- This suite shares one worker-scoped browser context across all its
+  tests, and recording against a context that long-lived stalls the
+  trace fixture past its 30s setup timeout.
+- The victim is whichever test runs next, so the symptom is a moving
+  target that never reproduces standalone.
+- It also cost roughly a third of the suite's wall-clock.
+
+**A *flaky* count is not noise.** Chromium segfaults during a full run
+often enough to matter (see TODO.md), killing the worker so the next
+test reports a 0ms failure it never ran.
+
+- Until that is fixed, read any flaky result as that bug.
+- The retry's trace won't help with it: the crash kills the worker
+  before a trace exists, and the retry runs in a fresh one and passes.
+- `playwright test` exits 0 when tests are flaky. Anything gating on
+  the exit code needs `--fail-on-flaky-tests`.
+
+**Diagnosing a failure from a full run**: use `--reporter=json` and read
+`errors[].message`.
+
+- The `list` reporter puts error detail in a trailing block that is
+  easy to lose to a `tail` or a `grep`.
+- "Expected X" without the received value is rarely enough to act on.
+
 ## Unit tests
 
 - Plain `node:test`. No mocks, no fakes — modules under test are

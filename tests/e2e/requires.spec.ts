@@ -27,6 +27,7 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitFor } from '../fixtures/sw-api';
 import { UserscriptServer } from '../fixtures/userscript-server';
 
 test.describe('@require', () => {
@@ -432,7 +433,14 @@ test.describe('@require', () => {
     const sources = await sm.getSources();
     const scriptIds = sources.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
-    const log = await sm.getScriptLog(scriptIds[0]);
+    // The sentinel reports from the page, so the entry lands some time
+    // after the navigation settles — wait for it rather than reading
+    // once and hoping the 500 ms above was enough.
+    const log = await waitFor(
+      () => sm.getScriptLog(scriptIds[0]),
+      (entries) => entries.some((e) => e.level === 'error' && /failed to parse/i.test(e.message)),
+      { label: 'parse failure reaches the script log' },
+    );
     const errors = log.filter((e) => e.level === 'error');
     expect(errors.length).toBeGreaterThanOrEqual(1);
     expect(errors[0].message).toMatch(/failed to parse/i);
