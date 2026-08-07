@@ -74,6 +74,116 @@ form input {
   font: inherit;
 }
 
+/* ---- API explorer (tests/examples/lib/api-explorer.js) ---- */
+
+/* Boxes sit side by side when a page has more than one (set/get), and
+   wrap to a column when they don't fit. */
+.explorer-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  align-items: flex-start;
+}
+
+.explorer-box {
+  flex: 1 1 20em;
+  min-width: 0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.5em 0.75em 0.75em;
+  margin: 0;
+}
+
+.explorer-box legend {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  padding: 0 0.35em;
+}
+
+.explorer-note {
+  margin: 0 0 0.5em;
+  font-size: 0.9em;
+  color: #555;
+}
+
+.explorer-presets {
+  margin-bottom: 0.75em;
+}
+
+.explorer-presets-label {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  color: #555;
+}
+
+.explorer-form {
+  gap: 0.6em;
+}
+
+.explorer-field {
+  gap: 0.2em;
+}
+
+.explorer-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4em;
+}
+
+.explorer-caption {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.explorer-caption em {
+  font-family: system-ui, sans-serif;
+  font-style: normal;
+  color: #777;
+  font-size: 0.85em;
+}
+
+.explorer-hint {
+  color: #666;
+  font-size: 0.85em;
+}
+
+.explorer-form textarea,
+.explorer-form select {
+  padding: 0.3em;
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
+.explorer-error {
+  margin: 0;
+  color: #a12;
+  font-size: 0.9em;
+}
+
+ul#log li.explorer-entry {
+  padding: 0.25em 0;
+  border-top: 1px solid #eee;
+}
+
+.explorer-entry:last-child {
+  border-top: 0;
+}
+
+.explorer-call {
+  font-weight: 600;
+}
+
+.explorer-expect {
+  color: #555;
+}
+
+.explorer-line[data-level="error"],
+.explorer-entry[data-level="error"] .explorer-call {
+  color: #a12;
+}
+
 ul#log {
   list-style: none;
   padding: 0.5em;
