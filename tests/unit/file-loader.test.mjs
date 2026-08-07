@@ -388,3 +388,4 @@ test('fetchResourceBytes: a scheme we do not fetch says so', async () => {
   const res = await fetchResourceBytes('ftp://example.com/a.js', { maxBytes: 1000 });
   assert.deepEqual(res, { failed: true, reason: 'unsupported-scheme' });
 });
+

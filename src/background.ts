@@ -97,6 +97,7 @@ import {
   removeSource,
   setScriptEnabled,
   setSourceEnabled,
+  setSourceLocalFiles,
   type AddSourceResult,
   type StoredScript,
   type StoredSource,
@@ -194,6 +195,7 @@ interface SourceMonkeyApi {
   getSources: () => Promise<StoredSource[]>;
   getSourceWithScripts: (id: string) => Promise<{ source: StoredSource; scripts: StoredScript[] } | null>;
   setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
+  setSourceLocalFiles: (id: string, localFiles: boolean) => Promise<StoredSource | null>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
   updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
@@ -311,6 +313,7 @@ const api: SourceMonkeyApi = {
   getSources,
   getSourceWithScripts,
   setSourceEnabled,
+  setSourceLocalFiles,
   setScriptEnabled,
   updateSource,
   updateScript,

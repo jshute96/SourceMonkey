@@ -38,6 +38,19 @@
          so heights line up with Refresh/Remove; only the horizontal
          padding is tightened so the arrow glyph isn't drowned in
          whitespace. */
+      /* The "Local files" opt-out, sitting among the header's buttons.
+         Labeled (unlike the bare enable switch on the left) because an
+         unlabeled second switch up here would read as a second
+         enable/disable control. */
+      .local-files-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.3em;
+        font-size: 0.85em;
+        color: #555;
+        cursor: pointer;
+        white-space: nowrap;
+      }
       .move-source { padding: 0.3em 0.5em; }
       .move-source:disabled { cursor: not-allowed; opacity: 0.35; }
       .script-table { width: 100%; border-collapse: collapse; }

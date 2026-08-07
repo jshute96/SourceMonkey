@@ -39,6 +39,7 @@ import {
   type FetchFailure,
   type ResolveFailure,
 } from './file-loader.js';
+import { localFileCandidates } from './local-file-overrides.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64 } from './bytes.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
@@ -189,6 +190,15 @@ interface SharedFileFields {
   // Epoch ms of the last successful (re)fetch. Bumps only on a true
   // content change so the sources-page row-highlight stays accurate.
   loadedAt: number;
+  // The local file we actually read instead of `url`, when a stand-in
+  // was found under one of the script's local search roots. Absent
+  // whenever the declared URL is what was fetched — which is the normal
+  // case, so its presence is exactly "this entry was overridden".
+  //
+  // `url` deliberately keeps the DECLARED URL even then: it is the dedup
+  // key, it is what the script says it depends on, and it is what the
+  // entry falls back to the moment the local file goes away.
+  localUrl?: string;
   // Server-reported (lowercased) Content-Type, or '' when not
   // available (file:// XHR often omits it). Optional on
   // StoredRequire because pre-this-change stored rows won't carry
@@ -309,6 +319,11 @@ export interface AttachFilesArgs {
   fetchCache: FileFetchCache;
   // Wall-clock for new loadedAt stamps.
   now: number;
+  // Ordered local directories searched for a stand-in before the
+  // declared URL is fetched — see `src/local-file-overrides.ts`. Empty (the
+  // default) restores the pre-feature behavior exactly: no candidate
+  // generation, no probe reads.
+  localRoots?: readonly string[];
 }
 
 export interface AttachFilesResult {
@@ -369,6 +384,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       fetchCache: args.fetchCache,
       now: args.now,
       seenUrls: seenRequireUrls,
+      localRoots: args.localRoots ?? [],
     });
     if (res.errorMessage) {
       return {
@@ -389,6 +405,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       recheck: args.recheck,
       fetchCache: args.fetchCache,
       now: args.now,
+      localRoots: args.localRoots ?? [],
     });
     if (res.errorMessage) {
       return {
@@ -427,6 +444,7 @@ export async function fetchRequireForPreview(
   scriptFileUrl: string,
   fetchCache: FileFetchCache,
   now: number,
+  localRoots: readonly string[] = [],
 ): Promise<StoredRequire> {
   const res = await loadRequire({
     ref,
@@ -435,6 +453,7 @@ export async function fetchRequireForPreview(
     recheck: 'all',
     fetchCache,
     now,
+    localRoots,
     // Fresh per call: dedup across refs is the batch loader's job, and
     // the preview shows one tab per declared ref.
     seenUrls: new Set(),
@@ -455,6 +474,48 @@ interface LoadResult<E> {
   errorMessage?: string;
 }
 
+// What we actually read for a declared URL, and from where.
+interface LoadedBytes {
+  // Set only when the bytes came from a local stand-in rather than the
+  // declared URL, so callers can record it without re-deriving the
+  // comparison. Absent means "the declared URL was fetched".
+  localUrl?: string;
+  got: FetchedFile | FileFailure;
+}
+
+// Read a declared file, preferring a local stand-in when one exists.
+//
+// Candidates are tried in order and the first that READS wins — the
+// probe and the real read are the same fetch, so a hit costs nothing
+// extra. A total miss costs one local read PER CANDIDATE, i.e. one per
+// path segment of the declared URL, not one overall. `ensureFetch`
+// caches those for the rest of the pass, misses included.
+//
+// Returns `null` when no stand-in was found, so the caller can take its
+// `recheck: 'preserve'` shortcut on the declared URL. That ordering is
+// deliberate: a stand-in is checked on EVERY refresh, including
+// opportunistic ones, so editing a local library shows up on the next
+// navigation — while a remote dependency still gets the cached-and-left-
+// alone treatment that keeps per-navigation cost bounded.
+//
+// A `null` here does NOT mean the caller can preserve any prior: a prior
+// that itself carries a `localUrl` describes a file we just failed to
+// find, so keeping it would serve a deleted stand-in indefinitely. Each
+// caller's preserve shortcut checks for that.
+async function readLocalStandIn(
+  declaredUrl: string,
+  localRoots: readonly string[],
+  fetchCache: FileFetchCache,
+): Promise<LoadedBytes | null> {
+  for (const candidate of localFileCandidates(declaredUrl, localRoots)) {
+    const got = await ensureFetch(fetchCache, candidate);
+    // A candidate that doesn't read isn't a failure — it just isn't
+    // there. Only an actual hit ends the search.
+    if (!isFailure(got)) return { localUrl: candidate, got };
+  }
+  return null;
+}
+
 interface LoadRequireArgs {
   ref: string;
   scriptFileUrl: string;
@@ -463,6 +524,7 @@ interface LoadRequireArgs {
   fetchCache: FileFetchCache;
   now: number;
   seenUrls: Set<string>;
+  localRoots: readonly string[];
 }
 
 async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequire>> {
@@ -480,12 +542,17 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   args.seenUrls.add(resolved.url);
 
   const prior = args.prior.get(resolved.url);
-  if (args.recheck === 'preserve' && prior) {
+
+  // Local stand-in first, and before the preserve shortcut — see
+  // `readLocalStandIn` for why an overridden file is never cached past
+  // a refresh.
+  const local = await readLocalStandIn(resolved.url, args.localRoots, args.fetchCache);
+  if (!local && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
   }
 
-  const pending = ensureFetch(args.fetchCache, resolved.url);
-  const got = await pending;
+  const loaded = local ?? { got: await ensureFetch(args.fetchCache, resolved.url) };
+  const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `@require ${args.ref}: ${got.errorMessage}` };
   }
@@ -497,7 +564,16 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // XHR case) is accepted by the predicate like any other non-markup
   // type.
   if (!requireAcceptContentType(got.contentType)) {
-    return { errorMessage: `@require ${args.ref}: The server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login` };
+    // Two different situations, so two different sentences. Blaming the
+    // server when the bytes came off local disk would be a flatly wrong
+    // diagnosis — the common way to hit that is a local *directory*
+    // whose name matches the ref, which Chrome answers with a generated
+    // HTML listing.
+    return {
+      errorMessage: loaded.localUrl
+        ? `@require ${args.ref}: The local file ${loaded.localUrl} is an HTML page, not JavaScript (Content-Type "${got.contentType}") — a folder with that name would look like this`
+        : `@require ${args.ref}: The server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login`,
+    };
   }
   // Strict UTF-8 decode: catches binary regardless of what the server
   // claimed the type was (a misconfigured CDN serving a PNG, or the
@@ -524,6 +600,11 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
       contentHash,
       contentType: got.contentType,
       loadedAt,
+      // Spread rather than assigned so the field is ABSENT (not
+      // `undefined`) on the ordinary path — stored rows are compared
+      // and JSON-round-tripped, and an explicit `undefined` would
+      // survive as a key in some of those comparisons.
+      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
     },
   };
 }
@@ -568,6 +649,7 @@ interface LoadResourceArgs {
   recheck: 'all' | 'preserve';
   fetchCache: FileFetchCache;
   now: number;
+  localRoots: readonly string[];
 }
 
 async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredResource>> {
@@ -591,15 +673,22 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
 
   // Prior lookup by URL.
   const prior = args.prior.get(resolved.url);
-  if (args.recheck === 'preserve' && prior && prior.name === args.decl.name) {
+
+  // Local stand-in first, and before the preserve shortcut — same rule
+  // and same reasoning as `@require`; see `readLocalStandIn`.
+  const local = await readLocalStandIn(resolved.url, args.localRoots, args.fetchCache);
+  if (
+    !local && args.recheck === 'preserve' &&
+    prior && prior.name === args.decl.name && !prior.localUrl
+  ) {
     return { entry: prior };
   }
 
   // Resources accept anything — including HTML. A script that wants
   // to embed a fragment of HTML as a string via GM_getResourceText
   // shouldn't be blocked.
-  const pending = ensureFetch(args.fetchCache, resolved.url);
-  const got = await pending;
+  const loaded = local ?? { got: await ensureFetch(args.fetchCache, resolved.url) };
+  const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `${subject}: ${got.errorMessage}` };
   }
@@ -617,6 +706,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
       contentHash,
       contentType: got.contentType,
       loadedAt,
+      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
     },
   };
 }

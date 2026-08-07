@@ -42,10 +42,13 @@ import {
   setScriptEnabled,
   setScriptsEnabled,
   setSourceEnabled,
+  setSourceLocalFiles,
+  sourceUsesLocalFiles,
   touchesStructuralRows,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import { localSearchRoots, sourceSupportsLocalFiles } from './local-file-overrides.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -556,6 +559,7 @@ async function syncScriptRowsFromStorage(
   scripts: readonly StoredScript[],
 ): Promise<void> {
   const inContainer = isContainerSource(source.path);
+  const useLocalFiles = sourceUsesLocalFiles(source);
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
 
@@ -577,10 +581,10 @@ async function syncScriptRowsFromStorage(
   for (const script of scripts) {
     const row = existing.get(script.id);
     if (row) {
-      syncScriptRow(row, script, sourceOn, inContainer);
+      syncScriptRow(row, script, sourceOn, inContainer, useLocalFiles);
       existing.delete(script.id);
     }
-    ordered.push(row ?? renderScriptRow(script, sourceOn, inContainer));
+    ordered.push(row ?? renderScriptRow(script, sourceOn, inContainer, useLocalFiles));
   }
   // Whatever is left in `existing` is a row whose script is gone. The
   // per-script bookkeeping is pruned by the caller, against the whole
@@ -604,6 +608,7 @@ function syncScriptRow(
   script: StoredScript,
   sourceOn: boolean,
   inContainer: boolean,
+  useLocalFiles: boolean,
 ): void {
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
@@ -626,8 +631,8 @@ function syncScriptRow(
   // moved. Rebuilding unconditionally would re-run the favicon fetch and
   // flash the globe placeholder on every unrelated repaint.
   const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
-  if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script)) {
-    fillNameCell(nameCell, script, inContainer);
+  if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script, useLocalFiles)) {
+    fillNameCell(nameCell, script, inContainer, useLocalFiles);
   }
 
   const scriptOn = isScriptEnabled(script);
@@ -671,13 +676,19 @@ function sameNodeOrder(container: Element, wanted: readonly Element[]): boolean 
 // one that would only flash its favicon for nothing.
 const nameCellKeys = new Map<string, string>();
 
-function nameCellKey(script: StoredScript): string {
+function nameCellKey(script: StoredScript, useLocalFiles: boolean): string {
   return JSON.stringify([
     script.relativePath,
     script.fileUrl,
     scriptDescription(script),
     iconRefFromHeader(script.header),
     script.matching,
+    // The source's local-files setting decides whether the `@icon` is
+    // fetched from its declared URL or from a file on disk, so flipping
+    // it changes what this cell paints. Without it here, toggling the
+    // switch would repaint the page and leave the old favicon in place
+    // until something unrelated rebuilt the row.
+    useLocalFiles,
   ]);
 }
 
@@ -932,6 +943,12 @@ async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
   const buttons = document.createElement('div');
   buttons.className = 'directory-buttons';
 
+  // Only where it can do something: every script under an http(s)
+  // source loads over the network, so the control would be inert there.
+  if (sourceSupportsLocalFiles(source.path)) {
+    buttons.appendChild(makeLocalFilesToggle(source));
+  }
+
   buttons.appendChild(makeMoveButton('up', source.id));
   buttons.appendChild(makeMoveButton('down', source.id));
 
@@ -984,6 +1001,7 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
   const data = await getSourceWithScripts(source.id);
   const scripts = data?.scripts ?? [];
   const inContainer = isContainerSource(source.path);
+  const useLocalFiles = sourceUsesLocalFiles(source);
 
   if (scripts.length === 0) {
     return makeMessage(
@@ -1030,7 +1048,9 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  for (const script of scripts) tbody.appendChild(renderScriptRow(script, sourceOn, inContainer));
+  for (const script of scripts) {
+    tbody.appendChild(renderScriptRow(script, sourceOn, inContainer, useLocalFiles));
+  }
   table.appendChild(tbody);
   return table;
 }
@@ -1039,6 +1059,7 @@ function renderScriptRow(
   script: StoredScript,
   sourceOn: boolean,
   inContainer: boolean,
+  useLocalFiles: boolean,
 ): HTMLTableRowElement {
   const scriptOn = isScriptEnabled(script);
 
@@ -1063,7 +1084,7 @@ function renderScriptRow(
 
   const nameCell = document.createElement('td');
   nameCell.classList.add('name-cell');
-  fillNameCell(nameCell, script, inContainer);
+  fillNameCell(nameCell, script, inContainer, useLocalFiles);
   tr.appendChild(nameCell);
 
   const sizeCell = document.createElement('td');
@@ -1108,6 +1129,10 @@ function fillNameCell(
   nameCell: HTMLTableCellElement,
   script: StoredScript,
   inContainer: boolean,
+  // Does this script's source allow local file overrides? Threaded
+  // alongside `inContainer` — both are per-source facts the row needs
+  // and neither is worth re-loading the source row for.
+  useLocalFiles: boolean,
 ): void {
   nameCell.textContent = '';
   // Slot for the favicon: a fixed-width container so the filename
@@ -1118,7 +1143,7 @@ function fillNameCell(
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
-  renderSiteIconInto(iconSlot, script);
+  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, useLocalFiles));
   const a = document.createElement('a');
   // For container scripts the `relativePath` is the full URL/path —
   // show just the basename in the filename column to keep rows
@@ -1151,7 +1176,7 @@ function fillNameCell(
   nameCell.appendChild(suffix);
   // Record what this cell was drawn from, so the next repaint can skip
   // it unless one of those inputs moved.
-  nameCellKeys.set(script.id, nameCellKey(script));
+  nameCellKeys.set(script.id, nameCellKey(script, useLocalFiles));
 }
 
 // Tooltip text for a script row: the parsed `@description` value, or
@@ -1588,6 +1613,47 @@ async function onToggleSource(id: string, enabled: boolean, label: HTMLLabelElem
     if (section) applySourceEnabledToDom(section, enabled);
   } finally {
     setToggleBusy(label, false);
+  }
+}
+
+// The per-source "Local files" switch: may a script under this source
+// load a `@require` / `@resource` from a file on disk next to it,
+// instead of the URL the declaration names? See docs/local-file-overrides.md.
+//
+// A labeled checkbox rather than the bare `makeToggle` switch used for
+// enable/disable: this one sits among named buttons, and an unlabeled
+// second switch in the header would read as a second enable control.
+//
+// Default-on, and only meaningful for local sources — which is why the
+// off position is the one worth reaching for: a directory of scripts
+// you didn't write is exactly where a file sitting next to one should
+// NOT quietly stand in for the library it names.
+function makeLocalFilesToggle(source: StoredSource): HTMLLabelElement {
+  const label = document.createElement('label');
+  label.className = 'local-files-toggle';
+  label.title =
+    'Load @require / @resource files from the script\'s own folder when a file ' +
+    'there matches the end of the declared URL';
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = sourceUsesLocalFiles(source);
+  cb.addEventListener('change', () => void onToggleLocalFiles(source.id, cb));
+  label.append(cb, document.createTextNode('Local files'));
+  return label;
+}
+
+// Writing the flag only changes what the NEXT refresh resolves to, so
+// the refresh is part of the click — otherwise the switch would appear
+// to do nothing until something else happened to touch the source.
+async function onToggleLocalFiles(id: string, cb: HTMLInputElement): Promise<void> {
+  cb.disabled = true;
+  try {
+    await setSourceLocalFiles(id, cb.checked);
+    await updateSource(id, 'manual');
+    await repaintPage();
+  } finally {
+    cb.disabled = false;
   }
 }
 

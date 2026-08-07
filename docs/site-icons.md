@@ -27,6 +27,13 @@
   under the script's parent dir. Caught textually via a post-resolution
   prefix check on the URL string, so `..`, `%2e%2e`, `..\`, and
   host-absolute `/` paths are all rejected uniformly.
+- An absolute `http(s)` `@icon` can be served from a **local file**
+  beside the script — same rule `@require` / `@resource` use, so a
+  script keeps its portable URL while an icon on disk stands in during
+  development. See
+  [local-file-overrides.md](local-file-overrides.md#icon-caching) for
+  the rule, the safety gate, and why the local candidate bypasses the
+  storage cache below.
 - `data:` URLs are length-capped to the same ~170 KB ceiling we apply
   to inline `<link rel="icon">` hrefs.
 - An *empty* `data:` URL (`data:,`, or a `;base64,` with no payload)
@@ -194,6 +201,10 @@ Parallel cache rows for the icon-source paths, sharing the same
   string; every script on that host shares the row.
 - `iconUrl:<url>` — `@icon`-declared icons. Key is the literal header
   URL; scripts pinning the same icon share one fetch.
+- A local stand-in is NOT written here — it's memoized for the life of
+  the page instead, so a newly created icon file isn't hidden behind a
+  24-hour cached miss. See
+  [local-file-overrides.md](local-file-overrides.md#icon-caching).
 - `data:` URLs render inline and are never stored.
 
 Rows are not garbage-collected when the last script referencing them

@@ -18,7 +18,9 @@ same rules as `@icon`:
 
 Extension over TM/VM/GM: relative paths. None of the major managers
 support them — a script that relies on this will only work in
-SourceMonkey.
+SourceMonkey. To keep a script portable *and* develop it locally, write
+the absolute URL and let a file on disk stand in for it — see
+[local-file-overrides.md](local-file-overrides.md).
 
 ## `.js` suffix gate
 
@@ -42,6 +44,8 @@ Per-entry fields:
 - `loadedAt` — epoch ms; bumps only on a true content change.
 - `httpEtag?`, `httpLastModified?` — captured from the last HTTP
   fetch. Not yet round-tripped to the byte fetcher — see TODO.
+- `localUrl?` — the local file read instead of `url`, when one stood
+  in. See [local-file-overrides.md](local-file-overrides.md#storage).
 
 Storage layout today: every script stores its own copy of every
 required file, so two scripts requiring jQuery store jQuery twice.
@@ -65,13 +69,17 @@ If both the `@require` and `@resource` lists on a script are
 unchanged across an opportunistic refresh, the work short-circuits
 entirely — no resolution, no fetching.
 
-Consequence for `file://` sources: editing a require file on disk
+Consequence for a require reached by its declared URL: editing it
 (without touching the host script) does **not** surface on the next
 navigation. The opportunistic path treats requires as opaque-by-URL
-and only the explicit Refresh button rechecks remote (or local)
-require bodies. Mirrors how TM/VM treat requires — they're fetched
-on install, not on every page load — and keeps per-navigation cost
-bounded for users with many requires.
+and only the explicit Refresh button rechecks those bodies. Mirrors how
+TM/VM treat requires — they're fetched on install, not on every page
+load — and keeps per-navigation cost bounded for users with many
+requires.
+
+A require served by a **local stand-in** is the deliberate exception:
+it is re-read every pass, so an edit shows up on the next navigation.
+See [local-file-overrides.md](local-file-overrides.md#refresh-policy).
 
 ## Cross-script + cross-kind dedup
 

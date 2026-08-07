@@ -9,8 +9,11 @@
 
 import { openInNewTabAnchor } from './code-links.js';
 import { matchTargetInfo } from './match-targets.js';
+import { splitResourceValue } from './script-links.js';
 import type { StoredSource } from './script-store.js';
+import type { StoredRequire, StoredResource } from './external-files.js';
 import { isContainerSource } from './directories.js';
+import { displayLocation, formatBytes, stripSriFragment } from './script-display.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -45,6 +48,18 @@ export interface LocationRow {
 
 export interface DetailsModel {
   header: ParsedHeader | null;
+  // Prefetched `@require` / `@resource` entries, when the caller has
+  // them. The declaration list comes from the header either way — these
+  // only ANNOTATE it, with what each declaration actually loaded: its
+  // size, and whether a local file stood in for the declared URL.
+  //
+  // A preview passes what its parse check resolved; an installed script
+  // passes its stored rows; an unparsed file passes neither and the rows
+  // fall back to bare declaration text.
+  files?: {
+    requires?: readonly StoredRequire[];
+    resources?: readonly StoredResource[];
+  };
   // Installed scripts only.
   logId?: string;
   source?: StoredSource | null;
@@ -91,10 +106,25 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
     // worth re-checking on an installed script.
     addList(dl, 'Permissions', getValues(h, 'grant'), 'grant-list');
     addList(dl, 'Network access', getValues(h, 'connect'), 'grant-list');
-    addList(dl, 'Loads libraries', getValues(h, 'require'));
+    // A `@require` line IS its ref, so the lookup key and the displayed
+    // text are the same string — modulo the SRI hash tail, which is
+    // stripped for display only.
+    addFileList(dl, 'Loads libraries', getValues(h, 'require'), byRef(model.files?.requires), {
+      key: (line) => line,
+      text: (line) => displayLocation(stripSriFragment(line)),
+    });
     // Whole `@resource <name> <url>` line: the URL is the part that
     // says what gets fetched, which is the point of showing it here.
-    addList(dl, 'Loads resources', getValues(h, 'resource'));
+    // Keyed on the URL half, which is what the loader keyed on, and
+    // reassembled for display so the name survives the strip.
+    addFileList(dl, 'Loads resources', getValues(h, 'resource'), byRef(model.files?.resources), {
+      key: (line) => splitResourceValue(line)?.url.trim() ?? line,
+      text: (line) => {
+        const parts = splitResourceValue(line);
+        if (!parts) return line;
+        return `${parts.prefix.trim()} ${displayLocation(stripSriFragment(parts.url.trim()))}`;
+      },
+    });
   }
 
   // Source row: the colored bubble + display name combo the sources
@@ -181,6 +211,80 @@ function addList(
   if (values.length === 0) return;
   const dd = appendRow(dl, label, listNode(values, (v) => document.createTextNode(v)));
   if (cls) dd.className = cls;
+}
+
+// The loaded entries for a `@require` / `@resource` row, keyed by the
+// verbatim ref so a declaration line can find its own entry. `ref` is
+// the trimmed header value, which is what the loader stored and what
+// the header hands back here.
+function byRef<T extends { ref: string }>(
+  entries: readonly T[] | undefined,
+): Map<string, T> {
+  const map = new Map<string, T>();
+  for (const e of entries ?? []) map.set(e.ref, e);
+  return map;
+}
+
+// `@require` / `@resource` row: the declaration text as written, plus
+// what it actually loaded.
+//
+// The declarations, not the loaded entries, drive the list. A ref that
+// failed to load has no entry and must still appear — an author reading
+// this panel is asking "what does this script pull in", and silently
+// dropping the one that broke would answer it wrong.
+//
+// `key` extracts the lookup key from a declaration line — `@resource`
+// lines carry a name before the URL, `@require` lines are the ref
+// outright. `text` is what the row reads as, which is NOT the same
+// string: an SRI hash tail is stripped for display but is part of the
+// ref everywhere else.
+interface FileLineShape {
+  key: (line: string) => string;
+  text: (line: string) => string;
+}
+
+function addFileList(
+  dl: HTMLDListElement,
+  label: string,
+  lines: string[],
+  entries: Map<string, LoadedFile>,
+  shape: FileLineShape,
+): void {
+  if (lines.length === 0) return;
+  appendRow(dl, label, listNode(lines, (line) => {
+    const span = document.createElement('span');
+    appendWithSlashBreaks(span, shape.text(line.trim()));
+    const entry = entries.get(shape.key(line.trim()));
+    if (!entry) return span;
+    if (entry.localUrl) {
+      const chip = document.createElement('span');
+      chip.className = 'local-chip';
+      chip.textContent = 'local';
+      // Where it came from is the whole point of the chip, so it rides
+      // along as the tooltip rather than widening every row that has
+      // one. Same wording and same `file://` URL form as the code tab's
+      // tooltip — one fact should not read two ways depending on which
+      // surface you hover.
+      chip.title = `Loaded from ${displayLocation(entry.localUrl)}`;
+      span.append(' ', chip);
+    }
+    if (entry.size != null) {
+      const size = document.createElement('span');
+      size.className = 'file-size';
+      size.textContent = formatBytes(entry.size);
+      span.append(' ', size);
+    }
+    return span;
+  }));
+}
+
+// The annotating fields this row reads, narrowed to what both stored
+// shapes have in common — `StoredRequire` and `StoredResource` differ in
+// how they carry their bodies, and none of that matters here.
+interface LoadedFile {
+  ref: string;
+  size?: number;
+  localUrl?: string;
 }
 
 // `@match` / `@include` / `@exclude` row: each pattern that resolves to

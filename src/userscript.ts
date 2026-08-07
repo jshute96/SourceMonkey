@@ -41,6 +41,7 @@ import {
   setScriptsEnabled,
   validateHeader,
   type StoredScript,
+  sourceUsesLocalFiles,
   type StoredSource,
 } from './script-store.js';
 import {
@@ -63,8 +64,10 @@ import {
   attachFiles,
   distillRequires,
   fetchRequireForPreview,
+  type AttachFilesResult,
   type FileFetchCache,
   type StoredRequire,
+  type StoredResource,
 } from './external-files.js';
 import {
   clearScriptLog,
@@ -98,6 +101,7 @@ import {
   leafName,
   scriptBasename,
   scriptOutdatedProbe,
+  stripSriFragment,
 } from './script-display.js';
 import { probeLabel } from './version-probe.js';
 import {
@@ -121,6 +125,7 @@ import {
 import { appendWithSlashBreaks } from './source-display.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { resolveScriptResource } from './file-loader.js';
+import { localSearchRoots } from './local-file-overrides.js';
 import {
   installGithubAuthListener,
   loadGithubAuthToken,
@@ -617,7 +622,14 @@ function render(script: StoredScript): void {
   // row goes missing it is someone else's doing. See `removedHere`.
   removedHere = false;
   controlsRowEl.hidden = false;
-  renderHeading(displayLocation(script.relativePath), script);
+  // A missing source row reads as ENABLED, matching `cacheSource`'s
+  // `sourceEnabled` default and `renderHeading`'s own — three spellings
+  // of the same "row not found" state should not disagree.
+  renderHeading(
+    displayLocation(script.relativePath),
+    script,
+    sourceRow ? sourceUsesLocalFiles(sourceRow) : true,
+  );
   document.title = `${displayLocation(script.relativePath)} — SourceMonkey`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
@@ -661,6 +673,7 @@ function render(script: StoredScript): void {
   const locationHref = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
   renderDetails(summaryEl, {
     header: script.header,
+    files: { requires: script.requires, resources: script.resources },
     logId: currentLogId,
     source: sourceRow,
     location: currentFilenamePath
@@ -986,6 +999,7 @@ function storedTabs(script: StoredScript): CodeTab[] {
     body: buildMainTabBody(script),
     fileUrl: script.fileUrl,
     sourceUrl: mainSourceUrl,
+    ...codeTabProvenance({ url: script.fileUrl }),
   }];
   for (const [i, r] of (script.requires ?? []).entries()) {
     tabs.push({
@@ -1007,6 +1021,7 @@ function storedTabs(script: StoredScript): CodeTab[] {
       // is what lets the Log tab linkify to this tab.
       fileUrl: r.url,
       sourceUrl: requireSourceUrls[i],
+      ...codeTabProvenance(r),
     });
   }
   tabs.push({ kind: 'log', label: 'Log' });
@@ -1031,6 +1046,40 @@ function buildMainTabBody(script: StoredScript): string {
 // the fallback keeps a future shape change from breaking the tab UI.
 // Not `scriptBasename`: that one falls back to the whole URL, and a
 // require tab labeled with a full CDN URL would wreck the tab strip.
+// Tooltip + chip for a code tab, saying where its body came from.
+//
+// Every code tab gets the tooltip — the main script's as much as a
+// `@require`'s. Labels are bare basenames, so "which file is this, and
+// where did it come from" is a fair question on any of them, and a
+// script's own URL is exactly as worth having one hover away as a
+// library's.
+//
+// The visible chip is for `localUrl` only: that's the case where the
+// tab is showing something other than what the declaration names, and a
+// hover-only disclosure would be no disclosure at all.
+function codeTabProvenance(
+  file: { url: string; localUrl?: string },
+): { title: string; mark?: string } {
+  // Display form on both counts: an SRI hash tail is most of a
+  // tooltip's width and nothing the reader can act on, and a URL
+  // carrying a script's name is a wall of `%20` unless it goes through
+  // `displayLocation` — the same decode every other URL the viewer
+  // shows already gets.
+  const url = displayLocation(stripSriFragment(file.url));
+  if (!file.localUrl) return { title: url };
+  // Blank line between the two: they are different facts — what the
+  // script declares, and what we read — not a wrapped sentence.
+  //
+  // The stand-in is named by its `file://` URL rather than the bare
+  // path, so both lines are URLs and the pair reads as "asked for this,
+  // got that". The Log's prose lines use the bare path, where a
+  // sentence is what's wanted.
+  return {
+    title: `${url}\n\nLoaded from ${displayLocation(file.localUrl)}`,
+    mark: 'local',
+  };
+}
+
 function requireBasename(url: string, ref: string): string {
   let name: string;
   try {
@@ -1106,6 +1155,20 @@ let previewHeader: ParsedHeader | null = null;
 // error for the life of the page rather than silently re-hitting the
 // host on every tab click; reload to retry.
 const previewFetchCache: FileFetchCache = new Map();
+// Declared `@require` ref → the local file that stood in for it, for
+// the refs where one did. Filled by the parse check (which resolves
+// every declared file anyway) and read by `previewTabs` for the tooltip
+// and the `local` chip.
+//
+// Populated after the first tab paint rather than before it: the tabs
+// are what make the preview appear, and blocking them on a filesystem
+// probe per require to add a chip would be the wrong trade. The check
+// re-sets the tab list when it finds one.
+const previewLocalFiles = new Map<string, string>();
+// The parse check's resolved `@require` / `@resource` entries, for the
+// details panel's dependency rows. Empty until the check lands, at
+// which point the panel repaints — see `recordPreviewFiles`.
+let previewFiles: { requires: readonly StoredRequire[]; resources: readonly StoredResource[] } | undefined;
 // Session keys backing raw-view tabs, all dropped when this page goes
 // away. A set rather than a single key because each click opens its own
 // tab, and two clicks can be in flight at once.
@@ -1218,20 +1281,7 @@ function renderPreview(text: string): void {
   // reads better for a local file, but only the file:// URL is a usable
   // href, and the copy button hands over the raw form either way.
   currentFilenamePath = previewLocation;
-  renderDetails(summaryEl, {
-    header: previewHeader,
-    location: {
-      text: displayLocation(previewLocation),
-      href: previewFileUrl,
-      trailing: filenameCopyBtn,
-      // Navigating this href for real would be captured straight back
-      // into a second preview of the same script (or, on Chrome ≤ 151,
-      // land on the download-workaround's HTML-parsed render). Route
-      // it through the same path the View raw source button uses.
-      onActivate: openRawSource,
-    },
-    size: formatBytes(new TextEncoder().encode(text).length),
-  });
+  renderPreviewDetails();
 
   tabsView.setTabs(previewTabs(text, previewHeader));
   // Previews are shareable URLs too, so `#<file>:<line>:<col>` has to
@@ -1337,7 +1387,18 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
     recheck: 'all',
     fetchCache: previewFetchCache,
     now,
+    // A preview has no source row yet, so there's no per-source opt-out
+    // to consult — a file the user is looking at on their own disk gets
+    // the same-folder rule. This is also the case the rule matters most
+    // for: the published URL a script `@require`s may not exist yet
+    // while it's being written.
+    localRoots: previewLocalRoots(),
   });
+  // Only on success. A failed `attachFiles` returns EMPTY lists rather
+  // than partial ones, so recording it would strip the size and `local`
+  // annotations off every row in the details panel — including the rows
+  // for files that loaded fine — because one dependency was broken.
+  if (!files.errorMessage) recordPreviewFiles(files);
   if (files.errorMessage) {
     // Deliberately softer than the syntax-error wording below. A dep
     // that won't load is usually a flaky host, and the store goes out
@@ -1538,6 +1599,7 @@ function previewTabs(text: string, header: ParsedHeader | null): CodeTab[] {
     fileUrl,
     // No stack frames without a run, so nothing to linkify against.
     sourceUrl: '',
+    ...codeTabProvenance({ url: fileUrl }),
   }];
   for (const ref of distillRequires(header)) {
     const resolved = resolveScriptResource(ref, fileUrl);
@@ -1550,9 +1612,74 @@ function previewTabs(text: string, header: ParsedHeader | null): CodeTab[] {
       body: () => loadPreviewRequire(ref, fileUrl),
       fileUrl: url || fileUrl,
       sourceUrl: '',
+      // `url` is '' for a ref we couldn't resolve; that tab's job is to
+      // report the rejection when opened, and a tooltip repeating the
+      // label would add nothing.
+      ...(url
+        ? codeTabProvenance({ url, localUrl: previewLocalFiles.get(ref) })
+        : {}),
     });
   }
   return tabs;
+}
+
+// The preview's details panel. Its own function because it is painted
+// twice: once as soon as the body renders, and again when the parse
+// check comes back with the resolved `@require` / `@resource` entries —
+// the panel's dependency rows annotate each declaration with what it
+// actually loaded, which isn't known on the first pass.
+function renderPreviewDetails(): void {
+  renderDetails(summaryEl, {
+    header: previewHeader,
+    files: previewFiles,
+    location: {
+      text: displayLocation(previewLocation),
+      href: previewFileUrl,
+      trailing: filenameCopyBtn,
+      // Navigating this href for real would be captured straight back
+      // into a second preview of the same script (or, on Chrome ≤ 151,
+      // land on the download-workaround's HTML-parsed render). Route
+      // it through the same path the View raw source button uses.
+      onActivate: openRawSource,
+    },
+    size: formatBytes(new TextEncoder().encode(previewText).length),
+  });
+}
+
+// Local search roots for the previewed file. Not gated on a stored
+// source: a preview is a file the user pointed at directly, and
+// `localSearchRoots` still refuses anything that isn't `file://`.
+function previewLocalRoots(): string[] {
+  return localSearchRoots(previewFileUrl, true);
+}
+
+// Fold the parse check's resolved files into the preview's state and
+// repaint what depends on them: the details panel's dependency rows
+// (size + `local` chip) and the tab strip's tooltips and chips.
+//
+// Repainting the strip is safe at any time — `setTabs` keeps the
+// selected index, so a user who has already opened a require tab stays
+// on it — but it is still gated on an actual change, because the check
+// runs again on every re-render.
+function recordPreviewFiles(files: AttachFilesResult): void {
+  // Rebuilt from this pass, never merged into. Merging would make the
+  // map add-only: a ref whose stand-in was deleted between checks would
+  // keep its `local` chip and a "Loaded from …" tooltip naming a file
+  // that no longer exists — precisely the silent-wrong-provenance this
+  // feature exists to prevent.
+  const next = new Map<string, string>();
+  for (const r of files.requires) {
+    if (r.localUrl) next.set(r.ref, r.localUrl);
+  }
+  const changed =
+    next.size !== previewLocalFiles.size ||
+    [...next].some(([ref, url]) => previewLocalFiles.get(ref) !== url);
+  previewLocalFiles.clear();
+  for (const [ref, url] of next) previewLocalFiles.set(ref, url);
+
+  previewFiles = { requires: files.requires, resources: files.resources };
+  renderPreviewDetails();
+  if (changed) tabsView.setTabs(previewTabs(previewText, previewHeader));
 }
 
 async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string> {
@@ -1561,6 +1688,7 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
     fileUrl,
     previewFetchCache,
     Date.now(),
+    previewLocalRoots(),
   );
   return entry.source;
 }
@@ -2012,13 +2140,18 @@ function startBusy(btn: HTMLButtonElement): HTMLElement {
 function renderHeading(
   text: string,
   script: Parameters<typeof renderSiteIconInto>[1],
+  // Local override roots for the script's `@icon`. Installed mode
+  // passes its source's setting; the preview passes `true` outright,
+  // the same way its `@require` / `@resource` resolution does — a file
+  // the user pointed at directly has no source row to consult.
+  useLocalFiles = true,
 ): void {
   filenameEl.replaceChildren();
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   filenameEl.appendChild(iconSlot);
   appendWithSlashBreaks(filenameEl, text);
-  renderSiteIconInto(iconSlot, script);
+  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, useLocalFiles));
 }
 
 function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {

@@ -557,7 +557,46 @@ during cumulative review of the GM_* phases:
   trusts the local filesystem already. Today the relative-path
   resolution covers same-directory and subdirectory cases; this
   would unblock requiring a file in a sibling directory or under a
-  user-supplied absolute path.
+  user-supplied absolute path. Note the portable answer for that case
+  now exists — see "Local file overrides" below — so this is only about
+  TM-compatible *input*, not about the capability.
+
+## Local file overrides — follow-ups
+
+Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). Today the
+only search root is the host script's own folder.
+
+- **Configured search roots.** The suffix-matching rule already takes
+  an ordered list of roots; nothing fills it beyond the implicit one.
+  Add `StoredSource.localRoots?: string[]` plus a global list in
+  options, ordered implicit-folder → source → global. This is what
+  makes the common `lib/` + sibling-script-directories layout work
+  without putting the library next to every script that uses it.
+  - Roots are absolute paths the user types, for the same reason
+    sources are: `<input type="file">` gives no absolute path in
+    Chrome, and `webkitdirectory` only gives relative ones, so a
+    picker can't produce something storable across sessions.
+- **Explicit per-file overrides.** A path the user names for one
+  specific ref, stored as `StoredScript.fileOverrides?: {ref,
+  localPath}[]`, offered from the details panel's dependency rows and
+  from the install preview. Unlike the inferred forms these are safe
+  for an http(s)-sourced host script too — naming the file IS the
+  authorization — which is the case of developing against a script
+  you already installed from the web.
+- **Sources-page visibility.** A source whose scripts are running on
+  local stand-ins says so only in the viewer today. A per-row marker
+  (or a count on the source header) would make it visible from the
+  list.
+- **Configured roots and `@resource`.** The implicit-folder rule is
+  no wider than a relative ref, but a configured root IS a new reach
+  for resource bytes, which flow into `GM_getResourceText`. Decide
+  whether configured roots apply to `@resource` at all, or only to
+  `@require`, before shipping them.
+- **`@icon` stand-ins are not re-read within a page.** They're memoized
+  for the page's lifetime (deliberately — see
+  [docs/local-file-overrides.md](docs/local-file-overrides.md#icon-caching)),
+  so editing an icon needs a reload where editing a `@require` doesn't.
+  Fine today; revisit if icon iteration ever becomes a real workflow.
 
 ## Install capture — follow-ups
 

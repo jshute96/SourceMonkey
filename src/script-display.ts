@@ -199,3 +199,41 @@ export function formatScriptStatusLabel(status: DisplayStatus): string {
     case 'error': return 'ERROR';
   }
 }
+
+// Drop a Subresource Integrity fragment from a `@require` / `@resource`
+// reference, for DISPLAY only.
+//
+// Lives here rather than in `file-loader.ts` (which owns resolution and
+// fetching) precisely because loading must never use it — it sits
+// beside `displayLocation`, the other transform every human-facing URL
+// goes through.
+//
+// Tampermonkey carries the expected hash in the URL fragment, as a
+// comma-separated list of `<algo>=<hex>` or `<algo>-<base64>` parts:
+//
+//   @require https://example.com/lib.js#sha256=e3b0c44298fc1c149…
+//   @require https://example.com/lib.js#md5=abc,sha256=def
+//
+// A 64-hex-digit tail is most of the width of a tooltip or a details
+// row and tells the reader nothing they can act on, so every surface
+// that shows a ref to a human strips it. Fetching, resolution, dedup,
+// storage, and error messages all keep the verbatim form — an error
+// should name what the author actually wrote.
+//
+// Only stripped when EVERY comma-separated part looks like a hash
+// declaration. An ordinary fragment (`#section`) is content the author
+// meant, so it survives; a malformed hash tail survives too, which is
+// the right way round — a reader wondering why validation didn't happen
+// needs to see what they typed.
+//
+// SourceMonkey does not yet validate these hashes; see TODO.md.
+const SRI_PART_RE = /^(?:md5|sha1|sha256|sha384|sha512)[=-]\S+$/i;
+
+export function stripSriFragment(urlOrRef: string): string {
+  const hash = urlOrRef.indexOf('#');
+  if (hash < 0) return urlOrRef;
+  const fragment = urlOrRef.slice(hash + 1);
+  if (!fragment) return urlOrRef;
+  if (!fragment.split(',').every((part) => SRI_PART_RE.test(part))) return urlOrRef;
+  return urlOrRef.slice(0, hash);
+}

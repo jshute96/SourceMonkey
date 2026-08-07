@@ -111,6 +111,25 @@
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
       /* @grant / @connect rows: API names and hosts, not prose. */
       .grant-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      /* The "loaded from local disk" chip, worn by both the tab strip
+         (`.tab-mark`, which adds only positioning) and a `@require` /
+         `@resource` declaration row. Loud enough to notice without
+         hovering, which is the whole reason the fact isn't left to the
+         tooltip — the reader is being told the body came off local disk
+         rather than from the URL the declaration names. The loaded size
+         beside it is muted: one is a detail, the other is a
+         substitution the reader has to see. */
+      .local-chip, .tab-mark {
+        padding: 0 0.4em;
+        border-radius: 3px;
+        background: #d97706;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .file-size { color: #777; font-size: 11px; }
       /* Details panel: parsed-header fields (when a metadata block is
          present) plus Filename / Size / Status. Cleared via :empty
          when there's no script. */
@@ -428,6 +447,9 @@
         border-bottom-color: #fafafa;
       }
       .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* Positioning only — the chip's own look lives in `.local-chip`,
+         shared with the details panel so the two can't drift. */
+      .tab-mark { margin-left: 0.5em; vertical-align: 1px; }
       /* The code box fills the rest of the viewport and scrolls. The
          padding/border give it a textbox-like look; tabindex makes it
          keyboard-focusable so it scrolls with arrow keys. The

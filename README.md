@@ -147,6 +147,27 @@ defaults or have another userscript manager handling links.
 Details: [docs/install-capture.md](docs/install-capture.md),
 [docs/parse-check.md](docs/parse-check.md).
 
+### Local development vs deployed scripts
+
+Scripts can reference and load other files with `@require`, `@resource` and `@icon` headers.
+TamperMonkey and other managers require absolute paths.
+
+To make local development on disk easier, SourceMonkey also allows relative
+paths, under the same directory holding the script.
+This is convenient, but makes scripts incompatible with other managers.
+
+Therefore, when publishing a script, absolute http paths are preferred.
+
+SourceMonkey enables local development on these scripts by **reading local files
+in place of http references**. For scripts run from local files, if there's
+a file in the same directory matching the end of the requested path,
+the local file will be read instead.
+
+This allows local development of the script and its resource files, without
+adjusting the file paths.
+
+See [docs/local-file-overrides.md](docs/local-file-overrides.md).
+
 ### Manifest files (`script_manifest.json`)
 
 SourceMonkey allows adding a directory as a source, and then

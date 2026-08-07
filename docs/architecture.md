@@ -97,8 +97,11 @@ details live in the topic-specific docs linked below.
   - Attaches typed entries to each StoredScript.
   - `@require` bodies are prepended at registration; `@resource`
     bytes are baked into the wrapper for `GM_getResource*`.
-  - See [requires.md](requires.md) and
-    [resources.md](resources.md).
+  - A file declared by absolute URL can be served from a local copy on
+    disk instead, for local development of a published library
+    (`src/local-file-overrides.ts`).
+  - See [requires.md](requires.md), [resources.md](resources.md), and
+    [local-file-overrides.md](local-file-overrides.md).
 - **Header parser** (`src/userscript-header.ts`) — splits a
   `.user.js` file into header + body and parses the metadata block.
   See [script-viewer.md](script-viewer.md). For which `@tag` fields

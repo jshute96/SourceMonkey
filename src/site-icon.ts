@@ -1,4 +1,5 @@
 import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
+import { localFileCandidates } from './local-file-overrides.js';
 import { representativeMatch } from './match-targets.js';
 
 // Site-icon (favicon) extraction + cache. Used by the sources page
@@ -485,8 +486,48 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
 // http(s) and file:// URLs go through the same bounded fetch + storage
 // cache the origin-discovery path uses, keyed by the URL itself so
 // multiple scripts sharing a URL share one fetch.
-export async function ensureIconForUrl(url: string): Promise<string | null> {
+//
+// `localRoots` opts this into the same local-override rule `@require`
+// and `@resource` use — see docs/local-file-overrides.md. Without it
+// (the default) nothing changes and no local reads happen. A script
+// that declares its icon by absolute URL while developing locally would
+// otherwise be the one file reference that ignored the copy on disk,
+// which reads as a gap rather than a policy.
+export async function ensureIconForUrl(
+  url: string,
+  localRoots: readonly string[] = [],
+): Promise<string | null> {
   if (url.startsWith('data:')) return usableDataUrl(url);
+  for (const candidate of localFileCandidates(url, localRoots)) {
+    const local = await localIconCandidate(candidate);
+    if (local) return local;
+  }
+  return ensureIconAt(url);
+}
+
+// A local stand-in candidate, memoized for the life of the page rather
+// than written to the storage cache.
+//
+// Deliberately NOT the storage cache: a miss there is remembered for 24
+// hours, so an icon file created after the first paint wouldn't appear
+// until the next day — the same "why isn't my edit showing up" trap the
+// require path exists to avoid. A page-lifetime memo instead means the
+// cost is one local read per icon per page load (repaints are free) and
+// a reload always sees the current state of the disk.
+//
+// A candidate that isn't there, or isn't an image, just returns null and
+// the caller falls through to the declared URL.
+const localIconMemo = new Map<string, Promise<string | null>>();
+
+function localIconCandidate(url: string): Promise<string | null> {
+  const memo = localIconMemo.get(url);
+  if (memo) return memo;
+  const p = fetchIconAt(url);
+  localIconMemo.set(url, p);
+  return p;
+}
+
+async function ensureIconAt(url: string): Promise<string | null> {
   const key = urlIconKey(url);
   const pending = inflight.get(key);
   if (pending) return pending;
@@ -534,7 +575,15 @@ interface ScriptWithMatching {
 // wins outright over the origin-discovered favicon. The click-through
 // link is always the site's linkUrl regardless — the @icon header is
 // only a visual override.
-export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching): void {
+export function renderSiteIconInto(
+  slot: HTMLElement,
+  script: ScriptWithMatching,
+  // Local override roots for a script-declared `@icon`, from the
+  // caller's `StoredSource`. Passed in rather than derived here because
+  // the per-source opt-out lives on the source row, which this module
+  // has no reason to load. Omitted → no overrides, no local reads.
+  localRoots: readonly string[] = [],
+): void {
   const target = representativeMatch(script.matching);
   // The header value is raw (URL, data:, or relative path). Resolve it
   // against the script's own URL so `@icon foo.png` reaches the
@@ -568,7 +617,7 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
       // Header-declared icon wins. Origin-based discovery only runs
       // when the script doesn't pin its own icon.
       dataUrl = resolvedIcon
-        ? await ensureIconForUrl(resolvedIcon.url)
+        ? await ensureIconForUrl(resolvedIcon.url, localRoots)
         : await ensureSiteIcon(target!.origin, target!.linkUrl);
     } catch {
       return;

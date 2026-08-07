@@ -38,6 +38,7 @@ import {
   getSources,
   getSourceWithScripts,
   loadStateLogEntry,
+  localFileLogMessages,
   refreshAllSources,
   refreshScript,
   refreshSource,
@@ -531,6 +532,13 @@ export function emitScriptOutcomeLog(
     });
     return;
   }
+  // Before the state verdict, and not gated by it: a script can be
+  // `invalid` for an unrelated reason and still have picked up a local
+  // stand-in this pass, and that substitution is exactly what the user
+  // needs to know about while debugging the failure.
+  for (const message of localFileLogMessages(prior, next)) {
+    logScriptEvent(scriptId, { level: 'info', source, message });
+  }
   const nextState = loadStateLogEntry(next);
   const priorState = prior ? loadStateLogEntry(prior) : null;
   if (nextState) {
@@ -638,6 +646,10 @@ function hasReportableOutcome(
   if (!next) return true;
   if (loadStateLogEntry(next)) return true;
   if (prior && loadStateLogEntry(prior)) return true;
+  // A local stand-in that appeared, vanished, or changed on disk is an
+  // outcome even when the script's own bytes didn't move — that's the
+  // common shape while editing a required library.
+  if (localFileLogMessages(prior, next).length > 0) return true;
   return !prior || prior.loadedAt !== next.loadedAt;
 }
 

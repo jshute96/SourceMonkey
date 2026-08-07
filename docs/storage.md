@@ -61,6 +61,10 @@ browsing session, not the user's configuration.
 - `enabled` — user-controlled on/off toggle. When `false`, every
   script under this source is treated as effectively disabled by the
   match index (independent of each script's own `enabled`).
+- `localFiles?` — per-source opt-OUT of local file overrides for
+  `@require` / `@resource` / `@icon`. Only an explicit `false` disables
+  it, so rows persisted before the field existed read as enabled. See
+  [local-file-overrides.md](local-file-overrides.md#per-source-opt-out).
 - `displayName?` — short, human-readable label shown on the sources
   page heading and the viewer's Source row. Backfilled from
   `inferDisplayName(path)` on first read after upgrade

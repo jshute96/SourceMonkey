@@ -17,6 +17,7 @@ import {
   scriptBasename,
   scriptDisplayName,
   scriptOutdatedProbe,
+  stripSriFragment,
 } from '../../dist/script-display.js';
 
 // ---------- formatBytes ----------
@@ -288,4 +289,67 @@ test('logIdDupeSuffix: only a trailing #<digits> counts', () => {
   // splitting on the first `#` would render half the name as one.
   assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js'), '');
   assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js#3'), '#3');
+});
+
+// ---------- stripSriFragment ----------
+//
+// Display-only: a 64-hex-digit tail is most of the width of a tooltip
+// or a details row and tells the reader nothing they can act on. The
+// fetch / dedup / error-message paths keep the verbatim ref.
+
+test('stripSriFragment: drops a single hash fragment', () => {
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#md5=c45f9b0d19ba69bb2d44918746c4d7ae'),
+    'https://example.com/lib.js',
+  );
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#sha256=e3b0c44298fc1c14'),
+    'https://example.com/lib.js',
+  );
+});
+
+// TM accepts a comma-separated list and uses the last supported one.
+test('stripSriFragment: drops a multi-hash fragment', () => {
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#md5=abc,sha256=def'),
+    'https://example.com/lib.js',
+  );
+});
+
+// The base64 spelling uses `-` where the hex spelling uses `=`.
+test('stripSriFragment: handles the base64 spelling', () => {
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#sha256-47DEQpj8HBSa+/TImW'),
+    'https://example.com/lib.js',
+  );
+});
+
+test('stripSriFragment: every supported algorithm', () => {
+  for (const algo of ['md5', 'sha1', 'sha256', 'sha384', 'sha512']) {
+    assert.equal(stripSriFragment(`https://example.com/lib.js#${algo}=abc`), 'https://example.com/lib.js');
+  }
+  // Case-insensitive: TM's docs lowercase these but nothing enforces it.
+  assert.equal(stripSriFragment('https://example.com/lib.js#SHA256=abc'), 'https://example.com/lib.js');
+});
+
+// An ordinary fragment is content the author meant, so it survives —
+// this is why the rule matches hash SHAPES rather than just cutting at
+// the first `#`.
+test('stripSriFragment: leaves a non-hash fragment alone', () => {
+  for (const url of [
+    'https://example.com/lib.js#section',
+    'https://example.com/lib.js#',
+    'https://example.com/lib.js#md5',
+    'https://example.com/lib.js#sha256=abc,notahash',
+    'https://example.com/lib.js#crc32=abc',
+    'https://example.com/lib.js',
+  ]) {
+    assert.equal(stripSriFragment(url), url);
+  }
+});
+
+// A malformed hash tail surviving is the right way round: a reader
+// wondering why validation didn't happen needs to see what they typed.
+test('stripSriFragment: leaves a hash with no value alone', () => {
+  assert.equal(stripSriFragment('https://example.com/lib.js#md5='), 'https://example.com/lib.js#md5=');
 });

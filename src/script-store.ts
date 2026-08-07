@@ -72,6 +72,7 @@ import {
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
+import { localSearchRoots } from './local-file-overrides.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import {
   ignoredMatchMessage,
@@ -85,6 +86,7 @@ import {
   validLocation,
   type DiagnosticLocation,
 } from './diagnostic-location.js';
+import { displayLocation, stripSriFragment } from './script-display.js';
 import { inferDisplayName } from './source-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
@@ -250,6 +252,22 @@ export interface StoredSource {
   // overridable value: when set, the UI uses it verbatim; the inferred
   // form is only consulted when this field is absent/empty.
   displayName?: string;
+  // Per-source opt-OUT of local stand-ins for `@require` / `@resource`
+  // files (see `src/local-file-overrides.ts` and docs/local-file-overrides.md). Only an
+  // explicit `false` disables it, so every row persisted before this
+  // field existed reads as enabled — which is the behavior a local
+  // directory source wants by default.
+  //
+  // Off is for a directory of scripts you didn't write, where a file
+  // sitting next to a script should NOT quietly stand in for the
+  // library it names.
+  localFiles?: boolean;
+}
+
+// Treat any pre-`localFiles`-era stored entry as enabled, the same way
+// `isSourceEnabled` treats `enabled`.
+export function sourceUsesLocalFiles(source: StoredSource): boolean {
+  return source.localFiles !== false;
 }
 
 // Treat any pre-`enabled`-era stored entry as enabled. The schema now
@@ -709,6 +727,72 @@ export function loadStateLogEntry(
   return null;
 }
 
+// Log lines for local stand-ins that started, stopped, or changed on
+// disk between two versions of a row.
+//
+// Why log this at all: running something other than what the `@require`
+// line names is exactly the kind of substitution that must not be
+// silent. The viewer marks it too (a `local` chip on the tab and in the
+// details panel), but the Log is what says *when* it happened, and a
+// re-read after an edit is the signal a developer is actually watching
+// for.
+//
+// Why it isn't noisy: `contentHash` gates the "still using it" case, so
+// a stand-in that hasn't changed says nothing on the dozens of
+// opportunistic refreshes between edits.
+// How a declared reference reads in a Log line: the SRI hash tail
+// dropped (it's most of the line's width and nothing the reader can act
+// on) and percent-escapes decoded, so a URL carrying a script's name
+// reads as `my lib/util.js` rather than `my%20lib/util.js`. Same
+// treatment every other URL a human sees already gets.
+const refText = (ref: string): string => displayLocation(stripSriFragment(ref));
+
+export function localFileLogMessages(
+  prior: StoredScript | undefined,
+  next: StoredScript,
+): string[] {
+  const out: string[] = [];
+  // Keyed by KIND + declared URL. The URL alone would collide: a
+  // `@require` and a `@resource` pointing at the same URL is an
+  // explicitly supported case (they share one fetch — see
+  // external-files.ts), and a single map would hand the require the
+  // resource's record on a last-write-wins basis.
+  //
+  // The URL rather than the ref is the right half of the key: it's the
+  // field that stays put while the stand-in appears and disappears
+  // underneath it.
+  const priorFiles = new Map<string, { localUrl?: string; contentHash: string }>();
+  const priorKey = (kind: string, url: string): string => `${kind}\n${url}`;
+  for (const f of prior?.requires ?? []) {
+    priorFiles.set(priorKey('require', f.url), { localUrl: f.localUrl, contentHash: f.contentHash });
+  }
+  for (const f of prior?.resources ?? []) {
+    priorFiles.set(priorKey('resource', f.url), { localUrl: f.localUrl, contentHash: f.contentHash });
+  }
+  for (const kind of ['require', 'resource'] as const) {
+    const list = kind === 'require' ? (next.requires ?? []) : (next.resources ?? []);
+    for (const f of list) {
+      const was = priorFiles.get(priorKey(kind, f.url));
+      if (f.localUrl) {
+        // Same file, same bytes as last pass → nothing happened.
+        if (was?.localUrl === f.localUrl && was.contentHash === f.contentHash) continue;
+        out.push(
+          `@${kind} ${refText(f.ref)} is loading from ${displayLocation(f.localUrl)}`,
+        );
+      } else if (was?.localUrl) {
+        out.push(`@${kind} ${refText(f.ref)} is no longer loading from a local file`);
+      }
+    }
+  }
+  // A declaration the script dropped isn't reported — the `@require`
+  // line going away is the event, and it isn't this function's to tell.
+  //
+  // Deduped because two `@resource` lines may name the same URL under
+  // different names (deliberately — see `distillResources`), and both
+  // entries would otherwise produce the identical line.
+  return [...new Set(out)];
+}
+
 // Resolve + fetch a script's `@require` bodies AND `@resource` blobs,
 // attaching both lists onto the StoredScript. On any failure preserves
 // the prior's last-known-good state and flips status to 'invalid' with a
@@ -735,13 +819,24 @@ export async function applyFiles(
   recheck: 'all' | 'preserve',
   fetchCache: FileFetchCache,
   now: number,
+  // Whether this script's source allows local stand-ins. Defaults to
+  // false so the offline validator (and any other caller outside the
+  // extension) keeps the plain declared-URL behavior.
+  useLocalFiles = false,
 ): Promise<StoredScript> {
   const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
   const priorResources = new Map((prior?.resources ?? []).map((r) => [r.url, r]));
+  const localRoots = localSearchRoots(built.fileUrl, useLocalFiles);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.
-  if (recheck === 'preserve' && prior) {
+  //
+  // Skipped entirely when the script has local search roots: a stand-in
+  // has to be re-read every pass or an edit on disk wouldn't surface
+  // until the user clicked Refresh, which is the workflow the whole
+  // feature exists for. The per-entry loaders still preserve cached
+  // REMOTE entries in that case, so only local reads are paid for.
+  if (recheck === 'preserve' && prior && localRoots.length === 0) {
     const newReqRefs = distillRequires(built.header);
     const sameReqs =
       newReqRefs.length === (prior.requires?.length ?? 0) &&
@@ -775,6 +870,7 @@ export async function applyFiles(
     recheck,
     fetchCache,
     now,
+    localRoots,
   });
   if (result.errorMessage) {
     // Preserve the last-known-good script state when we have one.
@@ -990,6 +1086,12 @@ interface RebuildArgs {
   // refreshAllSources); rebuildSource itself never mutates the entry
   // semantics, just hands the cache to attachFiles.
   fileFetchCache?: FileFetchCache;
+  // Does this source allow local stand-ins for the files its scripts
+  // declare (`StoredSource.localFiles`)? Passed as a plain flag rather
+  // than the whole source row because the roots are derived per script,
+  // from each script's own `fileUrl`. Defaults to false so a caller that
+  // hasn't thought about it gets the declared-URL-only behavior.
+  useLocalFiles?: boolean;
 }
 
 // Pure orchestrator: given the prior state for a source plus a fresh
@@ -1009,6 +1111,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
   const newId = args.newId ?? (() => crypto.randomUUID());
   const recheckFiles = args.recheckFiles ?? 'all';
   const fileFetchCache: FileFetchCache = args.fileFetchCache ?? new Map();
+  const useLocalFiles = args.useLocalFiles ?? false;
   const existingByPath = new Map<string, StoredScript>();
   for (const e of args.existing) existingByPath.set(e.relativePath, e);
 
@@ -1051,7 +1154,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         // Record the listing's mtime so the next refresh can decide to
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
-        const withFiles = await applyFiles(built, prior, recheckFiles, fileFetchCache, args.now);
+        const withFiles = await applyFiles(built, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles);
         // Soft-failure preservation: an http(s) fetch that returned 200
         // but parsed `invalid`, when we have a prior `ok` copy, is a
         // refresh failure — a login / error page served in place of the
@@ -1108,7 +1211,9 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
         // pick up remote dep updates without touching the main
         // script). The opportunistic path passes 'preserve' which
         // short-circuits.
-        entryPromises.push(applyFiles(next, prior, recheckFiles, fileFetchCache, args.now));
+        entryPromises.push(
+          applyFiles(next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles),
+        );
       } else {
         entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
           id,
@@ -1374,7 +1479,7 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
   // the row would briefly show OK and only flip on the storage-change
   // listener.
   if (refreshed) {
-    await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
+    await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
   }
   return { kind: 'newSource', source: refreshed?.source ?? seed };
 }
@@ -1469,25 +1574,33 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
 
   const refreshed = await refreshSource(containerId);
   if (refreshed) {
-    await Promise.all(refreshed.scripts.map(emitInitialLoadLogIfBroken));
+    await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
   }
   const finalSource = refreshed?.source ?? nextContainer;
   if (isNew) return { kind: 'newSource', source: finalSource };
   return { kind: 'existingContainer', source: finalSource, scriptId };
 }
 
-// Copy a freshly-added script's load failure into its Log tab.
+// Copy a freshly-added script's load failure — and any local stand-in
+// it picked up — into its Log tab. (Named for what it does now: it
+// also runs for a perfectly healthy script that resolved a stand-in.)
 //
 // The updater-driven refresh paths do this themselves; the add path
 // bypasses the updater, so without this a script that lands broken on
-// its very first load would show a red badge over an empty Log.
+// its very first load would show a red badge over an empty Log, and a
+// script running a local file in place of a declared URL would never
+// have said so.
 //
 // Plain append. Adding a single file to an *existing* container
 // refreshes every sibling, and we run over all of them — so a sibling
 // that is still broken logs that again. It was genuinely re-read, so
 // saying so is honest, and the add path is a deliberate user action
 // rather than something that fires on its own.
-async function emitInitialLoadLogIfBroken(script: StoredScript): Promise<void> {
+async function emitInitialLoadLog(script: StoredScript): Promise<void> {
+  // `undefined` prior: everything this row loaded is news at add time.
+  for (const message of localFileLogMessages(undefined, script)) {
+    await appendScriptLog(script.id, { level: 'info', source: 'add-source', message });
+  }
   const entry = loadStateLogEntry(script);
   if (!entry) return;
   await appendScriptLog(script.id, { ...entry, source: 'add-source' });
@@ -1679,6 +1792,7 @@ export async function refreshSource(
     now,
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
+    useLocalFiles: sourceUsesLocalFiles(source),
   });
 
   // Re-read the current rows INSIDE the lock and write atomically, so a
@@ -1793,6 +1907,7 @@ export async function refreshScript(
     now: Date.now(),
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
+    useLocalFiles: sourceUsesLocalFiles(sourceRow),
   });
   const next = result[0];
   if (!next) return null;
@@ -1942,6 +2057,23 @@ export async function setSourceEnabled(
     const source = await getRaw<StoredSource>(sourceKey(id));
     if (!source) return null;
     const next: StoredSource = { ...source, enabled };
+    await chrome.storage.local.set({ [sourceKey(id)]: next });
+    return next;
+  });
+}
+
+// Per-source opt-out of local stand-ins. Writing the field only —
+// nothing is refetched here, because the flag changes what the NEXT
+// refresh resolves to, and the sources page follows this with its own
+// Refresh so the user sees the effect immediately.
+export async function setSourceLocalFiles(
+  id: string,
+  localFiles: boolean,
+): Promise<StoredSource | null> {
+  return mutate(async () => {
+    const source = await getRaw<StoredSource>(sourceKey(id));
+    if (!source) return null;
+    const next: StoredSource = { ...source, localFiles };
     await chrome.storage.local.set({ [sourceKey(id)]: next });
     return next;
   });

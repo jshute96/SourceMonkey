@@ -139,6 +139,20 @@ the SRI fragment is parsed-and-preserved only — not yet validated.
 TM documents the full syntax; VM and GM4 don't document SRI in their
 metadata pages.
 
+It is stripped from what a human reads — the viewer's tab tooltips,
+details rows, and Log lines — since a 64-hex-digit tail is most of the
+width of those surfaces and nothing the reader can act on. Fetching,
+resolution, dedup, storage, and error messages all keep the verbatim
+reference.
+
+## Local files in place of a declared URL
+
+For a script loaded from `file://`, an absolute `http(s)` `@require`,
+`@resource`, or `@icon` can be served from a matching file on disk
+beside the script. Lets a published script keep the portable absolute
+URL that other managers require while still being developed locally.
+See [local-file-overrides.md](local-file-overrides.md).
+
 ---
 
 ## Anything unrecognised

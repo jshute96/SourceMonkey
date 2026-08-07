@@ -21,6 +21,7 @@ export interface SmApi {
     scripts: StoredScriptLike[];
   } | null>;
   setSourceEnabled(id: string, enabled: boolean): Promise<unknown>;
+  setSourceLocalFiles(id: string, localFiles: boolean): Promise<unknown>;
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
   updateSource(id: string, mode: Mode): Promise<unknown>;
   // `probe: 'force'` is what a genuine Refresh click passes. Pass it
@@ -136,6 +137,20 @@ export interface StoredScriptLike {
     size: number;
     contentHash?: string;
     loadedAt: number;
+    // Set when a local file stood in for `url` — see
+    // docs/local-file-overrides.md.
+    localUrl?: string;
+  }[];
+  resources?: {
+    name: string;
+    ref: string;
+    url: string;
+    bytesBase64: string;
+    size: number;
+    contentType: string;
+    contentHash?: string;
+    loadedAt: number;
+    localUrl?: string;
   }[];
   versionProbes?: {
     kinds: string[];
