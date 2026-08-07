@@ -51,23 +51,26 @@ Specs that opt out under TM via
 
 ## Failing specs (untriaged divergences)
 
-Last full TM run: 17 passed, 6 failed, 6 skipped.
+Last full TM run: 23 passed, 0 failed, 6 skipped (TM 5.5.0).
 
-- **`headers-inject-into/`** — page-world script doesn't see the
-  page's inline-script globals the way it does under SM. Different
-  world / context-isolation behaviour. Needs its own triage.
-- **`headers-run-at/`** — each `@run-at` variant logs its `<li>`
-  twice, so the `toHaveCount(1)` assertions see 2.
-- **`gm-dom/`** — every `GM_addElement` case fails.
-- Both of the above surfaced only once the driver's install path was
-  repaired (see below) — before that the whole TM suite died at
-  install, so "not failing" meant "never ran", not "passing". They are
-  not regressions from that repair: they fail identically with the
-  driver's stale-install-cache bug fixed, which rules out the obvious
-  cause of double-running (a script being reinstalled per test).
-  - The duplicate-`<li>` shape suggests two live copies of each
-    script. Worth checking the TM profile for duplicate installs
-    before assuming a real injection divergence.
+None outstanding.
+
+### Duplicate installs in the profile — check this first
+
+The `gm-dom` and `headers-run-at` failures seen after the install path
+was repaired were **not** a manager divergence: the TM profile held two
+copies of fourteen example scripts, so each one ran twice on every
+matching page and every `toHaveCount(1)` saw 2.
+
+- The copies pre-dated the repair. Nothing in the suite creates them
+  now — sync matches on `@name` and updates in place — but the profile
+  is persistent, so old damage survives indefinitely.
+- `getInstalledMap` now prints a warning naming any duplicated script,
+  because from the spec end this looks like an injection bug and
+  nothing points at the profile.
+- To clear them: TM dashboard → tick the extra rows → *Apply this to
+  all selected scripts* → **Delete** → Start, and accept the confirm.
+  Keep one copy of each `@name`.
 
 ## Behavior diffs (SM vs TM)
 
@@ -77,6 +80,19 @@ behavior down and the two managers picked different rules. The
 cross-manager assertion has been loosened to accept both; SM's
 specific rule stays enforced in an SM-only spec.
 
+- **`headers-inject-into/`** (content-world isolation) — TM doesn't
+  implement `@inject-into` at all. It's a Violentmonkey /
+  SourceMonkey header; TM's nearest equivalent is `@sandbox`.
+  - TM therefore ignores `@inject-into content` and honours the
+    variant's `@grant none`, which by TM's own rules means "run in
+    page context". The script then legitimately sees the page's
+    globals — a difference in what the header *means*, not a
+    world-isolation bug.
+  - The isolation assertions are skipped under TM (guarded in
+    `tests/examples/headers-inject-into/headers-inject-into.spec.ts`);
+    everything else in that spec, including the page-world half, still
+    runs under both. SM's rule stays enforced by the same spec on the
+    `sourcemonkey` project.
 - **`gm-dom/`** (default-parent `<p>`) — TM appends the no-parent
   element to `<head>` regardless of tag; SM/VM route by tag (head
   for `script`/`style`/`link`/`meta`/`title`/`base`, body for

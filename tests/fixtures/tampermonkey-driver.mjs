@@ -248,11 +248,30 @@ export class TampermonkeyDriver {
    * reads the dashboard; subsequent calls reuse the in-memory map.
    * Callers that install or update a script should call
    * `recordInstalled` so the cache stays in sync.
+   *
+   * Keying by `@name` collapses duplicate installs, so this also warns
+   * about them — a profile holding the same script twice runs it twice
+   * on every page, and the only symptom is an example spec counting
+   * two of something it expects one of. That is a slow thing to
+   * diagnose from the spec end; see `docs/cross-manager-test-results.md`.
    * @returns {Promise<Map<string, string>>}
    */
   async getInstalledMap() {
     if (this._installedMap === null) {
       const list = await this.listInstalled();
+      const seen = new Set();
+      const duplicated = new Set();
+      for (const s of list) {
+        if (seen.has(s.name)) duplicated.add(s.name);
+        seen.add(s.name);
+      }
+      if (duplicated.size) {
+        console.log(
+          `[tm-driver] Tampermonkey has more than one copy of: ${[...duplicated].join(', ')}. ` +
+          `Each copy runs on every matching page, so specs that count elements will fail. ` +
+          `Remove the extras from TM's dashboard (select the rows, Apply → Delete).`
+        );
+      }
       this._installedMap = new Map(list.map((s) => [s.name, s.version]));
     }
     return this._installedMap;
