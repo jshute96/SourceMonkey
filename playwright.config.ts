@@ -15,7 +15,7 @@ import { defineConfig } from '@playwright/test';
 //   - sourcemonkey (default) — runs every spec under both directories.
 //   - tampermonkey           — runs only the examples suite against the
 //                              user's TM-equipped browser opened via
-//                              scripts/open-test-browser-with-TamperMonkey.sh.
+//                              scripts/open-test-browser-with-Tampermonkey.sh.
 //                              SM-internals specs (e2e/) are skipped here
 //                              because they reach into the SM service
 //                              worker which doesn't exist under TM.

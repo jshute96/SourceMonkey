@@ -14,7 +14,7 @@
 //
 // Env vars:
 //   TM_CDP_PORT — CDP port to probe (default 9223; must match what
-//                 scripts/open-test-browser-with-TamperMonkey.sh uses
+//                 scripts/open-test-browser-with-Tampermonkey.sh uses
 //                 and what tests/fixtures/manager.ts reads).
 
 import { spawn } from 'node:child_process';
@@ -208,7 +208,7 @@ async function main() {
   // rewrites Preferences from memory on exit, so a later edit is lost.
   grantDownloadsPermission();
   console.log(`Tampermonkey test browser isn't running — launching it now…`);
-  const script = path.join(ROOT, 'scripts/open-test-browser-with-TamperMonkey.sh');
+  const script = path.join(ROOT, 'scripts/open-test-browser-with-Tampermonkey.sh');
   // Detached + ignore so the child survives after this preflight exits.
   // The opener script execs Chromium directly, so the unrefed child IS
   // the browser; killing the preflight process won't take it down.
@@ -221,7 +221,7 @@ async function main() {
   if (!(await waitForCdp())) {
     console.error(
       `\nBrowser didn't come up on CDP port ${PORT} within 15s.\n` +
-      `Try running scripts/open-test-browser-with-TamperMonkey.sh manually\n` +
+      `Try running scripts/open-test-browser-with-Tampermonkey.sh manually\n` +
       `to see what went wrong.\n`
     );
     process.exit(1);

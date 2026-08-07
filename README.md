@@ -19,7 +19,7 @@ Userscripts can also be loaded from the web, including from GitHub repos, and
 from sites like [Greasy Fork](https://greasyfork.org/).
 
 SourceMonkey is generally compatible with
-[TamperMonkey](https://www.tampermonkey.net/) and other common
+[Tampermonkey](https://www.tampermonkey.net/) and other common
 userscript managers.
 
 ### Example userscripts
@@ -29,7 +29,7 @@ that interactively demonstrate supported `GM` APIs and other
 functionality.
 
 These also function as a **compliance test suite** for userscript managers,
-with tests that compare behavior between SourceMonkey and TamperMonkey.
+with tests that compare behavior between SourceMonkey and Tampermonkey.
 
 ### Status
 
@@ -150,7 +150,7 @@ Details: [docs/install-capture.md](docs/install-capture.md),
 ### Local development vs deployed scripts
 
 Scripts can reference and load other files with `@require`, `@resource` and `@icon` headers.
-TamperMonkey and other managers require absolute paths.
+Tampermonkey and other managers require absolute paths.
 
 To make local development on disk easier, SourceMonkey also allows relative
 paths, under the same directory holding the script.
@@ -333,7 +333,7 @@ npm run test:e2e:tm:headed
 ```
 
 The headed variant connects over CDP to the browser opened by
-`scripts/open-test-browser-with-TamperMonkey.sh`. The headless
+`scripts/open-test-browser-with-Tampermonkey.sh`. The headless
 variant launches its own Chromium against the same persistent profile
 (so the same TM installation), but can't run while the headed browser
 is open against the profile.

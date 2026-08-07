@@ -4,7 +4,7 @@
 // logic and selectors stay in one place.
 //
 // TM is not loaded as an unpacked extension under our control — the
-// test browser is opened via scripts/open-test-browser-with-TamperMonkey.sh
+// test browser is opened via scripts/open-test-browser-with-Tampermonkey.sh
 // and the user installed TM from the Chrome Web Store into the
 // persistent profile (one-time setup). Callers connect to that browser
 // over CDP and pass the resulting BrowserContext to TampermonkeyDriver.

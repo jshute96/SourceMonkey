@@ -13,7 +13,7 @@
 //
 // How to run it
 //   1. Start the TM test browser:
-//      `scripts/open-test-browser-with-TamperMonkey.sh`
+//      `scripts/open-test-browser-with-Tampermonkey.sh`
 //   2. Have at least one userscript installed in TM (otherwise
 //      "first visible row" returns nothing useful).
 //   3. `node scripts/inspect-tm-dashboard.mjs`

@@ -14,7 +14,7 @@ compliance reference and surface divergences between managers.
 - `npm run test:e2e` — SM project only (default for `npm test` too).
 - `npm run test:e2e:tm` — TM project, **headless**.
   - Launches its own Chromium against the persistent TM profile.
-  - The headed browser (`open-test-browser-with-TamperMonkey.sh`) must
+  - The headed browser (`open-test-browser-with-Tampermonkey.sh`) must
     **not** be open at the same time — Chromium can't share a profile
     between two processes.
   - Preflight (`pretest:e2e:tm` → `scripts/e2e-tm-preflight.mjs
@@ -25,7 +25,7 @@ compliance reference and surface divergences between managers.
     before Playwright runs.
 - `npm run test:e2e:tm:headed` — TM project, **headed**.
   - Sets `TM_HEADED=1` and connects via CDP to the browser opened by
-    `scripts/open-test-browser-with-TamperMonkey.sh`.
+    `scripts/open-test-browser-with-Tampermonkey.sh`.
   - Use this when you want to watch the run or debug interactively.
   - Preflight (`pretest:e2e:tm:headed` → `scripts/e2e-tm-preflight.mjs
     --need-open`): if CDP 9223 isn't answering, spawns the opener
@@ -62,7 +62,7 @@ profile that already has Tampermonkey installed. The profile lives at
 
 Steps:
 
-1. `scripts/open-test-browser-with-TamperMonkey.sh` — opens Playwright's
+1. `scripts/open-test-browser-with-Tampermonkey.sh` — opens Playwright's
    bundled Chromium with the persistent profile and CDP enabled.
 2. In that browser, install Tampermonkey from the Chrome Web Store:
    <https://chromewebstore.google.com/detail/dhdgffkkebhmkfjojejmpbldmpobfkfo>

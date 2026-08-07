@@ -16,8 +16,8 @@
 #      across runs.
 #
 # Usage:
-#   scripts/open-test-browser-with-TamperMonkey.sh          # about:blank
-#   scripts/open-test-browser-with-TamperMonkey.sh <url>    # custom URL
+#   scripts/open-test-browser-with-Tampermonkey.sh          # about:blank
+#   scripts/open-test-browser-with-Tampermonkey.sh <url>    # custom URL
 
 set -euo pipefail
 

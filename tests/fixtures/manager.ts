@@ -4,7 +4,7 @@
 //   --project=sourcemonkey  — launches Chromium with the unpacked
 //     dist/ extension, same shape as tests/fixtures/extension.ts.
 //   --project=tampermonkey  — connects via CDP (port 9223) to the
-//     browser opened by scripts/open-test-browser-with-TamperMonkey.sh.
+//     browser opened by scripts/open-test-browser-with-Tampermonkey.sh.
 //     TM must be installed in that profile interactively beforehand.
 //
 // The project's `metadata.manager` field is what we read. The
@@ -172,12 +172,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
       if (TM_HEADED) {
         // Headed (debug) mode: connect to a browser the user already
-        // opened with scripts/open-test-browser-with-TamperMonkey.sh.
+        // opened with scripts/open-test-browser-with-Tampermonkey.sh.
         // Don't close at teardown — it's their interactive session.
         const browser = await chromium.connectOverCDP(`http://127.0.0.1:${TM_CDP_PORT}`).catch((err) => {
           throw new Error(
             `Could not connect to Tampermonkey test browser at CDP port ${TM_CDP_PORT}. ` +
-            `Start it first with: scripts/open-test-browser-with-TamperMonkey.sh\n` +
+            `Start it first with: scripts/open-test-browser-with-Tampermonkey.sh\n` +
             `Underlying error: ${err?.message ?? err}`
           );
         });
@@ -204,7 +204,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       if (!fs.existsSync(TM_PROFILE_DIR)) {
         throw new Error(
           `TM profile not found at ${TM_PROFILE_DIR}. ` +
-          `First-time setup: run scripts/open-test-browser-with-TamperMonkey.sh and install TM ` +
+          `First-time setup: run scripts/open-test-browser-with-Tampermonkey.sh and install TM ` +
           `from the Chrome Web Store, then close the browser. ` +
           `See docs/cross-manager-testing.md.`
         );
