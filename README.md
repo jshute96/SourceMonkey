@@ -89,7 +89,9 @@ headers, content (including the `@require` files it loads), status, and a
 When the same script is installed more than once — the same URL under two
 sources, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel, where each one can be
-enabled, updated, or opened.
+enabled, updated, opened, or removed. Enabling one copy disables the others,
+since two enabled copies of a script both run — ctrl-click a checkbox
+(cmd-click on a Mac) to override that.
 
 The **Options** link at the top-left covers `.user.js` link capture,
 debug logging, and a GitHub token (for private repos and a higher API

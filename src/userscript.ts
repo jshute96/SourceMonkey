@@ -37,13 +37,27 @@ import {
   getSources,
   isScriptEnabled,
   isSourceEnabled,
-  setScriptEnabled,
+  removeScript,
+  setScriptsEnabled,
   validateHeader,
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
-import { findRelatedVersions, type RelatedVersions } from './script-identity.js';
-import { renderRelatedVersions, type RelatedVersionsActions } from './related-versions.js';
+import {
+  allRelatedRows,
+  enableChanges,
+  findRelatedVersions,
+  otherRunningCopies,
+  type RelatedVersions,
+  type ScriptEnableChange,
+} from './script-identity.js';
+import {
+  enableTitle,
+  renderRelatedVersions,
+  SOURCE_OFF_TITLE,
+  watchSoloModifier,
+  type RelatedVersionsActions,
+} from './related-versions.js';
 import { computeLogIds } from './script-log-id.js';
 import {
   attachFiles,
@@ -178,6 +192,9 @@ const tabsView = new CodeTabsView(
 );
 
 refreshBtn.addEventListener('click', () => void onRefresh());
+// Same modifier wiring as a panel row's checkbox, from the same helper:
+// ctrl/cmd-click opts out of the exclusive sweep here too.
+const takeControlsRowSolo = watchSoloModifier(enableCheckboxEl);
 enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
 
 // Static markup for the Lucide-style copy / check icons. Safe to embed
@@ -343,7 +360,16 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   // If THIS script was removed, drop into the not-found state.
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage — open it from the sources page');
+    // Not consumed here: this path can run more than once for a single
+    // removal (our own call, then the storage event), and the second
+    // pass must not downgrade the wording. `render` clears the flag
+    // instead — once a script is on screen, any earlier removal is
+    // history and a later disappearance is someone else's.
+    showMissing(
+      removedHere
+        ? 'This script has been removed'
+        : 'Script not found in storage — open it from the sources page',
+    );
     return;
   }
   // Re-read the parent source too: its enabled state greys the Enable
@@ -474,12 +500,91 @@ async function onRefresh(): Promise<void> {
   }
 }
 
+// The controls-row toggle. Same radio-button rule as the panel's rows:
+// enabling this copy turns off every other copy that is running, since
+// two enabled copies of one script both register and both run.
+//
+// It has to read the related rows itself — unlike a panel row, this
+// checkbox has no table around it to take them from — but the rule
+// applied to them is the shared one, so the two controls can't drift.
 async function onToggleEnabled(enabled: boolean): Promise<void> {
   if (!scriptId) return;
-  const next = await setScriptEnabled(scriptId, enabled);
+  const solo = takeControlsRowSolo();
+  let changes = enableChanges(scriptId, enabled, []);
+  if (enabled && !solo) {
+    try {
+      const snapshot = await readStoreSnapshot();
+      const script = snapshot.scripts.find((s) => s.id === scriptId);
+      const related = findRelatedVersions({
+        ...snapshot,
+        location: script?.fileUrl ?? '',
+        header: script?.header ?? null,
+      });
+      changes = enableChanges(scriptId, enabled, allRelatedRows(related));
+    } catch (err) {
+      // Fails open: the copy the user actually clicked still gets
+      // written, and the panel below still shows whatever else is on.
+      // Blocking the toggle on a lookup it only needs for the OTHER
+      // rows would be worse than under-applying the sweep.
+      dlog(`[SourceMonkey] exclusive-enable lookup skipped: ${describeError(err)}`);
+    }
+  }
+  // Before the awaits: both checkboxes are showing an intent, and a
+  // radio-button pair that flips one now and the other after a round
+  // trip through storage reads as a bug.
+  paintEnabledOptimistically(changes);
+  await applyEnableChanges(changes);
+  const next = await getScript(scriptId);
   if (next) {
     render(next);
     tabsView.applyHash(false);
+  }
+}
+
+// Write one click's worth of enable changes.
+//
+// `setScriptsEnabled`, not a loop of `setScriptEnabled`: the bulk call
+// lands as ONE `chrome.storage.local.set`, so it fires one
+// `storage.onChanged`. A loop fired one per copy, and every one of them
+// rehydrated this page from a half-applied state — the user watched the
+// Enabled checkbox flip back and forth as the batch went through. It
+// also spares the background worker a registration sync per copy.
+async function applyEnableChanges(changes: readonly ScriptEnableChange[]): Promise<void> {
+  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })));
+}
+
+// One write, so one failure — there is no half-applied batch to
+// enumerate. A single change still names the copy and the direction,
+// because that message can appear next to several identical-looking
+// rows.
+function describeEnableFailure(
+  changes: readonly ScriptEnableChange[],
+  scripts: readonly StoredScript[],
+  err: unknown,
+): string {
+  if (changes.length === 1) {
+    const verb = changes[0].enabled ? 'enable' : 'disable';
+    return `Could not ${verb} ${describeRelatedScript(scripts, changes[0].scriptId)}: ${describeError(err)}`;
+  }
+  return `Could not change which copy is enabled: ${describeError(err)}`;
+}
+
+// Show an enable batch the moment it is decided, on every checkbox that
+// carries part of it — the page's own toggle and any panel row for the
+// same script. The write then lands underneath, and the repaint both
+// callers run afterwards redraws from stored state.
+//
+// Purely cosmetic: nothing reads these back, and every path that calls
+// this repaints unconditionally — including when the write turns out
+// to be a no-op, which fires no storage event of its own. So a paint
+// that got ahead of the truth is always corrected.
+function paintEnabledOptimistically(changes: readonly ScriptEnableChange[]): void {
+  for (const change of changes) {
+    if (change.scriptId === scriptId) enableCheckboxEl.checked = change.enabled;
+    const row = versionsEl.querySelector<HTMLInputElement>(
+      `tr[data-script-id="${CSS.escape(change.scriptId)}"] input[type=checkbox]`,
+    );
+    if (row) row.checked = change.enabled;
   }
 }
 
@@ -508,6 +613,9 @@ async function onCopyFilename(): Promise<void> {
 
 function render(script: StoredScript): void {
   currentScript = script;
+  // A script is on screen, so no removal is pending; the next time a
+  // row goes missing it is someone else's doing. See `removedHere`.
+  removedHere = false;
   controlsRowEl.hidden = false;
   renderHeading(displayLocation(script.relativePath), script);
   document.title = `${displayLocation(script.relativePath)} — SourceMonkey`;
@@ -515,9 +623,9 @@ function render(script: StoredScript): void {
   enableCheckboxEl.checked = isScriptEnabled(script);
   enableCheckboxEl.disabled = !sourceEnabled;
   enableLabelEl.classList.toggle('toggle-disabled', !sourceEnabled);
-  enableLabelEl.title = sourceEnabled
-    ? 'Enable this script'
-    : 'Source is disabled';
+  // The plain wording; `paintRelatedVersions` adds the multi-enable
+  // hint when there are other copies for the click to sweep.
+  enableLabelEl.title = sourceEnabled ? enableTitle(false) : SOURCE_OFF_TITLE;
 
   // Identity the script's own diagnostics name it by. Set before the
   // tabs so `appendDiagnostic` below can resolve a location to tab 0.
@@ -619,8 +727,62 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
 
   const actions: RelatedVersionsActions = {
     currentScriptId: args.currentScriptId,
-    setEnabled: async (id, enabled) => {
-      await setScriptEnabled(id, enabled);
+    setEnabled: async (changes) => {
+      relatedVersionsMessage = '';
+      // The clicked box has already flipped itself; this catches up the
+      // rest of the batch — the other rows and the page's own toggle —
+      // before the write, so the whole set moves at once.
+      paintEnabledOptimistically(changes);
+      let failure: unknown;
+      try {
+        await applyEnableChanges(changes);
+      } catch (err) {
+        failure = err;
+        relatedVersionsMessage = describeEnableFailure(changes, snapshot.scripts, err);
+      }
+      // Repainted either way, and NOT left to the storage listener.
+      //
+      // On success because each row's handler closes over the row list
+      // as it was when the row was drawn: without a repaint the second
+      // click would compute "the others" from pre-first-click data and
+      // sweep nothing — two enabled copies, the exact state this rule
+      // exists to prevent. A preview has no storage listener at all,
+      // and even on the viewer a batch that turns out to be a no-op
+      // writes nothing and so fires no event.
+      //
+      // On failure because it redraws every box from stored state,
+      // which is a better answer than the renderer's own revert of the
+      // one box that was clicked.
+      await afterPanelAction(args);
+      if (failure) throw new Error(relatedVersionsMessage);
+    },
+    remove: async (id) => {
+      relatedVersionsMessage = '';
+      // Removing the row this page is showing is allowed — it is a copy
+      // like any other, and refusing only where you happen to be
+      // standing would be arbitrary.
+      const isCurrent = id === args.currentScriptId;
+      try {
+        await removeScript(id);
+      } catch (err) {
+        relatedVersionsMessage =
+          `Could not remove ${describeRelatedScript(snapshot.scripts, id)}: ${describeError(err)}`;
+        await afterPanelAction(args);
+        return;
+      }
+      if (isCurrent) {
+        // Driven from here rather than left to the storage listener:
+        // `removeScript` writes nothing when the row was already gone,
+        // so there may be no event to wait for — and waiting for one
+        // that never comes would leave the page sitting on a table of
+        // rows it no longer has, with the trash can stuck disabled.
+        // The flag makes the not-found state read as the result the
+        // user asked for.
+        removedHere = true;
+        await rehydrateAfterStorageChange();
+        return;
+      }
+      await afterPanelAction(args);
     },
     update: async (ids) => {
       relatedVersionsMessage = '';
@@ -647,7 +809,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       } else if (failures.length > 1) {
         relatedVersionsMessage = `Could not refresh ${failures.length} copies — ${failures.join('; ')}`;
       }
-      await repaintRelatedVersions(args);
+      await afterPanelAction(args);
     },
     // Omitted — which is what suppresses the offer row — unless the
     // caller says installing here is a thing the user can actually do.
@@ -660,6 +822,45 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     mode: args.mode,
     version: args.header ? getValue(args.header, 'version') : undefined,
     message: relatedVersionsMessage,
+  });
+
+  // Now that we know what else is installed, the controls-row toggle
+  // can say what clicking it will do. `render` sets the plain wording
+  // and runs before this — it has no lookup of its own — so this is
+  // where the exclusive case gets named, on the one control whose
+  // effect on other copies is otherwise invisible from where it sits.
+  //
+  // Set on every branch, not only the exclusive one: this runs after
+  // repaints that had no `render` in front of them to restore the
+  // default, so a title left over from a previous state would stick.
+  if (args.currentScriptId && sourceEnabled) {
+    const others = otherRunningCopies(allRelatedRows(related), args.currentScriptId);
+    enableLabelEl.title = enableTitle(others.length > 0);
+  }
+}
+
+// Everything that has to catch up after one of the panel's own actions
+// changed storage.
+//
+// On the installed viewer the panel is all there is to redraw: the
+// `storage.onChanged` listener rehydrates the rest of the page. A
+// PREVIEW has no such listener — it returns early on `!scriptId` — so
+// the page around the panel would keep whatever the load-time wiring
+// left it with. Removing the copy a preview is offering to update, for
+// instance, would leave the banner claiming it is still installed and
+// Open / Update pointed at an id that no longer exists, with Install
+// still hidden because at wiring time there was nothing to add.
+//
+// Only for a preview that HAS install wiring: `renderInvalidPreview`
+// deliberately hides those buttons, and re-running the wiring would put
+// them back on a file the page has said cannot be installed.
+async function afterPanelAction(args: RelatedVersionsPaint): Promise<void> {
+  await repaintRelatedVersions(args);
+  if (args.mode !== 'preview' || !args.offerInstall) return;
+  await wireInstallButtons().catch((err) => {
+    // The panel repainted, so the user can still act from the table;
+    // only the header buttons are left as they were.
+    dlog(`[SourceMonkey] preview button re-wiring failed: ${describeError(err)}`);
   });
 }
 
@@ -687,6 +888,10 @@ interface RelatedVersionsPaint {
 // Bumped by every paint so a slower earlier one can tell it lost.
 let relatedVersionsGeneration = 0;
 
+// The user removed the script this page is showing, from the panel's
+// own trash can. Without it the not-found state that follows reads as
+// "the store lost your script" rather than "that worked".
+let removedHere = false;
 
 // The panel's own message, surviving repaints because it is passed
 // into every render. Cleared when the panel's next action starts, not
@@ -1184,12 +1389,15 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
 // returns the file's real bytes, so both of those really do land
 // INVALID.
 function syntaxErrorOutcome(): string {
-  // `updateBtn.hidden` is the question `wireInstallButtons` already
-  // answered, so the sentence can't disagree with the button on
-  // screen. It also degrades correctly: the button starts hidden in
-  // the markup, so if that wiring threw we describe an install, which
-  // is what an unwired preview offers.
-  if (updateBtn.hidden) return 'Installing it will store it as INVALID.';
+  // `previewInstalledStatus` is the question `wireInstallButtons`
+  // already answered — is there a row at this location? — rather than
+  // which button it put on screen. Those came apart once the header
+  // buttons started standing down in favour of the table: a copy can
+  // exist here while Update is deliberately hidden, and calling that
+  // an install would be wrong. It degrades the same way the old proxy
+  // did: null until the wiring runs, so an unwired preview describes
+  // an install, which is what it offers.
+  if (previewInstalledStatus === null) return 'Installing it will store it as INVALID.';
   // Preservation is gated on the installed row being `ok`, not merely
   // on it existing: `rebuildSource` keeps a prior copy running because
   // that copy WORKS. Updating a row that is already `invalid` has
@@ -1366,9 +1574,32 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
 // exists, Install adds the standalone one that doesn't. `installTarget`
 // is precisely "a single-file install here would add something", so it
 // is what decides whether Install shows.
+//
+// But only while each of them HAS one target. Once the panel below
+// offers more than one, these three step aside entirely and the table
+// becomes the only place to act — every one of them exists per-row
+// down there (Install on the offer row, Update on each "This URL"
+// row, and every location is a link to that copy's page). Leaving them
+// up here would leave the user to guess which row they meant, and the
+// banner's "…below" pointing past a row of buttons that do the same
+// three things is the worst of both.
 async function wireInstallButtons(): Promise<void> {
-  const related = await findInstalledHere();
+  // Re-runnable: `afterPanelAction` calls this again when a panel
+  // action changed what is installed. Every button it owns is reset
+  // first, or a copy that has just been removed would leave Open and
+  // Update on screen pointed at an id that no longer exists.
+  openBtn.hidden = true;
+  updateBtn.hidden = true;
+  previewInstalledStatus = null;
+
+  const related = await findRelatedHere();
   const existing = related.sameLocation[0]?.script;
+  const deferToTable = choiceCount(related) > 1;
+
+  // Recorded before any early return: the parse-check warning describes
+  // what installing WOULD do, and that depends on the row that exists
+  // here, not on which surface the user will click.
+  if (existing) previewInstalledStatus = existing.status;
 
   // Install shows when installing would add something:
   //   - `installTarget` — a single-file location with no copy of its
@@ -1378,7 +1609,15 @@ async function wireInstallButtons(): Promise<void> {
   //     http(s)/file location, so a `foo.js` or a manifest URL would
   //     otherwise lose its Install button with nothing said about why.
   //     `addSource` remains the thing that judges those.
-  if (related.installTarget || !existing) {
+  //
+  // …and it only stands down for a table that actually offers an
+  // install, which is the `installTarget` offer row. Deferring on the
+  // count alone would strand the second clause above: a `foo.js` with
+  // two same-`@name` copies installed elsewhere has two rows below and
+  // no offer row, so hiding the header button would leave nowhere to
+  // install it from at all.
+  const tableOffersInstall = deferToTable && related.installTarget !== undefined;
+  if (!tableOffersInstall && (related.installTarget || !existing)) {
     installBtn.hidden = false;
     installBtn.disabled = false;
     installBtn.onclick = () => void doInstall();
@@ -1386,20 +1625,40 @@ async function wireInstallButtons(): Promise<void> {
     installBtn.hidden = true;
   }
 
-  if (!existing) {
+  // "Not installed" means no copy ANYWHERE, not just none at this URL:
+  // a same-`@name` copy from a mirror is still this script, installed.
+  if (!existing && !related.sameIdentity.length) {
     renderBanner('This script is not installed yet', 'preview');
     return;
   }
 
-  previewInstalledStatus = existing.status;
-  renderInstalledBanner(existing, previewHeader);
+  renderInstalledBanner(related, previewHeader);
+
+  // Open and Update act on a row at THIS location. With none, there is
+  // nothing for them to act on — the banner has just said the copies
+  // are elsewhere, and the panel below is where the user goes to reach
+  // them.
+  if (!existing || deferToTable) return;
   showOpenButton(existing.id);
   updateBtn.hidden = false;
   updateBtn.onclick = () => void doUpdate(existing.id);
 }
 
+// How many things the panel below offers to act on: every installed
+// copy, plus the "not installed here yet" offer row, which is a target
+// like any other — it is what an Install would land in.
+//
+// One shared count, because it decides two things that must not
+// disagree: whether the banner sends the user to the table, and
+// whether the header buttons stand down in its favour.
+function choiceCount(related: RelatedVersions): number {
+  return related.sameLocation.length
+    + related.sameIdentity.length
+    + (related.installTarget ? 1 : 0);
+}
+
 async function offerOpenExisting(): Promise<void> {
-  const existing = (await findInstalledHere()).sameLocation[0]?.script;
+  const existing = (await findRelatedHere()).sameLocation[0]?.script;
   if (existing) showOpenButton(existing.id);
 }
 
@@ -1414,13 +1673,16 @@ async function offerOpenExisting(): Promise<void> {
 // install or a refresh, which is a worse failure than a transient one
 // that the next storage change corrects.
 //
-// Header is not passed: the buttons care only about this URL, never
-// about a same-`@name` copy from somewhere else. Installing over one of
-// those is not a thing we can do, so letting an identity match suppress
-// Install would strand the user with no way to add the script.
-async function findInstalledHere(): Promise<RelatedVersions> {
+// The header IS passed, but only the banner reads what it adds. Every
+// button decision comes from `sameLocation` / `installTarget`, which
+// the header cannot change: installing over a same-`@name` copy from
+// another URL is not a thing we can do, so letting an identity match
+// suppress Install would strand the user with no way to add the
+// script. What the identity match is for is telling the user WHICH
+// copies the buttons are and aren't about.
+async function findRelatedHere(): Promise<RelatedVersions> {
   const snapshot = await readStoreSnapshot();
-  return findRelatedVersions({ ...snapshot, location: previewLocation, header: null });
+  return findRelatedVersions({ ...snapshot, location: previewLocation, header: previewHeader });
 }
 
 interface StoreSnapshot {
@@ -1685,16 +1947,51 @@ function makeBanner(content: BannerContent, extraClass = ''): HTMLElement {
   return div;
 }
 
-function renderInstalledBanner(existing: StoredScript, header: ParsedHeader | null): void {
+// What "already installed" means here, which is not one thing: the copy
+// may be this very URL, or the same script from a mirror, or several at
+// once. The Install / Open / Update buttons above act on the copy at
+// THIS URL and nothing else, so a banner that said the same sentence in
+// all three cases would leave the user guessing which copy they were
+// about to touch — which is the whole reason this splits.
+function renderInstalledBanner(related: RelatedVersions, header: ParsedHeader | null): void {
+  const here = related.sameLocation.length;
+  const elsewhere = related.sameIdentity.length;
+  let text: string;
+  if (here + elsewhere > 1) {
+    text = 'This script is already installed multiple times';
+  } else if (here === 1) {
+    text = `This script is already installed${versionGloss(related.sameLocation[0].script, header)}`;
+  } else {
+    text = 'This script is already installed from a different URL';
+  }
+  const banner = makeBanner(text, 'installed');
+  // Only where a choice actually exists — and where it does, the same
+  // count has already taken Install / Open / Update out of the header,
+  // so "below" points at the only place those actions now live.
+  //
+  // The remaining case — one target, no offer — is the one the header
+  // buttons address unambiguously, and pointing at a table to pick
+  // from would invent a decision the user doesn't have to make.
+  if (choiceCount(related) > 1) {
+    const p = document.createElement('p');
+    p.textContent = 'Select which instance to open, update or install below';
+    banner.append(p);
+  }
+  replaceBanner(banner);
+}
+
+// The version aside, for the single-copy case: which version is
+// installed, and whether the file on screen disagrees. Left off the
+// multi-copy wordings — with several rows the answer is a column in the
+// table below, not a parenthetical about one of them.
+function versionGloss(existing: StoredScript, header: ParsedHeader | null): string {
   const installedVersion = existing.header ? getValue(existing.header, 'version') : undefined;
   const offeredVersion = header ? getValue(header, 'version') : undefined;
-  let text = 'This script is already installed';
-  if (installedVersion && offeredVersion && installedVersion !== offeredVersion) {
-    text += ` (version ${installedVersion}; this copy says ${offeredVersion})`;
-  } else if (installedVersion) {
-    text += ` (version ${installedVersion})`;
+  if (!installedVersion) return '';
+  if (offeredVersion && installedVersion !== offeredVersion) {
+    return ` (version ${installedVersion}; this copy says ${offeredVersion})`;
   }
-  renderBanner(text, 'installed');
+  return ` (version ${installedVersion})`;
 }
 
 function startBusy(btn: HTMLButtonElement): HTMLElement {
@@ -1814,6 +2111,12 @@ function showMissing(message: string): void {
   filenameEl.textContent = 'Not available';
   setMessage(message, 'error');
   summaryEl.replaceChildren();
+  // The panel goes with the rest. Its rows carry live toggles and trash
+  // cans keyed to script ids, and its heading — "Other versions of THIS
+  // script" — has nothing left to be other than. Reached by the panel's
+  // own trash can removing the row being viewed, and by another tab
+  // removing it out from under us.
+  versionsEl.replaceChildren();
   logPaneEl.replaceChildren();
   tabsView.clear();
 }

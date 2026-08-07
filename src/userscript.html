@@ -102,7 +102,10 @@
          which is also where the file-access banner comes from). Only
          the viewer's own colour variants live here — the amber default
          is a warning, and "already installed" / "preview" are not. */
-      .banner.installed { border-color: #2563eb; background: #eff6ff; }
+      /* Matches the "Existing versions" panel below it — this banner is
+         about which of those copies the buttons act on, so the two are
+         one thought and share a ground. */
+      .banner.installed { border-color: #b9d4b1; background: #dbecd6; }
       .banner.preview { border-color: #6b7280; background: #f3f4f6; }
       @keyframes sm-spin { to { transform: rotate(360deg); } }
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
@@ -181,15 +184,19 @@
         word-break: break-all;
       }
       /* ---- "Other versions" panel (src/related-versions.ts) ----
-         Same card as #header-summary so the two read as a pair. Empty
-         when nothing relates, and hidden by the :empty rule rather
-         than a `hidden` attribute the renderer would have to manage. */
+         Same card shape as #header-summary, but a green ground rather
+         than the details panel's grey: the two sit directly on top of
+         each other, and the panel is the one that carries live
+         controls, so it has to read as a different kind of thing at a
+         glance. Empty when nothing relates, and hidden by the :empty
+         rule rather than a `hidden` attribute the renderer would have
+         to manage. */
       #other-versions {
         margin: 0 0 0.8em;
         padding: 0.6em 0.8em;
-        border: 1px solid #ddd;
+        border: 1px solid #b9d4b1;
         border-radius: 4px;
-        background: #f5f7fa;
+        background: #dbecd6;
       }
       #other-versions:empty { display: none; }
       #other-versions h2 {
@@ -227,6 +234,7 @@
       .versions-table col.col-source   { width: 26%; }
       .versions-table col.col-version  { width: 7em; }
       .versions-table col.col-actions  { width: 6.5em; }
+      .versions-table col.col-remove   { width: 2.4em; }
       .versions-table th {
         text-align: left;
         font-size: 11px;
@@ -235,12 +243,12 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
         padding: 0 0.5em 0.2em 0;
-        border-bottom: 1px solid #e2e6ec;
+        border-bottom: 1px solid #b9d4b1;
       }
       .versions-table td {
         padding: 0.35em 0.5em 0.35em 0;
         vertical-align: top;
-        border-bottom: 1px solid #eceff3;
+        border-bottom: 1px solid #c9e0c2;
       }
       .versions-table tr:last-child td { border-bottom: none; }
       .versions-table .col-actions {
@@ -271,7 +279,10 @@
       .versions-source-name:hover { text-decoration: underline; }
       .versions-table .col-location a { color: inherit; text-decoration: none; }
       .versions-table .col-location a:hover { text-decoration: underline; }
-      .versions-table tr.is-current { background: #eaf0f9; }
+      /* A deeper tint of the panel's own green, not the blue used
+         elsewhere for "current" — on this ground a blue row would read
+         as a different kind of highlight rather than as emphasis. */
+      .versions-table tr.is-current { background: #c3e0ba; }
       .versions-current-marker { color: #666; }
       .versions-this-page { font-weight: 700; color: #333; }
       .versions-table tr.is-offer .versions-offer-text {
@@ -289,6 +300,39 @@
          clickable. */
       .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
+      /* Trash can, in its own column hard against the table's right
+         edge. Same glyph and red hover as the sources page's
+         `.remove-script`, so the two read as one control in two
+         places; the border and resting colour are the panel's own,
+         since it sits on green rather than white. Disabled (a script
+         inside a collection source) keeps the button on screen — the
+         column would otherwise look ragged with no clue why — but
+         drops it to a plain dimmed glyph with no border, so it doesn't
+         invite a click its tooltip has to then refuse. `not-allowed`
+         to match the disabled toggle two rules up. */
+      .versions-table .col-remove {
+        text-align: right;
+        padding-right: 0;
+        white-space: nowrap;
+      }
+      .versions-remove {
+        padding: 0 0.3em;
+        font: inherit;
+        line-height: 1;
+        border: 1px solid #b9d4b1;
+        border-radius: 3px;
+        background: transparent;
+        cursor: pointer;
+        color: #6a7b66;
+      }
+      .versions-remove:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
+      /* A bare glyph has no shape of its own to show focus with. */
+      .versions-remove:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+      .versions-remove:disabled {
+        cursor: not-allowed;
+        border-color: transparent;
+        opacity: 0.35;
+      }
       /* The panel reports its own action failures here rather than in
          the page's `#message` bar — see related-versions.ts. */
       .versions-message {
@@ -296,24 +340,25 @@
         color: #b3261e;
         font-size: 12px;
       }
-      /* Narrow windows shed columns rather than letting every cell
-         wrap to an unreadable ribbon. Version goes first — it is the
-         least load-bearing of the four. Location goes next, and takes
-         the per-row link to that copy's page with it; the source name
-         still links to the sources page, so the row is not a dead end.
-         Both remain in the DOM (hidden, not dropped) so nothing has to
+      /* Narrow windows shed the Version column rather than letting
+         every cell wrap to an unreadable ribbon. It is the least
+         load-bearing: nothing acts on it, and the copies it
+         distinguishes are still distinguished by source and location.
+         It stays in the DOM (hidden, not dropped) so nothing has to
          re-render on resize.
          Zeroing the <col> width alongside `display: none` on the
          cells is what actually reclaims the space: under
          `table-layout: fixed` the colgroup, not the cells, is what
-         sets column width. */
+         sets column width.
+
+         Location does NOT shed, though it used to. Its link is the
+         only way to reach another copy's page now that a preview with
+         several targets drops its header Open button in favour of this
+         table — hiding it would leave a narrow window with no route to
+         a copy at all. Wrapping a long path is the lesser cost. */
       @media (max-width: 640px) {
         .versions-table col.col-version { width: 0; }
         .versions-table .col-version { display: none; }
-      }
-      @media (max-width: 460px) {
-        .versions-table col.col-location { width: 0; }
-        .versions-table .col-location { display: none; }
       }
       /* Source row layout. Grid layout so a long display name wraps
          inside the right-hand column instead of dropping back to the

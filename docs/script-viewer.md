@@ -92,6 +92,10 @@ One page, one set of panels, two query strings:
    button → `refreshScript(scriptId)`. Installed mode only; preview
    shows the banner + action row in its place (see
    [Preview mode](#preview-mode)).
+   - The toggle is a radio button, not a plain checkbox: enabling this
+     copy disables every other copy that is running, exactly as the
+     panel's own rows do. Ctrl/cmd-click opts out. See
+     [script-identity.md](script-identity.md#enabling-is-exclusive-disabling-is-not).
 3. **Error message** (`<p class="message …">`) — visible when the
    script is flagged. Shows `errorMessage` (red, `.error`) for an
    `invalid` row, or `Refresh failed: <reason>` (amber,
@@ -188,11 +192,18 @@ One page, one set of panels, two query strings:
      script from a different URL** (same `@namespace` + `@name`).
    - Per row: enable toggle, type bubble + source name linking to the
      sources page, location linking to that copy's own viewer tab,
-     version, and a refetch button — **Refresh** here, **Update** in a
-     preview, matching whichever control the page already shows.
+     version, a refetch button — **Refresh** here, **Update** in a
+     preview, matching whichever control the page already shows — and a
+     trash can, live only for single-file installs.
+   - Enabling a copy disables the others, since two enabled copies both
+     run; ctrl/cmd-click opts out. Same rule on the controls-row
+     toggle, and the whole set flips on screen before the writes land.
    - Headed *Other versions of this script* installed, *Existing
      versions* in preview. Empty — and so hidden — when the only row
-     would be the script already on screen.
+     would be the script already on screen, or, in a preview, when
+     nothing is installed anywhere.
+   - Green card, so it doesn't read as more of the grey details panel
+     it sits under.
    - Full behaviour in [script-identity.md](script-identity.md).
 6. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
    Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
@@ -342,9 +353,9 @@ Banner (`#banner-slot`) states what this file is; the action row
 
 | Situation | Banner | Buttons |
 |-----------|--------|---------|
-| Not installed | "not installed yet" | **Install**, Cancel, View raw source |
-| Installed here | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
-| Only in a collection source | version(s), see below | **Install**, **Open installed script**, **Update now**, Cancel, View raw source |
+| Not installed anywhere | "not installed yet" | **Install**, Cancel, View raw source |
+| Installed here, once, nothing else | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
+| More than one target below | see [the wordings](script-identity.md#the-previews-already-installed-banner) + "Select which instance…" | Cancel, View raw source — the table carries the rest. **Install** stays if the table has no offer row to carry it |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
 - **Install** → `addSource(<input>)`, then jumps to the new script's
@@ -358,10 +369,18 @@ Banner (`#banner-slot`) states what this file is; the action row
   them a moment apart; the next storage change reconciles it. See
   [script-identity.md](script-identity.md). The banner names both
   versions when `@version` differs.
+- **The banner says WHICH copies exist**, because a header button can
+  only ever act on one of them. With more than one target below it adds
+  *Select which instance to open, update or install below* — and
+  Install / Open / Update leave the header entirely, since the table
+  carries all three per-row. Wordings and the rule in
+  [script-identity.md](script-identity.md#the-previews-already-installed-banner).
 - **Install and Open/Update are not exclusive.** A script already
   installed inside a collection source the user subscribes to is still
   worth a copy of their own; `installTarget` — "would a standalone
-  install add anything?" — is what decides whether Install shows.
+  install add anything?" — is what decides whether Install is offered.
+  When both apply, though, there are two targets, so both move into the
+  table rather than sitting side by side in the header.
 - **Update now** → `updateScript(id, 'manual')`, then the viewer.
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by

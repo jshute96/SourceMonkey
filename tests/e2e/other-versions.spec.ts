@@ -187,6 +187,418 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
+  // Two enabled copies of one script both register and both run, so
+  // enabling one turns the rest off. Disabling is not exclusive —
+  // "none of them" is an ordinary thing to want.
+  test('enabling one copy disables the others; disabling one leaves them alone', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const other = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    const box = (id: string) =>
+      page.locator(`${PANEL} tr[data-script-id="${id}"] input[type=checkbox]`);
+    const enabledOf = async (id: string) =>
+      (await allScripts(sm)).find((s) => s.id === id)!.enabled;
+
+    // Turn this one off. The other must NOT be promoted in its place.
+    await box(standalone.id).uncheck();
+    await expect.poll(() => enabledOf(standalone.id)).toBe(false);
+    expect(await enabledOf(other.id)).not.toBe(false);
+
+    // Turn it back on: now the other one gives way.
+    await box(standalone.id).check();
+    await expect.poll(() => enabledOf(other.id)).toBe(false);
+    expect(await enabledOf(standalone.id)).not.toBe(false);
+
+    await page.close();
+  });
+
+  test('ctrl-click enables a copy without disabling the others', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const other = scripts.find((s) => s.id !== standalone.id)!;
+    await sm.setScriptEnabled(other.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    await page
+      .locator(`${PANEL} tr[data-script-id="${other.id}"] input[type=checkbox]`)
+      .click({ modifiers: ['Control'] });
+
+    await expect.poll(async () =>
+      (await allScripts(sm)).find((s) => s.id === other.id)!.enabled,
+    ).not.toBe(false);
+    // The one that was already on stayed on — the whole point of the
+    // modifier.
+    expect((await allScripts(sm)).find((s) => s.id === standalone.id)!.enabled).not.toBe(false);
+    await page.close();
+  });
+
+  // A single-file install can be taken back out from here. A script
+  // that came in with a collection cannot: the source's next refresh
+  // would scan it straight back in, so the button says where the
+  // removal actually lives instead of pretending to work.
+  test('the trash can removes a single-file copy and is disabled for directory copies', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    // View the folder copy, so the row being removed is NOT this page.
+    await page.goto(`chrome-extension://${extensionId}/${viewer(inFolder.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    const trash = (id: string) =>
+      page.locator(`${PANEL} tr[data-script-id="${id}"] .versions-remove`);
+
+    await expect(trash(inFolder.id)).toBeDisabled();
+    await expect(trash(inFolder.id))
+      .toHaveAttribute(
+        'title',
+        'Script from directory source can only be removed by removing the source',
+      );
+    await expect(trash(standalone.id)).toBeEnabled();
+
+    await trash(standalone.id).click();
+    await expect.poll(async () => (await allScripts(sm)).length).toBe(1);
+    // With the standalone gone the folder copy stands alone, so the
+    // panel has nothing left to compare and hides itself.
+    await expect(page.locator(PANEL)).toBeHidden();
+    await page.close();
+  });
+
+  // The tooltip names the kind of source the copy came in with, using
+  // the words the sources page already uses for how it was added.
+  test('a manifest copy says "manifest source", not "directory source"', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    dir.writeRaw('script_manifest.json', JSON.stringify(['hello.user.js']));
+    await sm.addSource(`${dir.path}/script_manifest.json`);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inManifest = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+    await expect(
+      page.locator(`${PANEL} tr[data-script-id="${inManifest.id}"] .versions-remove`),
+    ).toHaveAttribute(
+      'title',
+      'Script from manifest source can only be removed by removing the source',
+    );
+    await page.close();
+  });
+
+  // The controls-row toggle is the same radio button as a panel row's,
+  // and both flip on screen together rather than one lagging a round
+  // trip through storage behind the other.
+  test('the page toggle applies the exclusive rule, and both boxes move at once', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+    await sm.setScriptEnabled(standalone.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    const otherBox = page.locator(
+      `${PANEL} tr[data-script-id="${inFolder.id}"] input[type=checkbox]`,
+    );
+    await expect(otherBox).toBeChecked();
+    // The tooltip mentions the modifier only where a sweep can fire —
+    // on this script's own controls, since the other copy is running.
+    // The panel row for the same script reads identically: they are the
+    // same control in two places.
+    const hinted = 'Enable this script (Ctrl-click for multi-enable)';
+    await expect(page.locator('#enable-label')).toHaveAttribute('title', hinted);
+    await expect(page.locator(`${PANEL} tr.is-current label.toggle`))
+      .toHaveAttribute('title', hinted);
+    // …and not on the running copy's own row: clicking that one turns
+    // it off, which sweeps nothing.
+    await expect(otherBox.locator('xpath=..'))
+      .toHaveAttribute('title', 'Enable this script');
+
+    await page.locator('#enable-checkbox').check();
+    // Painted before the write lands, so no poll: if this needed one,
+    // the lag being fixed here would be back.
+    await expect(otherBox).not.toBeChecked();
+
+    await expect.poll(async () =>
+      (await allScripts(sm)).find((s) => s.id === inFolder.id)!.enabled,
+    ).toBe(false);
+    await page.close();
+  });
+
+  test('ctrl-clicking the page toggle leaves the other copies alone', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+    await sm.setScriptEnabled(standalone.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await page.locator('#enable-checkbox').click({ modifiers: ['Control'] });
+
+    await expect.poll(async () =>
+      (await allScripts(sm)).find((s) => s.id === standalone.id)!.enabled,
+    ).not.toBe(false);
+    expect((await allScripts(sm)).find((s) => s.id === inFolder.id)!.enabled).not.toBe(false);
+    await page.close();
+  });
+
+  // Each row's handler closes over the row list as it was drawn, so a
+  // panel that doesn't repaint after a write computes the SECOND
+  // click's sweep from pre-first-click data and sweeps nothing. A
+  // preview is where this bites: it has no storage listener to repaint
+  // it, so the panel's own action has to.
+  test('a second exclusive toggle on a preview still sweeps', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns });
+    await sm.addSource(a);
+    await sm.addSource(b);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const first = scripts.find((s) => s.relativePath === a)!;
+    const second = scripts.find((s) => s.relativePath === b)!;
+    await sm.setScriptEnabled(first.id, false);
+    await sm.syncNow();
+
+    const c = write('c.user.js', 'Twin Script', { namespace: ns });
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${c}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    const box = (id: string) =>
+      page.locator(`${PANEL} tr[data-script-id="${id}"] input[type=checkbox]`);
+    const enabledOf = async (id: string) =>
+      (await allScripts(sm)).find((s) => s.id === id)!.enabled;
+
+    await box(first.id).check();
+    await expect.poll(() => enabledOf(second.id)).toBe(false);
+
+    // The one that matters: flip it back the other way.
+    await box(second.id).check();
+    await expect.poll(() => enabledOf(first.id)).toBe(false);
+    expect(await enabledOf(second.id)).not.toBe(false);
+    await page.close();
+  });
+
+  // Same panel, same actions — so the preview's rows get the rule too.
+  test('the preview panel checkboxes are exclusive as well', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns });
+    await sm.addSource(a);
+    await sm.addSource(b);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const first = scripts.find((s) => s.relativePath === a)!;
+    const second = scripts.find((s) => s.relativePath === b)!;
+    await sm.setScriptEnabled(first.id, false);
+    await sm.syncNow();
+
+    // Preview a third file that is the same script again, so both
+    // installed copies show up in the panel below the banner.
+    const c = write('c.user.js', 'Twin Script', { namespace: ns });
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${c}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    await expect(page.locator(ROWS)).toHaveCount(3);   // two copies + the install offer
+
+    const secondBox = page.locator(
+      `${PANEL} tr[data-script-id="${second.id}"] input[type=checkbox]`,
+    );
+    await page.locator(`${PANEL} tr[data-script-id="${first.id}"] input[type=checkbox]`).check();
+    await expect(secondBox).not.toBeChecked();
+
+    await expect.poll(async () =>
+      (await allScripts(sm)).find((s) => s.id === second.id)!.enabled,
+    ).toBe(false);
+    await page.close();
+  });
+
+  // A copy that cannot run is not competing with the one being
+  // enabled — and its own box is disabled, so a flip made here could
+  // not be undone from this panel at all.
+  test('the exclusive sweep spares a copy whose source is disabled', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const sources = await sm.getSources();
+    const folder = sources.find((s) => s.path === dir.path)!;
+    await sm.setSourceEnabled(folder.id, false);
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+    // Off, then on again: the second click is the exclusive one.
+    await sm.setScriptEnabled(standalone.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await page
+      .locator(`${PANEL} tr[data-script-id="${standalone.id}"] input[type=checkbox]`)
+      .check();
+
+    await expect.poll(async () =>
+      (await allScripts(sm)).find((s) => s.id === standalone.id)!.enabled,
+    ).not.toBe(false);
+    // Untouched: its stored intent survives for whenever the source
+    // comes back on.
+    expect((await allScripts(sm)).find((s) => s.id === inFolder.id)!.enabled).not.toBe(false);
+    await page.close();
+  });
+
+  // The sweep spans both sections — the point is that one copy of this
+  // script runs, not one copy per section.
+  test('enabling a copy also disables a same-identity copy at another URL', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns });
+    await sm.addSource(a);
+    await sm.addSource(b);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const first = scripts.find((s) => s.relativePath === a)!;
+    const second = scripts.find((s) => s.relativePath === b)!;
+    await sm.setScriptEnabled(first.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(first.id)}`);
+    await page
+      .locator(`${PANEL} tr[data-script-id="${first.id}"] input[type=checkbox]`)
+      .check();
+
+    await expect.poll(async () =>
+      (await allScripts(sm)).find((s) => s.id === second.id)!.enabled,
+    ).toBe(false);
+    await page.close();
+  });
+
+  // Removing the row you are standing on is allowed, and the page says
+  // so rather than reporting a store that lost your script.
+  test('removing the script being viewed reports it as removed', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+
+    await expect(page.locator('#message')).toContainText('This script has been removed');
+    // The panel goes with the rest of the page — its heading has
+    // nothing left to be "other than".
+    await expect(page.locator(PANEL)).toBeHidden();
+    expect(await allScripts(sm)).toHaveLength(1);
+    await page.close();
+  });
+
+  // A preview has no storage listener, so the buttons around the panel
+  // only catch up because the panel's actions re-wire them.
+  test('removing the installed copy from a preview re-offers Install', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    await expect(page.locator('#install-btn')).toBeHidden();
+    await expect(page.locator('#open-btn')).toBeVisible();
+
+    await page.locator(`${PANEL} .versions-remove`).click();
+
+    // Nothing is installed anywhere now: Install comes back, the stale
+    // Open/Update pointing at a dead id go away, and the panel — with
+    // no existing versions left — hides itself.
+    await expect(page.locator('#install-btn')).toBeVisible();
+    await expect(page.locator('#open-btn')).toBeHidden();
+    await expect(page.locator('#update-btn')).toBeHidden();
+    await expect(page.locator('#banner-slot')).toContainText('This script is not installed yet');
+    await expect(page.locator(PANEL)).toBeHidden();
+    await page.close();
+  });
+
   test('Refresh all appears only when more than one row can be refreshed', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -215,8 +627,10 @@ test.describe('other-versions panel', () => {
   });
 
   // A copy inside a collection source is not a copy of your own, so
-  // Install and Open/Update are both meaningful at once.
-  test('preview of a file a directory source already covers offers Install AND Open', async ({
+  // both installing and opening are meaningful — but there are two
+  // targets, so the header buttons stand down and the table carries
+  // them per-row.
+  test('preview of a file a directory source already covers defers to the table', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
@@ -230,9 +644,17 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#preview-actions')).toBeVisible();
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeVisible();
-    await expect(page.locator('#open-btn')).toBeVisible();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    // Two targets below — the installed copy and the offer — so
+    // "…below" must not point past a row of buttons doing the same
+    // three things.
+    await expect(page.locator('#banner-slot'))
+      .toContainText('Select which instance to open, update or install below');
+    await expect(page.locator('#install-btn')).toBeHidden();
+    await expect(page.locator('#open-btn')).toBeHidden();
+    await expect(page.locator('#update-btn')).toBeHidden();
+    // Cancel and View raw source are about the preview itself, not
+    // about a copy, so they stay.
+    await expect(page.locator('#cancel-btn')).toBeVisible();
 
     // Preview heading, and the offer row for the container that has no
     // copy yet.
@@ -243,6 +665,10 @@ test.describe('other-versions panel', () => {
     // The offer row borrows the previewed file's version rather than
     // reading as missing data.
     await expect(page.locator(`${PANEL} tr.is-offer td.col-version`)).toHaveText('1.0.0');
+    // Every action the header gave up is present in the table.
+    await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
+    await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Update');
+    await expect(page.locator(`${PANEL} td.col-location a`)).toHaveCount(1);
 
     await page.close();
   });
@@ -345,8 +771,13 @@ test.describe('other-versions panel', () => {
 
     const offRow = page.locator(`${PANEL} tbody tr:not(.is-current)`);
     await expect(offRow.locator('input[type=checkbox]')).toBeDisabled();
+    // The short tooltip says which state it is in; the accessible name
+    // carries the explanation, since a screen reader has no Source cell
+    // to read across to.
+    await expect(offRow.locator('label.toggle'))
+      .toHaveAttribute('title', 'Source is disabled');
     await expect(offRow.locator('input[type=checkbox]'))
-      .toHaveAttribute('aria-label', /source is disabled/);
+      .toHaveAttribute('aria-label', /source is disabled, so this copy does not run/);
     await expect(offRow.locator('label.toggle')).toHaveClass(/toggle-disabled/);
     // The current row's source is still on, so it stays operable.
     await expect(page.locator(`${PANEL} tr.is-current input[type=checkbox]`)).toBeEnabled();
@@ -368,6 +799,121 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#banner-slot')).toContainText('already installed');
     // The container already holds this URL, so there is nothing to add.
     await expect(page.locator('#install-btn')).toBeHidden();
+    // One copy, at this very URL: the buttons above are unambiguous, so
+    // the banner does not send the user to the table to pick.
+    await expect(page.locator('#banner-slot')).not.toContainText('Select which instance');
+    await page.close();
+  });
+
+  // With nothing installed anywhere there are no *existing* versions to
+  // head a panel with, and the offer row would only repeat the Install
+  // button one line higher.
+  test('a preview with nothing installed shows no panel', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('fresh.user.js', 'Fresh Script');
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    await expect(page.locator('#banner-slot')).toContainText('This script is not installed yet');
+    await expect(page.locator('#install-btn')).toBeVisible();
+    await expect(page.locator(PANEL)).toBeHidden();
+    expect(await allScripts(sm)).toHaveLength(0);
+    await page.close();
+  });
+
+  // The banner says WHICH copies exist, because the buttons beside it
+  // only ever act on the one at this URL.
+  test('the preview banner names the multiple-copy case', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addSource(dir.path);
+    await sm.addSource(path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    await expect(page.locator('#banner-slot'))
+      .toContainText('This script is already installed multiple times');
+    await expect(page.locator('#banner-slot'))
+      .toContainText('Select which instance to open, update or install below');
+    await expect(page.locator(ROWS)).toHaveCount(2);
+    await page.close();
+  });
+
+  // The header only stands down for a table that carries the action.
+  // A location with no single-file spelling gets no offer row, so its
+  // Install has nowhere else to live and must stay in the header —
+  // even with two rows below it.
+  test('a location the table cannot offer to install keeps its header Install', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    // `.js`, not `.user.js`: previewable, but not a single-file input,
+    // so `installTarget` — and with it the offer row — is undefined.
+    const plain = dir.writeRaw(
+      'plain.js',
+      [
+        '// ==UserScript==',
+        '// @name        Twin Script',
+        `// @namespace   ${ns}`,
+        '// @match       https://example.com/*',
+        '// ==/UserScript==',
+        '',
+        'console.log("hi");',
+        '',
+      ].join('\n'),
+    );
+    write('a.user.js', 'Twin Script', { namespace: ns });
+    write('b.user.js', 'Twin Script', { namespace: ns });
+    await sm.addSource(dir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${plain}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    // Two same-identity rows below, and no offer row to install from.
+    await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(0);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+    await expect(page.locator('#install-btn')).toBeVisible();
+    await page.close();
+  });
+
+  // Installed, but not from here. Open and Update would have nothing to
+  // act on, so they stay hidden and the panel is the way across.
+  test('the preview banner names the different-URL case', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0.0' });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.0' });
+    await sm.addSource(a);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${b}`)}`,
+    );
+    await expect(page.locator('#preview-actions')).toBeVisible();
+    await expect(page.locator('#banner-slot'))
+      .toContainText('This script is already installed from a different URL');
+    await expect(page.locator('#banner-slot')).toContainText('Select which instance');
+    // Nothing installed at THIS url, so nothing for Open/Update to act
+    // on; Install has two targets counting the twin's row, so it too
+    // defers to the table.
+    await expect(page.locator('#open-btn')).toBeHidden();
+    await expect(page.locator('#update-btn')).toBeHidden();
+    await expect(page.locator('#install-btn')).toBeHidden();
+    await expect(page.locator(PANEL)).toContainText('Same script from a different URL');
+    await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
     await page.close();
   });
 });

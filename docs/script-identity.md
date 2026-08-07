@@ -96,9 +96,88 @@ row offers, which the caller supplies as callbacks.
 |---|---|---|
 | Heading | Other versions of this script | Existing versions |
 | Current row | highlighted, **(this page)**, not a link | — |
+| Nothing installed anywhere | can't happen — its own row is always there | no panel at all |
 
 Sections: **This URL**, then **Same script from a different URL** with
 a normal-weight gloss naming the match.
+
+The panel sits on a green card rather than the grey of the details panel
+directly above it: the two stack, and this is the one carrying live
+controls, so it has to read as a different kind of thing at a glance.
+
+### Enabling is exclusive; disabling is not
+
+The rule applies to **every** enable checkbox the viewer shows: each
+panel row, on the details page and the preview alike, and the
+controls-row toggle at the top of the details page. `enableChanges` +
+`otherRunningCopies` are shared by all of them, so they cannot drift.
+The controls-row toggle has no table around it to read the copies from,
+so it runs its own lookup; if that read fails it still writes the copy
+the user clicked rather than blocking on something it needs only for
+the *other* rows.
+
+- **Clicking an unchecked box enables that copy and disables every
+  other copy that is running** — across both sections, since the point
+  is that one copy of this script runs, not one per section. Two
+  enabled copies at one URL both register and both run, which is almost
+  never wanted.
+- **Clicking a checked box just disables it.** That leaves none running,
+  which is an ordinary thing to want, and there is no other copy that
+  should be promoted in its place.
+- **A copy under a disabled source is spared.** It isn't running, so it
+  isn't competing — and its own checkbox is rendered disabled, so a
+  flip made here could not be undone from this panel at all. Turning it
+  off would silently destroy the user's stored intent for whenever they
+  re-enable that source.
+- **Ctrl/Cmd-click opts out** and toggles only that box, for the rare
+  case where two copies really are meant to run together (say, two
+  `@match`-disjoint edits of one script). Read from the `click` event,
+  not `change`, which carries no modifier state; keyboard activation
+  fires a click too, with the modifier simply false.
+- The action takes the whole list of changes at once, so the caller
+  applies them as one batch and one rejection reverts the clicked box.
+- **The panel repaints after the write, on success as well as failure.**
+  Each row's handler closes over the row list as it was drawn, so
+  without it the *second* click would compute "the others" from
+  pre-first-click data and sweep nothing — two enabled copies, the
+  exact state the rule exists to prevent. Leaving it to
+  `storage.onChanged` is not enough: a preview has no such listener,
+  and a batch that turns out to be a no-op writes nothing and fires no
+  event.
+- **The whole batch is one write.** `setScriptsEnabled`, not a loop of
+  `setScriptEnabled`: the bulk call lands as a single
+  `chrome.storage.local.set` and fires one `storage.onChanged`. A loop
+  fired one per copy, and each one rehydrated the viewer from a
+  half-applied state — the Enabled checkbox visibly flipped back and
+  forth as the batch went through. It also spares the background worker
+  a registration sync per copy.
+- **The whole batch paints before the write.** The browser flips the
+  box that was clicked; `paintEnabledOptimistically` catches up the
+  rest — the other rows and the page's own toggle — in the same task.
+  A radio-button pair that flips one box now and its partner after a
+  round trip through storage reads as a bug. Purely cosmetic: nothing
+  reads it back, and the repaint that follows draws from stored state,
+  so a failed write corrects itself.
+- **One tooltip, both surfaces**: *Enable this script*, the same pair
+  the sources page uses (with *Source is disabled* when the parent is
+  off). It does not name the copy — the Source and Location cells are
+  an inch to the right — and it does not swap to "Disable" when
+  checked, which would make one control read two ways for no gain.
+  - *(Ctrl-click for multi-enable)* is appended only where the sweep
+    can actually fire. It matters most on the controls-row toggle,
+    whose effect on other copies is otherwise invisible from where it
+    sits, so `paintRelatedVersions` adds it once the lookup it needs
+    has run.
+  - **The app names one key, the one this machine has** — *Cmd* on a
+    Mac, where ctrl-click opens the context menu and the handler takes
+    `metaKey` instead. These docs write "Ctrl/Cmd" because they
+    describe every platform at once; a message on screen would be
+    telling half its readers about a key their keyboard doesn't have.
+  - **The accessible name carries what the tooltip drops.** A panel
+    row's checkbox is the only content of its cell, so it has no name
+    from markup at all, and rows all announcing "Enable this script"
+    would be indistinguishable — where a sighted user simply reads
+    across to the Source cell.
 
 ### Which actions each section gets
 
@@ -126,6 +205,59 @@ a normal-weight gloss naming the match.
     the script twice;
   - an **invalid preview**, which has already said the file cannot be
     installed and hidden its own Install button.
+- **A trash can on every row**, in its own column right of the refetch
+  button — same glyph and behaviour as the sources page's per-script
+  remove.
+  - **Live only for scripts in a container source** (the *Scripts from
+    local disk* / *…from web* / *…from GitHub* buckets), which the user
+    added one at a time.
+  - **Disabled elsewhere**, with the tooltip *Script from **directory**
+    source can only be removed by removing the source* — or
+    ***manifest** source*, per `sourceHasManifest`.
+    - These docs call the whole family "collection sources", but that
+      phrase appears nowhere a user can see it, and this message is the
+      first that needed a name for them. *Directory* and *manifest* are
+      the words the sources page already uses for how a source was
+      added, so they are the ones a user can act on. A GitHub repo or
+      `/tree/` source is a directory of scripts too, and reads that way.
+    - Shown-but-disabled rather than hidden: a ragged column would give
+      no clue why some rows can be removed and others can't. Removing
+      such a copy wouldn't stick anyway — the source's next refresh
+      scans it straight back in.
+  - **A row whose source dangles gets the live button.** An orphan is
+    the thing a user would most want to clear out, and nothing will
+    scan it back in.
+  - **Removing the row you are looking at is allowed.** Refusing only
+    where the user happens to be standing would be arbitrary. The viewer
+    then reports "This script has been removed" rather than its generic
+    not-found message, and clears the panel along with the rest of the
+    page — its heading has nothing left to be *other than*.
+    - The removed state is driven from the action, not left to the
+      storage listener: `removeScript` writes nothing when the row was
+      already gone, so there may be no event to wait for.
+    - The flag behind that wording is cleared by `render`, not on read.
+      The path can run twice for one removal (our call, then the
+      event), and the second pass must not downgrade the message; once
+      a script is on screen again, a later disappearance is someone
+      else's doing.
+
+### Keeping the page around the panel in step
+
+- **The installed viewer needs nothing.** Its `storage.onChanged`
+  listener rehydrates the whole page after any panel action.
+- **A preview has no such listener** — it returns early without a
+  `scriptId` — so its banner and buttons would keep whatever the
+  load-time wiring left them with. After every panel action that
+  changed storage, the preview re-runs `wireInstallButtons`.
+  - Without it, removing the copy a preview offers to update leaves the
+    banner claiming it is still installed, Open and Update pointed at
+    an id that no longer exists, and Install still hidden — precisely
+    when Install is what the user now wants.
+  - `wireInstallButtons` therefore resets every button it owns before
+    deciding, rather than only ever revealing them.
+  - **Not on an invalid preview**, which has deliberately hidden those
+    buttons; re-running the wiring would put them back on a file the
+    page has said cannot be installed.
 
 ### Failures
 
@@ -137,17 +269,23 @@ a normal-weight gloss naming the match.
 - A multi-copy refresh keeps going past a failure and names every copy
   that failed. Aborting on the first would silently leave the rest
   untouched after the user asked for all of them.
+- **An exclusive toggle is a batch, and reports the same way.** A
+  half-applied one leaves two copies enabled, so the message names
+  which write failed and in which direction. The panel repaints from
+  stored state before rejecting — a better answer than the renderer's
+  own revert of the single box that was clicked.
 
 ### Accessibility
 
 - Each row's checkbox is the only content of its cell, so it carries an
-  `aria-label` naming the copy — five rows of "Enable this copy" would
-  be indistinguishable.
+  `aria-label` naming the copy — five rows of "Enable this script"
+  would be indistinguishable. See the tooltip note above for the split
+  between what the tooltip says and what the accessible name adds.
 - A row whose **source** is disabled greys out and says so, matching
   the viewer's own toggle. The box still shows the script's own stored
   flag; the source override is carried by the disabled state and label.
 - The current row gets `aria-current`, because the `(this page)` marker
-  lives in the Location cell, which the narrow layout hides.
+  is in the Location cell, which reads as decoration rather than state.
 
 ### Suppression
 
@@ -157,7 +295,7 @@ it.
 
 ### Row layout
 
-- Columns: enable toggle, source, location, version, actions.
+- Columns: enable toggle, source, location, version, actions, remove.
 - **Source cell leads with the type bubble**, then the name — the same
   order as the details panel's Source row and the sources page's
   headings. The bubble is fixed-width and the name is the variable
@@ -171,14 +309,16 @@ it.
   `table-layout: fixed` pins their columns to the same widths — without
   it each table sizes its own and the panel reads as two unrelated
   grids.
-- Narrow windows shed columns rather than wrapping every cell to a
-  ribbon: **Version** below 640px, **Location** below 460px. Zeroing
-  the `<col>` width alongside `display: none` on the cells is what
-  reclaims the space — under `table-layout: fixed` the colgroup, not
-  the cells, sets column width.
-- Dropping Location takes the per-row link to that copy's page with it.
-  The source name still links to the sources page, so the row is not a
-  dead end.
+- Narrow windows shed **Version** below 640px rather than wrapping
+  every cell to a ribbon. It is the least load-bearing: nothing acts on
+  it, and the copies it distinguishes are still told apart by source
+  and location. Zeroing the `<col>` width alongside `display: none` on
+  the cells is what reclaims the space — under `table-layout: fixed`
+  the colgroup, not the cells, sets column width.
+- **Location does not shed**, though it used to below 460px. Its link
+  is the only way to reach another copy's page now that a preview with
+  several targets drops its header Open button in favour of this table.
+  Wrapping a long path is the lesser cost.
 
 ## What this changed
 
@@ -190,10 +330,70 @@ it.
   the buttons and the panel apply the same rule for what counts as
   installed. Each reads storage separately, so they can sit a moment
   apart; sharing a cached snapshot would be worse, handing the buttons
-  a stale answer right after an install. It passes no header:
-  the buttons care only about this URL. Letting an identity match
-  suppress Install would strand the user with no way to add the script,
-  since installing one location over another is not a thing we can do.
+  a stale answer right after an install.
+  - The header **is** passed, but only the banner reads what it adds.
+    Every button decision comes from `sameLocation` / `installTarget`,
+    which the header cannot change: letting an identity match suppress
+    Install would strand the user with no way to add the script, since
+    installing one location over another is not a thing we can do.
+
+### The preview's already-installed banner
+
+Install / Open / Update act on the copy at **this URL** and nothing
+else, so one sentence for every situation would leave the user guessing
+which copy they were about to touch. The banner splits by what exists:
+
+| What exists | Banner |
+|---|---|
+| One copy, at this URL | This script is already installed *(version …)* |
+| One copy, elsewhere | This script is already installed from a different URL |
+| More than one | This script is already installed multiple times |
+| None anywhere | This script is not installed yet |
+
+- A second line — *Select which instance to open, update or install
+  below* — appears wherever a choice actually exists: more than one
+  **row in the table below**, counting the install-offer row. That is
+  `choiceCount`, and it decides two things at once.
+
+### When there is more than one target, the header buttons stand down
+
+- **Install / Open / Update disappear** and the table becomes the only
+  place to act. Every one of them exists per-row down there: Install on
+  the offer row, Update on each *This URL* row, and every location is a
+  link to that copy's page.
+- Leaving them up would leave the user to guess which row they meant —
+  and the banner's *…below* would be pointing past a row of buttons
+  doing the same three things.
+- **Cancel and View raw source stay.** They are about the preview
+  itself, not about any one copy.
+- **Install only stands down for a table that offers one**, i.e. one
+  with the `installTarget` offer row. A previewable location with no
+  single-file spelling (a `foo.js`, a manifest URL) never gets that
+  row, so with two same-`@name` copies installed elsewhere the count
+  would say "defer" while the table had nowhere to install from —
+  leaving no way to install it at all.
+- One count drives both the banner line and the buttons, so they cannot
+  disagree about whether a choice exists.
+- The offer row counts as a target because it is what an Install would
+  land in. A collection source holding this URL while the user has no
+  copy of their own is the case that motivated this: two rows below,
+  four buttons above, nothing tying them together — even though only
+  one copy is installed.
+- The single-target case is unchanged: one copy at this URL, no offer,
+  nothing elsewhere, and the header buttons act directly.
+- `syntaxErrorOutcome` asks `previewInstalledStatus`, not
+  `updateBtn.hidden`, for whether a row exists here. The two came apart
+  when the buttons started standing down — a copy can exist while
+  Update is deliberately hidden, and calling that an install would be
+  wrong.
+- The version aside is single-copy only. With several rows the answer is
+  the table's Version column, not a parenthetical about one of them.
+- **"Not installed" means nowhere**, not merely not here: a same-`@name`
+  copy from a mirror is still this script, installed.
+- With no copy at this URL, **Open and Update stay hidden** — there is
+  no row for them to act on, and the panel below is the way across.
+- The banner shares the panel's green ground: it is about which of those
+  copies the buttons act on, so the two are one thought.
 - **A script inside a directory or repo source is now recognized** when
   the same URL is opened directly — previously it wasn't, and installing
   by URL made a second copy.

@@ -19,6 +19,7 @@
 //
 // See [docs/script-identity.md].
 
+import { isContainerSource } from './directories.js';
 import { displayLocation } from './script-display.js';
 import { isScriptEnabled, isSourceEnabled, type StoredScript, type StoredSource } from './script-store.js';
 import {
@@ -27,15 +28,86 @@ import {
   effectiveDisplayName,
   makeSourceTypeBubble,
   sourceAnchorId,
+  sourceHasManifest,
 } from './source-display.js';
 import { getValue } from './userscript-header.js';
-import type { RelatedScript, RelatedVersions } from './script-identity.js';
+import {
+  allRelatedRows,
+  enableChanges,
+  otherRunningCopies,
+  type RelatedScript,
+  type RelatedVersions,
+  type ScriptEnableChange,
+} from './script-identity.js';
+
+// What every enable checkbox says, and the tail it adds when clicking
+// it would sweep other copies. Shared so both surfaces say exactly the
+// same thing — the panel rows and the controls-row toggle are the same
+// control, and the hint is the only part of them that varies.
+//
+// Deliberately short, and deliberately fixed. Naming the copy would
+// repeat the Source and Location cells an inch to the right, and
+// swapping to "Disable" when checked would make one control read two
+// ways for no gain.
+//
+// The hint names ONE key — the one this machine has. Only one of them
+// works here (on a Mac ctrl-click opens the context menu, so the
+// handler takes `metaKey` there and `ctrlKey` everywhere else), and a
+// message offering both would be telling half its readers about a
+// gesture their keyboard doesn't have. The docs say "Ctrl/Cmd" because
+// they describe every platform at once; the app knows which one it is
+// running on.
+const ENABLE_TITLE = 'Enable this script';
+const SOLO_HINT = ` (${isApplePlatform() ? 'Cmd' : 'Ctrl'}-click for multi-enable)`;
+
+// Resolved once, at module load — the platform can't change under us.
+// `userAgentData` is the supported spelling and is present in every
+// Chrome that can run this extension; `platform` is the fallback for a
+// non-Chrome host and for the tests' DOM stubs.
+function isApplePlatform(): boolean {
+  const data = (navigator as { userAgentData?: { platform?: string } }).userAgentData;
+  if (data?.platform) return data.platform === 'macOS';
+  return /mac|iphone|ipad/i.test(navigator.platform || '');
+}
+
+// Wording for an enable checkbox, hint included only when clicking it
+// would sweep other copies.
+export function enableTitle(sweepsOthers: boolean): string {
+  return sweepsOthers ? `${ENABLE_TITLE}${SOLO_HINT}` : ENABLE_TITLE;
+}
+
+// …and when the parent source is off, so the box can't be clicked at
+// all. Same string the controls row has always used.
+export const SOURCE_OFF_TITLE = 'Source is disabled';
+
+// Wire a checkbox so its `change` handler can find out whether the
+// click that produced it carried the exclusive-opt-out modifier.
+// Returns a consume-once reader.
+//
+// Read from `click`, not `change`: `change` carries no modifier state.
+// Keyboard activation (space) fires a click too, so nothing is lost —
+// and `ctrlKey` is simply false there, which is the right default.
+// `metaKey` covers Cmd-click on a Mac, where ctrl-click is the context
+// menu. Consumed on read, so a later `change` that arrives without a
+// click in front of it can't inherit a modifier pressed once.
+export function watchSoloModifier(box: HTMLInputElement): () => boolean {
+  let solo = false;
+  box.addEventListener('click', (ev: MouseEvent) => {
+    solo = ev.ctrlKey || ev.metaKey;
+  });
+  return () => {
+    const was = solo;
+    solo = false;
+    return was;
+  };
+}
 
 export interface RelatedVersionsActions {
-  // Flip a row's per-script enabled toggle. Rejecting the promise
-  // reverts the checkbox — the row is showing stored state, so it
-  // must not keep a value the store refused.
-  setEnabled(scriptId: string, enabled: boolean): Promise<void>;
+  // Apply every per-script enabled change a single click produced.
+  // Rejecting the promise reverts the clicked checkbox — the row is
+  // showing stored state, so it must not keep a value the store
+  // refused.
+  setEnabled(changes: readonly ScriptEnableChange[]): Promise<void>;
   // Refetch same-location rows from their own sources. Passed every
   // id in the section at once, so the "…all" control is the same call
   // as a single row's — one refresh pass, one place for the caller to
@@ -46,6 +118,13 @@ export interface RelatedVersionsActions {
   // the `installTarget` row. Receives the row's own button so the
   // caller can put the busy state on the control that was clicked.
   install?(button: HTMLButtonElement): void | Promise<void>;
+  // Delete one stored row outright. Offered only for scripts in a
+  // container source (the single-file installs the user added one at a
+  // time); a script that came in with a directory or manifest source
+  // has no meaning apart from that source, and removing it would just
+  // be undone by the source's next refresh. Omitted by callers with
+  // nowhere to report a failure.
+  remove?(scriptId: string): void | Promise<void>;
   // The row for the script currently on screen, so the panel can mark
   // it instead of linking to the page the user is already on. The
   // viewer passes its own id; the preview has none.
@@ -95,7 +174,14 @@ export function renderRelatedVersions(
   //   - an invalid preview — the page has already said this file
   //     cannot be installed.
   const installTarget = model.actions.install ? model.installTarget : undefined;
-  if (!sameLocation.length && !sameIdentity.length && !installTarget) return;
+  if (!sameLocation.length && !sameIdentity.length) {
+    // A preview with nothing installed anywhere has no *existing*
+    // versions to head a panel with, and the offer row would only
+    // repeat the page's own Install button one line lower. The
+    // installed viewer never reaches this branch — its own row is
+    // always in `sameLocation`.
+    return;
+  }
   // A panel whose only row is the script already on screen tells the
   // user nothing they can't see above it. The current row earns its
   // place only when there is something to compare it against.
@@ -105,6 +191,12 @@ export function renderRelatedVersions(
     && sameLocation.length === 1
     && sameLocation[0].script.id === model.actions.currentScriptId;
   if (onlySelf) return;
+
+  // Every row the panel is about to draw, in one list. Enabling a copy
+  // disables the others, and "the others" spans both sections — the
+  // point is that one copy of this script runs, not one per section.
+  // Same helper the controls-row toggle uses, so both see one list.
+  const allRows = allRelatedRows(model);
 
   const h2 = document.createElement('h2');
   h2.textContent =
@@ -139,7 +231,7 @@ export function renderRelatedVersions(
         : undefined,
     );
     for (const rel of sameLocation) {
-      table.tBodies[0].appendChild(versionRow(rel, model.actions, verb));
+      table.tBodies[0].appendChild(versionRow(rel, model.actions, verb, allRows));
     }
     if (installTarget) {
       table.tBodies[0].appendChild(installRow(installTarget, model));
@@ -153,7 +245,9 @@ export function renderRelatedVersions(
     );
     const table = makeTable();
     for (const rel of sameIdentity) {
-      table.tBodies[0].appendChild(versionRow(rel, model.actions, refetchVerb(model.mode)));
+      table.tBodies[0].appendChild(
+        versionRow(rel, model.actions, refetchVerb(model.mode), allRows),
+      );
     }
     container.appendChild(table);
   }
@@ -199,7 +293,14 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
   const table = document.createElement('table');
   table.className = 'versions-table';
   const cols = document.createElement('colgroup');
-  for (const cls of ['col-enabled', 'col-source', 'col-location', 'col-version', 'col-actions']) {
+  for (const cls of [
+    'col-enabled',
+    'col-source',
+    'col-location',
+    'col-version',
+    'col-actions',
+    'col-remove',
+  ]) {
     const col = document.createElement('col');
     col.className = cls;
     cols.appendChild(col);
@@ -212,6 +313,7 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
     ['Location', 'col-location'],
     ['Version', 'col-version'],
     ['', 'col-actions'],
+    ['', 'col-remove'],
   ] as const) {
     const th = document.createElement('th');
     th.className = cls;
@@ -228,24 +330,26 @@ function versionRow(
   rel: RelatedScript,
   actions: RelatedVersionsActions,
   verb: string,
+  allRows: readonly RelatedScript[],
 ): HTMLTableRowElement {
   const { script } = rel;
   const isCurrent = script.id === actions.currentScriptId;
   const tr = document.createElement('tr');
   if (isCurrent) {
     tr.className = 'is-current';
-    // The `(this page)` marker lives in the Location cell, which the
-    // narrow layout hides — leaving background colour as the only cue,
-    // and none at all for a screen reader. This one survives both.
+    // The `(this page)` marker is a run of text in the Location cell;
+    // to a screen reader it reads as more path, not as "you are here".
+    // This says it as state.
     tr.setAttribute('aria-current', 'true');
   }
   tr.dataset.scriptId = script.id;
 
-  tr.appendChild(enabledCell(rel, actions));
+  tr.appendChild(enabledCell(rel, actions, allRows));
   tr.appendChild(sourceCell(rel));
   tr.appendChild(locationCell(rel, isCurrent));
   tr.appendChild(versionCell(script));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb));
+  tr.appendChild(removeCell(rel, actions));
   return tr;
 }
 
@@ -254,7 +358,19 @@ function versionRow(
 // deciding which one runs is the action the user came here for, and
 // making them visit each script's own page to do it defeats the
 // point.
-function enabledCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTableCellElement {
+//
+// Enabling is EXCLUSIVE: two enabled copies of one script both
+// register and both run, which is almost never what the user wants, so
+// turning one on turns the rest off. Turning one off is not — that
+// leaves none running, which is a perfectly ordinary thing to want and
+// has no other copy to promote. Ctrl/Cmd-click opts out and toggles
+// just the one box, for the rare case where two copies really are
+// meant to run (say, two `@match`-disjoint edits of one script).
+function enabledCell(
+  rel: RelatedScript,
+  actions: RelatedVersionsActions,
+  allRows: readonly RelatedScript[],
+): HTMLTableCellElement {
   const { script } = rel;
   const td = cell('col-enabled');
   const label = document.createElement('label');
@@ -273,35 +389,51 @@ function enabledCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLT
     label.classList.add('toggle-disabled');
   }
 
-  // The checkbox is the only content of its cell, so it has no
-  // accessible name from markup. Naming the copy rather than "this
-  // copy" keeps several identical-looking rows distinguishable.
+  // The visible tooltip, same wording as the controls-row toggle. The
+  // hint is only worth showing where the sweep can actually fire: with
+  // nothing else running there are no "others" to keep.
+  label.title = sourceOff
+    ? SOURCE_OFF_TITLE
+    : enableTitle(otherRunningCopies(allRows, script.id).length > 0);
+
+  // The screen-reader name carries what the tooltip drops. The checkbox
+  // is the only content of its cell, so it has no accessible name from
+  // markup at all — and five rows announcing "Enable this script" would
+  // be indistinguishable, where a sighted user just reads across to the
+  // Source cell.
   const what = rel.source ? effectiveDisplayName(rel.source) : 'this copy';
-  const describe = (): void => {
-    const verb = box.checked ? 'Disable' : 'Enable';
-    const text = sourceOff
+  box.setAttribute(
+    'aria-label',
+    sourceOff
       ? `${what} — the source is disabled, so this copy does not run`
-      : `${verb} this copy in ${what}`;
-    box.setAttribute('aria-label', text);
-    label.title = text;
-  };
-  describe();
+      : `${label.title}, in ${what}`,
+  );
+
+  const takeSolo = watchSoloModifier(box);
 
   box.onchange = () => {
     const wanted = box.checked;
+    // Only enabling is exclusive, and only without the opt-out
+    // modifier.
+    const changes = enableChanges(script.id, wanted, takeSolo() ? [] : allRows);
     box.disabled = true;
     void actions
-      .setEnabled(script.id, wanted)
+      .setEnabled(changes)
       // The store refused the write, so the box must not keep a value
-      // that never landed. Only reachable when NO repaint follows: a
-      // write that succeeds fires `storage.onChanged`, which re-renders
-      // this row from stored state and discards this node entirely.
+      // that never landed. Rarely the thing the user actually sees: the
+      // caller repaints from stored state on both paths, which replaces
+      // this node outright. This is the backstop for a caller that
+      // doesn't — the panel's contract is that a rejection means
+      // nothing landed, and a box left showing an intent that was
+      // refused is a lie.
       .catch(() => {
         box.checked = !wanted;
       })
+      // No re-describe: the wording no longer depends on the box's own
+      // state, only on what else is installed — which a repaint is
+      // what re-reads.
       .finally(() => {
         box.disabled = false;
-        describe();
       });
   };
   label.appendChild(box);
@@ -403,6 +535,69 @@ function actionsCell(
   return td;
 }
 
+// The trash can, in its own column to the right of the refetch button
+// — the same glyph and hover treatment as the sources page's
+// per-script remove (`.remove-script`), so the two read as one control
+// in two places. Its own class, because the panel sits on a different
+// ground and the borders have to match that; and, unlike the sources
+// page, it appears disabled rather than hidden where it can't act.
+//
+// Live only for scripts in a container source (the "Scripts from local
+// disk" / "…from web" / "…from GitHub" buckets), which the user added
+// one at a time and can take back out the same way. A script that
+// arrived as part of a directory, manifest, or repo source is not
+// independently removable: the next refresh of that source would scan
+// it straight back in. Rather than hide the button on those rows —
+// leaving a ragged column and no clue why some rows can be removed —
+// it is shown disabled, with a tooltip that says where the removal
+// actually lives.
+// What to call a source that holds many scripts, when telling the user
+// their copy can't be removed on its own.
+//
+// There was no name for these before this message needed one — the
+// code says "collection source", but that phrase appears nowhere a
+// user can see it. "Directory" and "manifest" are the words the
+// sources page already uses for how they were added, so they are the
+// ones a user can act on. A GitHub repo or `/tree/` source is a
+// directory of scripts too, and reads that way.
+function collectionSourceNoun(source: StoredSource | null): string {
+  return source && sourceHasManifest(source.path) ? 'manifest' : 'directory';
+}
+
+function removeCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTableCellElement {
+  const td = cell('col-remove');
+  if (!actions.remove) return td;
+  // A row whose source dangles is an orphan — the thing a user would
+  // most want to clear out, and nothing will scan it back in — so it
+  // gets the live button rather than a tooltip about a source that
+  // isn't there.
+  const removable = rel.source ? isContainerSource(rel.source.path) : true;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'versions-remove';
+  b.textContent = '🗑';
+  const title = removable
+    ? 'Remove this copy of the script'
+    : `Script from ${collectionSourceNoun(rel.source)} source `
+      + 'can only be removed by removing the source';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  if (removable) {
+    b.onclick = () => {
+      b.disabled = true;
+      void actions.remove?.(rel.script.id);
+    };
+  } else {
+    b.disabled = true;
+    // Also on the cell: a disabled button is out of the tab order, so
+    // hovering anywhere in the column is the one way most users will
+    // ever meet the explanation.
+    td.title = title;
+  }
+  td.appendChild(b);
+  return td;
+}
+
 // The offer to keep your own single-file copy of a script you are
 // looking at inside someone else's collection. Rendered as a row in
 // the same table so the container reads as one more place the script
@@ -448,6 +643,9 @@ function installRow(
     act.appendChild(b);
   }
   tr.appendChild(act);
+  // No stored row yet, so nothing to remove — an empty cell rather
+  // than a disabled trash can, which would imply a copy exists.
+  tr.appendChild(cell('col-remove'));
   return tr;
 }
 

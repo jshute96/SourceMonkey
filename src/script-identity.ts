@@ -46,7 +46,7 @@ import {
   isSingleFileInput,
   type ContainerKind,
 } from './directories.js';
-import type { StoredScript, StoredSource } from './script-store.js';
+import { isScriptEnabled, isSourceEnabled, type StoredScript, type StoredSource } from './script-store.js';
 import { effectiveDisplayName } from './source-display.js';
 import { getValue, type ParsedHeader } from './userscript-header.js';
 
@@ -188,6 +188,69 @@ function installTargetFor(
   const path = containerPath(kind);
   if (sameLocation.some((r) => r.source?.path === path)) return undefined;
   return { kind, path, source: sources.find((s) => s.path === path) ?? null };
+}
+
+// One row's share of an enable/disable click. A plain click produces
+// several at once, so the write path takes a list rather than a single
+// id.
+export interface ScriptEnableChange {
+  scriptId: string;
+  enabled: boolean;
+}
+
+// One click's worth of enable/disable writes: the copy that was
+// clicked, plus — when it is being turned ON — every other copy that
+// is currently running. Pass an empty `rows` to opt out.
+//
+// Disabling is never exclusive: it leaves none running, which is an
+// ordinary thing to want, and there is no other copy that should be
+// promoted in its place.
+export function enableChanges(
+  scriptId: string,
+  enabled: boolean,
+  rows: readonly RelatedScript[],
+): ScriptEnableChange[] {
+  const changes: ScriptEnableChange[] = [{ scriptId, enabled }];
+  if (!enabled) return changes;
+  for (const other of otherRunningCopies(rows, scriptId)) {
+    changes.push({ scriptId: other.script.id, enabled: false });
+  }
+  return changes;
+}
+
+// Whether a row is actually running: its own flag AND its source's.
+function isRunning(rel: RelatedScript): boolean {
+  if (!isScriptEnabled(rel.script)) return false;
+  return rel.source ? isSourceEnabled(rel.source) : true;
+}
+
+// The copies an exclusive enable of `keepId` has to switch off: every
+// OTHER row that is currently running.
+//
+// Shared by both checkboxes the viewer puts on screen — the panel row's
+// and the controls row's — so "enabling one copy turns the rest off"
+// means the same thing wherever it is clicked.
+//
+// Two exclusions, both deliberate:
+//   - **Rows that aren't running already.** Nothing to gain by
+//     rewriting a value they effectively hold.
+//   - **Rows under a disabled source.** Not competing with the copy
+//     being enabled, and their own checkbox renders disabled — so a
+//     flip made here could not be undone from the panel at all, and
+//     would silently destroy the user's stored intent for whenever
+//     they re-enable that source.
+export function otherRunningCopies(
+  rows: readonly RelatedScript[],
+  keepId: string,
+): RelatedScript[] {
+  return rows.filter((r) => r.script.id !== keepId && isRunning(r));
+}
+
+// Every related row in one list, in the order the panel draws them.
+// The exclusive rule spans both sections: the point is that one copy
+// of this script runs, not one copy per section.
+export function allRelatedRows(related: RelatedVersions): RelatedScript[] {
+  return [...related.sameLocation, ...related.sameIdentity];
 }
 
 // Sorts by the name the row will actually show. Using the raw
