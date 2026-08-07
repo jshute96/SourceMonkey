@@ -86,12 +86,18 @@ Clicking a script name opens the **script viewer**, which shows the script's
 headers, content (including the `@require` files it loads), status, and a
 **Log** tab showing errors and other log messages.
 
+When the same script is installed more than once — the same URL under two
+sources, or the same `@name` and `@namespace` from two different places — the
+viewer lists the copies in an **Other versions** panel, where each one can be
+enabled, updated, or opened.
+
 The **Options** link at the top-left covers `.user.js` link capture,
 debug logging, and a GitHub token (for private repos and a higher API
 rate limit).
 
 Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
+[docs/script-identity.md](docs/script-identity.md),
 [docs/script-log.md](docs/script-log.md),
 [docs/diagnostics.md](docs/diagnostics.md).
 
@@ -129,7 +135,9 @@ invalid scripts.  **Install** loads the script, the same as adding its
 URL on the sources page.
 
 If the script is already registered, the preview allows updating the
-existing copy.
+existing copy. A script that arrives via a collection source you already
+subscribe to can still be installed as a copy of your own — the preview
+lists both and lets you pick.
 
 Link capture can be turned off on the Options page if you want Chrome's
 defaults or have another userscript manager handling links.

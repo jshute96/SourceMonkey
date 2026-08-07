@@ -180,6 +180,141 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         word-break: break-all;
       }
+      /* ---- "Other versions" panel (src/related-versions.ts) ----
+         Same card as #header-summary so the two read as a pair. Empty
+         when nothing relates, and hidden by the :empty rule rather
+         than a `hidden` attribute the renderer would have to manage. */
+      #other-versions {
+        margin: 0 0 0.8em;
+        padding: 0.6em 0.8em;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f5f7fa;
+      }
+      #other-versions:empty { display: none; }
+      #other-versions h2 {
+        font-size: 1.1em;
+        font-weight: 650;
+        color: #333;
+        margin: 0 0 0.6em;
+      }
+      .versions-section-heading {
+        font-size: 1em;
+        font-weight: 600;
+        color: #444;
+        margin: 0.9em 0 0.3em;
+      }
+      .versions-section-heading:first-of-type { margin-top: 0; }
+      /* The parenthesized gloss names which match produced the rows
+         below. It belongs to the heading, so it lives inside the
+         <h3> — but at body weight, or the two sections would read as
+         equally emphatic. */
+      .versions-heading-gloss {
+        font-weight: 400;
+        color: #777;
+        font-size: 12px;
+      }
+      /* `fixed` + the <colgroup> the renderer emits is what keeps the
+         two sections' columns aligned with each other: without it each
+         <table> sizes its own columns from its own content and the
+         panel reads as two unrelated grids. */
+      .versions-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .versions-table col.col-enabled  { width: 2.2em; }
+      .versions-table col.col-source   { width: 26%; }
+      .versions-table col.col-version  { width: 7em; }
+      .versions-table col.col-actions  { width: 6.5em; }
+      .versions-table th {
+        text-align: left;
+        font-size: 11px;
+        font-weight: 600;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 0 0.5em 0.2em 0;
+        border-bottom: 1px solid #e2e6ec;
+      }
+      .versions-table td {
+        padding: 0.35em 0.5em 0.35em 0;
+        vertical-align: top;
+        border-bottom: 1px solid #eceff3;
+      }
+      .versions-table tr:last-child td { border-bottom: none; }
+      .versions-table .col-actions {
+        text-align: right;
+        padding-right: 0;
+        white-space: nowrap;
+      }
+      .versions-table th.col-actions button { font-size: 12px; padding: 1px 8px; }
+      .versions-table .col-version {
+        color: #555;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
+         a long URL shrink its column rather than widening the table. */
+      .versions-table .col-source,
+      .versions-table .col-location {
+        overflow-wrap: anywhere;
+        word-break: normal;
+        min-width: 0;
+      }
+      .versions-table .col-location { font-size: 12px; color: #555; }
+      .versions-source-name {
+        color: inherit;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .versions-source-name:hover { text-decoration: underline; }
+      .versions-table .col-location a { color: inherit; text-decoration: none; }
+      .versions-table .col-location a:hover { text-decoration: underline; }
+      .versions-table tr.is-current { background: #eaf0f9; }
+      .versions-current-marker { color: #666; }
+      .versions-this-page { font-weight: 700; color: #333; }
+      .versions-table tr.is-offer .versions-offer-text {
+        color: #888;
+        font-style: italic;
+      }
+      .versions-table .toggle {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+      }
+      .versions-table .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
+      /* Same treatment as the controls-row toggle when the parent
+         source is off: the box can't be clicked, so it must not look
+         clickable. */
+      .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
+      .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
+      /* The panel reports its own action failures here rather than in
+         the page's `#message` bar — see related-versions.ts. */
+      .versions-message {
+        margin: 0 0 0.5em;
+        color: #b3261e;
+        font-size: 12px;
+      }
+      /* Narrow windows shed columns rather than letting every cell
+         wrap to an unreadable ribbon. Version goes first — it is the
+         least load-bearing of the four. Location goes next, and takes
+         the per-row link to that copy's page with it; the source name
+         still links to the sources page, so the row is not a dead end.
+         Both remain in the DOM (hidden, not dropped) so nothing has to
+         re-render on resize.
+         Zeroing the <col> width alongside `display: none` on the
+         cells is what actually reclaims the space: under
+         `table-layout: fixed` the colgroup, not the cells, is what
+         sets column width. */
+      @media (max-width: 640px) {
+        .versions-table col.col-version { width: 0; }
+        .versions-table .col-version { display: none; }
+      }
+      @media (max-width: 460px) {
+        .versions-table col.col-location { width: 0; }
+        .versions-table .col-location { display: none; }
+      }
       /* Source row layout. Grid layout so a long display name wraps
          inside the right-hand column instead of dropping back to the
          row's left edge. The bubble's own styling (color, padding,
@@ -475,6 +610,7 @@
     </div>
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
+    <div id="other-versions"></div>
     <div id="tabs" class="tabs" role="tablist" hidden></div>
     <pre id="code-pane" class="code-box line-numbers" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>

@@ -34,6 +34,7 @@ import {
   getAllScripts,
   getScript,
   getSource,
+  getSources,
   isScriptEnabled,
   isSourceEnabled,
   setScriptEnabled,
@@ -41,6 +42,8 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
+import { findRelatedVersions, type RelatedVersions } from './script-identity.js';
+import { renderRelatedVersions, type RelatedVersionsActions } from './related-versions.js';
 import { computeLogIds } from './script-log-id.js';
 import {
   attachFiles,
@@ -163,6 +166,7 @@ const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
 const viewSourceBtn = document.getElementById('view-source-btn') as HTMLButtonElement;
 const messageEl = document.getElementById('message')!;
 const summaryEl = document.getElementById('header-summary')!;
+const versionsEl = document.getElementById('other-versions')!;
 const tabsEl = document.getElementById('tabs')!;
 const contentEl = document.getElementById('content')!;
 const codePaneEl = document.getElementById('code-pane') as HTMLElement;
@@ -571,12 +575,138 @@ function render(script: StoredScript): void {
     versionProbes: script.versionProbes,
   });
 
+  void repaintRelatedVersions({
+    location: script.fileUrl,
+    header: script.header,
+    mode: 'installed',
+    currentScriptId: script.id,
+  });
+
   tabsView.setTabs(storedTabs(script));
 
   // Painted AFTER the tabs, not with the rest of the header fields: a
   // location can only become a link once there are tabs to resolve it
   // against, and `setTabs` is what installs them.
   paintScriptMessage(script);
+}
+
+// Paint the "Other versions" panel for whichever mode is on screen.
+//
+// Fire-and-forget from both render paths: the panel is supplementary,
+// so a slow store read must not delay the page around it, and a failed
+// one must not blank a page that is otherwise fine. A failure empties
+// the panel (`:empty` hides it) and logs via `dlog` — no user-facing
+// message, because "we couldn't tell you about copies you may not
+// have" is not actionable.
+//
+// `location` is the ABSOLUTE URL, not the stored `relativePath`: see
+// [docs/script-identity.md] for why the match can't use the relative
+// form.
+async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
+  const generation = ++relatedVersionsGeneration;
+  const snapshot = await readStoreSnapshot();
+  // A later paint started while this one was reading storage, so this
+  // result is already stale. Drop it rather than let two in-flight
+  // reads race to paint last — the installed viewer repaints on every
+  // `script:*` change, so overlapping paints are routine.
+  if (generation !== relatedVersionsGeneration) return;
+
+  const related = findRelatedVersions({
+    ...snapshot,
+    location: args.location,
+    header: args.header,
+  });
+
+  const actions: RelatedVersionsActions = {
+    currentScriptId: args.currentScriptId,
+    setEnabled: async (id, enabled) => {
+      await setScriptEnabled(id, enabled);
+    },
+    update: async (ids) => {
+      relatedVersionsMessage = '';
+      const failures: string[] = [];
+      // Sequential, not concurrent: each `updateScript` refetches and
+      // rewrites storage, and the store serializes writes anyway. A
+      // parallel burst would only add contention.
+      //
+      // The try is INSIDE the loop. Wrapping the whole loop would let
+      // one unreachable host abandon every copy after it, silently —
+      // the user asked for all of them.
+      for (const id of ids) {
+        try {
+          await updateScript(id, 'manual', 'force');
+        } catch (err) {
+          failures.push(`${describeRelatedScript(snapshot.scripts, id)}: ${describeError(err)}`);
+        }
+      }
+      // Name which copies failed. With several rows in the table,
+      // "Update failed" alone leaves the user no way to tell which one
+      // to look at — see docs/diagnostics.md#wording.
+      if (failures.length === 1) {
+        relatedVersionsMessage = `Could not refresh ${failures[0]}`;
+      } else if (failures.length > 1) {
+        relatedVersionsMessage = `Could not refresh ${failures.length} copies — ${failures.join('; ')}`;
+      }
+      await repaintRelatedVersions(args);
+    },
+    // Omitted — which is what suppresses the offer row — unless the
+    // caller says installing here is a thing the user can actually do.
+    install: args.offerInstall ? (btn) => doInstall(btn) : undefined,
+  };
+
+  renderRelatedVersions(versionsEl, {
+    ...related,
+    actions,
+    mode: args.mode,
+    version: args.header ? getValue(args.header, 'version') : undefined,
+    message: relatedVersionsMessage,
+  });
+}
+
+// How a failed copy is named in the panel's own message. The source
+// display name is what the failing row shows in its Source cell, so
+// that is what the user scans for; the location disambiguates two
+// copies under one source.
+function describeRelatedScript(scripts: readonly StoredScript[], id: string): string {
+  const script = scripts.find((s) => s.id === id);
+  return script ? displayLocation(script.relativePath) : 'this copy';
+}
+
+interface RelatedVersionsPaint {
+  location: string;
+  header: ParsedHeader | null;
+  mode: 'installed' | 'preview';
+  currentScriptId?: string;
+  // Whether to offer a standalone install of this location. Never on
+  // the installed page (a second row for a file already installed
+  // would inject the script twice), and not for a preview the page has
+  // already declared uninstallable.
+  offerInstall?: boolean;
+}
+
+// Bumped by every paint so a slower earlier one can tell it lost.
+let relatedVersionsGeneration = 0;
+
+
+// The panel's own message, surviving repaints because it is passed
+// into every render. Cleared when the panel's next action starts, not
+// on a repaint — a storage change caused by the very refresh that
+// failed must not erase the report of that failure.
+let relatedVersionsMessage = '';
+
+// Re-run the panel after one of its own actions. The installed viewer
+// also repaints via the `storage.onChanged` listener, but a preview has
+// no `scriptId` so that listener returns early — this is what keeps the
+// preview's panel current.
+function repaintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
+  return paintRelatedVersions(args).catch((err) => {
+    // Emptied, not left as-is: the rows carry live buttons keyed to
+    // script ids, and a failed re-read is exactly when those ids may
+    // have stopped existing. Stale rows that still act would be worse
+    // than none. `:empty` then hides the container.
+    versionsEl.replaceChildren();
+    dlog(`[SourceMonkey] other-versions repaint failed: ${describeError(err)}`);
+  });
 }
 
 // The message bar for an installed script: whichever "here is what's
@@ -906,6 +1036,18 @@ function renderPreview(text: string): void {
   // Same validation the store runs when a script is added, so what the
   // preview says about a file matches what installing it would produce.
   const error = previewValidationError(text, previewHeader);
+
+  // Painted either way — a file that won't install is exactly when the
+  // copies you already have are worth seeing — but an invalid one gets
+  // no Install offer, or the panel would contradict the banner above it
+  // and the Install button the invalid path just hid.
+  void repaintRelatedVersions({
+    location: previewLocation,
+    header: previewHeader,
+    mode: 'preview',
+    offerInstall: !error,
+  });
+
   if (error) {
     renderInvalidPreview(error);
     return;
@@ -1215,42 +1357,80 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
   return entry.source;
 }
 
-// Look for an existing row for this location and pick the button set.
-// A container script's `relativePath` holds the full URL/path the user
-// added, canonicalized — which is exactly what `addSource` would store
-// for this install, so it's the field to match on.
+// Look for existing rows at this location and pick the button set.
+//
+// Install and Open/Update are not mutually exclusive any more. A
+// script can already be installed *inside a collection source* the
+// user subscribes to while they still have no copy of their own — and
+// in that case both are meaningful: Open jumps to the copy that
+// exists, Install adds the standalone one that doesn't. `installTarget`
+// is precisely "a single-file install here would add something", so it
+// is what decides whether Install shows.
 async function wireInstallButtons(): Promise<void> {
-  const existing = await findInstalled();
+  const related = await findInstalledHere();
+  const existing = related.sameLocation[0]?.script;
 
-  if (!existing) {
-    renderBanner('This script is not installed yet', 'preview');
+  // Install shows when installing would add something:
+  //   - `installTarget` — a single-file location with no copy of its
+  //     own yet, INCLUDING when a collection source already covers it;
+  //   - nothing installed here at all. `installTarget` only speaks for
+  //     single-file inputs (`.user.js`), but a preview accepts any
+  //     http(s)/file location, so a `foo.js` or a manifest URL would
+  //     otherwise lose its Install button with nothing said about why.
+  //     `addSource` remains the thing that judges those.
+  if (related.installTarget || !existing) {
     installBtn.hidden = false;
     installBtn.disabled = false;
     installBtn.onclick = () => void doInstall();
+  } else {
+    installBtn.hidden = true;
+  }
+
+  if (!existing) {
+    renderBanner('This script is not installed yet', 'preview');
     return;
   }
 
   previewInstalledStatus = existing.status;
   renderInstalledBanner(existing, previewHeader);
-  installBtn.hidden = true;
   showOpenButton(existing.id);
   updateBtn.hidden = false;
   updateBtn.onclick = () => void doUpdate(existing.id);
 }
 
 async function offerOpenExisting(): Promise<void> {
-  const existing = await findInstalled();
+  const existing = (await findInstalledHere()).sameLocation[0]?.script;
   if (existing) showOpenButton(existing.id);
 }
 
-// The stored row for the location being previewed, if we have one.
-// Both sides go through `canonicalSourceInput`: `previewLocation` is
-// already canonical, but a row written before `addSource` started
-// collapsing `file://` inputs still carries the URL spelling, and a
-// miss here is a duplicate install.
-async function findInstalled(): Promise<StoredScript | undefined> {
-  const scripts = await getAllScripts();
-  return scripts.find((s) => canonicalSourceInput(s.relativePath) === previewLocation);
+// Stored rows at the location being previewed, via the same lookup the
+// "Existing versions" panel uses — one answer to "do we already have
+// this?", so the buttons and the panel agree by construction.
+//
+// "Agree" means the RULE is shared, not the instant: this runs its own
+// read, so a write landing between it and the panel's paint can leave
+// the two a moment apart. Deliberate — caching the panel's snapshot to
+// close that window would hand the buttons a stale answer after an
+// install or a refresh, which is a worse failure than a transient one
+// that the next storage change corrects.
+//
+// Header is not passed: the buttons care only about this URL, never
+// about a same-`@name` copy from somewhere else. Installing over one of
+// those is not a thing we can do, so letting an identity match suppress
+// Install would strand the user with no way to add the script.
+async function findInstalledHere(): Promise<RelatedVersions> {
+  const snapshot = await readStoreSnapshot();
+  return findRelatedVersions({ ...snapshot, location: previewLocation, header: null });
+}
+
+interface StoreSnapshot {
+  scripts: StoredScript[];
+  sources: StoredSource[];
+}
+
+async function readStoreSnapshot(): Promise<StoreSnapshot> {
+  const [scripts, sources] = await Promise.all([getAllScripts(), getSources()]);
+  return { scripts, sources };
 }
 
 function showOpenButton(id: string): void {
@@ -1260,8 +1440,12 @@ function showOpenButton(id: string): void {
   };
 }
 
-async function doInstall(): Promise<void> {
-  const spinner = startBusy(installBtn);
+// `btn` is whichever control the user actually clicked: the preview's
+// own Install, or the panel's offer-row Install. The busy state has to
+// land on that one — spinning the header button while the clicked one
+// stays live invites a second click, and a second `addSource`.
+async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
+  const spinner = startBusy(btn);
   try {
     // The normalized form, not the raw input: `addSource` normalizes
     // again internally (a no-op on an already-canonical value), and
@@ -1289,7 +1473,7 @@ async function doInstall(): Promise<void> {
     setMessage(`Install failed: ${describeError(err)}`, 'error');
   } finally {
     spinner.remove();
-    installBtn.disabled = false;
+    btn.disabled = false;
   }
 }
 

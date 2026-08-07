@@ -89,6 +89,11 @@ in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
 - Reads canonicalize the *stored* value too (the preview's
   already-installed check, the container's duplicate check), so rows
   written before this existed still match.
+- The preview's already-installed check compares the **absolute**
+  location, so a copy inside a directory / repo source counts too —
+  see [script-identity.md](script-identity.md). Install is still
+  offered in that case: a copy in someone else's collection is not a
+  copy of your own.
 - **Not applied** to Windows drive-letter (`file:///C:/…`) or UNC
   (`file://server/…`) URLs: the bare-path conversion drops the host and
   turns the drive letter into a path segment. Those keep the URL
@@ -315,11 +320,6 @@ path those differ.
   none. A hint on the options page would close the gap.
 - **Mixed-case suffixes are ignored** everywhere, by design — see
   "Every matcher has to agree" above.
-- **A script installed as part of a directory / repo source isn't
-  recognised as already installed.** The already-installed check
-  matches on `relativePath`, which is repo-relative for those sources,
-  so installing the same script by URL creates a second copy. That's
-  the pre-existing shape of container dedup, not new here.
 - **`Content-Disposition: attachment` responses** still download on
   every Chrome version when the capture loses the startup race; the
   DNR rule only rewrites `Content-Type`.

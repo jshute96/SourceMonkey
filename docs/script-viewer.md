@@ -179,7 +179,22 @@ One page, one set of panels, two query strings:
        `loglevel:<scriptId>` repaints just this row, and the same
        listener repaints it (plus the message bar) when the injector's
        `injector-rejections` map changes.
-5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
+5. **Other versions panel** (`#other-versions`) — every installed copy
+   of this script, when there is more than one to talk about. Built by
+   `renderRelatedVersions` in
+   [`src/related-versions.ts`](../src/related-versions.ts) over the
+   lookup in [`src/script-identity.ts`](../src/script-identity.ts).
+   - Two sections: **This URL** (same absolute `fileUrl`) and **Same
+     script from a different URL** (same `@namespace` + `@name`).
+   - Per row: enable toggle, type bubble + source name linking to the
+     sources page, location linking to that copy's own viewer tab,
+     version, and a refetch button — **Refresh** here, **Update** in a
+     preview, matching whichever control the page already shows.
+   - Headed *Other versions of this script* installed, *Existing
+     versions* in preview. Empty — and so hidden — when the only row
+     would be the script already on screen.
+   - Full behaviour in [script-identity.md](script-identity.md).
+6. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
    Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`
      (decoded when that path is a URL).
@@ -191,7 +206,7 @@ One page, one set of panels, two query strings:
      main-script tab keeps the viewer's shape consistent.
    - The currently selected tab + highlight is mirrored into
      `location.hash` — see "URL fragment navigation" below.
-6. **Code pane / Log pane** — the active tab decides which is shown:
+7. **Code pane / Log pane** — the active tab decides which is shown:
    - Code tabs paint a `<pre><code>` highlighted by Prism. Main-script
      tab shows `leadingText + headerText + '\n' + bodyText` (the
      `leadingText` covers anything in the source file above the
@@ -328,16 +343,25 @@ Banner (`#banner-slot`) states what this file is; the action row
 | Situation | Banner | Buttons |
 |-----------|--------|---------|
 | Not installed | "not installed yet" | **Install**, Cancel, View raw source |
-| Already installed | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
+| Installed here | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
+| Only in a collection source | version(s), see below | **Install**, **Open installed script**, **Update now**, Cancel, View raw source |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
 - **Install** → `addSource(<input>)`, then jumps to the new script's
   viewer. A web install is not a special kind of script: it lands in
   the http / github container source and picks up normal refresh and
   update behavior.
-- "Already installed" is matched on the stored `relativePath` equalling
-  the normalized URL — that's exactly what `addSource` would store. The
-  banner names both versions when `@version` differs.
+- Already-installed rows come from `findRelatedVersions`, matched on
+  the absolute `fileUrl` — the same lookup the Existing versions panel
+  uses, so both apply the same rule for what counts as installed. Each
+  reads storage separately, so a write landing between them can leave
+  them a moment apart; the next storage change reconciles it. See
+  [script-identity.md](script-identity.md). The banner names both
+  versions when `@version` differs.
+- **Install and Open/Update are not exclusive.** A script already
+  installed inside a collection source the user subscribes to is still
+  worth a copy of their own; `installTarget` — "would a standalone
+  install add anything?" — is what decides whether Install shows.
 - **Update now** → `updateScript(id, 'manual')`, then the viewer.
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by
