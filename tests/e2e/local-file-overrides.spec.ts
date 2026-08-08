@@ -503,4 +503,124 @@ test.describe('local file overrides', () => {
     expect(res?.localUrl).toMatch(/\/style\.css$/);
     expect(Buffer.from(res!.bytesBase64, 'base64').toString()).toBe('.local{}');
   });
+
+  // ---------- Configured search roots (options page) ----------
+  //
+  // The motivating layout: a shared library directory that is NOT the
+  // script's own folder, so the implicit root can't reach it. These
+  // drive the real setting through the SW, so what's under test is the
+  // storage read plus the ordering, not just the pure rule.
+  test.describe('configured roots', () => {
+    let libDir: ScriptsDir;
+
+    test.beforeEach(() => {
+      libDir = ScriptsDir.create('sourcemonkey-lib-');
+    });
+    test.afterEach(() => {
+      libDir.cleanup();
+    });
+
+    // Write `<libDir>/<relative>` with the given body, creating parents.
+    function writeLib(relative: string, body: string): void {
+      const full = path.join(libDir.path, relative);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, body);
+    }
+
+    test('a configured root resolves what the script folder cannot', async ({ sm }) => {
+      // Matches the declared URL's `lib/util.js` suffix, one directory
+      // up from anything the implicit root can see.
+      writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
+      await sm.setLocalRoots([libDir.path]);
+      writeScript();
+      const source = await sm.addSource(scriptsDir.path);
+      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      expect(req?.source).toBe('window.__SM_LOCAL = "configured";');
+      expect(req?.localUrl).toBe(`file://${libDir.path}/lib/util.js`);
+      expect(server.countResponses('/lib/util.js', 200)).toBe(0);
+    });
+
+    // The implicit root is prepended, so a file sitting next to the
+    // script beats the shared library — the local edit you are looking
+    // at wins over the one you forgot about.
+    test('the script\'s own folder still wins over a configured root', async ({ sm }) => {
+      fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "own-folder";');
+      writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
+      await sm.setLocalRoots([libDir.path]);
+      writeScript();
+      const source = await sm.addSource(scriptsDir.path);
+      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      expect(req?.source).toBe('window.__SM_LOCAL = "own-folder";');
+    });
+
+    test('roots are searched in the order listed', async ({ sm }) => {
+      const second = ScriptsDir.create('sourcemonkey-lib2-');
+      try {
+        writeLib('lib/util.js', 'window.__SM_LOCAL = "first";');
+        fs.mkdirSync(path.join(second.path, 'lib'), { recursive: true });
+        fs.writeFileSync(path.join(second.path, 'lib/util.js'), 'window.__SM_LOCAL = "second";');
+        await sm.setLocalRoots([libDir.path, second.path]);
+        writeScript();
+        const source = await sm.addSource(scriptsDir.path);
+        const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+        expect(req?.source).toBe('window.__SM_LOCAL = "first";');
+      } finally {
+        second.cleanup();
+      }
+    });
+
+    // The safety floor, now that a root is a directory the script had no
+    // other way to reach: a declared URL cannot walk out of one.
+    test('a configured root cannot be climbed out of', async ({ sm }) => {
+      // `secret.js` is a sibling of the root, reachable only by going up.
+      fs.writeFileSync(path.join(path.dirname(libDir.path), 'sm-secret.js'), 'window.__SM_LOCAL = "leaked";');
+      await sm.setLocalRoots([path.join(libDir.path, 'lib')]);
+      scriptsDir.write({
+        relativePath: 'main.user.js',
+        meta: {
+          name: 'Climb',
+          match: ['https://example.com/*'],
+          extra: [`// @require     ${server.baseUrl}/..%2f..%2fsm-secret.js`],
+        },
+        body: '',
+      });
+      const source = await sm.addSource(scriptsDir.path);
+      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      expect(req?.localUrl).toBeUndefined();
+      expect(req?.source ?? '').not.toContain('leaked');
+    });
+
+    // The `file://`-host gate covers configured roots too: a script
+    // installed from the web resolves nothing out of a dev directory.
+    test('an http-sourced script ignores configured roots', async ({ sm }) => {
+      writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
+      await sm.setLocalRoots([libDir.path]);
+      server.setRoute('/remote.user.js', [
+        '// ==UserScript==',
+        '// @name        Remote Roots',
+        '// @match       https://example.com/*',
+        `// @require     ${server.baseUrl}/lib/util.js`,
+        '// ==/UserScript==',
+        '',
+      ].join('\n'));
+      const source = await sm.addSource(`${server.baseUrl}/remote.user.js`);
+      const script = (await sm.getSourceWithScripts(source!.id))!.scripts
+        .find((s) => s.relativePath.includes('remote.user.js'));
+      const req = script!.requires?.[0];
+      expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
+      expect(req?.localUrl).toBeUndefined();
+    });
+
+    test('the per-source opt-out also disables configured roots', async ({ sm }) => {
+      writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
+      await sm.setLocalRoots([libDir.path]);
+      writeScript();
+      const source = await sm.addSource(scriptsDir.path);
+      await sm.setSourceLocalFiles(source!.id, false);
+      await sm.updateSource(source!.id, 'manual');
+      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
+      expect(req?.localUrl).toBeUndefined();
+    });
+  });
 });

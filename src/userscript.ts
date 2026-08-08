@@ -125,7 +125,11 @@ import {
 import { appendWithSlashBreaks } from './source-display.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { resolveScriptResource } from './file-loader.js';
-import { localSearchRoots } from './local-file-overrides.js';
+import {
+  installLocalRootsListener,
+  localRootsReady,
+  localSearchRoots,
+} from './local-file-overrides.js';
 import {
   installGithubAuthListener,
   loadGithubAuthToken,
@@ -246,10 +250,15 @@ const filenameCopyBtn = (() => {
 const fileAccessProbe = isFileSchemeAccessAllowed();
 let fileAccessAllowed = true;
 
+installLocalRootsListener();
 void load();
 
 async function load(): Promise<void> {
   fileAccessAllowed = await fileAccessProbe;
+  // Stand-in resolution (the preview's own parse check, and the icon
+  // slot) reads the configured roots synchronously, so hydrate the
+  // setting before either runs.
+  await localRootsReady();
   if (scriptId) {
     await loadStored();
     return;

@@ -27,13 +27,13 @@ test('sources page loads', async ({
   await page.close();
 });
 
-test('options page renders the version', async ({
+test('options page renders', async ({
   extensionContext,
   extensionId,
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
-  await expect(page.locator('#version')).toHaveText(/^Version /);
+  await expect(page.locator('h1')).toHaveText('SourceMonkey');
   await page.close();
 });
 

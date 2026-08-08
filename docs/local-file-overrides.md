@@ -45,11 +45,76 @@ The same-directory case is not a separate rule — it is this rule with an
 implicit root of the script's own folder, where the only suffix that can
 match is the bare filename. One code path, so the two can't drift.
 
-### Roots today
+### Where roots come from
 
-Phase 1 produces at most one root: **the host script's own folder**.
-Configured per-source and global search roots are a planned follow-on —
-see [TODO.md](../TODO.md). The implicit folder always sorts first.
+In search order:
+
+1. **The host script's own folder.** Implicit, always first, always
+   present. A file sitting next to the script is the least surprising
+   answer, so it wins over anything configured.
+2. **Configured global roots.** The search-paths box on the options
+   page, in the order typed.
+
+A configured root that duplicates the script's own folder is dropped,
+so the list reads as what it claims to be — the *additional* places
+searched, each appearing once. (Duplicate candidates would be collapsed
+anyway; the de-dupe is about the list, not the probing.)
+
+Per-source roots are a planned follow-on — see [TODO.md](../TODO.md).
+
+### Configured roots
+
+- Stored under `smLocalFileRoots` as an **ordered array of canonical
+  `file://` directory URLs** — already parsed and validated. Text
+  becomes roots once, at Save; nothing re-parses at resolve time.
+- Each non-blank line of the box is an absolute path or a `file://`
+  URL. Canonicalized to a `file://` URL with a trailing slash, with `.`
+  and `..` resolved.
+- Parsing is **all-or-nothing**, which is why Save is disabled while any
+  line is malformed: the stored array is the parsed form, so there'd be
+  no honest entry to write for a line that didn't parse.
+- Save writes the canonical form back into the box, so what's shown is
+  what's searched.
+- Save then **refreshes every source that supports local files**, for
+  the same reason the per-source switch refreshes its source: roots
+  only change what the *next* refresh resolves to. http(s) sources and
+  the web / GitHub containers are skipped — they resolve over the
+  network, so a root cannot change their outcome.
+- Cached in a module variable in each context that resolves — service
+  worker, sources page, viewer.
+  - Loaded once at startup, then kept current via `storage.onChanged`,
+    the same shape as `debug-log.ts`.
+  - `localSearchRoots` is synchronous because render paths call it, so
+    ordering is the caller's job: the resolve path and both page
+    bootstraps `await localRootsReady()` first.
+  - Without that await, a refresh racing SW startup would resolve as
+    though no roots were set — and persist the result.
+  - An initial read still in flight will not overwrite a newer value
+    that landed while it waited.
+
+#### Validation
+
+Two kinds of complaint, both shown under the box, and only one blocks
+Save:
+
+- **Format**, decided locally and instantly. **Blocks Save.**
+- **Existence**, which needs a `file://` read, so it is debounced and
+  cached per page. A *warning* only: the directory can appear later (a
+  repo you haven't cloned), and saving it costs nothing, since
+  resolution simply finds no candidate under it.
+
+How the existence test works:
+
+- A root is tested by **reading its directory URL**. Chrome serves a
+  listing for a directory and fails for a plain file, so one read
+  distinguishes "missing" from "that's a file".
+- That is why the canonical form's trailing slash matters, and why a
+  root carrying a fragment or query is rejected outright — both are
+  stripped before the filesystem sees them, which would make the probe
+  read a file and call it a directory.
+- With *Allow access to file URLs* off every read fails identically, so
+  the page shows the shared file-access banner instead of labelling
+  every root missing.
 
 ## What keeps it safe
 
@@ -61,7 +126,15 @@ Not which tag is being resolved, but **who the host script is**:
   stand-in from that folder grants nothing new.
 - An **http(s)-loaded script never gets inference**. That is the case
   where a hostile `@resource file:///home/you/.ssh/id_rsa` followed by
-  `GM_getResourceText` would actually matter.
+  `GM_getResourceText` would actually matter. The gate covers configured
+  roots too — a script installed from the web resolves nothing out of a
+  development directory.
+- A **configured root is reach the script didn't otherwise have**, and
+  the script picks the path suffix it looks for. So every file under a
+  root is readable by any locally-loaded script, `@resource` +
+  `GM_getResourceText` included. That is a property of the setting,
+  stated on the options page where it's configured: roots name
+  directories of script content, not home directories.
 - Explicit per-file overrides (a path you typed for one specific ref)
   will be allowed for any host script, because naming the file *is* the
   authorization. Not built yet — see [TODO.md](../TODO.md).
@@ -152,6 +225,10 @@ memoize for the life of the page — see the caveats under
 
 ## Storage
 
+`chrome.storage.local` key `smLocalFileRoots` holds the configured
+roots as an ordered array of canonical `file://` directory URLs — see
+[Configured roots](#configured-roots).
+
 Both `StoredRequire` and `StoredResource` gain one field:
 
 - `localUrl?` — the `file://` URL actually read, present only when a
@@ -172,6 +249,9 @@ persisted before the field existed read as enabled.
   over the network.
 - Toggling it refreshes the source, because the flag only changes what
   the *next* refresh resolves to.
+- Off disables **all** roots for that source, configured ones included
+  — it's the whole mechanism's off-switch, not just the implicit
+  folder's.
 - Off is for a directory of scripts you didn't write, where a file
   sitting next to one should not quietly stand in for the library it
   names.

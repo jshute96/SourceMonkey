@@ -42,8 +42,8 @@ details live in the topic-specific docs linked below.
   paths) and inspect per-script status. See [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
-  and GitHub auth token entry. Reached via the Options link at the top
-  of the sources page.
+  local-file-override search roots, and GitHub auth token entry.
+  Reached via the Options link at the top of the sources page.
 - **Install capture** (`src/install-capture.ts`) — turns a navigation
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode

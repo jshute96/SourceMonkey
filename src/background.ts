@@ -34,6 +34,13 @@ import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from './github-auth.js';
+import {
+  LOCAL_ROOTS_KEY,
+  _setLocalRootsForTests,
+  installLocalRootsListener,
+  loadLocalRootsSetting,
+  rootsFromText,
+} from './local-file-overrides.js';
 import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { installUserJsCapture } from './install-capture.js';
@@ -196,6 +203,7 @@ interface SourceMonkeyApi {
   getSourceWithScripts: (id: string) => Promise<{ source: StoredSource; scripts: StoredScript[] } | null>;
   setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
   setSourceLocalFiles: (id: string, localFiles: boolean) => Promise<StoredSource | null>;
+  setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
   updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
@@ -314,6 +322,17 @@ const api: SourceMonkeyApi = {
   getSourceWithScripts,
   setSourceEnabled,
   setSourceLocalFiles,
+  // Write the real setting so the production read path is what's under
+  // test, AND push it into the module cache directly: `storage.onChanged`
+  // delivery isn't ordered against the call that follows, and a test
+  // that adds a source on the next line must not race it.
+  setLocalRoots: async (paths: string[]) => {
+    // Through the same text→array parse the options page's Save runs,
+    // so what's stored is exactly what a real save would store.
+    const roots = rootsFromText(paths.join('\n')) ?? [];
+    await chrome.storage.local.set({ [LOCAL_ROOTS_KEY]: roots });
+    _setLocalRootsForTests(roots);
+  },
   setScriptEnabled,
   updateSource,
   updateScript,
@@ -415,6 +434,11 @@ const api: SourceMonkeyApi = {
     }
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    // The clear above fires `storage.onChanged`, which would reset the
+    // cached roots — but not necessarily before the next test's first
+    // call. Drop them synchronously so a reset is a clean slate the
+    // moment it returns.
+    _setLocalRootsForTests([]);
     // Mark first-run seeding as already done so a later SW restart
     // doesn't repopulate the deliberately-emptied store with the default
     // sources. A reset is meant to leave a clean slate, and re-seeding
@@ -2348,6 +2372,7 @@ installDeepLinkRedirect();
 installUserJsCapture();
 installScriptMessageListener();
 installDebugLoggingListener();
+installLocalRootsListener();
 installGithubAuthListener();
 installNotificationListeners();
 installDownloadListeners();
@@ -2358,6 +2383,9 @@ installActionContextMenu();
 void ensureLoaded();
 void syncRegistrations();
 void loadDebugLoggingFlag();
+// Kicked off here so the read is already in flight by the time the
+// first refresh awaits `localRootsReady()`.
+void loadLocalRootsSetting();
 void loadGithubAuthToken();
 // Refill each script's Log tab from persisted state (current load
 // failures + parse-time diagnostics) the first time the SW boots in a

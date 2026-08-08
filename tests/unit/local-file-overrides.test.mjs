@@ -15,9 +15,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  _setLocalRootsForTests,
   localFileCandidates,
   localSearchRoots,
+  parseLocalRootLines,
+  rootsFromText,
   sourceSupportsLocalFiles,
+  textFromRoots,
 } from '../../dist/local-file-overrides.js';
 import { attachFiles } from '../../dist/external-files.js';
 import { localFileLogMessages, sourceUsesLocalFiles } from '../../dist/script-store.js';
@@ -52,6 +56,140 @@ test('localSearchRoots: disabled means no roots at all', () => {
 test('localSearchRoots: an http-loaded script never gets roots', () => {
   assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', true), []);
   assert.deepEqual(localSearchRoots('', true), []);
+});
+
+// ---------- Configured roots ----------
+
+// Each of these sets the module-level setting, so restore it after.
+// Takes the paths a user would type; the stored form is the parsed
+// array, so route them through the same parse the options page runs.
+function withRoots(paths, fn) {
+  try {
+    // `?? []` so a case that deliberately passes a REJECTED root
+    // lands as "no configured roots", which is the real behavior.
+    _setLocalRootsForTests(rootsFromText(paths.join('\n')) ?? []);
+    fn();
+  } finally {
+    _setLocalRootsForTests([]);
+  }
+}
+
+test('localSearchRoots: configured roots follow the script\'s own folder', () => {
+  withRoots(['/home/me/dev/lib', '/opt/shared'], () => {
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [
+      SCRIPT_DIR,
+      'file:///home/me/dev/lib/',
+      'file:///opt/shared/',
+    ]);
+  });
+});
+
+// The own-folder root is the one that must win, so listing it globally
+// too should not produce a duplicate (and a duplicated probe).
+test('localSearchRoots: a configured root equal to the script folder is not repeated', () => {
+  withRoots(['/home/me/scripts'], () => {
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+  });
+});
+
+// The gate covers configured roots too: an http(s)-hosted script gets
+// nothing, however many roots are set.
+test('localSearchRoots: configured roots do not apply to an http-loaded script', () => {
+  withRoots(['/home/me/dev/lib'], () => {
+    assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', true), []);
+  });
+});
+
+test('localSearchRoots: the per-source opt-out also disables configured roots', () => {
+  withRoots(['/home/me/dev/lib'], () => {
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, false), []);
+  });
+});
+
+test('parseLocalRootLines: blank lines are dropped, order is kept', () => {
+  const got = parseLocalRootLines('/a\n\n  \n/b\n');
+  assert.deepEqual(got.map((r) => r.url), ['file:///a/', 'file:///b/']);
+  // Line numbers stay 1-based against the ORIGINAL text, so an error
+  // points at the line the user is looking at.
+  assert.deepEqual(got.map((r) => r.lineNumber), [1, 4]);
+});
+
+test('parseLocalRootLines: accepts file:// URLs and percent-encodes typed paths', () => {
+  assert.equal(parseLocalRootLines('file:///a/b/').at(0).url, 'file:///a/b/');
+  assert.equal(parseLocalRootLines('file:///a/b').at(0).url, 'file:///a/b/');
+  assert.equal(parseLocalRootLines('/my dev/lib').at(0).url, 'file:///my%20dev/lib/');
+});
+
+// `..` a user typed is resolved at parse time, so the stored root is
+// the directory it actually names — candidates are matched against the
+// resolved form.
+test('parseLocalRootLines: resolves . and .. in a typed root', () => {
+  assert.equal(parseLocalRootLines('/home/me/dev/../lib').at(0).url, 'file:///home/me/lib/');
+});
+
+test('parseLocalRootLines: rejects relative paths and http URLs', () => {
+  for (const bad of ['dev/lib', '~/dev', 'https://example.com/lib', 'C:\\lib']) {
+    const entry = parseLocalRootLines(bad).at(0);
+    assert.equal(entry.url, undefined, bad);
+    assert.match(entry.error, /^A local file root must be an absolute path/, bad);
+  }
+});
+
+// The root is the floor every containment check measures against, so it
+// has to be at least as clean as the candidates built on top of it.
+test('parseLocalRootLines: rejects roots that would not name a real directory', () => {
+  const bad = [
+    // A fragment or query is stripped before the filesystem sees it, so
+    // every candidate under such a root would read the SAME file — and
+    // the directory probe would accept a plain file.
+    'file:///a/b#frag',
+    'file:///a/b?q=1',
+    // An encoded separator survives the URL parser but may not survive
+    // the conversion to a path, putting the real floor above the stated
+    // one. Only reachable via the file:// form — see the next test.
+    'file:///a/..%2f..%2fetc',
+    'file:///a/..%5c..%5cetc',
+    // A host is not a local absolute path.
+    'file://host/share',
+  ];
+  for (const root of bad) {
+    assert.equal(parseLocalRootLines(root).at(0).url, undefined, root);
+  }
+  assert.equal(rootsFromText(bad.join('\n')), null);
+});
+
+// A typed PATH can't smuggle an encoded separator: `pathToFileUrl`
+// percent-encodes each segment, so a literal `%2f` becomes `%252f` and
+// names a directory actually called `..%2f..`. Documented because it is
+// why the guard above only ever fires on the file:// form.
+test('parseLocalRootLines: a typed path containing %2f is escaped, not rejected', () => {
+  assert.equal(
+    parseLocalRootLines('/a/..%2f..%2fetc').at(0).url,
+    'file:///a/..%252f..%252fetc/',
+  );
+});
+
+// The same rejection has to hold once the root reaches the resolver:
+// nothing may be generated under a root that never parsed.
+test('localSearchRoots: a rejected root never reaches the search list', () => {
+  withRoots(['file:///a/b#frag'], () => {
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+  });
+});
+
+// The stored setting is the PARSED array, so text that doesn't fully
+// parse must not produce one — null is what disables the Save button.
+test('rootsFromText: all-or-nothing, so a bad line blocks the save', () => {
+  assert.deepEqual(rootsFromText('/a\n/b'), ['file:///a/', 'file:///b/']);
+  assert.equal(rootsFromText('/a\nnot-a-path\n/b'), null);
+  assert.deepEqual(rootsFromText(''), []);
+});
+
+// Round-trip: what the box shows after a save re-parses to the same
+// array, so re-saving an untouched box is a no-op.
+test('textFromRoots: round-trips through rootsFromText', () => {
+  const roots = rootsFromText('/home/me/dev\n/my dev/lib');
+  assert.deepEqual(rootsFromText(textFromRoots(roots)), roots);
 });
 
 // ---------- localFileCandidates ----------

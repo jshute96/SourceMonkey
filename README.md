@@ -94,8 +94,8 @@ since two enabled copies of a script both run — ctrl-click a checkbox
 (cmd-click on a Mac) to override that.
 
 The **Options** link at the top-left covers `.user.js` link capture,
-debug logging, and a GitHub token (for private repos and a higher API
-rate limit).
+debug logging, local file override directories, and a GitHub token (for
+private repos and a higher API rate limit).
 
 Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
@@ -165,6 +165,9 @@ the local file will be read instead.
 
 This allows local development of the script and its resource files, without
 adjusting the file paths.
+
+Additional directories to search can be listed on the Options page.
+They're searched after the script's own directory, in the order listed.
 
 See [docs/local-file-overrides.md](docs/local-file-overrides.md).
 

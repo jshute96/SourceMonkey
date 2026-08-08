@@ -48,7 +48,12 @@ import {
   type StoredScript,
   type StoredSource,
 } from './script-store.js';
-import { localSearchRoots, sourceSupportsLocalFiles } from './local-file-overrides.js';
+import {
+  installLocalRootsListener,
+  localRootsReady,
+  localSearchRoots,
+  sourceSupportsLocalFiles,
+} from './local-file-overrides.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -156,6 +161,7 @@ const initialRenderDone = new Promise<void>((resolve) => {
   resolveInitialRender = resolve;
 });
 
+installLocalRootsListener();
 void bootstrap().catch((err: unknown) => {
   console.info('[SourceMonkey] sources page failed to start', err);
 });
@@ -730,6 +736,10 @@ async function bootstrap(): Promise<void> {
   // so it must never be the thing left waiting.
   try {
     await githubTokenReady;
+    // Same reasoning for the configured local-file roots: the icon
+    // slots resolve stand-ins synchronously during render, so the
+    // setting has to be in hand before the first paint.
+    await localRootsReady();
     await render();
   } finally {
     resolveInitialRender();
@@ -1632,8 +1642,9 @@ function makeLocalFilesToggle(source: StoredSource): HTMLLabelElement {
   const label = document.createElement('label');
   label.className = 'local-files-toggle';
   label.title =
-    'Load @require / @resource files from the script\'s own folder when a file ' +
-    'there matches the end of the declared URL';
+    'Load @require / @resource files from the script\'s own folder — and from the ' +
+    'search roots configured in Options — when a file there matches the end of the ' +
+    'declared URL';
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';

@@ -22,6 +22,9 @@ export interface SmApi {
   } | null>;
   setSourceEnabled(id: string, enabled: boolean): Promise<unknown>;
   setSourceLocalFiles(id: string, localFiles: boolean): Promise<unknown>;
+  // The global search-root setting: absolute directory paths, in
+  // search order, as the options page would save them.
+  setLocalRoots(paths: string[]): Promise<void>;
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
   updateSource(id: string, mode: Mode): Promise<unknown>;
   // `probe: 'force'` is what a genuine Refresh click passes. Pass it

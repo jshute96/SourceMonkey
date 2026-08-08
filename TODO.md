@@ -563,15 +563,14 @@ during cumulative review of the GM_* phases:
 
 ## Local file overrides — follow-ups
 
-Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). Today the
-only search root is the host script's own folder.
+Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). Search
+roots today: the host script's own folder, then the global list from
+the options page.
 
-- **Configured search roots.** The suffix-matching rule already takes
-  an ordered list of roots; nothing fills it beyond the implicit one.
-  Add `StoredSource.localRoots?: string[]` plus a global list in
-  options, ordered implicit-folder → source → global. This is what
-  makes the common `lib/` + sibling-script-directories layout work
-  without putting the library next to every script that uses it.
+- **Per-source search roots.** The global list covers the common `lib/`
+  layout; a per-source list would let one directory of scripts search
+  somewhere the rest don't. `StoredSource.localRoots?: string[]`,
+  ordered implicit-folder → source → global.
   - Roots are absolute paths the user types, for the same reason
     sources are: `<input type="file">` gives no absolute path in
     Chrome, and `webkitdirectory` only gives relative ones, so a
@@ -587,11 +586,6 @@ only search root is the host script's own folder.
   local stand-ins says so only in the viewer today. A per-row marker
   (or a count on the source header) would make it visible from the
   list.
-- **Configured roots and `@resource`.** The implicit-folder rule is
-  no wider than a relative ref, but a configured root IS a new reach
-  for resource bytes, which flow into `GM_getResourceText`. Decide
-  whether configured roots apply to `@resource` at all, or only to
-  `@require`, before shipping them.
 - **`@icon` stand-ins are not re-read within a page.** They're memoized
   for the page's lifetime (deliberately — see
   [docs/local-file-overrides.md](docs/local-file-overrides.md#icon-caching)),

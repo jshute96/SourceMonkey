@@ -44,6 +44,9 @@ For any reading to work the user must:
   the preview fetch, a load error, and a failed **Refresh**, but not a
   parse verdict on a file we read successfully. See
   [script-viewer.md](script-viewer.md#when-a-local-file-wont-read).
+- **Options page** — only when checking whether a configured local
+  search root exists, since that is the page's one `file://` read. See
+  [local-file-overrides.md](local-file-overrides.md#validation).
 
 Why it takes a probe rather than error text: a blocked read and a
 missing file both surface as the XHR `onerror` below, with no status

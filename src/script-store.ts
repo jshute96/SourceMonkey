@@ -72,7 +72,7 @@ import {
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
-import { localSearchRoots } from './local-file-overrides.js';
+import { localSearchRoots, localRootsReady } from './local-file-overrides.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import {
   ignoredMatchMessage,
@@ -826,6 +826,10 @@ export async function applyFiles(
 ): Promise<StoredScript> {
   const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
   const priorResources = new Map((prior?.resources ?? []).map((r) => [r.url, r]));
+  // Configured roots come from storage, so make sure that read has
+  // landed before asking — a refresh racing SW startup would otherwise
+  // resolve as if none were set and persist that.
+  if (useLocalFiles) await localRootsReady();
   const localRoots = localSearchRoots(built.fileUrl, useLocalFiles);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
