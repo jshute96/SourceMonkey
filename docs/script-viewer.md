@@ -167,6 +167,17 @@ One page, one set of panels, two query strings:
        normalized URL being previewed. Activating the anchor is
        intercepted in both modes — a plain navigation to a `.user.js`
        URL gets captured — see the Link rendering section below.
+     - `<Site> page` — the human-facing listing page on the site the
+       script was published on, derived from the Location URL. Shown in
+       both modes, whenever the location matches a known hosting site;
+       the sites and their rewrites are tabulated in
+       [Hosting-site pages](#hosting-site-pages-srcscript-sitests).
+       - Labeled with the site's own name (`Greasy Fork page`) — a
+         second row called `Homepage` would collide with the
+         `@homepage` row above.
+       - Omitted when the row would only repeat what's already on
+         screen: the script's own `@homepage` / `@homepageURL` names
+         the same script, or the Location is itself the page URL.
      - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
        preview, the byte length of the fetched text.
      - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
@@ -533,7 +544,9 @@ merged page treats them like any other viewer content:
 - The **Location** row is the exception, and is intercepted: navigating
   a `.user.js` URL for real would be captured straight back into a
   second preview, so the click routes to View raw source instead
-  (which is what the old prompt's "from `<url>`" link did).
+  (which is what the old prompt's "from `<url>`" link did). The
+  `<Site> page` row below it needs no such interception — it points at
+  an HTML listing page, not at the script file.
 - Installed mode intercepts it too, for the same reason, but stands the
   capture down and opens the real location in a new tab — there is no
   fetched copy to show there, and the row should open what it says.
@@ -649,6 +662,39 @@ so the body header and the details panel agree.
   Chromium typically refuses to navigate to a `file://` link from a
   chrome-extension page; the path is still readable, selectable, and
   copyable via the adjacent button.
+
+### Hosting-site pages (`src/script-sites.ts`)
+
+What we fetch from a userscript-hosting site is its *raw code* URL,
+which is not a page a person wants to open. Each supported site
+encodes the script's identity in that URL, so the listing page is a
+pure rewrite — no network call, no stored field.
+
+| Site | URLs recognised | Page URL | Identity key |
+| --- | --- | --- | --- |
+| Greasy Fork | `greasyfork.org/[<locale>/]scripts/<id>[-<slug>]/code/…`, `update.greasyfork.org/scripts/<id>/…`, and the page URL itself | `greasyfork.org/[<locale>/]scripts/<id>[-<slug>]` | `greasyfork.org:<id>` |
+| Sleazy Fork | the same shapes on `sleazyfork.org` | `sleazyfork.org/[<locale>/]scripts/<id>[-<slug>]` | `sleazyfork.org:<id>` |
+| OpenUserJS | `openuserjs.org/install/<user>/<name>.user.js`, `/src/scripts/…`, and the page URL itself | `openuserjs.org/scripts/<user>/<name>` | `openuserjs.org:<user>/<name>` |
+| GitHub Gist | `gist.githubusercontent.com/<user>/<id>/raw/…` and the gist page URL | `gist.github.com/<user>/<id>` | `gist.github.com:<id>` |
+
+- The locale segment is preserved so the page opens in the language the
+  install link came from; the `-<slug>` tail is kept when the URL
+  carried it. Neither is part of the script's identity, hence the key
+  column.
+- **Compare keys, never URL text**, to ask "same script?". A location
+  of `update.greasyfork.org/scripts/12345/x.user.js` and an
+  `@homepage` of `greasyfork.org/en/scripts/12345-my-script` are one
+  page written two ways, and only the key sees that. This is what the
+  row's duplicate suppression runs on.
+- Paths are read without decoding, so a percent-encoded or CJK slug
+  reaches the `href` in the same form every other URL in the panel is
+  printed in.
+- GitHub blob URLs are deliberately absent: `raw.githubusercontent.com`
+  is already rewritten to the `github.com/<o>/<r>/blob/…` page form
+  before the viewer sees it, so the Location row *is* the page link.
+  Gists get a table row because that rewrite doesn't cover them.
+- Anything else (a plain web server, a local file, an unknown host)
+  yields no row.
 
 ### Code box (post-Prism walk)
 

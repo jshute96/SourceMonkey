@@ -14,6 +14,7 @@ import type { StoredSource } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
 import { isContainerSource } from './directories.js';
 import { displayLocation, formatBytes, stripSriFragment } from './script-display.js';
+import { sitePageRow } from './script-sites.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
@@ -86,7 +87,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
     addText(dl, 'Description', getValue(h, 'description'));
     addText(dl, 'Author', getValue(h, 'author'));
     addText(dl, 'Namespace', getValue(h, 'namespace'));
-    addLink(dl, 'Homepage', getValue(h, 'homepage') ?? getValue(h, 'homepageURL'));
+    addLink(dl, 'Homepage', declaredHomepage(h));
   }
 
   // Log ID sits right under the header fields — it's how the user maps
@@ -136,6 +137,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
+    addSitePage(dl, model.location.href, h);
   }
   if (model.size) {
     appendRow(dl, 'Size', document.createTextNode(model.size));
@@ -186,6 +188,30 @@ function probeValueText(loadedVersion: string | undefined, probe: VersionProbe):
     // report — no relation, no qualifier.
     case 'unknown': return probe.version;
   }
+}
+
+// The publishing site's page for the script, derived from the Location
+// URL — the location is a raw-code URL, this is the page a person can
+// read. `sitePageRow` owns which sites are recognised and when the row
+// would only repeat something already on screen; see
+// `script-sites.ts`.
+//
+// Labeled with the site's own name ("Greasy Fork page") rather than a
+// generic "Home page": the panel already has a Homepage row fed by the
+// script's `@homepage`, and two rows with the same label saying
+// different things would be worse than either alone.
+function addSitePage(dl: HTMLDListElement, locationUrl: string, h: ParsedHeader | null): void {
+  const row = sitePageRow(locationUrl, h ? declaredHomepage(h) : undefined);
+  if (!row) return;
+  appendRow(dl, row.label, openInNewTabAnchor(row.url, row.url));
+}
+
+// The header's own claim about where the script lives. Read in two
+// places — the Homepage row and the hosting-site row's duplicate check
+// — which have to agree on what counts, or the check silently stops
+// matching when this grows a tag.
+function declaredHomepage(h: ParsedHeader): string | undefined {
+  return getValue(h, 'homepage') ?? getValue(h, 'homepageURL');
 }
 
 function addText(dl: HTMLDListElement, label: string, value: string | undefined): void {
