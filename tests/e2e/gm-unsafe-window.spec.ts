@@ -48,7 +48,7 @@ test.describe('@grant unsafeWindow', () => {
         unsafeWindow.__FROM_SCRIPT__ = 'hello-page';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -91,7 +91,7 @@ test.describe('@grant unsafeWindow', () => {
         GM_setValue('visits', seen + 1);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const first = await extensionContext.newPage();
@@ -147,7 +147,7 @@ test.describe('@grant unsafeWindow', () => {
           });
         `,
       });
-      await sm.addSource(scriptsDir.path);
+      await sm.addCollection(scriptsDir.path);
       await sm.syncNow();
 
       const page = await extensionContext.newPage();
@@ -178,7 +178,7 @@ test.describe('@grant unsafeWindow', () => {
       },
       body: `document.body.dataset.smRan = '1';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -214,7 +214,7 @@ test.describe('@grant unsafeWindow', () => {
         document.body.dataset.smSameAsWindow = String(unsafeWindow === window);
       `,
     });
-    const added = await sm.addSource(scriptsDir.path);
+    const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -226,7 +226,7 @@ test.describe('@grant unsafeWindow', () => {
     await page.close();
 
     // ...and the user is told why, on the stored script and in the Log.
-    const detail = await sm.getSourceWithScripts(added!.id);
+    const detail = await sm.getCollectionWithScripts(added!.id);
     const script = detail!.scripts[0];
     const warning = (script.startupLogs ?? []).find(
       (l) => l.message.includes('unsafeWindow'),
@@ -276,7 +276,7 @@ test.describe('@grant unsafeWindow', () => {
       },
       body: `document.documentElement.dataset.smMain = '1';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     // Reader tab first, with a page-side tap on the bridge's push
@@ -344,7 +344,7 @@ test.describe('@grant unsafeWindow', () => {
       },
       body: `document.documentElement.dataset.smMain = '1';`,
     });
-    const added = await sm.addSource(scriptsDir.path);
+    const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const seed = await extensionContext.newPage();
@@ -353,7 +353,7 @@ test.describe('@grant unsafeWindow', () => {
     await seed.waitForTimeout(500);
     await seed.close();
 
-    const detail = await sm.getSourceWithScripts(added!.id);
+    const detail = await sm.getCollectionWithScripts(added!.id);
     const victimId = detail!.scripts.find((s) => s.relativePath === 'victim.user.js')!.id;
 
     const page = await extensionContext.newPage();

@@ -67,7 +67,7 @@ function grantHeader(...grants) {
 function makeScript(over = {}) {
   return {
     id: 'script-1',
-    sourceId: 'source-1',
+    collectionId: 'collection-1',
     relativePath: 'a.user.js',
     fileUrl: 'file:///a.user.js',
     status: 'ok',
@@ -234,14 +234,14 @@ test('buildRegistrationSpec: @grant none MAIN scripts are unchanged (GM_info onl
 
 // ---------- runtime registration ----------
 
-function makeSource(over = {}) {
-  return { id: 'source-1', path: '/p', lastRefreshedAt: 0, scriptIds: [], enabled: true, ...over };
+function makeCollection(over = {}) {
+  return { id: 'collection-1', path: '/p', lastRefreshedAt: 0, scriptIds: [], enabled: true, ...over };
 }
 
 test('collectActiveSpecs: an unsafeWindow + GM_* script asks for the MAIN runtime', async () => {
   const { specs, gmRuntimeScope } = await collectActiveSpecs(
     [makeScript({ header: grantHeader('unsafeWindow', 'GM_setValue') })],
-    new Map([['source-1', makeSource()]]),
+    new Map([['collection-1', makeCollection()]]),
   );
   assert.equal(specs.length, 1);
   assert.deepEqual([...gmRuntimeScope.keys()], ['MAIN']);
@@ -254,7 +254,7 @@ test('collectActiveSpecs: an unsafeWindow + GM_* script asks for the MAIN runtim
 test('collectActiveSpecs: unsafeWindow alone needs no runtime anywhere', async () => {
   const { gmRuntimeScope } = await collectActiveSpecs(
     [makeScript({ header: grantHeader('unsafeWindow') })],
-    new Map([['source-1', makeSource()]]),
+    new Map([['collection-1', makeCollection()]]),
   );
   assert.equal(gmRuntimeScope.size, 0);
 });
@@ -273,7 +273,7 @@ test('collectActiveSpecs: both worlds can need the runtime at once, each with it
         matching: { matches: ['https://iso.example/*'], excludes: [], includes: ['*://glob/*'] },
       }),
     ],
-    new Map([['source-1', makeSource()]]),
+    new Map([['collection-1', makeCollection()]]),
   );
   assert.deepEqual([...gmRuntimeScope.keys()].sort(), ['MAIN', 'USER_SCRIPT']);
   assert.deepEqual([...gmRuntimeScope.get('MAIN').matches], ['https://main.example/*']);
@@ -295,7 +295,7 @@ test('collectActiveSpecs: the scope unions every script in the world', async () 
         matching: { matches: ['https://b.example/*'], excludes: [], includes: [] },
       }),
     ],
-    new Map([['source-1', makeSource()]]),
+    new Map([['collection-1', makeCollection()]]),
   );
   assert.deepEqual(
     [...gmRuntimeScope.get('MAIN').matches].sort(),
