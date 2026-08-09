@@ -140,7 +140,7 @@ test.describe('options: local file overrides', () => {
   // other test drives the setting through `sm.setLocalRoots`, which
   // pushes the value into the service worker's cache directly — so this
   // is the only coverage of the production seam (`storage.onChanged`
-  // into the SW) and of Save refreshing the affected sources.
+  // into the SW) and of Save refreshing the affected collections.
   test('saving on the options page re-resolves a script from the new root', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -163,8 +163,8 @@ test.describe('options: local file overrides', () => {
       });
 
       // Installed BEFORE any root exists, so it starts on the remote copy.
-      const source = await sm.addSource(scriptsDir.path);
-      expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0]?.source)
+      const collection = await sm.addCollection(scriptsDir.path);
+      expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0]?.source)
         .toBe('window.__SM_LOCAL = "remote";');
 
       const page = await extensionContext.newPage();
@@ -173,9 +173,9 @@ test.describe('options: local file overrides', () => {
       await page.locator('#local-roots-save').click();
       await expect(page.locator('#local-roots-status')).toHaveText(/Searching 1 directory/);
 
-      // No explicit refresh here: Save is what re-resolves the source.
+      // No explicit refresh here: Save is what re-resolves the collection.
       await expect.poll(async () => {
-        const data = await sm.getSourceWithScripts(source!.id);
+        const data = await sm.getCollectionWithScripts(collection!.id);
         return data!.scripts[0].requires?.[0]?.source;
       }).toBe('window.__SM_LOCAL = "configured";');
       await page.close();

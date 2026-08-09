@@ -3,7 +3,7 @@
 //
 // This module is the shared vocabulary for "what's wrong, and where" —
 // every content-derived verdict in the extension formats through it, so
-// the phrasing here is what the sources page's hover text, the viewer's
+// the phrasing here is what the collections page's hover text, the viewer's
 // message bar, the install preview's warning and the Log tab all say.
 // The interesting behaviour is what it does with a PARTIAL location,
 // because the producers genuinely differ in how much they know.

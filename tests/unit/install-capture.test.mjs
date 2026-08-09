@@ -70,7 +70,7 @@ test('suffix matching is case-sensitive', () => {
   // The `webNavigation` pre-filter and `isSingleFileInput` (which
   // decides single-script vs directory at install time) are both
   // case-sensitive, so this has to be too — a URL that captured but
-  // then registered as a directory source would be silent corruption.
+  // then registered as a directory collection would be silent corruption.
   assert.equal(isUserJsUrl('https://example.com/Foo.User.JS'), false);
   assert.equal(isUserJsUrl('https://example.com/foo.USER.JS'), false);
 });
@@ -86,7 +86,7 @@ test('non-.user.js URLs are left alone', () => {
 });
 
 test('schemes outside http(s) / file are never captured', () => {
-  // Not source shapes `addSource` can register, so a preview would have
+  // Not shapes `addCollection` can register, so a preview would have
   // nothing to offer.
   assert.equal(isUserJsUrl(`chrome-extension://${EXT_ID}/foo.user.js`), false);
   assert.equal(isUserJsUrl('ftp://example.com/foo.user.js'), false);

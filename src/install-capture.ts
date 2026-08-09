@@ -105,7 +105,7 @@ const CHROME_USERJS_FIX_VERSION = 152;
 // [docs/install-capture.md] "The cost, and what pays for it".
 //
 // Anything else (`chrome-extension:`, `ftp:`, `data:`, …) stays out:
-// those aren't source shapes `addSource` can register.
+// those aren't collection shapes `addCollection` can register.
 const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 
 // True for URLs the capture should act on: an http(s) or file:// URL
@@ -119,7 +119,7 @@ const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 // single script or a directory to scan). Chrome's own legacy check is
 // case-insensitive, so the three ways SourceMonkey can see one URL
 // have to agree or a `FOO.USER.JS` ends up captured but registered as
-// a directory source. Lowercase is the universal convention; a
+// a directory collection. Lowercase is the universal convention; a
 // mixed-case suffix is simply not ours to handle.
 export function isUserJsUrl(url: string): boolean {
   let u: URL;
@@ -162,7 +162,7 @@ function bypassKey(url: string): string {
 }
 
 // Record a one-shot "don't capture this URL" marker. Called from the
-// preview page's View source action.
+// preview page's View collection action.
 export async function markInstallBypass(url: string): Promise<void> {
   await chrome.storage.session.set({ [bypassKey(url)]: Date.now() + BYPASS_TTL_MS });
 }

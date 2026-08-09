@@ -20,8 +20,8 @@ details live in the topic-specific docs linked below.
 
 ```
 +------------------+        +-----------------------+        +---------------+
-| Sources page UI  |  -->   | background service    |  -->   | chrome.storage
-| (sources.html)   |        | worker (background.ts)|        |  .local       |
+| Collections page UI  |  -->   | background service    |  -->   | chrome.storage
+| (collections.html)   |        | worker (background.ts)|        |  .local       |
 +------------------+        +-----------------------+        +---------------+
                                       |
                                       v
@@ -33,22 +33,22 @@ details live in the topic-specific docs linked below.
 ```
 
 - **Service worker** (`src/background.ts`) — central event handler.
-  Opens the sources page on toolbar click, watches tab navigation,
+  Opens the collections page on toolbar click, watches tab navigation,
   and surfaces per-tab match counts via the action badge. See
   [matching.md](matching.md).
-- **Sources page** (`src/sources.html` + `src/sources.ts`) — manage
-  sources (directory, manifest, github-dir, or one of the three
+- **Collections page** (`src/collections.html` + `src/collections.ts`) — manage
+  collections (directory, manifest, github-dir, or one of the three
   per-kind containers that hold individually added `.user.js` URLs /
   paths) and inspect per-script status. See [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
   local-file-override search roots, and GitHub auth token entry.
-  Reached via the Options link at the top of the sources page.
+  Reached via the Options link at the top of the collections page.
 - **Install capture** (`src/install-capture.ts`) — turns a navigation
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode
   (`userscript.html?preview=<url>`), which fetches, describes,
-  and — on confirmation — `addSource`s the script. Its "View raw
+  and — on confirmation — `addCollection`s the script. Its "View raw
   source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
   through `src/raw-view.ts`. See
   [install-capture.md](install-capture.md).
@@ -65,13 +65,13 @@ details live in the topic-specific docs linked below.
   `@updateURL` / `@downloadURL` declares and compare it with the copy
   we run. Reporting only: the install source stays the update channel.
   See [updates.md](updates.md).
-- **Source I/O** (`src/directories.ts` + `src/github-source.ts`) —
+- **Collection I/O** (`src/directories.ts` + `src/github-provider.ts`) —
   `file://` fetcher, directory-listing parser, recursive `*.user.js`
   scanner, `http(s)://` fetcher, JSON manifest parser, and the GitHub
   provider (URL parsing, blob→raw rewrite, Contents-API scanner) which
   lives in its own module and is dispatched to from `directories.ts`.
   See [file-access.md](file-access.md) and
-  [http-sources.md](http-sources.md).
+  [http-collections.md](http-collections.md).
 - **File-access permission UI** (`src/file-access.ts`) — the
   "Allow access to file URLs" probe plus the shared banner every page
   raises when the toggle is what blocked a local read. See
@@ -83,7 +83,7 @@ details live in the topic-specific docs linked below.
   (including `github.com/<o>/<r>/raw/`, which 302s to raw and the
   Fetch spec strips Authorization on cross-origin redirects). See
   the GitHub-authentication section of
-  [http-sources.md](http-sources.md).
+  [http-collections.md](http-collections.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
   (`@icon`, `@require`, `@resource`) into absolute URLs against the
   script's parent dir (rejecting `..` and host-absolute paths), and
@@ -122,15 +122,15 @@ details live in the topic-specific docs linked below.
 - **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
   — per-script page with two modes: an installed script rendered from
   the store, and a preview of one that isn't installed yet (the landing
-  spot for install capture and single-script Add Source). Its details
+  spot for install capture and a single-script Add). Its details
   panel (`src/script-details.ts`), tabbed code view
   (`src/code-tabs.ts`), and code linkifier (`src/code-links.ts`) are
   separate modules so both modes render identically. See
   [script-viewer.md](script-viewer.md).
 - **Log IDs** (`src/script-log-id.ts`) — assigns each script a short
   file-derived label (basename, with `#N` suffix on dupes) used in
-  every SW log line and shown in the sources/viewer UI so users can
-  correlate console output with the rows on the sources page. See
+  every SW log line and shown in the collections/viewer UI so users can
+  correlate console output with the rows on the collections page. See
   [logging.md](logging.md).
 - **Display names** (`src/script-display.ts`) — one place decides how
   a stored URL or path is rendered for humans: percent-decoded for
@@ -139,7 +139,7 @@ details live in the topic-specific docs linked below.
 - **Debug logging** (`src/debug-log.ts`) — gates the noisier
   navigation/refresh log lines behind a storage-backed flag
   (`smDebugLogging`), toggled via a checkbox on the Options page
-  (linked from the top of the sources page).
+  (linked from the top of the collections page).
 - **Per-script event log** (`src/script-log.ts`) — structured per-
   script log of refresh outcomes and wrapper reports, stored in
   `chrome.storage.session` and surfaced through the viewer's Log
@@ -196,11 +196,11 @@ details live in the topic-specific docs linked below.
 ## Cross-cutting docs
 
 - [storage.md](storage.md) — `chrome.storage.local` schema, status
-  model, load/refresh pipeline, sources-page table rendering.
+  model, load/refresh pipeline, collections-page table rendering.
 - [file-access.md](file-access.md) — `file://` permissions, why we
   chose paths over the File System Access API, directory-listing
   enumeration, format caveats.
-- [http-sources.md](http-sources.md) — `http(s)://` URL formats,
+- [http-collections.md](http-collections.md) — `http(s)://` URL formats,
   scheme-agnostic manifest schema (works for local paths and
   file:// URLs too), conditional-GET update detection.
 - [updates.md](updates.md) — how a script updates from its install
@@ -238,7 +238,7 @@ details live in the topic-specific docs linked below.
 - [script-log.md](script-log.md) — per-script structured event log
   shown in the viewer's Log tab.
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,
-  favicon fetch + cache, icon slot in the sources/viewer UI.
+  favicon fetch + cache, icon slot in the collections/viewer UI.
 - [GM-APIs.md](GM-APIs.md) — `GM_*` / `GM.*` implementation: the
   catalog, page-side runtime, SW-side storage / XHR, `@connect`
   gating, and the per-API surface SourceMonkey ships.

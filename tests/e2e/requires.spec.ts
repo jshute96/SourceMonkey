@@ -1,17 +1,17 @@
 // End-to-end coverage of the `@require` pipeline.
 //
-//   - A `@require` declared on a userscript is prefetched at addSource
+//   - A `@require` declared on a userscript is prefetched at addCollection
 //     time and concatenated before the body when chrome.userScripts
 //     registers the script. The DOM mutation is the proof: it only
 //     runs if the require's exported function survived the prepend.
 //   - Relative `@require` paths resolve against the script's parent
 //     dir (the same file-loader rule `@icon` uses) — works for both
-//     file:// and HTTP sources.
+//     file:// and HTTP collections.
 //   - Refusing dangerous refs (path traversal, non-`.js` suffix,
 //     absolute file://) flips the script to status: 'invalid' and the
 //     injection never happens.
 //   - Cross-script dedup: two scripts requiring the same canonical URL
-//     share one fetch in a refreshAllSources pass.
+//     share one fetch in a refreshAllCollections pass.
 //   - Shared scope: requires are concatenated ahead of the body in a
 //     single injected entry, so a library's top-level `const`/`class`
 //     is simply visible to the script — including the minified,
@@ -56,8 +56,8 @@ test.describe('@require', () => {
       },
       body: 'void window.__SM_REQ_VALUE;',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
     expect(data!.scripts[0].requires).toHaveLength(1);
     expect(data!.scripts[0].requires?.[0]?.url).toMatch(/\/lib\.js$/);
@@ -81,8 +81,8 @@ test.describe('@require', () => {
         '// ==/UserScript==',
         '',
       ].join('\n'));
-      const source = await sm.addSource(`${server.baseUrl}/pkg/main.user.js`);
-      const data = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(`${server.baseUrl}/pkg/main.user.js`);
+      const data = await sm.getCollectionWithScripts(collection!.id);
       expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
       expect(data!.scripts[0].requires).toHaveLength(1);
       expect(data!.scripts[0].requires?.[0]?.url).toBe(`${server.baseUrl}/pkg/lib.js`);
@@ -107,8 +107,8 @@ test.describe('@require', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].status).toBe('invalid');
     expect(data!.scripts[0].errorMessage).toMatch(/must end in \.js/);
   });
@@ -132,8 +132,8 @@ test.describe('@require', () => {
           '',
         ].join('\n'),
       );
-      const source = await sm.addSource(child);
-      const data = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(child);
+      const data = await sm.getCollectionWithScripts(collection!.id);
       expect(data!.scripts[0].status).toBe('invalid');
       // Names the containment rule specifically — a `../` ref and an
       // unsupported scheme are different mistakes and used to share
@@ -168,9 +168,9 @@ test.describe('@require', () => {
         '',
       ].join('\n'));
       server.setManifest('/pkg/script_manifest.json', ['a.user.js', 'b.user.js']);
-      await sm.addSource(`${server.baseUrl}/pkg/script_manifest.json`);
+      await sm.addCollection(`${server.baseUrl}/pkg/script_manifest.json`);
       // Both scripts' requires resolve to the same URL — must hit it
-      // exactly once during the addSource refresh pass.
+      // exactly once during the addCollection refresh pass.
       expect(server.countResponses('/lib.js', 200)).toBe(1);
     } finally {
       await server.stop();
@@ -195,16 +195,16 @@ test.describe('@require', () => {
         '// ==/UserScript==',
         '',
       ].join('\n'));
-      const source = await sm.addSource(`${server.baseUrl}/main.user.js`);
-      const before = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(`${server.baseUrl}/main.user.js`);
+      const before = await sm.getCollectionWithScripts(collection!.id);
       expect(before!.scripts[0].status).toBe('ok');
       expect(before!.scripts[0].requires?.[0]?.source).toBe(requireBody);
 
       // Pull the dependency from the server. Next refresh: require
       // can't be fetched.
       server.removeRoute('/dep.js');
-      await sm.updateSource(source!.id, 'manual');
-      const after = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      const after = await sm.getCollectionWithScripts(collection!.id);
       // Still OK + injectable, but flagged: refreshError names the URL.
       expect(after!.scripts[0].status).toBe('ok');
       expect(after!.scripts[0].errorMessage).toBeUndefined();
@@ -238,7 +238,7 @@ test.describe('@require', () => {
         if (el) el.textContent = tag('ok');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -279,7 +279,7 @@ test.describe('@require', () => {
         if (el) el.textContent = GM_config.label('ok');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -309,7 +309,7 @@ test.describe('@require', () => {
         if (el) el.textContent = second;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -341,7 +341,7 @@ test.describe('@require', () => {
         if (el) el.textContent = GM_getValue('fromRequire', 'MISSING');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -375,7 +375,7 @@ test.describe('@require', () => {
         if (el) el.textContent = readyAtRequire;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -418,7 +418,7 @@ test.describe('@require', () => {
         if (el) el.textContent = 'ran';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -430,8 +430,8 @@ test.describe('@require', () => {
     // But the failure IS reported: the sentinel entry is its own
     // script, so it parses and runs even though the one before it
     // didn't.
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
     // The sentinel reports from the page, so the entry lands some time
     // after the navigation settles — wait for it rather than reading
@@ -478,11 +478,11 @@ test.describe('@require', () => {
       },
       body: `document.title = 'ran';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
 
     // A page the regex does NOT match. The script is registered here
@@ -542,7 +542,7 @@ test.describe('@require', () => {
         if (el) el.textContent = 'ran';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -550,8 +550,8 @@ test.describe('@require', () => {
     await page.waitForTimeout(500);
     await expect(page.locator('#target')).not.toHaveText('ran');
 
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
     // The pause above is for the negative assertion (the body must not
     // run). This read is a positive one, so wait for the entry — same
@@ -580,8 +580,8 @@ test.describe('@require', () => {
       ].join('\n');
       server.setRoute('/dep.js', '/* v1 */', { contentType: 'application/javascript' });
       server.setRoute('/main.user.js', scriptBody);
-      const source = await sm.addSource(`${server.baseUrl}/main.user.js`);
-      const before = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(`${server.baseUrl}/main.user.js`);
+      const before = await sm.getCollectionWithScripts(collection!.id);
       expect(before!.scripts[0].requires?.[0]?.source).toBe('/* v1 */');
 
       // Server replaces the dependency.
@@ -590,13 +590,13 @@ test.describe('@require', () => {
       // Opportunistic refresh: must NOT re-pull the require, even
       // though the underlying body could've changed. The cached
       // version persists.
-      await sm.updateSource(source!.id, 'opportunistic');
-      const afterOpp = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'opportunistic');
+      const afterOpp = await sm.getCollectionWithScripts(collection!.id);
       expect(afterOpp!.scripts[0].requires?.[0]?.source).toBe('/* v1 */');
 
       // Manual refresh: re-checks remote requires and surfaces v2.
-      await sm.updateSource(source!.id, 'manual');
-      const afterManual = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      const afterManual = await sm.getCollectionWithScripts(collection!.id);
       expect(afterManual!.scripts[0].requires?.[0]?.source).toBe('/* v2 */');
     } finally {
       await server.stop();

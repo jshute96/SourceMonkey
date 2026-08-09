@@ -84,7 +84,7 @@ See [local-file-overrides.md](local-file-overrides.md#refresh-policy).
 ## Cross-script + cross-kind dedup
 
 A `FileFetchCache` is threaded through every refresh entry point.
-Two scripts (within or across sources) that reference the same
+Two scripts (within or across collections) that reference the same
 canonical URL in the same refresh pass share one fetch.
 
 - A `@require` and a `@resource` pointing at the same URL also share
@@ -267,7 +267,7 @@ buys most of it back:
   [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
   A script that reads its own `err.stack` still sees generated
   coordinates — we rewrite the string on the way into our views, not
-  at the source.
+  at the collection.
 - `sourcesContent` is embedded without a size cap: `sourcemonkey://`
   URLs aren't fetchable, so dropping the text would leave a map with
   nothing to show. The real limit is whatever

@@ -750,7 +750,7 @@
   /* ---------- GM_log ----------
 
      Page-side console wrapper that ALSO fans the call out to the SW
-     so it lands on the script's Log tab in the sources-page viewer.
+     so it lands on the script's Log tab in the collections-page viewer.
      Two channels:
        1. console.log to the page DevTools — unchanged, with a
           "[SourceMonkey:<scriptId>]" prefix for grep-ability. The

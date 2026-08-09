@@ -11,7 +11,7 @@
 //
 // What gets probed: only `@updateURL` / `@downloadURL` values that
 // differ from the URL we load the script from. We already auto-update
-// from our own source — local files via the scan's size+mtime check,
+// from our own collection — local files via the scan's size+mtime check,
 // http(s) via a conditional GET — so probing it would be a slower way
 // to learn what the refresh that just ran already established.
 //
@@ -57,7 +57,7 @@ export type ProbePolicy = 'force' | 'if-stale';
 // How long a recorded probe stays fresh. Probes hit third-party hosts
 // on somebody else's page load, and an upstream release is a
 // once-in-weeks event, so this is deliberately hours rather than the
-// seconds the source-refresh gate uses.
+// seconds the collection-refresh gate uses.
 export const PROBE_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // Canonical form for comparing a probe URL against the script's own

@@ -86,10 +86,10 @@ const ENCODED_SEPARATOR_RE = /%2f|%5c/i;
 export const LOCAL_ROOTS_KEY = 'smLocalFileRoots';
 
 // The shapes a search root may take, as a sentence fragment — the same
-// role `LOCATION_SHAPES` plays for source inputs. http(s) is absent on
-// purpose: a root names a directory on this machine. Unexported: unlike
-// `LOCATION_SHAPES` there is only one validator, so the whole message
-// is what callers see.
+// role `LOCATION_SHAPES` plays for collection inputs. http(s) is absent
+// on purpose: a root names a directory on this machine. Unexported:
+// unlike `LOCATION_SHAPES` there is only one validator, so the whole
+// message is what callers see.
 const ROOT_SHAPES = 'must be an absolute path starting with / or a file:// URL';
 
 export interface ParsedRoot {
@@ -172,11 +172,12 @@ export function textFromRoots(roots: readonly string[]): string {
   return roots.join('\n');
 }
 
-// Cached copy of the setting, mirroring `debug-log.ts`: `localSearchRoots`
-// is called synchronously from render paths in three contexts (service
-// worker, sources page, viewer), so each loads once at startup and then
-// tracks `storage.onChanged`. Defaults to none, which is also what any
-// caller outside the extension (the offline validator) sees.
+// Cached copy of the setting, mirroring `debug-log.ts`:
+// `localSearchRoots` is called synchronously from render paths in three
+// contexts (service worker, collections page, viewer), so each loads
+// once at startup and then tracks `storage.onChanged`. Defaults to
+// none, which is also what any caller outside the extension (the
+// offline validator) sees.
 let configuredRoots: string[] = [];
 let loadOnce: Promise<void> | null = null;
 // Bumped by anything that publishes a newer value, so an initial read
@@ -283,16 +284,17 @@ export function localSearchRoots(
   return [parent, ...configuredRoots.filter((r) => r !== parent)];
 }
 
-// Can a source's scripts ever have local stand-ins? Used only to decide
-// whether the sources page shows the per-source toggle — the real gate
-// is `localSearchRoots`, which looks at each script's own URL.
+// Can a collection's scripts ever have local stand-ins? Used only to
+// decide whether the collections page shows the per-collection toggle —
+// the real gate is `localSearchRoots`, which looks at each script's own
+// URL.
 //
-// http(s) sources and the http / github containers are excluded: every
-// script under them loads over the network, so the toggle would be a
-// control that does nothing.
-export function sourceSupportsLocalFiles(sourcePath: string): boolean {
-  if (isHttpUrl(sourcePath)) return false;
-  const container = containerKind(sourcePath);
+// http(s) collections and the http / github containers are excluded:
+// every script under them loads over the network, so the toggle would
+// be a control that does nothing.
+export function collectionSupportsLocalFiles(collectionPath: string): boolean {
+  if (isHttpUrl(collectionPath)) return false;
+  const container = containerKind(collectionPath);
   return container !== 'http' && container !== 'github';
 }
 

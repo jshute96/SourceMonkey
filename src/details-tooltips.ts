@@ -27,9 +27,9 @@ const FIXED: Readonly<Record<string, string>> = {
   'Version at update URL': "The version published at the script's @updateURL",
   'Version at download URL': "The version published at the script's @downloadURL",
 
-  Source:
-    'The directory or collection this script was added from.\n'
-    + 'Click through to manage it on the Sources page.',
+  Collection:
+    'The collection this script was added from.\n'
+    + 'Click through to manage it on the Collections page.',
   Location: 'Where this script file lives, and where a refresh re-reads it from',
   Homepage: "The script's @homepage",
   'Log ID':

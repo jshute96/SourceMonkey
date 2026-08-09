@@ -44,7 +44,7 @@ Until the user flips that, **every** `register()` call throws. The
 badge logic is unaffected (it's local code, not the userScripts API),
 so the toolbar still counts matches — only injection is blocked.
 
-The sources page probes the API at render time and shows a banner with
+The collections page probes the API at render time and shows a banner with
 a copy-pasteable `chrome://extensions/?id=<id>` link when the call
 fails.
 
@@ -57,7 +57,7 @@ fails.
   so we wipe-and-replace to guarantee the post-startup state matches
   storage exactly.
 - **On every cache change** — the match-index already fires
-  `onCacheChanged` for `script:*` / `source:*` mutations. The SW
+  `onCacheChanged` for `script:*` / `collection:*` mutations. The SW
   subscribes a second listener that re-runs `syncRegistrations()`,
   alongside the existing badge re-evaluation.
 - **One-time world config** — `chrome.userScripts.configureWorld({
@@ -91,7 +91,7 @@ a second placed the script, and the first then offered the id again.
   surface's teardown — runs through one promise-chain lock in
   `src/injector.ts`. Overlap used to be easy to hit: the SW-startup
   sync against the one `onCacheChanged` schedules for boot-time
-  storage writes, or a source refresh's retry against the sync its own
+  storage writes, or a collection refresh's retry against the sync its own
   writes triggered.
 - **Queued syncs collapse.** A sync waiting on the lock has not read
   storage yet, so a later caller joins it instead of queueing a second
@@ -100,10 +100,10 @@ a second placed the script, and the first then offered the id again.
   single new queued sync between them.
 - **Replace, don't re-offer.** `registerReplacing` registers, and only
   on a refusal unregisters the id and tries once more. The lock is
-  per-JS-context and the sources page and viewer run the retry in
+  per-JS-context and the collections page and viewer run the retry in
   theirs, so a page-side registration can still land mid-sync. Which
   spec is newer isn't knowable from there and doesn't need to be —
-  every `script:*` / `source:*` write schedules its own sync, so the
+  every `script:*` / `collection:*` write schedules its own sync, so the
   set converges on the last write. What matters is that the duplicate
   is our sequencing and not something to badge the script for.
 - **A failed unregister-all falls back to one id at a time.** Chrome
@@ -122,7 +122,7 @@ rules and why it carries no location.
 
 - **Where it lives.** `src/script-rejection.ts` keeps
   `{script id → reason}` in `chrome.storage.session`, written only by
-  the injector and read by the sources page, the viewer, and the tab
+  the injector and read by the collections page, the viewer, and the tab
   badge in `background.ts`.
 - **It describes the current registration set.** Every sync rewrites
   the map wholesale, so a script that has since been disabled, deleted,
@@ -151,7 +151,7 @@ rules and why it carries no location.
     sit in the reload fast-path's 500 ms window. Same reasoning as the
     version probe beside it.
 - **Everything that re-checks a script retries it**: the viewer's and
-  sources page's Refresh, refresh-source, refresh-all, and the
+  collections page's Refresh, refresh-collection, refresh-all, and the
   opportunistic check a navigation to a matching page fires. That last
   one matters because the page in front of the user is where the script
   visibly didn't run.
@@ -168,7 +168,7 @@ rules and why it carries no location.
   - The floor limits **attempts**, not reporting. Every attempt that is
     refused still writes its row; the answer to a burst is to try less
     often, not to hide what happened.
-  - It's module state, and **per JS context**: the sources page and the
+  - It's module state, and **per JS context**: the collections page and the
     viewer import `script-updater.ts` directly, so their Refresh runs
     the retry — and its own copy of the floor — in the page rather than
     the worker. Each context rate-limits its own automatic retries.
@@ -211,7 +211,7 @@ rules and why it carries no location.
 ## What gets registered
 
 For each `status: 'ok'` script whose own `enabled` flag **and** parent
-source's `enabled` flag are both true, we build a
+collection's `enabled` flag are both true, we build a
 `RegisteredUserScript`:
 
 - `id` — the stored script UUID.

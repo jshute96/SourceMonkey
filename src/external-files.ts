@@ -188,7 +188,8 @@ interface SharedFileFields {
   // SHA-256 hex of the fetched bytes.
   contentHash: string;
   // Epoch ms of the last successful (re)fetch. Bumps only on a true
-  // content change so the sources-page row-highlight stays accurate.
+  // content change so the collections-page row-highlight stays
+  // accurate.
   loadedAt: number;
   // The local file we actually read instead of `url`, when a stand-in
   // was found under one of the script's local search roots. Absent

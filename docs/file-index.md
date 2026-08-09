@@ -58,15 +58,15 @@ One-line descriptions of every source file, grouped by directory.
 | `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
 | `src/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
-| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap, first-run sources-page open |
+| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, injector + match-index bootstrap, first-run collections-page open |
 | `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
 | `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the viewer's preview to its raw-source tab |
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
-| `src/sources.html` | Sources page markup: Options button, path-entry form, file-access banner slot, directory list |
-| `src/sources.ts` | Sources page controller — render, in-place updates, repaint-from-storage on change, `?refresh`/`?add_source`/`?first_run` triggers |
-| `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, GitHub auth token, sources link |
+| `src/collections.html` | Collections page markup: Options button, path-entry form, file-access banner slot, collection list |
+| `src/collections.ts` | Collections page controller — render, in-place updates, repaint-from-storage on change, `?refresh`/`?add`/`?first_run` triggers |
+| `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, GitHub auth token, collections link |
 | `src/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), GitHub-token controls |
 | `src/userscript.html` | Userscript viewer markup: controls row, banner slot + preview actions, details panel, tab strip, code box, log pane |
 | `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), live `storage` watchers, log pane |
@@ -78,19 +78,19 @@ One-line descriptions of every source file, grouped by directory.
 | `src/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
-| `src/directories.ts` | Source I/O + classifiers (single-file / manifest / github-dir / container), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
+| `src/directories.ts` | Collection I/O + classifiers (single-file / manifest / github-dir / container), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
 | `src/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
-| `src/github-source.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
+| `src/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
-| `src/source-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-source.ts` |
-| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-source dispatch in addSource, parse-time diagnostics, refreshAllSources, first-run flag + DEFAULT_SOURCES |
+| `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
+| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-collection dispatch in addCollection, parse-time diagnostics, refreshAllCollections, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/script-display.ts` | Pure display helpers: size/status formatting, decode-for-display name/path helpers, SRI-fragment strip |
 | `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same verdict |
 | `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
 | `src/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, bounded size/timeout/concurrency |
-| `src/source-display.ts` | Source-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |
-| `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the source-type bubble, display-name, and warning-banner rules |
+| `src/collection-display.ts` | Collection-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, plus the colored type-bubble builder |
+| `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the collection-type bubble, display-name, and warning-banner rules |
 | `src/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
 | `src/stack-link.ts` | Pure stack-ref helpers: `parseStackRefs` splits a log message into text + `{url, line, col}` runs; `displayRefText` decodes our own URLs for reading |
@@ -104,12 +104,12 @@ One-line descriptions of every source file, grouped by directory.
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) and chunked `bytesToBase64` (XHR + `@resource` transport) |
-| `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the sources/viewer UI |
+| `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the collections/viewer UI |
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, plus a sibling `loglevel:` sentinel |
 | `src/log-format.ts` | Log cell formatting (time, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
 | `src/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor; shared by site-icon and the viewer linkifier |
-| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the slot renderer for sources page + viewer |
+| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the slot renderer for collections page + viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (implicit + configured), host/path suffix candidates, containment |
@@ -149,28 +149,28 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
-| `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, sources page renders, fixture server responds |
+| `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
-| `tests/e2e/sources.spec.ts` | Source lifecycle (add/refresh/remove) via the real file:// scan pipeline |
-| `tests/e2e/live-updates.spec.ts` | Live watchers: sources page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
-| `tests/e2e/container-sources.spec.ts` | Container-source lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
-| `tests/e2e/manifest.spec.ts` | Manifest source refresh: vanished-entry deletion, unreadable-manifest preservation |
+| `tests/e2e/collections.spec.ts` | Collection lifecycle (add/refresh/remove) via the real file:// scan pipeline |
+| `tests/e2e/live-updates.spec.ts` | Live watchers: collections page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
+| `tests/e2e/container-collections.spec.ts` | Container-collection lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
+| `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` override, relative-path resolution, two-tier cache, large-icon blob-URL de-dup |
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
-| `tests/e2e/change-detection.spec.ts` | Unified change-detection: each source/scheme combo preserves loadedAt on identical content and bumps it on edits |
+| `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/e2e/rejected-registration.spec.ts` | REJECTED state end to end: a `@match` Chrome refuses stays `ok` but never runs, and every retry re-reports until it's fixed |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (HTTP soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
-| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the source, already-installed + non-userscript cases, raw view, option off |
+| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, raw view, option off |
 | `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
-| `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add Source install, Update, invalid-header refusal, `@require` tabs |
+| `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, `@require` tabs |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
-| `tests/unit/github-source.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
+| `tests/unit/github-provider.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
 | `tests/unit/github-auth.test.mjs` | Unit tests for the GitHub auth helper: host-gated `Authorization` header, no token → no header, never leaks to non-GitHub hosts |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build) |
@@ -179,7 +179,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/version-compare.test.mjs` | Unit tests for `@version` ordering: numeric segments, missing tails, prereleases, empty input |
 | `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |
 | `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
-| `tests/unit/source-display.test.mjs` | Unit tests for source-display helpers: type classification, manifest flag, short-name inference, effective display name |
+| `tests/unit/collection-display.test.mjs` | Unit tests for collection-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-sites.test.mjs` | Unit tests for the hosting-site page rewrites, the cross-spelling identity key, and the row's suppression rules |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
 | `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs` (URL + line/col extraction, query strings, ports) and `displayRefText` (which URLs decode) |
@@ -218,7 +218,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/script-identity.test.mjs` | Unit tests for the related-versions lookup — identity key rules, absolute-URL matching, list disjointness, install-target cases |
 | `tests/e2e/gm-grants.spec.ts` | E2E tests: `@grant` gating, ungranted APIs return undefined, GM_info shape, `GM.` alias namespace, `GM.setValue` granted form |
 | `tests/e2e/gm-storage.spec.ts` | E2E tests for `GM_setValue`/`GM_getValue`/`GM_deleteValue`/`GM_listValues` round-trip, persistence across reloads, per-script namespace isolation, `GM.` promised forms |
-| `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across source kinds, per-row toggle, Refresh all, preview install offer |
+| `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, preview install offer |
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — write in tab A is visible in tab B; originator doesn't echo |
@@ -292,10 +292,10 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 |------|-------------|
 | `docs/file-index.md` | This file |
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
-| `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, sources-page render |
+| `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, collections-page render |
 | `docs/updates.md` | How scripts update from their install source, and why `@updateURL`/`@downloadURL` are probed but never followed |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
-| `docs/http-sources.md` | `http(s)://` script and manifest sources, container routing, GitHub handling, conditional GETs |
+| `docs/http-collections.md` | `http(s)://` script and manifest collections, container routing, GitHub handling, conditional GETs |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
 | `docs/matching.md` | `@match`/`@include`/`@exclude` semantics, in-memory match index, per-tab badge |
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |

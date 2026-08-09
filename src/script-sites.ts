@@ -85,7 +85,7 @@ function forkRule(siteName: string, host: string): SiteRule {
 // GitHub proper is deliberately absent: `raw.githubusercontent.com`
 // URLs are already rewritten to their `github.com/<o>/<r>/blob/...`
 // page form before they reach the viewer (see `githubRawToBlobUrl` in
-// `github-source.ts`), so the Location row is the page link. Gists get
+// `github-provider.ts`), so the Location row is the page link. Gists get
 // a rule because that rewrite doesn't cover them.
 const SITE_RULES: readonly SiteRule[] = [
   forkRule('Greasy Fork', 'greasyfork.org'),

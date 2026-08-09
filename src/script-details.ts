@@ -4,8 +4,8 @@
 //
 // The two modes render the same rows from the same code; rows whose
 // data a mode doesn't have simply aren't passed in (a preview has no
-// Source or Status; an unparseable file has no header). Row order is
-// fixed here so the panel doesn't reshuffle between modes.
+// Collection or Status; an unparseable file has no header). Row order
+// is fixed here so the panel doesn't reshuffle between modes.
 //
 // What earns a row: the panel is NOT a mirror of the header block.
 // The header block is on screen already — the first code tab opens on
@@ -13,7 +13,7 @@
 // to look at the same string twice. A row earns its place when it is
 //   - identity a reader scans for (Name, Description, Version),
 //   - something we resolved or computed that the file doesn't say
-//     (Source, Location, hosting-site page, Size, Status, the
+//     (Collection, Location, hosting-site page, Size, Status, the
 //     upstream version probes), or
 //   - a claim worth acting on (Homepage, Match / Include / Exclude,
 //     Network access).
@@ -38,17 +38,17 @@ import { openInNewTabAnchor } from './code-links.js';
 import { makeCopyButton } from './copy-button.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
 import { matchTargetInfo } from './match-targets.js';
-import type { StoredSource } from './script-store.js';
+import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
-import { isContainerSource, sourceFsPath } from './directories.js';
+import { isContainerCollection, locationFsPath } from './directories.js';
 import { displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
-  makeSourceTypeBubble,
-  sourceAnchorId,
-} from './source-display.js';
+  makeCollectionTypeBubble,
+  collectionAnchorId,
+} from './collection-display.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import { versionRelation, type VersionRelation } from './version-compare.js';
 import { probeLabel, type VersionProbe } from './version-probe.js';
@@ -96,7 +96,7 @@ export interface DetailsModel {
   };
   // Installed scripts only.
   logId?: string;
-  source?: StoredSource | null;
+  collection?: StoredCollection | null;
   status?: Node;
   location?: LocationRow;
   size?: string;
@@ -131,12 +131,13 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
     addVersionProbes(dl, version, probes);
   }
 
-  // Source row: the colored bubble + display name combo the sources
-  // page uses, with the display name doubling as a back-link to the
-  // sources page (anchored to this source's section). Above Location so
-  // the "where did this come from" rows are grouped.
-  if (model.source) {
-    appendRow(dl, 'Source', sourceCell(model.source));
+  // Collection row: the colored bubble + display name combo the
+  // collections page uses, with the display name doubling as a
+  // back-link to the collections page (anchored to this collection's
+  // section). Above Location so the "where did this come from" rows are
+  // grouped.
+  if (model.collection) {
+    appendRow(dl, 'Collection', collectionCell(model.collection));
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
@@ -148,8 +149,8 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   //
   // Outside the `location` block on purpose, even though it reads as
   // part of that group: `@homepage` comes from the header alone, so a
-  // script whose parent source row has vanished (no Location row, see
-  // `currentFilenamePath`) must not lose it too.
+  // script whose parent collection row has vanished (no Location row,
+  // see `currentFilenamePath`) must not lose it too.
   if (h) addLink(dl, 'Homepage', declaredHomepage(h));
 
   // Only when the log ID carries a `#N` disambiguator. Without one it
@@ -380,13 +381,13 @@ function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void
     // and what the reader needs in order to go open the file.
     //
     // Rendered as a BARE filesystem path, not the `file://` URL we
-    // hold: the Location row above resolves its own `file://` source
-    // the same way (`sourceFsPath`, then `displayLocation`), and two
+    // hold: the Location row above resolves its own `file://` location
+    // the same way (`locationFsPath`, then `displayLocation`), and two
     // path styles in one panel would read as two different kinds of
     // thing. The code tab's tooltip keeps the URL form deliberately —
     // there it sits directly under the declared URL, and the pair reads
     // as "asked for this, got that".
-    const localPath = sourceFsPath(e.localUrl);
+    const localPath = locationFsPath(e.localUrl);
     const path = document.createElement('span');
     path.className = 'local-override-path';
     appendWithSlashBreaks(path, displayLocation(localPath));
@@ -493,26 +494,26 @@ function logIdCell(logId: string): Node {
   return span;
 }
 
-// Source-row cell: colored type bubble on the left (linking out to the
-// underlying file:// / http(s):// URL), followed by the source's
-// display name as a back-link to the sources page anchored at this
-// source's section.
-function sourceCell(source: StoredSource): Node {
+// Collection-row cell: colored type bubble on the left (linking out to
+// the underlying file:// / http(s):// URL), followed by the
+// collection's display name as a back-link to the collections page
+// anchored at this collection's section.
+function collectionCell(collection: StoredCollection): Node {
   const cell = document.createElement('span');
-  cell.className = 'source-cell';
+  cell.className = 'collection-cell';
 
-  cell.appendChild(makeSourceTypeBubble(source.path));
+  cell.appendChild(makeCollectionTypeBubble(collection.path));
 
   const nameLink = document.createElement('a');
-  nameLink.className = 'source-display-name';
-  appendWithSlashBreaks(nameLink, effectiveDisplayName(source));
+  nameLink.className = 'collection-display-name';
+  appendWithSlashBreaks(nameLink, effectiveDisplayName(collection));
   // Page-relative (both pages sit at the extension root) so the href
   // doesn't carry the `chrome-extension://<id>/` prefix.
-  nameLink.href = `sources.html#${sourceAnchorId(source.id)}`;
+  nameLink.href = `collections.html#${collectionAnchorId(collection.id)}`;
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
-  // the section on the sources page. Container sources have a
+  // the section on the collections page. Container collections have a
   // synthetic `container:<kind>` path which would leak — skip then.
-  if (!isContainerSource(source.path)) nameLink.title = source.path;
+  if (!isContainerCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
 
   return cell;

@@ -18,13 +18,13 @@ Key spaces in `chrome.storage.local`:
 
 | Key                    | Type                | Purpose |
 |------------------------|---------------------|---------|
-| `"sources"`            | `string[]`          | Index of source IDs in display order. |
-| `"source:<sid>"`       | `StoredSource`      | Per-directory metadata. |
+| `"collections"`         | `string[]`          | Index of collection IDs in display order. |
+| `"collection:<cid>"`    | `StoredCollection`  | Per-collection metadata. |
 | `"script:<scid>"`      | `StoredScript`      | Per-file content, parsed header, status. |
 | `"pathIcon:<pageUrl>"` | `SiteIconEntry`     | Per-page-URL favicon hit (deep-page HTML discovery; see [site-icons.md](site-icons.md)). |
 | `"siteIcon:<orig>"`    | `SiteIconEntry`     | Origin-level favicon fallback for an `https://host` (see [site-icons.md](site-icons.md)). |
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
-| `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default sources; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
+| `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
@@ -39,50 +39,74 @@ browsing session, not the user's configuration.
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
 | `"rawview:<key>"`        | `string`                | Hand-off of a fetched script from the viewer's preview to its raw-source tab. |
 
-### `StoredSource`
+### Legacy key migration (temporary)
+
+Collections were called "sources" until August 2026. A profile written
+before the rename carries the old spelling, and reading it with the new
+keys would look like a wiped profile.
+
+- **What moves**: `"sources"` → `"collections"`, every `source:<id>` row
+  → `collection:<id>`, and each script's `sourceId` field →
+  `collectionId`. Nothing else changes.
+- **When**: `ensureCollectionKeysMigrated` (`src/script-store.ts`) runs
+  on the first storage read in each JS context, memoized. A cheap
+  `get("sources")` probe gates the full `get(null)`, so a migrated
+  profile pays one small read per context and no more.
+- **Ordering**: new rows are written before the old ones are removed, so
+  an interrupted run leaves both spellings and the retry is a no-op over
+  what it already moved. A failed run clears the memo instead of wedging
+  every read behind it.
+- **Who awaits it**: every read path in the store, plus `loadAll` in
+  `src/match-index.ts` and `readAll` in `src/injector.ts` — the two
+  modules that read the structural rows straight out of
+  `chrome.storage.local`.
+- **Removal** is scheduled in [TODO.md](../TODO.md) for after
+  2026-09-01.
+
+### `StoredCollection`
 
 - `id` — UUID.
-- `path` — canonical source location the user added. One of:
+- `path` — canonical collection location the user added. One of:
   - absolute filesystem path or `file://` URL pointing at a directory
     of `.user.js` files (recursive scan; see
     [file-access.md](file-access.md)).
   - `http(s)://` URL to a `script_manifest.json` (see
-    [http-sources.md](http-sources.md)).
+    [http-collections.md](http-collections.md)).
   - `github.com/<o>/<r>/tree/<ref>(/<path>?)` URL for a directory
-    source (blob / file URLs are rewritten to `raw.githubusercontent.com`
+    collection (blob / file URLs are rewritten to `raw.githubusercontent.com`
     at add time).
   - One of three **container** identifiers — `container:file`,
     `container:http`, `container:github` — used by the synthetic
-    "Scripts from local disk / web / GitHub" sources that aggregate
-    individually added `.user.js` URLs and paths. Container sources
+    "Scripts from local disk / web / GitHub" collections that aggregate
+    individually added `.user.js` URLs and paths. Container collections
     have no scan step; their `scriptIds` list is the source of truth.
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
 - `enabled` — user-controlled on/off toggle. When `false`, every
-  script under this source is treated as effectively disabled by the
+  script under this collection is treated as effectively disabled by the
   match index (independent of each script's own `enabled`).
-- `localFiles?` — per-source opt-OUT of local file overrides for
+- `localFiles?` — per-collection opt-OUT of local file overrides for
   `@require` / `@resource` / `@icon`. Only an explicit `false` disables
   it, so rows persisted before the field existed read as enabled. See
-  [local-file-overrides.md](local-file-overrides.md#per-source-opt-out).
-- `displayName?` — short, human-readable label shown on the sources
-  page heading and the viewer's Source row. Backfilled from
+  [local-file-overrides.md](local-file-overrides.md#per-collection-opt-out).
+- `displayName?` — short, human-readable label shown on the collections
+  page heading and the viewer's Collection row. Backfilled from
   `inferDisplayName(path)` on first read after upgrade
-  (`backfillSourceDisplayNames`). Future user-rename UI would write
+  (`backfillCollectionDisplayNames`). Future user-rename UI would write
   this field; the UI prefers it over the inferred form whenever it's
-  set (see [`src/source-display.ts`](../src/source-display.ts)).
+  set (see [`src/collection-display.ts`](../src/collection-display.ts)).
 
 ### `StoredScript`
 
 - `id` — UUID, **stable across refreshes** (keyed by `relativePath`).
-- `sourceId` — back-reference so the viewer can refresh without
+- `collectionId` — back-reference so the viewer can refresh without
   looking up the parent.
 - `relativePath`, `fileUrl` — identity + how to refetch.
-  - Directory/manifest/github-dir source: `relativePath` is the path
-    relative to the source root; `fileUrl` is the joined absolute URL.
-  - Container source: `relativePath` is the full URL or absolute path
-    the user added, in its canonical spelling (`canonicalSourceInput`:
+  - Directory/manifest/github-dir collection: `relativePath` is the path
+    relative to the collection root; `fileUrl` is the joined absolute URL.
+  - Container collection: `relativePath` is the full URL or absolute path
+    the user added, in its canonical spelling (`canonicalCollectionInput`:
     a `file://` URL collapses to its bare path, so one file on disk
     can't land as two rows); `fileUrl` is its URL form.
 - `status` — `'ok' | 'invalid' | 'missing'`.
@@ -121,13 +145,13 @@ browsing session, not the user's configuration.
 - `fsMtime?` — modification time as reported by Chrome's directory
   listing on the last successful scan. Opaque integer used only for
   equality. Combined with `size` it lets refresh skip refetching files
-  whose listing-reported size+mtime are unchanged. (file:// sources
+  whose listing-reported size+mtime are unchanged. (file:// collections
   only.)
 - `httpEtag?`, `httpLastModified?` — HTTP validators captured from
   the last successful fetch. Sent on the next refresh as
   `If-None-Match` / `If-Modified-Since` so the server can answer 304
-  instead of resending the body. (http(s):// sources only; see
-  [http-sources.md](http-sources.md).)
+  instead of resending the body. (http(s):// collections only; see
+  [http-collections.md](http-collections.md).)
 - `headerText`, `bodyText` — raw split of the file.
 - `header` — `ParsedHeader | null` (see [script-viewer.md](script-viewer.md)).
 - `matching` — `{matches, excludes, includes}` distilled from the
@@ -135,7 +159,7 @@ browsing session, not the user's configuration.
 - `loadedAt` — epoch ms; bumped whenever fresh content lands.
 - `enabled` — user-controlled per-script toggle. Preserved across
   refreshes; a script's effective enabled state is
-  `source.enabled && script.enabled`.
+  `collection.enabled && script.enabled`.
 - `requires?` — prefetched `@require` bodies, inline as an array of
   `StoredRequire` rows (`{ref, url, source, size, contentHash,
   loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
@@ -151,7 +175,7 @@ browsing session, not the user's configuration.
 
 ## Status model
 
-The persisted `status` field has three values; the sources page +
+The persisted `status` field has three values; the collections page +
 viewer combine it with each script's **highest log level seen** (from
 `chrome.storage.session`, see [script-log.md](script-log.md)) and its
 update-probe verdict to render the Status column.
@@ -176,7 +200,7 @@ update-probe verdict to render the Status column.
     preserved so the viewer keeps working.
   - If the file returns on a later refresh, the prior `enabled` is
     preserved so the user's choice survives.
-  - The sources page surfaces a trash-can button on missing rows
+  - The collections page surfaces a trash-can button on missing rows
     (`removeScript`) for clearing records the user doesn't expect back.
   - **Re-enabling** a missing row makes it run again from the cached
     body — match-index and injector both treat enabled `missing` rows
@@ -203,7 +227,7 @@ record the reason. Triggers:
   throws.
 - **Soft failure** (http(s) only): the fetch returned 200 but the body
   parsed `invalid` — a login / error page served in place of the
-  script (e.g. a logged-out source). Scoped to http(s): a `file://`
+  script (e.g. a logged-out collection). Scoped to http(s): a `file://`
   read returns the file's real bytes, so an `invalid` parse there is a
   genuine local edit and is flagged `invalid` immediately.
 - **Dependency failure**: a `@require` / `@resource` fetch failed, so
@@ -224,14 +248,14 @@ Both the failure and the recovery are copied into the script's own Log
 see [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 This mirrors the [scan-failure](#scan-failure-leave-scripts-untouched)
-policy one level down: scan failure protects every script in a source
+policy one level down: scan failure protects every script in a collection
 when the *listing* can't be read; `refreshError` protects a single
 script when its own *fetch* fails.
 
 ### Displayed status (UI-level)
 
 `src/script-display.ts` exports `effectiveScriptStatus(script,
-maxLogLevel, outdated, rejected)` which is what the sources page +
+maxLogLevel, outdated, rejected)` which is what the collections page +
 viewer render. Priority order (highest wins):
 
 - `INVALID` — `status === 'invalid'`.
@@ -250,7 +274,7 @@ viewer render. Priority order (highest wins):
   all. Rendered in amber, distinct from red `INVALID`.
 - `OUTDATED` — an update probe found a newer `@version` at a URL we
   deliberately don't update from. Same rationale (and same amber) as
-  `REFRESH FAILED`, and ranks just under it: a source we can't reach at
+  `REFRESH FAILED`, and ranks just under it: a collection we can't reach at
   all subsumes "some other copy is ahead". See
   [updates.md](updates.md).
 - `ERROR` — `status === 'ok'`, no `refreshError`, but the per-script
@@ -271,16 +295,16 @@ so a badge going green has a matching line; see
 Every loaded script row carries a `contentHash` — a deterministic hash
 of the fetched source bytes on the last successful load. It's the
 universal "last-change token" the rest of the system uses to decide
-"did anything actually change?", regardless of source kind or scheme.
+"did anything actually change?", regardless of collection kind or scheme.
 
 ### Three layers, same end-state
 
-For every source/scheme combination the refresh pipeline still asks
+For every collection/scheme combination the refresh pipeline still asks
 the same question — "is there a new version?" — in the cheapest way
 each one supports, and then has a universal fallback:
 
 1. **Cheap pre-fetch check** (avoids the body entirely):
-   - file:// in a directory source — compare the listing's
+   - file:// in a directory collection — compare the listing's
      `size` + `mtime` against the prior row.
    - http(s):// — conditional GET (`If-None-Match` /
      `If-Modified-Since`). A `304` short-circuits with no body.
@@ -290,7 +314,7 @@ each one supports, and then has a universal fallback:
 3. **Post-fetch content compare** — `buildScriptFromText` rehashes the
    freshly fetched bytes and compares with the prior `contentHash`.
    Match → `loadedAt` is preserved (the row is logically unchanged,
-   so the sources page's "row updated" highlight doesn't fire).
+   so the collections page's "row updated" highlight doesn't fire).
    Mismatch → `loadedAt` is bumped to now.
 
 This makes the **outcome** uniform across every combination of
@@ -304,7 +328,7 @@ appropriate-for-scheme cheap check couldn't prove it.
   Using the standard SubtleCrypto API rather than a hand-rolled hash
   means the same helper works uniformly in service workers, page
   contexts, and Node ≥19. SubtleCrypto is async on the web platform,
-  so `buildScriptFromText` and `rebuildSource` are async.
+  so `buildScriptFromText` and `rebuildCollection` are async.
 - Status still reflects the **current** parse outcome even when the
   hash matches, so a parser update between refreshes can promote an
   unchanged file from `error` → `ok` (or vice versa) without bumping
@@ -313,9 +337,9 @@ appropriate-for-scheme cheap check couldn't prove it.
   fetch are still recorded — they let the next refresh take the cheap
   pre-fetch path even though this one didn't.
 
-## Container sources
+## Container collections
 
-Container sources aggregate individually-added scripts of one kind:
+Container collections aggregate individually-added scripts of one kind:
 
 - `container:file` — "Scripts from local disk"
 - `container:http` — "Scripts from web"
@@ -333,36 +357,36 @@ Properties:
   stays until the user clicks Remove on the section).
 - Per-script duplicate detection compares the new URL/path against
   every `relativePath` already in the container — adding the same URL
-  twice returns null from `addSource`.
+  twice returns null from `addCollection`.
 
-The dispatch rule sits in `addSource`:
+The dispatch rule sits in `addCollection`:
 
 - input passes `isSingleFileInput` → folded into container by kind
   (`containerKindForSingleFileInput` classifies `https://github.com/*`
   and `raw.githubusercontent.com/*` as `github`, anything else
   http(s) as `http`, raw paths / `file://` as `file`).
-- otherwise → directory / manifest / github-dir source (existing
+- otherwise → directory / manifest / github-dir collection (existing
   behavior).
 
 ## Load / refresh pipeline
 
 Every load path goes through the same pipeline:
 
-1. List the source:
-   - **Container sources** skip `scanForUserScripts` entirely. The
+1. List the collection:
+   - **Container collections** skip `scanForUserScripts` entirely. The
      synthetic scan is built from the existing `scriptIds`, one entry
      per child with `relativePath` set to the child's URL/path. No
      size/mtime hints are carried, so the per-entry skip strategy in
      `fetchOrSkipInParallel` (conditional GET for HTTP, always-fetch
      for file://) is what decides whether to re-download each child.
-   - **All other sources** call `scanForUserScripts` (see
+   - **All other collections** call `scanForUserScripts` (see
      [file-access.md](file-access.md) for local directories and
-     [http-sources.md](http-sources.md) for HTTP manifests of any
+     [http-collections.md](http-collections.md) for HTTP manifests of any
      scheme). Local-directory scans carry each file's `size` and
      `mtime`; URL-style scans (manifest entries) don't have a
      pre-fetch stat step.
 2. For each scanned file, decide whether to fetch — *per resolved
-   entry URL*, not per source (so a manifest can mix schemes):
+   entry URL*, not per collection (so a manifest can mix schemes):
    - **file:// skip** (emit `{ unchanged: true }`) if the prior
      stored entry is `status: 'ok'` AND the listing's size+mtime
      match the prior `size` and `fsMtime`. Only local-directory
@@ -385,30 +409,30 @@ Every load path goes through the same pipeline:
      [change-detection model](#change-detection-the-last-change-token)
      so unchanged content never registers as an update even when the
      cheap pre-fetch skips couldn't fire.
-4. Reconcile against the prior state in `rebuildSource`:
+4. Reconcile against the prior state in `rebuildCollection`:
    - Reuse IDs by `relativePath`.
    - Mint a new UUID for any new file.
-   - Vanished-entry handling depends on the source kind:
-     - **Directory sources** — tag the prior file `'missing'`
+   - Vanished-entry handling depends on the collection kind:
+     - **Directory collections** — tag the prior file `'missing'`
        (content preserved). A vanished file may come back; the
        row stays so the viewer keeps working.
-     - **Manifest sources** — drop the row entirely. The manifest
+     - **Manifest collections** — drop the row entirely. The manifest
        is the user's source of truth; removing an entry is an
        explicit removal, not a "maybe gone" signal.
-     - **Container sources** — vanished is never observed, because
+     - **Container collections** — vanished is never observed, because
        the synthetic scan is built from the existing scripts. Per-
        script removal goes through `removeScript` instead.
-5. Persist the source row + every script row in a single
+5. Persist the collection row + every script row in a single
    `chrome.storage.local.set` call.
 
 ### Scan failure: leave scripts untouched
 
 - **Triggers**: unreadable directory listing, unreadable manifest,
   malformed manifest JSON, bad URL shape.
-- **Outcome**: source row records the error in `scanError`; every
+- **Outcome**: collection row records the error in `scanError`; every
   existing script is left untouched — content, status, and `enabled`
   state all preserved.
-- **Why**: we can't tell whether a source that won't list is actually
+- **Why**: we can't tell whether a collection that won't list is actually
   empty or just temporarily unreachable (remote mount with stale
   creds, flaky network, …). The user's scripts keep running until we
   see definitive evidence they're gone.
@@ -417,55 +441,55 @@ Every load path goes through the same pipeline:
 - **Logging**: because no script row is touched, the per-script
   outcome pass would report "no change" for rows that were never
   checked (see [script-log.md](script-log.md#how-a-check-frames-itself)). Instead the reason is fanned out to every script's Log at
-  info level (the badge for a source-level problem stays on the source
+  info level (the badge for a collection-level problem stays on the collection
   row), plus one entry when it clears — see
-  [script-log.md](script-log.md#source-level-failures).
+  [script-log.md](script-log.md#collection-level-failures).
 
 ### Entry points
 
-- `addSource(path)` — dispatches by input shape:
+- `addCollection(path)` — dispatches by input shape:
   - **single-file `.user.js`** input (URL or path) → folded into the
-    matching container source (created if absent); the new script row
+    matching container collection (created if absent); the new script row
     is seeded and refreshed. Returns
-    `{kind: 'newSource' | 'existingContainer', source, scriptId?}` to
+    `{kind: 'newCollection' | 'existingContainer', collection, scriptId?}` to
     tell the caller whether to render a new section or replace an
     existing one. Returns `null` if the URL/path is already a script
     in that container.
   - **everything else** (directory / manifest / github-dir) →
-    create an empty source row, then run `refreshSource`. Returns
-    `{kind: 'newSource', source}`. Returns `null` if the source path
+    create an empty collection row, then run `refreshCollection`. Returns
+    `{kind: 'newCollection', collection}`. Returns `null` if the collection path
     is already registered.
-- `refreshSource(id)` — full rescan + reload of one source
+- `refreshCollection(id)` — full rescan + reload of one collection
   (with the unchanged-file skip described above).
-- `refreshAllSources()` — runs `refreshSource` for every registered
-  source in parallel. Used by the sources page's "Refresh All"
+- `refreshAllCollections()` — runs `refreshCollection` for every registered
+  collection in parallel. Used by the collections page's "Refresh All"
   button and by the `?refresh` URL trigger.
-- `removeSource(id)` — drop the source row + every child script row +
+- `removeCollection(id)` — drop the collection row + every child script row +
   rewrite the index.
-- `moveSource(id, 'up' | 'down')` — swap the source one position in
-  the `"sources"` index. No-op at the boundary. Only the index row
-  is rewritten; per-source rows untouched.
+- `moveCollection(id, 'up' | 'down')` — swap the collection one position in
+  the `"collections"` index. No-op at the boundary. Only the index row
+  is rewritten; per-collection rows untouched.
 - `removeScript(id)` — drop a single script row and remove its ID
-  from the parent source's `scriptIds`. Used by the sources page's
-  trash-can button on `'missing'` rows and (in container sources) on
+  from the parent collection's `scriptIds`. Used by the collections page's
+  trash-can button on `'missing'` rows and (in container collections) on
   every row.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
-  Goes through the same `fetchOrSkipInParallel` + `rebuildSource`
-  pipeline as the source-level Refresh (so the two paths can't
+  Goes through the same `fetchOrSkipInParallel` + `rebuildCollection`
+  pipeline as the collection-level Refresh (so the two paths can't
   drift on skip rules, fsMtime handling, enabled preservation, error
   shape — they share the per-file logic), but with a single-element
-  scan. For file:// sources it does a targeted directory-listing
+  scan. For file:// collections it does a targeted directory-listing
   lookup to populate the scan's size+mtime; for http(s):// and
-  manifest sources it skips that step and relies on the conditional
+  manifest collections it skips that step and relies on the conditional
   GET inside `fetchOrSkipInParallel` instead. Doesn't enumerate the
   whole parent dir, so it can't transition a script into `'missing'`
-  — that's the source-level Refresh's job.
-- `setSourceEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
-  flip the per-source / per-script `enabled` flag with a single-row
+  — that's the collection-level Refresh's job.
+- `setCollectionEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
+  flip the per-collection / per-script `enabled` flag with a single-row
   write. The match index picks up the change via `storage.onChanged`.
 - `setScriptsEnabled(updates)` — bulk variant: flips many scripts'
   enabled flags in a **single** `chrome.storage.local.set` call.
-  Used by the sources page's bulk +/− toggle so 15 flips fire one
+  Used by the collections page's bulk +/− toggle so 15 flips fire one
   `storage.onChanged` event (and therefore one background re-sync)
   instead of one per script.
 
@@ -474,28 +498,28 @@ Every load path goes through the same pipeline:
 `chrome.storage.local` has no compare-and-swap, so two operations that
 each *read* a row, derive a new value, and *write* it back can drop one
 another's change. The classic symptom: a user toggles a script's
-`enabled` flag while an opportunistic `refreshSource` is mid-fetch; the
+`enabled` flag while an opportunistic `refreshCollection` is mid-fetch; the
 refresh captured the old flag before the toggle and writes it back,
 silently reverting the user's choice.
 
 - All structural read-modify-writes run inside a single non-reentrant
   mutex (`mutate()` in `script-store.ts`): the enable setters, the
-  index mutators (`addSource`/`addScriptToContainer` seed, `moveSource`,
-  `removeSource`, `removeScript`), and the write halves of
-  `refreshSource` / `refreshScript`.
+  index mutators (`addCollection`/`addScriptToContainer` seed, `moveCollection`,
+  `removeCollection`, `removeScript`), and the write halves of
+  `refreshCollection` / `refreshScript`.
 - The mutex guards only the **short** critical sections. Slow fetches
   stay *outside* it: a refresh fetches first, then re-reads the current
   rows and writes **inside** the lock, taking the user-owned `enabled`
-  (and the source's `displayName`) from the freshly re-read row and
+  (and the collection's `displayName`) from the freshly re-read row and
   keeping the refresh-owned content. So an enable toggle that landed
   during the fetch is preserved, and I/O isn't serialized.
 - Non-reentrant: a `mutate()` block must not call another mutator. The
-  orchestrators honor this — `addSource` runs its dedup+seed write in
-  the lock, then calls `refreshSource` (which takes the lock for its own
-  write) *outside* it; `refreshAllSources` fans out `refreshSource`
+  orchestrators honor this — `addCollection` runs its dedup+seed write in
+  the lock, then calls `refreshCollection` (which takes the lock for its own
+  write) *outside* it; `refreshAllCollections` fans out `refreshCollection`
   calls that each lock independently.
 - **Residual** (narrow, pre-existing): adding a child to a container
-  (`addScriptToContainer`) concurrently with a `refreshSource` on that
+  (`addScriptToContainer`) concurrently with a `refreshCollection` on that
   same container can still drop the new child from `scriptIds`, because
   the refresh computes its child set from a snapshot taken before the
   add. The byte-level writes are now atomic, but this logical
@@ -505,23 +529,23 @@ silently reverting the user's choice.
 ## First-run seeding
 
 So a freshly-installed extension isn't empty, SourceMonkey seeds the
-`DEFAULT_SOURCES` (`script-store.ts`) on the very first run. Seeding is
-**driven by the sources page**, not the SW, so the user watches the
+`DEFAULT_COLLECTIONS` (`script-store.ts`) on the very first run. Seeding is
+**driven by the collections page**, not the SW, so the user watches the
 normal Add flow (each section appears, populated) instead of scripts
 materialising silently.
 
 - **Open trigger.** On `chrome.runtime.onInstalled` with reason
   `install`, and only while `"firstRunComplete"` is unset, the SW opens
-  `sources.html?first_run=1`. The flag check matters because unpacked
+  `collections.html?first_run=1`. The flag check matters because unpacked
   reloads re-fire `onInstalled('install')`.
-- **Seed trigger.** `seedDefaultSourcesViaUi()` (`sources.ts`) runs only
+- **Seed trigger.** `seedDefaultCollectionsViaUi()` (`collections.ts`) runs only
   when the page loads with `?first_run` AND the flag is unset — so an
-  ordinary sources-page visit never seeds. It adds each default via the
-  same `onAddDirectory` the Add button uses; `addSource` fetches the
-  source's scripts as part of the add, so no follow-up Refresh is needed.
+  ordinary collections-page visit never seeds. It adds each default via the
+  same `onAddCollection` the Add button uses; `addCollection` fetches the
+  collection's scripts as part of the add, so no follow-up Refresh is needed.
 - **Run-once.** The page writes `"firstRunComplete"` after seeding;
   once set, neither the SW open nor the page seed fires again —
-  including after the user deletes the seeded sources.
+  including after the user deletes the seeded collections.
 - **Reset behavior.** The test-surface `resetAllState()` sets
   `"firstRunComplete"` after clearing storage, and the e2e launch
   fixture pre-sets it at startup, so the network seed never runs during
@@ -532,8 +556,8 @@ materialising silently.
 `src/script-updater.ts` is the single entry point every refresh path
 goes through, so concurrency and rate-limiting live in one place.
 
-- **`updateScript(id, mode)`**, **`updateSource(id, mode)`**,
-  **`updateAllSources(mode)`** — thin gates over the corresponding
+- **`updateScript(id, mode)`**, **`updateCollection(id, mode)`**,
+  **`updateAllCollections(mode)`** — thin gates over the corresponding
   `script-store` `refresh*` functions.
 - **`mode: 'manual'`** — Refresh buttons. Always runs. Awaited by the
   caller so the UI can show a spinner and re-render.
@@ -576,7 +600,7 @@ listener on the SW side and flips affected tabs to PURPLE/RELOAD.
 `script-store.ts` exports its core logic as pure functions so the
 unit tests don't need a `chrome.storage` stub:
 
-- `rebuildSource` — orchestrator that takes prior scripts + scan
+- `rebuildCollection` — orchestrator that takes prior scripts + scan
   results + per-file fetch results and returns the new script list.
 - `buildScriptFromText`, `applyFetchError`, `applyMissing`,
   `buildInitialErrorEntry` — per-script state transitions.
@@ -584,31 +608,31 @@ unit tests don't need a `chrome.storage` stub:
 
 Covered by `tests/unit/script-store.test.mjs`.
 
-## Sources-page render
+## Collections-page render
 
-The sources page reads from the store and renders **one section per
-source**:
+The collections page reads from the store and renders **one section per
+collection**:
 
-- **Enable** toggle (checkbox) for the source as a whole, placed to
+- **Enable** toggle (checkbox) for the collection as a whole, placed to
   the left of the directory path.
 - Heading with the directory path.
-- **Up / Down** arrow buttons → `moveSource`. Swap this source's
-  position in the `"sources"` index. Up is disabled on the first
+- **Up / Down** arrow buttons → `moveCollection`. Swap this collection's
+  position in the `"collections"` index. Up is disabled on the first
   section; Down is disabled on the last. The DOM moves the two
   sibling sections directly instead of re-rendering, so per-section
   state (highlights, scroll) is preserved.
-- **Refresh** button → `refreshSource`.
-- **Remove** button → `removeSource`. If the source owns ≥ 1 script,
-  a `confirm()` dialog prompts "Remove source with N scripts?" first;
-  cancel aborts the remove. An empty source removes silently.
+- **Refresh** button → `refreshCollection`.
+- **Remove** button → `removeCollection`. If the collection owns ≥ 1 script,
+  a `confirm()` dialog prompts "Remove collection with N scripts?" first;
+  cancel aborts the remove. An empty collection removes silently.
 - Table with columns **(bulk toggle) | Filename | Size | Status**.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
-    flips every script under this source on (when not all are on) or
-    off (when all are on). Greyed when the source itself is off.
+    flips every script under this collection on (when not all are on) or
+    off (when all are on). Greyed when the collection itself is off.
   - First column of each row is a per-script enable toggle. When the
-    source is disabled, the script toggles are visually greyed and
+    collection is disabled, the script toggles are visually greyed and
     the checkbox itself is `disabled` (the underlying value is
-    preserved so flipping the source back on restores each script's
+    preserved so flipping the collection back on restores each script's
     prior state).
   - Filename links to the viewer at
     `userscript.html?script=<scriptId>`.
@@ -622,7 +646,7 @@ source**:
     tab; the cell's `title` carries `errorMessage` for hover detail.
   - Missing rows get a small trash-can button next to the Status
     label. It calls `removeScript` to drop the row from storage (and
-    from the parent source's `scriptIds`) — useful because a refresh
+    from the parent collection's `scriptIds`) — useful because a refresh
     won't re-add a row whose file the scan no longer reports.
 
 Adding a directory triggers a full load immediately — no need to
@@ -631,27 +655,27 @@ click Refresh after adding. The input is validated client-side:
 - anything else surfaces an inline error and the add is rejected
   before it touches the store.
 
-Each rendered source section gets a stable DOM id
-(`source-<sourceId>`) so it can be scrolled to via the URL fragment
-or via `jumpToSource(id)`. After a successful add the page scrolls
-to the new section and writes `#source-<id>` into the URL.
+Each rendered collection section gets a stable DOM id
+(`collection-<collectionId>`) so it can be scrolled to via the URL fragment
+or via `jumpToCollection(id)`. After a successful add the page scrolls
+to the new section and writes `#collection-<id>` into the URL.
 
-A page-level **Refresh All** button at the top of the sources page
-runs `refreshAllSources()` and re-renders every section in place. The
-same flow is auto-triggered when the sources page is opened with
+A page-level **Refresh All** button at the top of the collections page
+runs `refreshAllCollections()` and re-renders every section in place. The
+same flow is auto-triggered when the collections page is opened with
 `?refresh` in the query string — i.e. an external tool can poke the
 extension with:
 
 ```
-google-chrome chrome-extension://<extension-id>/sources.html?refresh
+google-chrome chrome-extension://<extension-id>/collections.html?refresh
 ```
 
 after writing new userscripts to disk. Combined with the unchanged-
 file skip, this is cheap when most files are untouched.
 
-Similarly, `?add_source=<path-or-url>`:
+Similarly, `?add=<path-or-url>`:
 
-- Runs the same flow as typing the value into Add Source and
+- Runs the same flow as typing the value into the Add field and
   clicking Add (validation, dedup, scroll-to-section).
 - A single `.user.js` value (URL or path) hands off to the viewer's
   preview rather than being added outright — see
@@ -689,10 +713,10 @@ See [change detection](#change-detection-the-last-change-token).
 
 ### In-place updates (no full re-render)
 
-The sources page does **not** re-render the whole `#directories` list
+The collections page does **not** re-render the whole `#collections` list
 on every interaction. Each user action mutates only the affected DOM:
 
-- Per-source toggle → flips `.disabled` on the section, retitles each
+- Per-collection toggle → flips `.disabled` on the section, retitles each
   per-script toggle, and re-evaluates the bulk-toggle's symbol.
 - Per-script toggle → flips `.disabled` on that row + recomputes the
   bulk-toggle symbol.
@@ -715,7 +739,7 @@ The in-place mutators above cover the page's **own** actions.
 A `chrome.storage.local.onChanged` listener covers everything else:
 
 - a Refresh from the viewer, or a background opportunistic refresh;
-- an Install captured in another tab, or a second Sources tab.
+- an Install captured in another tab, or a second Collections tab.
 
 The page therefore always shows the current stored state without a
 manual reload.
@@ -747,14 +771,14 @@ A repaint runs on any structural write from anywhere, so it has to be
 safe while the user is mid-interaction. Nothing is rebuilt that doesn't
 have to be.
 
-- **Sections** are matched to the stored source list: gone ones are
+- **Sections** are matched to the stored collection list: gone ones are
   removed, new ones built, the rest updated in place. The section
   element is never replaced, so the Refresh button's busy state and
   every row's spinner survive.
-- **Rows** are matched to the source's scripts the same way: a `<tr>`
+- **Rows** are matched to the collection's scripts the same way: a `<tr>`
   that is still wanted is updated in place rather than recreated, so
   refresh highlights and in-flight toggles survive.
-  - The exception is a source crossing between "has scripts" and "has
+  - The exception is a collection crossing between "has scripts" and "has
     none", since a table and the empty message are different elements.
     That swap discards the block wholesale.
 - **Re-seating** into stored order happens only when the order actually
@@ -765,8 +789,8 @@ have to be.
   Both discard and recreate their contents, which would drop focus off
   a link the user had tabbed to; the Filename cell would also re-run the
   favicon fetch and flash the globe placeholder.
-- **Reads are proportionate.** One pass reads the source index and each
-  source's scripts once, and derives the dedup `#N` map from those rows.
+- **Reads are proportionate.** One pass reads the collection index and each
+  collection's scripts once, and derives the dedup `#N` map from those rows.
   Going through `getAllScripts()` instead would mean a
   `storage.local.get(null)` per pass — every script body, every
   prefetched `@require`, and the base64 favicon cache — on top of the
@@ -787,7 +811,7 @@ repaint only ever converges the DOM onto storage.
 The handlers therefore don't defend against it — they use the repaint
 themselves rather than hand-rendering their result:
 
-- **Add / Remove**, both per-source and per-script, write and then
+- **Add / Remove**, both per-collection and per-script, write and then
   `await repaintPage()`. Sections, rows, and the empty placeholder come
   and go as a consequence of what is stored.
 - **Refresh** writes, awaits the repaint, and then paints its
@@ -802,13 +826,13 @@ A control the page is still awaiting shows the value the user just
 chose; a repaint must not overwrite it, or the operation appears to undo
 itself mid-flight.
 
-- **Per-script and per-source toggle checkboxes** — left alone while
+- **Per-script and per-collection toggle checkboxes** — left alone while
   their label carries a `.busy-spinner`. The handler's `finally` writes
   the settled state.
   - The label's `toggle-disabled` class and tooltip are updated anyway.
-    They say what the parent source is, not what the user clicked, and
+    They say what the parent collection is, not what the user clicked, and
     `setToggleBusy`'s restore reads the class back to settle the
-    checkbox — skip it and a source disabled mid-click leaves an
+    checkbox — skip it and a collection disabled mid-click leaves an
     enabled checkbox with nothing left to repaint it.
 - **The bulk `+`/`−` button** — its `disabled` is left alone while
   `.busy` is set.
@@ -818,7 +842,7 @@ itself mid-flight.
 ### Background-SW sync coalescing
 
 `onCacheChanged` (in `match-index.ts`) fires for every
-`storage.onChanged` batch that touches a `source:*` or `script:*` row.
+`storage.onChanged` batch that touches a `collection:*` or `script:*` row.
 The background SW's handler debounces by 50 ms before calling
 `syncRegistrations` + `refreshAllOpenTabs`, so several rapid changes
 collapse into one re-sync. `syncRegistrations` is O(total scripts) and

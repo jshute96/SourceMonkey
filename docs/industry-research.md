@@ -244,7 +244,7 @@ sites — included here because they're often pitched in the same
   React props, point-and-prompt. Multiple agents run in parallel and
   write *back into source*. Audience is product builders editing
   their own codebase.
-- **vs SourceMonkey:** Inverted audience — you own the source, so the
+- **vs SourceMonkey:** Inverted audience — you own the collection, so the
   agent edits the repo. SourceMonkey targets third-party sites where
   source isn't yours, so a userscript is the only place edits can
   land.

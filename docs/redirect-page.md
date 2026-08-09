@@ -22,7 +22,7 @@ extension page named in the `page` query parameter.
 
 | `page=` | Lands on | Useful params |
 |---------|----------|---------------|
-| `sources.html` | Sources page | `refresh`; `add_source=<url-or-path>` |
+| `collections.html` | Collections page | `refresh`; `add=<url-or-path>` |
 | `options.html` | Options page | — |
 | `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` |
 
@@ -31,14 +31,14 @@ user sees this page.
 
 ## Example links
 
-- Open the sources page:
-  `…/redirect-page.md?page=sources.html`
-- Open the sources page and trigger a refresh-all:
-  `…/redirect-page.md?page=sources.html&refresh`
-- Add a userscript source (path or URL) to the sources page; the
+- Open the collections page:
+  `…/redirect-page.md?page=collections.html`
+- Open the collections page and trigger a refresh-all:
+  `…/redirect-page.md?page=collections.html&refresh`
+- Add a userscript or a collection (path or URL) on the collections page; the
   page validates the input, jumps to the new section on success, or
-  jumps to the existing section if the source is already registered:
-  `…/redirect-page.md?page=sources.html&add_source=https://example.com/foo.user.js`
+  jumps to the existing section if the collection is already registered:
+  `…/redirect-page.md?page=collections.html&add=https://example.com/foo.user.js`
 - Open the options (settings) page:
   `…/redirect-page.md?page=options.html`
 - View a specific script:
@@ -48,7 +48,7 @@ user sees this page.
 
 Anything you put in the query string is visible to GitHub when the
 visitor does not have SourceMonkey installed — the markdown page
-loads normally and the full URL (including `add_source=…`) appears
+loads normally and the full URL (including `add=…`) appears
 in GitHub's request logs.
 
 ## Installing SourceMonkey

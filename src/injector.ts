@@ -56,19 +56,20 @@
 // Requirements: manifest must include the "userScripts" permission AND
 // the user must enable the "Allow User Scripts" toggle (Chrome ≥138) or
 // developer mode (Chrome 120–137) on chrome://extensions. If the toggle
-// is off, chrome.userScripts.register throws. The sources page prompts
-// for the toggle off its own probe (`probeUserScriptsApi` in
-// sources.ts) rather than anything this module records — it needs an
-// answer at render time, and an SW that has been evicted since the last
-// sync would have nothing to report.
+// is off, chrome.userScripts.register throws. The collections page
+// prompts for the toggle off its own probe (`probeUserScriptsApi` in
+// collections.ts) rather than anything this module records — it needs
+// an answer at render time, and an SW that has been evicted since the
+// last sync would have nothing to report.
 
 import {
   describeError,
+  ensureCollectionKeysMigrated,
   isScriptEnabled,
-  isSourceEnabled,
+  isCollectionEnabled,
   type StartupLog,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
 } from './script-store.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import {
@@ -111,7 +112,7 @@ import {
 } from './script-rejection.js';
 
 const SCRIPT_PREFIX = 'script:';
-const SOURCE_PREFIX = 'source:';
+const COLLECTION_PREFIX = 'collection:';
 
 // Match the runtime-message types we use between injected scripts and
 // the SW. Keep these in sync with the strings the prelude sends.
@@ -247,7 +248,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     // `location` the diagnostic is about, and that is for the Log tab
     // — the prelude just echoes these to the page console. Passing it
     // would put the script's path (an absolute local path, for a
-    // single-file source) into code the page can read.
+    // single-file install) into code the page can read.
     wire.startupLogs = cfg.startupLogs.map((l) => ({ level: l.level, message: l.message }));
   }
   const call =
@@ -827,16 +828,16 @@ export async function buildRegistrationSpec(
 }
 
 // Pure: pick the scripts that should be registered right now. Both the
-// script's own enabled flag and its parent source's flag must be true.
-// `ok` scripts are eligible; `missing` scripts are eligible too when the
-// user has explicitly re-enabled them (the cached body + header from
-// the last good load is what gets injected). `error` scripts never run.
-// Async because each spec build is async (storage pre-load). We
-// parallelize the per-script builds with Promise.all rather than
-// awaiting sequentially.
+// script's own enabled flag and its parent collection's flag must be
+// true. `ok` scripts are eligible; `missing` scripts are eligible too
+// when the user has explicitly re-enabled them (the cached body +
+// header from the last good load is what gets injected). `error`
+// scripts never run. Async because each spec build is async (storage
+// pre-load). We parallelize the per-script builds with Promise.all
+// rather than awaiting sequentially.
 export async function collectActiveSpecs(
   scripts: StoredScript[],
-  sources: Map<string, StoredSource>,
+  collections: Map<string, StoredCollection>,
   scriptHandlerVersion: string = '0.0.0',
 ): Promise<RegistrationSpec[]> {
   // Dedup-aware log labels are computed against ALL stored scripts
@@ -850,8 +851,8 @@ export async function collectActiveSpecs(
   for (const s of scripts) {
     if (s.status !== 'ok' && s.status !== 'missing') continue;
     if (!isScriptEnabled(s)) continue;
-    const src = sources.get(s.sourceId);
-    if (!src || !isSourceEnabled(src)) continue;
+    const src = collections.get(s.collectionId);
+    if (!src || !isCollectionEnabled(src)) continue;
     const label = logIds.get(s.id) ?? scriptBasename(s.relativePath);
     promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label));
   }
@@ -917,18 +918,21 @@ export function isUserScriptsAvailable(): boolean {
   return typeof chrome !== 'undefined' && (chrome as { userScripts?: unknown }).userScripts != null;
 }
 
-async function readAll(): Promise<{ scripts: StoredScript[]; sources: Map<string, StoredSource> }> {
+async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<string, StoredCollection> }> {
+  // See match-index's loadAll: the pre-rename key spelling has to be
+  // moved before anything reads the structural rows directly.
+  await ensureCollectionKeysMigrated();
   const all = await chrome.storage.local.get(null);
   const scripts: StoredScript[] = [];
-  const sources = new Map<string, StoredSource>();
+  const collections = new Map<string, StoredCollection>();
   for (const [k, v] of Object.entries(all)) {
     if (k.startsWith(SCRIPT_PREFIX)) scripts.push(v as StoredScript);
-    else if (k.startsWith(SOURCE_PREFIX)) {
-      const s = v as StoredSource;
-      sources.set(s.id, s);
+    else if (k.startsWith(COLLECTION_PREFIX)) {
+      const s = v as StoredCollection;
+      collections.set(s.id, s);
     }
   }
-  return { scripts, sources };
+  return { scripts, collections };
 }
 
 // ---------- Serializing registration work ----------
@@ -946,7 +950,7 @@ async function readAll(): Promise<{ scripts: StoredScript[]; sources: Map<string
 // then the first one offered the same id again. It shows up after a
 // restart or an extension update (the SW-startup sync overlapping the
 // one `onCacheChanged` schedules for whatever boot work writes to
-// storage) and after a refresh (the source refresh's targeted retry
+// storage) and after a refresh (the collection refresh's targeted retry
 // overlapping the sync its own storage writes triggered).
 //
 // So: one registration operation at a time per JS context. The queue is
@@ -1068,8 +1072,8 @@ export function syncRegistrations(): Promise<void> {
 
 async function runSync(): Promise<void> {
   if (!isUserScriptsAvailable()) {
-    // Nothing to register into. Not stored anywhere — the sources page
-    // runs its own probe for the banner — but a sync that can't do
+    // Nothing to register into. Not stored anywhere — the collections
+    // page runs its own probe for the banner — but a sync that can't do
     // anything shouldn't be silent in the SW console either.
     //
     // Once per SW lifetime: `syncRegistrations` re-runs on every
@@ -1083,15 +1087,15 @@ async function runSync(): Promise<void> {
     // describes the current registration set, and "nothing is
     // registered" is a complete answer — leaving entries would strand
     // REJECTED badges blaming a `@match` pattern for a turned-off
-    // toggle, which the sources page's own banner already explains.
+    // toggle, which the collections page's own banner already explains.
     await writeRejections(await readRejections(), {});
     return;
   }
   try {
     await ensureWorldConfigured();
-    const { scripts, sources } = await readAll();
+    const { scripts, collections } = await readAll();
     const handlerVersion = chrome.runtime.getManifest().version;
-    const userSpecs = await collectActiveSpecs(scripts, sources, handlerVersion);
+    const userSpecs = await collectActiveSpecs(scripts, collections, handlerVersion);
     const bridge = buildBridgeSpec(userSpecs);
     const gmRuntime = buildGmRuntimeSpec(userSpecs);
     // GM runtime first so it installs window.__SM_GM__ ahead of any
@@ -1243,7 +1247,7 @@ export async function retryRejectedRegistrations(
       // Contained like the version probe beside it in script-updater:
       // this is incidental work hanging off a refresh, and a failure
       // here must not fail the Refresh the user actually asked for (the
-      // source paths await us) or surface as an unhandled rejection
+      // collection paths await us) or surface as an unhandled rejection
       // (the per-script path does not).
       console.info('[SourceMonkey] registration retry failed:', describeError(err));
     } finally {
@@ -1260,7 +1264,7 @@ export async function retryRejectedRegistrations(
 // "Duplicate script ID '<id>'" rather than replacing it, and there are
 // two ordinary ways it already knows one of ours:
 //
-//   - **Another context placed it.** The sources page and the viewer
+//   - **Another context placed it.** The collections page and the viewer
 //     run `retryRejectedRegistrations` in their own JS context, so the
 //     lock in this module — which is per-context — cannot order a
 //     page-side retry against the SW's sync. A retry that lands between
@@ -1273,8 +1277,8 @@ export async function retryRejectedRegistrations(
 // the script: reporting it badged a running script REJECTED and wrote a
 // Log row blaming it for our sequencing. Which of the two specs is
 // newer we can't tell from here, and don't need to — every `script:*` /
-// `source:*` write schedules a sync of its own, so the set converges on
-// the last write either way.
+// `collection:*` write schedules a sync of its own, so the set
+// converges on the last write either way.
 //
 // Register first, and only on a refusal try to drop the id and place
 // it again. The obvious arrangement — unregister, then register —
@@ -1317,16 +1321,17 @@ async function registerReplacing(spec: RegistrationSpec): Promise<void> {
 async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // Same precondition as the sync: `configureWorld` must precede
   // `register`. Guarded and idempotent, and `worldConfigured` is
-  // per-JS-context — the sources page and the viewer reach this without
-  // ever running a sync — so the retry can't assume someone else did it.
+  // per-JS-context — the collections page and the viewer reach this
+  // without ever running a sync — so the retry can't assume someone
+  // else did it.
   await ensureWorldConfigured();
-  const { scripts, sources } = await readAll();
+  const { scripts, collections } = await readAll();
   const handlerVersion = chrome.runtime.getManifest().version;
   const wanted = new Set(ids);
   // Built through collectActiveSpecs rather than buildRegistrationSpec
   // directly so the retry can't drift from the sync on eligibility or
   // on dedup-aware log labels.
-  const specs = (await collectActiveSpecs(scripts, sources, handlerVersion))
+  const specs = (await collectActiveSpecs(scripts, collections, handlerVersion))
     .filter((s) => wanted.has(s.id));
   const placed: string[] = [];
   const refused = new Map<string, string>();

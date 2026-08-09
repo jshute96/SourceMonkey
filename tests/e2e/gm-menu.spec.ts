@@ -67,7 +67,7 @@ test.describe('GM_registerMenuCommand', () => {
         document.body.appendChild(btn);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -127,7 +127,7 @@ test.describe('GM_registerMenuCommand', () => {
       },
       body: `GM_registerMenuCommand('One', () => {});`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -200,7 +200,7 @@ test.describe('GM_registerMenuCommand', () => {
         }, { id: 'shared' });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -252,7 +252,7 @@ test.describe('GM_registerMenuCommand', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -319,7 +319,7 @@ test.describe('GM_registerMenuCommand', () => {
         GM_registerMenuCommand('B4', () => {});
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -376,7 +376,7 @@ test.describe('GM_registerMenuCommand', () => {
         document.body.dataset.smIds = JSON.stringify([id1, id2]);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

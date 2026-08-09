@@ -49,7 +49,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -89,7 +89,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -125,7 +125,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -161,7 +161,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -170,7 +170,7 @@ test.describe('GM_download', () => {
       timeout: 15000,
     });
 
-    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const withScripts = await sm.getCollectionWithScripts(collection!.id);
     const entries = await sm.getScriptLog(withScripts!.scripts[0].id);
     expect(entries.filter((e) => e.source === 'gm-download')).toEqual([]);
     await page.close();
@@ -202,7 +202,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -211,7 +211,7 @@ test.describe('GM_download', () => {
       timeout: 15000,
     });
     // A timeout is a failure, so it DOES reach the Log.
-    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const withScripts = await sm.getCollectionWithScripts(collection!.id);
     const scriptId = withScripts!.scripts[0].id;
     await expect.poll(async () => {
       const entries = await sm.getScriptLog(scriptId);
@@ -242,7 +242,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -277,7 +277,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -308,7 +308,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -317,7 +317,7 @@ test.describe('GM_download', () => {
 
     // The same refusal lands on the script's Log tab — a user who sees
     // "nothing downloaded" needs a reason somewhere.
-    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const withScripts = await sm.getCollectionWithScripts(collection!.id);
     const scriptId = withScripts!.scripts[0].id;
     await expect.poll(async () => {
       const entries = await sm.getScriptLog(scriptId);
@@ -362,7 +362,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -375,7 +375,7 @@ test.describe('GM_download', () => {
       { timeout: 15000 },
     );
 
-    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const withScripts = await sm.getCollectionWithScripts(collection!.id);
     const scriptId = withScripts!.scripts[0].id;
     await expect.poll(async () => {
       const entries = await sm.getScriptLog(scriptId);
@@ -409,7 +409,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -441,7 +441,7 @@ test.describe('GM_download', () => {
         ctl.abort();
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -476,7 +476,7 @@ test.describe('GM_download', () => {
         ctl.abort();
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -507,7 +507,7 @@ test.describe('GM_download', () => {
         }
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -539,7 +539,7 @@ test.describe('GM_download', () => {
         document.body.dataset.smCtl = String(ctl && typeof ctl.abort === 'function');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -566,7 +566,7 @@ test.describe('GM_download', () => {
         document.body.dataset.smDownloadType = typeof GM_download;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -605,7 +605,7 @@ test.describe('GM_download', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

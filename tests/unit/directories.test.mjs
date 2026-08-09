@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  canonicalSourceInput,
+  canonicalCollectionInput,
   fetchHttpText,
   parseListing,
   parseManifest,
@@ -22,13 +22,13 @@ import {
   isHttpUrl,
   isFileUrl,
   isSingleFileInput,
-  isContainerSource,
+  isContainerCollection,
   containerKind,
   containerPath,
   containerKindForSingleFileInput,
-  isManifestSource,
-  sourceCanonicalUrl,
-  sourceFsPath,
+  isManifestCollection,
+  collectionCanonicalUrl,
+  locationFsPath,
   parentDir,
   baseName,
 } from '../../dist/directories.js';
@@ -103,9 +103,9 @@ test('scriptFileUrl joins dir + relative and encodes the result', () => {
 });
 
 test('isSingleFileInput matches *.user.js across all schemes', () => {
-  // Single-file inputs no longer become top-level sources — they get
-  // folded into the matching container source. This predicate is the
-  // gate that routes addSource to the container path.
+  // Single-file inputs no longer become top-level collections — they get
+  // folded into the matching container collection. This predicate is the
+  // gate that routes addCollection to the container path.
   assert.equal(isSingleFileInput('/home/me/foo.user.js'), true);
   assert.equal(isSingleFileInput('file:///home/me/foo.user.js'), true);
   assert.equal(isSingleFileInput('file:///home/me/my%20scripts/foo.user.js'), true);
@@ -123,11 +123,11 @@ test('container helpers classify the three container kinds', () => {
   assert.equal(containerPath('file'), 'container:file');
   assert.equal(containerPath('http'), 'container:http');
   assert.equal(containerPath('github'), 'container:github');
-  assert.equal(isContainerSource('container:file'), true);
-  assert.equal(isContainerSource('container:http'), true);
-  assert.equal(isContainerSource('container:github'), true);
-  assert.equal(isContainerSource('/home/me/scripts'), false);
-  assert.equal(isContainerSource('https://x/foo.user.js'), false);
+  assert.equal(isContainerCollection('container:file'), true);
+  assert.equal(isContainerCollection('container:http'), true);
+  assert.equal(isContainerCollection('container:github'), true);
+  assert.equal(isContainerCollection('/home/me/scripts'), false);
+  assert.equal(isContainerCollection('https://x/foo.user.js'), false);
   assert.equal(containerKind('container:file'), 'file');
   assert.equal(containerKind('container:github'), 'github');
   assert.equal(containerKind('/home/me/scripts'), null);
@@ -159,56 +159,56 @@ test('containerKindForSingleFileInput routes single-file inputs by host', () => 
   );
 });
 
-test('sourceFsPath strips file:// and percent-decodes the path', () => {
-  assert.equal(sourceFsPath('/home/me/foo.user.js'), '/home/me/foo.user.js');
-  assert.equal(sourceFsPath('file:///home/me/foo.user.js'), '/home/me/foo.user.js');
+test('locationFsPath strips file:// and percent-decodes the path', () => {
+  assert.equal(locationFsPath('/home/me/foo.user.js'), '/home/me/foo.user.js');
+  assert.equal(locationFsPath('file:///home/me/foo.user.js'), '/home/me/foo.user.js');
   assert.equal(
-    sourceFsPath('file:///home/me/my%20scripts/foo.user.js'),
+    locationFsPath('file:///home/me/my%20scripts/foo.user.js'),
     '/home/me/my scripts/foo.user.js',
   );
   // HTTP URLs are not local; they pass through untouched so callers
   // that mistakenly hand one in get a non-fatal but obviously-wrong
   // value (the URL string) rather than a silent decode.
-  assert.equal(sourceFsPath('https://x/foo.user.js'), 'https://x/foo.user.js');
+  assert.equal(locationFsPath('https://x/foo.user.js'), 'https://x/foo.user.js');
 });
 
-test('canonicalSourceInput gives one spelling per local file', () => {
+test('canonicalCollectionInput gives one spelling per local file', () => {
   // The whole point: a captured `file://` navigation and a path typed
-  // into the sources page have to produce the same stored value, or
+  // into the collections page have to produce the same stored value, or
   // one file on disk gets two installed rows.
-  assert.equal(canonicalSourceInput('file:///home/me/foo.user.js'), '/home/me/foo.user.js');
-  assert.equal(canonicalSourceInput('/home/me/foo.user.js'), '/home/me/foo.user.js');
+  assert.equal(canonicalCollectionInput('file:///home/me/foo.user.js'), '/home/me/foo.user.js');
+  assert.equal(canonicalCollectionInput('/home/me/foo.user.js'), '/home/me/foo.user.js');
   assert.equal(
-    canonicalSourceInput('file:///home/me/my%20scripts/foo.user.js'),
+    canonicalCollectionInput('file:///home/me/my%20scripts/foo.user.js'),
     '/home/me/my scripts/foo.user.js',
   );
-  // Idempotent — `addSource` canonicalizes on write and readers
+  // Idempotent — `addCollection` canonicalizes on write and readers
   // canonicalize stored values again on compare.
   assert.equal(
-    canonicalSourceInput(canonicalSourceInput('file:///home/me/foo.user.js')),
+    canonicalCollectionInput(canonicalCollectionInput('file:///home/me/foo.user.js')),
     '/home/me/foo.user.js',
   );
   // Round-trips back to the same URL, so the fetch still hits the file
   // the user pointed at.
   assert.equal(
-    pathToFileUrl(canonicalSourceInput('file:///home/me/a%23b.user.js')),
+    pathToFileUrl(canonicalCollectionInput('file:///home/me/a%23b.user.js')),
     'file:///home/me/a%23b.user.js',
   );
   // http(s) has only one spelling; nothing to collapse.
   assert.equal(
-    canonicalSourceInput('https://example.com/foo.user.js'),
+    canonicalCollectionInput('https://example.com/foo.user.js'),
     'https://example.com/foo.user.js',
   );
 });
 
-test('canonicalSourceInput leaves non-POSIX file URLs alone', () => {
+test('canonicalCollectionInput leaves non-POSIX file URLs alone', () => {
   // Collapsing these would corrupt them: the drive letter becomes a
   // path segment (and gets its colon percent-encoded on the way back),
   // and a UNC host is dropped entirely — pointing at a different file.
   // Keeping the URL form means they behave exactly as they did before
   // canonicalization existed.
-  assert.equal(canonicalSourceInput('file:///C:/Users/me/foo.user.js'), 'file:///C:/Users/me/foo.user.js');
-  assert.equal(canonicalSourceInput('file://server/share/foo.user.js'), 'file://server/share/foo.user.js');
+  assert.equal(canonicalCollectionInput('file:///C:/Users/me/foo.user.js'), 'file:///C:/Users/me/foo.user.js');
+  assert.equal(canonicalCollectionInput('file://server/share/foo.user.js'), 'file://server/share/foo.user.js');
 });
 
 test('scriptFileUrl resolves container scripts to their URL/path form', () => {
@@ -230,7 +230,7 @@ test('scriptFileUrl resolves container scripts to their URL/path form', () => {
   );
 });
 
-test('scriptAbsolutePath returns the bare fs path for file:// local directory sources', () => {
+test('scriptAbsolutePath returns the bare fs path for file:// local directory collections', () => {
   assert.equal(
     scriptAbsolutePath('file:///home/me/scripts', 'sub/foo.user.js'),
     '/home/me/scripts/sub/foo.user.js',
@@ -246,7 +246,7 @@ test('parentDir and baseName split an absolute path', () => {
 });
 
 test('scriptAbsolutePath returns the resolved fs path for a container file script', () => {
-  // Container scripts are added one at a time via the sources page;
+  // Container scripts are added one at a time via the collections page;
   // scriptAbsolutePath returns the bare on-disk path so the viewer's
   // Location row is readable.
   assert.equal(
@@ -259,7 +259,7 @@ test('scriptAbsolutePath returns the resolved fs path for a container file scrip
   );
 });
 
-// ---------- HTTP source detection ----------
+// ---------- HTTP collection detection ----------
 
 test('isHttpUrl is true for http and https, false for file/path', () => {
   assert.equal(isHttpUrl('http://example.com/foo.user.js'), true);
@@ -272,26 +272,26 @@ test('isHttpUrl is true for http and https, false for file/path', () => {
 });
 
 
-test('isManifestSource matches the script_manifest.json basename regardless of scheme or query', () => {
+test('isManifestCollection matches the script_manifest.json basename regardless of scheme or query', () => {
   // Manifest support is scheme-agnostic AND filename-specific: a path
   // counts as a manifest iff its pathname basename is exactly
   // `script_manifest.json`. Arbitrary `.json` files are NOT manifests.
-  assert.equal(isManifestSource('https://x/script_manifest.json'), true);
-  assert.equal(isManifestSource('http://x/script_manifest.json'), true);
-  assert.equal(isManifestSource('https://x/sub/script_manifest.json?branch=main'), true);
-  assert.equal(isManifestSource('file:///home/me/script_manifest.json'), true);
-  assert.equal(isManifestSource('/home/me/script_manifest.json'), true);
+  assert.equal(isManifestCollection('https://x/script_manifest.json'), true);
+  assert.equal(isManifestCollection('http://x/script_manifest.json'), true);
+  assert.equal(isManifestCollection('https://x/sub/script_manifest.json?branch=main'), true);
+  assert.equal(isManifestCollection('file:///home/me/script_manifest.json'), true);
+  assert.equal(isManifestCollection('/home/me/script_manifest.json'), true);
   // Arbitrary .json files (including the legacy `manifest.json` name)
   // are NOT manifests — only the exact `script_manifest.json` basename
   // counts.
-  assert.equal(isManifestSource('https://x/manifest.json'), false);
-  assert.equal(isManifestSource('/home/me/manifest.json'), false);
-  assert.equal(isManifestSource('/home/me/list.json'), false);
+  assert.equal(isManifestCollection('https://x/manifest.json'), false);
+  assert.equal(isManifestCollection('/home/me/manifest.json'), false);
+  assert.equal(isManifestCollection('/home/me/list.json'), false);
   // A file whose name *contains* script_manifest.json as a suffix but
   // isn't actually that file (no `/` before it) doesn't count either.
-  assert.equal(isManifestSource('https://x/nope_script_manifest.json'), false);
-  assert.equal(isManifestSource('https://x/foo.user.js'), false);
-  assert.equal(isManifestSource('/home/me/scripts'), false);
+  assert.equal(isManifestCollection('https://x/nope_script_manifest.json'), false);
+  assert.equal(isManifestCollection('https://x/foo.user.js'), false);
+  assert.equal(isManifestCollection('/home/me/scripts'), false);
 });
 
 test('isFileUrl recognises file:// URLs', () => {
@@ -301,19 +301,19 @@ test('isFileUrl recognises file:// URLs', () => {
   assert.equal(isFileUrl('/local/foo.json'), false);
 });
 
-test('sourceCanonicalUrl normalises raw paths to file:// URLs and passes URLs through', () => {
+test('collectionCanonicalUrl normalises raw paths to file:// URLs and passes URLs through', () => {
   // Used as the base for new URL(entry, base) when resolving manifest
   // entries, so a local manifest's relative paths resolve correctly.
   assert.equal(
-    sourceCanonicalUrl('/home/me/scripts/script_manifest.json'),
+    collectionCanonicalUrl('/home/me/scripts/script_manifest.json'),
     'file:///home/me/scripts/script_manifest.json',
   );
   assert.equal(
-    sourceCanonicalUrl('file:///already/url.json'),
+    collectionCanonicalUrl('file:///already/url.json'),
     'file:///already/url.json',
   );
   assert.equal(
-    sourceCanonicalUrl('https://example.com/script_manifest.json'),
+    collectionCanonicalUrl('https://example.com/script_manifest.json'),
     'https://example.com/script_manifest.json',
   );
 });
@@ -351,7 +351,7 @@ test('scriptFileUrl resolves manifest entries relative to the manifest URL', () 
   );
 });
 
-test('scriptAbsolutePath returns the resolved URL for HTTP container + manifest sources', () => {
+test('scriptAbsolutePath returns the resolved URL for HTTP container + manifest collections', () => {
   // The viewer's Location row reads this for both flavours.
   assert.equal(
     scriptAbsolutePath('container:http', 'https://example.com/foo.user.js'),
@@ -437,7 +437,7 @@ test('scriptFileUrl propagates a manifest URL query string onto relative entries
 
 test('resolveManifestEntryUrl propagates query only for same-origin no-query entries', () => {
   // Direct unit test of the helper so the propagation rule is pinned
-  // down without going through scriptFileUrl's source-kind dispatch.
+  // down without going through scriptFileUrl's collection-kind dispatch.
   const base = 'https://x.example.com/dir/script_manifest.json?t=1';
   assert.equal(resolveManifestEntryUrl('foo.user.js', base).href,
     'https://x.example.com/dir/foo.user.js?t=1');
@@ -461,10 +461,10 @@ test('scriptFileUrl resolves entries against a file:// manifest URL', () => {
 });
 
 test('scriptAbsolutePath shows the resolved fs path for local manifest entries', () => {
-  // For consistency with other local sources, the viewer's Location
+  // For consistency with other local collections, the viewer's Location
   // row shows the bare on-disk path — not the file:// URL form. This
   // is the same display rule that local directories and local
-  // single-file sources use.
+  // single-file collections use.
   assert.equal(
     scriptAbsolutePath('/home/me/scripts/script_manifest.json', 'foo.user.js'),
     '/home/me/scripts/foo.user.js',
@@ -541,7 +541,7 @@ test('parseManifest accepts any string entry — scheme gating happens at scanMa
 });
 
 test('parseManifest returns [] for an empty list (both shapes)', () => {
-  // Behaviorally: rebuildSource will tag every previously-known script
+  // Behaviorally: rebuildCollection will tag every previously-known script
   // as missing on the next refresh, which is the right behavior — the
   // manifest is the source of truth.
   assert.deepEqual(parseManifest('[]'), []);
@@ -641,13 +641,13 @@ test('fetchHttpText: a thrown fetch surfaces with the underlying message', async
 
 // ---------- GitHub-dir dispatch ----------
 //
-// scriptFileUrl / scriptAbsolutePath delegate to github-source.ts for
-// github-dir sources. The github helpers themselves are covered in
-// tests/unit/github-source.test.mjs; the tests here lock down that
-// directories.ts's source-kind dispatch routes through them correctly.
+// scriptFileUrl / scriptAbsolutePath delegate to github-provider.ts for
+// github-dir collections. The github helpers themselves are covered in
+// tests/unit/github-provider.test.mjs; the tests here lock down that
+// directories.ts's collection-kind dispatch routes through them correctly.
 
 test('scriptFileUrl resolves github-dir entries to raw.githubusercontent.com URLs', () => {
-  // Same shape as a manifest entry: the source URL is the dir's
+  // Same shape as a manifest entry: the collection URL is the dir's
   // github.com URL, the relativePath is the path relative to that dir,
   // and the fetch URL is the raw URL.
   assert.equal(

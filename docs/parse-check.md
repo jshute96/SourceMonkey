@@ -15,7 +15,7 @@ Before this check, that was only discoverable at injection time:
   "Script source failed to parse (a `@require` or the script body has a
   syntax error); nothing was run".
 - It fired only on a page the script actually matched, so a broken
-  script looked fine on the sources page until you happened to visit
+  script looked fine on the collections page until you happened to visit
   one.
 - It named no file.
 
@@ -143,9 +143,9 @@ source and drives the offscreen document.
 
 ### Extension pages
 
-The load pipeline runs **wherever it was called from**. The sources
-page (Add Source, Refresh, Refresh All) and the viewer (Install,
-Refresh) call `addSource` / `updateSource` / `updateScript` in the
+The load pipeline runs **wherever it was called from**. The collections
+page (Add, Refresh, Refresh All) and the viewer (Install,
+Refresh) call `addCollection` / `updateCollection` / `updateScript` in the
 *page*, not in the service worker.
 
 `parse-check-client.ts` installs a checker there. The page has a DOM,
@@ -225,13 +225,13 @@ whose content didn't move reuses the prior verdict.
 
 ## Interaction with refresh policy
 
-The check sets `status: 'invalid'`, and `rebuildSource`'s existing
+The check sets `status: 'invalid'`, and `rebuildCollection`'s existing
 soft-failure rule then applies on top:
 
-- **http(s) source with a prior `ok` copy** — keep the prior copy
+- **http(s) collection with a prior `ok` copy** — keep the prior copy
   running and record `refreshError`. A 200 that doesn't parse is
   usually a login or error page served in place of the script.
-- **`file://` source** — flag immediately. That is a real local edit,
+- **`file://` collection** — flag immediately. That is a real local edit,
   and a developer wants to see it now.
 
 ## The offscreen document is shared
@@ -390,7 +390,7 @@ See [offline-validation.md](offline-validation.md).
 - `tests/bad-examples/` — installable by hand, one file per route
   through the location logic (body, `@require`, swallowed brace,
   swallowed brace at end of file, join-only collision, unterminated
-  construct). Add the directory as a source to see the real messages.
+  construct). Add the directory as a collection to see the real messages.
   The expectations live in `tests/fixtures/bad-script-cases.mjs` and
   are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
   `tests/unit/validate-userscripts.test.mjs` under Node, which is what

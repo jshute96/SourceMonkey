@@ -21,7 +21,7 @@ depend on the choice of mode, see [injection.md](injection.md).
   Pristine line numbers and a real devtools file per require — but
   separate entries are separate V8 scripts with separate top-level
   scopes, so `const`/`let`/`class` didn't cross, and recovering them
-  meant statically analysing library source. See
+  meant statically analysing library collection. See
   [Why Mode B was replaced](#why-mode-b-was-replaced).
 - **Mode C — eval-per-require (not implemented).** One `{code}` entry,
   but inside it the wrapper `eval`s each require and the main body
@@ -116,7 +116,7 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
   - The registered path and the reload-swap path produce the same
     layout, so the viewer maps a hot-swapped script the same way as a
     registered one.
-- **The map costs ~1.6× the source size, so the entry runs ~2.6×.**
+- **The map costs ~1.6× the collection size, so the entry runs ~2.6×.**
   Measured: one 90 KB require → 104 KB of code + 167 KB of map; four
   of them → ~1 MB in one script's `js[]`. `sourcesContent` has to be
   embedded because `sourcemonkey://` URLs aren't fetchable by
@@ -331,7 +331,7 @@ the issue tracker links below.
   source map. V8 honors the per-eval `//# sourceURL=` directive, so
   stack traces point at the right URL with the right line — including
   inside `err.stack` strings, which Mode A's source map cannot fix at
-  the source. (Mode A instead maps those strings on the way into the
+  the collection. (Mode A instead maps those strings on the way into the
   Log tab, which covers our own views but not a script that reads its
   own `err.stack`.)
 - **Exact closure-scope semantics (with direct eval).** Same
@@ -365,7 +365,7 @@ the issue tracker links below.
 - **Devtools sources tree shows eval'd scripts under a synthetic
   parent.** A real `{code}` entry shows up as its own top-level
   source; eval'd code shows up nested under a "(VM:N)"
-  pseudo-source. Less clean for breakpoint workflows.
+  pseudo-collection. Less clean for breakpoint workflows.
 
 ### When you might want this
 

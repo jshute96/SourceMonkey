@@ -59,7 +59,7 @@ test.describe('GM_xmlhttpRequest binary path (Phase 9)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -107,7 +107,7 @@ test.describe('GM_xmlhttpRequest binary path (Phase 9)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -153,7 +153,7 @@ test.describe('GM_xmlhttpRequest binary path (Phase 9)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

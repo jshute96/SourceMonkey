@@ -42,10 +42,10 @@ test.describe('log export', () => {
       meta: { name: 'LogExport', match: ['https://example.com/*'] },
       body: "console.log('hi');",
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const scriptId = sources.flatMap((s) => s.scriptIds)[0];
+    const collections = await sm.getCollections();
+    const scriptId = collections.flatMap((s) => s.scriptIds)[0];
 
     // Clear first: installing already logs, and the assertions below
     // name every row of the exported file. The read is what drains the

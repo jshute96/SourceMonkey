@@ -1,7 +1,7 @@
 // The parse check has to hold on the paths a USER actually drives.
 //
-// `addSource` / `updateSource` / `updateScript` run wherever they were
-// called from, and the sources page and the viewer call them in the
+// `addCollection` / `updateCollection` / `updateScript` run wherever they were
+// called from, and the collections page and the viewer call them in the
 // PAGE — not in the service worker. Pages used to install no checker
 // and skip the check entirely. That wasn't merely "unverified": a
 // viewer Refresh CLEARED a prior `invalid` verdict and logged "loads
@@ -44,9 +44,9 @@ test.describe('parse check on page-driven paths', () => {
     extensionContext, extensionId, sm,
   }) => {
     writeMain(BROKEN_BODY);
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    const script = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    const script = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(script.status).toBe('invalid');
 
     const page = await extensionContext.newPage();
@@ -67,7 +67,7 @@ test.describe('parse check on page-driven paths', () => {
       return log.filter((e) => e.source === 'manual-refresh').length;
     }, { message: 'the refresh never reported an outcome' }).toBeGreaterThan(0);
 
-    const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(after.status, 'a page-driven refresh must re-derive the verdict, not drop it')
       .toBe('invalid');
     // ...and it must not have claimed a recovery on the way.
@@ -83,9 +83,9 @@ test.describe('parse check on page-driven paths', () => {
     // service worker must not leave a repaired script stuck at
     // `invalid`.
     writeMain(BROKEN_BODY);
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    const script = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    const script = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(script.status).toBe('invalid');
 
     const page = await extensionContext.newPage();
@@ -94,7 +94,7 @@ test.describe('parse check on page-driven paths', () => {
     await page.locator('#refresh-btn').click();
 
     await expect.poll(async () => {
-      const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+      const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
       return after.status;
     }).toBe('ok');
     await page.close();
@@ -121,9 +121,9 @@ test.describe('parse check on page-driven paths', () => {
     await page.locator('#install-btn').click();
     await page.waitForURL(/userscript\.html\?script=/);
 
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    const installed = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    const installed = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(installed.status).toBe('invalid');
     expect(installed.errorMessage).toMatch(/syntax error/i);
     await page.close();
@@ -163,7 +163,7 @@ test.describe('parse check on page-driven paths', () => {
       meta: { name: 'Updatable', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet;',
     });
-    await sm.addSource(file);
+    await sm.addCollection(file);
 
     // The upstream copy goes bad after we installed a working one.
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = (;');
@@ -182,7 +182,7 @@ test.describe('parse check on page-driven paths', () => {
   test('an http Update over a working copy says the copy keeps running', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // The branch with the non-obvious semantics. `rebuildSource` treats
+    // The branch with the non-obvious semantics. `rebuildCollection` treats
     // an http(s) refresh that doesn't parse as a bad RESPONSE — a login
     // page served in place of the script — and keeps the prior working
     // body running rather than disabling it. Promising INVALID here
@@ -191,9 +191,9 @@ test.describe('parse check on page-driven paths', () => {
     try {
       server.setRoute('/main.user.js', userscriptText('HttpUpdatable'));
       const url = `${server.baseUrl}/main.user.js`;
-      await sm.addSource(url);
-      const sources = await sm.getSources();
-      expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('ok');
+      await sm.addCollection(url);
+      const collections = await sm.getCollections();
+      expect((await sm.getCollectionWithScripts(collections[0].id))!.scripts[0].status).toBe('ok');
 
       server.setRoute('/main.user.js', `${userscriptText('HttpUpdatable')}\nconst x = (;`);
       const page = await extensionContext.newPage();
@@ -223,9 +223,9 @@ test.describe('parse check on page-driven paths', () => {
     try {
       server.setRoute('/broken.user.js', `${userscriptText('HttpBroken')}\nconst x = (;`);
       const url = `${server.baseUrl}/broken.user.js`;
-      await sm.addSource(url);
-      const sources = await sm.getSources();
-      expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('invalid');
+      await sm.addCollection(url);
+      const collections = await sm.getCollections();
+      expect((await sm.getCollectionWithScripts(collections[0].id))!.scripts[0].status).toBe('invalid');
 
       const page = await extensionContext.newPage();
       await page.goto(
@@ -394,29 +394,29 @@ test.describe('parse check on page-driven paths', () => {
     await page.close();
   });
 
-  test('a sources-page Refresh All catches a newly-broken @require', async ({
+  test('a collections-page Refresh All catches a newly-broken @require', async ({
     extensionContext, extensionId, sm,
   }) => {
     // Same delegation, driven from the other page — and through a
     // `@require`, whose body is the half of the composed program the
-    // viewer never shows as the script's own source.
+    // viewer never shows as the script's own collection.
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = 1;');
     scriptsDir.write({
       relativePath: 'main.user.js',
       meta: { name: 'PageReq', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet;',
     });
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('ok');
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    expect((await sm.getCollectionWithScripts(collections[0].id))!.scripts[0].status).toBe('ok');
 
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = (;');
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await page.locator('#refresh-all').click();
 
     await expect.poll(async () => {
-      const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+      const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
       return after.status;
     }).toBe('invalid');
     await page.close();

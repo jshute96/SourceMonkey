@@ -10,18 +10,20 @@
 // in-memory loop over the cache.
 //
 // Enabled state: a script is considered for matching only if BOTH its
-// own `enabled` flag and its parent source's `enabled` flag are true.
-// We cache every injectable script (regardless of enabled) and
-// separately track the set of disabled sources, so toggling a source
-// flips every script under it in O(1) without rewalking storage.
+// own `enabled` flag and its parent collection's `enabled` flag are
+// true. We cache every injectable script (regardless of enabled) and
+// separately track the set of disabled collections, so toggling a
+// collection flips every script under it in O(1) without rewalking
+// storage.
 
 import { scriptDisplayName } from './script-display.js';
 import {
+  ensureCollectionKeysMigrated,
   isScriptEnabled,
-  isSourceEnabled,
+  isCollectionEnabled,
   type ScriptMatching,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
 
@@ -29,18 +31,18 @@ export interface MatchedScript {
   id: string;
   name: string;       // @name, or the readable relativePath as a fallback
   matching: ScriptMatching;
-  sourceId: string;
+  collectionId: string;
 }
 
 const SCRIPT_PREFIX = 'script:';
-const SOURCE_PREFIX = 'source:';
+const COLLECTION_PREFIX = 'collection:';
 
 interface CacheEntry extends MatchedScript {
-  enabled: boolean;   // the script's own toggle (not the source's)
+  enabled: boolean;   // the script's own toggle (not the collection's)
 }
 
 let cache = new Map<string, CacheEntry>();
-let disabledSources = new Set<string>();
+let disabledCollections = new Set<string>();
 let loaded: Promise<void> | null = null;
 
 // While loadAll() is awaiting its full `get(null)` snapshot, any
@@ -61,6 +63,9 @@ export function ensureLoaded(): Promise<void> {
 
 async function loadAll(): Promise<void> {
   pendingDuringLoad = [];
+  // Before the read, not after: a profile still on the pre-rename key
+  // spelling would otherwise load an empty cache and inject nothing.
+  await ensureCollectionKeysMigrated();
   const all = await chrome.storage.local.get(null);
   const nextCache = new Map<string, CacheEntry>();
   const nextDisabled = new Set<string>();
@@ -68,13 +73,13 @@ async function loadAll(): Promise<void> {
     if (key.startsWith(SCRIPT_PREFIX)) {
       const entry = toEntry(value as StoredScript);
       if (entry) nextCache.set(entry.id, entry);
-    } else if (key.startsWith(SOURCE_PREFIX)) {
-      const source = value as StoredSource;
-      if (!isSourceEnabled(source)) nextDisabled.add(source.id);
+    } else if (key.startsWith(COLLECTION_PREFIX)) {
+      const collection = value as StoredCollection;
+      if (!isCollectionEnabled(collection)) nextDisabled.add(collection.id);
     }
   }
   cache = nextCache;
-  disabledSources = nextDisabled;
+  disabledCollections = nextDisabled;
   // Replay any changes that landed during the await on top of the
   // fresh snapshot, then stop buffering. A change for a key already in
   // the snapshot just re-applies the same (or newer) value; one for a
@@ -100,7 +105,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
     id: script.id,
     name,
     matching: script.matching,
-    sourceId: script.sourceId,
+    collectionId: script.collectionId,
     enabled: isScriptEnabled(script),
   };
 }
@@ -138,17 +143,17 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
       const entry = toEntry(change.newValue as StoredScript);
       if (entry) cache.set(id, entry);
       else cache.delete(id);
-    } else if (key.startsWith(SOURCE_PREFIX)) {
-      const id = key.slice(SOURCE_PREFIX.length);
-      const next = change.newValue as StoredSource | undefined;
+    } else if (key.startsWith(COLLECTION_PREFIX)) {
+      const id = key.slice(COLLECTION_PREFIX.length);
+      const next = change.newValue as StoredCollection | undefined;
       if (next === undefined) {
-        // Source was removed entirely — its scripts will be deleted
+        // Collection was removed entirely — its scripts will be deleted
         // via separate script:* changes; just drop our tracking row.
-        if (disabledSources.delete(id)) touched = true;
-      } else if (!isSourceEnabled(next)) {
-        if (!disabledSources.has(id)) { disabledSources.add(id); touched = true; }
+        if (disabledCollections.delete(id)) touched = true;
+      } else if (!isCollectionEnabled(next)) {
+        if (!disabledCollections.has(id)) { disabledCollections.add(id); touched = true; }
       } else {
-        if (disabledSources.delete(id)) touched = true;
+        if (disabledCollections.delete(id)) touched = true;
       }
     }
   }
@@ -156,8 +161,8 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
 }
 
 // Allow the background SW to refresh open-tab badges when the script
-// set changes (e.g. after a directory Refresh on the sources page, or a
-// per-source / per-script enabled toggle).
+// set changes (e.g. after a directory Refresh on the collections page,
+// or a per-collection / per-script enabled toggle).
 type ChangeListener = () => void;
 const changeListeners: ChangeListener[] = [];
 export function onCacheChanged(fn: ChangeListener): void {
@@ -173,13 +178,13 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
   const out: MatchedScript[] = [];
   for (const entry of cache.values()) {
     if (!entry.enabled) continue;
-    if (disabledSources.has(entry.sourceId)) continue;
+    if (disabledCollections.has(entry.collectionId)) continue;
     if (urlMatchesScript(url, entry.matching)) {
       out.push({
         id: entry.id,
         name: entry.name,
         matching: entry.matching,
-        sourceId: entry.sourceId,
+        collectionId: entry.collectionId,
       });
     }
   }
@@ -195,11 +200,11 @@ export function cacheSize(): number {
 // Test/debug: dump the current cache contents. Lets e2e tests
 // distinguish "the script never landed in the cache" from "the URL
 // pattern doesn't match" when a badge classification looks wrong.
-export function debugDumpCache(): { entries: { id: string; name: string; enabled: boolean; sourceId: string; matching: ScriptMatching }[]; disabledSources: string[] } {
+export function debugDumpCache(): { entries: { id: string; name: string; enabled: boolean; collectionId: string; matching: ScriptMatching }[]; disabledCollections: string[] } {
   return {
     entries: [...cache.values()].map((e) => ({
-      id: e.id, name: e.name, enabled: e.enabled, sourceId: e.sourceId, matching: e.matching,
+      id: e.id, name: e.name, enabled: e.enabled, collectionId: e.collectionId, matching: e.matching,
     })),
-    disabledSources: [...disabledSources],
+    disabledCollections: [...disabledCollections],
   };
 }

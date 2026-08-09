@@ -1,5 +1,5 @@
 // End-to-end coverage of the "refresh failed, keep the good copy
-// running" behavior for HTTP sources.
+// running" behavior for HTTP collections.
 //
 // A refresh must never downgrade a working script because the latest
 // fetch failed or returned something that isn't a userscript. Both the
@@ -13,10 +13,10 @@
 // Every one of those states must also be readable in the script's own
 // Log tab — a badge the user can't explain is worse than no badge — so
 // the same sequence is asserted against the log, including that a
-// source which stays down keeps saying so on each check.
+// collection which stays down keeps saying so on each check.
 //
 // The store-level unit tests cover the pure transitions; this drives
-// the real fetch pipeline (fetchHttpText + rebuildSource) end to end.
+// the real fetch pipeline (fetchHttpText + rebuildCollection) end to end.
 
 import { test, expect } from '../fixtures/extension';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
@@ -28,8 +28,8 @@ test.describe('refresh failed (keep prior good copy)', () => {
 
   test('soft failure: a 200 login page does not replace the working script', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
-    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const good = before!.scripts[0];
     expect(good.status).toBe('ok');
     const priorBody = good.bodyText;
@@ -42,9 +42,9 @@ test.describe('refresh failed (keep prior good copy)', () => {
       contentType: 'text/html; charset=utf-8',
     });
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     // Still OK + injectable, body untouched, but flagged as stale.
     expect(after.status).toBe('ok');
     expect(after.bodyText).toBe(priorBody);
@@ -55,17 +55,17 @@ test.describe('refresh failed (keep prior good copy)', () => {
 
   test('hard failure: a 404 keeps the working script and records refreshError', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
-    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
-    const good = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const good = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(good.status).toBe('ok');
     const priorBody = good.bodyText;
 
     // The URL starts 404'ing (server moved / temporarily gone).
     server.removeRoute('/app.user.js');
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(after.status).toBe('ok');
     expect(after.bodyText).toBe(priorBody);
     expect(after.refreshError).toBeTruthy();
@@ -73,24 +73,24 @@ test.describe('refresh failed (keep prior good copy)', () => {
 
   test('recovery: a later good refresh clears refreshError and updates the body', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
-    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
-    const priorLoadedAt = (await sm.getSourceWithScripts(source!.id))!.scripts[0].loadedAt;
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const priorLoadedAt = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].loadedAt;
 
     // Break it (soft failure) → refresh-failed.
     server.setRoute('/app.user.js', '<!doctype html><title>Please log in</title>', {
       contentType: 'text/html; charset=utf-8',
     });
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].refreshError).toBeTruthy();
+    await sm.updateCollection(collection!.id, 'manual');
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].refreshError).toBeTruthy();
 
-    // Source comes back with a real (new) version → refreshError clears,
+    // Collection comes back with a real (new) version → refreshError clears,
     // body updates, loadedAt bumps.
     await new Promise((r) => setTimeout(r, 10));
     server.setRoute('/app.user.js', userscriptText('App', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(after.status).toBe('ok');
     expect(after.refreshError).toBeUndefined();
     expect(after.bodyText).toContain('v2');
@@ -99,16 +99,16 @@ test.describe('refresh failed (keep prior good copy)', () => {
 
   test('the Log tab explains the failure, repeats it per check, and records the recovery', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
-    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     await sm.clearScriptLog(scriptId);
 
-    // 1. Source goes down → one warning naming the reason. The script
+    // 1. Collection goes down → one warning naming the reason. The script
     //    keeps running from its cached copy, so warning (not error) is
     //    the honest level.
     server.removeRoute('/app.user.js');
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     const afterFirst = await sm.getScriptLog(scriptId);
     const failures = afterFirst.filter((e) => /Refresh failed/.test(e.message));
     expect(failures.length).toBe(1);
@@ -117,16 +117,16 @@ test.describe('refresh failed (keep prior good copy)', () => {
     // 2. Still down two refreshes later → one entry per check. Each
     //    refresh really re-fetched and re-validated, so every one of
     //    them is reporting a fresh verdict on a fresh read.
-    await sm.updateSource(source!.id, 'manual');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     const afterRepeats = await sm.getScriptLog(scriptId);
     expect(afterRepeats.filter((e) => /Refresh failed/.test(e.message)).length).toBe(3);
 
-    // 3. Source comes back → an info entry says so, and the log's
+    // 3. Collection comes back → an info entry says so, and the log's
     //    highest level stops being the last word on the script.
     await new Promise((r) => setTimeout(r, 10));
     server.setRoute('/app.user.js', userscriptText('App', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     const afterRecovery = await sm.getScriptLog(scriptId);
     const recovery = afterRecovery.filter((e) => /Refresh succeeded again/.test(e.message));
     expect(recovery.length).toBe(1);
@@ -136,15 +136,15 @@ test.describe('refresh failed (keep prior good copy)', () => {
 
   test('a soft failure (200 login page) is explained in the Log too', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
-    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     await sm.clearScriptLog(scriptId);
 
     server.setRoute('/app.user.js', '<!doctype html><title>Please log in</title>', {
       contentType: 'text/html; charset=utf-8',
     });
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
     const log = await sm.getScriptLog(scriptId);
     const failures = log.filter((e) => /Refresh failed/.test(e.message));
@@ -158,8 +158,8 @@ test.describe('refresh failed (keep prior good copy)', () => {
     // means "can't run" — error level, and the Log has to carry the
     // parse reason behind the INVALID badge.
     server.setRoute('/broken.user.js', 'just some text, no metadata block\n');
-    const source = await sm.addSource(`${server.baseUrl}/broken.user.js`);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(`${server.baseUrl}/broken.user.js`);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.status).toBe('invalid');
 
     const afterAdd = await sm.getScriptLog(script.id);
@@ -171,8 +171,8 @@ test.describe('refresh failed (keep prior good copy)', () => {
     // take the size+mtime skip, which requires status 'ok' — so each
     // check reports its own verdict.
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     const afterRefreshes = await sm.getScriptLog(script.id);
     const allErrors = afterRefreshes.filter((e) => e.level === 'error');
     expect(allErrors.length).toBe(3);
@@ -182,7 +182,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     // the Log can tell "the same problem again" from "a new problem"
     // by the message alone.
     expect(new Set(allErrors.map((e) => e.message)).size).toBe(1);
-    expect(allErrors[0].source).toBe('add-source');
+    expect(allErrors[0].source).toBe('add');
     expect(allErrors[1].source).toBe('manual-refresh');
   });
 
@@ -192,15 +192,15 @@ test.describe('refresh failed (keep prior good copy)', () => {
     // row is unchanged, so a naive "skip when unchanged" rule would
     // stay silent forever.
     server.setRoute('/broken.user.js', 'just some text, no metadata block\n');
-    const source = await sm.addSource(`${server.baseUrl}/broken.user.js`);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(`${server.baseUrl}/broken.user.js`);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.status).toBe('invalid');
 
     await sm.clearScriptLog(script.id);
     expect((await sm.getScriptLog(script.id)).length).toBe(0);
 
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     const log = await sm.getScriptLog(script.id);
     const errors = log.filter((e) => e.level === 'error');
     expect(errors.length).toBe(1);

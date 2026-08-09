@@ -101,22 +101,22 @@ export function isGithubAuthInUse(url: string): boolean {
   return isGithubAuthUrl(url);
 }
 
-// True when a *source URL* (the stored sourcePath, not a per-fetch
-// URL) describes content SourceMonkey reaches through GitHub —
-// covers the github-dir case where `sourcePath` is a
+// True when a *collection URL* (the stored collectionPath, not a
+// per-fetch URL) describes content SourceMonkey reaches through GitHub
+// — covers the github-dir case where `collectionPath` is a
 // `github.com/<o>/<r>/tree/...` page URL but the actual scan + per-
 // script fetches go to api.github.com + raw.githubusercontent.com.
-// Returns true iff a token is configured AND the source URL is
-// recognisably GitHub. Used by the source-refresh log line.
-export function isGithubAuthInUseForSource(sourcePath: string): boolean {
+// Returns true iff a token is configured AND the collection URL is
+// recognisably GitHub. Used by the collection-refresh log line.
+export function isGithubAuthInUseForCollection(collectionPath: string): boolean {
   if (!cachedToken) return false;
-  if (isGithubAuthUrl(sourcePath)) return true;
+  if (isGithubAuthUrl(collectionPath)) return true;
   // github.com page URLs (`/blob/`, `/tree/`, bare repo) aren't
-  // fetched directly — but a github-dir source resolves to authed
+  // fetched directly — but a github-dir collection resolves to authed
   // api.github.com + raw.githubusercontent.com calls. Recognise the
-  // github.com host so those sources get the suffix too.
+  // github.com host so those collections get the suffix too.
   try {
-    const host = new URL(sourcePath).hostname.toLowerCase();
+    const host = new URL(collectionPath).hostname.toLowerCase();
     return host === 'github.com';
   } catch {
     return false;
@@ -124,9 +124,9 @@ export function isGithubAuthInUseForSource(sourcePath: string): boolean {
 }
 
 // Log-line suffix used by the updater so the SW console makes it
-// obvious when a source refresh / per-script check is going out
+// obvious when a collection refresh / per-script check is going out
 // authenticated. Empty string when no token would apply, so callers
 // can unconditionally `${label}${githubTokenLogSuffix(url)}`.
 export function githubTokenLogSuffix(url: string): string {
-  return isGithubAuthInUseForSource(url) ? ' (with GitHub token)' : '';
+  return isGithubAuthInUseForCollection(url) ? ' (with GitHub token)' : '';
 }

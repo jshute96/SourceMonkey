@@ -1,12 +1,12 @@
-// Sources page UI: adding a directory through the form, toggling a
-// script, removing a source. The page talks to the same script-store
+// Collections page UI: adding a directory through the form, toggling a
+// script, removing a collection. The page talks to the same script-store
 // the SW does, so these exercise the real add/remove pipeline without
 // any SW-side shortcut.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
-test.describe('sources page', () => {
+test.describe('collections page', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
@@ -19,19 +19,19 @@ test.describe('sources page', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    expect(source).not.toBeNull();
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect(collection).not.toBeNull();
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    await expect(page.locator(`section.directory[data-source-id="${source!.id}"] h2 .source-display-name`))
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    await expect(page.locator(`section.collection[data-collection-id="${collection!.id}"] h2 .collection-display-name`))
       .toHaveText(scriptsDir.path);
-    await expect(page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`))
+    await expect(page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`))
       .toHaveCount(1);
     await page.close();
   });
 
-  test('add-directory form registers a new source', async ({
+  test('add-directory form registers a new collection', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -41,21 +41,21 @@ test.describe('sources page', () => {
     });
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
     await page.locator('#add-path').fill(scriptsDir.path);
     await page.locator('#add-form button[type="submit"]').click();
 
     // Section appears with the new script row.
-    await expect(page.locator('section.directory')).toHaveCount(1);
-    await expect(page.locator('section.directory h2 .source-display-name')).toHaveText(scriptsDir.path);
-    await expect(page.locator('section.directory tbody tr')).toHaveCount(1);
+    await expect(page.locator('section.collection')).toHaveCount(1);
+    await expect(page.locator('section.collection h2 .collection-display-name')).toHaveText(scriptsDir.path);
+    await expect(page.locator('section.collection tbody tr')).toHaveCount(1);
 
-    // And the SW now sees the source.
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    expect(sources[0].path).toBe(scriptsDir.path);
+    // And the SW now sees the collection.
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    expect(collections[0].path).toBe(scriptsDir.path);
     await page.close();
   });
 
@@ -67,24 +67,24 @@ test.describe('sources page', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section).toBeVisible();
 
-    // Source has 1 script, so Remove now prompts a confirm.
+    // Collection has 1 script, so Remove now prompts a confirm.
     page.once('dialog', (dialog) => void dialog.accept());
     await section.locator('button', { hasText: 'Remove' }).click();
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
-    expect(await sm.getSources()).toHaveLength(0);
+    expect(await sm.getCollections()).toHaveLength(0);
     await page.close();
   });
 
-  test('?add_source registers a new source and jumps to its anchor', async ({
+  test('?add registers a new collection and jumps to its anchor', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -94,29 +94,29 @@ test.describe('sources page', () => {
     });
 
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
-    url.searchParams.set('add_source', scriptsDir.path);
+    const url = new URL(`chrome-extension://${extensionId}/collections.html`);
+    url.searchParams.set('add', scriptsDir.path);
     await page.goto(url.toString());
 
     // Section gets rendered, URL hash points to it, query param is scrubbed.
-    const section = page.locator('section.directory').first();
+    const section = page.locator('section.collection').first();
     await expect(section).toBeVisible();
-    await expect(section.locator('h2 .source-display-name')).toHaveText(scriptsDir.path);
+    await expect(section.locator('h2 .collection-display-name')).toHaveText(scriptsDir.path);
 
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    const sourceId = sources[0].id;
-    await expect(section).toHaveAttribute('id', `source-${sourceId}`);
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    const collectionId = collections[0].id;
+    await expect(section).toHaveAttribute('id', `collection-${collectionId}`);
 
     await expect.poll(() => page.evaluate(() => location.hash))
-      .toBe(`#source-${sourceId}`);
+      .toBe(`#collection-${collectionId}`);
     await expect.poll(() => page.evaluate(() => location.search))
       .toBe('');
 
     await page.close();
   });
 
-  test('?add_source on an already-registered path jumps to existing without re-adding', async ({
+  test('?add on an already-registered path jumps to existing without re-adding', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -124,20 +124,20 @@ test.describe('sources page', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const existing = await sm.addSource(scriptsDir.path);
+    const existing = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
-    url.searchParams.set('add_source', scriptsDir.path);
+    const url = new URL(`chrome-extension://${extensionId}/collections.html`);
+    url.searchParams.set('add', scriptsDir.path);
     await page.goto(url.toString());
 
-    // Still exactly one source — no duplicate row.
-    await expect(page.locator('section.directory')).toHaveCount(1);
-    expect(await sm.getSources()).toHaveLength(1);
+    // Still exactly one collection — no duplicate row.
+    await expect(page.locator('section.collection')).toHaveCount(1);
+    expect(await sm.getCollections()).toHaveLength(1);
 
-    // URL hash points at the existing source.
+    // URL hash points at the existing collection.
     await expect.poll(() => page.evaluate(() => location.hash))
-      .toBe(`#source-${existing!.id}`);
+      .toBe(`#collection-${existing!.id}`);
 
     // User is told why nothing new appeared.
     await expect(page.locator('#add-error')).toBeVisible();
@@ -146,43 +146,43 @@ test.describe('sources page', () => {
     await page.close();
   });
 
-  test('?add_source with invalid input shows an error and does not add', async ({
+  test('?add with invalid input shows an error and does not add', async ({
     extensionContext, extensionId, sm,
   }) => {
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
-    url.searchParams.set('add_source', 'not-a-valid-path-or-url');
+    const url = new URL(`chrome-extension://${extensionId}/collections.html`);
+    url.searchParams.set('add', 'not-a-valid-path-or-url');
     await page.goto(url.toString());
 
     const errorEl = page.locator('#add-error');
     await expect(errorEl).toBeVisible();
     await expect(errorEl).toContainText(/absolute path|http\(s\):\/\/|file:\/\//);
 
-    expect(await sm.getSources()).toHaveLength(0);
-    await expect(page.locator('section.directory')).toHaveCount(0);
+    expect(await sm.getCollections()).toHaveLength(0);
+    await expect(page.locator('section.collection')).toHaveCount(0);
 
-    // URL preserves `add_source` so the user can edit/retry/reload.
+    // URL preserves `add` so the user can edit/retry/reload.
     await expect.poll(() => page.evaluate(() => location.search))
-      .toContain('add_source');
+      .toContain('add');
 
     await page.close();
   });
 
-  test('?add_source rejects a bare "/" path', async ({
+  test('?add rejects a bare "/" path', async ({
     extensionContext, extensionId, sm,
   }) => {
     const page = await extensionContext.newPage();
-    const url = new URL(`chrome-extension://${extensionId}/sources.html`);
-    url.searchParams.set('add_source', '/');
+    const url = new URL(`chrome-extension://${extensionId}/collections.html`);
+    url.searchParams.set('add', '/');
     await page.goto(url.toString());
 
     await expect(page.locator('#add-error')).toBeVisible();
-    expect(await sm.getSources()).toHaveLength(0);
+    expect(await sm.getCollections()).toHaveLength(0);
 
     await page.close();
   });
 
-  test('Remove confirm: cancel keeps the source', async ({
+  test('Remove confirm: cancel keeps the collection', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -195,28 +195,28 @@ test.describe('sources page', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section).toBeVisible();
 
     // Dismiss the confirm — section must stay.
     page.once('dialog', async (dialog) => {
       expect(dialog.type()).toBe('confirm');
-      expect(dialog.message()).toBe('Remove source with 2 scripts?');
+      expect(dialog.message()).toBe('Remove collection with 2 scripts?');
       await dialog.dismiss();
     });
     await section.locator('button', { hasText: 'Remove' }).click();
 
     await expect(section).toBeVisible();
-    expect(await sm.getSources()).toHaveLength(1);
+    expect(await sm.getCollections()).toHaveLength(1);
 
     await page.close();
   });
 
-  test('Remove confirm: accept removes the source', async ({
+  test('Remove confirm: accept removes the collection', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -224,36 +224,36 @@ test.describe('sources page', () => {
       meta: { name: 'Only', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section).toBeVisible();
 
     // Singular "script" since count is 1.
     page.once('dialog', async (dialog) => {
-      expect(dialog.message()).toBe('Remove source with 1 script?');
+      expect(dialog.message()).toBe('Remove collection with 1 script?');
       await dialog.accept();
     });
     await section.locator('button', { hasText: 'Remove' }).click();
 
     await expect(section).toHaveCount(0);
-    expect(await sm.getSources()).toHaveLength(0);
+    expect(await sm.getCollections()).toHaveLength(0);
 
     await page.close();
   });
 
-  test('Remove on an empty source does not prompt', async ({
+  test('Remove on an empty collection does not prompt', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Create a dir but write no userscripts — the source loads with
+    // Create a dir but write no userscripts — the collection loads with
     // zero scripts, so Remove should skip the confirm prompt.
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section).toBeVisible();
 
     // If anything pops a dialog this test fails loudly.
@@ -266,15 +266,15 @@ test.describe('sources page', () => {
 
     await expect(section).toHaveCount(0);
     expect(dialogFired).toBe(false);
-    expect(await sm.getSources()).toHaveLength(0);
+    expect(await sm.getCollections()).toHaveLength(0);
 
     await page.close();
   });
 
-  test('Up/Down buttons reorder sources and disable at the ends', async ({
+  test('Up/Down buttons reorder collections and disable at the ends', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Two separate source dirs so we get two sections to reorder.
+    // Two separate collection dirs so we get two sections to reorder.
     const dirA = ScriptsDir.create();
     const dirB = ScriptsDir.create();
     dirA.write({
@@ -288,18 +288,18 @@ test.describe('sources page', () => {
       body: '',
     });
     try {
-      const sourceA = await sm.addSource(dirA.path);
-      const sourceB = await sm.addSource(dirB.path);
+      const sourceA = await sm.addCollection(dirA.path);
+      const sourceB = await sm.addCollection(dirB.path);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/sources.html`);
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
 
-      const sections = page.locator('section.directory');
+      const sections = page.locator('section.collection');
       await expect(sections).toHaveCount(2);
       // Initial order matches add order; first row's Up is disabled and
       // last row's Down is disabled.
-      await expect(sections.nth(0)).toHaveAttribute('data-source-id', sourceA!.id);
-      await expect(sections.nth(1)).toHaveAttribute('data-source-id', sourceB!.id);
+      await expect(sections.nth(0)).toHaveAttribute('data-collection-id', sourceA!.id);
+      await expect(sections.nth(1)).toHaveAttribute('data-collection-id', sourceB!.id);
       await expect(sections.nth(0).locator('.move-up')).toBeDisabled();
       await expect(sections.nth(0).locator('.move-down')).toBeEnabled();
       await expect(sections.nth(1).locator('.move-up')).toBeEnabled();
@@ -307,20 +307,20 @@ test.describe('sources page', () => {
 
       // Move A down — sections swap and the disabled bookends follow.
       await sections.nth(0).locator('.move-down').click();
-      await expect(sections.nth(0)).toHaveAttribute('data-source-id', sourceB!.id);
-      await expect(sections.nth(1)).toHaveAttribute('data-source-id', sourceA!.id);
+      await expect(sections.nth(0)).toHaveAttribute('data-collection-id', sourceB!.id);
+      await expect(sections.nth(1)).toHaveAttribute('data-collection-id', sourceA!.id);
       await expect(sections.nth(0).locator('.move-up')).toBeDisabled();
       await expect(sections.nth(1).locator('.move-down')).toBeDisabled();
 
       // Persisted in the store too.
-      const stored = await sm.getSources();
+      const stored = await sm.getCollections();
       expect(stored.map((s) => s.id)).toEqual([sourceB!.id, sourceA!.id]);
 
       // Move A back up — round-trip restores the original order.
       await sections.nth(1).locator('.move-up').click();
-      await expect(sections.nth(0)).toHaveAttribute('data-source-id', sourceA!.id);
-      await expect(sections.nth(1)).toHaveAttribute('data-source-id', sourceB!.id);
-      const stored2 = await sm.getSources();
+      await expect(sections.nth(0)).toHaveAttribute('data-collection-id', sourceA!.id);
+      await expect(sections.nth(1)).toHaveAttribute('data-collection-id', sourceB!.id);
+      const stored2 = await sm.getCollections();
       expect(stored2.map((s) => s.id)).toEqual([sourceA!.id, sourceB!.id]);
 
       await page.close();
@@ -338,13 +338,13 @@ test.describe('sources page', () => {
       meta: { name: 'Mark', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'marked';`,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
-    // Toggle the script OFF via the sources page.
+    // Toggle the script OFF via the collections page.
     const optionsPage = await extensionContext.newPage();
-    await optionsPage.goto(`chrome-extension://${extensionId}/sources.html`);
-    const row = optionsPage.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+    await optionsPage.goto(`chrome-extension://${extensionId}/collections.html`);
+    const row = optionsPage.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`).first();
     const checkbox = row.locator('.toggle input[type="checkbox"]');
     await expect(checkbox).toBeChecked();
     await checkbox.uncheck();
@@ -352,7 +352,7 @@ test.describe('sources page', () => {
     // Wait for the storage write to settle, then force a sync so the
     // navigation that follows doesn't race the debounced re-register.
     await expect(async () => {
-      const ws = await sm.getSourceWithScripts(source!.id);
+      const ws = await sm.getCollectionWithScripts(collection!.id);
       expect(ws!.scripts[0].enabled).toBe(false);
     }).toPass();
     await sm.syncNow();

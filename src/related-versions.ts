@@ -19,17 +19,17 @@
 //
 // See [docs/script-identity.md].
 
-import { isContainerSource } from './directories.js';
+import { isContainerCollection } from './directories.js';
 import { displayLocation } from './script-display.js';
-import { isScriptEnabled, isSourceEnabled, type StoredScript, type StoredSource } from './script-store.js';
+import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
 import {
   appendWithSlashBreaks,
   CONTAINER_DISPLAY_NAMES,
   effectiveDisplayName,
-  makeSourceTypeBubble,
-  sourceAnchorId,
-  sourceHasManifest,
-} from './source-display.js';
+  makeCollectionTypeBubble,
+  collectionAnchorId,
+  collectionHasManifest,
+} from './collection-display.js';
 import { getValue } from './userscript-header.js';
 import {
   allRelatedRows,
@@ -46,7 +46,7 @@ import {
 // control, and the hint is the only part of them that varies.
 //
 // Deliberately short, and deliberately fixed. Naming the copy would
-// repeat the Source and Location cells an inch to the right, and
+// repeat the Collection and Location cells an inch to the right, and
 // swapping to "Disable" when checked would make one control read two
 // ways for no gain.
 //
@@ -76,9 +76,9 @@ export function enableTitle(sweepsOthers: boolean): string {
   return sweepsOthers ? `${ENABLE_TITLE}${SOLO_HINT}` : ENABLE_TITLE;
 }
 
-// …and when the parent source is off, so the box can't be clicked at
-// all. Same string the controls row has always used.
-export const SOURCE_OFF_TITLE = 'Source is disabled';
+// …and when the parent collection is off, so the box can't be clicked
+// at all. Same string the controls row has always used.
+export const COLLECTION_OFF_TITLE = 'Collection is disabled';
 
 // Wire a checkbox so its `change` handler can find out whether the
 // click that produced it carried the exclusive-opt-out modifier.
@@ -108,7 +108,7 @@ export interface RelatedVersionsActions {
   // showing stored state, so it must not keep a value the store
   // refused.
   setEnabled(changes: readonly ScriptEnableChange[]): Promise<void>;
-  // Refetch same-location rows from their own sources. Passed every
+  // Refetch same-location rows from their own collections. Passed every
   // id in the section at once, so the "…all" control is the same call
   // as a single row's — one refresh pass, one place for the caller to
   // report a failure. Omitted by callers that have nowhere to report
@@ -119,11 +119,11 @@ export interface RelatedVersionsActions {
   // caller can put the busy state on the control that was clicked.
   install?(button: HTMLButtonElement): void | Promise<void>;
   // Delete one stored row outright. Offered only for scripts in a
-  // container source (the single-file installs the user added one at a
-  // time); a script that came in with a directory or manifest source
-  // has no meaning apart from that source, and removing it would just
-  // be undone by the source's next refresh. Omitted by callers with
-  // nowhere to report a failure.
+  // container collection (the single-file installs the user added one
+  // at a time); a script that came in with a directory or manifest
+  // collection has no meaning apart from that collection, and removing
+  // it would just be undone by the collection's next refresh. Omitted
+  // by callers with nowhere to report a failure.
   remove?(scriptId: string): void | Promise<void>;
   // The row for the script currently on screen, so the panel can mark
   // it instead of linking to the page the user is already on. The
@@ -295,7 +295,7 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
   const cols = document.createElement('colgroup');
   for (const cls of [
     'col-enabled',
-    'col-source',
+    'col-collection',
     'col-location',
     'col-version',
     'col-actions',
@@ -309,7 +309,7 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
   const head = table.createTHead().insertRow();
   for (const [label, cls] of [
     ['On', 'col-enabled'],
-    ['Source', 'col-source'],
+    ['Collection', 'col-collection'],
     ['Location', 'col-location'],
     ['Version', 'col-version'],
     ['', 'col-actions'],
@@ -345,7 +345,7 @@ function versionRow(
   tr.dataset.scriptId = script.id;
 
   tr.appendChild(enabledCell(rel, actions, allRows));
-  tr.appendChild(sourceCell(rel));
+  tr.appendChild(collectionCell(rel));
   tr.appendChild(locationCell(rel, isCurrent));
   tr.appendChild(versionCell(script));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb));
@@ -379,12 +379,12 @@ function enabledCell(
   box.type = 'checkbox';
   box.checked = isScriptEnabled(script);
 
-  // A disabled source disables every script under it, so a row that
+  // A disabled collection disables every script under it, so a row that
   // showed only `script.enabled` would read as running when it isn't —
   // in a panel whose whole point is "which copy runs". Same treatment
   // as the viewer's own toggle.
-  const sourceOff = rel.source ? !isSourceEnabled(rel.source) : false;
-  if (sourceOff) {
+  const collectionOff = rel.collection ? !isCollectionEnabled(rel.collection) : false;
+  if (collectionOff) {
     box.disabled = true;
     label.classList.add('toggle-disabled');
   }
@@ -392,20 +392,20 @@ function enabledCell(
   // The visible tooltip, same wording as the controls-row toggle. The
   // hint is only worth showing where the sweep can actually fire: with
   // nothing else running there are no "others" to keep.
-  label.title = sourceOff
-    ? SOURCE_OFF_TITLE
+  label.title = collectionOff
+    ? COLLECTION_OFF_TITLE
     : enableTitle(otherRunningCopies(allRows, script.id).length > 0);
 
   // The screen-reader name carries what the tooltip drops. The checkbox
   // is the only content of its cell, so it has no accessible name from
   // markup at all — and five rows announcing "Enable this script" would
   // be indistinguishable, where a sighted user just reads across to the
-  // Source cell.
-  const what = rel.source ? effectiveDisplayName(rel.source) : 'this copy';
+  // Collection cell.
+  const what = rel.collection ? effectiveDisplayName(rel.collection) : 'this copy';
   box.setAttribute(
     'aria-label',
-    sourceOff
-      ? `${what} — the source is disabled, so this copy does not run`
+    collectionOff
+      ? `${what} — the collection is disabled, so this copy does not run`
       : `${label.title}, in ${what}`,
   );
 
@@ -441,35 +441,35 @@ function enabledCell(
   return td;
 }
 
-// Source name links to the sources page, scrolled to that source's
-// section — the same `#source-<id>` anchor the viewer's Source row
-// uses, so both routes land in the same place.
+// Collection name links to the collections page, scrolled to that
+// collection's section — the same `#collection-<id>` anchor the
+// viewer's Collection row uses, so both routes land in the same place.
 //
 // Bubble first, then the name: same order as the details panel's
-// Source row and the sources page's own headings. The bubble is a
-// fixed-width tag and the name is the variable part, so leading with
+// Collection row and the collections page's own headings. The bubble is
+// a fixed-width tag and the name is the variable part, so leading with
 // it also keeps a column of rows aligned down the left edge.
-function sourceCell(rel: RelatedScript): HTMLTableCellElement {
-  const td = cell('col-source');
-  if (!rel.source) {
-    td.appendChild(document.createTextNode('(unknown source)'));
+function collectionCell(rel: RelatedScript): HTMLTableCellElement {
+  const td = cell('col-collection');
+  if (!rel.collection) {
+    td.appendChild(document.createTextNode('(unknown collection)'));
     return td;
   }
-  td.appendChild(makeSourceTypeBubble(rel.source.path));
+  td.appendChild(makeCollectionTypeBubble(rel.collection.path));
   td.appendChild(document.createTextNode(' '));
-  td.appendChild(sourceNameLink(rel.source));
+  td.appendChild(collectionNameLink(rel.collection));
   return td;
 }
 
-// Back-link to a source's section on the sources page. Shared by the
-// version rows and the install-offer row so both carry the same class,
-// href, and tooltip — they drifted apart when written twice.
-function sourceNameLink(source: StoredSource): HTMLAnchorElement {
+// Back-link to a collection's section on the collections page. Shared
+// by the version rows and the install-offer row so both carry the same
+// class, href, and tooltip — they drifted apart when written twice.
+function collectionNameLink(collection: StoredCollection): HTMLAnchorElement {
   const a = document.createElement('a');
-  a.className = 'versions-source-name';
-  a.href = `sources.html#${sourceAnchorId(source.id)}`;
-  a.title = 'Show this source on the sources page';
-  appendWithSlashBreaks(a, effectiveDisplayName(source));
+  a.className = 'versions-collection-name';
+  a.href = `collections.html#${collectionAnchorId(collection.id)}`;
+  a.title = 'Show this collection on the collections page';
+  appendWithSlashBreaks(a, effectiveDisplayName(collection));
   return a;
 }
 
@@ -528,58 +528,57 @@ function actionsCell(
   // The current script's own row is NOT excluded: see the call site.
   if (rel.sameLocation && actions.update) {
     const title = isCurrent
-      ? `${verb} this script from its source`
-      : `${verb} this copy from its source`;
+      ? `${verb} this script from its collection`
+      : `${verb} this copy from its collection`;
     td.appendChild(button(verb, title, () => void actions.update?.([rel.script.id])));
   }
   return td;
 }
 
-// The trash can, in its own column to the right of the refetch button
-// — the same glyph and hover treatment as the sources page's
+// The trash can, in its own column to the right of the refetch button —
+// the same glyph and hover treatment as the collections page's
 // per-script remove (`.remove-script`), so the two read as one control
 // in two places. Its own class, because the panel sits on a different
-// ground and the borders have to match that; and, unlike the sources
-// page, it appears disabled rather than hidden where it can't act.
+// ground and the borders have to match that; and, unlike the
+// collections page, it appears disabled rather than hidden where it
+// can't act.
 //
-// Live only for scripts in a container source (the "Scripts from local
-// disk" / "…from web" / "…from GitHub" buckets), which the user added
-// one at a time and can take back out the same way. A script that
-// arrived as part of a directory, manifest, or repo source is not
-// independently removable: the next refresh of that source would scan
-// it straight back in. Rather than hide the button on those rows —
-// leaving a ragged column and no clue why some rows can be removed —
-// it is shown disabled, with a tooltip that says where the removal
-// actually lives.
-// What to call a source that holds many scripts, when telling the user
-// their copy can't be removed on its own.
+// Live only for scripts in a container collection (the "Scripts from
+// local disk" / "…from web" / "…from GitHub" buckets), which the user
+// added one at a time and can take back out the same way. A script that
+// arrived as part of a directory, manifest, or repo collection is not
+// independently removable: the next refresh of that collection would
+// scan it straight back in. Rather than hide the button on those rows —
+// leaving a ragged column and no clue why some rows can be removed — it
+// is shown disabled, with a tooltip that says where the removal
+// actually lives. What to call a collection that holds many scripts,
+// when telling the user their copy can't be removed on its own.
 //
-// There was no name for these before this message needed one — the
-// code says "collection source", but that phrase appears nowhere a
-// user can see it. "Directory" and "manifest" are the words the
-// sources page already uses for how they were added, so they are the
-// ones a user can act on. A GitHub repo or `/tree/` source is a
-// directory of scripts too, and reads that way.
-function collectionSourceNoun(source: StoredSource | null): string {
-  return source && sourceHasManifest(source.path) ? 'manifest' : 'directory';
+// "Collection" is the name for the whole family, but it says nothing
+// about how this one was added. "Directory" and "manifest" are the words
+// the collections page already uses for that, so they are the ones a
+// user can act on. A GitHub repo or `/tree/` collection is a directory
+// of scripts too, and reads that way.
+function collectionNoun(collection: StoredCollection | null): string {
+  return collection && collectionHasManifest(collection.path) ? 'manifest' : 'directory';
 }
 
 function removeCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTableCellElement {
   const td = cell('col-remove');
   if (!actions.remove) return td;
-  // A row whose source dangles is an orphan — the thing a user would
-  // most want to clear out, and nothing will scan it back in — so it
-  // gets the live button rather than a tooltip about a source that
-  // isn't there.
-  const removable = rel.source ? isContainerSource(rel.source.path) : true;
+  // A row whose collection dangles is an orphan — the thing a user
+  // would most want to clear out, and nothing will scan it back in — so
+  // it gets the live button rather than a tooltip about a collection
+  // that isn't there.
+  const removable = rel.collection ? isContainerCollection(rel.collection.path) : true;
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';
   b.textContent = '🗑';
   const title = removable
     ? 'Remove this copy of the script'
-    : `Script from ${collectionSourceNoun(rel.source)} source `
-      + 'can only be removed by removing the source';
+    : `Script from ${collectionNoun(rel.collection)} collection `
+      + 'can only be removed by removing the collection';
   b.title = title;
   b.setAttribute('aria-label', title);
   if (removable) {
@@ -614,11 +613,11 @@ function installRow(
   on.textContent = '—';
   tr.appendChild(on);
 
-  const src = cell('col-source');
-  src.appendChild(makeSourceTypeBubble(target.path));
+  const src = cell('col-collection');
+  src.appendChild(makeCollectionTypeBubble(target.path));
   src.appendChild(document.createTextNode(' '));
-  if (target.source) {
-    src.appendChild(sourceNameLink(target.source));
+  if (target.collection) {
+    src.appendChild(collectionNameLink(target.collection));
   } else {
     // No row yet, so nothing to link to — the container is created by
     // the install this row offers.

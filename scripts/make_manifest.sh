@@ -8,7 +8,7 @@
 # then serve the directory over HTTP and point SourceMonkey at
 # https://.../script_manifest.json. Relative entries resolve against the
 # manifest URL's parent (so "foo.user.js" becomes
-# "<manifest-dir>/foo.user.js"); see docs/http-sources.md.
+# "<manifest-dir>/foo.user.js"); see docs/http-collections.md.
 #
 # Exits 1 (with a message to stderr) when no userscripts were found.
 

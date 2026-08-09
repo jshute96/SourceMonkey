@@ -11,7 +11,7 @@
 // entry caught it and logged "Script source failed to parse (a
 // @require or the script body has a syntax error); nothing was run" —
 // but only on a page the script matched. Checking up front turns that
-// into an `invalid` status on the sources page, next to the script,
+// into an `invalid` status on the collections page, next to the script,
 // the moment it is added or refreshed.
 //
 // The verdict is about the whole composed program, so on its own it

@@ -67,7 +67,7 @@ test.describe('GM storage cross-script read leak', () => {
       body: `document.documentElement.dataset.smFiller = '1';`,
     });
 
-    const added = await sm.addSource(scriptsDir.path);
+    const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     // First load: victim seeds the secret and persists it to the SW.
@@ -78,7 +78,7 @@ test.describe('GM storage cross-script read leak', () => {
     // Resolve the victim's real scriptId (a v4 UUID — the practical
     // barrier the leak relied on; the test knows it, a real page would
     // have to guess it).
-    const detail = await sm.getSourceWithScripts(added!.id);
+    const detail = await sm.getCollectionWithScripts(added!.id);
     const victimId = detail!.scripts.find((s) => s.relativePath === 'victim.user.js')!.id;
 
     // The probe below is only meaningful once there is something stored

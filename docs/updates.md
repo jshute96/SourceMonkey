@@ -16,9 +16,9 @@ Keeping them apart is the point of the design. A probe host that's down
 must not disable a working script, and a URL the script names in its
 own header must not silently become an update channel.
 
-## Refresh: the source is the update channel
+## Refresh: the collection is the update channel
 
-Every source kind already auto-updates from where it was installed:
+Every collection kind already auto-updates from where it was installed:
 
 - **`file://`** — the scan reports each file's size + mtime; a change
   refetches and re-stores.
@@ -92,7 +92,7 @@ Staleness rules:
 - At most `PROBE_CONCURRENCY` fetches run at once, so Refresh All over
   a large collection doesn't open one request per script.
 
-Awaited by the source-level entry points, not by the per-script one:
+Awaited by the collection-level entry points, not by the per-script one:
 
 - The per-script check's promise is what the
   [reload fast path](injection.md#reload-fast-path) races against a
@@ -126,7 +126,7 @@ metadata block wherever it sits.
 
 Split across two modules so display code stays off the fetch stack:
 `src/version-probe.ts` is pure (targets, verdict, staleness, types) and
-is what `script-display.ts` / `sources.ts` / `script-details.ts`
+is what `script-display.ts` / `collections.ts` / `script-details.ts`
 import; `src/version-probe-fetch.ts` does the fetching and is reached
 only from `script-updater.ts`.
 
@@ -149,12 +149,12 @@ compare, "same" would be a lie.
 
 ## What the user sees
 
-### Sources page
+### Collections page
 
 The Status cell shows **OUTDATED** (amber) when a probe found a newer
 version; hovering gives the version and the URL.
 
-- Ranks below `REFRESH FAILED` — a source we can't reach at all
+- Ranks below `REFRESH FAILED` — a collection we can't reach at all
   subsumes "some other copy is ahead".
 - Ranks above the log-derived `ERROR` / `WARNING`, which have their own
   surface in the Log tab. See

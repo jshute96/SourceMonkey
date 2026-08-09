@@ -71,12 +71,12 @@ One page, one set of panels, two query strings:
 
 | URL | Mode | Where it comes from |
 |-----|------|---------------------|
-| `userscript.html?script=<scriptId>` | **Installed** | sources page, badge menu, Install / Update |
-| `userscript.html?preview=<url>` | **Preview** | [`.user.js` capture](install-capture.md), single-script Add Source |
+| `userscript.html?script=<scriptId>` | **Installed** | collections page, badge menu, Install / Update |
+| `userscript.html?preview=<url>` | **Preview** | [`.user.js` capture](install-capture.md), a single-script Add |
 
 - **Installed** hydrates from the [script store](storage.md) — it does
   **not** re-fetch from disk on open, so what the user sees matches
-  what the sources page table reports.
+  what the collections page table reports.
 - **Preview** fetches the URL itself and shows the same heading,
   details panel, and code tabs for a script that isn't in the store.
   Nothing is written until the user says Install.
@@ -131,7 +131,7 @@ One page, one set of panels, two query strings:
      opens on it. A row has to pay for the second reading:
      - identity a reader scans for: `Name`, `Description`, `Version`
      - something resolved or computed that the file doesn't state:
-       `Source`, `Location`, `<Site> page`, `Size`, `Status`, the
+       `Collection`, `Location`, `<Site> page`, `Size`, `Status`, the
        version probes
      - a claim worth acting on: `Homepage`, `Match` / `Include` /
        `Exclude`, `Network access`
@@ -174,15 +174,15 @@ One page, one set of panels, two query strings:
          would imply it had.
        - Full rules and the reasoning in [updates.md](updates.md).
    - Location rows:
-     - `Source` — colored type bubble (linking to the source's
-       file:// / http(s) URL) + the source's display name (linking
-       back to the parent section on the sources page via
-       `sources.html#source-<id>`). Same bubble/name combo the sources
+     - `Collection` — colored type bubble (linking to the collection's
+       file:// / http(s) URL) + the collection's display name (linking
+       back to the parent section on the collections page via
+       `collections.html#collection-<id>`). Same bubble/name combo the collections
        page renders. Installed mode only; row omitted if the parent
-       source row has vanished. See
-       [`src/source-display.ts`](../src/source-display.ts).
+       collection row has vanished. See
+       [`src/collection-display.ts`](../src/collection-display.ts).
      - `Location` — anchor wrapping the resolved location. Display form
-       depends on source kind:
+       depends on collection kind:
        - `file://` → bare fs path
        - `github` (any flavour) → `github.com/<o>/<r>/blob/<ref>/<path>`
          page URL (raw URL is internal-only)
@@ -197,7 +197,7 @@ One page, one set of panels, two query strings:
          `Local overrides` entries). Copies the raw location, not the
          decoded display text; the icon swaps to a checkmark for ~1.2 s
          on success.
-       - Row omitted if the parent source row has vanished.
+       - Row omitted if the parent collection row has vanished.
        - Activating the anchor is intercepted in both modes — a plain
          navigation to a `.user.js` URL gets captured — see the Link
          rendering section below.
@@ -286,8 +286,8 @@ One page, one set of panels, two query strings:
    lookup in [`src/script-identity.ts`](../src/script-identity.ts).
    - Two sections: **This URL** (same absolute `fileUrl`) and **Same
      script from a different URL** (same `@namespace` + `@name`).
-   - Per row: enable toggle, type bubble + source name linking to the
-     sources page, location linking to that copy's own viewer tab,
+   - Per row: enable toggle, type bubble + collection name linking to the
+     collections page, location linking to that copy's own viewer tab,
      version, a refetch button — **Refresh** here, **Update** in a
      preview, matching whichever control the page already shows — and a
      trash can, live only for single-file installs.
@@ -357,23 +357,23 @@ load.
 ### Live sync (changes from any origin)
 
 An installed viewer stays current with state written elsewhere — the
-sources page, a background opportunistic refresh, another tab — not just
+collections page, a background opportunistic refresh, another tab — not just
 its own Refresh. A `chrome.storage.onChanged` listener re-hydrates and
 re-renders when:
 
 - a **`script:*`** row changes — this script (status, content, size,
   enabled), or a sibling whose add/remove shifts this script's dedup
   `#N` log ID;
-- **this script's parent `source:*`** row changes, but only in a field
+- **this script's parent `collection:*`** row changes, but only in a field
   this page shows — `enabled` (greys the Enable toggle), `displayName`
-  or `path` (the Source row). The re-hydrate re-reads the source
+  or `path` (the Collection row). The re-hydrate re-reads the collection
   alongside the script, so both reach the panel without a reload.
   - Everything else on that row is ignored on purpose. A refresh
     rewrites `lastRefreshedAt` (and `scanError`) whether or not it
-    achieved anything, so a source stuck retrying a failing scan would
+    achieved anything, so a collection stuck retrying a failing scan would
     otherwise re-render every viewer open on it, on every retry.
 
-If the re-read finds the script gone (its source was removed), the
+If the re-read finds the script gone (its collection was removed), the
 viewer drops into the not-found state. Session-storage changes
 (`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
 repaint separately, as described above.
@@ -428,10 +428,10 @@ what differs is the controls and where the data comes from.
 
 ### Getting the script
 
-- `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
+- `normalizeCollectionInput` runs first, so a `github.com/.../blob/...`
   URL is fetched (and later stored) in its raw form.
-- `canonicalSourceInput` then collapses a `file://` URL to its bare
-  filesystem path, the same spelling `addSource` stores — so a captured
+- `canonicalCollectionInput` then collapses a `file://` URL to its bare
+  filesystem path, the same spelling `addCollection` stores — so a captured
   local script and one added by path are the same installed row, not
   two. See
   [install-capture.md](install-capture.md#one-file-one-installed-row).
@@ -454,9 +454,9 @@ Banner (`#banner-slot`) states what this file is; the action row
 | More than one target below | see [the wordings](script-identity.md#the-previews-already-installed-banner) + "Select which instance…" | Cancel, View raw source — the table carries the rest. **Install** stays if the table has no offer row to carry it |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
-- **Install** → `addSource(<input>)`, then jumps to the new script's
+- **Install** → `addCollection(<input>)`, then jumps to the new script's
   viewer. A web install is not a special kind of script: it lands in
-  the http / github container source and picks up normal refresh and
+  the http / github container collection and picks up normal refresh and
   update behavior.
 - Already-installed rows come from `findRelatedVersions`, matched on
   the absolute `fileUrl` — the same lookup the Existing versions panel
@@ -472,7 +472,7 @@ Banner (`#banner-slot`) states what this file is; the action row
   carries all three per-row. Wordings and the rule in
   [script-identity.md](script-identity.md#the-previews-already-installed-banner).
 - **Install and Open/Update are not exclusive.** A script already
-  installed inside a collection source the user subscribes to is still
+  installed inside a collection the user subscribes to is still
   worth a copy of their own; `installTarget` — "would a standalone
   install add anything?" — is what decides whether Install is offered.
   When both apply, though, there are two targets, so both move into the
@@ -493,7 +493,7 @@ Banner (`#banner-slot`) states what this file is; the action row
 - When a `file://` read fails, the page asks
   `chrome.extension.isAllowedFileSchemeAccess()`. If the toggle really
   is off, `#banner-slot` gets the **"File access is disabled."**
-  banner — the same one the sources page shows, from
+  banner — the same one the collections page shows, from
   [`src/file-access.ts`](../src/file-access.ts) — with a click-through
   to `chrome://extensions/?id=<our id>`.
 - Both modes raise it, because both can hit the toggle:
@@ -509,7 +509,7 @@ Banner (`#banner-slot`) states what this file is; the action row
   does, and no parse or validation message does.
 - The banner's closing instruction differs by caller, because what
   actually retries the read does:
-  - Sources page and preview read on load → *reload this page*.
+  - Collections page and preview read on load → *reload this page*.
   - Installed mode renders a stored row → *click Refresh*. A reload
     would replay the same cached copy and the same error.
 - The toggle is probed **once per page**, not per failure: it lives on
@@ -532,7 +532,7 @@ Banner (`#banner-slot`) states what this file is; the action row
   including a link to the line it is about, which for a header problem
   is the `// ==UserScript==` marker and for a file with no block at all
   is the file itself. See [diagnostics.md](diagnostics.md).
-- The source is still rendered. Seeing what actually came back is the
+- The collection is still rendered. Seeing what actually came back is the
   whole point when a URL returns a login page instead of a script.
 - **Continue to page** loads the location itself, with the capture
   stood down: a path ending in `.user.js` and carrying no metadata
@@ -573,7 +573,7 @@ clicking Install.
   same. The sentence names the button on screen, read off
   `updateBtn.hidden` so the two can't disagree.
 - The promised outcome is the real one, which is not one sentence.
-  `rebuildSource` treats an http(s) refresh that doesn't parse as a bad
+  `rebuildCollection` treats an http(s) refresh that doesn't parse as a bad
   *response*, not a bad script — so an Update over http keeps the
   installed body running and flags the refresh, while a first install
   or a `file://` edit really does land `INVALID`.
@@ -647,7 +647,7 @@ merged page treats them like any other viewer content:
   a two-pane before/after diff per tab is the intended next step. See
   TODO.md.
 - **Previewing a whole source.** Directory / manifest / github-dir
-  adds still go straight to `addSource`; previewing a listing needs a
+  adds still go straight to `addCollection`; previewing a listing needs a
   different UI. See TODO.md.
 
 ## Syntax highlighting
@@ -836,7 +836,7 @@ pure rewrite — no network call, no stored field.
 - Closing brackets (`)`, `]`) only peel when the URL has no matching
   open bracket, so `https://en.wikipedia.org/wiki/Foo_(disambig)`
   keeps its `)`.
-- `@require` source tabs have no metadata block, so they stay in
+- `@require` file tabs have no metadata block, so they stay in
   URL-only mode for the entire body.
 
 #### Anchor styling

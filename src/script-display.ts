@@ -1,4 +1,4 @@
-// Display helpers shared by the sources page, the userscript viewer,
+// Display helpers shared by the collections page, the userscript viewer,
 // the script preview, and the service worker.
 //
 // Two groups live here: the script-status row formatting (size +
@@ -44,9 +44,9 @@ export function leafName(path: string): string {
 // is a wall of `%20` / `%F0%9F…`; Chrome's own omnibox shows those
 // decoded and so do we.
 //
-// Only absolute URLs are decoded. A relativePath from a local
-// directory source is a literal on-disk name, where a `%20` really is
-// a percent followed by two digits.
+// Only absolute URLs are decoded. A relativePath from a local directory
+// collection is a literal on-disk name, where a `%20` really is a
+// percent followed by two digits.
 //
 // Display only: hrefs, clipboard copies, fetches, and stored values
 // all keep the encoded form.
@@ -117,11 +117,11 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 //   invalid        — the script can't run (parse / fetch / dep failure)
 //   rejected       — the script loaded fine, but Chrome refused the
 //                    registration, so it never runs (script-rejection.ts)
-//   missing        — the source file vanished from its listing
+//   missing        — the script's own file vanished from its listing
 //   refresh-failed — running fine on its cached copy, but the latest
-//                    refresh failed (unreachable source, or a fetched
+//                    refresh failed (unreachable collection, or a fetched
 //                    copy that wasn't a valid script)
-//   outdated       — running fine and up to date with its own source,
+//   outdated       — running fine and up to date with its own collection,
 //                    but an `@updateURL` / `@downloadURL` elsewhere
 //                    declares a newer `@version` (see version-probe.ts)
 //   error          — script loaded fine but its Log has an error entry
@@ -135,10 +135,10 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 // can't co-occur — an invalid script is never offered to Chrome.)
 // `refresh-failed` and `outdated` rank above the Log-derived levels for
 // the same reason: both are specific facts about the update pipeline
-// that have no other surface in the sources list, whereas the running
-// script's own runtime errors still show up in the Log tab regardless.
-// `refresh-failed` outranks `outdated` because a source we can't reach
-// at all subsumes "some other copy is ahead".
+// that have no other surface in the collections list, whereas the
+// running script's own runtime errors still show up in the Log tab
+// regardless. `refresh-failed` outranks `outdated` because a collection
+// we can't reach at all subsumes "some other copy is ahead".
 export type DisplayStatus =
   | 'ok' | 'invalid' | 'rejected' | 'missing'
   | 'refresh-failed' | 'outdated' | 'warning' | 'error';
@@ -148,7 +148,7 @@ export type LogLevelForStatus = 'info' | 'warning' | 'error';
 // `outdated` and `rejected` come in as caller-computed flags rather
 // than being derived here: neither lives on the script row (one is a
 // version probe, the other is session state the injector writes), and
-// the sources page's repaint path rebuilds status cells from DOM
+// the collections page's repaint path rebuilds status cells from DOM
 // datasets with no script row in hand. Both callers read `outdated`
 // from `scriptOutdatedProbe` below and `rejected` from the shared
 // rejection map, so the two surfaces can't drift.

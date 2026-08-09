@@ -50,7 +50,7 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
     can't grammatically (`is empty`), give it a subject (`The file is
     empty`) rather than exempting it.
   - Only a splice *inside* a sentence we wrote stays lowercase —
-    `LOCATION_SHAPES`, which completes `A source must be an …`.
+    `LOCATION_SHAPES`, which completes `A location must be an …`.
 - **One message per problem**; wrap the shared string rather than writing a
   second copy for another surface.
   - That covers code that *recognizes* a message too: import the shared
@@ -109,13 +109,13 @@ user before elaborating further. Default to action over planning.
     `sm` fixture is a typed proxy over the SW's `self.SourceMonkey` test
     surface (see `src/background.ts`).
   - `tests/fixtures/scripts-dir.ts` builds a tmp directory of real
-    `*.user.js` files on disk so `sm.addSource(dir.path)` runs the
+    `*.user.js` files on disk so `sm.addCollection(dir.path)` runs the
     production file:// scan + fetch pipeline.
   - The fixture pre-writes `extensions.settings.<id>.user_scripts_enabled
     = true` into Chrome's Preferences so `chrome.userScripts` is callable
     in headless mode (Chrome ≥138 normally requires a manual toggle).
 - **Always call `sm.syncNow()`** after any state-changing operation
-  (addSource, updateSource, setSourceEnabled, setScriptEnabled) and
+  (addCollection, updateCollection, setCollectionEnabled, setScriptEnabled) and
   BEFORE the navigation that should see the new state. The production
   storage→sync path has a 50ms debounce that a fast-following navigation
   will out-race; `syncNow` flushes it.

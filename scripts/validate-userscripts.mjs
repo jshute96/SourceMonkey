@@ -277,14 +277,14 @@ const parseNotes = new Map();
 
 function installParseChecker() {
   setParseChecker(async (script) => {
-    let source;
+    let checked;
     try {
-      source = await buildParseCheckSource(script, EXTENSION_VERSION);
+      checked = await buildParseCheckSource(script, EXTENSION_VERSION);
     } catch (err) {
       parseNotes.set(script.id, { kind: 'errored', message: String(err?.message ?? err) });
       throw err;
     }
-    const verdict = attachParseLocation(checkParseNode(source.text), source);
+    const verdict = attachParseLocation(checkParseNode(checked.text), checked);
     if (verdict?.status === 'unknown') {
       parseNotes.set(script.id, { kind: 'inconclusive', message: verdict.message ?? '' });
     }
@@ -304,10 +304,10 @@ async function checkScript(file, offlineRoot, now) {
   const fileUrl = scriptUrlFor(file, offlineRoot);
   const built = await buildScriptFromText({
     id: `offline-${file}`,
-    sourceId: 'offline',
+    collectionId: 'offline',
     relativePath: path.basename(file),
     fileUrl,
-    source,
+    text: source,
     now,
   });
   // A fresh install: no prior row, and `recheck: 'all'` refetches every

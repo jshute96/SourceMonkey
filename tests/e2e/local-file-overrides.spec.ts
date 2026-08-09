@@ -11,7 +11,7 @@
 //     a `<host>/` directory under a root beats any bare path suffix;
 //   - editing the local file surfaces on an opportunistic refresh (the
 //     dev loop), while a remote dependency stays cached;
-//   - the per-source opt-out turns all of it off;
+//   - the per-collection opt-out turns all of it off;
 //   - `.js`-suffix and traversal rules still run on the DECLARED URL,
 //     so a stand-in can't be used to get around them;
 //   - `@resource` and `@icon` take the same rule, the latter through
@@ -61,8 +61,8 @@ test.describe('local file overrides', () => {
   test('a file next to the script stands in for the declared URL', async ({ sm }) => {
     fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     const req = data!.scripts[0].requires?.[0];
     expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
     expect(req?.source).toBe('window.__SM_LOCAL = "local";');
@@ -77,8 +77,8 @@ test.describe('local file overrides', () => {
 
   test('no local file means the declared URL is fetched as usual', async ({ sm }) => {
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     const req = data!.scripts[0].requires?.[0];
     expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
     expect(req?.localUrl).toBeUndefined();
@@ -92,8 +92,8 @@ test.describe('local file overrides', () => {
     fs.writeFileSync(path.join(scriptsDir.path, 'lib', 'util.js'), 'window.__SM_LOCAL = "deep";');
     fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "shallow";');
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LOCAL = "deep";');
   });
 
@@ -104,13 +104,13 @@ test.describe('local file overrides', () => {
     const libPath = path.join(scriptsDir.path, 'util.js');
     fs.writeFileSync(libPath, 'window.__SM_LOCAL = "v1";');
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    let data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    let data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LOCAL = "v1";');
 
     fs.writeFileSync(libPath, 'window.__SM_LOCAL = "v2";');
-    await sm.updateSource(source!.id, 'opportunistic');
-    data = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'opportunistic');
+    data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LOCAL = "v2";');
   });
 
@@ -119,9 +119,9 @@ test.describe('local file overrides', () => {
   // cost bounded for a user with many requires.
   test('a remote dependency is still not refetched opportunistically', async ({ sm }) => {
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     expect(server.countResponses('/lib/util.js', 200)).toBe(1);
-    await sm.updateSource(source!.id, 'opportunistic');
+    await sm.updateCollection(collection!.id, 'opportunistic');
     expect(server.countResponses('/lib/util.js', 200)).toBe(1);
   });
 
@@ -129,27 +129,27 @@ test.describe('local file overrides', () => {
     const libPath = path.join(scriptsDir.path, 'util.js');
     fs.writeFileSync(libPath, 'window.__SM_LOCAL = "local";');
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0]?.localUrl)
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0]?.localUrl)
       .toBeTruthy();
 
     fs.rmSync(libPath);
-    await sm.updateSource(source!.id, 'opportunistic');
-    const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+    await sm.updateCollection(collection!.id, 'opportunistic');
+    const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
     expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
     expect(req?.localUrl).toBeUndefined();
   });
 
-  test('the per-source opt-out turns substitution off', async ({ sm }) => {
+  test('the per-collection opt-out turns substitution off', async ({ sm }) => {
     fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0]?.localUrl)
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0]?.localUrl)
       .toBeTruthy();
 
-    await sm.setSourceLocalFiles(source!.id, false);
-    await sm.updateSource(source!.id, 'manual');
-    const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+    await sm.setCollectionLocalFiles(collection!.id, false);
+    await sm.updateCollection(collection!.id, 'manual');
+    const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
     expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
     expect(req?.localUrl).toBeUndefined();
   });
@@ -167,8 +167,8 @@ test.describe('local file overrides', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.status).toBe('invalid');
     expect(script.errorMessage).toMatch(/must end in \.js/);
   });
@@ -190,8 +190,8 @@ test.describe('local file overrides', () => {
         },
         body: '',
       });
-      const source = await sm.addSource(scriptsDir.path);
-      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
       // Either the declared URL 404s or it serves something — but under
       // no circumstance is it the planted file.
       expect(req?.source).not.toBe('window.__SM_LOCAL = "escaped";');
@@ -208,8 +208,8 @@ test.describe('local file overrides', () => {
     const libPath = path.join(scriptsDir.path, 'util.js');
     fs.writeFileSync(libPath, 'window.__SM_LOCAL = "v1";');
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const collection = await sm.addCollection(scriptsDir.path);
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     const localLines = async () =>
       (await sm.getScriptLog(scriptId))
         .filter((e) => /is (loading from file:|no longer loading)/.test(e.message))
@@ -221,23 +221,23 @@ test.describe('local file overrides', () => {
 
     // Manual refreshes here, not opportunistic ones: opportunistic
     // checks are rate-limited to one per `UPDATE_MIN_INTERVAL_MS` per
-    // source, so a test that fired several in a row would be asserting
+    // collection, so a test that fired several in a row would be asserting
     // on refreshes that never ran. The log diff doesn't depend on the
     // mode — the live-re-read behavior it rests on is covered above.
 
     // An unchanged stand-in says nothing, however many times we look.
-    await sm.updateSource(source!.id, 'manual');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     expect(await localLines()).toHaveLength(1);
 
     // An edit is news.
     fs.writeFileSync(libPath, 'window.__SM_LOCAL = "v2";');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     expect(await localLines()).toHaveLength(2);
 
     // So is losing it.
     fs.rmSync(libPath);
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     const lines = await localLines();
     expect(lines).toHaveLength(3);
     expect(lines[2]).toMatch(/is no longer loading from a local file$/);
@@ -260,8 +260,8 @@ test.describe('local file overrides', () => {
       scriptPath,
       fs.readFileSync(scriptPath, 'utf8').replace('/lib/util.js', `/lib/util.js${hash}`),
     );
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     // Stored verbatim: the fragment is part of the ref, and stripping it
     // at the storage layer would lose what the author wrote.
@@ -308,12 +308,12 @@ test.describe('local file overrides', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const img = page
-      .locator(`section.directory[data-source-id="${source!.id}"] tbody tr`)
+      .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
       .first()
       .locator('.site-icon a.site-icon-inner img');
     // The painted data: URL carries the LOCAL file's bytes.
@@ -340,19 +340,19 @@ test.describe('local file overrides', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const img = page
-      .locator(`section.directory[data-source-id="${source!.id}"] tbody tr`)
+      .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
       .first()
       .locator('.site-icon a.site-icon-inner img');
     await expect(img).toHaveAttribute('src', `data:image/png;base64,${remotePng.toString('base64')}`);
     await page.close();
   });
 
-  // The sources page only rebuilds a Filename cell when its cache key
+  // The collections page only rebuilds a Filename cell when its cache key
   // moved — otherwise every unrelated repaint would re-run the favicon
   // fetch and flash the globe placeholder. The local-files setting has
   // to be part of that key, or flipping the switch leaves the old icon
@@ -380,12 +380,12 @@ test.describe('local file overrides', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const img = page
-      .locator(`section.directory[data-source-id="${source!.id}"] tbody tr`)
+      .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
       .first()
       .locator('.site-icon a.site-icon-inner img');
     await expect(img).toHaveAttribute('src', `data:image/png;base64,${localPng.toString('base64')}`);
@@ -414,8 +414,8 @@ test.describe('local file overrides', () => {
       '// ==/UserScript==',
       '',
     ].join('\n'));
-    const source = await sm.addSource(`${server.baseUrl}/remote.user.js`);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts
+    const collection = await sm.addCollection(`${server.baseUrl}/remote.user.js`);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts
       .find((s) => s.relativePath.includes('remote.user.js'));
     const req = script!.requires?.[0];
     expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
@@ -433,8 +433,8 @@ test.describe('local file overrides', () => {
     fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
     fs.writeFileSync(path.join(scriptsDir.path, 'style.css'), '.local{}');
     writeScript([`// @resource    css ${server.baseUrl}/assets/style.css`]);
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.status, script.errorMessage).toBe('ok');
 
     const page = await extensionContext.newPage();
@@ -448,7 +448,7 @@ test.describe('local file overrides', () => {
     await expect(items.nth(1)).toContainText('@resource');
     await expect(items.nth(1)).toContainText(path.join(scriptsDir.path, 'style.css'));
     // A BARE filesystem path, not the `file://` URL — the Location row
-    // renders its own local source the same way, and two path styles in
+    // renders its own local collection the same way, and two path styles in
     // one panel would read as two different kinds of thing.
     await expect(items.nth(0).locator('.local-override-path'))
       .toHaveText(path.join(scriptsDir.path, 'util.js'));
@@ -498,8 +498,8 @@ test.describe('local file overrides', () => {
   }) => {
     // No local `util.js`, so the declared URL is what gets fetched.
     writeScript();
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.requires?.[0]?.localUrl).toBeUndefined();
 
     const page = await extensionContext.newPage();
@@ -578,8 +578,8 @@ test.describe('local file overrides', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const res = (await sm.getSourceWithScripts(source!.id))!.scripts[0].resources?.[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const res = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].resources?.[0];
     expect(res?.localUrl).toMatch(/\/style\.css$/);
     expect(Buffer.from(res!.bytesBase64, 'base64').toString()).toBe('.local{}');
   });
@@ -613,8 +613,8 @@ test.describe('local file overrides', () => {
       writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
       await sm.setLocalRoots([libDir.path]);
       writeScript();
-      const source = await sm.addSource(scriptsDir.path);
-      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
       expect(req?.source).toBe('window.__SM_LOCAL = "configured";');
       expect(req?.localUrl).toBe(`file://${libDir.path}/lib/util.js`);
       expect(server.countResponses('/lib/util.js', 200)).toBe(0);
@@ -628,8 +628,8 @@ test.describe('local file overrides', () => {
       writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
       await sm.setLocalRoots([libDir.path]);
       writeScript();
-      const source = await sm.addSource(scriptsDir.path);
-      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
       expect(req?.source).toBe('window.__SM_LOCAL = "own-folder";');
     });
 
@@ -643,8 +643,8 @@ test.describe('local file overrides', () => {
       writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
       await sm.setLocalRoots([libDir.path]);
       writeScript();
-      const source = await sm.addSource(scriptsDir.path);
-      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
       expect(req?.source).toBe('window.__SM_LOCAL = "mirror";');
       expect(req?.localUrl).toBe(`file://${libDir.path}/${host}/lib/util.js`);
       expect(server.countResponses('/lib/util.js', 200)).toBe(0);
@@ -658,8 +658,8 @@ test.describe('local file overrides', () => {
         fs.writeFileSync(path.join(second.path, 'lib/util.js'), 'window.__SM_LOCAL = "second";');
         await sm.setLocalRoots([libDir.path, second.path]);
         writeScript();
-        const source = await sm.addSource(scriptsDir.path);
-        const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+        const collection = await sm.addCollection(scriptsDir.path);
+        const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
         expect(req?.source).toBe('window.__SM_LOCAL = "first";');
       } finally {
         second.cleanup();
@@ -681,8 +681,8 @@ test.describe('local file overrides', () => {
         },
         body: '',
       });
-      const source = await sm.addSource(scriptsDir.path);
-      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
       expect(req?.localUrl).toBeUndefined();
       expect(req?.source ?? '').not.toContain('leaked');
     });
@@ -700,22 +700,22 @@ test.describe('local file overrides', () => {
         '// ==/UserScript==',
         '',
       ].join('\n'));
-      const source = await sm.addSource(`${server.baseUrl}/remote.user.js`);
-      const script = (await sm.getSourceWithScripts(source!.id))!.scripts
+      const collection = await sm.addCollection(`${server.baseUrl}/remote.user.js`);
+      const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts
         .find((s) => s.relativePath.includes('remote.user.js'));
       const req = script!.requires?.[0];
       expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
       expect(req?.localUrl).toBeUndefined();
     });
 
-    test('the per-source opt-out also disables configured roots', async ({ sm }) => {
+    test('the per-collection opt-out also disables configured roots', async ({ sm }) => {
       writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
       await sm.setLocalRoots([libDir.path]);
       writeScript();
-      const source = await sm.addSource(scriptsDir.path);
-      await sm.setSourceLocalFiles(source!.id, false);
-      await sm.updateSource(source!.id, 'manual');
-      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.setCollectionLocalFiles(collection!.id, false);
+      await sm.updateCollection(collection!.id, 'manual');
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
       expect(req?.source).toBe('window.__SM_LOCAL = "remote";');
       expect(req?.localUrl).toBeUndefined();
     });

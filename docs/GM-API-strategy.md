@@ -214,7 +214,7 @@ That means:
   B (and our GM_* shim) running in the same document will see the
   mutated version.
 - The mutator is the user's own code, run on the user's own
-  trusted sources. So it's a "didn't mean to break things"
+  trusted collections. So it's a "didn't mean to break things"
   scenario, not a "hostile actor" one.
 
 VM's vault does protect against this case (the snapshot is taken
@@ -507,7 +507,7 @@ Our wrapper compiles GM_* bindings into the registered script source,
 so `@grant` is naturally a register-time decision: changing it
 requires a reload. The alternative — per-call permission checks
 backed by a cache and invalidation broadcasts — gives instantaneous
-sources-page edits but adds an IPC on every call. **Default to
+collections-page edits but adds an IPC on every call. **Default to
 bake-in for v1**; revisit if real users want live revocation.
 
 ## A loose phasing for Option B

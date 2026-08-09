@@ -41,7 +41,7 @@ export type TabBody = string | (() => Promise<string>);
 // `fileUrl` is the tab body's canonical fetchable URL — main-script
 // tabs use `script.fileUrl`; require tabs use the require's resolved
 // URL so any relative ref inside the require resolves against the
-// require, not the host script (uncommon — require sources rarely have
+// require, not the host script (uncommon — require bodies rarely have
 // their own metadata block — but cheap to get right).
 //
 // `sourceUrl` is the `sourcemonkey://…` URL we expect stack frames for

@@ -60,10 +60,10 @@ test.describe('update probes', () => {
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
 
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.versionProbes).toHaveLength(1);
     expect(script.versionProbes![0]).toMatchObject({
       kinds: ['update'],
@@ -92,10 +92,10 @@ test.describe('update probes', () => {
       body: "console.log('MIRROR BODY');",
     }));
 
-    const source = await sm.addSource(`${server.baseUrl}/mirror.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/mirror.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.bodyText).toContain('MIRROR BODY');
     expect(script.bodyText).not.toContain('OFFICIAL BODY');
     expect(script.versionProbes![0]).toMatchObject({
@@ -110,10 +110,10 @@ test.describe('update probes', () => {
       updateUrl: `${server.baseUrl}/gone.meta.js`,
     }));
 
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.status).toBe('ok');
     expect(script.refreshError).toBeUndefined();
     expect(script.versionProbes![0].version).toBeUndefined();
@@ -127,11 +127,11 @@ test.describe('update probes', () => {
     const own = `${server.baseUrl}/thing.user.js`;
     server.setRoute('/thing.user.js', versionedScript({ version: '1.0', downloadUrl: own }));
 
-    const source = await sm.addSource(own);
+    const collection = await sm.addCollection(own);
     const before = server.requestLog.filter((e) => e.path === '/thing.user.js').length;
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.versionProbes).toBeUndefined();
     // One request for the refresh itself, none for a probe.
     expect(server.requestLog.filter((e) => e.path === '/thing.user.js').length).toBe(before + 1);
@@ -143,17 +143,17 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes).toHaveLength(1);
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes).toHaveLength(1);
 
     // The author removes the header. Without an explicit clear, the row
     // would keep showing OUTDATED against a URL it no longer names.
     server.setRoute('/thing.user.js', versionedScript({ version: '1.0' }));
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes)
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes)
       .toBeUndefined();
   });
 
@@ -165,9 +165,9 @@ test.describe('update probes', () => {
       updateUrl: `${server.baseUrl}/a.meta.js`,
       downloadUrl: `${server.baseUrl}/b.user.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes)
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes)
       .toHaveLength(2);
 
     // Drop only the download URL. The surviving row must stay and the
@@ -178,9 +178,9 @@ test.describe('update probes', () => {
       updateUrl: `${server.baseUrl}/a.meta.js`,
     }));
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const probes = (await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes!;
+    const probes = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes!;
     expect(probes).toHaveLength(1);
     expect(probes[0]).toMatchObject({ kinds: ['update'], version: '2.0' });
   });
@@ -193,16 +193,16 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
-    expect((await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes![0].version)
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes![0].version)
       .toBe('2.0');
 
     server.removeRoute('/thing.meta.js');
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const probe = (await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes![0];
+    const probe = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes![0];
     expect(probe.version).toBe('2.0');
     expect(probe.error).toBeTruthy();
   });
@@ -216,9 +216,9 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+    await sm.updateCollection(collection!.id, 'manual');
     const afterFirst = server.requestLog.filter((e) => e.path === '/thing.meta.js').length;
     expect(afterFirst).toBe(1);
 
@@ -228,12 +228,12 @@ test.describe('update probes', () => {
       .toBe(afterFirst);
 
     // An explicit Refresh still checks now.
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     expect(server.requestLog.filter((e) => e.path === '/thing.meta.js').length)
       .toBe(afterFirst + 1);
   });
 
-  test('the sources page shows OUTDATED with the newer version on hover', async ({
+  test('the collections page shows OUTDATED with the newer version on hover', async ({
     extensionContext, extensionId, sm,
   }) => {
     server.setRoute('/thing.meta.js', metaBlock('2.5'));
@@ -241,18 +241,18 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const status = page.locator('.script-table td.status-cell a');
     await expect(status).toHaveText('OUTDATED');
     await expect(status).toHaveAttribute('title', /Version 2\.5 at update URL/);
 
     // And the viewer's details panel carries the comparison.
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}`);
     await expect(page.locator('#header-summary')).toContainText('Version at update URL');
     await expect(page.locator('#header-summary dd.version-newer')).toHaveText('2.5 (Newer)');
@@ -270,13 +270,13 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
     // The probe really did resolve — this is a dropped row, not a
     // missing probe, which is what makes the assertion below mean
     // something.
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.versionProbes![0].version).toBe('1.0');
 
     const page = await extensionContext.newPage();
@@ -301,10 +301,10 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
     // First check agrees, so at this point there is deliberately no row.
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}`);
     await expect(page.locator('#header-summary dt', { hasText: 'Version at' })).toHaveCount(0);
@@ -312,8 +312,8 @@ test.describe('update probes', () => {
     // Now the upstream goes away.
     server.removeRoute('/thing.meta.js');
     await sm.syncNow();
-    await sm.updateSource(source!.id, 'manual');
-    const probe = (await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes![0];
+    await sm.updateCollection(collection!.id, 'manual');
+    const probe = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes![0];
     expect(probe.version).toBe('1.0');
     expect(probe.error).toBeTruthy();
 
@@ -344,10 +344,10 @@ test.describe('update probes', () => {
       '// ==/UserScript==',
       '',
     ].join('\n'));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.versionProbes![0].version).toBe('2.0');
 
     const page = await extensionContext.newPage();
@@ -373,10 +373,10 @@ test.describe('update probes', () => {
       version: '1.0',
       updateUrl: `${server.baseUrl}/gone.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     const probeError = script.versionProbes![0].error!;
 
     const page = await extensionContext.newPage();
@@ -402,15 +402,15 @@ test.describe('update probes', () => {
       version: '2.0',
       updateUrl: `${server.baseUrl}/thing.meta.js`,
     }));
-    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
-    await sm.updateSource(source!.id, 'manual');
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await expect(page.locator('.script-table td.status-cell a')).toHaveText('OK');
 
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}`);
     await expect(page.locator('#header-summary')).toContainText('1.0 (Older)');
     await expect(page.locator('#header-summary dd.version-newer')).toHaveCount(0);

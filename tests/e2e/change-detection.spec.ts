@@ -1,13 +1,13 @@
 // End-to-end coverage of the unified change-detection pipeline:
 // every loaded script carries a `contentHash`, and an "unchanged
 // content → preserved loadedAt" outcome must hold across every
-// combination of source kind (directory, single-file, manifest) and
+// combination of collection kind (directory, single-file, manifest) and
 // scheme (file://, http(s)://) — using whichever cheap pre-fetch
 // skip path the combo supports, with the post-fetch content-hash
 // compare as the universal fallback.
 //
 // The local-directory + file:// case is already covered by
-// sources.spec.ts ("refresh skips unchanged files…" / "rewriting a
+// collections.spec.ts ("refresh skips unchanged files…" / "rewriting a
 // script body bumps loadedAt…"). This file fills in the others:
 //
 //   - HTTP single-file with no ETag/Last-Modified (content-hash path)
@@ -35,21 +35,21 @@ test.describe('change detection', () => {
     // post-fetch contentHash compare is what keeps loadedAt stable
     // when the bytes haven't changed.
     server.setRoute('/foo.user.js', userscriptText('Foo'));
-    const source = await sm.addSource(`${server.baseUrl}/foo.user.js`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/foo.user.js`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
     expect(before!.scripts[0].status).toBe('ok');
 
     // Same body — different physical fetch, identical bytes → loadedAt unchanged.
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
-    let after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    let after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
 
     // Now change the body. New bytes → loadedAt bumps.
     server.setRoute('/foo.user.js', userscriptText('Foo', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
-    after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).toContain('v2');
   });
@@ -59,8 +59,8 @@ test.describe('change detection', () => {
     // replays as If-None-Match next time. The cheap-skip HTTP 304 path
     // fires (no body crosses the wire); content-hash never needed.
     server.setRoute('/bar.user.js', userscriptText('Bar'), { etag: 'W/"v1"' });
-    const source = await sm.addSource(`${server.baseUrl}/bar.user.js`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/bar.user.js`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
 
     // Conditional GET → 304 → unchanged. loadedAt preserved. We assert
@@ -69,8 +69,8 @@ test.describe('change detection', () => {
     // loadedAt and the test would silently double-cover the wrong
     // path.
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
-    let after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    let after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
     expect(server.countResponses('/bar.user.js', 304)).toBe(1);
     const conditional = server.requestLog.find(
@@ -81,8 +81,8 @@ test.describe('change detection', () => {
     // Rotate the ETag AND change the body. Conditional GET → 200,
     // new body, fresh validators captured, loadedAt bumped.
     server.setRoute('/bar.user.js', userscriptText('Bar', ' /* v2 */'), { etag: 'W/"v2"' });
-    await sm.updateSource(source!.id, 'manual');
-    after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).toContain('v2');
     // The third refresh request must have come back 200 (server still
@@ -103,8 +103,8 @@ test.describe('change detection', () => {
     server.setRoute('/b.user.js', userscriptText('B'));
     server.setManifest('/script_manifest.json', ['a.user.js', 'b.user.js']);
 
-    const source = await sm.addSource(`${server.baseUrl}/script_manifest.json`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/script_manifest.json`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     expect(before!.scripts).toHaveLength(2);
     const priorByPath = Object.fromEntries(
       before!.scripts.map((s) => [s.relativePath, s]),
@@ -115,18 +115,18 @@ test.describe('change detection', () => {
     // Refresh with everything identical. Both entries hit the
     // content-hash path → both loadedAt values preserved.
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
-    let after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    let after = await sm.getCollectionWithScripts(collection!.id);
     let afterByPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(afterByPath['a.user.js'].loadedAt).toBe(priorByPath['a.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].loadedAt).toBe(priorByPath['b.user.js'].loadedAt);
 
     // Change only `b`. `a`'s loadedAt must remain pinned to its prior
     // value while `b` advances — proves the new-file / updated-file
-    // distinction the sources page relies on for its highlights.
+    // distinction the collections page relies on for its highlights.
     server.setRoute('/b.user.js', userscriptText('B', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
-    after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    after = await sm.getCollectionWithScripts(collection!.id);
     afterByPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(afterByPath['a.user.js'].loadedAt).toBe(priorByPath['a.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].loadedAt).toBeGreaterThan(priorByPath['b.user.js'].loadedAt);
@@ -151,8 +151,8 @@ test.describe('change detection', () => {
       const manifestPath = path.join(scriptsDir.path, 'script_manifest.json');
       fs.writeFileSync(manifestPath, JSON.stringify(['a.user.js']));
 
-      const source = await sm.addSource(manifestPath);
-      const before = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(manifestPath);
+      const before = await sm.getCollectionWithScripts(collection!.id);
       expect(before!.scripts).toHaveLength(1);
       expect(before!.scripts[0].status).toBe('ok');
       const priorLoadedAt = before!.scripts[0].loadedAt;
@@ -161,14 +161,14 @@ test.describe('change detection', () => {
       // fetches always physically re-read; content-hash keeps
       // loadedAt stable.
       await new Promise((r) => setTimeout(r, 10));
-      await sm.updateSource(source!.id, 'manual');
-      let after = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      let after = await sm.getCollectionWithScripts(collection!.id);
       expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
 
       // Mutate the body → fresh hash → loadedAt bumps.
       scriptsDir.rewriteBody('a.user.js', 'console.log("v2");');
-      await sm.updateSource(source!.id, 'manual');
-      after = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      after = await sm.getCollectionWithScripts(collection!.id);
       expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
       expect(after!.scripts[0].bodyText).toContain('v2');
     } finally {
@@ -182,8 +182,8 @@ test.describe('change detection', () => {
     // validators. Without this field the post-fetch compare wouldn't
     // work on subsequent refreshes.
     server.setRoute('/c.user.js', userscriptText('C'));
-    const source = await sm.addSource(`${server.baseUrl}/c.user.js`);
-    const result = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/c.user.js`);
+    const result = await sm.getCollectionWithScripts(collection!.id);
     expect(result!.scripts[0].status).toBe('ok');
     expect(typeof (result!.scripts[0] as { contentHash?: string }).contentHash).toBe('string');
   });

@@ -1,6 +1,6 @@
 // Tests for src/script-display.ts (compiled to dist/script-display.js).
 //
-// Pure display helpers shared by the sources page + userscript viewer.
+// Pure display helpers shared by the collections page + userscript viewer.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -85,7 +85,7 @@ test('formatScriptStatusLabel: distinct labels per display status', () => {
   assert.equal(formatScriptStatusLabel('invalid'), 'INVALID');
   assert.equal(formatScriptStatusLabel('missing'), 'MISSING');
   assert.equal(formatScriptStatusLabel('refresh-failed'), 'REFRESH FAILED');
-  // OUTDATED: the script runs and is current with its own source, but a
+  // OUTDATED: the script runs and is current with its own collection, but a
   // URL we deliberately don't update from declares a newer @version.
   assert.equal(formatScriptStatusLabel('outdated'), 'OUTDATED');
   assert.equal(formatScriptStatusLabel('warning'), 'WARNING');
@@ -144,7 +144,7 @@ test('effectiveScriptStatus: refreshError surfaces as refresh-failed', () => {
 
 test('effectiveScriptStatus: outdated ranks under refresh-failed, over log levels', () => {
   // OUTDATED is an update-pipeline fact with no other surface in the
-  // sources list, so it outranks the log-derived levels — but a source
+  // collections list, so it outranks the log-derived levels — but a collection
   // we can't reach at all subsumes "some other copy is ahead".
   assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined, true), 'outdated');
   assert.equal(effectiveScriptStatus({ status: 'ok' }, 'error', true), 'outdated');

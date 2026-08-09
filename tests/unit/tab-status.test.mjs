@@ -34,7 +34,7 @@ function expected(id, name = id) {
   return {
     id,
     name,
-    sourceId: 'src-1',
+    collectionId: 'src-1',
     matching: { matches: [], excludes: [], includes: [] },
   };
 }
@@ -73,7 +73,7 @@ test('computeBadge: expected but no report → MISSING, ORANGE', () => {
 test('computeBadge: a refused registration → REJECTED, RED', () => {
   // MISSING is provisional (the wrapper may still be on its way);
   // REJECTED is settled — Chrome refused the spec, so nothing is
-  // coming. Same word the sources page and viewer use, and red because
+  // coming. Same word the collections page and viewer use, and red because
   // it is as final as a thrown error.
   const view = computeBadge({
     documentId: DOC, url: 'https://x',

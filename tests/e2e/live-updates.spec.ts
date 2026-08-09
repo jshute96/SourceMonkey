@@ -1,4 +1,4 @@
-// Live state watchers: the Sources page and the viewer follow
+// Live state watchers: the Collections page and the viewer follow
 // chrome.storage.local writes made from ANOTHER origin (a background
 // refresh, a second tab, the SW test surface) without a manual browser
 // reload. Regression coverage for issue #10 — a script that recovered
@@ -10,7 +10,7 @@ import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
 
-test.describe('sources page live updates', () => {
+test.describe('collections page live updates', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
@@ -24,12 +24,12 @@ test.describe('sources page live updates', () => {
       meta: { name: '', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(script.status).toBe('invalid');
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const row = page.locator(`tr[data-script-id="${script.id}"]`);
     const statusCell = row.locator('td.status-cell');
     await expect(statusCell.locator('a')).toHaveText('INVALID');
@@ -44,7 +44,7 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
     await expect(row).toHaveAttribute('data-script-status', 'ok');
     await expect(statusCell).not.toHaveClass(/status-invalid/);
@@ -58,7 +58,7 @@ test.describe('sources page live updates', () => {
       meta: { name: '', match: ['https://example.com/*'] },
       body: '',
     });
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await expect(statusCell.locator('a')).toHaveText('INVALID');
     await expect(row).toHaveAttribute('data-script-status', 'invalid');
 
@@ -79,11 +79,11 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const row = page.locator(`tr[data-script-id="${script.id}"]`);
     await expect(row).toHaveAttribute('data-script-status', 'ok');
 
@@ -95,10 +95,10 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: 'function () {}\n',
     });
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
     await expect(row).toHaveAttribute('data-script-status', 'invalid');
-    const stored = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const stored = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(stored.errorLocation?.file).toBe('a.user.js');
     // Both the dataset and the visible hover text carry the location.
     await expect(row).toHaveAttribute('data-script-error', /\(in a\.user\.js, line \d+/);
@@ -121,11 +121,11 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'], extra: ['// @description first'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const nameLink = page.locator(`tr[data-script-id="${script.id}"] td.name-cell a:not(.site-icon-inner)`);
     await expect(nameLink).toHaveAttribute('title', 'first');
 
@@ -134,7 +134,7 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'], extra: ['// @description second'] },
       body: '',
     });
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await expect(nameLink).toHaveAttribute('title', 'second');
 
     await page.close();
@@ -148,13 +148,13 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
-    const sourceCheckbox = section.locator('.directory-toggle input[type="checkbox"]');
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
+    const sourceCheckbox = section.locator('.collection-toggle input[type="checkbox"]');
     const row = page.locator(`tr[data-script-id="${script.id}"]`);
     const checkbox = row.locator('.toggle input[type="checkbox"]');
     await expect(checkbox).toBeChecked();
@@ -165,18 +165,18 @@ test.describe('sources page live updates', () => {
     await expect(checkbox).not.toBeChecked();
     await expect(row).toHaveClass(/disabled/);
 
-    // Source-level disable greys the whole section and hard-disables the
+    // Collection-level disable greys the whole section and hard-disables the
     // per-script checkbox (its underlying value is preserved). The
-    // source's OWN toggle has to follow too — it lives in the section
+    // collection's OWN toggle has to follow too — it lives in the section
     // header, and nothing on this page clicked it, so a greyed-out
     // section under a checked "on" toggle is the state to avoid.
-    await sm.setSourceEnabled(source!.id, false);
+    await sm.setCollectionEnabled(collection!.id, false);
     await expect(section).toHaveClass(/disabled/);
     await expect(checkbox).toBeDisabled();
     await expect(sourceCheckbox).not.toBeChecked();
 
     // And back: re-enabling elsewhere re-checks it and ungreys the row.
-    await sm.setSourceEnabled(source!.id, true);
+    await sm.setCollectionEnabled(collection!.id, true);
     await expect(section).not.toHaveClass(/disabled/);
     await expect(sourceCheckbox).toBeChecked();
     await expect(checkbox).toBeEnabled();
@@ -198,12 +198,12 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     const row = page.locator(`tr[data-script-id="${script.id}"]`);
 
     // Change the file, then refresh from THIS page so the row picks up
@@ -219,7 +219,7 @@ test.describe('sources page live updates', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
     await expect(section.locator('tbody tr')).toHaveCount(2);
     await expect(row).toHaveClass(/row-updated/);
@@ -245,14 +245,14 @@ test.describe('sources page live updates', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+    const collection = await sm.addCollection(scriptsDir.path);
+    const scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
     const a = scripts.find((s) => s.relativePath === 'a.user.js')!;
     const b = scripts.find((s) => s.relativePath === 'b.user.js')!;
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     const rowA = page.locator(`tr[data-script-id="${a.id}"]`);
     const rowB = page.locator(`tr[data-script-id="${b.id}"]`);
     const refresh = section.locator('button', { hasText: 'Refresh' });
@@ -288,12 +288,12 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(file);
-    expect(source!.path).toBe('container:file');
+    const collection = await sm.addCollection(file);
+    expect(collection!.path).toBe('container:file');
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(1);
 
     page.once('dialog', (dialog) => void dialog.accept());
@@ -314,30 +314,30 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section.locator('p.error')).toHaveCount(0);
 
     // Directory becomes unreadable → the scan fails and the section
     // grows an error line, with the scripts left in place.
     const moved = `${scriptsDir.path}-moved`;
     fs.renameSync(scriptsDir.path, moved);
-    await sm.updateSource(source!.id, 'manual');
-    await expect(section.locator('p.error')).toContainText('This source did not load');
+    await sm.updateCollection(collection!.id, 'manual');
+    await expect(section.locator('p.error')).toContainText('This collection did not load');
     await expect(section.locator('tbody tr')).toHaveCount(1);
 
     // Directory comes back → the error line goes away again.
     fs.renameSync(moved, scriptsDir.path);
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await expect(section.locator('p.error')).toHaveCount(0);
 
     await page.close();
   });
 
-  test('a source removed elsewhere drops its section', async ({
+  test('a collection removed elsewhere drops its section', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -345,23 +345,23 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section).toBeVisible();
 
     // Removed from the SW — the index reconcile drops the section and,
     // since it was the only one, puts the empty placeholder back.
-    await sm.removeSource(source!.id);
+    await sm.removeCollection(collection!.id);
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toHaveCount(1);
 
     await page.close();
   });
 
-  test('a script added to the source elsewhere appears as a new row', async ({
+  test('a script added to the collection elsewhere appears as a new row', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -369,11 +369,11 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(1);
 
     // A second file appears in the directory and a refresh happens from
@@ -383,9 +383,9 @@ test.describe('sources page live updates', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+    const scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
     const b = scripts.find((s) => s.relativePath === 'b.user.js')!;
     await expect(page.locator(`tr[data-script-id="${b.id}"]`)).toBeVisible();
     await expect(section.locator('tbody tr')).toHaveCount(2);
@@ -397,7 +397,7 @@ test.describe('sources page live updates', () => {
   // fires in the writing context too). These two guard that the watcher
   // and the flow handler don't BOTH insert the same structural node.
 
-  test("adding a source via the page's own form yields exactly one section", async ({
+  test("adding a collection via the page's own form yields exactly one section", async ({
     extensionContext, extensionId, sm,
   }) => {
     void sm;   // taken for its per-test resetAllState, not called directly
@@ -408,23 +408,23 @@ test.describe('sources page live updates', () => {
     });
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
-    // addSource writes the `sources` index early, then scans; the index
+    // addCollection writes the `collections` index early, then scans; the index
     // echo could make the watcher build the section before the handler's
     // own append. Exactly one section must exist, not two.
     await page.locator('#add-path').fill(scriptsDir.path);
     await page.locator('#add-form button[type="submit"]').click();
 
-    await expect(page.locator('section.directory')).toHaveCount(1);
-    await expect(page.locator('section.directory tbody tr')).toHaveCount(1);
+    await expect(page.locator('section.collection')).toHaveCount(1);
+    await expect(page.locator('section.collection tbody tr')).toHaveCount(1);
     await expect(page.locator('.empty-placeholder')).toHaveCount(0);
 
     await page.close();
   });
 
-  test("removing the last source via the page's own button leaves one placeholder", async ({
+  test("removing the last collection via the page's own button leaves one placeholder", async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -432,14 +432,14 @@ test.describe('sources page live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section).toBeVisible();
 
-    // removeSource writes `sources: []`; that echo makes the watcher add
+    // removeCollection writes `collections: []`; that echo makes the watcher add
     // the empty placeholder. The handler must not add a second one.
     page.once('dialog', (dialog) => void dialog.accept());
     await section.locator('button', { hasText: 'Remove' }).click();
@@ -455,8 +455,8 @@ test.describe('sources page live updates', () => {
 // `data-script-refresh-error`: it was written when a refresh failed and
 // never removed when the refresh started working again, so every later
 // repaint recomputed REFRESH FAILED from the leftover value. Needs an
-// HTTP source, since that's what can fail a fetch and then recover.
-test.describe('sources page live updates (refresh failures)', () => {
+// HTTP collection, since that's what can fail a fetch and then recover.
+test.describe('collections page live updates (refresh failures)', () => {
   let server: UserscriptServer;
   test.beforeEach(async () => { server = await UserscriptServer.start(); });
   test.afterEach(async () => { await server.stop(); });
@@ -465,11 +465,11 @@ test.describe('sources page live updates (refresh failures)', () => {
     extensionContext, extensionId, sm,
   }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
-    const source = await sm.addSource(`${server.baseUrl}/app.user.js`);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const row = page.locator(`tr[data-script-id="${script.id}"]`);
     const statusLink = row.locator('td.status-cell a');
     await expect(statusLink).toHaveText('OK');
@@ -478,17 +478,17 @@ test.describe('sources page live updates (refresh failures)', () => {
     // the update failed, so the row flips to REFRESH FAILED and stores
     // the reason for its hover text.
     server.removeRoute('/app.user.js');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await expect(statusLink).toHaveText('REFRESH FAILED');
     await expect(row).toHaveAttribute('data-script-refresh-error', /.+/);
     await expect(row).toHaveAttribute('data-script-status', 'ok');
 
-    // The source comes back. Nothing about the STORED status changed
+    // The collection comes back. Nothing about the STORED status changed
     // across this transition — it was `ok` throughout — so the cleared
     // `refreshError` can only show up if it reached the repaint and the
     // stale dataset was deleted.
     server.setRoute('/app.user.js', userscriptText('App', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await expect(row).not.toHaveAttribute('data-script-refresh-error');
     await expect(row.locator('td.status-cell')).not.toHaveClass(/status-refresh-failed/);
 
@@ -511,12 +511,12 @@ test.describe('viewer live updates', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('a source write that changes nothing on screen does not re-render', async ({
+  test('a collection write that changes nothing on screen does not re-render', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // The viewer only re-renders for the source fields it displays. A
+    // The viewer only re-renders for the collection fields it displays. A
     // refresh rewrites `lastRefreshedAt` whether or not it achieved
-    // anything, so without the filter a source retrying a failing scan
+    // anything, so without the filter a collection retrying a failing scan
     // would re-render every viewer open on it, forever. Proven by way of
     // the code pane's scroll position, which a re-render resets.
     scriptsDir.write({
@@ -524,8 +524,8 @@ test.describe('viewer live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: `// ${'x'.repeat(60)}\n`.repeat(200),
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
@@ -535,8 +535,8 @@ test.describe('viewer live updates', () => {
     expect(await codeBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 
     // Nothing about the file changed, so this refresh only bumps the
-    // source's `lastRefreshedAt`.
-    await sm.updateSource(source!.id, 'manual');
+    // collection's `lastRefreshedAt`.
+    await sm.updateCollection(collection!.id, 'manual');
     // Give a re-render the chance to happen before declaring it didn't.
     await page.waitForTimeout(300);
     expect(await codeBox.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
@@ -544,7 +544,7 @@ test.describe('viewer live updates', () => {
     await page.close();
   });
 
-  test('disabling the parent source elsewhere greys the viewer toggle', async ({
+  test('disabling the parent collection elsewhere greys the viewer toggle', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -552,8 +552,8 @@ test.describe('viewer live updates', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
@@ -562,9 +562,9 @@ test.describe('viewer live updates', () => {
     await expect(checkbox).toBeEnabled();
     await expect(label).not.toHaveClass(/toggle-disabled/);
 
-    // Source disabled from the sources page / another tab: the viewer's
+    // Collection disabled from the collections page / another tab: the viewer's
     // Enable toggle greys out without a reload.
-    await sm.setSourceEnabled(source!.id, false);
+    await sm.setCollectionEnabled(collection!.id, false);
     await expect(checkbox).toBeDisabled();
     await expect(label).toHaveClass(/toggle-disabled/);
 

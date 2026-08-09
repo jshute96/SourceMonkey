@@ -1,7 +1,7 @@
 // The fetching half of update probes. Split from `version-probe.ts` so
 // the pure half — target selection, the outdated verdict, the staleness
 // gate — can be imported by display code (`script-display.ts`,
-// `sources.ts`, `script-details.ts`) without dragging the whole fetch
+// `collections.ts`, `script-details.ts`) without dragging the whole fetch
 // stack into every extension page. Only `script-updater.ts` needs this
 // module. See [docs/updates.md].
 
@@ -15,7 +15,7 @@ import type { ProbeTarget, VersionProbe } from './version-probe.js';
 const PROBE_MAX_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 5000;
 // Cap on simultaneous probe fetches within one pass. Refresh All can
-// hand us every script in every source at once; each probe is a
+// hand us every script in every collection at once; each probe is a
 // cross-origin request of up to PROBE_MAX_BYTES.
 const PROBE_CONCURRENCY = 4;
 

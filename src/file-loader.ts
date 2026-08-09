@@ -18,7 +18,7 @@
 // `file:///*` host permission so any caller code can read arbitrary
 // local files via the byte fetcher; we don't want a malicious
 // HTTP-sourced userscript pointing `@icon file:///etc/passwd` and
-// having us inline a host file into the sources-page DOM. A file://
+// having us inline a host file into the collections-page DOM. A file://
 // result is only reachable as the *resolution* of a relative path
 // against a file:// script, in which case the containment check
 // confines it to the script's own directory tree.
@@ -135,7 +135,7 @@ export function resolveScriptResourceDetailed(
     return { kind: 'file', url: resolvedStr };
   }
   // A relative ref that lands on some other scheme — only reachable
-  // when the script's own URL has one, which the source pipeline
+  // when the script's own URL has one, which the collection pipeline
   // doesn't produce today.
   return { failed: true, reason: 'unsupported-scheme', scheme: resolved.protocol };
 }

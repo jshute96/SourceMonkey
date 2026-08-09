@@ -62,8 +62,8 @@ export async function launchSourceMonkeyContext(opts: {
     ctx.on('serviceworker', wireUp);
   }
 
-  // Suppress first-run default-source seeding in tests. The SW opens a
-  // `sources.html?first_run` tab on install and that page seeds the
+  // Suppress first-run default-collection seeding in tests. The SW opens a
+  // `collections.html?first_run` tab on install and that page seeds the
   // defaults over the network (GitHub) — flaky and slow in a test run.
   // Pre-setting the flag makes the SW skip the open and any seeding page
   // skip the network add. (Key mirrors FIRST_RUN_DONE_KEY in

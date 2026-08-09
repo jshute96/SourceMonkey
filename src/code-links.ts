@@ -17,7 +17,7 @@ import {
   splitResourceValue,
   splitTextByUrls,
 } from './script-links.js';
-import { appendWithSlashBreaks } from './source-display.js';
+import { appendWithSlashBreaks } from './collection-display.js';
 
 export function openInNewTabAnchor(
   href: string,

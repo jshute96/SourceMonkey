@@ -45,7 +45,7 @@ test.describe('GM_* storage (Phase 3)', () => {
         document.body.dataset.smProbe = String(got);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -81,7 +81,7 @@ test.describe('GM_* storage (Phase 3)', () => {
         document.body.dataset.smProbe = JSON.stringify(out);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -122,7 +122,7 @@ test.describe('GM_* storage (Phase 3)', () => {
         document.body.dataset.smProbe = JSON.stringify(out);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -155,7 +155,7 @@ test.describe('GM_* storage (Phase 3)', () => {
         document.body.dataset.smProbe = String(previous);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     // First load: counter starts at 0, the script sets it to 1.
@@ -208,7 +208,7 @@ test.describe('GM_* storage (Phase 3)', () => {
         document.body.dataset.smB = JSON.stringify(GM_listValues().sort());
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -245,7 +245,7 @@ test.describe('GM_* storage (Phase 3)', () => {
         })();
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

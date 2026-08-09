@@ -141,7 +141,7 @@ The compile-only check is in (see
     recovery.
 - **Don't fetch dependencies twice on install-from-preview.** The
   preview fills `previewFetchCache` to run its check; clicking Install
-  then runs `addSource` → `attachFiles` against the store's own cache,
+  then runs `addCollection` → `attachFiles` against the store's own cache,
   so every `@require` / `@resource` is fetched again. Bridging the two
   caches (or handing the preview's typed entries to the install) would
   halve the third-party traffic that eager fetching introduced.
@@ -251,7 +251,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **Live `@grant` revocation.** Today `@grant` is baked into the
   wrapper at register time, so changes only take effect on reload.
   Worth doing per-call permission checks (with caching + invalidation
-  broadcasts) if users start expecting sources-page edits to take
+  broadcasts) if users start expecting collections-page edits to take
   effect immediately.
 - **Offscreen-doc fallback for clipboard.** `navigator.clipboard.
   writeText` may reject without focus / transient activation. TM/VM
@@ -455,7 +455,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **`@connect *` install-time warning.** A wildcard `@connect`
   effectively asks for cross-origin fetch reach against any host.
   TM prompts, VM logs a warning. Surface a "this script wants to
-  talk to any host" signal in the sources-page row at install /
+  talk to any host" signal in the collections-page row at install /
   refresh time.
 
 ## Test coverage gaps
@@ -477,17 +477,34 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
-- **Live repaint** (sources page): a `sources`-index reorder arriving
+- **Live repaint** (collections page): a `collections`-index reorder arriving
   from another origin, and the `.busy-spinner` guards that stop a
   repaint from overwriting a control the user just clicked. The reorder
   case has no test because nothing on the SW test surface moves a
-  source — `moveSource` would have to be exposed first.
+  collection — `moveCollection` would have to be exposed first.
 - **`repaintPage()`'s serialization contract** — that a burst of writes
   collapses into one pass, and that `await repaintPage()` observes the
   caller's own write. The add / remove / refresh tests depend on it but
   only cover it incidentally.
 
-## Sources page — follow-ups
+## Storage-key migration — remove after 2026-09-01
+
+- **`ensureCollectionKeysMigrated` in `src/script-store.ts` is
+  temporary.** "Sources" were renamed to "collections" in August 2026,
+  which moved the `"sources"` index to `"collections"`, every
+  `source:<id>` row to `collection:<id>`, and each script's `sourceId`
+  field to `collectionId`.
+- The helper rewrites a pre-rename profile in place on the first storage
+  read in each JS context, so an upgrade doesn't read as a wiped
+  profile. Every read path in the store awaits it, and `match-index.ts`
+  / `injector.ts` await it before their direct `storage.local` reads.
+- **After 2026-09-01**, delete `ensureCollectionKeysMigrated`,
+  `migrateLegacyCollectionKeys`, `LEGACY_INDEX_KEY`,
+  `LEGACY_COLLECTION_PREFIX`, and the three `await` sites. Any profile
+  still on the old spelling by then re-adds its collections by hand,
+  which is a one-time cost paid by nobody in practice.
+
+## Collections page — follow-ups
 
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
@@ -497,27 +514,27 @@ during cumulative review of the GM_* phases:
   click; the second write then lands and corrects it. A refcount on the
   label would close it.
 
-## HTTP sources — follow-ups
+## HTTP collections — follow-ups
 
-- GitHub directory sources are scanned via the unauthenticated Contents
+- GitHub directory collections are scanned via the unauthenticated Contents
   API (60 req/hour/IP). Worth optimising: stash the listing's ETag and
   send `If-None-Match` on refresh so unchanged dirs don't burn budget.
 - GitHub Contents API pagination. `scanGithubDir` reads only the first
   page; trees with >1000 entries silently truncate. Add `?per_page=100`
-  + Link-header following when a real source hits the cap.
+  + Link-header following when a real collection hits the cap.
 - Branch names containing slashes (e.g. `feature/foo`) aren't supported
   by the github URL parser — the first ref segment is taken as the ref
   and everything after as the path. Disambiguating would need an extra
   branches/tags lookup.
 - Conditional GET on the manifest itself. Today every refresh
   re-fetches and re-parses the manifest body even when nothing
-  changed. Stashing the manifest's ETag/Last-Modified on the source
+  changed. Stashing the manifest's ETag/Last-Modified on the collection
   row would let us skip the manifest-level fetch on 304.
 - End-to-end test coverage for the HTTP pipeline (the in-test
   fixture server can already serve arbitrary files; needs a
-  `*.user.js` route plus a manifest route, then `sm.addSource(url)`).
-- Authenticated sources for non-GitHub hosts (basic-auth header,
-  per-source bearer token, etc.). GitHub PATs are wired up via
+  `*.user.js` route plus a manifest route, then `sm.addCollection(url)`).
+- Authenticated collections for non-GitHub hosts (basic-auth header,
+  per-collection bearer token, etc.). GitHub PATs are wired up via
   `src/github-auth.ts`; everything else still relies on URLs being
   publicly fetchable.
 
@@ -531,9 +548,9 @@ during cumulative review of the GM_* phases:
   contentHash, validators, loadedAt }`. Add a sweeper that drops a
   `require:<hash>` row when its refcount across scripts hits zero.
 - **UI surface for prefetched requires.** The viewer now shows one
-  tab per require with its full source, but the sources page row and
+  tab per require with its full source, but the collections page row and
   the viewer's details panel still don't expose require state. Add a
-  count badge / chip per sources-page row ("3 requires") and a sub-
+  count badge / chip per collections-page row ("3 requires") and a sub-
   list in the viewer details panel showing each require's URL, size,
   and loadedAt.
 - **HTTP conditional GETs on require fetches.** `fetchResourceText`
@@ -567,12 +584,12 @@ Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). 
 roots today: the host script's own folder, then the global list from
 the options page.
 
-- **Per-source search roots.** The global list covers the common `lib/`
-  layout; a per-source list would let one directory of scripts search
-  somewhere the rest don't. `StoredSource.localRoots?: string[]`,
-  ordered implicit-folder → source → global.
+- **Per-collection search roots.** The global list covers the common `lib/`
+  layout; a per-collection list would let one directory of scripts search
+  somewhere the rest don't. `StoredCollection.localRoots?: string[]`,
+  ordered implicit-folder → collection → global.
   - Roots are absolute paths the user types, for the same reason
-    sources are: `<input type="file">` gives no absolute path in
+    collections are: `<input type="file">` gives no absolute path in
     Chrome, and `webkitdirectory` only gives relative ones, so a
     picker can't produce something storable across sessions.
 - **Explicit per-file overrides.** A path the user names for one
@@ -582,9 +599,9 @@ the options page.
   for an http(s)-sourced host script too — naming the file IS the
   authorization — which is the case of developing against a script
   you already installed from the web.
-- **Sources-page visibility.** A source whose scripts are running on
+- **Collections-page visibility.** A collection whose scripts are running on
   local stand-ins says so only in the viewer today. A per-row marker
-  (or a count on the source header) would make it visible from the
+  (or a count on the collection header) would make it visible from the
   list.
 - **`@icon` stand-ins are not re-read within a page.** They're memoized
   for the page's lifetime (deliberately — see
@@ -605,7 +622,7 @@ that need doing *here* rather than describing there:
   access to file URLs". With the grant missing nothing fires and
   nothing explains why. The options page should read
   `chrome.extension.isAllowedFileSchemeAccess()` and say so next to
-  the capture toggle. The sources page already has a file-access
+  the capture toggle. The collections page already has a file-access
   banner slot to model it on.
 - **Manual check: capture with file access OFF.** Chrome grants file
   access unconditionally to `--load-extension` builds (writing
@@ -620,7 +637,7 @@ that need doing *here* rather than describing there:
 ## Script preview — follow-ups
 
 The preview (`userscript.html?preview=<url>`) is where a captured
-`.user.js` click and a single-script Add Source both land. See
+`.user.js` click and a single-script Add Collection both land. See
 [docs/script-viewer.md](docs/script-viewer.md#preview-mode).
 
 - **Compare against the installed copy.** When the URL is already
@@ -634,7 +651,7 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   before/after per tab, so "what would Update actually change" is
   answerable without leaving the page. Applies to `@require` tabs too.
 - **Preview a whole source.** Directory / manifest / github-dir adds
-  still go straight to `addSource`. Previewing a listing needs a
+  still go straight to `addCollection`. Previewing a listing needs a
   different UI — a table of the scripts that would be added, with
   per-script drill-in — not the single-script layout.
 
@@ -660,7 +677,7 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   viewer can surface a rejected `@icon ../secret.png` in the
   details panel.
 
-## Local directory sources — follow-ups
+## Local directory collections — follow-ups
 
 - Watch for upstream changes to Chrome's `file://` directory-listing
   HTML format that could break `parseListing`.
@@ -682,8 +699,8 @@ Two rough edges are left:
   WARNING/ERROR keeps that badge for the rest of the Chrome session
   even after the Log's newest entry says it recovered. Now that
   recoveries are logged, the badge is the only thing still lying.
-  - It is also why source-level fan-out rows are logged at `info`:
-    anything higher would badge every script under a source from one
+  - It is also why collection-level fan-out rows are logged at `info`:
+    anything higher would badge every script under a collection from one
     transient listing failure.
   - Recomputing the max on every append is too expensive. A recovery
     entry could reset it — but only if the reset can tell "the failure
@@ -696,19 +713,19 @@ Two rough edges are left:
   blocker is that `manual` currently means "not rate-limited", not
   "the user clicked", so the fast-path can't be told apart from a
   Refresh click.
-- **`refreshAllSources` uses `Promise.all`**, so one source throwing
+- **`refreshAllCollections` uses `Promise.all`**, so one collection throwing
   rejects the whole batch — contradicting its own docstring, which
-  claims a failed source doesn't take the rest down. `allSettled`
+  claims a failed collection doesn't take the rest down. `allSettled`
   would make the doc true; the updater currently compensates by
   fanning the throw out to every script.
-- **Vanished manifest entries leak their log rows.** `refreshSource`
+- **Vanished manifest entries leak their log rows.** `refreshCollection`
   drops the `script:` key but not the `log:` / `loglevel:` session
   rows; only `removeScript` cleans both up.
 - **The add-to-existing-container path emits no recovery rows.** It
   refreshes every sibling but only restates load failures, so a
   sibling that recovered during that refresh never logs it (and the
   next refresh compares against the already-healthy row). Sharing
-  `summarizeSourceOutcome` would fix it, but that lives in
+  `summarizeCollectionOutcome` would fix it, but that lives in
   `script-updater.ts`, which imports `script-store.ts`.
 
 ## Registration rejections — follow-ups
@@ -753,7 +770,7 @@ itself once a sync places it. What's missing:
   or a dropped `@match` is only visible after installing.
 - **Registration has no single owner across contexts.** The lock in
   `src/injector.ts` serializes registration work within one JS context,
-  but the sources page and the viewer call
+  but the collections page and the viewer call
   `retryRejectedRegistrations` in theirs, so a page-side registration
   can still land in the middle of the SW's sync. `registerReplacing`
   makes that survivable (the id is replaced, not reported as a
@@ -820,10 +837,10 @@ they follow are in
 
 ## Feature TODOs and ideas
 
-- nice UI for sources page
+- nice UI for collections page
 - nice UI for script page and logging
 - status widget instead of context menu for running scripts
-- smoother add source/script flow, maybe a dialog box
+- smoother add collection/script flow, maybe a dialog box
 - relative paths for dev, absolute paths for release (for requires & resources)
 - fix caveats with the new multi-file script injection model:
   - reload fast-path doesn't work right?

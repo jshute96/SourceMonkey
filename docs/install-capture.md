@@ -42,8 +42,8 @@ in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
 - The handler rewrites the tab with
   `chrome.tabs.update(tabId, { url: userscript.html?preview=<clicked URL> })`.
 - Scope is deliberately narrow — see `isUserJsUrl`:
-  - `http:`, `https:`, and `file:` only. Other schemes aren't source
-    shapes `addSource` can register, so a preview would have nothing to
+  - `http:`, `https:`, and `file:` only. Other schemes aren't shapes
+    `addCollection` can register, so a preview would have nothing to
     offer.
   - the suffix must be on the *path*, so a page whose query string
     mentions a `.user.js` URL isn't captured.
@@ -53,7 +53,7 @@ in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
 
 - A `file://…/foo.user.js` navigation is captured exactly like a web
   one: same preview, same Install button.
-- Adding one through the sources page previews it too — the Add Source
+- Adding one through the collections page previews it too — the Add
   field routes any single script to the same page.
 - It depends on the per-extension **Allow access to file URLs** toggle.
   `webNavigation` delivery is gated on host access, so with the toggle
@@ -79,18 +79,18 @@ in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
 #### One file, one installed row
 
 - The same file on disk has two spellings: the bare
-  `/home/me/foo.user.js` the sources page's path field takes, and the
+  `/home/me/foo.user.js` the collections page's path field takes, and the
   `file:///home/me/foo.user.js` a capture arrives as. Left alone they
   would produce two installed rows.
-- `canonicalSourceInput` (`directories.ts`) picks the bare path as the
-  one true spelling. It runs inside **`addSource`**, so every entry
-  point converges — the capture, the preview's Install, the sources
-  page's field, and the `?add_source=` deep link.
+- `canonicalCollectionInput` (`directories.ts`) picks the bare path as the
+  one true spelling. It runs inside **`addCollection`**, so every entry
+  point converges — the capture, the preview's Install, the collections
+  page's field, and the `?add=` deep link.
 - Reads canonicalize the *stored* value too (the preview's
   already-installed check, the container's duplicate check), so rows
   written before this existed still match.
 - The preview's already-installed check compares the **absolute**
-  location, so a copy inside a directory / repo source counts too —
+  location, so a copy inside a directory / repo collection counts too —
   see [script-identity.md](script-identity.md). Install is still
   offered in that case: a copy in someone else's collection is not a
   copy of your own.
@@ -116,7 +116,7 @@ between them is a bug, not a nuance:
 - All are **case-sensitive** and **path-anchored**. Chrome's own legacy
   check is case-*insensitive*, which is the temptation to match it —
   but a `FOO.USER.JS` that captured would then fail
-  `isSingleFileInput` and register as a *directory source*.
+  `isSingleFileInput` and register as a *directory collection*.
 - The DNR rule needs `isUrlFilterCaseSensitive: true` explicitly (DNR
   defaults to insensitive) and `^[^?]*` to keep the suffix on the path
   (`regexFilter` matches the whole URL).
@@ -199,7 +199,7 @@ Capture-specific points:
 
 - A file with no (or an unterminated) metadata block can't be
   installed: the preview says so and hides Install, rather than letting
-  `addSource` create an `invalid` row.
+  `addCollection` create an `invalid` row.
 - Usually that means the URL is an ordinary **web page** whose path
   happens to end in `.user.js` — a forge's blob view, say. The capture
   runs before any response exists, so it can't apply the
@@ -211,7 +211,7 @@ Capture-specific points:
 - For a local file the same button reads **Continue to file** and
   targets the `file://` form — the bare path the preview may have been
   opened with would resolve against the extension's own origin.
-- GitHub blob URLs never reach this state — `normalizeSourceInput`
+- GitHub blob URLs never reach this state — `normalizeCollectionInput`
   rewrites them to their raw counterpart, so the preview describes the
   real script. The flip side is that a captured GitHub blob URL can no
   longer be used to reach GitHub's own file page.
@@ -303,7 +303,7 @@ path those differ.
 
 - [`docs/deep-link.md`](deep-link.md) covers the other direction: a
   page that *wants* to hand SourceMonkey a URL links to the GitHub
-  redirect stub with `?page=sources.html&add_source=…`.
+  redirect stub with `?page=collections.html&add=…`.
 - Capture needs no cooperation from the page at all, but only works
   from a `.user.js` URL. Starting from a script's *listing* page needs
   the deep link, which the page has to opt into.

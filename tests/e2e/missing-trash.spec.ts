@@ -21,24 +21,24 @@ test.describe('missing-row trash-can', () => {
         body: '',
       });
     }
-    const source = await sm.addSource(scriptsDir.path);
-    expect(source).not.toBeNull();
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect(collection).not.toBeNull();
 
     // Delete all three so they become 'missing' after a refresh.
     scriptsDir.remove('a.user.js');
     scriptsDir.remove('b.user.js');
     scriptsDir.remove('c.user.js');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
 
-    const ws = await sm.getSourceWithScripts(source!.id);
+    const ws = await sm.getCollectionWithScripts(collection!.id);
     const allMissing = ws!.scripts.every((s) => s.status === 'missing');
     expect(allMissing).toBe(true);
     expect(ws!.scripts).toHaveLength(3);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(3);
     await expect(section.locator('button.remove-script')).toHaveCount(3);
 
@@ -72,19 +72,19 @@ test.describe('missing-row trash-can', () => {
         body: '',
       });
     }
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     scriptsDir.remove('b.user.js');
     scriptsDir.remove('c.user.js');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
 
-    const ws = await sm.getSourceWithScripts(source!.id);
+    const ws = await sm.getCollectionWithScripts(collection!.id);
     expect(ws!.scripts.filter((s) => s.status === 'missing')).toHaveLength(2);
     expect(ws!.scripts.filter((s) => s.status === 'ok')).toHaveLength(1);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const section = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(3);
     await expect(section.locator('button.remove-script')).toHaveCount(2);
 
@@ -107,11 +107,11 @@ test.describe('missing-row trash-can', () => {
       .toHaveText('a.user.js');
 
     // And the storage reflects only the ok row.
-    const after = await sm.getSourceWithScripts(source!.id);
+    const after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts).toHaveLength(1);
     expect(after!.scripts[0].relativePath).toBe('a.user.js');
     expect(after!.scripts[0].status).toBe('ok');
-    expect(after!.source.scriptIds).toEqual([after!.scripts[0].id]);
+    expect(after!.collection.scriptIds).toEqual([after!.scripts[0].id]);
 
     await page.close();
   });

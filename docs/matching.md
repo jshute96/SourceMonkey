@@ -197,10 +197,10 @@ place.
 ### Effective enabled
 
 A script participates in matching only if **both** its own `enabled`
-flag and its parent source's `enabled` flag are true. The two toggles
-compose: turning the source off blanks the count for every script
+flag and its parent collection's `enabled` flag are true. The two toggles
+compose: turning the collection off blanks the count for every script
 under it, but each script's individual choice is preserved so flipping
-the source back on restores the prior state.
+the collection back on restores the prior state.
 
 ## In-memory match index
 
@@ -211,21 +211,21 @@ user has re-enabled it) so the background SW never hits
 
 Lifecycle:
 
-- **Startup**: `ensureLoaded()` reads all `script:*` and `source:*`
-  rows once, populates the cache, and records which sources are
+- **Startup**: `ensureLoaded()` reads all `script:*` and `collection:*`
+  rows once, populates the cache, and records which collections are
   disabled.
 - **Updates**: `installStorageListener()` registers a
   `chrome.storage.onChanged` listener that mutates the cache in place
-  on every `set`/`remove` of a `script:*` or `source:*` key. `ok` and
+  on every `set`/`remove` of a `script:*` or `collection:*` key. `ok` and
   `missing` scripts are kept (the latter so a user-re-enabled missing
   row runs from its cached body); `error` entries get evicted. The
   per-script `enabled` flag — checked in `findMatchesForUrl`, not at
-  cache build — is what actually gates a missing row. Source changes
-  flip an in-memory `disabledSources` set, which lets a source toggle
+  cache build — is what actually gates a missing row. Collection changes
+  flip an in-memory `disabledCollections` set, which lets a collection toggle
   re-evaluate every script under it in O(1).
 - **Subscribers**: `onCacheChanged(fn)` lets the background SW re-badge
   every open tab when the script set itself changes (e.g. after a
-  directory Refresh on the sources page or a per-source / per-script
+  directory Refresh on the collections page or a per-collection / per-script
   enabled toggle).
 
 Per-navigation cost is one `Map` iteration + the pattern checks for
@@ -291,12 +291,12 @@ For each tab we:
     `MISSING`: both mean "expected here, never reported", but `MISSING`
     is provisional (the wrapper may still be in flight) while this is
     settled, which is why it takes the error colour. Same word the
-    sources page and the viewer use for the row.
+    collections page and the viewer use for the row.
   - `MISSING` — expected by the matcher but no `sm:start` yet.
   - `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
     predict it (e.g. Chrome's matching disagrees with ours, or a race
     against a script-store change).
-  - `Reload to update` — the script is running here but its source
+  - `Reload to update` — the script is running here but its collection
     on disk has changed since. The verbose label is rendered in place
     of the raw enum so the tooltip tells the user what to do.
 - **Action context menu** — same `"<name> | <STATUS>"` lines as

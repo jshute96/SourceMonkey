@@ -1,8 +1,8 @@
 # Site icons
 
-- Each row in the sources page (and the H1 of the script viewer)
+- Each row in the collections page (and the H1 of the script viewer)
   shows a small favicon next to the script filename.
-- Source priority:
+- Collection priority:
   - A script-declared `@icon` (or its TM aliases — see below) wins
     outright when set.
   - Otherwise the icon is discovered from the matched site itself.
@@ -188,7 +188,7 @@ the first one discovered for the host.
 
 ## Storage shape
 
-Parallel cache rows for the icon-source paths, sharing the same
+Parallel cache rows for the icon-collection paths, sharing the same
 `{ dataUrl, fetchedAt }` shape and TTLs:
 
 - `pathIcon:<pageUrl>` — HTML-discovery result for a specific
@@ -209,7 +209,7 @@ Parallel cache rows for the icon-source paths, sharing the same
 
 Rows are not garbage-collected when the last script referencing them
 is removed — favicon entries are tiny and removing the row would
-just trigger a fresh fetch if the user re-adds the source.
+just trigger a fresh fetch if the user re-adds the collection.
 
 ## Display
 
@@ -222,7 +222,7 @@ just trigger a fresh fetch if the user re-adds the source.
 - The inner element always starts with a muted globe placeholder so
   users see *something* immediately and rows missing an origin still
   show a consistent placeholder.
-- The async swap picks its source by header priority: if the script
+- The async swap picks its collection by header priority: if the script
   declares an `@icon`, `ensureIconForUrl` runs; otherwise
   `ensureSiteIcon` runs the origin-discovery pipeline. The resolved
   icon is wrapped in an `<img>` that replaces the globe inside
@@ -233,11 +233,11 @@ just trigger a fresh fetch if the user re-adds the source.
 
 A big site can have dozens of scripts, and naive rendering inlined a
 full copy of each favicon — and the globe SVG — into *every* row,
-pushing the live sources-page DOM past half a megabyte (mostly
+pushing the live collections-page DOM past half a megabyte (mostly
 duplicated bytes). Two measures keep it bounded:
 
 - **Shared globe glyph.** The globe is defined once per page as an SVG
-  `<symbol id="sm-globe">` (in `sources.html` / `userscript.html`);
+  `<symbol id="sm-globe">` (in `collections.html` / `userscript.html`);
   each slot renders a tiny `<svg class="site-icon-globe"><use
   href="#sm-globe">`. Stroke/fill styling lives in CSS on
   `.site-icon-globe` so it still inherits `currentColor`.
@@ -253,6 +253,6 @@ duplicated bytes). Two measures keep it bounded:
   Storage is unaffected: icons are still cached as base64 `data:` URLs
   (one row per origin/URL); the blob is minted fresh at render time.
 
-Viewer/sources cross-links are page-relative (`userscript.html?...`,
-`sources.html#...`) rather than absolute `chrome.runtime.getURL(...)`,
+Viewer/collections cross-links are page-relative (`userscript.html?...`,
+`collections.html#...`) rather than absolute `chrome.runtime.getURL(...)`,
 so the `chrome-extension://<id>/` prefix isn't repeated twice per row.

@@ -5,7 +5,7 @@ How SourceMonkey reads userscripts off the local filesystem. Owned by
 [script store](storage.md) and the [viewer](script-viewer.md). For
 the `http(s)://` story (single-file URLs + JSON manifests + ETag /
 Last-Modified conditional GETs) see
-[http-sources.md](http-sources.md).
+[http-collections.md](http-collections.md).
 
 ## Why paths + `file://` instead of FSA
 
@@ -37,7 +37,7 @@ For any reading to work the user must:
 `chrome.extension.isAllowedFileSchemeAccess()` probe, and the
 **"File access is disabled."** banner every page renders from it.
 
-- **Sources page** — up front, on every load. Without the toggle,
+- **Collections page** — up front, on every load. Without the toggle,
   every fetch the page could make will fail.
 - **Script viewer / install preview** — only after a `file://` read
   actually failed, since an unrelated page has no reason to nag. Covers
@@ -93,9 +93,9 @@ by relative path.
 ### Single-file paths
 
 A path that points directly at a `*.user.js` file (rather than at a
-directory) is **not** registered as its own source. `addSource`
-routes single-file inputs into the matching container source instead
-— see [storage.md](storage.md#container-sources). The script's
+directory) is **not** registered as its own source. `addCollection`
+routes single-file inputs into the matching container collection instead
+— see [storage.md](storage.md#container-collections). The script's
 `relativePath` carries the full path/URL the user added, and
 `scriptFileUrl` URL-coerces it back to the `file://` form for the
 fetcher.
@@ -120,16 +120,16 @@ Chrome's directory-listing HTML is an **undocumented format**:
 - `joinPath(base, child)` — POSIX path join.
 - `parentDir(path)` / `baseName(path)` — split an absolute path.
 - `isSingleFileInput(path)` — true iff the path ends in `.user.js`.
-  Used at add-source time to route the input into the matching
-  container source rather than minting a single-file source row.
-- `scriptFileUrl(sourcePath, relativePath)` — composes the file URL
-  for a found script, dispatching on source kind (directory /
+  Used at add-collection time to route the input into the matching
+  container collection rather than minting a single-file collection row.
+- `scriptFileUrl(collectionPath, relativePath)` — composes the file URL
+  for a found script, dispatching on collection kind (directory /
   manifest / github-dir / container).
 - `fetchFileUrlText(url)` — XHR a `file://` URL → text.
 - `parseListing(html)` — Chrome listing → `{name, isDir}[]`.
 - `scanForUserScripts(absolutePath, depth?, prefix?)` — recursive
-  `*.user.js` walk for directory / manifest / github-dir sources.
-  Container sources are never scanned through this entry point —
-  `refreshSource` builds a synthetic scan from their explicit
+  `*.user.js` walk for directory / manifest / github-dir collections.
+  Container collections are never scanned through this entry point —
+  `refreshCollection` builds a synthetic scan from their explicit
   `scriptIds` instead.
 - `MAX_SCAN_DEPTH` — recursion cap (currently 2).

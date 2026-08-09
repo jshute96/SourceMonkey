@@ -70,7 +70,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -93,7 +93,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const pageA = await extensionContext.newPage();
@@ -114,7 +114,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -190,7 +190,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeMultiProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -219,7 +219,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeMultiProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const pageA = await extensionContext.newPage();
@@ -265,7 +265,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeMultiProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const pageA = await extensionContext.newPage();
@@ -298,7 +298,7 @@ test.describe('GM_* storage freshness across documents', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     writeMultiProbe(fixtureServer.baseUrl);
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
     await sm.setDebugForceSnapshotFailure(true);
     try {
@@ -313,8 +313,8 @@ test.describe('GM_* storage freshness across documents', () => {
 
       // The wrapper should have sent sm:error so the failure
       // surfaces on the per-script log.
-      const sources = await sm.getSources();
-      const scriptIds = sources.flatMap((s) => s.scriptIds);
+      const collections = await sm.getCollections();
+      const scriptIds = collections.flatMap((s) => s.scriptIds);
       expect(scriptIds.length).toBe(1);
       const log = await sm.getScriptLog(scriptIds[0]);
       const errors = log.filter((e) => e.level === 'error');

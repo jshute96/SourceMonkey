@@ -20,11 +20,11 @@ import {
   localSearchRoots,
   parseLocalRootLines,
   rootsFromText,
-  sourceSupportsLocalFiles,
+  collectionSupportsLocalFiles,
   textFromRoots,
 } from '../../dist/local-file-overrides.js';
 import { attachFiles } from '../../dist/external-files.js';
-import { localFileLogMessages, sourceUsesLocalFiles } from '../../dist/script-store.js';
+import { localFileLogMessages, collectionUsesLocalFiles } from '../../dist/script-store.js';
 
 const SCRIPT_URL = 'file:///home/me/scripts/foo.user.js';
 const SCRIPT_DIR = 'file:///home/me/scripts/';
@@ -100,7 +100,7 @@ test('localSearchRoots: configured roots do not apply to an http-loaded script',
   });
 });
 
-test('localSearchRoots: the per-source opt-out also disables configured roots', () => {
+test('localSearchRoots: the per-collection opt-out also disables configured roots', () => {
   withRoots(['/home/me/dev/lib'], () => {
     assert.deepEqual(localSearchRoots(SCRIPT_URL, false), []);
   });
@@ -326,15 +326,15 @@ test('localFileCandidates: a dotted host cannot climb or duplicate', () => {
   );
 });
 
-// ---------- sourceSupportsLocalFiles ----------
+// ---------- collectionSupportsLocalFiles ----------
 
-test('sourceSupportsLocalFiles: local paths yes, http sources no', () => {
-  assert.equal(sourceSupportsLocalFiles('/home/me/scripts'), true);
-  assert.equal(sourceSupportsLocalFiles('file:///home/me/scripts'), true);
-  assert.equal(sourceSupportsLocalFiles('container:file'), true);
-  assert.equal(sourceSupportsLocalFiles('https://example.com/script_manifest.json'), false);
-  assert.equal(sourceSupportsLocalFiles('container:http'), false);
-  assert.equal(sourceSupportsLocalFiles('container:github'), false);
+test('collectionSupportsLocalFiles: local paths yes, http collections no', () => {
+  assert.equal(collectionSupportsLocalFiles('/home/me/scripts'), true);
+  assert.equal(collectionSupportsLocalFiles('file:///home/me/scripts'), true);
+  assert.equal(collectionSupportsLocalFiles('container:file'), true);
+  assert.equal(collectionSupportsLocalFiles('https://example.com/script_manifest.json'), false);
+  assert.equal(collectionSupportsLocalFiles('container:http'), false);
+  assert.equal(collectionSupportsLocalFiles('container:github'), false);
 });
 
 // ---------- attachFiles with localRoots ----------
@@ -507,15 +507,15 @@ test('attachFiles: no localRoots means no substitution', async () => {
   assert.equal(r.requires[0].source, 'remote body');
 });
 
-// ---------- sourceUsesLocalFiles ----------
+// ---------- collectionUsesLocalFiles ----------
 
 // Only an explicit `false` disables it, so rows persisted before the
 // field existed read as enabled.
-test('sourceUsesLocalFiles: absent means enabled', () => {
-  assert.equal(sourceUsesLocalFiles({}), true);
-  assert.equal(sourceUsesLocalFiles({ localFiles: undefined }), true);
-  assert.equal(sourceUsesLocalFiles({ localFiles: true }), true);
-  assert.equal(sourceUsesLocalFiles({ localFiles: false }), false);
+test('collectionUsesLocalFiles: absent means enabled', () => {
+  assert.equal(collectionUsesLocalFiles({}), true);
+  assert.equal(collectionUsesLocalFiles({ localFiles: undefined }), true);
+  assert.equal(collectionUsesLocalFiles({ localFiles: true }), true);
+  assert.equal(collectionUsesLocalFiles({ localFiles: false }), false);
 });
 
 // ---------- localFileLogMessages ----------

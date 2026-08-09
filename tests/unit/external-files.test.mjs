@@ -170,7 +170,7 @@ test('attachFiles: recheck=preserve reuses prior @require entries without fetchi
   const priorEntry = {
     ref: url,
     url,
-    source: 'old source',
+    source: 'old collection',
     size: 10,
     contentHash: 'abc',
     loadedAt: 9999,
@@ -186,7 +186,7 @@ test('attachFiles: recheck=preserve reuses prior @require entries without fetchi
     now: 9999,
   });
   assert.equal(r.errorMessage, undefined);
-  assert.equal(r.requires[0].source, 'old source');
+  assert.equal(r.requires[0].source, 'old collection');
 });
 
 test('attachFiles: rejects @require non-.js suffix', async () => {
@@ -486,11 +486,11 @@ test('attachFiles: @require accepts application/octet-stream', async () => {
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
-    fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', 'application/octet-stream'))]]),
+    fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js collection', 'application/octet-stream'))]]),
     now: 2000,
   });
   assert.equal(r.errorMessage, undefined);
-  assert.equal(r.requires[0].source, '// js source');
+  assert.equal(r.requires[0].source, '// js collection');
 });
 
 test('attachFiles: @require rejects octet-stream that is actually binary', async () => {
@@ -521,7 +521,7 @@ test('attachFiles: @require accepts text/plain and rejects xhtml', async () => {
       priorRequires: new Map(),
       priorResources: new Map(),
       recheck: 'all',
-      fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', contentType))]]),
+      fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js collection', contentType))]]),
       now: 2000,
     });
     return r.errorMessage;

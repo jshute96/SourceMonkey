@@ -4,7 +4,7 @@
 //
 // The unit tests cover the matching rules against fabricated rows;
 // what only a real run can prove is that the absolute URLs the store
-// actually writes line up — a directory source's `fileUrl` really does
+// actually writes line up — a directory collection's `fileUrl` really does
 // canonicalize to the same string as a standalone install's, through
 // the production scan + fetch pipeline.
 //
@@ -40,15 +40,15 @@ test.describe('other-versions panel', () => {
     return `userscript.html?script=${encodeURIComponent(scriptId)}`;
   }
 
-  // Every stored script, across every source. The SW test surface
-  // exposes sources and their scripts, not a flat list.
-  async function allScripts(sm: { getSources: () => Promise<{ id: string }[]>;
-    getSourceWithScripts: (id: string) => Promise<{ scripts: unknown[] } | null> }):
+  // Every stored script, across every collection. The SW test surface
+  // exposes collections and their scripts, not a flat list.
+  async function allScripts(sm: { getCollections: () => Promise<{ id: string }[]>;
+    getCollectionWithScripts: (id: string) => Promise<{ scripts: unknown[] } | null> }):
     Promise<{ id: string; relativePath: string; enabled?: boolean }[]> {
-    const sources = await sm.getSources();
+    const collections = await sm.getCollections();
     const out: { id: string; relativePath: string; enabled?: boolean }[] = [];
-    for (const src of sources) {
-      const withScripts = await sm.getSourceWithScripts(src.id);
+    for (const src of collections) {
+      const withScripts = await sm.getCollectionWithScripts(src.id);
       for (const script of withScripts?.scripts ?? []) {
         out.push(script as { id: string; relativePath: string; enabled?: boolean });
       }
@@ -56,15 +56,15 @@ test.describe('other-versions panel', () => {
     return out;
   }
 
-  // The case the whole feature exists for. The directory source stores
+  // The case the whole feature exists for. The directory collection stores
   // `hello.user.js`; the standalone install stores the absolute path.
   // Only their `fileUrl`s agree, and this proves they do in production.
   test('a directory copy and a standalone copy of one file share a section', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
-    await sm.addSource(dir.path);   // the folder
-    await sm.addSource(path);       // the same file, on its own
+    await sm.addCollection(dir.path);   // the folder
+    await sm.addCollection(path);       // the same file, on its own
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -100,8 +100,8 @@ test.describe('other-versions panel', () => {
     const ns = 'https://example.com/ns';
     const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0.0' });
     const b = write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.0' });
-    await sm.addSource(a);
-    await sm.addSource(b);
+    await sm.addCollection(a);
+    await sm.addCollection(b);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -130,7 +130,7 @@ test.describe('other-versions panel', () => {
   }) => {
     write('a.user.js', 'Twin Script', { namespace: 'https://one.example/' });
     write('b.user.js', 'Twin Script', { namespace: 'https://two.example/' });
-    await sm.addSource(dir.path);
+    await sm.addCollection(dir.path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -148,7 +148,7 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('lonely.user.js', 'Lonely Script');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -163,8 +163,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -194,8 +194,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -228,8 +228,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -256,15 +256,15 @@ test.describe('other-versions panel', () => {
   });
 
   // A single-file install can be taken back out from here. A script
-  // that came in with a collection cannot: the source's next refresh
+  // that came in with a collection cannot: the collection's next refresh
   // would scan it straight back in, so the button says where the
   // removal actually lives instead of pretending to work.
   test('the trash can removes a single-file copy and is disabled for directory copies', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -283,7 +283,7 @@ test.describe('other-versions panel', () => {
     await expect(trash(inFolder.id))
       .toHaveAttribute(
         'title',
-        'Script from directory source can only be removed by removing the source',
+        'Script from directory collection can only be removed by removing the collection',
       );
     await expect(trash(standalone.id)).toBeEnabled();
 
@@ -295,15 +295,15 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // The tooltip names the kind of source the copy came in with, using
-  // the words the sources page already uses for how it was added.
-  test('a manifest copy says "manifest source", not "directory source"', async ({
+  // The tooltip names the kind of collection the copy came in with, using
+  // the words the collections page already uses for how it was added.
+  test('a manifest copy says "manifest collection", not "directory collection"', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
     dir.writeRaw('script_manifest.json', JSON.stringify(['hello.user.js']));
-    await sm.addSource(`${dir.path}/script_manifest.json`);
-    await sm.addSource(path);
+    await sm.addCollection(`${dir.path}/script_manifest.json`);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -317,7 +317,7 @@ test.describe('other-versions panel', () => {
       page.locator(`${PANEL} tr[data-script-id="${inManifest.id}"] .versions-remove`),
     ).toHaveAttribute(
       'title',
-      'Script from manifest source can only be removed by removing the source',
+      'Script from manifest collection can only be removed by removing the collection',
     );
     await page.close();
   });
@@ -329,8 +329,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -375,8 +375,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -407,8 +407,8 @@ test.describe('other-versions panel', () => {
     const ns = 'https://example.com/ns';
     const a = write('a.user.js', 'Twin Script', { namespace: ns });
     const b = write('b.user.js', 'Twin Script', { namespace: ns });
-    await sm.addSource(a);
-    await sm.addSource(b);
+    await sm.addCollection(a);
+    await sm.addCollection(b);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -445,8 +445,8 @@ test.describe('other-versions panel', () => {
     const ns = 'https://example.com/ns';
     const a = write('a.user.js', 'Twin Script', { namespace: ns });
     const b = write('b.user.js', 'Twin Script', { namespace: ns });
-    await sm.addSource(a);
-    await sm.addSource(b);
+    await sm.addCollection(a);
+    await sm.addCollection(b);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -480,17 +480,17 @@ test.describe('other-versions panel', () => {
   // A copy that cannot run is not competing with the one being
   // enabled — and its own box is disabled, so a flip made here could
   // not be undone from this panel at all.
-  test('the exclusive sweep spares a copy whose source is disabled', async ({
+  test('the exclusive sweep spares a copy whose collection is disabled', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
-    const sources = await sm.getSources();
-    const folder = sources.find((s) => s.path === dir.path)!;
-    await sm.setSourceEnabled(folder.id, false);
+    const collections = await sm.getCollections();
+    const folder = collections.find((s) => s.path === dir.path)!;
+    await sm.setCollectionEnabled(folder.id, false);
 
     const scripts = await allScripts(sm);
     const standalone = scripts.find((s) => s.relativePath === path)!;
@@ -508,7 +508,7 @@ test.describe('other-versions panel', () => {
     await expect.poll(async () =>
       (await allScripts(sm)).find((s) => s.id === standalone.id)!.enabled,
     ).not.toBe(false);
-    // Untouched: its stored intent survives for whenever the source
+    // Untouched: its stored intent survives for whenever the collection
     // comes back on.
     expect((await allScripts(sm)).find((s) => s.id === inFolder.id)!.enabled).not.toBe(false);
     await page.close();
@@ -522,8 +522,8 @@ test.describe('other-versions panel', () => {
     const ns = 'https://example.com/ns';
     const a = write('a.user.js', 'Twin Script', { namespace: ns });
     const b = write('b.user.js', 'Twin Script', { namespace: ns });
-    await sm.addSource(a);
-    await sm.addSource(b);
+    await sm.addCollection(a);
+    await sm.addCollection(b);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -550,8 +550,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -575,7 +575,7 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -603,7 +603,7 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     let scripts = await allScripts(sm);
@@ -612,7 +612,7 @@ test.describe('other-versions panel', () => {
     // One copy: the panel is hidden entirely, so no Update all either.
     await expect(page.locator(PANEL)).toBeHidden();
 
-    await sm.addSource(dir.path);
+    await sm.addCollection(dir.path);
     await sm.syncNow();
     scripts = await allScripts(sm);
     await page.goto(`chrome-extension://${extensionId}/${viewer(scripts[0].id)}`);
@@ -626,15 +626,15 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // A copy inside a collection source is not a copy of your own, so
+  // A copy inside a collection collection is not a copy of your own, so
   // both installing and opening are meaningful — but there are two
   // targets, so the header buttons stand down and the table carries
   // them per-row.
-  test('preview of a file a directory source already covers defers to the table', async ({
+  test('preview of a file a directory collection already covers defers to the table', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
-    await sm.addSource(dir.path);
+    await sm.addCollection(dir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -687,7 +687,7 @@ test.describe('other-versions panel', () => {
   }) => {
     const ns = 'https://example.com/ns';
     const good = write('good.user.js', 'Broken Twin', { namespace: ns, version: '1.0.0' });
-    await sm.addSource(good);
+    await sm.addCollection(good);
     await sm.syncNow();
 
     const bad = dir.writeRaw(
@@ -728,8 +728,8 @@ test.describe('other-versions panel', () => {
     const ns = 'https://example.com/ns';
     const a = write('a.user.js', 'Twin Script', { namespace: ns });
     write('b.user.js', 'Twin Script', { namespace: ns });
-    await sm.addSource(a);
-    await sm.addSource(dir.path);
+    await sm.addCollection(a);
+    await sm.addCollection(dir.path);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -747,21 +747,21 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // A row under a disabled source does not run. The box keeps showing
+  // A row under a disabled collection does not run. The box keeps showing
   // the script's OWN stored flag — same as the page's controls-row
   // toggle, which also stays checked and goes grey — and the disabled
-  // state plus the label carry the source override.
-  test('a row under a disabled source is greyed out and explains why', async ({
+  // state plus the label carry the collection override.
+  test('a row under a disabled collection is greyed out and explains why', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
-    const sources = await sm.getSources();
-    const folder = sources.find((s) => s.path === dir.path)!;
-    await sm.setSourceEnabled(folder.id, false);
+    const collections = await sm.getCollections();
+    const folder = collections.find((s) => s.path === dir.path)!;
+    await sm.setCollectionEnabled(folder.id, false);
     await sm.syncNow();
 
     const scripts = await allScripts(sm);
@@ -772,14 +772,14 @@ test.describe('other-versions panel', () => {
     const offRow = page.locator(`${PANEL} tbody tr:not(.is-current)`);
     await expect(offRow.locator('input[type=checkbox]')).toBeDisabled();
     // The short tooltip says which state it is in; the accessible name
-    // carries the explanation, since a screen reader has no Source cell
+    // carries the explanation, since a screen reader has no Collection cell
     // to read across to.
     await expect(offRow.locator('label.toggle'))
-      .toHaveAttribute('title', 'Source is disabled');
+      .toHaveAttribute('title', 'Collection is disabled');
     await expect(offRow.locator('input[type=checkbox]'))
-      .toHaveAttribute('aria-label', /source is disabled, so this copy does not run/);
+      .toHaveAttribute('aria-label', /collection is disabled, so this copy does not run/);
     await expect(offRow.locator('label.toggle')).toHaveClass(/toggle-disabled/);
-    // The current row's source is still on, so it stays operable.
+    // The current row's collection is still on, so it stays operable.
     await expect(page.locator(`${PANEL} tr.is-current input[type=checkbox]`)).toBeEnabled();
     await page.close();
   });
@@ -788,7 +788,7 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -830,8 +830,8 @@ test.describe('other-versions panel', () => {
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addSource(dir.path);
-    await sm.addSource(path);
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -872,7 +872,7 @@ test.describe('other-versions panel', () => {
     );
     write('a.user.js', 'Twin Script', { namespace: ns });
     write('b.user.js', 'Twin Script', { namespace: ns });
-    await sm.addSource(dir.path);
+    await sm.addCollection(dir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -895,7 +895,7 @@ test.describe('other-versions panel', () => {
     const ns = 'https://example.com/ns';
     const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0.0' });
     const b = write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.0' });
-    await sm.addSource(a);
+    await sm.addCollection(a);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

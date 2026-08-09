@@ -13,7 +13,7 @@
 // disagree, we throw.
 //
 // Tests get a single `setup.installScriptsFrom(dir)` helper that does
-// the right thing per manager — adds a directory source under SM, or
+// the right thing per manager — adds a directory collection under SM, or
 // syncs each *.user.js file into TM via the dashboard.
 
 import { test as base, chromium, type BrowserContext } from '@playwright/test';
@@ -79,7 +79,7 @@ const TM_HEADED = process.env.TM_HEADED === '1';
 export interface SetupApi {
   /**
    * Install or sync every `*.user.js` in `dir` into the active manager.
-   * Under SourceMonkey, registers the directory as a source. Under
+   * Under SourceMonkey, registers the directory as a collection. Under
    * Tampermonkey, installs/updates scripts via the dashboard, skipping
    * already-installed entries at the same-or-newer version.
    */
@@ -272,12 +272,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const getServiceWorker = makeGetServiceWorker(extensionContext);
       const sm = makeSwApi(getServiceWorker);
       // Per-test clean slate matches tests/fixtures/extension.ts: each
-      // test starts with no sources registered, no scripts in storage.
+      // test starts with no collections registered, no scripts in storage.
       await sm.resetAllState();
       await use({
         manager,
         installScriptsFrom: async (dir: string) => {
-          await sm.addSource(dir);
+          await sm.addCollection(dir);
           await sm.syncNow();
         },
       });

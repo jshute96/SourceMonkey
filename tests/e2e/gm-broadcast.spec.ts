@@ -61,7 +61,7 @@ test.describe('GM_* cross-tab broadcast (Phase 6)', () => {
         }, 50);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     // Open both pages.
@@ -111,7 +111,7 @@ test.describe('GM_* cross-tab broadcast (Phase 6)', () => {
         document.body.dataset.smReadback = String(GM_getValue('x'));
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

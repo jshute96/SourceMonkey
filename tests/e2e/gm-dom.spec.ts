@@ -36,7 +36,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         document.body.dataset.smStyleTag = String(styleEl && styleEl.tagName);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -70,7 +70,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         document.body.dataset.smElementContent = String(el && el.getAttribute('content'));
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -110,7 +110,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         document.body.dataset.smBaseParent  = String(b && b.parentElement && b.parentElement.tagName);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -142,7 +142,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
           String(el && el.parentElement && el.parentElement.tagName);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -178,7 +178,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         document.body.dataset.smParent = String(span && span.parentNode && span.parentNode.id);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -206,7 +206,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         document.body.dataset.smChecked = 'true';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -238,7 +238,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         document.body.dataset.smAddStyleType = typeof GM_addStyle;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

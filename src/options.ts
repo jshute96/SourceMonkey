@@ -1,8 +1,8 @@
 // Options page controller. Owns the actual configurable settings
 // (link capture, debug-logging gate, local-file-override search roots,
-// GitHub auth token). The per-source management UI lives on
-// `sources.html` / `sources.ts`; a header link points users back and
-// forth.
+// GitHub auth token). The per-collection management UI lives on
+// `collections.html` / `collections.ts`; a header link points users
+// back and forth.
 
 import { DEBUG_LOGGING_KEY } from './debug-log.js';
 import { GITHUB_AUTH_TOKEN_KEY } from './github-auth.js';
@@ -16,14 +16,14 @@ import {
   type ParsedRoot,
 } from './local-file-overrides.js';
 import { fetchFileUrlText } from './directories.js';
-import { getSources } from './script-store.js';
-import { sourceSupportsLocalFiles } from './local-file-overrides.js';
-import { updateSource } from './script-updater.js';
+import { getCollections } from './script-store.js';
+import { collectionSupportsLocalFiles } from './local-file-overrides.js';
+import { updateCollection } from './script-updater.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 
-const openSourcesBtn = document.getElementById('open-sources') as HTMLButtonElement;
-openSourcesBtn.addEventListener('click', () => {
-  location.href = 'sources.html';
+const openCollectionsBtn = document.getElementById('open-collections') as HTMLButtonElement;
+openCollectionsBtn.addEventListener('click', () => {
+  location.href = 'collections.html';
 });
 
 // Both boolean settings differ only in their storage key and what an
@@ -129,32 +129,35 @@ function initLocalRootControls(): void {
     try {
       await chrome.storage.local.set({ [LOCAL_ROOTS_KEY]: roots });
       // The roots only change what the NEXT refresh resolves to, so the
-      // refresh is part of the save — same reasoning as the per-source
-      // "Local files" switch, which refreshes its source on toggle.
-      // Without it a newly-added root would appear to do nothing until
-      // something else happened to touch a source.
+      // refresh is part of the save — same reasoning as the
+      // per-collection "Local files" switch, which refreshes its
+      // collection on toggle. Without it a newly-added root would
+      // appear to do nothing until something else happened to touch a
+      // collection.
       setStatus('Saved — refreshing scripts', '');
-      await refreshLocalSources();
+      await refreshLocalCollections();
     } finally {
       saveBtn!.disabled = false;
     }
     await validate();
   }
 
-  // Refresh only the sources a root could possibly affect. http(s)
-  // sources and the web / GitHub containers resolve everything over the
-  // network, so refreshing them would be cost with no possible change.
-  async function refreshLocalSources(): Promise<void> {
+  // Refresh only the collections a root could possibly affect. http(s)
+  // collections and the web / GitHub containers resolve everything over
+  // the network, so refreshing them would be cost with no possible
+  // change.
+  async function refreshLocalCollections(): Promise<void> {
     try {
-      const sources = await getSources();
-      for (const source of sources) {
-        if (!sourceSupportsLocalFiles(source.path)) continue;
-        await updateSource(source.id, 'manual');
+      const collections = await getCollections();
+      for (const collection of collections) {
+        if (!collectionSupportsLocalFiles(collection.path)) continue;
+        await updateCollection(collection.id, 'manual');
       }
     } catch {
       // A refresh that fails is not a failed save: the setting is
-      // written, and every source re-resolves on its own next refresh.
-      // Per-source failures already surface on the sources page.
+      // written, and every collection re-resolves on its own next
+      // refresh. Per-collection failures already surface on the
+      // collections page.
     }
   }
 

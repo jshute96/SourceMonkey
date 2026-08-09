@@ -28,7 +28,7 @@
         /* Hanging indent past the favicon slot below, so a wrapped
            name's continuation lines align with the first line's text
            instead of tucking under the icon. No `0.6em` term here (an
-           h1 has no cell padding to absorb) — don't copy the sources
+           h1 has no cell padding to absorb) — don't copy the collections
            page's constant. */
         padding-left: calc(16px + 0.4em);
         text-indent: calc(-16px - 0.4em);
@@ -98,7 +98,7 @@
       .actions button:disabled { cursor: not-allowed; opacity: 0.5; }
       .actions .primary { font-weight: 600; }
       .actions .spacer { margin-left: auto; }
-      /* The banner box is in styles.css (shared with the sources page,
+      /* The banner box is in styles.css (shared with the collections page,
          which is also where the file-access banner comes from). Only
          the viewer's own colour variants live here — the amber default
          is a warning, and "already installed" / "preview" are not. */
@@ -127,7 +127,7 @@
         letter-spacing: 0.04em;
       }
       /* Details panel: the header fields worth surfacing (when a
-         metadata block is present) plus the resolved Source /
+         metadata block is present) plus the resolved Collection /
          Location / Size / Status rows. Cleared via :empty when there's
          no script. */
       #header-summary {
@@ -214,8 +214,8 @@
          read as plain text by default; underline only on hover so
          the rows stay calm. The bubble is excluded so its `color:#fff`
          survives — its hover affordance is the opacity dip below. */
-      #header-summary dd a:not(.source-type-bubble) { color: inherit; text-decoration: none; }
-      #header-summary dd a:not(.source-type-bubble):hover { text-decoration: underline; }
+      #header-summary dd a:not(.collection-type-bubble) { color: inherit; text-decoration: none; }
+      #header-summary dd a:not(.collection-type-bubble):hover { text-decoration: underline; }
       /* Anchors inside the highlighted code block. Inherit Prism's
          token color (comment-grey, string-green, etc.) so the code
          box keeps reading as code; only the hover underline signals
@@ -275,7 +275,7 @@
         table-layout: fixed;
       }
       .versions-table col.col-enabled  { width: 2.2em; }
-      .versions-table col.col-source   { width: 26%; }
+      .versions-table col.col-collection { width: 26%; }
       .versions-table col.col-version  { width: 7em; }
       .versions-table col.col-actions  { width: 6.5em; }
       .versions-table col.col-remove   { width: 2.4em; }
@@ -308,19 +308,19 @@
       }
       /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
          a long URL shrink its column rather than widening the table. */
-      .versions-table .col-source,
+      .versions-table .col-collection,
       .versions-table .col-location {
         overflow-wrap: anywhere;
         word-break: normal;
         min-width: 0;
       }
       .versions-table .col-location { font-size: 12px; color: #555; }
-      .versions-source-name {
+      .versions-collection-name {
         color: inherit;
         text-decoration: none;
         font-weight: 500;
       }
-      .versions-source-name:hover { text-decoration: underline; }
+      .versions-collection-name:hover { text-decoration: underline; }
       .versions-table .col-location a { color: inherit; text-decoration: none; }
       .versions-table .col-location a:hover { text-decoration: underline; }
       /* A deeper tint of the panel's own green, not the blue used
@@ -340,16 +340,16 @@
       }
       .versions-table .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       /* Same treatment as the controls-row toggle when the parent
-         source is off: the box can't be clicked, so it must not look
+         collection is off: the box can't be clicked, so it must not look
          clickable. */
       .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
       /* Trash can, in its own column hard against the table's right
-         edge. Same glyph and red hover as the sources page's
+         edge. Same glyph and red hover as the collections page's
          `.remove-script`, so the two read as one control in two
          places; the border and resting colour are the panel's own,
          since it sits on green rather than white. Disabled (a script
-         inside a collection source) keeps the button on screen — the
+         inside a collection) keeps the button on screen — the
          column would otherwise look ragged with no clue why — but
          drops it to a plain dimmed glyph with no border, so it doesn't
          invite a click its tooltip has to then refuse. `not-allowed`
@@ -387,7 +387,7 @@
       /* Narrow windows shed the Version column rather than letting
          every cell wrap to an unreadable ribbon. It is the least
          load-bearing: nothing acts on it, and the copies it
-         distinguishes are still distinguished by source and location.
+         distinguishes are still distinguished by collection and location.
          It stays in the DOM (hidden, not dropped) so nothing has to
          re-render on resize.
          Zeroing the <col> width alongside `display: none` on the
@@ -404,11 +404,11 @@
         .versions-table col.col-version { width: 0; }
         .versions-table .col-version { display: none; }
       }
-      /* Source row layout. Grid layout so a long display name wraps
+      /* Collection row layout. Grid layout so a long display name wraps
          inside the right-hand column instead of dropping back to the
          row's left edge. The bubble's own styling (color, padding,
          hover) is in styles.css, the cross-page shared stylesheet. */
-      .source-cell {
+      .collection-cell {
         display: grid;
         grid-template-columns: max-content 1fr;
         column-gap: 0.5em;
@@ -670,7 +670,7 @@
   </head>
   <body>
     <!-- Shared globe glyph referenced by the icon slot's <use href="#sm-globe">
-         (see sources.html for the rationale). -->
+         (see collections.html for the rationale). -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
     <h1 id="filename"></h1>
     <div id="meta-row" class="meta-row" hidden>

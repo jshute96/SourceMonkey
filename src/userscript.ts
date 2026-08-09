@@ -4,14 +4,14 @@
 //   ?script=<scriptId>  — an installed script. Hydrates from the
 //                         persistent store (chrome.storage.local)
 //                         rather than re-reading the file, so the
-//                         content always matches what the sources page
+//                         content always matches what the collections page
 //                         shows.
 //   ?preview=<url>      — a script that is NOT installed (yet). Fetches
 //                         it, shows exactly the same panels, and offers
 //                         Install / Update. This is where a captured
 //                         `.user.js` navigation lands (see
-//                         `install-capture.ts`) and where the sources
-//                         page sends a single-file Add Source.
+//                         `install-capture.ts`) and where the collections
+//                         page sends a single-file Add.
 //
 // Both modes render: a heading (favicon + location), a controls row,
 // the details panel (`script-details.ts`), and the tabbed code view
@@ -27,22 +27,22 @@
 // See [docs/script-viewer.md] and [docs/install-capture.md].
 
 import {
-  addSource,
+  addCollection,
   buildScriptFromText,
   describeError,
   distillMatching,
   getAllScripts,
   getScript,
-  getSource,
-  getSources,
+  getCollection,
+  getCollections,
   isScriptEnabled,
-  isSourceEnabled,
+  isCollectionEnabled,
   removeScript,
   setScriptsEnabled,
   validateHeader,
   type StoredScript,
-  sourceUsesLocalFiles,
-  type StoredSource,
+  collectionUsesLocalFiles,
+  type StoredCollection,
 } from './script-store.js';
 import {
   allRelatedRows,
@@ -55,7 +55,7 @@ import {
 import {
   enableTitle,
   renderRelatedVersions,
-  SOURCE_OFF_TITLE,
+  COLLECTION_OFF_TITLE,
   watchSoloModifier,
   type RelatedVersionsActions,
 } from './related-versions.js';
@@ -112,17 +112,17 @@ import {
   type ParsedHeader,
 } from './userscript-header.js';
 import {
-  canonicalSourceInput,
+  canonicalCollectionInput,
   fetchFileUrlText,
   fetchHttpText,
   isFileUrl,
   isHttpUrl,
   LOCATION_SHAPES,
-  normalizeSourceInput,
+  normalizeCollectionInput,
   scriptAbsolutePath,
-  sourceCanonicalUrl,
+  collectionCanonicalUrl,
 } from './directories.js';
-import { appendWithSlashBreaks } from './source-display.js';
+import { appendWithSlashBreaks } from './collection-display.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { resolveScriptResource } from './file-loader.js';
 import {
@@ -170,7 +170,7 @@ const githubTokenReady = loadGithubAuthToken();
 const params = new URLSearchParams(location.search);
 const scriptId = params.get('script');
 // The location to preview, exactly as it arrived: the URL the user
-// clicked (for a captured navigation) or typed (for Add Source). See
+// clicked (for a captured navigation) or typed into Add). See
 // the preview-mode section below for the normalized forms derived
 // from it.
 const previewInput = params.get('preview');
@@ -214,7 +214,7 @@ enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableChe
 //
 // Copies the raw location, not the decoded form the row displays: a
 // pasted URL has to still work in a terminal, an address bar, or the
-// Add Source field.
+// Add field.
 const filenameCopyBtn = makeCopyButton({
   label: 'Copy location to clipboard',
   text: () => currentFilenamePath,
@@ -258,30 +258,31 @@ async function load(): Promise<void> {
 // ---------- Installed-script mode ----------
 
 // Keep the displayed Log ID in sync with the global dupe set: if
-// another tab (sources page, viewer of a sibling) adds or removes a
+// another tab (collections page, viewer of a sibling) adds or removes a
 // script that shares this basename, our `#N` would otherwise go
 // stale. Listen for any script:* mutation and re-derive.
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (!scriptId) return;
   if (areaName === 'local') {
     // Repaint on any script:* mutation (this script, or a sibling whose
-    // add/remove shifts our dedup `#N`) AND on a change to THIS script's
-    // parent source. A source enable/disable or rename done on the
-    // sources page or in another tab has to reach the viewer's Enable
-    // toggle and Source row, not just this script's own Refresh.
-    const sourceKey = currentScript ? `source:${currentScript.sourceId}` : null;
+    // add/remove shifts our dedup `#N`) AND on a change to THIS
+    // script's parent collection. A collection enable/disable or rename
+    // done on the collections page or in another tab has to reach the
+    // viewer's Enable toggle and Collection row, not just this script's
+    // own Refresh.
+    const collectionKey = currentScript ? `collection:${currentScript.collectionId}` : null;
     let touched = false;
     for (const key of Object.keys(changes)) {
       if (key.startsWith('script:')) {
         touched = true;
         break;
       }
-      // A source row is written on every refresh attempt, successful or
+      // A collection row is written on every refresh attempt, successful or
       // not (`lastRefreshedAt`, `scanError`), and none of that shows
       // here. Re-render only for the fields this page actually reads,
-      // or a source stuck retrying a failing scan would re-render every
+      // or a collection stuck retrying a failing scan would re-render every
       // viewer open on it, on every retry, with nothing changing.
-      if (sourceKey && key === sourceKey && sourceFieldsShownHereChanged(changes[key])) {
+      if (collectionKey && key === collectionKey && sourceFieldsShownHereChanged(changes[key])) {
         touched = true;
         break;
       }
@@ -328,16 +329,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 });
 
-// Does a `source:*` delta touch anything this viewer shows? The Enable
-// toggle reads the source's enabled state and the Source row reads its
-// display name and path; nothing else on the page comes from that row.
-// An add or a removal always counts — the re-read handles both.
+// Does a `collection:*` delta touch anything this viewer shows? The
+// Enable toggle reads the collection's enabled state and the Collection
+// row reads its display name and path; nothing else on the page comes
+// from that row. An add or a removal always counts — the re-read
+// handles both.
 function sourceFieldsShownHereChanged(change: chrome.storage.StorageChange): boolean {
-  const prev = change.oldValue as StoredSource | undefined;
-  const next = change.newValue as StoredSource | undefined;
+  const prev = change.oldValue as StoredCollection | undefined;
+  const next = change.newValue as StoredCollection | undefined;
   if (!prev || !next) return true;
   return (
-    isSourceEnabled(prev) !== isSourceEnabled(next) ||
+    isCollectionEnabled(prev) !== isCollectionEnabled(next) ||
     (prev.displayName ?? '') !== (next.displayName ?? '') ||
     prev.path !== next.path
   );
@@ -367,15 +369,15 @@ async function rehydrateAfterStorageChange(): Promise<void> {
     showMissing(
       removedHere
         ? 'This script has been removed'
-        : 'Script not found in storage — open it from the sources page',
+        : 'Script not found in storage — open it from the collections page',
     );
     return;
   }
-  // Re-read the parent source too: its enabled state greys the Enable
-  // toggle and its display name shows in the Source row, and either can
-  // change from the sources page or another tab while this viewer is
-  // open. render() reads these from the cached values.
-  cacheSource(await getSource(script.sourceId));
+  // Re-read the parent collection too: its enabled state greys the
+  // Enable toggle and its display name shows in the Collection row, and
+  // either can change from the collections page or another tab while
+  // this viewer is open. render() reads these from the cached values.
+  cacheCollection(await getCollection(script.collectionId));
   await refreshLogId();
   render(script);
   // render() wipes the flash overlay via `textContent =` and may
@@ -384,22 +386,24 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   tabsView.applyHash(false);
 }
 
-// Source-enabled state is needed for greying the toggle. We cache it so
-// onToggle doesn't have to re-read storage. sourcePath is cached for
-// the same reason — render() builds the absolute filename from it.
-// sourceRow holds the whole StoredSource (when found) so the Source
-// row can render its bubble + display name without a second read.
-let sourceEnabled = true;
-let sourcePath = '';
-let sourceRow: StoredSource | null = null;
+// Collection-enabled state is needed for greying the toggle. We cache
+// it so onToggle doesn't have to re-read storage. collectionPath is
+// cached for the same reason — render() builds the absolute filename
+// from it. collectionRow holds the whole StoredCollection (when found)
+// so the Collection row can render its bubble + display name without a
+// second read.
+let collectionEnabled = true;
+let collectionPath = '';
+let collectionRow: StoredCollection | null = null;
 
-// Single place the three cached source values are derived, so the load
-// path and the live re-hydrate can't fall out of step on what a missing
-// source means (treated as enabled, with no path and no row to render).
-function cacheSource(source: StoredSource | undefined): void {
-  sourceEnabled = source ? isSourceEnabled(source) : true;
-  sourcePath = source?.path ?? '';
-  sourceRow = source ?? null;
+// Single place the three cached collection values are derived, so the
+// load path and the live re-hydrate can't fall out of step on what a
+// missing collection means (treated as enabled, with no path and no row
+// to render).
+function cacheCollection(collection: StoredCollection | undefined): void {
+  collectionEnabled = collection ? isCollectionEnabled(collection) : true;
+  collectionPath = collection?.path ?? '';
+  collectionRow = collection ?? null;
 }
 // Path currently shown in the Location cell. The copy button reads
 // this rather than the cell's textContent, which would also break if
@@ -443,10 +447,10 @@ async function loadStored(): Promise<void> {
   if (!scriptId) return;
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage — open it from the sources page');
+    showMissing('Script not found in storage — open it from the collections page');
     return;
   }
-  cacheSource(await getSource(script.sourceId));
+  cacheCollection(await getCollection(script.collectionId));
   await refreshLogId();
   // Hydrate the max log level and any registration rejection before
   // render() so the first paint of the Status row already reflects
@@ -592,22 +596,23 @@ function render(script: StoredScript): void {
   // row goes missing it is someone else's doing. See `removedHere`.
   removedHere = false;
   controlsRowEl.hidden = false;
-  // A missing source row reads as ENABLED, matching `cacheSource`'s
-  // `sourceEnabled` default and `renderHeading`'s own — three spellings
-  // of the same "row not found" state should not disagree.
+  // A missing collection row reads as ENABLED, matching
+  // `cacheCollection`'s `collectionEnabled` default and
+  // `renderHeading`'s own — three spellings of the same "row not found"
+  // state should not disagree.
   renderHeading(
     displayLocation(script.relativePath),
     script,
-    sourceRow ? sourceUsesLocalFiles(sourceRow) : true,
+    collectionRow ? collectionUsesLocalFiles(collectionRow) : true,
   );
   document.title = `${displayLocation(script.relativePath)} — SourceMonkey`;
 
   enableCheckboxEl.checked = isScriptEnabled(script);
-  enableCheckboxEl.disabled = !sourceEnabled;
-  enableLabelEl.classList.toggle('toggle-disabled', !sourceEnabled);
+  enableCheckboxEl.disabled = !collectionEnabled;
+  enableLabelEl.classList.toggle('toggle-disabled', !collectionEnabled);
   // The plain wording; `paintRelatedVersions` adds the multi-enable
   // hint when there are other copies for the click to sweep.
-  enableLabelEl.title = sourceEnabled ? enableTitle(false) : SOURCE_OFF_TITLE;
+  enableLabelEl.title = collectionEnabled ? enableTitle(false) : COLLECTION_OFF_TITLE;
 
   // Identity the script's own diagnostics name it by. Set before the
   // tabs so `appendDiagnostic` below can resolve a location to tab 0.
@@ -628,15 +633,15 @@ function render(script: StoredScript): void {
   }
 
   // Resolved location for the script: an absolute filesystem path for
-  // file:// sources, the github page URL for github sources, or the
-  // resolved URL for non-github HTTP sources. Skip the row entirely if
-  // the source row is gone — a bare relative path under a "Location"
-  // label would be misleading.
-  currentFilenamePath = sourcePath
-    ? scriptAbsolutePath(sourcePath, script.relativePath)
+  // file:// collections, the github page URL for github collections, or
+  // the resolved URL for non-github HTTP collections. Skip the row
+  // entirely if the collection row is gone — a bare relative path under
+  // a "Location" label would be misleading.
+  currentFilenamePath = collectionPath
+    ? scriptAbsolutePath(collectionPath, script.relativePath)
     : '';
 
-  // Anchor href: for file:// sources we use the file:// URL (the
+  // Anchor href: for file:// collections we use the file:// URL (the
   // display string is the bare fs path, not navigable). For everything
   // else display = href, so the user clicks the same URL they'd copy
   // from the row.
@@ -645,7 +650,7 @@ function render(script: StoredScript): void {
     header: script.header,
     files: { requires: script.requires, resources: script.resources },
     logId: currentLogId,
-    source: sourceRow,
+    collection: collectionRow,
     location: currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
@@ -655,8 +660,8 @@ function render(script: StoredScript): void {
           // script, so a plain navigation would be captured and land
           // the user in a preview of the script they are already
           // looking at. Open it the same way the preview does: bypass
-          // first, then a new tab. (A github source's blob URL ends in
-          // `.user.js` too, and is an HTML page, so it would land on
+          // first, then a new tab. (A github collection's blob URL ends
+          // in `.user.js` too, and is an HTML page, so it would land on
           // the "not an installable userscript" banner.)
           onActivate: () => navigateRaw(locationHref),
         }
@@ -816,7 +821,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   // Set on every branch, not only the exclusive one: this runs after
   // repaints that had no `render` in front of them to restore the
   // default, so a title left over from a previous state would stick.
-  if (args.currentScriptId && sourceEnabled) {
+  if (args.currentScriptId && collectionEnabled) {
     const others = otherRunningCopies(allRelatedRows(related), args.currentScriptId);
     enableLabelEl.title = enableTitle(others.length > 0);
   }
@@ -847,10 +852,10 @@ async function afterPanelAction(args: RelatedVersionsPaint): Promise<void> {
   });
 }
 
-// How a failed copy is named in the panel's own message. The source
-// display name is what the failing row shows in its Source cell, so
+// How a failed copy is named in the panel's own message. The collection
+// display name is what the failing row shows in its Collection cell, so
 // that is what the user scans for; the location disambiguates two
-// copies under one source.
+// copies under one collection.
 function describeRelatedScript(scripts: readonly StoredScript[], id: string): string {
   const script = scripts.find((s) => s.id === id);
   return script ? displayLocation(script.relativePath) : 'this copy';
@@ -1102,11 +1107,11 @@ function buildStatusCell(script: StoredScript): Node {
 //   previewInput     — verbatim from the query string. For an http(s)
 //                      capture this is the URL the browser was about to
 //                      navigate to, so it's what a bypass is keyed on.
-//   previewLocation  — `normalizeSourceInput` then
-//                      `canonicalSourceInput`: a github.com blob URL
+//   previewLocation  — `normalizeCollectionInput` then
+//                      `canonicalCollectionInput`: a github.com blob URL
 //                      rewritten to its raw form, a `file://` URL
 //                      collapsed to its bare path, a local path left
-//                      alone. Exactly what `addSource` would store as
+//                      alone. Exactly what `addCollection` would store as
 //                      `relativePath`, so it's what the
 //                      already-installed check compares, and what the
 //                      Location row displays.
@@ -1161,7 +1166,7 @@ async function loadPreview(): Promise<void> {
   // network for a problem that is in the address bar.
   let badInput = false;
   try {
-    // Check the shape before canonicalizing: `sourceCanonicalUrl`
+    // Check the shape before canonicalizing: `collectionCanonicalUrl`
     // turns anything that isn't already http(s)/file:// into a
     // file:// URL, so an `ftp://…` param would otherwise fail with a
     // baffling `file:///ftp%3A//…` error instead of being named.
@@ -1172,12 +1177,12 @@ async function loadPreview(): Promise<void> {
       // the other failures there take.
       throw new Error(`This is not a script location — it ${LOCATION_SHAPES}`);
     }
-    // Same canonicalization `addSource` runs, so what the
+    // Same canonicalization `addCollection` runs, so what the
     // already-installed check compares is exactly what installing
     // would store. A no-op for http(s); a plain POSIX `file://` URL
     // collapses to its bare path.
-    previewLocation = canonicalSourceInput(await normalizeSourceInput(input));
-    previewFileUrl = sourceCanonicalUrl(previewLocation);
+    previewLocation = canonicalCollectionInput(await normalizeCollectionInput(input));
+    previewFileUrl = collectionCanonicalUrl(previewLocation);
     text = await fetchPreviewText(previewFileUrl);
   } catch (err) {
     // Keep the heading and the action row: the location is still worth
@@ -1194,7 +1199,7 @@ async function loadPreview(): Promise<void> {
       'error',
     );
     // The likeliest reason a local file wouldn't read. `previewFileUrl`
-    // is still '' if normalizeSourceInput is what threw, which is
+    // is still '' if normalizeCollectionInput is what threw, which is
     // correctly not a file:// URL — we never got as far as a read.
     showFileAccessBannerIfBlocked(previewFileUrl);
     summaryEl.replaceChildren();
@@ -1203,7 +1208,8 @@ async function loadPreview(): Promise<void> {
     // A fetch that failed for a location we already hold a copy of is
     // exactly when the user wants to reach the copy that works. Only
     // meaningful once we know the normalized location — if
-    // normalizeSourceInput is what threw, there's nothing to match on.
+    // normalizeCollectionInput is what threw, there's nothing to match
+    // on.
     if (previewLocation) void offerOpenExisting();
     return;
   }
@@ -1214,7 +1220,7 @@ async function loadPreview(): Promise<void> {
 }
 
 // Shapes we know how to preview, checked against the raw input. Mirrors
-// what the sources page's Add field accepts for a single script: an
+// what the collections page's Add field accepts for a single script: an
 // http(s) or file:// URL, or an absolute local path.
 function isPreviewableInput(input: string): boolean {
   return isHttpUrl(input) || isFileUrl(input) || input.startsWith('/');
@@ -1222,7 +1228,7 @@ function isPreviewableInput(input: string): boolean {
 
 // Fetch the text to preview. By this point the location has been
 // canonicalized, so it is http(s) or file:// — the two shapes a
-// single-file source can take.
+// single-file location can take.
 async function fetchPreviewText(url: string): Promise<string> {
   if (isFileUrl(url)) return fetchFileUrlText(url);
   const result = await fetchHttpText(url);
@@ -1328,12 +1334,12 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
   const now = Date.now();
   const script = await buildScriptFromText({
     // Placeholder identity: nothing is stored, and the preview's own
-    // location is what `addSource` would record for a real install.
+    // location is what `addCollection` would record for a real install.
     id: 'preview',
-    sourceId: 'preview',
+    collectionId: 'preview',
     relativePath: previewLocation,
     fileUrl: previewFileUrl,
-    source: text,
+    text,
     now,
   });
   // A header problem is already on screen (`renderInvalidPreview`), and
@@ -1357,11 +1363,11 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
     recheck: 'all',
     fetchCache: previewFetchCache,
     now,
-    // A preview has no source row yet, so there's no per-source opt-out
-    // to consult — a file the user is looking at on their own disk gets
-    // the same-folder rule. This is also the case the rule matters most
-    // for: the published URL a script `@require`s may not exist yet
-    // while it's being written.
+    // A preview has no collection row yet, so there's no per-collection
+    // opt-out to consult — a file the user is looking at on their own
+    // disk gets the same-folder rule. This is also the case the rule
+    // matters most for: the published URL a script `@require`s may not
+    // exist yet while it's being written.
     localRoots: previewLocalRoots(),
   });
   // Only on success. A failed `attachFiles` returns EMPTY lists rather
@@ -1409,7 +1415,7 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
 }
 
 // What actually happens if the user goes ahead — which is not one
-// sentence, because `rebuildSource` (script-store.ts) deliberately
+// sentence, because `rebuildCollection` (script-store.ts) deliberately
 // treats an http(s) refresh that doesn't parse as a bad *response*
 // rather than a bad script: a 200 login page served in place of the
 // source must not take down the copy that works. So an Update over
@@ -1430,9 +1436,10 @@ function syntaxErrorOutcome(): string {
   // an install, which is what it offers.
   if (previewInstalledStatus === null) return 'Installing it will store it as INVALID.';
   // Preservation is gated on the installed row being `ok`, not merely
-  // on it existing: `rebuildSource` keeps a prior copy running because
-  // that copy WORKS. Updating a row that is already `invalid` has
-  // nothing worth keeping, so the bad parse is stored like any other.
+  // on it existing: `rebuildCollection` keeps a prior copy running
+  // because that copy WORKS. Updating a row that is already `invalid`
+  // has nothing worth keeping, so the bad parse is stored like any
+  // other.
   if (isHttpUrl(previewLocation) && previewInstalledStatus === 'ok') {
     return 'Updating it will leave the installed copy running and mark the refresh as failed.';
   }
@@ -1618,7 +1625,7 @@ function renderPreviewDetails(): void {
 }
 
 // Local search roots for the previewed file. Not gated on a stored
-// source: a preview is a file the user pointed at directly, and
+// collection row: a preview is a file the user pointed at directly, and
 // `localSearchRoots` still refuses anything that isn't `file://`.
 function previewLocalRoots(): string[] {
   return localSearchRoots(previewFileUrl, true);
@@ -1667,7 +1674,7 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
 // Look for existing rows at this location and pick the button set.
 //
 // Install and Open/Update are not mutually exclusive any more. A
-// script can already be installed *inside a collection source* the
+// script can already be installed *inside a collection* the
 // user subscribes to while they still have no copy of their own — and
 // in that case both are meaningful: Open jumps to the copy that
 // exists, Install adds the standalone one that doesn't. `installTarget`
@@ -1702,12 +1709,12 @@ async function wireInstallButtons(): Promise<void> {
 
   // Install shows when installing would add something:
   //   - `installTarget` — a single-file location with no copy of its
-  //     own yet, INCLUDING when a collection source already covers it;
+  //     own yet, INCLUDING when a collection already covers it;
   //   - nothing installed here at all. `installTarget` only speaks for
   //     single-file inputs (`.user.js`), but a preview accepts any
   //     http(s)/file location, so a `foo.js` or a manifest URL would
   //     otherwise lose its Install button with nothing said about why.
-  //     `addSource` remains the thing that judges those.
+  //     `addCollection` remains the thing that judges those.
   //
   // …and it only stands down for a table that actually offers an
   // install, which is the `installTarget` offer row. Deferring on the
@@ -1786,12 +1793,12 @@ async function findRelatedHere(): Promise<RelatedVersions> {
 
 interface StoreSnapshot {
   scripts: StoredScript[];
-  sources: StoredSource[];
+  collections: StoredCollection[];
 }
 
 async function readStoreSnapshot(): Promise<StoreSnapshot> {
-  const [scripts, sources] = await Promise.all([getAllScripts(), getSources()]);
-  return { scripts, sources };
+  const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
+  return { scripts, collections };
 }
 
 function showOpenButton(id: string): void {
@@ -1804,16 +1811,16 @@ function showOpenButton(id: string): void {
 // `btn` is whichever control the user actually clicked: the preview's
 // own Install, or the panel's offer-row Install. The busy state has to
 // land on that one — spinning the header button while the clicked one
-// stays live invites a second click, and a second `addSource`.
+// stays live invites a second click, and a second `addCollection`.
 async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
   const spinner = startBusy(btn);
   try {
-    // The normalized form, not the raw input: `addSource` normalizes
-    // again internally (a no-op on an already-canonical value), and
-    // for a github blob URL the raw input would cost a second
-    // Contents-API round trip that can fail after the user has
+    // The normalized form, not the raw input: `addCollection`
+    // normalizes again internally (a no-op on an already-canonical
+    // value), and for a github blob URL the raw input would cost a
+    // second Contents-API round trip that can fail after the user has
     // already clicked Install.
-    const result = await addSource(previewLocation);
+    const result = await addCollection(previewLocation);
     if (!result) {
       // Raced another tab (or the same URL under a different spelling
       // that normalizes to an already-installed one). Re-run the button
@@ -1826,10 +1833,10 @@ async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
     const scriptId =
       result.kind === 'existingContainer'
         ? result.scriptId
-        : result.source.scriptIds[0];
+        : result.collection.scriptIds[0];
     location.href = scriptId
       ? `userscript.html?script=${encodeURIComponent(scriptId)}`
-      : 'sources.html';
+      : 'collections.html';
   } catch (err) {
     setMessage(`Install failed: ${describeError(err)}`, 'error');
   } finally {
@@ -1887,8 +1894,8 @@ function openRawSource(): void {
   const target = previewInput ?? '';
   const isHttp = isHttpUrl(target);
   if (!previewText && !isHttp && !previewFileUrl) {
-    // Nothing fetched and nothing to navigate to — normalizeSourceInput
-    // threw before we ever resolved a URL.
+    // Nothing fetched and nothing to navigate to —
+    // normalizeCollectionInput threw before we ever resolved a URL.
     setMessage('There is no source to open for this location', 'error');
     return;
   }
@@ -1969,8 +1976,8 @@ function leavePage(): void {
   });
 }
 
-// Show the sources page's file-access banner when a local read failed
-// *and* the toggle is the plausible reason.
+// Show the collections page's file-access banner when a local read
+// failed *and* the toggle is the plausible reason.
 //
 // Chrome reports "toggle off" and "no such file" as the same opaque
 // fetch failure, so the error text alone can't tell them apart — the
@@ -2112,9 +2119,9 @@ function renderHeading(
   text: string,
   script: Parameters<typeof renderSiteIconInto>[1],
   // Local override roots for the script's `@icon`. Installed mode
-  // passes its source's setting; the preview passes `true` outright,
+  // passes its collection's setting; the preview passes `true` outright,
   // the same way its `@require` / `@resource` resolution does — a file
-  // the user pointed at directly has no source row to consult.
+  // the user pointed at directly has no collection row to consult.
   useLocalFiles = true,
 ): void {
   filenameEl.replaceChildren();

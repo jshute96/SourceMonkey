@@ -1,9 +1,9 @@
 // Page-side half of the compile-only parse check.
 //
-// The load pipeline runs wherever it was called from: `addSource` /
-// `updateSource` / `updateScript` invoked from the sources page or the
-// viewer execute in that PAGE, not in the service worker. A page with
-// no checker installed silently skipped the check — which didn't
+// The load pipeline runs wherever it was called from: `addCollection` /
+// `updateCollection` / `updateScript` invoked from the collections page
+// or the viewer execute in that PAGE, not in the service worker. A page
+// with no checker installed silently skipped the check — which didn't
 // merely leave the row unverified, it CLEARED a previous `invalid`
 // verdict and reported "Loads cleanly again" for a script that still
 // doesn't parse.
@@ -39,8 +39,8 @@ import { setParseChecker, type ParseChecker } from './script-store.js';
 
 // Call once at page startup, before anything can touch the store.
 // Every extension page that mutates the store needs this — see the
-// `addSource` / `updateSource` / `updateScript` callers in
-// `sources.ts` and `userscript.ts`.
+// `addCollection` / `updateCollection` / `updateScript` callers in
+// `collections.ts` and `userscript.ts`.
 export function installPageParseChecker(): void {
   setParseChecker(checkScriptParses);
 }

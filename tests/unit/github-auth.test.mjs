@@ -12,7 +12,7 @@ import {
   _setGithubAuthTokenForTests,
   githubAuthHeaders,
   githubTokenLogSuffix,
-  isGithubAuthInUseForSource,
+  isGithubAuthInUseForCollection,
   isGithubAuthUrl,
 } from '../../dist/github-auth.js';
 
@@ -65,14 +65,14 @@ test('githubAuthHeaders returns an empty object when no token is set', () => {
   );
 });
 
-test('githubTokenLogSuffix annotates GitHub source URLs only when a token is set', () => {
+test('githubTokenLogSuffix annotates GitHub collection URLs only when a token is set', () => {
   // No token → suffix is empty regardless of URL.
   _setGithubAuthTokenForTests('');
   assert.equal(githubTokenLogSuffix('https://github.com/foo/bar/tree/main'), '');
   assert.equal(githubTokenLogSuffix('https://raw.githubusercontent.com/foo/bar/main/x.user.js'), '');
   _setGithubAuthTokenForTests('ghp_x');
   try {
-    // github-dir source path — the stored URL is a github.com page URL,
+    // github-dir collection path — the stored URL is a github.com page URL,
     // even though the actual fetches go to api.github.com / raw.
     // The suffix should still fire so the log makes it obvious the
     // refresh is using auth.
@@ -80,7 +80,7 @@ test('githubTokenLogSuffix annotates GitHub source URLs only when a token is set
       githubTokenLogSuffix('https://github.com/foo/bar/tree/main/dir'),
       ' (with GitHub token)',
     );
-    // Raw single-file or manifest source path (post-normalize form).
+    // Raw single-file or manifest collection path (post-normalize form).
     assert.equal(
       githubTokenLogSuffix('https://raw.githubusercontent.com/foo/bar/main/x.user.js'),
       ' (with GitHub token)',
@@ -93,19 +93,19 @@ test('githubTokenLogSuffix annotates GitHub source URLs only when a token is set
   }
 });
 
-test('isGithubAuthInUseForSource recognises github.com source paths even when the fetch goes via api/raw', () => {
+test('isGithubAuthInUseForCollection recognises github.com collection paths even when the fetch goes via api/raw', () => {
   _setGithubAuthTokenForTests('ghp_x');
   try {
-    // The github-dir source's stored URL is a github.com page URL —
+    // The github-dir collection's stored URL is a github.com page URL —
     // not authed for direct fetch (we don't fetch HTML pages), but the
     // refresh underneath uses authed api.github.com + raw calls. The
-    // for-source predicate has to recognise the page URL too.
+    // for-collection predicate has to recognise the page URL too.
     assert.equal(
-      isGithubAuthInUseForSource('https://github.com/foo/bar/tree/main/dir'),
+      isGithubAuthInUseForCollection('https://github.com/foo/bar/tree/main/dir'),
       true,
     );
     assert.equal(
-      isGithubAuthInUseForSource('https://github.com/foo/bar'),
+      isGithubAuthInUseForCollection('https://github.com/foo/bar'),
       true,
     );
   } finally {

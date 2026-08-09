@@ -2,13 +2,13 @@
 //
 // Layout (one row per record, no monolithic blob):
 //
-//   "sources"          → string[]                   index of source IDs
-//   "source:<sid>"     → StoredSource               per-source metadata
-//   "script:<scid>"    → StoredScript               per-script content+header
+//   "collections"      → string[]            index of collection IDs
+//   "collection:<cid>" → StoredCollection     per-collection metadata
+//   "script:<scid>"    → StoredScript         per-script content+header
 //
-// Sources own their scripts via `scriptIds`. Scripts back-reference
-// their source via `sourceId` so the viewer page can refresh a single
-// script without first looking up its parent.
+// Collections own their scripts via `scriptIds`. Scripts back-reference
+// their collection via `collectionId` so the viewer page can refresh a
+// single script without first looking up its parent.
 //
 // All add/refresh flows go through one pipeline:
 //   listing → fetch each file → splitHeaderBody → parseHeader →
@@ -16,9 +16,9 @@
 // A script is `ok` iff fetch succeeded AND splitHeaderBody returned no
 // error AND validateHeader returned null. Otherwise `status: 'invalid'`
 // with an `errorMessage`. On refresh, files that were known before but
-// no longer appear in the scan listing are reconciled per source kind:
-// directory sources mark them `status: 'missing'` (file may come
-// back); manifest sources delete the row (user explicitly removed the
+// no longer appear in the scan listing are reconciled per collection kind:
+// directory collections mark them `status: 'missing'` (file may come
+// back); manifest collections delete the row (user explicitly removed the
 // entry). In every error/missing case we preserve the previously
 // loaded content so the viewer (and the injector) keep working.
 //
@@ -35,25 +35,25 @@
 // flag it `invalid` immediately. See [docs/storage.md].
 //
 // If the scan step itself fails (unreadable listing, unreadable
-// manifest, …), refreshSource records the error in `scanError` on the
-// source row and leaves every existing script untouched — see that
-// function's docstring for the rationale.
+// manifest, …), refreshCollection records the error in `scanError` on
+// the collection row and leaves every existing script untouched — see
+// that function's docstring for the rationale.
 
 import {
-  canonicalSourceInput,
+  canonicalCollectionInput,
   containerKindForSingleFileInput,
   containerPath,
   fetchFileUrlText,
   fetchHttpText,
-  isContainerSource,
+  isContainerCollection,
   isHttpUrl,
-  isManifestSource,
+  isManifestCollection,
   isSingleFileInput,
   joinPath,
-  normalizeSourceInput,
+  normalizeCollectionInput,
   scanForUserScripts,
   scriptFileUrl,
-  sourceFsPath,
+  locationFsPath,
   statFromListing,
 } from './directories.js';
 import {
@@ -87,7 +87,7 @@ import {
   type DiagnosticLocation,
 } from './diagnostic-location.js';
 import { displayLocation, stripSriFragment } from './script-display.js';
-import { inferDisplayName } from './source-display.js';
+import { inferDisplayName } from './collection-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
 import { dlog } from './debug-log.js';
@@ -97,8 +97,8 @@ import { dlog } from './debug-log.js';
 // failure, or a missing/broken @require / @resource. All of them
 // surface in the UI as INVALID (the user-facing label) because from
 // the user's perspective the script can't run. `missing` is reserved
-// for the narrower case where the source file vanished from its
-// listing — the row is preserved with its last-known content but the
+// for the narrower case where the script's own file vanished from
+// its listing — the row is preserved with its last-known content but the
 // file is gone.
 export type ScriptStatus = 'ok' | 'invalid' | 'missing';
 
@@ -123,7 +123,7 @@ export interface StartupLog {
   // The header line the diagnostic is about, so the Log tab can link
   // to it. Every producer here reads the metadata block, so the file is
   // always the script's own — but it is stored in full rather than
-  // implied, because the Log tab resolves locations from every source
+  // implied, because the Log tab resolves locations from every file
   // through one path and a special case would be the only entry that
   // couldn't name a `@require`.
   location?: DiagnosticLocation;
@@ -131,7 +131,7 @@ export interface StartupLog {
 
 export interface StoredScript {
   id: string;            // UUID, stable across refreshes (keyed on relativePath)
-  sourceId: string;
+  collectionId: string;
   relativePath: string;
   fileUrl: string;
   status: ScriptStatus;
@@ -169,9 +169,9 @@ export interface StoredScript {
   // Universal "last-change token": a content-derived hash of the
   // fetched source text on the last successful load. Lets the refresh
   // pipeline decide "did anything actually change?" uniformly across
-  // source kinds and schemes — the per-scheme cheap-skip paths
+  // collection kinds and schemes — the per-scheme cheap-skip paths
   // (size+fsMtime, conditional GET) avoid the fetch entirely when the
-  // source/server cooperates; this hash catches the cases where a
+  // collection/server cooperates; this hash catches the cases where a
   // fetch did happen but the content turned out identical (a manifest
   // entry whose server returns no ETag / Last-Modified, or a file://
   // entry inside a manifest where the scan has no per-file stat).
@@ -191,7 +191,7 @@ export interface StoredScript {
   // listing-reported size+mtime are unchanged. Optional because older
   // listings / older stored rows may not have it.
   fsMtime?: number;
-  // HTTP-source validators captured from the last successful fetch.
+  // HTTP-collection validators captured from the last successful fetch.
   // Sent back as If-None-Match / If-Modified-Since on the next refresh
   // so the server can answer 304 instead of resending the body. The
   // 304 path lands in fetchOrSkipInParallel as `unchanged`, mirroring
@@ -238,25 +238,26 @@ export interface StoredScript {
   versionProbes?: VersionProbe[];
 }
 
-export interface StoredSource {
+export interface StoredCollection {
   id: string;
   path: string;
   lastRefreshedAt: number;
   scriptIds: string[];
   scanError?: string;    // set when the scan itself failed (directory listing, manifest fetch, bad URL shape)
-  enabled: boolean;      // per-source toggle; defaults true on first load
-  // Short, human-readable label for the sources page heading + the
-  // viewer's Source row. Backfilled from `inferDisplayName(path)` on
-  // first read after upgrade (see `backfillSourceDisplayNames`) so
-  // every persisted row carries one. Treated as a future user-
+  enabled: boolean;      // per-collection toggle; defaults true on first load
+  // Short, human-readable label for the collections page heading + the
+  // viewer's Collection row. Backfilled from `inferDisplayName(path)`
+  // on first read after upgrade (see `backfillCollectionDisplayNames`)
+  // so every persisted row carries one. Treated as a future user-
   // overridable value: when set, the UI uses it verbatim; the inferred
   // form is only consulted when this field is absent/empty.
   displayName?: string;
-  // Per-source opt-OUT of local stand-ins for `@require` / `@resource`
-  // files (see `src/local-file-overrides.ts` and docs/local-file-overrides.md). Only an
-  // explicit `false` disables it, so every row persisted before this
-  // field existed reads as enabled — which is the behavior a local
-  // directory source wants by default.
+  // Per-collection opt-OUT of local stand-ins for `@require` /
+  // `@resource` files (see `src/local-file-overrides.ts` and
+  // docs/local-file-overrides.md). Only an explicit `false` disables
+  // it, so every row persisted before this field existed reads as
+  // enabled — which is the behavior a local directory collection wants
+  // by default.
   //
   // Off is for a directory of scripts you didn't write, where a file
   // sitting next to a script should NOT quietly stand in for the
@@ -265,17 +266,17 @@ export interface StoredSource {
 }
 
 // Treat any pre-`localFiles`-era stored entry as enabled, the same way
-// `isSourceEnabled` treats `enabled`.
-export function sourceUsesLocalFiles(source: StoredSource): boolean {
-  return source.localFiles !== false;
+// `isCollectionEnabled` treats `enabled`.
+export function collectionUsesLocalFiles(collection: StoredCollection): boolean {
+  return collection.localFiles !== false;
 }
 
 // Treat any pre-`enabled`-era stored entry as enabled. The schema now
 // requires `enabled: boolean`, but rows persisted before this field was
 // introduced will read back as undefined; only an explicit `false`
 // should count as disabled.
-export function isSourceEnabled(source: StoredSource): boolean {
-  return source.enabled !== false;
+export function isCollectionEnabled(collection: StoredCollection): boolean {
+  return collection.enabled !== false;
 }
 export function isScriptEnabled(script: StoredScript): boolean {
   return script.enabled !== false;
@@ -290,7 +291,7 @@ export function isScriptEnabled(script: StoredScript): boolean {
 //     listing reported the same size+mtime as the stored entry, or
 //     (http) the server answered 304 to our conditional GET
 export type FetchResult =
-  | { ok: true; source: string; httpEtag?: string; httpLastModified?: string }
+  | { ok: true; text: string; httpEtag?: string; httpLastModified?: string }
   | { ok: false; errorMessage: string }
   | { unchanged: true };
 
@@ -300,7 +301,7 @@ export type FetchResult =
 // same helper works in production and in unit tests with no
 // per-environment polyfill. Async by necessity (SubtleCrypto has no
 // sync form on the web platform); buildScriptFromText and
-// rebuildSource are async in turn.
+// rebuildCollection are async in turn.
 export async function hashSource(text: string): Promise<string> {
   return sha256Hex(text);
 }
@@ -460,15 +461,15 @@ export function validateHeader(header: ParsedHeader | null): HeaderProblem | nul
 
 interface BuildArgs {
   id: string;
-  sourceId: string;
+  collectionId: string;
   relativePath: string;
   fileUrl: string;
-  source: string;
+  text: string;
   now: number;
   // Prior row, if any. Used purely for the content-hash compare: if
   // the freshly fetched bytes hash to the same value as the prior
   // row's `contentHash`, we preserve the prior `loadedAt` so callers
-  // (notably the sources page's row-highlight code) can tell that
+  // (notably the collections page's row-highlight code) can tell that
   // nothing actually changed. This is the universal post-fetch
   // change-detection path — it catches cases the cheap pre-fetch
   // skips (size+mtime, HTTP 304) couldn't handle, e.g. manifest
@@ -485,13 +486,13 @@ interface BuildArgs {
 // the content fields stay populated. Async because hashing the source
 // for the universal change-detection token uses SubtleCrypto.
 export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript> {
-  const split = splitHeaderBody(args.source);
-  const header = parseHeader(args.source);
+  const split = splitHeaderBody(args.text);
+  const header = parseHeader(args.text);
   const matching = distillMatching(header);
   // UTF-16 string length ≠ file byte length for non-ASCII content;
   // TextEncoder gives us the wire-accurate UTF-8 byte count.
-  const size = new TextEncoder().encode(args.source).length;
-  const contentHash = await hashSource(args.source);
+  const size = new TextEncoder().encode(args.text).length;
+  const contentHash = await hashSource(args.text);
 
   let status: ScriptStatus = 'ok';
   let errorMessage: string | undefined;
@@ -513,7 +514,7 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   }
 
   // Same bytes as last time → preserve the prior load timestamp so
-  // the sources page's "what changed" highlight stays accurate even
+  // the collections page's "what changed" highlight stays accurate even
   // when the cheap skip paths didn't fire. Status still reflects the
   // current parse outcome (parser fixes between refreshes are rare
   // but shouldn't be silently masked).
@@ -522,7 +523,7 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
 
   const entry: StoredScript = {
     id: args.id,
-    sourceId: args.sourceId,
+    collectionId: args.collectionId,
     relativePath: args.relativePath,
     fileUrl: args.fileUrl,
     status,
@@ -534,7 +535,7 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
     matching,
     loadedAt,
     // New rows default enabled; existing rows preserve their prior
-    // value via the merge in rebuildSource / refreshScript.
+    // value via the merge in rebuildCollection / refreshScript.
     enabled: true,
   };
   if (errorMessage) {
@@ -629,7 +630,7 @@ const NOT_READ = 'Could not be read';
 // content fields stay empty and size is null.
 export function buildInitialInvalidEntry(args: {
   id: string;
-  sourceId: string;
+  collectionId: string;
   relativePath: string;
   fileUrl: string;
   errorMessage: string;
@@ -637,7 +638,7 @@ export function buildInitialInvalidEntry(args: {
 }): StoredScript {
   return {
     id: args.id,
-    sourceId: args.sourceId,
+    collectionId: args.collectionId,
     relativePath: args.relativePath,
     fileUrl: args.fileUrl,
     status: 'invalid',
@@ -664,7 +665,7 @@ export function buildInitialInvalidEntry(args: {
 // refresh ran), applyMissing leaves `enabled` alone. Otherwise we'd
 // silently clobber a user who has re-enabled a missing row to run from
 // the cached body: any subsequent refresh while the file is still gone
-// would re-disable it. If the file later returns, rebuildSource
+// would re-disable it. If the file later returns, rebuildCollection
 // preserves whatever `enabled` value the user left in place.
 //
 // HTTP validators (httpEtag / httpLastModified) ride along untouched.
@@ -685,8 +686,8 @@ export function applyMissing(existing: StoredScript): StoredScript {
 // null when the row is healthy (`ok` with no `refreshError`).
 //
 // Single source of truth for "how do we phrase this failure in the
-// Log tab", shared by every path that can surface one: the add-source
-// path (script-store), the refresh outcome path and the startup replay
+// Log tab", shared by every path that can surface one: the add path
+// (script-store), the refresh outcome path and the startup replay
 // (script-updater). Sharing it means the same failure reads the same
 // way whichever path reported it, so a user comparing two rows can
 // tell "the same problem again" from "a different problem".
@@ -700,7 +701,7 @@ export function applyMissing(existing: StoredScript): StoredScript {
 //     its last-known-good copy; only the *update* failed. Calling that
 //     an error would overstate it, and would also poison the
 //     monotonic `loglevel:` sentinel so the row still read ERROR long
-//     after the source came back. (The badge is unaffected either way:
+//     after the collection came back. (The badge is unaffected either way:
 //     `effectiveScriptStatus` returns REFRESH FAILED before it ever
 //     consults the max log level — see src/script-display.ts.)
 export function loadStateLogEntry(
@@ -719,7 +720,7 @@ export function loadStateLogEntry(
   if (script.status === 'missing') {
     // Deliberately no location: a vanished file has no content, and
     // `applyMissing` clears any location the row used to carry.
-    return { level: 'error', message: script.errorMessage ?? 'Source file is missing' };
+    return { level: 'error', message: script.errorMessage ?? 'Script file is missing' };
   }
   if (script.refreshError) {
     return { level: 'warning', message: `Refresh failed: ${script.refreshError}` };
@@ -819,8 +820,8 @@ export async function applyFiles(
   recheck: 'all' | 'preserve',
   fetchCache: FileFetchCache,
   now: number,
-  // Whether this script's source allows local stand-ins. Defaults to
-  // false so the offline validator (and any other caller outside the
+  // Whether this script's collection allows local stand-ins. Defaults
+  // to false so the offline validator (and any other caller outside the
   // extension) keeps the plain declared-URL behavior.
   useLocalFiles = false,
 ): Promise<StoredScript> {
@@ -920,7 +921,7 @@ export async function applyFiles(
 // natural call would be `injector.buildParseCheckSource`. But
 // `injector.ts` imports runtime helpers from this module, and a real
 // (not type-only) cycle between them is something this codebase
-// deliberately avoids — see the note on `source-display.ts`.
+// deliberately avoids — see the note on `collection-display.ts`.
 //
 // So the dependency is inverted: whoever owns both modules installs
 // the checker. `background.ts` does it for the service worker,
@@ -989,8 +990,8 @@ function extensionVersion(): string {
 // `invalid` is deliberate rather than `refreshError`: unlike a failed
 // dependency fetch, this is not transient and re-running won't help —
 // the content we hold genuinely cannot run. Callers upstream still
-// apply their own preservation policy on top; `rebuildSource` keeps a
-// prior good copy running when an *http* refresh comes back invalid
+// apply their own preservation policy on top; `rebuildCollection` keeps
+// a prior good copy running when an *http* refresh comes back invalid
 // (a login page served in place of the script), while a file:// edit
 // flags immediately, which is what a local dev wants.
 //
@@ -1064,8 +1065,8 @@ interface ScanEntry {
 }
 
 interface RebuildArgs {
-  sourceId: string;
-  sourcePath: string;
+  collectionId: string;
+  collectionPath: string;
   existing: StoredScript[];
   scan: ScanEntry[];
   fetchResults: Map<string, FetchResult>;  // keyed by relativePath
@@ -1086,32 +1087,32 @@ interface RebuildArgs {
   // Cross-script file-fetch cache. Two scripts referencing the same
   // canonical URL share one fetch — and a require + resource pointing
   // at the same URL also share. Caller passes a fresh map per top-
-  // level refresh entry point (refreshSource / refreshScript /
-  // refreshAllSources); rebuildSource itself never mutates the entry
-  // semantics, just hands the cache to attachFiles.
+  // level refresh entry point (refreshCollection / refreshScript /
+  // refreshAllCollections); rebuildCollection itself never mutates the
+  // entry semantics, just hands the cache to attachFiles.
   fileFetchCache?: FileFetchCache;
-  // Does this source allow local stand-ins for the files its scripts
-  // declare (`StoredSource.localFiles`)? Passed as a plain flag rather
-  // than the whole source row because the roots are derived per script,
+  // Does this collection allow local stand-ins for the files its scripts
+  // declare (`StoredCollection.localFiles`)? Passed as a plain flag rather
+  // than the whole collection row because the roots are derived per script,
   // from each script's own `fileUrl`. Defaults to false so a caller that
   // hasn't thought about it gets the declared-URL-only behavior.
   useLocalFiles?: boolean;
 }
 
-// Pure orchestrator: given the prior state for a source plus a fresh
-// scan and the per-file fetch results, return the new list of
-// `StoredScript`s in canonical order (scan order, then any entries
-// that fell off the listing tagged `missing`). Stable IDs come from
-// looking up by relativePath in `existing`. No I/O — easy to test.
+// Pure orchestrator: given the prior state for a collection plus a
+// fresh scan and the per-file fetch results, return the new list of
+// `StoredScript`s in canonical order (scan order, then any entries that
+// fell off the listing tagged `missing`). Stable IDs come from looking
+// up by relativePath in `existing`. No I/O — easy to test.
 //
-// Vanished-entry handling depends on the source kind:
-//   - Manifest sources: an entry that's no longer listed is treated
+// Vanished-entry handling depends on the collection kind:
+//   - Manifest collections: an entry that's no longer listed is treated
 //     as an explicit user removal — the row is dropped entirely (the
-//     `refreshSource` caller then deletes the storage row).
-//   - Other sources (local directory): the prior row is tagged
+//     `refreshCollection` caller then deletes the storage row).
+//   - Other collections (local directory): the prior row is tagged
 //     `missing` and auto-disabled. The file might come back; the row
 //     stays so the viewer keeps working.
-export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> {
+export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
   const recheckFiles = args.recheckFiles ?? 'all';
   const fileFetchCache: FileFetchCache = args.fileFetchCache ?? new Map();
@@ -1131,16 +1132,16 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
     handledPaths.add(found.relativePath);
     const prior = existingByPath.get(found.relativePath);
     const id = prior?.id ?? newId();
-    const fileUrl = scriptFileUrl(args.sourcePath, found.relativePath);
+    const fileUrl = scriptFileUrl(args.collectionPath, found.relativePath);
     const fr = args.fetchResults.get(found.relativePath);
     if (fr && 'ok' in fr && fr.ok) {
       entryPromises.push((async (): Promise<StoredScript> => {
         const built = await buildScriptFromText({
           id,
-          sourceId: args.sourceId,
+          collectionId: args.collectionId,
           relativePath: found.relativePath,
           fileUrl,
-          source: fr.source,
+          text: fr.text,
           now: args.now,
           // Pass prior so buildScriptFromText can preserve loadedAt when
           // the freshly fetched bytes hash to the same value — the
@@ -1199,16 +1200,17 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       // fresh-fetch failure — shouldn't happen because the orchestrator
       // only emits `unchanged` when prior exists.)
       if (prior) {
-        // Recompute fileUrl unconditionally — if the source's path/URL
-        // ever changes (e.g. a future edit-source UI), the prior's
-        // fileUrl would silently lie. Cheap to recompute here.
+        // Recompute fileUrl unconditionally — if the collection's
+        // path/URL ever changes (e.g. a future edit-collection UI), the
+        // prior's fileUrl would silently lie. Cheap to recompute here.
         const next = { ...prior, fileUrl };
         if (found.mtime !== undefined) next.fsMtime = found.mtime;
         if (found.size !== undefined) next.size = found.size;
         // A proven-unchanged refetch (HTTP 304 or matching size+mtime)
-        // means the source is reachable and serving the same good bytes
-        // again — clear any stale "refresh failed" annotation. If a dep
-        // recheck below fails again, applyFiles re-sets refreshError.
+        // means the collection is reachable and serving the same good
+        // bytes again — clear any stale "refresh failed" annotation. If
+        // a dep recheck below fails again, applyFiles re-sets
+        // refreshError.
         delete next.refreshError;
         // Even when the body is unchanged, explicit Refresh still
         // rechecks @require + @resource bodies (the user may want to
@@ -1221,7 +1223,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       } else {
         entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
           id,
-          sourceId: args.sourceId,
+          collectionId: args.collectionId,
           relativePath: found.relativePath,
           fileUrl,
           // Prefixed as internal because it is: the orchestrator told us
@@ -1240,7 +1242,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       } else {
         entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
           id,
-          sourceId: args.sourceId,
+          collectionId: args.collectionId,
           relativePath: found.relativePath,
           fileUrl,
           errorMessage,
@@ -1254,7 +1256,7 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
       entryPromises.push(Promise.resolve(prior
         ? applyFetchError(prior, NOT_READ)
         : buildInitialInvalidEntry({
-            id, sourceId: args.sourceId, relativePath: found.relativePath,
+            id, collectionId: args.collectionId, relativePath: found.relativePath,
             fileUrl, errorMessage: NOT_READ, now: args.now,
           })));
     }
@@ -1263,9 +1265,9 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
   const out = await Promise.all(entryPromises);
 
   // Anything in `existing` that the scan didn't see → either marked
-  // missing (directory sources: file may come back) or dropped
-  // (manifest sources: the user explicitly removed the entry).
-  const dropVanished = isManifestSource(args.sourcePath);
+  // missing (directory collections: file may come back) or dropped
+  // (manifest collections: the user explicitly removed the entry).
+  const dropVanished = isManifestCollection(args.collectionPath);
   for (const e of args.existing) {
     if (handledPaths.has(e.relativePath)) continue;
     if (dropVanished) continue;
@@ -1276,20 +1278,20 @@ export async function rebuildSource(args: RebuildArgs): Promise<StoredScript[]> 
 
 // ---------- chrome.storage.local I/O ----------
 
-const SOURCES_INDEX_KEY = 'sources';
-const sourceKey = (id: string) => `source:${id}`;
+const COLLECTIONS_INDEX_KEY = 'collections';
+const collectionKey = (id: string) => `collection:${id}`;
 const scriptKey = (id: string) => `script:${id}`;
 
 // Does a `chrome.storage.local` change touch the structural rows — the
-// source index, a source, or a script? Exported so pages watching for
-// "something I display moved" ask the module that owns the key layout
-// instead of re-deriving the prefixes, where a rename here would leave
-// them silently watching keys that no longer exist.
+// collection index, a collection, or a script? Exported so pages
+// watching for "something I display moved" ask the module that owns the
+// key layout instead of re-deriving the prefixes, where a rename here
+// would leave them silently watching keys that no longer exist.
 export function touchesStructuralRows(keys: Iterable<string>): boolean {
   for (const key of keys) {
     if (
-      key === SOURCES_INDEX_KEY ||
-      key.startsWith(sourceKey('')) ||
+      key === COLLECTIONS_INDEX_KEY ||
+      key.startsWith(collectionKey('')) ||
       key.startsWith(scriptKey(''))
     ) {
       return true;
@@ -1298,20 +1300,20 @@ export function touchesStructuralRows(keys: Iterable<string>): boolean {
   return false;
 }
 
-// Serialize every read-modify-write of the structural rows (the source
-// index, source rows, script rows). chrome.storage.local has no
-// compare-and-swap, so two operations that each read a row, derive a
-// new value, and write it back would otherwise drop one another's
-// change — e.g. a user's enable toggle reverted by a refresh that
-// captured the old flag before the fetch, or an addSource racing a
-// removeSource on the shared index. Callers run their read AND write
-// inside one `mutate()` so the pair is atomic with respect to other
-// mutators.
+// Serialize every read-modify-write of the structural rows (the
+// collection index, collection rows, script rows). chrome.storage.local
+// has no compare-and-swap, so two operations that each read a row,
+// derive a new value, and write it back would otherwise drop one
+// another's change — e.g. a user's enable toggle reverted by a refresh
+// that captured the old flag before the fetch, or an addCollection
+// racing a removeCollection on the shared index. Callers run their read
+// AND write inside one `mutate()` so the pair is atomic with respect to
+// other mutators.
 //
 // The critical sections here are short (no network) — slow fetches stay
 // OUTSIDE the lock (refresh fetches, then re-reads + writes inside it),
 // so this doesn't serialize I/O. IMPORTANT: a `mutate()` block must
-// never call another mutator (refreshSource / addSource / a set*),
+// never call another mutator (refreshCollection / addCollection / a set*),
 // since this mutex is non-reentrant — keep orchestrator calls outside.
 let mutateChain: Promise<unknown> = Promise.resolve();
 function mutate<T>(fn: () => Promise<T>): Promise<T> {
@@ -1324,66 +1326,161 @@ function mutate<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// Set to `true` the first time the SW seeds the default sources, so the
-// seeding never runs again even after the user removes those sources.
+// Set to `true` the first time the SW seeds the default collections, so
+// the seeding never runs again even after the user removes those
+// collections.
 const FIRST_RUN_DONE_KEY = 'firstRunComplete';
 
-// Sources seeded on the very first run (by the sources page — see
-// `seedDefaultSourcesViaUi` in sources.ts). Each is fed through the
-// normal add → Refresh flow, so any input shape `addSource` accepts
-// (github-dir / http(s) `.user.js` / manifest URL, or an absolute
-// directory path) works here. `addSource` dedupes by canonical source
-// path, so any accidental repeat collapses to one source.
-export const DEFAULT_SOURCES: readonly string[] = [
+// Collections seeded on the very first run (by the collections page —
+// see `seedDefaultCollectionsViaUi` in collections.ts). Each is fed
+// through the normal add → Refresh flow, so any input shape
+// `addCollection` accepts (github-dir / http(s) `.user.js` / manifest
+// URL, or an absolute directory path) works here. `addCollection`
+// dedupes by canonical collection path, so any accidental repeat
+// collapses to one collection.
+export const DEFAULT_COLLECTIONS: readonly string[] = [
   'https://github.com/jshute96/SourceMonkey/tree/main/tests/examples',
   'https://github.com/jshute96/SourceMonkey/tree/main/userscripts',
 ];
 
+// ---------- Legacy key migration (temporary — see TODO.md) ----------
+//
+// Collections were called "sources" before the August 2026 rename, and
+// a profile written then holds a `"sources"` index, `source:<id>` rows,
+// and a `sourceId` back-reference on every script. Without this, an
+// upgrade would read as a wiped profile: every collection gone, every
+// script unregistered. Rewrite the rows once, on the first storage read
+// in each JS context, and drop the old keys.
+const LEGACY_INDEX_KEY = 'sources';
+const LEGACY_COLLECTION_PREFIX = 'source:';
+
+let migrationPromise: Promise<void> | null = null;
+
+// Idempotent, memoized per context. Awaited by every read path in this
+// module, and exported for the two SW modules that read the structural
+// rows straight out of `chrome.storage.local` (`match-index.ts` and
+// `injector.ts`) rather than through here. `script-log-id.ts` reads
+// `script:*` rows directly too and deliberately does NOT await: script
+// keys don't move, and it reads only `relativePath`.
+export function ensureCollectionKeysMigrated(): Promise<void> {
+  migrationPromise ??= migrateLegacyCollectionKeys().catch((err: unknown) => {
+    // Never let a failed migration wedge every read behind it: clear the
+    // memo so the next reader retries, and leave the old rows in place.
+    console.info('[SourceMonkey] collection-key migration failed', err);
+    migrationPromise = null;
+  });
+  return migrationPromise;
+}
+
+// Forget that this context has already checked. Only for the test
+// surface's `resetAllState`, which wipes storage — the memo describes a
+// profile that no longer exists, and a test seeding pre-rename rows
+// afterwards would otherwise never see them migrated.
+//
+// Scope is the calling context only: `resetAllState` runs in the service
+// worker, so an extension page already open keeps its own resolved memo.
+// A test that seeds pre-rename rows has to open the page afterwards.
+export function resetCollectionKeyMigrationForTests(): void {
+  migrationPromise = null;
+}
+
+async function migrateLegacyCollectionKeys(): Promise<void> {
+  // Cheap gate first. A profile with any collection at all has the old
+  // index row, so its absence means there is nothing to move. The memo
+  // means this runs at most once per context — but that is still once
+  // per service-worker wake and once per page load, and the `get(null)`
+  // below drags back every script body and the whole favicon cache.
+  const probe = await chrome.storage.local.get(LEGACY_INDEX_KEY);
+  if (!(LEGACY_INDEX_KEY in probe)) return;
+
+  const all = await chrome.storage.local.get(null);
+  const toSet: Record<string, unknown> = {};
+  const toRemove: string[] = [LEGACY_INDEX_KEY];
+  // Seed the index ONLY when the new spelling isn't there yet. This runs
+  // outside `mutate()`, so a context that read `all` before another one
+  // finished migrating would otherwise write the stale legacy id list
+  // over an index a later add had already extended — orphaning that
+  // collection's row from the index.
+  if (!(COLLECTIONS_INDEX_KEY in all)) {
+    const ids = all[LEGACY_INDEX_KEY];
+    toSet[COLLECTIONS_INDEX_KEY] = Array.isArray(ids) ? ids : [];
+  }
+
+  let scriptsMoved = 0;
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(LEGACY_COLLECTION_PREFIX)) {
+      toSet[collectionKey(key.slice(LEGACY_COLLECTION_PREFIX.length))] = value;
+      toRemove.push(key);
+      continue;
+    }
+    if (!key.startsWith('script:')) continue;
+    const row = value as StoredScript & { sourceId?: string };
+    if (row?.sourceId === undefined) continue;
+    const { sourceId, ...rest } = row;
+    toSet[key] = { ...rest, collectionId: rest.collectionId ?? sourceId };
+    scriptsMoved++;
+  }
+
+  // Write the new rows before dropping the old ones: an interrupted
+  // migration then leaves both spellings present, and the re-run is a
+  // no-op over the rows it already moved.
+  await chrome.storage.local.set(toSet);
+  await chrome.storage.local.remove(toRemove);
+  console.log(
+    `[SourceMonkey] migrated ${toRemove.length - 1} collections and `
+    + `${scriptsMoved} scripts to the collection:* key spelling`,
+  );
+}
+
 async function getRaw<T>(key: string): Promise<T | undefined> {
+  await ensureCollectionKeysMigrated();
   const result = await chrome.storage.local.get(key);
   return result[key] as T | undefined;
 }
 
 async function getMany(keys: string[]): Promise<Record<string, unknown>> {
   if (keys.length === 0) return {};
+  await ensureCollectionKeysMigrated();
   return await chrome.storage.local.get(keys);
 }
 
-async function readSourceIndex(): Promise<string[]> {
-  return (await getRaw<string[]>(SOURCES_INDEX_KEY)) ?? [];
+async function readCollectionIndex(): Promise<string[]> {
+  return (await getRaw<string[]>(COLLECTIONS_INDEX_KEY)) ?? [];
 }
 
-// Read every registered source's metadata (without scripts). Order
+// Read every registered collection's metadata (without scripts). Order
 // preserved from the index.
-export async function getSources(): Promise<StoredSource[]> {
-  const ids = await readSourceIndex();
-  const got = await getMany(ids.map(sourceKey));
+export async function getCollections(): Promise<StoredCollection[]> {
+  const ids = await readCollectionIndex();
+  const got = await getMany(ids.map(collectionKey));
   return ids
-    .map((id) => got[sourceKey(id)] as StoredSource | undefined)
-    .filter((s): s is StoredSource => s != null);
+    .map((id) => got[collectionKey(id)] as StoredCollection | undefined)
+    .filter((s): s is StoredCollection => s != null);
 }
 
-// Read a source plus all its scripts in declared order.
-export async function getSourceWithScripts(
+// Read a collection plus all its scripts in declared order.
+export async function getCollectionWithScripts(
   id: string,
-): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
-  const source = await getRaw<StoredSource>(sourceKey(id));
-  if (!source) return null;
-  const got = await getMany(source.scriptIds.map(scriptKey));
-  const scripts = source.scriptIds
+): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
+  const collection = await getRaw<StoredCollection>(collectionKey(id));
+  if (!collection) return null;
+  const got = await getMany(collection.scriptIds.map(scriptKey));
+  const scripts = collection.scriptIds
     .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
     .filter((s): s is StoredScript => s != null);
-  return { source, scripts };
+  return { collection, scripts };
 }
 
 export async function getScript(scriptId: string): Promise<StoredScript | undefined> {
   return await getRaw<StoredScript>(scriptKey(scriptId));
 }
 
-// Read every stored script (across all sources, regardless of status).
-// One `get(null)` scan rather than N per-source reads; used by the
-// sources page + viewer to compute global log IDs in one pass.
+// Read every stored script (across all collections, regardless of
+// status). One `get(null)` scan rather than N per-collection reads;
+// used by the collections page + viewer to compute global log IDs in
+// one pass.
 export async function getAllScripts(): Promise<StoredScript[]> {
+  await ensureCollectionKeysMigrated();
   const all = await chrome.storage.local.get(null);
   const out: StoredScript[] = [];
   for (const [key, value] of Object.entries(all)) {
@@ -1392,67 +1489,69 @@ export async function getAllScripts(): Promise<StoredScript[]> {
   return out;
 }
 
-export async function getSource(id: string): Promise<StoredSource | undefined> {
-  return await getRaw<StoredSource>(sourceKey(id));
+export async function getCollection(id: string): Promise<StoredCollection | undefined> {
+  return await getRaw<StoredCollection>(collectionKey(id));
 }
 
-// Result of `addSource`. Three outcomes:
-//   - newSource: a brand-new source row was created (a directory /
-//     manifest / github-dir source, or a never-before-seen container
+// Result of `addCollection`. Three outcomes:
+//   - newCollection: a brand-new collection row was created (a directory /
+//     manifest / github-dir collection, or a never-before-seen container
 //     auto-created for the first single-file add of its kind). The
 //     caller appends a fresh section to the DOM.
 //   - existingContainer: the input was a single-file URL/path added
 //     into a container that already existed. The caller re-renders
 //     that container's section in place.
-//   - null: the input was a duplicate (an already-registered source
+//   - null: the input was a duplicate (an already-registered collection
 //     path, or a script URL/path already present in its container).
 //     The caller surfaces the duplicate message and jumps to the
 //     existing section.
-export type AddSourceResult =
-  | { kind: 'newSource'; source: StoredSource }
-  | { kind: 'existingContainer'; source: StoredSource; scriptId: string }
+export type AddCollectionResult =
+  | { kind: 'newCollection'; collection: StoredCollection }
+  | { kind: 'existingContainer'; collection: StoredCollection; scriptId: string }
   | null;
 
-// Register a new source from a raw user input. Dispatches by input
+// Register a new collection from a raw user input. Dispatches by input
 // shape:
 //   - single-file `.user.js` URL/path → folded into the matching
-//     container source (created on demand if none exists). The script
+//     container collection (created on demand if none exists). The script
 //     is added to the container's `scriptIds` and its initial fetch
 //     runs immediately so the table populates without a manual
 //     Refresh.
 //   - everything else (directory, manifest, github-dir URL) → mints a
-//     UUID, persists an empty source row, then refreshes to populate
+//     UUID, persists an empty collection row, then refreshes to populate
 //     the scripts.
 //
-// `normalizeSourceInput` runs first so a github.com `/blob/.../foo.user.js`
-// (or `/blob/.../script_manifest.json`) URL gets rewritten to its raw
-// counterpart before we hit the duplicate check. The github blob URL
-// serves HTML, not raw bytes, so storing it verbatim would silently
-// load the page chrome instead of the script — see [docs/http-sources.md].
-export async function addSource(rawPath: string): Promise<AddSourceResult> {
+// `normalizeCollectionInput` runs first so a github.com
+// `/blob/.../foo.user.js` (or `/blob/.../script_manifest.json`) URL
+// gets rewritten to its raw counterpart before we hit the duplicate
+// check. The github blob URL serves HTML, not raw bytes, so storing it
+// verbatim would silently load the page chrome instead of the script —
+// see [docs/http-collections.md].
+export async function addCollection(rawPath: string): Promise<AddCollectionResult> {
   // Two canonicalizations, in order: provider rewriting (github blob →
   // raw), then the one-spelling-per-location rule. The second is what
-  // keeps `/x/a.user.js` typed into the sources page and
+  // keeps `/x/a.user.js` typed into the collections page and
   // `file:///x/a.user.js` arriving from a captured navigation from
-  // becoming two rows for one file — see `canonicalSourceInput`.
-  const path = canonicalSourceInput(await normalizeSourceInput(rawPath));
+  // becoming two rows for one file — see `canonicalCollectionInput`.
+  const path = canonicalCollectionInput(await normalizeCollectionInput(rawPath));
 
   if (isSingleFileInput(path)) {
     return await addScriptToContainer(path);
   }
 
   // Dedup-and-register atomically so two concurrent adds of the same
-  // path can't both create a source (and so this index write can't lose
-  // a race with another index mutator). The refresh runs OUTSIDE the
-  // lock (it acquires the lock itself for its own write).
+  // path can't both create a collection (and so this index write can't
+  // lose a race with another index mutator). The refresh runs OUTSIDE
+  // the lock (it acquires the lock itself for its own write).
   const created = await mutate(async () => {
-    const sources = await getSources();
+    const collections = await getCollections();
     // Canonicalize the stored side too, for the same reason the
-    // container check does: a source row written before `addSource`
-    // collapsed `file://` inputs still carries the URL spelling.
-    if (sources.some((s) => canonicalSourceInput(s.path) === path)) return null;
+    // container check does: a collection row written before
+    // `addCollection` collapsed `file://` inputs still carries the URL
+    // spelling.
+    if (collections.some((s) => canonicalCollectionInput(s.path) === path)) return null;
     const id = crypto.randomUUID();
-    const seed: StoredSource = {
+    const seed: StoredCollection = {
       id,
       path,
       lastRefreshedAt: 0,
@@ -1463,16 +1562,16 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
       // name only materialises on the next backfill pass.
       displayName: inferDisplayName(path),
     };
-    const nextIndex = [...sources.map((s) => s.id), id];
+    const nextIndex = [...collections.map((s) => s.id), id];
     await chrome.storage.local.set({
-      [SOURCES_INDEX_KEY]: nextIndex,
-      [sourceKey(id)]: seed,
+      [COLLECTIONS_INDEX_KEY]: nextIndex,
+      [collectionKey(id)]: seed,
     });
     return { id, seed };
   });
   if (!created) return null;
   const { id, seed } = created;
-  const refreshed = await refreshSource(id);
+  const refreshed = await refreshCollection(id);
   // The updater-driven refresh paths already emit per-script Log
   // entries when a script's load state goes bad. This initial-add path
   // bypasses the updater, so anything that lands already broken would
@@ -1485,11 +1584,11 @@ export async function addSource(rawPath: string): Promise<AddSourceResult> {
   if (refreshed) {
     await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
   }
-  return { kind: 'newSource', source: refreshed?.source ?? seed };
+  return { kind: 'newCollection', collection: refreshed?.collection ?? seed };
 }
 
-// First-run gate. Seeding the default sources is driven from the
-// sources page (so the user watches the normal add → Refresh flow,
+// First-run gate. Seeding the default collections is driven from the
+// collections page (so the user watches the normal add → Refresh flow,
 // rather than scripts appearing silently from the SW); the SW only
 // opens that page on install. These two helpers are the persisted flag
 // the page and SW share.
@@ -1498,19 +1597,19 @@ export async function isFirstRunComplete(): Promise<boolean> {
 }
 
 // Record that first-run handling is done so the SW stops opening the
-// seeding page and the sources page stops re-seeding — including after
-// the user deletes the seeded sources. Also called by the test-surface
-// reset so a cleared store isn't re-seeded.
+// seeding page and the collections page stops re-seeding — including
+// after the user deletes the seeded collections. Also called by the
+// test-surface reset so a cleared store isn't re-seeded.
 export async function markFirstRunComplete(): Promise<void> {
   await chrome.storage.local.set({ [FIRST_RUN_DONE_KEY]: true });
 }
 
-// Add a single-file input to the matching container source. Creates
+// Add a single-file input to the matching container collection. Creates
 // the container row if this is the first script of its kind. Returns
 // null if the URL/path is already registered as a script under its
-// container. The fetch runs as part of `refreshSource` so the new row
-// lands populated.
-async function addScriptToContainer(path: string): Promise<AddSourceResult> {
+// container. The fetch runs as part of `refreshCollection` so the new
+// row lands populated.
+async function addScriptToContainer(path: string): Promise<AddCollectionResult> {
   const kind = containerKindForSingleFileInput(path);
   const cPath = containerPath(kind);
 
@@ -1518,8 +1617,8 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
   // concurrent add (or index mutator) can't lose this scriptIds/index
   // write. The refresh runs OUTSIDE the lock. Returns null on duplicate.
   const seeded = await mutate(async () => {
-    const sources = await getSources();
-    const existingContainer = sources.find((s) => s.path === cPath);
+    const collections = await getCollections();
+    const existingContainer = collections.find((s) => s.path === cPath);
     const isNew = !existingContainer;
     if (existingContainer) {
       // Each container script's `relativePath` is the full URL/path the
@@ -1529,10 +1628,10 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
         const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
         if (s === undefined) continue;
         // Canonicalize the STORED value too: rows written before
-        // `addSource` started collapsing `file://` inputs still carry
-        // the URL spelling, and comparing raw would offer to install a
-        // second copy of a file we already have.
-        if (canonicalSourceInput(s.relativePath) === path) return null;
+        // `addCollection` started collapsing `file://` inputs still
+        // carry the URL spelling, and comparing raw would offer to
+        // install a second copy of a file we already have.
+        if (canonicalCollectionInput(s.relativePath) === path) return null;
       }
     }
 
@@ -1540,7 +1639,7 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
     const containerId = existingContainer?.id ?? crypto.randomUUID();
     const scriptId = crypto.randomUUID();
     const priorScriptIds = existingContainer?.scriptIds ?? [];
-    const nextContainer: StoredSource = existingContainer
+    const nextContainer: StoredCollection = existingContainer
       ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
       : {
           id: containerId,
@@ -1552,7 +1651,7 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
         };
     const seedScript = buildInitialInvalidEntry({
       id: scriptId,
-      sourceId: containerId,
+      collectionId: containerId,
       relativePath: path,
       fileUrl: scriptFileUrl(cPath, path),
       errorMessage: NOT_LOADED_YET,
@@ -1562,13 +1661,13 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
     // Single set call so a SW restart between writes can never leave a
     // half-populated container — either the new script lands with its
     // container's scriptIds pointing at it (and, for a new container,
-    // the sources index pointing at the container), or nothing does.
+    // the collections index pointing at the container), or nothing does.
     const toSet: Record<string, unknown> = {
-      [sourceKey(containerId)]: nextContainer,
+      [collectionKey(containerId)]: nextContainer,
       [scriptKey(scriptId)]: seedScript,
     };
     if (isNew) {
-      toSet[SOURCES_INDEX_KEY] = [...sources.map((s) => s.id), containerId];
+      toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((s) => s.id), containerId];
     }
     await chrome.storage.local.set(toSet);
     return { isNew, containerId, scriptId, nextContainer };
@@ -1576,13 +1675,13 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
   if (!seeded) return null;
   const { isNew, containerId, scriptId, nextContainer } = seeded;
 
-  const refreshed = await refreshSource(containerId);
+  const refreshed = await refreshCollection(containerId);
   if (refreshed) {
     await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
   }
-  const finalSource = refreshed?.source ?? nextContainer;
-  if (isNew) return { kind: 'newSource', source: finalSource };
-  return { kind: 'existingContainer', source: finalSource, scriptId };
+  const finalCollection = refreshed?.collection ?? nextContainer;
+  if (isNew) return { kind: 'newCollection', collection: finalCollection };
+  return { kind: 'existingContainer', collection: finalCollection, scriptId };
 }
 
 // Copy a freshly-added script's load failure — and any local stand-in
@@ -1603,79 +1702,80 @@ async function addScriptToContainer(path: string): Promise<AddSourceResult> {
 async function emitInitialLoadLog(script: StoredScript): Promise<void> {
   // `undefined` prior: everything this row loaded is news at add time.
   for (const message of localFileLogMessages(undefined, script)) {
-    await appendScriptLog(script.id, { level: 'info', source: 'add-source', message });
+    await appendScriptLog(script.id, { level: 'info', source: 'add', message });
   }
   const entry = loadStateLogEntry(script);
   if (!entry) return;
-  await appendScriptLog(script.id, { ...entry, source: 'add-source' });
+  await appendScriptLog(script.id, { ...entry, source: 'add' });
 }
 
-// Fill in `displayName` on any source row that doesn't have one yet.
-// Runs at sources-page boot (and at any other entry point that wants
-// stable display labels for older rows). Cheap — one read of the
-// source index plus one bulk write iff anything was missing. The
-// pure-inference rules live in `source-display.ts`; that module only
-// imports a TYPE from this file so the cycle is compile-time only.
-export async function backfillSourceDisplayNames(): Promise<void> {
-  const sources = await getSources();
+// Fill in `displayName` on any collection row that doesn't have one
+// yet. Runs at collections-page boot (and at any other entry point that
+// wants stable display labels for older rows). Cheap — one read of the
+// collection index plus one bulk write iff anything was missing. The
+// pure-inference rules live in `collection-display.ts`; that module
+// only imports a TYPE from this file so the cycle is compile-time only.
+export async function backfillCollectionDisplayNames(): Promise<void> {
+  const collections = await getCollections();
   const toSet: Record<string, unknown> = {};
-  for (const s of sources) {
+  for (const s of collections) {
     if (s.displayName && s.displayName.trim()) continue;
-    const next: StoredSource = { ...s, displayName: inferDisplayName(s.path) };
-    toSet[sourceKey(s.id)] = next;
+    const next: StoredCollection = { ...s, displayName: inferDisplayName(s.path) };
+    toSet[collectionKey(s.id)] = next;
   }
   if (Object.keys(toSet).length > 0) {
     await chrome.storage.local.set(toSet);
   }
 }
 
-// Reorder the sources index by moving the given source one position
-// up or down. No-op if the source is already at the boundary in the
-// requested direction (caller-side Up/Down buttons disable themselves
-// at the ends, but the function tolerates a redundant call). Only the
-// index row is rewritten; per-source rows are untouched.
-export async function moveSource(
+// Reorder the collections index by moving the given collection one
+// position up or down. No-op if the collection is already at the
+// boundary in the requested direction (caller-side Up/Down buttons
+// disable themselves at the ends, but the function tolerates a
+// redundant call). Only the index row is rewritten; per-collection rows
+// are untouched.
+export async function moveCollection(
   id: string,
   direction: 'up' | 'down',
 ): Promise<void> {
   await mutate(async () => {
-    const ids = await readSourceIndex();
+    const ids = await readCollectionIndex();
     const idx = ids.indexOf(id);
     if (idx < 0) return;
     const swapWith = direction === 'up' ? idx - 1 : idx + 1;
     if (swapWith < 0 || swapWith >= ids.length) return;
     const next = ids.slice();
     [next[idx], next[swapWith]] = [next[swapWith]!, next[idx]!];
-    await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: next });
+    await chrome.storage.local.set({ [COLLECTIONS_INDEX_KEY]: next });
   });
 }
 
-export async function removeSource(id: string): Promise<void> {
+export async function removeCollection(id: string): Promise<void> {
   await mutate(async () => {
-    const source = await getRaw<StoredSource>(sourceKey(id));
-    const ids = await readSourceIndex();
+    const collection = await getRaw<StoredCollection>(collectionKey(id));
+    const ids = await readCollectionIndex();
     const nextIndex = ids.filter((sid) => sid !== id);
-    const removeKeys = [sourceKey(id), ...(source?.scriptIds ?? []).map(scriptKey)];
-    await chrome.storage.local.set({ [SOURCES_INDEX_KEY]: nextIndex });
+    const removeKeys = [collectionKey(id), ...(collection?.scriptIds ?? []).map(scriptKey)];
+    await chrome.storage.local.set({ [COLLECTIONS_INDEX_KEY]: nextIndex });
     await chrome.storage.local.remove(removeKeys);
   });
 }
 
 // Drop a single script row from storage and remove its ID from the
-// parent source's scriptIds list. Used by the sources-page trash-can
-// next to a `missing` row so the user can clear out records for files
-// that are gone for good — refreshSource won't recreate the row because
-// it only adds entries the scan currently reports.
+// parent collection's scriptIds list. Used by the collections-page
+// trash-can next to a `missing` row so the user can clear out records
+// for files that are gone for good — refreshCollection won't recreate
+// the row because it only adds entries the scan currently reports.
 export async function removeScript(id: string): Promise<void> {
   await mutate(async () => {
     const script = await getRaw<StoredScript>(scriptKey(id));
     if (!script) return;
-    const source = await getRaw<StoredSource>(sourceKey(script.sourceId));
+    const collection = await getRaw<StoredCollection>(collectionKey(script.collectionId));
     const toSet: Record<string, unknown> = {};
-    if (source) {
-      const nextIds = source.scriptIds.filter((sid) => sid !== id);
-      if (nextIds.length !== source.scriptIds.length) {
-        toSet[sourceKey(source.id)] = { ...source, scriptIds: nextIds };
+    if (collection) {
+      const nextIds = collection.scriptIds.filter((sid) => sid !== id);
+      if (nextIds.length !== collection.scriptIds.length) {
+        toSet[collectionKey(collection.id)] = { ...collection, scriptIds: nextIds };
       }
     }
     if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
@@ -1690,23 +1790,23 @@ export async function removeScript(id: string): Promise<void> {
   } catch { /* best-effort: a missing session row isn't an error */ }
 }
 
-// Rescan a source + refetch all of its scripts. Adds new files, keeps
-// known files (status updated based on fetch result), and reconciles
-// vanished files per source kind: directory sources mark them
-// `missing` (the file may come back), manifest sources delete them
-// (the user explicitly removed the entry). Persists the updated source
-// row plus every script row in one set call.
+// Rescan a collection + refetch all of its scripts. Adds new files,
+// keeps known files (status updated based on fetch result), and
+// reconciles vanished files per collection kind: directory collections
+// mark them `missing` (the file may come back), manifest collections
+// delete them (the user explicitly removed the entry). Persists the
+// updated collection row plus every script row in one set call.
 //
 // Scan failure (unreadable directory listing, unreadable manifest, bad
-// URL) records a `scanError` on the source and **leaves every script
+// URL) records a `scanError` on the collection and **leaves every script
 // untouched** — content, status, and enabled state all preserved. We
-// can't tell whether a source that won't list is actually empty or
+// can't tell whether a collection that won't list is actually empty or
 // just temporarily unreachable (remote mount with timed-out creds,
 // flaky network, …), so we err on the side of keeping the user's
 // scripts running until we see definitive evidence they're gone.
 //
 // Optimisation: skip the fetch and reuse the prior entry verbatim when
-// the source can prove a file is unchanged — file:// uses Chrome's
+// the collection can prove a file is unchanged — file:// uses Chrome's
 // directory-listing size+mtime; http(s):// uses a conditional GET
 // (304 from the server). This keeps "Refresh All" cheap when most
 // scripts are unchanged.
@@ -1717,26 +1817,26 @@ export interface RefreshOptions {
   // the opportunistic path so background checks don't redownload
   // every dep on every navigation.
   recheckFiles?: 'all' | 'preserve';
-  // Shared cross-script file-fetch cache. When refreshAllSources
-  // calls multiple refreshSource concurrently, threading one cache
-  // through them lets two scripts (across two sources) referencing
-  // the same URL share one fetch. Single refreshSource calls let it
+  // Shared cross-script file-fetch cache. When refreshAllCollections
+  // calls multiple refreshCollection concurrently, threading one cache
+  // through them lets two scripts (across two collections) referencing
+  // the same URL share one fetch. Single refreshCollection calls let it
   // default to an empty fresh map.
   fileFetchCache?: FileFetchCache;
 }
 
-export async function refreshSource(
+export async function refreshCollection(
   id: string,
   opts: RefreshOptions = {},
-): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
-  const prior = await getSourceWithScripts(id);
+): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
+  const prior = await getCollectionWithScripts(id);
   if (!prior) return null;
-  const { source, scripts: existingScripts } = prior;
+  const { collection, scripts: existingScripts } = prior;
 
   let scan: { relativePath: string; size?: number; mtime?: number }[] = [];
   let scanError: string | undefined;
-  if (isContainerSource(source.path)) {
-    // Container sources have no scan step — their child scripts are
+  if (isContainerCollection(collection.path)) {
+    // Container collections have no scan step — their child scripts are
     // explicit. Build a synthetic scan from the existing rows so the
     // rest of the pipeline can refetch each URL/path. No size/mtime
     // hints; HTTP entries skip via conditional GET, file:// entries
@@ -1744,7 +1844,7 @@ export async function refreshSource(
     scan = existingScripts.map((s) => ({ relativePath: s.relativePath }));
   } else {
     try {
-      scan = await scanForUserScripts(source.path);
+      scan = await scanForUserScripts(collection.path);
     } catch (err) {
       scanError = describeError(err);
     }
@@ -1755,64 +1855,65 @@ export async function refreshSource(
   // Scan failure (unreadable manifest, unreadable top-level directory,
   // bad URL shape) is treated as "we don't actually know what's there
   // right now" — keep every existing script row, its content, and its
-  // enabled state untouched. The source row records the scanError so
-  // the sources page can surface it. Without this guard, the
-  // rebuildSource path below would mark every script `missing` (or, for
-  // manifest sources, drop them entirely) — both of which silently
-  // disable the scripts. That's the wrong call when the source might
+  // enabled state untouched. The collection row records the scanError so
+  // the collections page can surface it. Without this guard, the
+  // rebuildCollection path below would mark every script `missing` (or, for
+  // manifest collections, drop them entirely) — both of which silently
+  // disable the scripts. That's the wrong call when the collection might
   // just be a remote mount with timed-out credentials, a flaky network,
-  // etc.; the user wants the scripts to stay enabled until the source
+  // etc.; the user wants the scripts to stay enabled until the collection
   // is actually proven gone.
   if (scanError) {
     return await mutate(async () => {
-      // Re-read inside the lock so a concurrent setSourceEnabled (or
-      // displayName backfill) that landed during the scan isn't reverted
-      // — we only own lastRefreshedAt + scanError here.
-      const curSource = await getRaw<StoredSource>(sourceKey(id)) ?? source;
-      const nextSource: StoredSource = {
-        ...curSource,
+      // Re-read inside the lock so a concurrent setCollectionEnabled
+      // (or displayName backfill) that landed during the scan isn't
+      // reverted — we only own lastRefreshedAt + scanError here.
+      const curCollection = await getRaw<StoredCollection>(collectionKey(id)) ?? collection;
+      const nextCollection: StoredCollection = {
+        ...curCollection,
         lastRefreshedAt: now,
         scanError,
       };
-      await chrome.storage.local.set({ [sourceKey(id)]: nextSource });
-      return { source: nextSource, scripts: existingScripts };
+      await chrome.storage.local.set({ [collectionKey(id)]: nextCollection });
+      return { collection: nextCollection, scripts: existingScripts };
     });
   }
 
   // Fetch every scanned file in parallel except those whose size+mtime
   // are already current.
   const fetchResults = await fetchOrSkipInParallel(
-    source.path,
+    collection.path,
     scan,
     existingScripts,
   );
 
-  const scripts = await rebuildSource({
-    sourceId: source.id,
-    sourcePath: source.path,
+  const scripts = await rebuildCollection({
+    collectionId: collection.id,
+    collectionPath: collection.path,
     existing: existingScripts,
     scan,
     fetchResults,
     now,
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
-    useLocalFiles: sourceUsesLocalFiles(source),
+    useLocalFiles: collectionUsesLocalFiles(collection),
   });
 
   // Re-read the current rows INSIDE the lock and write atomically, so a
-  // concurrent enable toggle (setSourceEnabled / setScriptEnabled) that
-  // landed during the fetch isn't reverted by stale values captured
-  // before it. Content (and any deliberate refresh-owned `enabled`
-  // change, e.g. applyMissing flipping a vanished script to disabled) is
-  // kept; we only re-apply the user's toggle when the persisted
-  // `enabled` actually changed vs the snapshot this refresh started from
-  // — that's the signal a setScriptEnabled landed mid-fetch.
+  // concurrent enable toggle (setCollectionEnabled / setScriptEnabled)
+  // that landed during the fetch isn't reverted by stale values
+  // captured before it. Content (and any deliberate refresh-owned
+  // `enabled` change, e.g. applyMissing flipping a vanished script to
+  // disabled) is kept; we only re-apply the user's toggle when the
+  // persisted `enabled` actually changed vs the snapshot this refresh
+  // started from — that's the signal a setScriptEnabled landed
+  // mid-fetch.
   const priorById = new Map(existingScripts.map((s) => [s.id, s]));
   return await mutate(async () => {
-    const curSource = await getRaw<StoredSource>(sourceKey(id));
-    if (!curSource) {
-      // Source was removed during the refresh — abandon the write rather
-      // than resurrect a deleted source row.
+    const curCollection = await getRaw<StoredCollection>(collectionKey(id));
+    if (!curCollection) {
+      // Collection was removed during the refresh — abandon the write
+      // rather than resurrect a deleted collection row.
       return null;
     }
     const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
@@ -1822,38 +1923,38 @@ export async function refreshSource(
       curScripts[scriptKey(s.id)] as StoredScript | undefined,
     ));
 
-    const nextSource: StoredSource = {
-      ...curSource,
+    const nextCollection: StoredCollection = {
+      ...curCollection,
       lastRefreshedAt: now,
       scriptIds: finalScripts.map((s) => s.id),
     };
     // Clear any scanError left by a previous failed refresh — control
     // only reaches here when the scan succeeded (the early-return above
     // handles the failure case).
-    delete nextSource.scanError;
+    delete nextCollection.scanError;
 
     // Drop rows whose IDs are no longer referenced. Hit by manifest
-    // sources whose user removed an entry; also defensive against any
-    // future per-script Remove.
+    // collections whose user removed an entry; also defensive against
+    // any future per-script Remove.
     const priorIds = new Set(existingScripts.map((s) => s.id));
     const nextIds = new Set(finalScripts.map((s) => s.id));
     const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
 
-    const toSet: Record<string, unknown> = { [sourceKey(id)]: nextSource };
+    const toSet: Record<string, unknown> = { [collectionKey(id)]: nextCollection };
     for (const s of finalScripts) toSet[scriptKey(s.id)] = s;
     await chrome.storage.local.set(toSet);
     if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
 
-    return { source: nextSource, scripts: finalScripts };
+    return { collection: nextCollection, scripts: finalScripts };
   });
 }
 
 // Refetch a single script. Goes through the same per-file pipeline as
-// the directory-level Refresh (fetchOrSkipInParallel → rebuildSource)
-// so the two paths can't drift — same skip rules, same fsMtime
-// handling, same enabled-preservation, same error shape. The single-
-// file path additionally lists the file's parent dir once so it has
-// the size+mtime needed by the skip check.
+// the directory-level Refresh (fetchOrSkipInParallel →
+// rebuildCollection) so the two paths can't drift — same skip rules,
+// same fsMtime handling, same enabled-preservation, same error shape.
+// The single- file path additionally lists the file's parent dir once
+// so it has the size+mtime needed by the skip check.
 //
 // Note: does NOT re-scan the parent dir for VANISHED files, so this
 // can't promote a script to `missing` — that's the directory-level
@@ -1865,30 +1966,30 @@ export async function refreshScript(
 ): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
   if (!prior) return null;
-  const sourceRow = await getRaw<StoredSource>(sourceKey(prior.sourceId));
-  if (!sourceRow) return null;
+  const collectionRow = await getRaw<StoredCollection>(collectionKey(prior.collectionId));
+  if (!collectionRow) return null;
 
-  // Build a single-entry scan. Only local-directory sources support
+  // Build a single-entry scan. Only local-directory collections support
   // the targeted size+mtime listing lookup; HTTP, manifest, and
-  // container sources rely on the per-entry skip strategy inside
+  // container collections rely on the per-entry skip strategy inside
   // fetchOrSkipInParallel (conditional GETs for HTTP entries, always-
   // fetch for file:// entries reached through a manifest or container).
   const scan: { relativePath: string; size?: number; mtime?: number }[] = [
     { relativePath: prior.relativePath },
   ];
   const usesListingStat =
-    !isHttpUrl(sourceRow.path) &&
-    !isManifestSource(sourceRow.path) &&
-    !isContainerSource(sourceRow.path);
+    !isHttpUrl(collectionRow.path) &&
+    !isManifestCollection(collectionRow.path) &&
+    !isContainerCollection(collectionRow.path);
   if (usesListingStat) {
     const slash = prior.relativePath.lastIndexOf('/');
     const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
     const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
-    // The "scan directory" is the source path plus any subDir prefix
-    // from the relativePath. Normalise any file:// URL form back to a
-    // raw fs path before doing path arithmetic so parentDir/joinPath
-    // behave correctly.
-    const fsRoot = sourceFsPath(sourceRow.path);
+    // The "scan directory" is the collection path plus any subDir
+    // prefix from the relativePath. Normalise any file:// URL form back
+    // to a raw fs path before doing path arithmetic so
+    // parentDir/joinPath behave correctly.
+    const fsRoot = locationFsPath(collectionRow.path);
     const dirAbs = subDir ? joinPath(fsRoot, subDir) : fsRoot;
     try {
       const stat = await statFromListing(dirAbs, fileName);
@@ -1901,17 +2002,17 @@ export async function refreshScript(
     }
   }
 
-  const fetchResults = await fetchOrSkipInParallel(sourceRow.path, scan, [prior]);
-  const result = await rebuildSource({
-    sourceId: prior.sourceId,
-    sourcePath: sourceRow.path,
+  const fetchResults = await fetchOrSkipInParallel(collectionRow.path, scan, [prior]);
+  const result = await rebuildCollection({
+    collectionId: prior.collectionId,
+    collectionPath: collectionRow.path,
     existing: [prior],
     scan,
     fetchResults,
     now: Date.now(),
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
-    useLocalFiles: sourceUsesLocalFiles(sourceRow),
+    useLocalFiles: collectionUsesLocalFiles(collectionRow),
   });
   const next = result[0];
   if (!next) return null;
@@ -1954,15 +2055,16 @@ function preserveConcurrentEdits(
 
 // Fetch each scanned file in parallel.
 //
-// Dispatch is per *entry URL*, not per source: a manifest source may
-// list http(s):// entries, file:// entries, or a mix, so each entry
-// picks its fetcher and skip strategy based on the resolved URL scheme.
+// Dispatch is per *entry URL*, not per collection: a manifest
+// collection may list http(s):// entries, file:// entries, or a mix, so
+// each entry picks its fetcher and skip strategy based on the resolved
+// URL scheme.
 //
 // Scheme behaviors:
 //   - http(s)://: conditional GET. We send the prior row's ETag /
 //     Last-Modified as If-None-Match / If-Modified-Since; a server 304
 //     becomes `unchanged`, a 200 carries new validators back through
-//     FetchResult.ok for rebuildSource to persist.
+//     FetchResult.ok for rebuildCollection to persist.
 //   - file://: direct fetch. If the scan supplied size+mtime (only
 //     local-directory scans do — manifests don't), we apply the
 //     pre-fetch listing skip when those match the prior row.
@@ -1970,7 +2072,7 @@ function preserveConcurrentEdits(
 // In both modes a prior error/missing entry always refetches so it has
 // a chance to recover.
 export async function fetchOrSkipInParallel(
-  sourcePath: string,
+  collectionPath: string,
   scan: { relativePath: string; size?: number; mtime?: number }[],
   existing: StoredScript[],
 ): Promise<Map<string, FetchResult>> {
@@ -1978,7 +2080,7 @@ export async function fetchOrSkipInParallel(
   const results = await Promise.all(
     scan.map(async (found): Promise<[string, FetchResult]> => {
       const prior = byPath.get(found.relativePath);
-      const url = scriptFileUrl(sourcePath, found.relativePath);
+      const url = scriptFileUrl(collectionPath, found.relativePath);
       if (isHttpUrl(url)) {
         try {
           const fetched = await fetchHttpText(url, prior?.status === 'ok' ? {
@@ -1988,7 +2090,7 @@ export async function fetchOrSkipInParallel(
           if (fetched.kind === 'unchanged') {
             return [found.relativePath, { unchanged: true }];
           }
-          const ok: FetchResult = { ok: true, source: fetched.text };
+          const ok: FetchResult = { ok: true, text: fetched.text };
           if (fetched.etag) ok.httpEtag = fetched.etag;
           if (fetched.lastModified) ok.httpLastModified = fetched.lastModified;
           return [found.relativePath, ok];
@@ -2007,8 +2109,8 @@ export async function fetchOrSkipInParallel(
         return [found.relativePath, { unchanged: true }];
       }
       try {
-        const source = await fetchFileUrlText(url);
-        return [found.relativePath, { ok: true, source }];
+        const text = await fetchFileUrlText(url);
+        return [found.relativePath, { ok: true, text }];
       } catch (err) {
         return [found.relativePath, { ok: false, errorMessage: describeError(err) }];
       }
@@ -2017,26 +2119,27 @@ export async function fetchOrSkipInParallel(
   return new Map(results);
 }
 
-// Refresh every registered source in parallel. Returns the new state
-// per source so callers can compute "what changed" without a second
-// read. A failed source-level refresh (e.g. one source's scan
-// throws) doesn't take the rest down — its slot in the result map is
-// just absent, and the source's `scanError` field carries the reason.
-export async function refreshAllSources(
+// Refresh every registered collection in parallel. Returns the new
+// state per collection so callers can compute "what changed" without a
+// second read. A failed collection-level refresh (e.g. one collection's
+// scan throws) doesn't take the rest down — its slot in the result map
+// is just absent, and the collection's `scanError` field carries the
+// reason.
+export async function refreshAllCollections(
   opts: RefreshOptions = {},
-): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
-  const sources = await getSources();
-  // One shared file-fetch cache across every source in this pass so
-  // two scripts (across two sources) referencing the same canonical
+): Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>> {
+  const collections = await getCollections();
+  // One shared file-fetch cache across every collection in this pass so
+  // two scripts (across two collections) referencing the same canonical
   // URL share one fetch. Caller can override by passing their own.
   const fileFetchCache = opts.fileFetchCache ?? new Map();
   const entries = await Promise.all(
-    sources.map(async (s) => {
-      const r = await refreshSource(s.id, { ...opts, fileFetchCache });
+    collections.map(async (s) => {
+      const r = await refreshCollection(s.id, { ...opts, fileFetchCache });
       return [s.id, r] as const;
     }),
   );
-  const out = new Map<string, { source: StoredSource; scripts: StoredScript[] }>();
+  const out = new Map<string, { collection: StoredCollection; scripts: StoredScript[] }>();
   for (const [id, r] of entries) {
     if (r) out.set(id, r);
   }
@@ -2050,35 +2153,35 @@ export function describeError(err: unknown): string {
   return String(err);
 }
 
-// Flip a source's enabled flag without touching anything else. The
-// match-index listens for `source:<id>` changes and re-evaluates the
-// effective enabled state of every script under this source.
-export async function setSourceEnabled(
+// Flip a collection's enabled flag without touching anything else. The
+// match-index listens for `collection:<id>` changes and re-evaluates
+// the effective enabled state of every script under this collection.
+export async function setCollectionEnabled(
   id: string,
   enabled: boolean,
-): Promise<StoredSource | null> {
+): Promise<StoredCollection | null> {
   return mutate(async () => {
-    const source = await getRaw<StoredSource>(sourceKey(id));
-    if (!source) return null;
-    const next: StoredSource = { ...source, enabled };
-    await chrome.storage.local.set({ [sourceKey(id)]: next });
+    const collection = await getRaw<StoredCollection>(collectionKey(id));
+    if (!collection) return null;
+    const next: StoredCollection = { ...collection, enabled };
+    await chrome.storage.local.set({ [collectionKey(id)]: next });
     return next;
   });
 }
 
-// Per-source opt-out of local stand-ins. Writing the field only —
+// Per-collection opt-out of local stand-ins. Writing the field only —
 // nothing is refetched here, because the flag changes what the NEXT
-// refresh resolves to, and the sources page follows this with its own
-// Refresh so the user sees the effect immediately.
-export async function setSourceLocalFiles(
+// refresh resolves to, and the collections page follows this with its
+// own Refresh so the user sees the effect immediately.
+export async function setCollectionLocalFiles(
   id: string,
   localFiles: boolean,
-): Promise<StoredSource | null> {
+): Promise<StoredCollection | null> {
   return mutate(async () => {
-    const source = await getRaw<StoredSource>(sourceKey(id));
-    if (!source) return null;
-    const next: StoredSource = { ...source, localFiles };
-    await chrome.storage.local.set({ [sourceKey(id)]: next });
+    const collection = await getRaw<StoredCollection>(collectionKey(id));
+    if (!collection) return null;
+    const next: StoredCollection = { ...collection, localFiles };
+    await chrome.storage.local.set({ [collectionKey(id)]: next });
     return next;
   });
 }

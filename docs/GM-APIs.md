@@ -32,7 +32,7 @@ SourceMonkey actually does today.
     replace per-subsystem methods.
 - **`src/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
-  per-script source; `buildGmRuntimeSpec` returns the runtime
+  per-script collection; `buildGmRuntimeSpec` returns the runtime
   registration alongside `buildBridgeSpec`.
 
 ## Bindings layout in the wrapper
@@ -473,7 +473,7 @@ Known limitations:
 ## `GM_log`
 
 Page-side wrapper around `console.log` with an SW-side fan-out so
-the call also lands on the script's Log tab in the sources-page
+the call also lands on the script's Log tab in the collections-page
 viewer. The binding emitter routes `GM_log(...)` to
 `window.__SM_GM__.log.write(scriptId, arguments)`.
 
@@ -646,7 +646,7 @@ Why the split:
   in-memory (same lifetime story as `gm-tab` / `gm-notification`).
 - Each entry carries the emit closure the message handler built, the
   timeout timer, and the progress interval.
-- `chrome.downloads.onChanged` is the terminal-event source:
+- `chrome.downloads.onChanged` is the terminal-event collection:
   `state.current === 'complete'` → `load` (after a
   `chrome.downloads.search` for filename + size), `'interrupted'` →
   `error`/`not_succeeded` with `delta.error` passed through as

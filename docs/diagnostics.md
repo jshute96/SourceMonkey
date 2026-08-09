@@ -79,7 +79,7 @@ A failure to fetch the **script itself** produces no location at all.
 
 `parseHeader` records a 1-based `line` on every `HeaderTag`, and
 `startLine` on the block, both counted from the top of the whole
-source — which is what the viewer's gutter shows.
+source file — which is what the viewer's gutter shows.
 
 - Counting and splitting share one line-terminator rule
   (`LINE_BREAK` in `src/userscript-header.ts`). If they diverged, every
@@ -152,7 +152,7 @@ what the row now says.
   `sourcemonkey://…:L:C` refs inside a runtime stack trace: those are
   text the script produced and are found by scanning, whereas this is
   structure we derived.
-- **Sources page** — hover text only. The dataset is a string channel,
+- **Collections page** — hover text only. The dataset is a string channel,
   so the message is flattened there; the row's link opens the viewer,
   which has the clickable form.
 
@@ -264,8 +264,8 @@ verdicts about a script's content:
   `background.ts`, `injector.ts`) — `Could not check for updates`, not
   `update check threw`; `This script was removed while it was being
   refreshed`, not `row vanished`.
-- **Source-level failures** — `This source did not load`, not `scan
-  failed`. "Scan" is the pipeline stage's name; the sources page never
+- **Collection-level failures** — `This collection did not load`, not `scan
+  failed`. "Scan" is the pipeline stage's name; the collections page never
   shows it.
   - Phrased so it doesn't echo what follows it. `scanError` values
     usually open with their own `Could not read <url>: …`, so a
@@ -285,13 +285,13 @@ One capitalization convention, with carve-outs:
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
     it as INVALID.` Prefer an em-dash and one sentence where that works
-    (`Script not found in storage — open it from the sources page`).
+    (`Script not found in storage — open it from the collections page`).
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
 - **The carve-out is mid-*sentence* splices, not post-colon tails.**
   `LOCATION_SHAPES` stays lowercase because it completes a sentence we
-  wrote — `A source must be an http(s):// or file:// URL…`. A capital
+  wrote — `A location must be an http(s):// or file:// URL…`. A capital
   there would land inside the sentence. A tail after `: ` is not that
   case: it starts its own clause, so it gets a capital, and if it can't
   take one grammatically it wants rewriting rather than exempting.
@@ -301,7 +301,7 @@ One capitalization convention, with carve-outs:
   values above, and the errors GM APIs hand back to script code. None
   of them is a message a user reads in our UI.
 - **Static page copy is not a message.** Headings and empty-state prose
-  (`No sources yet. Add one above.`, `File access is disabled.`) are
+  (`No collections yet. Add one above.`, `File access is disabled.`) are
   layout text, not a report of an outcome, and punctuate as ordinary
   writing. The line is whether the string tells the user what just
   happened: a banner does and follows the message rule, a heading that
@@ -318,7 +318,7 @@ constant, so the copies can't drift:
 | `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
-| `LOCATION_SHAPES` (`directories.ts`) | the add-source and preview validators' description of a valid location |
+| `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |

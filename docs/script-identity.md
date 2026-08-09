@@ -21,25 +21,25 @@ A script can be all three at once, or only one.
 
 ## Same URL
 
-- Key: `canonicalSourceInput(script.fileUrl)`.
+- Key: `canonicalCollectionInput(script.fileUrl)`.
 - **`fileUrl`, not `relativePath`.** A script inside a directory,
-  manifest, or repo source stores a path relative to its source root.
+  manifest, or repo collection stores a path relative to its collection root.
   That shares no text with the full URL the same script carries when
   installed standalone, so comparing `relativePath` can never match a
   collection copy against a single-file copy.
 - `fileUrl` is the absolute form the load pipeline already builds for
-  every source kind — `scriptFileUrl` in
+  every collection kind — `scriptFileUrl` in
   [`src/directories.ts`](../src/directories.ts) resolves manifest
   entries against the manifest URL, joins directory entries onto the
-  source root, and maps GitHub dirs to raw URLs.
-- `canonicalSourceInput` collapses a `file://` URL to its bare path, so
-  a directory source's `file://` URL and a container row's bare path
+  collection root, and maps GitHub dirs to raw URLs.
+- `canonicalCollectionInput` collapses a `file://` URL to its bare path, so
+  a directory collection's `file://` URL and a container row's bare path
   land on the same key.
 
 ### Display is unaffected
 
 - A collection copy still **shows** its relative path — that is the
-  name the user recognizes from the source's own listing.
+  name the user recognizes from the collection's own listing.
 - Only the comparison uses the absolute form. The row's tooltip carries
   it, per [names-and-paths.md](names-and-paths.md).
 
@@ -82,9 +82,9 @@ Returns three things.
   only when it would actually add something:
   - the location is a single-file input, **and**
   - no `sameLocation` row already sits in that container.
-  - `source: null` means the container does not exist yet.
+  - `collection: null` means the container does not exist yet.
 
-Both lists sort by source display name, then location, so the panel is
+Both lists sort by collection display name, then location, so the panel is
 stable across renders.
 
 ## The panel
@@ -124,11 +124,11 @@ the *other* rows.
 - **Clicking a checked box just disables it.** That leaves none running,
   which is an ordinary thing to want, and there is no other copy that
   should be promoted in its place.
-- **A copy under a disabled source is spared.** It isn't running, so it
+- **A copy under a disabled collection is spared.** It isn't running, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it
   off would silently destroy the user's stored intent for whenever they
-  re-enable that source.
+  re-enable that collection.
 - **Ctrl/Cmd-click opts out** and toggles only that box, for the rare
   case where two copies really are meant to run together (say, two
   `@match`-disjoint edits of one script). Read from the `click` event,
@@ -159,8 +159,8 @@ the *other* rows.
   reads it back, and the repaint that follows draws from stored state,
   so a failed write corrects itself.
 - **One tooltip, both surfaces**: *Enable this script*, the same pair
-  the sources page uses (with *Source is disabled* when the parent is
-  off). It does not name the copy — the Source and Location cells are
+  the collections page uses (with *Collection is disabled* when the parent is
+  off). It does not name the copy — the Collection and Location cells are
   an inch to the right — and it does not swap to "Disable" when
   checked, which would make one control read two ways for no gain.
   - *(Ctrl-click for multi-enable)* is appended only where the sweep
@@ -177,7 +177,7 @@ the *other* rows.
     row's checkbox is the only content of its cell, so it has no name
     from markup at all, and rows all announcing "Enable this script"
     would be indistinguishable — where a sighted user simply reads
-    across to the Source cell.
+    across to the Collection cell.
 
 ### Which actions each section gets
 
@@ -206,25 +206,25 @@ the *other* rows.
   - an **invalid preview**, which has already said the file cannot be
     installed and hidden its own Install button.
 - **A trash can on every row**, in its own column right of the refetch
-  button — same glyph and behaviour as the sources page's per-script
+  button — same glyph and behaviour as the collections page's per-script
   remove.
-  - **Live only for scripts in a container source** (the *Scripts from
+  - **Live only for scripts in a container collection** (the *Scripts from
     local disk* / *…from web* / *…from GitHub* buckets), which the user
     added one at a time.
   - **Disabled elsewhere**, with the tooltip *Script from **directory**
-    source can only be removed by removing the source* — or
-    ***manifest** source*, per `sourceHasManifest`.
-    - These docs call the whole family "collection sources", but that
+    collection can only be removed by removing the collection* — or
+    ***manifest** collection*, per `collectionHasManifest`.
+    - These docs call the whole family "collection collections", but that
       phrase appears nowhere a user can see it, and this message is the
       first that needed a name for them. *Directory* and *manifest* are
-      the words the sources page already uses for how a source was
+      the words the collections page already uses for how a collection was
       added, so they are the ones a user can act on. A GitHub repo or
-      `/tree/` source is a directory of scripts too, and reads that way.
+      `/tree/` collection is a directory of scripts too, and reads that way.
     - Shown-but-disabled rather than hidden: a ragged column would give
       no clue why some rows can be removed and others can't. Removing
-      such a copy wouldn't stick anyway — the source's next refresh
+      such a copy wouldn't stick anyway — the collection's next refresh
       scans it straight back in.
-  - **A row whose source dangles gets the live button.** An orphan is
+  - **A row whose collection dangles gets the live button.** An orphan is
     the thing a user would most want to clear out, and nothing will
     scan it back in.
   - **Removing the row you are looking at is allowed.** Refusing only
@@ -281,9 +281,9 @@ the *other* rows.
   `aria-label` naming the copy — five rows of "Enable this script"
   would be indistinguishable. See the tooltip note above for the split
   between what the tooltip says and what the accessible name adds.
-- A row whose **source** is disabled greys out and says so, matching
+- A row whose **collection** is disabled greys out and says so, matching
   the viewer's own toggle. The box still shows the script's own stored
-  flag; the source override is carried by the disabled state and label.
+  flag; the collection override is carried by the disabled state and label.
 - The current row gets `aria-current`, because the `(this page)` marker
   is in the Location cell, which reads as decoration rather than state.
 
@@ -295,9 +295,9 @@ it.
 
 ### Row layout
 
-- Columns: enable toggle, source, location, version, actions, remove.
-- **Source cell leads with the type bubble**, then the name — the same
-  order as the details panel's Source row and the sources page's
+- Columns: enable toggle, collection, location, version, actions, remove.
+- **Collection cell leads with the type bubble**, then the name — the same
+  order as the details panel's Collection row and the collections page's
   headings. The bubble is fixed-width and the name is the variable
   part, so leading with it also keeps rows aligned down the left edge.
 - Location shows the row's own stored `relativePath` (relative for a
@@ -311,7 +311,7 @@ it.
   grids.
 - Narrow windows shed **Version** below 640px rather than wrapping
   every cell to a ribbon. It is the least load-bearing: nothing acts on
-  it, and the copies it distinguishes are still told apart by source
+  it, and the copies it distinguishes are still told apart by collection
   and location. Zeroing the `<col>` width alongside `display: none` on
   the cells is what reclaims the space — under `table-layout: fixed`
   the colgroup, not the cells, sets column width.
@@ -323,7 +323,7 @@ it.
 ## What this changed
 
 - **Install and Open/Update are no longer exclusive.** A script can be
-  installed inside a collection source while the user still has no copy
+  installed inside a collection collection while the user still has no copy
   of their own. `installTarget` — "would a standalone install add
   anything?" — is what decides whether Install shows.
 - **The preview's already-installed check now uses this lookup**, so
@@ -375,7 +375,7 @@ which copy they were about to touch. The banner splits by what exists:
 - One count drives both the banner line and the buttons, so they cannot
   disagree about whether a choice exists.
 - The offer row counts as a target because it is what an Install would
-  land in. A collection source holding this URL while the user has no
+  land in. A collection collection holding this URL while the user has no
   copy of their own is the case that motivated this: two rows below,
   four buttons above, nothing tying them together — even though only
   one copy is installed.
@@ -394,7 +394,7 @@ which copy they were about to touch. The banner splits by what exists:
   no row for them to act on, and the panel below is the way across.
 - The banner shares the panel's green ground: it is about which of those
   copies the buttons act on, so the two are one thought.
-- **A script inside a directory or repo source is now recognized** when
+- **A script inside a directory or repo collection is now recognized** when
   the same URL is opened directly — previously it wasn't, and installing
   by URL made a second copy.
 - **Install shows when installing would add something**: an
@@ -402,7 +402,7 @@ which copy they were about to touch. The banner splits by what exists:
   second clause matters because a preview accepts any http(s)/file
   location while `installTarget` only speaks for `.user.js` ones —
   without it a `foo.js` or manifest URL would lose its Install button
-  with nothing said about why. `addSource` remains what judges those.
+  with nothing said about why. `addCollection` remains what judges those.
 
 ## Known limitations
 

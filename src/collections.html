@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>SourceMonkey — Sources</title>
+    <title>SourceMonkey — Collections</title>
     <link rel="stylesheet" href="styles.css" />
     <style>
       body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
@@ -20,19 +20,19 @@
         column-gap: 0.5em;
         align-items: baseline;
       }
-      /* `.source-type-bubble` + colored `.bubble-*` variants +
-         `.source-display-name` typography are in styles.css (the
+      /* `.collection-type-bubble` + colored `.bubble-*` variants +
+         `.collection-display-name` typography are in styles.css (the
          cross-page shared stylesheet). */
       button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
       input[type="text"] { font: inherit; padding: 0.3em 0.5em; }
       .placeholder { color: #666; }
       .add-form { display: flex; gap: 0.5em; margin-bottom: 1em; align-items: center; }
       .add-form input[type="text"] { flex: 1 1 auto; }
-      .directory { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
-      .directory-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
-      .directory-header h2 { flex: 1 1 auto; min-width: 0; }
-      .directory-toggle { flex: 0 0 auto; }
-      .directory-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
+      .collection { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
+      .collection-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
+      .collection-header h2 { flex: 1 1 auto; min-width: 0; }
+      .collection-toggle { flex: 0 0 auto; }
+      .collection-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
       /* Up/Down arrow buttons that sit left of Refresh. Keep the
          vertical padding identical to the standard button rule above
          so heights line up with Refresh/Remove; only the horizontal
@@ -51,22 +51,22 @@
         cursor: pointer;
         white-space: nowrap;
       }
-      .move-source { padding: 0.3em 0.5em; }
-      .move-source:disabled { cursor: not-allowed; opacity: 0.35; }
+      .move-collection { padding: 0.3em 0.5em; }
+      .move-collection:disabled { cursor: not-allowed; opacity: 0.35; }
       .script-table { width: 100%; border-collapse: collapse; }
       .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
       .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
       .script-table tbody tr:last-child td { border-bottom: none; }
       .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell { white-space: nowrap; width: 1%; }
-      /* Container-source action column: the per-row remove button.
+      /* Container-collection action column: the per-row remove button.
          Right-aligned so the trash icon hugs the table edge regardless
          of how narrow / wide the filename column wants to be. */
       .script-table td.action-cell { text-align: right; padding-left: 0.2em; }
       .script-table th:last-child { width: 1%; }
       .script-table td.toggle-cell { padding-right: 0.2em; }
-      /* When a source is off, its whole section dims; when a script is off, just the row dims.
+      /* When a collection is off, its whole section dims; when a script is off, just the row dims.
          The toggle itself stays at full opacity so users can flip it back. */
-      .directory.disabled .directory-header h2,
+      .collection.disabled .collection-header h2,
       .script-table tr.disabled td:not(.toggle-cell) { opacity: 0.45; }
       .toggle { display: inline-flex; align-items: center; cursor: pointer; }
       .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
@@ -118,7 +118,7 @@
       /* Script names come from the file/URL and can be arbitrarily long
          (web-installed scripts often carry a whole marketing title).
          Let them wrap rather than force the table wider than its
-         `.directory` card, which pushed Size / Status outside the box.
+         `.collection` card, which pushed Size / Status outside the box.
          `<wbr>` markers after each `/` (appendWithSlashBreaks) give
          preferred break points before a mid-word break is needed.
          The hanging indent keeps continuation lines aligned with the
@@ -155,8 +155,8 @@
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
       /* The banner box itself is in styles.css (shared with the
-         viewer). These are the sources-page-only parts: a roomier
-         gap before the source list, and the raw-API-error line the
+         viewer). These are the collections-page-only parts: a roomier
+         gap before the collection list, and the raw-API-error line the
          "Allow User Scripts" banner appends. */
       .banner { margin-bottom: 1em; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
@@ -166,8 +166,8 @@
       /* Bulk-toggle button shows its spinner in place of the +/- glyph. */
       .bulk-toggle.busy { position: relative; color: transparent; }
       .bulk-toggle.busy::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -5px 0 0 -5px; width: 10px; height: 10px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
-      /* While a directory is being removed, dim the whole section and block further clicks. */
-      .directory.removing { opacity: 0.5; pointer-events: none; }
+      /* While a collection is being removed, dim the whole section and block further clicks. */
+      .collection.removing { opacity: 0.5; pointer-events: none; }
       /* Highlight rows that changed during a refresh. The color
          persists until the next refresh clears it, so the
          user can leave the page and come back without losing the
@@ -193,18 +193,18 @@
     <div class="top-actions">
       <button id="open-options" type="button" title="Open the options page">Options</button>
       <div class="right-actions">
-        <button id="refresh-all" type="button" title="Refresh every source">Refresh All</button>
+        <button id="refresh-all" type="button" title="Refresh every collection">Refresh All</button>
       </div>
     </div>
 
     <form id="add-form" class="add-form">
       <input id="add-path" type="text" placeholder="Absolute path or URL, to a .user.js file, a directory, or a script_manifest.json file" required autocomplete="off" spellcheck="false" />
-      <button type="submit">Add source</button>
+      <button type="submit">Add</button>
     </form>
     <p id="add-error" class="error" hidden></p>
 
-    <div id="directories"></div>
+    <div id="collections"></div>
 
-    <script src="sources.js" type="module"></script>
+    <script src="collections.js" type="module"></script>
   </body>
 </html>

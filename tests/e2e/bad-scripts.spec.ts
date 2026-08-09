@@ -1,7 +1,7 @@
 // End-to-end coverage for the malformed-script examples under
 // tests/bad-examples/. Two angles:
 //
-//   1. Source-addition: every bad script either reports the expected
+//   1. Collection-addition: every bad script either reports the expected
 //      ERROR status (with the right errorMessage), or — for the cases
 //      SM tolerates (two-headers, leading-text) or can't detect at
 //      load time (the `@require`s that only fail once injected) —
@@ -23,7 +23,7 @@
 // tests/examples/ so the TM cross-manager sync (which walks
 // tests/examples/ only) never sees these files — TM refuses to
 // install most of them and installs the rest inconsistently. The
-// separation also lets a developer add the dir as its own SM source
+// separation also lets a developer add the dir as its own SM collection
 // and toggle it off without losing the good examples.
 
 import fs from 'node:fs';
@@ -60,10 +60,10 @@ async function openViewer(extensionContext: BrowserContext, extensionId: string,
 }
 
 test.describe('bad-examples corpus', () => {
-  test('addSource records the expected status for every bad script', async ({ sm }) => {
-    const source = await sm.addSource(BAD_SCRIPTS_DIR);
-    expect(source).not.toBeNull();
-    const got = await sm.getSourceWithScripts(source!.id);
+  test('addCollection records the expected status for every bad script', async ({ sm }) => {
+    const collection = await sm.addCollection(BAD_SCRIPTS_DIR);
+    expect(collection).not.toBeNull();
+    const got = await sm.getCollectionWithScripts(collection!.id);
     expect(got).not.toBeNull();
 
     // Build an actual-by-filename map and assert each expected entry
@@ -139,8 +139,8 @@ test.describe('bad-examples corpus', () => {
   test('the viewer round-trips each bad script byte-for-byte', async ({
     extensionContext, extensionId, sm,
   }) => {
-    const source = await sm.addSource(BAD_SCRIPTS_DIR);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(BAD_SCRIPTS_DIR);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const byFile = new Map<string, NonNullable<typeof got>['scripts'][number]>();
     for (const s of got!.scripts) byFile.set(s.relativePath, s);
 
@@ -163,10 +163,10 @@ test.describe('bad-examples corpus', () => {
     // The valid baseline: any well-formed script from another examples
     // dir. gm-info is small and stable. This catches regressions where
     // the bad-script-driven path drifts away from the common case.
-    const source = await sm.addSource(GM_INFO_DIR);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(GM_INFO_DIR);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const s = got!.scripts.find((x) => x.relativePath === 'gm-info.user.js');
-    expect(s, 'gm-info.user.js missing from gm-info source').toBeDefined();
+    expect(s, 'gm-info.user.js missing from gm-info collection').toBeDefined();
     expect(s!.status).toBe('ok');
 
     const page = await openViewer(extensionContext, extensionId, s!.id);
@@ -188,8 +188,8 @@ test.describe('bad-examples corpus', () => {
     // visual-only difference once `display: block` is in play).
     // Assert structurally: every bad-example with a properly-closed
     // header MUST end its `.userscript-header` span with `\n`.
-    const source = await sm.addSource(BAD_SCRIPTS_DIR);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(BAD_SCRIPTS_DIR);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const byFile = new Map<string, NonNullable<typeof got>['scripts'][number]>();
     for (const s of got!.scripts) byFile.set(s.relativePath, s);
 

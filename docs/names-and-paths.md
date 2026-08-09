@@ -28,7 +28,7 @@ How a stored location becomes the text a user reads. Helpers live in
 - **`Local overrides` is the one row whose copy button gives you the
   displayed string.** Its value is a bare filesystem path, not a URL, so
   there is no encoded form to preserve — decoding already happened in
-  `sourceFsPath`.
+  `locationFsPath`.
 
 ## Helpers
 
@@ -45,7 +45,7 @@ How a stored location becomes the text a user reads. Helpers live in
 
 - `displayLocation` and `scriptBasename` decode only when the string
   starts with a scheme.
-- A `relativePath` from a local directory source is a literal on-disk
+- A `relativePath` from a local directory collection is a literal on-disk
   name: a file really called `a%20b.user.js` must keep its `%20`, or
   the name on screen won't be the name on disk.
 
@@ -60,7 +60,7 @@ How a stored location becomes the text a user reads. Helpers live in
   unsafe. `displayLocation` decodes any absolute URL and accepts the
   same `%2F`-reads-as-`/` ambiguity (see **Known limitations**).
 - The line is **coordinate vs name**. A stack ref is compared against
-  devtools, pasted into a Sources-panel search, or matched to a
+  devtools, pasted into a Collections-panel search, or matched to a
   `@require` line, so it wants the bytes that were really in the URL.
   Our synthetic URLs are the exception because their encoding is an
   artifact we introduced, not part of an address anyone can look up.
@@ -88,15 +88,15 @@ How a stored location becomes the text a user reads. Helpers live in
 - Any element showing one must wrap. A `white-space: nowrap` name cell
   pushes its table wider than the card around it and the trailing
   columns render outside the border.
-- The wrap recipe, used by the sources page's `td.name-cell`, the
-  source heading (`.source-display-name`), the viewer's `h1` and its
+- The wrap recipe, used by the collections page's `td.name-cell`, the
+  collection heading (`.collection-display-name`), the viewer's `h1` and its
   Location row (`.filename-text`):
   - CSS `overflow-wrap: anywhere; word-break: normal;`
   - text appended via `appendWithSlashBreaks`.
 - Break order that gives: spaces first, then `/`, then mid-word only
   when nothing else fits.
 - `anywhere` (not `break-word`) is load-bearing: only `anywhere` lowers
-  the element's min-content width, which is what lets the sources
+  the element's min-content width, which is what lets the collections
   table's name column actually shrink.
 - Where a fixed-width favicon slot precedes the text, add a hanging
   indent (`padding-left` past the icon + a matching negative
@@ -120,7 +120,7 @@ How a stored location becomes the text a user reads. Helpers live in
   - a space or paren ends the ref run `stack-link.ts` matches, so a
     stack frame would stop linkifying to its viewer tab.
 - Round-trip is stable for the common case: `My%20Script` decodes to
-  `My Script` and re-encodes to `My%20Script`, so devtools' Sources
+  `My Script` and re-encodes to `My%20Script`, so devtools' Collections
   tree looks exactly as it did.
 - It is *not* stable when the stored URL has a query string (now
   dropped from the label) or non-canonical escapes (`%e2` → `%E2`).

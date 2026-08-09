@@ -1,7 +1,7 @@
 // SourceMonkey MV3 service worker.
 //
 // Today the SW does these real jobs:
-//   - Opens the sources page on toolbar click (no popup configured).
+//   - Opens the collections page on toolbar click (no popup configured).
 //   - Watches every tab navigation, finds matching userscripts via the
 //     in-memory match index, listens to sm:start / sm:error reports
 //     from injected wrappers, and surfaces the combined state as a
@@ -11,7 +11,7 @@
 //   - Mirrors the badge's per-script status lines into the toolbar
 //     icon's right-click menu (chrome.contextMenus, action context),
 //     so users can jump to a script's viewer page without going
-//     through the sources page first.
+//     through the collections page first.
 //
 // The `self.SourceMonkey` surface exists so e2e tests can drive the
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
@@ -89,25 +89,26 @@ import {
 import {
   replayScriptLogsAtBoot,
   requestOpportunisticScriptChecks,
-  updateAllSources,
+  updateAllCollections,
   updateScript,
-  updateSource,
+  updateCollection,
 } from './script-updater.js';
 import type { ProbePolicy } from './version-probe.js';
 import {
-  addSource,
+  addCollection,
   getScript,
-  getSources,
-  getSourceWithScripts,
+  getCollections,
+  getCollectionWithScripts,
   isFirstRunComplete,
+  resetCollectionKeyMigrationForTests,
   markFirstRunComplete,
-  removeSource,
+  removeCollection,
   setScriptEnabled,
-  setSourceEnabled,
-  setSourceLocalFiles,
-  type AddSourceResult,
+  setCollectionEnabled,
+  setCollectionLocalFiles,
+  type AddCollectionResult,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
   setParseChecker,
 } from './script-store.js';
 import {
@@ -188,24 +189,25 @@ interface SourceMonkeyApi {
   // These methods exist so Playwright tests can drive the extension via
   // `serviceWorker.evaluate(...)`. MV3 service workers can't be poked
   // from a Playwright UI action (no toolbar click); without these the
-  // tests would have to navigate to the sources page for every state
-  // transition, which is both slow and couples tests to the page's DOM.
-  // All of them delegate straight to the production functions — they
-  // are not test-only logic, just convenience accessors.
+  // tests would have to navigate to the collections page for every
+  // state transition, which is both slow and couples tests to the
+  // page's DOM. All of them delegate straight to the production
+  // functions — they are not test-only logic, just convenience
+  // accessors.
   //
   // Production exposure: the manifest has no `externally_connectable`
   // entry, so neither web pages nor other extensions can reach the SW
   // to call these. Practically callable only from DevTools on an
   // extension page or from Playwright's `serviceWorker.evaluate`.
-  addSource: (path: string) => Promise<AddSourceResult>;
-  removeSource: (id: string) => Promise<void>;
-  getSources: () => Promise<StoredSource[]>;
-  getSourceWithScripts: (id: string) => Promise<{ source: StoredSource; scripts: StoredScript[] } | null>;
-  setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
-  setSourceLocalFiles: (id: string, localFiles: boolean) => Promise<StoredSource | null>;
+  addCollection: (path: string) => Promise<AddCollectionResult>;
+  removeCollection: (id: string) => Promise<void>;
+  getCollections: () => Promise<StoredCollection[]>;
+  getCollectionWithScripts: (id: string) => Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null>;
+  setCollectionEnabled: (id: string, enabled: boolean) => Promise<StoredCollection | null>;
+  setCollectionLocalFiles: (id: string, localFiles: boolean) => Promise<StoredCollection | null>;
   setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
-  updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
   // Refresh click passes, and several behaviors key off it (upstream
   // version probes, and retrying a refused registration immediately
@@ -216,7 +218,7 @@ interface SourceMonkeyApi {
     mode: 'manual' | 'opportunistic',
     probe?: ProbePolicy,
   ) => Promise<unknown>;
-  updateAllSources: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  updateAllCollections: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // Inspect the per-tab badge state Chrome would render. We pull
   // text/title back from chrome.action and the structured TabRecord
   // from session storage so a single round-trip gives a test
@@ -231,8 +233,8 @@ interface SourceMonkeyApi {
   // each test starts clean.
   resetAllState: () => Promise<void>;
   // Force an immediate chrome.userScripts re-sync, bypassing the 50ms
-  // debounce in scheduleSync(). Tests use this after addSource /
-  // updateScript / setSourceEnabled so the navigation that follows
+  // debounce in scheduleSync(). Tests use this after addCollection /
+  // updateScript / setCollectionEnabled so the navigation that follows
   // can't out-race the debounced registration.
   syncNow: () => Promise<{ registered: { id: string }[] }>;
   // Re-run the SW-boot startup-log replay. Tests use this after
@@ -316,16 +318,16 @@ const api: SourceMonkeyApi = {
     await ensureLoaded();
     return findMatchesForUrl(url);
   },
-  addSource,
-  removeSource,
-  getSources,
-  getSourceWithScripts,
-  setSourceEnabled,
-  setSourceLocalFiles,
+  addCollection,
+  removeCollection,
+  getCollections,
+  getCollectionWithScripts,
+  setCollectionEnabled,
+  setCollectionLocalFiles,
   // Write the real setting so the production read path is what's under
   // test, AND push it into the module cache directly: `storage.onChanged`
   // delivery isn't ordered against the call that follows, and a test
-  // that adds a source on the next line must not race it.
+  // that adds a collection on the next line must not race it.
   setLocalRoots: async (paths: string[]) => {
     // Through the same text→array parse the options page's Save runs,
     // so what's stored is exactly what a real save would store.
@@ -334,9 +336,9 @@ const api: SourceMonkeyApi = {
     _setLocalRootsForTests(roots);
   },
   setScriptEnabled,
-  updateSource,
+  updateCollection,
   updateScript,
-  updateAllSources,
+  updateAllCollections,
   getTabState: async (tabId: number) => {
     const [badgeText, badgeColor, title, record] = await Promise.all([
       chrome.action.getBadgeText({ tabId }),
@@ -349,9 +351,9 @@ const api: SourceMonkeyApi = {
   // Drains this script's in-flight appends before reading. Production
   // log writes go through `logScriptEvent`, which is deliberately
   // fire-and-forget — a refresh must not wait on its own transcript —
-  // so `updateSource()` can resolve before the entry it just produced
-  // has landed. A test that reads straight after would be asserting on
-  // a log that is still being written.
+  // so `updateCollection()` can resolve before the entry it just
+  // produced has landed. A test that reads straight after would be
+  // asserting on a log that is still being written.
   getScriptLog: async (scriptId: string) => {
     await _flushScriptLogQueueForTests(scriptId);
     return getScriptLog(scriptId);
@@ -395,10 +397,10 @@ const api: SourceMonkeyApi = {
   setDebugForceSnapshotFailure,
   syncNow: async () => {
     // Cancel any pending debounced sync first — otherwise its work
-    // would fire just after we return, and a test that does addSource
-    // → syncNow → page.goto could see the registration briefly
-    // disappear mid-navigation. Tests rely on syncNow being the LAST
-    // sync until the next mutation.
+    // would fire just after we return, and a test that does
+    // addCollection → syncNow → page.goto could see the registration
+    // briefly disappear mid-navigation. Tests rely on syncNow being the
+    // LAST sync until the next mutation.
     if (syncTimer != null) {
       clearTimeout(syncTimer);
       syncTimer = null;
@@ -434,6 +436,10 @@ const api: SourceMonkeyApi = {
     }
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    // The legacy-key migration memo describes the profile we just
+    // wiped, so drop it — otherwise a test that seeds pre-rename rows
+    // would find nothing willing to move them.
+    resetCollectionKeyMigrationForTests();
     // The clear above fires `storage.onChanged`, which would reset the
     // cached roots — but not necessarily before the next test's first
     // call. Drop them synchronously so a reset is a clean slate the
@@ -441,7 +447,7 @@ const api: SourceMonkeyApi = {
     _setLocalRootsForTests([]);
     // Mark first-run seeding as already done so a later SW restart
     // doesn't repopulate the deliberately-emptied store with the default
-    // sources. A reset is meant to leave a clean slate, and re-seeding
+    // collections. A reset is meant to leave a clean slate, and re-seeding
     // would contradict that. (This stops future seed runs from starting;
     // a seed already in flight from the boot before this reset isn't
     // cancelled — the in-loop flag re-check narrows but can't fully
@@ -464,7 +470,7 @@ const api: SourceMonkeyApi = {
     }
     // Cancel the post-clear scheduled sync that the onChanged listener
     // just armed. Without this it would fire ~50 ms into the next
-    // test, potentially mid-addSource.
+    // test, potentially mid-addCollection.
     if (syncTimer != null) {
       clearTimeout(syncTimer);
       syncTimer = null;
@@ -474,7 +480,7 @@ const api: SourceMonkeyApi = {
 
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
 
-// Clicking the toolbar icon opens the sources page (the extension's
+// Clicking the toolbar icon opens the collections page (the extension's
 // declared `options_ui.page`). We have no popup configured, so
 // onClicked fires on every action click; openOptionsPage honors
 // `options_ui.open_in_tab` (true) and focuses an existing tab if one
@@ -483,15 +489,15 @@ chrome.action.onClicked.addListener(() => {
   chrome.runtime.openOptionsPage();
 });
 
-// First run: open the sources page so the user lands somewhere useful
-// instead of an empty toolbar, and so the page can seed the default
-// sources through the normal add → Refresh flow (see
-// `seedDefaultSourcesViaUi` in sources.ts). The `?first_run` param is
-// the seeding trigger — only this auto-opened page carries it, so an
-// ordinary sources-page visit never re-seeds. Gated by the persisted
-// flag (not just the install reason) because unpacked-extension reloads
-// re-fire onInstalled with reason 'install'; without the flag check
-// every dev reload would reopen the tab.
+// First run: open the collections page so the user lands somewhere
+// useful instead of an empty toolbar, and so the page can seed the
+// default collections through the normal add → Refresh flow (see
+// `seedDefaultCollectionsViaUi` in collections.ts). The `?first_run`
+// param is the seeding trigger — only this auto-opened page carries it,
+// so an ordinary collections-page visit never re-seeds. Gated by the
+// persisted flag (not just the install reason) because
+// unpacked-extension reloads re-fire onInstalled with reason 'install';
+// without the flag check every dev reload would reopen the tab.
 chrome.runtime.onInstalled.addListener((details) => {
   console.log(`[SourceMonkey] onInstalled (reason=${details.reason})`);
   if (details.reason !== 'install') return;
@@ -499,20 +505,20 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (await isFirstRunComplete()) {
       console.log(
         '[SourceMonkey] first run already complete (firstRunComplete=true); ' +
-        'not opening the sources page. Clear that storage key to re-seed.',
+        'not opening the collections page. Clear that storage key to re-seed.',
       );
       return;
     }
     console.log(
-      '[SourceMonkey] first run detected — opening sources.html?first_run=1 ' +
-      'so the page can seed the default sources',
+      '[SourceMonkey] first run detected — opening collections.html?first_run=1 ' +
+      'so the page can seed the default collections',
     );
     try {
       await chrome.tabs.create({
-        url: chrome.runtime.getURL('sources.html?first_run=1'),
+        url: chrome.runtime.getURL('collections.html?first_run=1'),
       });
     } catch (err) {
-      console.info('[SourceMonkey] failed to open first-run sources page:', err);
+      console.info('[SourceMonkey] failed to open first-run collections page:', err);
     }
   })();
 });
@@ -1074,7 +1080,7 @@ onCacheChanged(() => {
 // REJECTED badge clears the moment a retry places the script (and
 // appears the moment one stops registering). Without this the badge
 // would keep its old label until the next navigation, contradicting the
-// sources page beside it.
+// collections page beside it.
 //
 // Session area only: this is the injector's rejection map, and script
 // content changes come through `onCacheChanged` above.

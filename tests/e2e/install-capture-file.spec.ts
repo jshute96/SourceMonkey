@@ -5,7 +5,7 @@
 //   - `webNavigation` fires for `file://` at all, so the capture works
 //   - the preview can read a local file from an extension page
 //   - Install lands in the file container under the same bare path the
-//     sources page's path field produces, and Refresh works afterwards
+//     collections page's path field produces, and Refresh works afterwards
 //   - the bypass lets the user reach the file they meant to read
 //
 // Environment note: Chrome grants "Allow access to file URLs"
@@ -51,7 +51,7 @@ test.describe('.user.js capture for local files', () => {
   test.afterEach(() => { dir.cleanup(); });
 
   // Write a script and return both spellings of its location: the bare
-  // filesystem path (what the sources page's field takes, and what the
+  // filesystem path (what the collections page's field takes, and what the
   // store holds) and the `file://` URL (what a browser navigates to).
   function writeScript(name: string, scriptName: string, body = 'console.log("local");\n'): {
     path: string;
@@ -96,12 +96,12 @@ test.describe('.user.js capture for local files', () => {
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
-    // Registered exactly as the sources page's path field would have:
+    // Registered exactly as the collections page's path field would have:
     // into the local-file container, keyed by the absolute path.
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    expect(sources[0].path).toBe('container:file');
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    expect(collections[0].path).toBe('container:file');
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(1);
     const script = withScripts!.scripts[0];
     expect(script.status).toBe('ok');
@@ -113,7 +113,7 @@ test.describe('.user.js capture for local files', () => {
     dir.rewriteBody('hello.user.js', 'console.log("edited on disk");\n');
     await page.locator('#refresh-btn').click();
     await expect(page.locator('#content')).toContainText('edited on disk');
-    const after = await sm.getSourceWithScripts(sources[0].id);
+    const after = await sm.getCollectionWithScripts(collections[0].id);
     expect(after!.scripts[0].bodyText).toContain('edited on disk');
     await page.close();
   });
@@ -121,12 +121,12 @@ test.describe('.user.js capture for local files', () => {
   test('a file already added by path is recognised as installed', async ({
     extensionContext, sm,
   }) => {
-    // The sources page stores a bare path; the capture hands over a
+    // The collections page stores a bare path; the capture hands over a
     // `file://` URL. If the preview didn't collapse one to the other the
     // user would be offered Install and end up with two rows for one
     // file.
     const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -216,15 +216,15 @@ test.describe('.user.js capture for local files', () => {
   test('a row stored under the file:// spelling is still recognised', async ({
     extensionContext, getServiceWorker, sm,
   }) => {
-    // Rows added before `addSource` canonicalized `file://` inputs (and
+    // Rows added before `addCollection` canonicalized `file://` inputs (and
     // any added by pasting a `file://` URL into the Add field) carry the
     // URL spelling. The already-installed check has to canonicalize the
     // STORED value too, or those users get offered a duplicate install.
     const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const before = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    const before = await sm.getCollectionWithScripts(collections[0].id);
     // Rewrite the stored row to the old spelling. No test-surface call
     // for this on purpose — it's a shape production code no longer
     // writes, only reads.
@@ -292,10 +292,10 @@ test.describe('.user.js capture for local files', () => {
     // navigation would be captured and land the user on a preview of
     // the script they are already looking at.
     const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
-    await sm.addSource(path);
+    await sm.addCollection(path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
 
     const page = await extensionContext.newPage();
     await page.goto(

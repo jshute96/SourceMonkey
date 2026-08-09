@@ -33,7 +33,7 @@ test.describe('GM_openInTab', () => {
         document.body.dataset.smOpened = String(typeof ctl === 'object');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -65,7 +65,7 @@ test.describe('GM_openInTab', () => {
         document.body.dataset.smOpened = String(typeof ctl === 'object');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -97,7 +97,7 @@ test.describe('GM_openInTab', () => {
         ctl.onclose = function () { document.body.dataset.smOnClose = 'fired'; };
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -127,7 +127,7 @@ test.describe('GM_openInTab', () => {
         document.body.dataset.smOpenType = typeof GM_openInTab;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

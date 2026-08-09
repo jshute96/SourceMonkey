@@ -1,7 +1,7 @@
 // Single entry point for every userscript refresh path.
 //
 // Two trigger modes share the same underlying work (refreshScript /
-// refreshSource / refreshAllSources in script-store.ts):
+// refreshCollection / refreshAllCollections in script-store.ts):
 //
 //   - 'manual'        — the user clicked a Refresh button. Always runs.
 //                       Awaited by the caller so the UI can show a
@@ -17,14 +17,15 @@
 // shared — a manual click that lands while an opportunistic check is
 // already running awaits that existing promise instead of starting a
 // second pass. This holds PER gate key: the script gate
-// (`updateScript`), the source gate (`updateSource`), and the
-// all-sources gate (`updateAllSources`) are independent maps, so an
-// opportunistic `updateScript(X)` can still run alongside a manual
-// `updateSource(S⊇X)` or `updateAllSources` that also rebuilds X. They
-// fetch the same bytes, and their storage writes are serialized and
-// re-read user-owned state by `script-store.ts`'s `mutate()` lock (see
-// docs/storage.md "Write serialization"), so the overlap is idempotent
-// rather than corrupting — but it is NOT deduped to a single fetch.
+// (`updateScript`), the collection gate (`updateCollection`), and the
+// all-collections gate (`updateAllCollections`) are independent maps,
+// so an opportunistic `updateScript(X)` can still run alongside a
+// manual `updateCollection(S⊇X)` or `updateAllCollections` that also
+// rebuilds X. They fetch the same bytes, and their storage writes are
+// serialized and re-read user-owned state by `script-store.ts`'s
+// `mutate()` lock (see docs/storage.md "Write serialization"), so the
+// overlap is idempotent rather than corrupting — but it is NOT deduped
+// to a single fetch.
 //
 // We deliberately don't try to mark tabs stale from here. The actual
 // stale propagation happens via chrome.storage.onChanged in
@@ -35,17 +36,17 @@
 import {
   getAllScripts,
   getScript,
-  getSources,
-  getSourceWithScripts,
+  getCollections,
+  getCollectionWithScripts,
   loadStateLogEntry,
   localFileLogMessages,
-  refreshAllSources,
+  refreshAllCollections,
   refreshScript,
-  refreshSource,
+  refreshCollection,
   setVersionProbes,
   type StartupLog,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
 } from './script-store.js';
 import {
   outdatedProbe,
@@ -131,12 +132,12 @@ export function gate<T>(
 
 // Separate maps per result type so type inference stays clean.
 const scriptState = new Map<Resource, GateSlot<StoredScript | null>>();
-const sourceState = new Map<Resource, GateSlot<{ source: StoredSource; scripts: StoredScript[] } | null>>();
-const allSourcesState = new Map<Resource, GateSlot<unknown>>();
+const collectionState = new Map<Resource, GateSlot<{ collection: StoredCollection; scripts: StoredScript[] } | null>>();
+const allCollectionsState = new Map<Resource, GateSlot<unknown>>();
 
-// "all sources" is one global slot, but reuse the same shape so the
+// "all collections" is one global slot, but reuse the same shape so the
 // concurrency/rate-limit logic stays uniform.
-const ALL_SOURCES_KEY = '*';
+const ALL_COLLECTIONS_KEY = '*';
 
 // Public API ---------------------------------------------------------
 
@@ -155,29 +156,29 @@ export function updateScript(
 }
 
 // Only ever reached from a Refresh button, so probes force by default.
-export function updateSource(
-  sourceId: string,
+export function updateCollection(
+  collectionId: string,
   mode: UpdateMode,
   probe: ProbePolicy = 'force',
-): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
-  return gate(sourceState, sourceId, mode, () => runSourceCheck(sourceId, mode, probe), null);
+): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
+  return gate(collectionState, collectionId, mode, () => runCollectionCheck(collectionId, mode, probe), null);
 }
 
 // Only ever reached from Refresh All, so probes force by default.
-export function updateAllSources(
+export function updateAllCollections(
   mode: UpdateMode,
   probe: ProbePolicy = 'force',
-): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
+): Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>> {
   // We have to do the cast dance because gate is generic over a single
   // result type and the skip result for "no work done" is just an empty
   // map, not null.
   return gate<unknown>(
-    allSourcesState,
-    ALL_SOURCES_KEY,
+    allCollectionsState,
+    ALL_COLLECTIONS_KEY,
     mode,
-    () => runAllSourcesCheck(mode, probe) as Promise<unknown>,
+    () => runAllCollectionsCheck(mode, probe) as Promise<unknown>,
     new Map(),
-  ) as Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>>;
+  ) as Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>>;
 }
 
 // ---------- Task wrappers that log lifecycle to the SW console -------
@@ -187,9 +188,9 @@ export function updateAllSources(
 // content", or "failed: <err>". Without this it's hard to tell
 // whether the opportunistic refresh is even running.
 //
-// We do a getScript / getSourceWithScripts read BEFORE the refresh so
-// we have the prior loadedAt to compare against the post-refresh row.
-// One extra storage read per check — cheap.
+// We do a getScript / getCollectionWithScripts read BEFORE the refresh
+// so we have the prior loadedAt to compare against the post-refresh
+// row. One extra storage read per check — cheap.
 
 // `@require` + `@resource` policy by trigger mode. Manual clicks
 // rebuild deps from scratch so users can pick up remote updates
@@ -258,45 +259,45 @@ async function runScriptCheck(
   return next;
 }
 
-async function runSourceCheck(
-  sourceId: string,
+async function runCollectionCheck(
+  collectionId: string,
   mode: UpdateMode,
   probe: ProbePolicy,
-): Promise<{ source: StoredSource; scripts: StoredScript[] } | null> {
-  const priorData = await getSourceWithScripts(sourceId);
+): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
+  const priorData = await getCollectionWithScripts(collectionId);
   const prior: SourceSnapshot | undefined = priorData
-    ? { source: priorData.source, scripts: new Map(priorData.scripts.map((s) => [s.id, s])) }
+    ? { collection: priorData.collection, scripts: new Map(priorData.scripts.map((s) => [s.id, s])) }
     : undefined;
-  const label = priorData?.source.path ?? sourceId;
-  // Suffix the start line with "(with GitHub token)" when the source
-  // URL would carry the GitHub auth header on fetch. Lets the user
-  // confirm from the SW console that their Options-page token is
-  // actually in play for this source (otherwise a silent "still
+  const label = priorData?.collection.path ?? collectionId;
+  // Suffix the start line with "(with GitHub token)" when the
+  // collection URL would carry the GitHub auth header on fetch. Lets
+  // the user confirm from the SW console that their Options-page token
+  // is actually in play for this collection (otherwise a silent "still
   // hitting unauthenticated rate limits" is hard to diagnose).
-  const tokenSuffix = prior?.source.path ? githubTokenLogSuffix(prior.source.path) : '';
-  console.log(`[SourceMonkey] source refresh (${mode}): ${label}${tokenSuffix}`);
-  let result: { source: StoredSource; scripts: StoredScript[] } | null;
+  const tokenSuffix = prior?.collection.path ? githubTokenLogSuffix(prior.collection.path) : '';
+  console.log(`[SourceMonkey] collection refresh (${mode}): ${label}${tokenSuffix}`);
+  let result: { collection: StoredCollection; scripts: StoredScript[] } | null;
   try {
-    result = await refreshSource(sourceId, { recheckFiles: fileRecheckMode(mode) });
+    result = await refreshCollection(collectionId, { recheckFiles: fileRecheckMode(mode) });
   } catch (err) {
     const msg = describe(err);
-    console.info(`[SourceMonkey] source refresh failed: ${label}: ${msg}`);
-    // A throw out of refreshSource (storage failure, and nothing else
-    // today — scan failures are caught inside and surface as scanError)
-    // leaves every script under this source unrefreshed. Say so in each
-    // one's Log rather than letting the failure live only in the SW
-    // console.
-    logSourceEventToScripts(
-      [...(prior?.scripts.values() ?? [])], mode, `Could not refresh this source: ${msg}`,
+    console.info(`[SourceMonkey] collection refresh failed: ${label}: ${msg}`);
+    // A throw out of refreshCollection (storage failure, and nothing
+    // else today — scan failures are caught inside and surface as
+    // scanError) leaves every script under this collection unrefreshed.
+    // Say so in each one's Log rather than letting the failure live
+    // only in the SW console.
+    logCollectionEventToScripts(
+      [...(prior?.scripts.values() ?? [])], mode, `Could not refresh this collection: ${msg}`,
     );
     throw err;
   }
   if (result) {
-    summarizeSourceOutcome(label, prior, result, mode);
+    summarizeCollectionOutcome(label, prior, result, mode);
     await runVersionProbes(result.scripts, probe);
-    // Retry any script under this source that Chrome is refusing —
-    // refreshing a source is one of the places a user goes to say "try
-    // again". See `retryRejectedRegistrations`.
+    // Retry any script under this collection that Chrome is refusing —
+    // refreshing a collection is one of the places a user goes to say
+    // "try again". See `retryRejectedRegistrations`.
     await retryRejectedRegistrations(
       result.scripts.map((s) => s.id), { userInitiated: probe === 'force' },
     );
@@ -304,36 +305,37 @@ async function runSourceCheck(
   return result;
 }
 
-async function runAllSourcesCheck(
+async function runAllCollectionsCheck(
   mode: UpdateMode,
   probe: ProbePolicy,
-): Promise<Map<string, { source: StoredSource; scripts: StoredScript[] }>> {
-  console.log(`[SourceMonkey] refreshing all sources (${mode})`);
+): Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>> {
+  console.log(`[SourceMonkey] refreshing all collections (${mode})`);
   // Snapshot priors BEFORE the refresh; reading after would just give
   // back the post-refresh state and the summary would always say 0
   // updated / 0 added.
-  const priorBySourceId = await snapshotAllSourceScripts();
-  let result: Map<string, { source: StoredSource; scripts: StoredScript[] }>;
+  const priorByCollectionId = await snapshotAllCollectionScripts();
+  let result: Map<string, { collection: StoredCollection; scripts: StoredScript[] }>;
   try {
-    result = await refreshAllSources({ recheckFiles: fileRecheckMode(mode) });
+    result = await refreshAllCollections({ recheckFiles: fileRecheckMode(mode) });
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] refresh all failed: ${msg}`);
-    // `refreshAllSources` fans out with Promise.all, so one source
-    // throwing rejects the whole batch and NO source gets summarized —
-    // not even the ones that succeeded. Same fan-out as runSourceCheck
-    // so the two paths can't drift, applied across every source.
-    for (const snapshot of priorBySourceId.values()) {
-      logSourceEventToScripts(
-        [...snapshot.scripts.values()], mode, `Could not refresh this source: ${msg}`,
+    // `refreshAllCollections` fans out with Promise.all, so one
+    // collection throwing rejects the whole batch and NO collection
+    // gets summarized — not even the ones that succeeded. Same fan-out
+    // as runCollectionCheck so the two paths can't drift, applied
+    // across every collection.
+    for (const snapshot of priorByCollectionId.values()) {
+      logCollectionEventToScripts(
+        [...snapshot.scripts.values()], mode, `Could not refresh this collection: ${msg}`,
       );
     }
     throw err;
   }
   for (const [, refreshed] of result) {
-    summarizeSourceOutcome(
-      refreshed.source.path,
-      priorBySourceId.get(refreshed.source.id),
+    summarizeCollectionOutcome(
+      refreshed.collection.path,
+      priorByCollectionId.get(refreshed.collection.id),
       refreshed,
       mode,
     );
@@ -358,7 +360,7 @@ async function runAllSourcesCheck(
 // for what "probe" means here and [docs/updates.md] for why we don't
 // simply update from the probed URL.
 //
-// Awaited by the source-level entry points (a Refresh button click,
+// Awaited by the collection-level entry points (a Refresh button click,
 // where the user is watching a spinner and expects the row to be
 // current when it stops) but not by the per-script one, which sits on
 // the navigation hot path — see runScriptCheck.
@@ -419,18 +421,19 @@ async function probeOneScript(
 }
 
 interface SourceSnapshot {
-  source: StoredSource;
+  collection: StoredCollection;
   scripts: Map<string, StoredScript>;
 }
 
-// Pre-refresh state per source: the source row (for its `scanError`, so
-// a still-down source doesn't re-log) plus its scripts by ID.
-async function snapshotAllSourceScripts(): Promise<Map<string, SourceSnapshot>> {
-  const sources = await getSources();
-  const entries = await Promise.all(sources.map(async (s) => {
-    const data = await getSourceWithScripts(s.id);
+// Pre-refresh state per collection: the collection row (for its
+// `scanError`, so a still-down collection doesn't re-log) plus its
+// scripts by ID.
+async function snapshotAllCollectionScripts(): Promise<Map<string, SourceSnapshot>> {
+  const collections = await getCollections();
+  const entries = await Promise.all(collections.map(async (s) => {
+    const data = await getCollectionWithScripts(s.id);
     const scripts = new Map((data?.scripts ?? []).map((sc) => [sc.id, sc]));
-    return [s.id, { source: s, scripts }] as const;
+    return [s.id, { collection: s, scripts }] as const;
   }));
   return new Map(entries);
 }
@@ -455,8 +458,8 @@ function logScriptOutcome(
     return;
   }
   // Refresh failed but the cached good copy keeps running. Log once on
-  // the transition (or when the reason changes) so a source that stays
-  // down doesn't spam the console on every opportunistic check.
+  // the transition (or when the reason changes) so a collection that
+  // stays down doesn't spam the console on every opportunistic check.
   if (next.refreshError && prior?.refreshError !== next.refreshError) {
     console.info(`[SourceMonkey] refresh failed: ${label}: ${next.refreshError}`);
     return;
@@ -583,26 +586,27 @@ export function emitScriptOutcomeLog(
   }
 }
 
-// Fan a SOURCE-level fact out into the Log of every script under that
-// source. Used for the failures that stop us from checking any of them
-// (an unreadable listing, a throw out of the refresh) and for the
-// matching recovery.
+// Fan a COLLECTION-level fact out into the Log of every script under
+// that collection. Used for the failures that stop us from checking any
+// of them (an unreadable listing, a throw out of the refresh) and for
+// the matching recovery.
 //
 // **Always `info`, never warning/error.** These entries exist so a user
 // reading one script's Log can see why it wasn't checked — the badge
-// for a source-level problem belongs on the source row, which already
-// renders `scanError` (see `renderSource` in sources.ts). Logging them
-// higher would promote every script under a source to WARNING via the
-// `loglevel:` sentinel, which is monotonic within a session: one
-// transient listing failure would leave N rows badged WARNING for the
-// rest of the session, long after the source came back.
+// for a collection-level problem belongs on the collection row, which
+// already renders `scanError` (see `renderCollectionSection` in
+// collections.ts). Logging them higher would promote every script under
+// a collection to WARNING via the `loglevel:` sentinel, which is
+// monotonic within a session: one transient listing failure would leave
+// N rows badged WARNING for the rest of the session, long after the
+// collection came back.
 //
-// Plain append. A source that stays unreadable re-logs on each pass,
+// Plain append. A collection that stays unreadable re-logs on each pass,
 // which is honest — every one of those passes really did try to read
-// it. Only reachable from a Refresh / Refresh All click (see
-// `updateSource` / `updateAllSources` callers in sources.ts), so the
-// user asked for each repeat.
-function logSourceEventToScripts(
+// it. Only reachable from a Refresh / Refresh All click (see the
+// `updateCollection` / `updateAllCollections` callers in
+// collections.ts), so the user asked for each repeat.
+function logCollectionEventToScripts(
   scripts: readonly StoredScript[],
   mode: UpdateMode,
   message: string,
@@ -659,8 +663,8 @@ function hasReportableOutcome(
 // the parse started succeeding, or the server did.
 function recoveryMessage(prior: StoredScript): string {
   if (prior.status === 'invalid') return 'Loads cleanly again (was invalid)';
-  if (prior.status === 'missing') return 'Source file is back';
-  return 'Refresh succeeded again (source is reachable)';
+  if (prior.status === 'missing') return 'Script file is back';
+  return 'Refresh succeeded again (collection is reachable)';
 }
 
 // Map a StartupLog level (page-console-flavored: log/info/warn/error)
@@ -727,7 +731,7 @@ export async function replayScriptLogsAtBoot(): Promise<void> {
   if (got[BOOT_REPLAY_SENTINEL_KEY]) return;
 
   // Single chrome.storage.local.get(null) scan via getAllScripts —
-  // cheaper than per-source reads when most scripts won't have
+  // cheaper than per-collection reads when most scripts won't have
   // anything to replay anyway. Per-script work runs concurrently;
   // `appendScriptLog`'s own queue keeps each script's appends ordered.
   const scripts = await getAllScripts();
@@ -768,37 +772,38 @@ async function ensureStartupLogsInLogTab(script: StoredScript): Promise<void> {
   }
 }
 
-// Roll a source-level refresh up into one SW-console line, and fan the
-// per-script outcomes out into the Log tab.
+// Roll a collection-level refresh up into one SW-console line, and fan
+// the per-script outcomes out into the Log tab.
 //
 // The scan-failure case is handled separately from the per-script loop.
-// `refreshSource` deliberately leaves every script row untouched when
-// the listing can't be read (see [docs/storage.md]) — so the per-script
-// loop would report no change for every one of them, which is a lie:
-// nothing was checked. Instead the reason is fanned out to each script
-// (see `logSourceEventToScripts` for why that's `info`).
+// `refreshCollection` deliberately leaves every script row untouched
+// when the listing can't be read (see [docs/storage.md]) — so the
+// per-script loop would report no change for every one of them, which
+// is a lie: nothing was checked. Instead the reason is fanned out to
+// each script (see `logCollectionEventToScripts` for why that's
+// `info`).
 //
 // Exported for unit tests.
-export function summarizeSourceOutcome(
+export function summarizeCollectionOutcome(
   label: string,
   prior: SourceSnapshot | undefined,
-  next: { source: StoredSource; scripts: StoredScript[] },
+  next: { collection: StoredCollection; scripts: StoredScript[] },
   mode: UpdateMode,
 ): void {
   const nextScripts = next.scripts;
-  const scanError = next.source.scanError;
+  const scanError = next.collection.scanError;
   if (scanError) {
-    logSourceEventToScripts(
+    logCollectionEventToScripts(
       nextScripts, mode,
-      // Same no-echo phrasing as the sources page's banner, since
+      // Same no-echo phrasing as the collections page's banner, since
       // `scanError` usually starts with its own `Could not read …`.
-      `This source did not load: ${scanError} — still running the cached copy`,
+      `This collection did not load: ${scanError} — still running the cached copy`,
     );
-    console.log(`[SourceMonkey] source refresh: ${label}: scan failed: ${scanError}`);
+    console.log(`[SourceMonkey] collection refresh: ${label}: scan failed: ${scanError}`);
     return;
   }
-  if (prior?.source.scanError) {
-    logSourceEventToScripts(nextScripts, mode, 'This source is readable again');
+  if (prior?.collection.scanError) {
+    logCollectionEventToScripts(nextScripts, mode, 'This collection is readable again');
   }
   const priorBy = prior?.scripts ?? new Map<string, StoredScript>();
   let changed = 0;
@@ -824,7 +829,7 @@ export function summarizeSourceOutcome(
   if (unchanged) parts.push(`${unchanged} unchanged`);
   if (refreshFailed) parts.push(`${refreshFailed} refresh-failed`);
   if (errored) parts.push(`${errored} error`);
-  console.log(`[SourceMonkey] source refresh: ${label}: ${parts.join(', ')}`);
+  console.log(`[SourceMonkey] collection refresh: ${label}: ${parts.join(', ')}`);
 }
 
 function describe(err: unknown): string {
@@ -853,6 +858,6 @@ export function requestOpportunisticScriptChecks(scriptIds: string[]): void {
 // timing-mock gymnastics.
 export function _resetUpdaterStateForTests(): void {
   scriptState.clear();
-  sourceState.clear();
-  allSourcesState.clear();
+  collectionState.clear();
+  allCollectionsState.clear();
 }

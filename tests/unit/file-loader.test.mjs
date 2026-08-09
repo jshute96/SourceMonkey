@@ -39,7 +39,7 @@ test('resolveScriptResource: absolute file:// references are rejected', () => {
   // The extension holds `file:///*` host permission; allowing a script
   // to point an `@icon` at an arbitrary host file would let a
   // malicious HTTP-sourced script read /etc/passwd (or anywhere) and
-  // inline it into the sources-page DOM. Relative paths against a
+  // inline it into the collections-page DOM. Relative paths against a
   // file:// script can still produce a file:// result, but those are
   // confined to the script's parent dir by the containment check.
   assert.equal(

@@ -77,7 +77,7 @@ so the list reads as what it claims to be — the *additional* places
 searched, each appearing once. (Duplicate candidates would be collapsed
 anyway; the de-dupe is about the list, not the probing.)
 
-Per-source roots are a planned follow-on — see [TODO.md](../TODO.md).
+Per-collection roots are a planned follow-on — see [TODO.md](../TODO.md).
 
 ### Configured roots
 
@@ -92,13 +92,13 @@ Per-source roots are a planned follow-on — see [TODO.md](../TODO.md).
   no honest entry to write for a line that didn't parse.
 - Save writes the canonical form back into the box, so what's shown is
   what's searched.
-- Save then **refreshes every source that supports local files**, for
-  the same reason the per-source switch refreshes its source: roots
-  only change what the *next* refresh resolves to. http(s) sources and
+- Save then **refreshes every collection that supports local files**, for
+  the same reason the per-collection switch refreshes its collection: roots
+  only change what the *next* refresh resolves to. http(s) collections and
   the web / GitHub containers are skipped — they resolve over the
   network, so a root cannot change their outcome.
 - Cached in a module variable in each context that resolves — service
-  worker, sources page, viewer.
+  worker, collections page, viewer.
   - Loaded once at startup, then kept current via `storage.onChanged`,
     the same shape as `debug-log.ts`.
   - `localSearchRoots` is synchronous because render paths call it, so
@@ -229,10 +229,10 @@ exception:
   fast path: it describes a file that may since have been deleted, and
   keeping it would serve a stand-in that no longer exists.
 
-Cost when enabled, for local-source scripts only: up to one local read
-per path segment of each declared dependency's URL, plus one for the
-host-qualified form, per refresh. A hit short-circuits the rest, and
-`ensureFetch` dedups within a pass. Note that a script with local
+Cost when enabled, for scripts in a local collection only: up to one
+local read per path segment of each declared dependency's URL, plus one
+for the host-qualified form, per refresh. A hit short-circuits the rest,
+and `ensureFetch` dedups within a pass. Note that a script with local
 roots also skips the whole-list `preserve`
 shortcut, so it re-runs resolution every opportunistic refresh — that is
 the price of edits showing up without a Refresh click.
@@ -260,21 +260,21 @@ Both `StoredRequire` and `StoredResource` gain one field:
   is what the script says it depends on, and it is what the entry falls
   back to when the local file goes away.
 
-## Per-source opt-out
+## Per-collection opt-out
 
-`StoredSource.localFiles` — only an explicit `false` disables it, so rows
+`StoredCollection.localFiles` — only an explicit `false` disables it, so rows
 persisted before the field existed read as enabled.
 
-- Rendered as a **Local files** checkbox in the source's header on the
-  sources page, next to Refresh / Remove. (Distinct from the viewer's
+- Rendered as a **Local files** checkbox in the collection's header on the
+  collections page, next to Refresh / Remove. (Distinct from the viewer's
   **Local overrides** row below — this switches the feature on for a
-  source, that lists what it actually substituted for one script.)
-- Shown only where it can do something: http(s) sources and the http /
+  collection, that lists what it actually substituted for one script.)
+- Shown only where it can do something: http(s) collections and the http /
   github containers are excluded, since every script under them loads
   over the network.
-- Toggling it refreshes the source, because the flag only changes what
+- Toggling it refreshes the collection, because the flag only changes what
   the *next* refresh resolves to.
-- Off disables **all** roots for that source, configured ones included
+- Off disables **all** roots for that collection, configured ones included
   — it's the whole mechanism's off-switch, not just the implicit
   folder's.
 - Off is for a directory of scripts you didn't write, where a file

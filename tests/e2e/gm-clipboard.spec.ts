@@ -43,7 +43,7 @@ test.describe('GM_setClipboard (Phase 5)', () => {
         );
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -78,7 +78,7 @@ test.describe('GM_setClipboard (Phase 5)', () => {
         );
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -106,7 +106,7 @@ test.describe('GM_setClipboard (Phase 5)', () => {
         document.body.dataset.smClipType = typeof GM_setClipboard;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

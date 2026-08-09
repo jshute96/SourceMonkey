@@ -41,7 +41,7 @@ If you want to cross-check by hand, fetch those three pages.
 | `@namespace` | ⚪ | ✓ | ✓ | ✓ | TM/VM/GM combine it with `@name` as a unique storage key. SourceMonkey keys scripts by their UUID, so this has no effect here. |
 | `@version` | 👁 | ✓ | ✓ | ✓ | Shown in the viewer, and compared against whatever `@updateURL` / `@downloadURL` declare to flag an OUTDATED script — see [updates.md](updates.md). Not used to decide whether to *fetch*: that's driven by `size+mtime` / conditional GET against the install source. |
 | `@description` | 👁 | ✓ | ✓ | ✓ | Shown in the userscript viewer summary. |
-| `@author` | ⚪ | ✓ |   |   | Not part of VM's or GM4's documented tag set (GM explicitly notes it's "ignored but readable" — i.e. preserved in source, not honored as metadata). |
+| `@author` | ⚪ | ✓ |   |   | Not part of VM's or GM4's documented tag set (GM explicitly notes it's "ignored but readable" — i.e. preserved in collection, not honored as metadata). |
 | `@copyright` | ⚪ | ✓ |   |   | TM-only per docs. |
 | `@homepage` / `@website` / `@source` | ⚪ | ✓ |   |   | TM treats these as aliases for `@homepageURL`. VM and GM4 don't document the aliases — only `@homepageURL` (VM) or nothing (GM4). |
 | `@homepageURL` | ⚪ | ✓ | ✓ |   | The canonical form. Links the "home" icon in TM/VM's script list. |
@@ -51,7 +51,7 @@ If you want to cross-check by hand, fetch those three pages.
 | `@icon64` / `@icon64URL` | ✅ | ✓ |   |   | 64×64 variant; TM-only per docs. Lower priority than the regular `@icon` variants since our display target is 16×16. |
 | `@tag` (categorization) | ⚪ | ✓ (5.0+) | ✓ |   | Labels for organising scripts in the dashboard. Distinct from "the metadata tag concept" generally. |
 | `@antifeature` | ⚪ | ✓ |   |   | Monetisation/tracking disclosure. TM documents it; VM and GM4 don't. Widely used by GreasyFork tooling regardless. |
-| `@license` | ⚪ |   |   |   | Not documented by any of TM/VM/GM4. Used in practice by source-sharing sites (OpenUserJS, GreasyFork) as plain metadata. |
+| `@license` | ⚪ |   |   |   | Not documented by any of TM/VM/GM4. Used in practice by collection-sharing sites (OpenUserJS, GreasyFork) as plain metadata. |
 
 ---
 

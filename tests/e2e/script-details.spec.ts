@@ -42,8 +42,8 @@ test.describe('userscript viewer details panel', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
@@ -76,8 +76,8 @@ test.describe('userscript viewer details panel', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
@@ -118,8 +118,8 @@ test.describe('userscript viewer details panel', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     const file = path.join(scriptsDir.path, 'a.user.js');
 
     const page = await extensionContext.newPage();
@@ -156,8 +156,8 @@ test.describe('userscript viewer details panel', () => {
     scriptsDir.write({ relativePath: 'solo.user.js', meta, body: '' });
     scriptsDir.write({ relativePath: 'sub/dupe.user.js', meta, body: '' });
     scriptsDir.write({ relativePath: 'other/dupe.user.js', meta, body: '' });
-    const source = await sm.addSource(scriptsDir.path);
-    const scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+    const collection = await sm.addCollection(scriptsDir.path);
+    const scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
     const solo = scripts.find((s) => s.relativePath.endsWith('solo.user.js'))!;
     const dupe = scripts.find((s) => s.relativePath.endsWith('sub/dupe.user.js'))!;
 
@@ -197,8 +197,8 @@ test.describe('userscript viewer details panel', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts
       .find((s) => s.relativePath === 'a.user.js')!;
 
     const page = await extensionContext.newPage();
@@ -217,8 +217,8 @@ test.describe('userscript viewer details panel', () => {
       meta: { name: 'Light', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);

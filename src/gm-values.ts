@@ -57,7 +57,8 @@ export async function loadAllValues(scriptId: string): Promise<Record<string, un
   // chrome.storage.local.get(null) returns the whole namespace. We
   // can't ask for a prefix directly, so we filter client-side.
   // Acceptable: the rest of the storage layout is small (scripts +
-  // sources), and per-script-row queries would be a different shape.
+  // collections), and per-script-row queries would be a different
+  // shape.
   const all = await chrome.storage.local.get(null);
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(all)) {

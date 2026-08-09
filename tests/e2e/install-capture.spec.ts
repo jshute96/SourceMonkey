@@ -9,7 +9,7 @@
 //
 // Every test takes the `sm` fixture even when it never calls it: `sm`
 // is what runs `resetAllState()` around each test, and this file writes
-// both a settings row (`smCaptureUserJsLinks`) and userscript sources.
+// both a settings row (`smCaptureUserJsLinks`) and userscript collections.
 
 import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
@@ -98,11 +98,11 @@ test.describe('.user.js link capture', () => {
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
-    // Installed as a normal http source, exactly as if the URL had
-    // been typed into the sources page.
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    // Installed as a normal http collection, exactly as if the URL had
+    // been typed into the collections page.
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(1);
     const script = withScripts!.scripts[0];
     expect(script.status).toBe('ok');
@@ -145,8 +145,8 @@ test.describe('.user.js link capture', () => {
     await expect(location).toHaveText(scriptUrl.replace(encodedPath, `/${decodedName}`));
     expect(await location.getAttribute('href')).toBe(scriptUrl);
     // What we stored — and would refetch — is the real URL.
-    const sources = await sm.getSources();
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts[0].relativePath).toBe(scriptUrl);
     await page.close();
   });
@@ -154,12 +154,12 @@ test.describe('.user.js link capture', () => {
   test('a second install joins the existing container and opens the new script', async ({
     extensionContext, sm,
   }) => {
-    // Exercises addSource's `existingContainer` branch — the one that
+    // Exercises addCollection's `existingContainer` branch — the one that
     // has to pick the newly added script's id, not the container's
     // first. A single-install test can't tell those apart.
     server.setRoute('/first.user.js', userscriptText('First Script'));
     server.setRoute('/second.user.js', userscriptText('Second Script'));
-    await sm.addSource(`${server.baseUrl}/first.user.js`);
+    await sm.addCollection(`${server.baseUrl}/first.user.js`);
 
     const page = await extensionContext.newPage();
     await page.goto(`${server.baseUrl}/second.user.js`).catch(() => {});
@@ -167,9 +167,9 @@ test.describe('.user.js link capture', () => {
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(2);
     // The viewer opened on the script just installed, not the first one.
     const openedId = new URL(page.url()).searchParams.get('script');
@@ -183,7 +183,7 @@ test.describe('.user.js link capture', () => {
   }) => {
     server.setRoute('/hello.user.js', userscriptText('Hello From The Web'));
     const scriptUrl = `${server.baseUrl}/hello.user.js`;
-    await sm.addSource(scriptUrl);
+    await sm.addCollection(scriptUrl);
 
     const page = await extensionContext.newPage();
     await page.goto(scriptUrl).catch(() => {});
@@ -209,7 +209,7 @@ test.describe('.user.js link capture', () => {
 
     await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
-    // The source is still shown, so the user can see what they got.
+    // The collection is still shown, so the user can see what they got.
     await expect(page.locator('#content')).toContainText('no metadata block here');
     await page.close();
   });
@@ -314,7 +314,7 @@ test.describe('.user.js link capture', () => {
 
     const rules = await workaroundRules(getServiceWorker);
     if (major >= CHROME_USERJS_FIX_VERSION) {
-      // Past the fix the rewrite would garble a perfectly good source
+      // Past the fix the rewrite would garble a perfectly good collection
       // view, so it must not be registered at all.
       expect(rules).toHaveLength(0);
       return;

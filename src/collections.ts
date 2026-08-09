@@ -1,16 +1,14 @@
-// Sources page controller. Renders one section per registered source
-// (a local directory of userscripts, a single `.user.js` file, an
-// http(s) `.user.js` URL, or a JSON manifest — locally as a path or
-// file:// URL, or remotely over http(s)), with Refresh + Remove
-// buttons and a script table showing filename, size, and parse
-// status.
+// Collections page controller. Renders one section per registered
+// collection (a local directory of userscripts, an http(s) directory or
+// JSON manifest, a GitHub tree, or one of the three built-in containers
+// that hold individually added scripts), with Refresh + Remove buttons
+// and a script table showing filename, size, and parse status.
 //
-// "Add source" submits the raw string; the store classifies it by
-// shape (path vs URL, suffix) and scans accordingly, loading every
-// script it finds into chrome.storage immediately so the user doesn't
-// need to click Refresh after add. The CSS hooks (`.directory*`) and
-// the `directories` container id predate http sources — they're just
-// stable selector names now, not a claim that every section is a dir.
+// Add submits the raw string; the store classifies it by shape (path vs
+// URL, suffix) and scans accordingly, loading every script it finds into
+// chrome.storage immediately so the user doesn't need to click Refresh
+// after add. A single `.user.js` input isn't a collection of its own —
+// it lands in the built-in container matching its scheme.
 //
 // The initial `render()` runs once at load to draw banners and seed
 // every section. After that the page keeps itself current by REPAINTING
@@ -26,45 +24,45 @@
 // whose spinner is up.
 
 import {
-  addSource,
-  backfillSourceDisplayNames,
-  DEFAULT_SOURCES,
+  addCollection,
+  backfillCollectionDisplayNames,
+  DEFAULT_COLLECTIONS,
   getAllScripts,
-  getSourceWithScripts,
-  getSources,
+  getCollectionWithScripts,
+  getCollections,
   isFirstRunComplete,
   isScriptEnabled,
-  isSourceEnabled,
+  isCollectionEnabled,
   markFirstRunComplete,
-  moveSource,
+  moveCollection,
   removeScript,
-  removeSource,
+  removeCollection,
   setScriptEnabled,
   setScriptsEnabled,
-  setSourceEnabled,
-  setSourceLocalFiles,
-  sourceUsesLocalFiles,
+  setCollectionEnabled,
+  setCollectionLocalFiles,
+  collectionUsesLocalFiles,
   touchesStructuralRows,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
 } from './script-store.js';
 import {
   installLocalRootsListener,
   localRootsReady,
   localSearchRoots,
-  sourceSupportsLocalFiles,
+  collectionSupportsLocalFiles,
 } from './local-file-overrides.js';
 import {
   appendWithSlashBreaks,
   effectiveDisplayName,
-  makeSourceTypeBubble,
-  sourceAnchorId,
-} from './source-display.js';
+  makeCollectionTypeBubble,
+  collectionAnchorId,
+} from './collection-display.js';
 import { getValue } from './userscript-header.js';
 import { describeDiagnostic } from './diagnostic-location.js';
 import {
-  updateAllSources,
-  updateSource,
+  updateAllCollections,
+  updateCollection,
 } from './script-updater.js';
 import {
   displayLocation,
@@ -90,15 +88,15 @@ import {
 } from './script-rejection.js';
 import { iconRefFromHeader, renderSiteIconInto } from './site-icon.js';
 import {
-  canonicalSourceInput,
+  canonicalCollectionInput,
   containerKindForSingleFileInput,
   containerPath,
-  isContainerSource,
+  isContainerCollection,
   isHttpUrl,
   isFileUrl,
   LOCATION_SHAPES,
   isSingleFileInput,
-  normalizeSourceInput,
+  normalizeCollectionInput,
 } from './directories.js';
 import {
   installGithubAuthListener,
@@ -117,7 +115,7 @@ import { installPageParseChecker } from './parse-check-client.js';
 // re-derived. See src/parse-check-client.ts.
 installPageParseChecker();
 
-// Refresh-from-sources-page paths run fetchHttpText in the page
+// Refresh-from-collections-page paths run fetchHttpText in the page
 // context, so the page needs its own copy of the cached GitHub token
 // — the SW's cached value isn't reachable from here. Listen
 // synchronously; bootstrap() awaits the initial load before any
@@ -127,7 +125,7 @@ installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
 const bannerSlot = document.getElementById('banner-slot')!;
-const directoriesEl = document.getElementById('directories')!;
+const collectionsEl = document.getElementById('collections')!;
 const addForm = document.getElementById('add-form') as HTMLFormElement;
 const addInput = document.getElementById('add-path') as HTMLInputElement;
 const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonElement;
@@ -137,7 +135,7 @@ const addErrorEl = document.getElementById('add-error') as HTMLParagraphElement;
 
 addForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  void onAddDirectory(addInput.value);
+  void onAddCollection(addInput.value);
 });
 
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
@@ -153,7 +151,7 @@ openOptionsBtn.addEventListener('click', () => {
 // own copy.
 //
 // Deliberately the RENDER, not all of `bootstrap()`. Bootstrap goes on
-// to run first-run seeding, `?refresh` and `?add_source`, all of which
+// to run first-run seeding, `?refresh` and `?add`, all of which
 // go through handlers that repaint — waiting for bootstrap here would
 // have those handlers waiting on themselves.
 let resolveInitialRender!: () => void;
@@ -163,7 +161,7 @@ const initialRenderDone = new Promise<void>((resolve) => {
 
 installLocalRootsListener();
 void bootstrap().catch((err: unknown) => {
-  console.info('[SourceMonkey] sources page failed to start', err);
+  console.info('[SourceMonkey] collections page failed to start', err);
 });
 
 // Repaint Status cells when the per-script max-log-level row changes
@@ -198,10 +196,10 @@ if (chrome.storage?.session?.onChanged) {
 
 // Keep the page current with `chrome.storage.local` writes from ANY
 // origin — the viewer's Refresh, a background opportunistic refresh, an
-// Install captured in another tab, a second Sources tab. Before this the
-// page only ever reflected the state it wrote itself, so a script that
-// recovered elsewhere kept a stale badge until a manual reload (issue
-// #10).
+// Install captured in another tab, a second Collections tab. Before
+// this the page only ever reflected the state it wrote itself, so a
+// script that recovered elsewhere kept a stale badge until a manual
+// reload (issue #10).
 //
 // The change event is treated as a bare "something you display moved"
 // signal — what it says changed is ignored. The repaint re-reads storage
@@ -378,15 +376,16 @@ function paintStatusCell(
     removeBtn.textContent = '🗑';
     removeBtn.title = 'Remove this script record';
     removeBtn.setAttribute('aria-label', 'Remove this script record');
-    // Defer the row → sourceId lookup until click time. paintStatusCell
-    // may be called before the cell is appended to its parent row (the
-    // initial render path builds the cell first and only inserts it
-    // afterwards), so a synchronous `closest('tr')` here would read
-    // null and the dispatcher would be left with no sourceId.
+    // Defer the row → collectionId lookup until click time.
+    // paintStatusCell may be called before the cell is appended to its
+    // parent row (the initial render path builds the cell first and
+    // only inserts it afterwards), so a synchronous `closest('tr')`
+    // here would read null and the dispatcher would be left with no
+    // collectionId.
     removeBtn.addEventListener('click', () => {
       const row = removeBtn.closest<HTMLTableRowElement>('tr[data-script-id]');
-      const sourceId = row?.dataset.sourceId ?? '';
-      void onRemoveScript(scriptId, sourceId, removeBtn);
+      const collectionId = row?.dataset.collectionId ?? '';
+      void onRemoveScript(scriptId, collectionId, removeBtn);
     });
     cell.appendChild(removeBtn);
   }
@@ -394,7 +393,7 @@ function paintStatusCell(
 
 function applyLogIdSuffixesToDom(): void {
   // The point of this walk is the sections we DIDN'T just re-render:
-  // after `onRefreshDirectory` rebuilds a single section, sibling
+  // after `onRefreshCollection` rebuilds a single section, sibling
   // sections still display their pre-refresh suffixes. The just-
   // rendered section's rows are already correct (renderScriptRow read
   // the same currentLogIds), so writing the same string over them is
@@ -456,47 +455,47 @@ function repaintPage(): Promise<void> {
   return repaintChain;
 }
 
-// Make the rendered sections match the stored sources: drop the ones
+// Make the rendered sections match the stored collections: drop the ones
 // that are gone, build the ones that appeared, update the rest in place,
 // and re-seat them into index order. Existing elements are reused so
 // refresh highlights, in-flight spinners, and focus survive.
 async function repaintFromStorage(): Promise<void> {
-  const sources = await getSources();
-  // Read each source's scripts ONCE, up front, and paint from that.
+  const collections = await getCollections();
+  // Read each collection's scripts ONCE, up front, and paint from that.
   // The obvious shape — `refreshLogIds()` then render each section —
   // reads the whole store twice per pass: `getAllScripts` is a
   // `storage.local.get(null)`, which drags back every script body, every
   // prefetched `@require`, and the base64 favicon cache, and then each
   // section re-reads its own scripts. A repaint runs on any structural
   // write from anywhere, so that has to stay proportionate.
-  const scriptsBySource = new Map<string, StoredScript[]>();
-  for (const source of sources) {
-    scriptsBySource.set(source.id, (await getSourceWithScripts(source.id))?.scripts ?? []);
+  const scriptsByCollection = new Map<string, StoredScript[]>();
+  for (const collection of collections) {
+    scriptsByCollection.set(collection.id, (await getCollectionWithScripts(collection.id))?.scripts ?? []);
   }
-  const allScripts = [...scriptsBySource.values()].flat();
+  const allScripts = [...scriptsByCollection.values()].flat();
 
   // Dedup `#N` suffixes shift across the whole page when any script is
   // added or removed, so recompute before anything draws.
   currentLogIds = computeLogIds(allScripts);
   applyLogIdSuffixesToDom();
-  // Forget the per-script bookkeeping of everything no longer stored, in
-  // one place rather than at each of the several points a row can go
+  // Forget the per-script bookkeeping of everything no longer stored,
+  // in one place rather than at each of the several points a row can go
   // away — and keyed off what storage says, so a script that moved
-  // between sources isn't forgotten by its old section after its new one
-  // has already recorded it.
+  // between collections isn't forgotten by its old section after its
+  // new one has already recorded it.
   forgetScriptsExcept(new Set(allScripts.map((s) => s.id)));
 
-  const wanted = new Set(sources.map((s) => s.id));
+  const wanted = new Set(collections.map((s) => s.id));
   for (const section of [
-    ...directoriesEl.querySelectorAll<HTMLElement>('section.directory'),
+    ...collectionsEl.querySelectorAll<HTMLElement>('section.collection'),
   ]) {
-    const id = section.dataset.sourceId;
+    const id = section.dataset.collectionId;
     if (!id || !wanted.has(id)) section.remove();
   }
 
-  if (sources.length === 0) {
-    if (!directoriesEl.querySelector('.empty-placeholder')) {
-      directoriesEl.appendChild(emptyPlaceholder());
+  if (collections.length === 0) {
+    if (!collectionsEl.querySelector('.empty-placeholder')) {
+      collectionsEl.appendChild(emptyPlaceholder());
     }
     refreshMoveButtons();
     return;
@@ -504,55 +503,56 @@ async function repaintFromStorage(): Promise<void> {
   removeEmptyPlaceholder();
 
   const ordered: HTMLElement[] = [];
-  for (const source of sources) {
-    const scripts = scriptsBySource.get(source.id) ?? [];
-    const section = findSection(source.id);
-    if (section) await syncSectionFromStorage(section, source, scripts);
-    ordered.push(section ?? await renderSourceSection(source));
+  for (const collection of collections) {
+    const scripts = scriptsByCollection.get(collection.id) ?? [];
+    const section = findSection(collection.id);
+    if (section) await syncSectionFromStorage(section, collection, scripts);
+    ordered.push(section ?? await renderCollectionSection(collection));
   }
   // appendChild moves an already-attached node, so appending each in
   // index order re-seats them. Only done when the order actually
   // differs: re-seating detaches the node first, and Chrome blurs
   // anything focused inside it.
-  if (!sameNodeOrder(directoriesEl, ordered)) {
-    for (const section of ordered) directoriesEl.appendChild(section);
+  if (!sameNodeOrder(collectionsEl, ordered)) {
+    for (const section of ordered) collectionsEl.appendChild(section);
   }
   refreshMoveButtons();
 }
 
-// Update one already-rendered section from its stored source row. The
-// section element itself is never replaced — that would take the
+// Update one already-rendered section from its stored collection row.
+// The section element itself is never replaced — that would take the
 // Refresh button's busy state and every row's spinner with it.
 async function syncSectionFromStorage(
   section: HTMLElement,
-  source: StoredSource,
+  collection: StoredCollection,
   scripts: readonly StoredScript[],
 ): Promise<void> {
-  const sourceOn = isSourceEnabled(source);
-  applySourceEnabledToDom(section, sourceOn);
+  const collectionOn = isCollectionEnabled(collection);
+  applyCollectionEnabledToDom(section, collectionOn);
 
-  // The type bubble is derived from `source.path`, which is the source's
-  // identity and never rewritten, so only the display name can move.
-  const nameEl = section.querySelector<HTMLElement>('.source-display-name');
-  const displayName = effectiveDisplayName(source);
+  // The type bubble is derived from `collection.path`, which is the
+  // collection's identity and never rewritten, so only the display name
+  // can move.
+  const nameEl = section.querySelector<HTMLElement>('.collection-display-name');
+  const displayName = effectiveDisplayName(collection);
   if (nameEl && nameEl.textContent !== displayName) {
     nameEl.textContent = '';
     appendWithSlashBreaks(nameEl, displayName);
   }
 
   const priorError = section.querySelector<HTMLElement>(':scope > p.error');
-  const errorText = scanErrorText(source);
+  const errorText = scanErrorText(collection);
   if (!errorText) {
     priorError?.remove();
   } else if (priorError) {
     priorError.textContent = errorText;
   } else {
     // The error line sits between the header and the script list.
-    section.querySelector('.directory-header')
+    section.querySelector('.collection-header')
       ?.after(makeMessage('error', errorText));
   }
 
-  await syncScriptRowsFromStorage(section, source, sourceOn, scripts);
+  await syncScriptRowsFromStorage(section, collection, collectionOn, scripts);
 }
 
 // Update the section's script list in place: reuse the `<tr>` for a
@@ -560,20 +560,21 @@ async function syncSectionFromStorage(
 // the rows whose scripts are gone, and re-seat into stored order.
 async function syncScriptRowsFromStorage(
   section: HTMLElement,
-  source: StoredSource,
-  sourceOn: boolean,
+  collection: StoredCollection,
+  collectionOn: boolean,
   scripts: readonly StoredScript[],
 ): Promise<void> {
-  const inContainer = isContainerSource(source.path);
-  const useLocalFiles = sourceUsesLocalFiles(source);
+  const inContainer = isContainerCollection(collection.path);
+  const useLocalFiles = collectionUsesLocalFiles(collection);
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
 
-  // A source with no scripts shows a message instead of a table, so the
-  // two shapes have to be swapped whole. Everything else is in place.
+  // A collection with no scripts shows a message instead of a table, so
+  // the two shapes have to be swapped whole. Everything else is in
+  // place.
   if (scripts.length === 0 || !tbody) {
     if (scripts.length === 0 && !tbody) return;   // already the message
-    const fresh = await renderScriptBlock(source, sourceOn);
+    const fresh = await renderScriptBlock(collection, collectionOn);
     if (block) block.replaceWith(fresh);
     else section.appendChild(fresh);
     return;
@@ -587,10 +588,10 @@ async function syncScriptRowsFromStorage(
   for (const script of scripts) {
     const row = existing.get(script.id);
     if (row) {
-      syncScriptRow(row, script, sourceOn, inContainer, useLocalFiles);
+      syncScriptRow(row, script, collectionOn, inContainer, useLocalFiles);
       existing.delete(script.id);
     }
-    ordered.push(row ?? renderScriptRow(script, sourceOn, inContainer, useLocalFiles));
+    ordered.push(row ?? renderScriptRow(script, collectionOn, inContainer, useLocalFiles));
   }
   // Whatever is left in `existing` is a row whose script is gone. The
   // per-script bookkeeping is pruned by the caller, against the whole
@@ -612,7 +613,7 @@ async function syncScriptRowsFromStorage(
 function syncScriptRow(
   row: HTMLTableRowElement,
   script: StoredScript,
-  sourceOn: boolean,
+  collectionOn: boolean,
   inContainer: boolean,
   useLocalFiles: boolean,
 ): void {
@@ -620,9 +621,10 @@ function syncScriptRow(
 
   // Like the Filename cell below, the Status cell is only rebuilt when
   // what it shows moved. `paintStatusCell` discards and recreates the
-  // `<a>` (and the 🗑 on a missing row), so repainting it unconditionally
-  // would drop focus off it — and a repaint runs on any structural write
-  // anywhere, including a background refresh of an unrelated source.
+  // `<a>` (and the 🗑 on a missing row), so repainting it
+  // unconditionally would drop focus off it — and a repaint runs on any
+  // structural write anywhere, including a background refresh of an
+  // unrelated collection.
   const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
   const wanted = statusCellKey(script.id, script.status, errorMessage, script.refreshError);
   if (cell && statusCellKeys.get(script.id) !== wanted) {
@@ -653,17 +655,17 @@ function syncScriptRow(
   const busy = !!label?.querySelector('.busy-spinner');
   if (cb && !busy) {
     cb.checked = scriptOn;
-    cb.disabled = !sourceOn;
+    cb.disabled = !collectionOn;
   }
-  // Mirror applySourceEnabledToDom's label upkeep, spinner or not: this
-  // is the parent source's state, not the user's click, and the restore
-  // in setToggleBusy reads `toggle-disabled` back to settle the
-  // checkbox.
+  // Mirror applyCollectionEnabledToDom's label upkeep, spinner or not:
+  // this is the parent collection's state, not the user's click, and
+  // the restore in setToggleBusy reads `toggle-disabled` back to settle
+  // the checkbox.
   if (label) {
-    label.classList.toggle('toggle-disabled', !sourceOn);
-    label.title = sourceOn ? 'Enable this script' : 'Source is disabled';
+    label.classList.toggle('toggle-disabled', !collectionOn);
+    label.title = collectionOn ? 'Enable this script' : 'Collection is disabled';
   }
-  row.classList.toggle('disabled', !sourceOn || !scriptOn);
+  row.classList.toggle('disabled', !collectionOn || !scriptOn);
 }
 
 // Are `wanted` already the container's element children, in that order?
@@ -689,11 +691,11 @@ function nameCellKey(script: StoredScript, useLocalFiles: boolean): string {
     scriptDescription(script),
     iconRefFromHeader(script.header),
     script.matching,
-    // The source's local-files setting decides whether the `@icon` is
-    // fetched from its declared URL or from a file on disk, so flipping
-    // it changes what this cell paints. Without it here, toggling the
-    // switch would repaint the page and leave the old favicon in place
-    // until something unrelated rebuilt the row.
+    // The collection's local-files setting decides whether the `@icon`
+    // is fetched from its declared URL or from a file on disk, so
+    // flipping it changes what this cell paints. Without it here,
+    // toggling the switch would repaint the page and leave the old
+    // favicon in place until something unrelated rebuilt the row.
     useLocalFiles,
   ]);
 }
@@ -715,13 +717,13 @@ function forgetScriptsExcept(keep: ReadonlySet<string>): void {
 
 // `?refresh` in the URL triggers a refresh-all as soon as the initial
 // render is done. Lets external tools poke the extension via
-//   google-chrome chrome-extension://<id>/sources.html?refresh
+//   google-chrome chrome-extension://<id>/collections.html?refresh
 // after they've written new userscripts.
 //
-// `?add_source=<path-or-url>` does the equivalent of typing the value
-// into the Add Source field and clicking Add. Validates the input;
+// `?add=<path-or-url>` does the equivalent of typing the value
+// into the Add field and clicking Add. Validates the input;
 // shows an error if it doesn't look like an absolute path or URL.
-// On success or duplicate, jumps to the resulting source section.
+// On success or duplicate, jumps to the resulting collection section.
 // Lets the docs/redirect-page.md deep link route here from anywhere
 // on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
@@ -744,13 +746,13 @@ async function bootstrap(): Promise<void> {
   } finally {
     resolveInitialRender();
   }
-  // Re-trigger any `#source-<id>` hash scroll after the async render.
-  // The browser's initial jump fires immediately on page load, before
-  // our render() finishes building the sections, so it finds no
+  // Re-trigger any `#collection-<id>` hash scroll after the async
+  // render. The browser's initial jump fires immediately on page load,
+  // before our render() finishes building the sections, so it finds no
   // matching element and gives up. Look at the hash again now that
-  // every section is in the DOM and scroll the matching one into
-  // view. Triggered for any hash matching the source-anchor shape.
-  scrollToHashSourceIfPresent();
+  // every section is in the DOM and scroll the matching one into view.
+  // Triggered for any hash matching the collection-anchor shape.
+  scrollToHashCollectionIfPresent();
   const params = new URLSearchParams(location.search);
   // First-run seeding. The SW opens this page with `?first_run` once on
   // install (see background.ts); only that auto-opened page seeds, so an
@@ -758,8 +760,8 @@ async function bootstrap(): Promise<void> {
   // so a manual reload of the same URL can't seed twice.
   if (params.has('first_run')) {
     const done = await isFirstRunComplete();
-    console.log(`[SourceMonkey] sources page opened with ?first_run (firstRunComplete=${done})`);
-    if (!done) await seedDefaultSourcesViaUi();
+    console.log(`[SourceMonkey] collections page opened with ?first_run (firstRunComplete=${done})`);
+    if (!done) await seedDefaultCollectionsViaUi();
     else console.log('[SourceMonkey] first run already complete; skipping seed');
     scrubQueryParams(['first_run']);
   }
@@ -767,47 +769,49 @@ async function bootstrap(): Promise<void> {
     await onRefreshAll();
     scrubQueryParams(['refresh']);
   }
-  const addSourceArg = params.get('add_source');
-  if (addSourceArg !== null) {
-    await handleAddSourceParam(addSourceArg);
+  const addArg = params.get('add');
+  if (addArg !== null) {
+    await handleAddParam(addArg);
   }
 }
 
 // First-run seeding, driven from the page so the user watches the
-// familiar flow: each default source's section appears, populated, as it
-// loads. Reuses the manual Add handler (`onAddDirectory`), so there's no
-// separate code path that can drift. `addSource` fetches each source's
-// scripts as part of the add, so no follow-up Refresh is needed. Marks
-// first-run complete at the end (even if a source failed) so it never
-// repeats.
-async function seedDefaultSourcesViaUi(): Promise<void> {
+// familiar flow: each default collection's section appears, populated,
+// as it loads. Reuses the manual Add handler (`onAddCollection`), so
+// there's no separate code path that can drift. `addCollection` fetches
+// each collection's scripts as part of the add, so no follow-up Refresh
+// is needed. Marks first-run complete at the end (even if a collection
+// failed) so it never repeats.
+async function seedDefaultCollectionsViaUi(): Promise<void> {
   // Best-effort + run-once: mark complete in a finally so a failure on
   // one default (network down, bad URL) neither aborts the others nor
   // leaves the flag unset (which can't auto-retry — onInstalled fires
-  // only once, so a re-open wouldn't carry ?first_run). A failed source
-  // still leaves a section with its Refresh button for manual recovery.
-  console.log('[SourceMonkey] first run: seeding default sources', [...DEFAULT_SOURCES]);
+  // only once, so a re-open wouldn't carry ?first_run). A failed
+  // collection still leaves a section with its Refresh button for
+  // manual recovery.
+  console.log('[SourceMonkey] first run: seeding default collections', [...DEFAULT_COLLECTIONS]);
   try {
-    // Skip exact-repeat entries up front; addSource also dedupes by
-    // canonical source path (so two spellings of the same source still
-    // yield one), this just avoids a pointless duplicate-add round-trip
-    // for a byte-identical repeat. `jump: false` so adding several in a
-    // row doesn't scroll-dance through each new section.
+    // Skip exact-repeat entries up front; addCollection also dedupes by
+    // canonical collection path (so two spellings of the same
+    // collection still yield one), this just avoids a pointless
+    // duplicate-add round-trip for a byte-identical repeat. `jump:
+    // false` so adding several in a row doesn't scroll-dance through
+    // each new section.
     const seen = new Set<string>();
-    for (const raw of DEFAULT_SOURCES) {
+    for (const raw of DEFAULT_COLLECTIONS) {
       const path = raw.trim();
       if (!path || seen.has(path)) continue;
       seen.add(path);
-      console.log('[SourceMonkey] first run: adding source', path);
+      console.log('[SourceMonkey] first run: adding collection', path);
       addInput.value = path;
       try {
-        await onAddDirectory(path, { jump: false, preview: false });
+        await onAddCollection(path, { jump: false, preview: false });
       } catch (err) {
         console.info('[SourceMonkey] first-run add failed', path, err);
       }
     }
   } finally {
-    // Clear the Add field — onAddDirectory clears it on success, but a
+    // Clear the Add field — onAddCollection clears it on success, but a
     // failed add leaves the last attempted path sitting there.
     addInput.value = '';
     console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
@@ -815,25 +819,25 @@ async function seedDefaultSourcesViaUi(): Promise<void> {
   }
 }
 
-// If the URL hash points at a rendered source section, scroll it into
-// view. No-op otherwise; safe to call any time after render().
-function scrollToHashSourceIfPresent(): void {
-  if (!location.hash.startsWith('#source-')) return;
+// If the URL hash points at a rendered collection section, scroll it
+// into view. No-op otherwise; safe to call any time after render().
+function scrollToHashCollectionIfPresent(): void {
+  if (!location.hash.startsWith('#collection-')) return;
   const id = location.hash.slice(1);
   const section = document.getElementById(id);
   if (!section) return;
   section.scrollIntoView({ block: 'start' });
 }
 
-// Drive the Add Source flow from a `?add_source=` query param. Pre-
+// Drive the Add flow from a `?add=` query param. Pre-
 // fills the form field (so the user sees what was attempted) and
 // runs the same flow as the manual Add button. The URL is scrubbed
 // only on success/duplicate; an invalid value is left in place so
 // the user can copy/share/edit it.
-async function handleAddSourceParam(raw: string): Promise<void> {
+async function handleAddParam(raw: string): Promise<void> {
   addInput.value = raw;
-  const ok = await onAddDirectory(raw);
-  if (ok) scrubQueryParams(['add_source']);
+  const ok = await onAddCollection(raw);
+  if (ok) scrubQueryParams(['add']);
 }
 
 // Remove the given query params from the current URL via
@@ -856,7 +860,7 @@ function scrubQueryParams(names: readonly string[]): void {
 
 async function render(): Promise<void> {
   bannerSlot.textContent = '';
-  directoriesEl.textContent = '';
+  collectionsEl.textContent = '';
 
   // Seed the status maps FIRST, before anything that can throw. Every
   // Status cell is drawn through them, and a repaint after a failed
@@ -867,10 +871,10 @@ async function render(): Promise<void> {
   currentLogLevels = await getAllMaxLogLevels();
   currentRejections = await readRejections();
 
-  // One-shot backfill so older source rows (pre-displayName) pick up
-  // an inferred label on first view after upgrade. Cheap no-op once
+  // One-shot backfill so older collection rows (pre-displayName) pick
+  // up an inferred label on first view after upgrade. Cheap no-op once
   // every row carries a name.
-  await backfillSourceDisplayNames();
+  await backfillCollectionDisplayNames();
 
   // Surface the file:// access state up-front. Without the toggle on
   // chrome://extensions, every fetch we try will fail.
@@ -889,15 +893,15 @@ async function render(): Promise<void> {
     bannerSlot.appendChild(renderUserScriptsBanner(userScriptsState.error));
   }
 
-  const sources = await getSources();
+  const collections = await getCollections();
 
   await refreshLogIds();
-  if (sources.length === 0) {
-    directoriesEl.appendChild(emptyPlaceholder());
+  if (collections.length === 0) {
+    collectionsEl.appendChild(emptyPlaceholder());
     return;
   }
-  for (const source of sources) {
-    directoriesEl.appendChild(await renderSourceSection(source));
+  for (const collection of collections) {
+    collectionsEl.appendChild(await renderCollectionSection(collection));
   }
   refreshMoveButtons();
 }
@@ -905,113 +909,114 @@ async function render(): Promise<void> {
 function emptyPlaceholder(): HTMLElement {
   const p = document.createElement('p');
   p.className = 'placeholder empty-placeholder';
-  p.textContent = 'No sources yet. Add one above.';
+  p.textContent = 'No collections yet. Add one above.';
   return p;
 }
 
 // ---------- Per-section build ----------
 
-async function renderSourceSection(source: StoredSource): Promise<HTMLElement> {
-  const sourceOn = isSourceEnabled(source);
+async function renderCollectionSection(collection: StoredCollection): Promise<HTMLElement> {
+  const collectionOn = isCollectionEnabled(collection);
 
   const section = document.createElement('section');
-  section.className = 'directory';
-  section.dataset.sourceId = source.id;
-  // Stable per-source anchor; lets deep links (and the post-add
-  // `jumpToSource` helper) scroll directly to this section.
-  section.id = sourceAnchorId(source.id);
-  if (!sourceOn) section.classList.add('disabled');
+  section.className = 'collection';
+  section.dataset.collectionId = collection.id;
+  // Stable per-collection anchor; lets deep links (and the post-add
+  // `jumpToCollection` helper) scroll directly to this section.
+  section.id = collectionAnchorId(collection.id);
+  if (!collectionOn) section.classList.add('disabled');
 
   const header = document.createElement('div');
-  header.className = 'directory-header';
+  header.className = 'collection-header';
 
-  // Per-source enable toggle sits left of the path so it visually
+  // Per-collection enable toggle sits left of the path so it visually
   // groups with the directory it controls and aligns with the
   // per-script toggle column below.
   const enableLabel = makeToggle(
-    sourceOn,
+    collectionOn,
     false,
-    (next, label) => void onToggleSource(source.id, next, label),
-    'Enable scripts under this source',
+    (next, label) => void onToggleCollection(collection.id, next, label),
+    'Enable scripts under this collection',
   );
-  enableLabel.classList.add('directory-toggle');
+  enableLabel.classList.add('collection-toggle');
   header.appendChild(enableLabel);
 
   const heading = document.createElement('h2');
-  heading.appendChild(makeSourceTypeBubble(source.path));
+  heading.appendChild(makeCollectionTypeBubble(collection.path));
   const nameEl = document.createElement('span');
-  nameEl.className = 'source-display-name';
-  appendWithSlashBreaks(nameEl, effectiveDisplayName(source));
+  nameEl.className = 'collection-display-name';
+  appendWithSlashBreaks(nameEl, effectiveDisplayName(collection));
   // Tooltip surfaces the raw stored path so the user can still see the
   // canonical URL / fs path behind a shortened display name. Container
-  // sources have a synthetic identifier as their path, which would
+  // collections have a synthetic identifier as their path, which would
   // leak `container:file` etc. — skip the tooltip in that case.
-  if (!isContainerSource(source.path)) nameEl.title = source.path;
+  if (!isContainerCollection(collection.path)) nameEl.title = collection.path;
   heading.appendChild(nameEl);
   header.appendChild(heading);
 
   const buttons = document.createElement('div');
-  buttons.className = 'directory-buttons';
+  buttons.className = 'collection-buttons';
 
   // Only where it can do something: every script under an http(s)
-  // source loads over the network, so the control would be inert there.
-  if (sourceSupportsLocalFiles(source.path)) {
-    buttons.appendChild(makeLocalFilesToggle(source));
+  // collection loads over the network, so the control would be inert
+  // there.
+  if (collectionSupportsLocalFiles(collection.path)) {
+    buttons.appendChild(makeLocalFilesToggle(collection));
   }
 
-  buttons.appendChild(makeMoveButton('up', source.id));
-  buttons.appendChild(makeMoveButton('down', source.id));
+  buttons.appendChild(makeMoveButton('up', collection.id));
+  buttons.appendChild(makeMoveButton('down', collection.id));
 
   const refreshBtn = document.createElement('button');
   refreshBtn.textContent = 'Refresh';
-  refreshBtn.addEventListener('click', () => void onRefreshDirectory(source.id, refreshBtn));
+  refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
   buttons.appendChild(refreshBtn);
 
   const removeBtn = document.createElement('button');
   removeBtn.textContent = 'Remove';
-  removeBtn.addEventListener('click', () => void onRemoveDirectory(source.id, section, removeBtn));
+  removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
   buttons.appendChild(removeBtn);
 
   header.appendChild(buttons);
   section.appendChild(header);
 
-  const scanError = scanErrorText(source);
+  const scanError = scanErrorText(collection);
   if (scanError) section.appendChild(makeMessage('error', scanError));
-  section.appendChild(await renderScriptBlock(source, sourceOn));
+  section.appendChild(await renderScriptBlock(collection, collectionOn));
   return section;
 }
 
-// The section's scan-failure line, or '' when the source scanned fine.
-// Shared with the repaint so the two can't render the same failure two
-// different ways.
+// The section's scan-failure line, or '' when the collection scanned
+// fine. Shared with the repaint so the two can't render the same
+// failure two different ways.
 //
 // "Scan" is the name of our pipeline stage, not something the page ever
-// shows — what the reader sees is a source that didn't load. Phrased to
-// avoid echoing what follows: most `scanError` values already open with
-// `Could not read <url>: …`, so a `Could not …:` prefix would say
-// "could not" twice in a row.
-function scanErrorText(source: StoredSource): string {
-  return source.scanError ? `This source did not load: ${source.scanError}` : '';
+// shows — what the reader sees is a collection that didn't load.
+// Phrased to avoid echoing what follows: most `scanError` values
+// already open with `Could not read <url>: …`, so a `Could not …:`
+// prefix would say "could not" twice in a row.
+function scanErrorText(collection: StoredCollection): string {
+  return collection.scanError ? `This collection did not load: ${collection.scanError}` : '';
 }
 
 // The section's script list: a table, or the message that stands in for
-// it when the source has no scripts. Both carry `.script-block` so a
-// repaint can find whichever is present and swap one shape for the
+// it when the collection has no scripts. Both carry `.script-block` so
+// a repaint can find whichever is present and swap one shape for the
 // other without disturbing the header above it.
 async function renderScriptBlock(
-  source: StoredSource,
-  sourceOn: boolean,
+  collection: StoredCollection,
+  collectionOn: boolean,
 ): Promise<HTMLElement> {
-  const block = await renderScriptTable(source, sourceOn);
+  const block = await renderScriptTable(collection, collectionOn);
   block.classList.add('script-block');
   return block;
 }
 
-async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promise<HTMLElement> {
-  const data = await getSourceWithScripts(source.id);
+async function renderScriptTable(collection: StoredCollection, collectionOn: boolean): Promise<HTMLElement> {
+  const data = await getCollectionWithScripts(collection.id);
   const scripts = data?.scripts ?? [];
-  const inContainer = isContainerSource(source.path);
-  const useLocalFiles = sourceUsesLocalFiles(source);
+  const inContainer = isContainerCollection(collection.path);
+  const useLocalFiles = collectionUsesLocalFiles(collection);
 
   if (scripts.length === 0) {
     return makeMessage(
@@ -1034,9 +1039,9 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
   bulkHead.className = 'toggle-cell';
   const bulkBtn = makeBulkToggle(
     allOn,
-    !sourceOn,
-    () => void onBulkToggleScripts(source.id, bulkBtn),
-    bulkTitle(sourceOn, allOn),
+    !collectionOn,
+    () => void onBulkToggleScripts(collection.id, bulkBtn),
+    bulkTitle(collectionOn, allOn),
   );
   bulkHead.appendChild(bulkBtn);
   headRow.appendChild(bulkHead);
@@ -1059,7 +1064,7 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
 
   const tbody = document.createElement('tbody');
   for (const script of scripts) {
-    tbody.appendChild(renderScriptRow(script, sourceOn, inContainer, useLocalFiles));
+    tbody.appendChild(renderScriptRow(script, collectionOn, inContainer, useLocalFiles));
   }
   table.appendChild(tbody);
   return table;
@@ -1067,7 +1072,7 @@ async function renderScriptTable(source: StoredSource, sourceOn: boolean): Promi
 
 function renderScriptRow(
   script: StoredScript,
-  sourceOn: boolean,
+  collectionOn: boolean,
   inContainer: boolean,
   useLocalFiles: boolean,
 ): HTMLTableRowElement {
@@ -1075,20 +1080,20 @@ function renderScriptRow(
 
   const tr = document.createElement('tr');
   tr.dataset.scriptId = script.id;
-  tr.dataset.sourceId = script.sourceId;
+  tr.dataset.collectionId = script.collectionId;
   // Stash the persisted status + errorMessage on the row so
   // `applyStatusCellsToDom` can repaint the Status cell after a
   // chrome.storage.session change without re-querying the store.
   const { errorMessage } = applyScriptRowDatasets(tr, script);
-  if (!sourceOn || !scriptOn) tr.classList.add('disabled');
+  if (!collectionOn || !scriptOn) tr.classList.add('disabled');
 
   const toggleCell = document.createElement('td');
   toggleCell.className = 'toggle-cell';
   toggleCell.appendChild(makeToggle(
     scriptOn,
-    !sourceOn,    // disabled (greyed out) when the parent source is off
+    !collectionOn,    // disabled (greyed out) when the parent collection is off
     (next, label) => void onToggleScript(script.id, next, label),
-    sourceOn ? 'Enable this script' : 'Source is disabled',
+    collectionOn ? 'Enable this script' : 'Collection is disabled',
   ));
   tr.appendChild(toggleCell);
 
@@ -1120,7 +1125,7 @@ function renderScriptRow(
     removeBtn.title = 'Remove this script';
     removeBtn.setAttribute('aria-label', 'Remove this script');
     removeBtn.addEventListener('click', () => {
-      void onRemoveScript(script.id, script.sourceId, removeBtn);
+      void onRemoveScript(script.id, script.collectionId, removeBtn);
     });
     actionCell.appendChild(removeBtn);
     tr.appendChild(actionCell);
@@ -1139,9 +1144,9 @@ function fillNameCell(
   nameCell: HTMLTableCellElement,
   script: StoredScript,
   inContainer: boolean,
-  // Does this script's source allow local file overrides? Threaded
-  // alongside `inContainer` — both are per-source facts the row needs
-  // and neither is worth re-loading the source row for.
+  // Does this script's collection allow local file overrides? Threaded
+  // alongside `inContainer` — both are per-collection facts the row
+  // needs and neither is worth re-loading the collection row for.
   useLocalFiles: boolean,
 ): void {
   nameCell.textContent = '';
@@ -1166,8 +1171,8 @@ function fillNameCell(
     ? scriptBasename(script.relativePath)
     : displayLocation(script.relativePath);
   // Slash-aware appender (not textContent) so a long name wraps at `/`
-  // boundaries before breaking mid-segment, matching the source heading
-  // and the viewer's Location row.
+  // boundaries before breaking mid-segment, matching the collection
+  // heading and the viewer's Location row.
   appendWithSlashBreaks(a, nameText);
   // Hovering the filename surfaces the `@description`. Scoped to the
   // anchor so the Size / Status cells (which carry their own meaning)
@@ -1197,14 +1202,14 @@ function scriptDescription(script: StoredScript): string {
   return desc?.trim() || 'No description';
 }
 
-async function onRemoveScript(scriptId: string, _sourceId: string, btn: HTMLButtonElement): Promise<void> {
+async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTMLButtonElement): Promise<void> {
   btn.disabled = true;
   try {
     await removeScript(scriptId);
     // Write, then repaint — the same shape as the other flow handlers.
     // Hand-rolling the row removal here also meant hand-rolling the
-    // "source is now empty" message, which said "No *.user.js files
-    // found." even on a container source, whose empty state is
+    // "collection is now empty" message, which said "No *.user.js files
+    // found." even on a container collection, whose empty state is
     // "No scripts in this container yet". Only container rows have this
     // button, so that was the common case, and no later repaint would
     // correct it.
@@ -1221,17 +1226,17 @@ async function onRemoveScript(scriptId: string, _sourceId: string, btn: HTMLButt
 // ---------- Flow handlers ----------
 
 // Returns true if the input was accepted by the validator and the
-// add flow ran (whether the source was newly created or already
+// add flow ran (whether the collection was newly created or already
 // existed). Returns false if validation rejected the input. Used by
-// `handleAddSourceParam` to decide whether to scrub the `add_source`
+// `handleAddParam` to decide whether to scrub the `add`
 // query param — invalid input keeps the URL so the user can edit
 // and retry.
-async function onAddDirectory(
+async function onAddCollection(
   rawPath: string,
   opts: { jump?: boolean; preview?: boolean } = {},
 ): Promise<boolean> {
   // `jump` controls the post-add smooth-scroll. On by default for the
-  // manual Add button + `?add_source` (the user wants to land on the new
+  // manual Add button + `?add` (the user wants to land on the new
   // section); off for first-run seeding, which adds several in a row and
   // would otherwise scroll-dance through them.
   //
@@ -1242,16 +1247,16 @@ async function onAddDirectory(
   const path = rawPath.trim();
   if (!path) return false;
 
-  if (!isValidSourceInput(path)) {
-    showAddError(`A source ${LOCATION_SHAPES}`);
+  if (!isValidCollectionInput(path)) {
+    showAddError(`A location ${LOCATION_SHAPES}`);
     return false;
   }
   showAddError(null);
 
   // One script → preview it first. The viewer shows its metadata,
-  // what it asks permission to do, and its source, then installs on
+  // what it asks permission to do, and its source text, then installs on
   // confirmation (or offers Update when we already have this URL).
-  // Directory / manifest / github-dir sources still add directly:
+  // Directory / manifest / github-dir collections still add directly:
   // previewing a whole listing needs a different UI (see TODO.md).
   if (preview && isSingleFileInput(path)) {
     location.href = `userscript.html?preview=${encodeURIComponent(path)}`;
@@ -1264,35 +1269,36 @@ async function onAddDirectory(
     // call on the duplicate-jump lookup below — and so any failure
     // (rate limit, private repo, network down) surfaces here with a
     // user-visible message instead of dead-ending in the page console.
-    // `addSource` re-normalizes internally, but the second call is
+    // `addCollection` re-normalizes internally, but the second call is
     // a no-op on already-canonical inputs (idempotent for non-github
     // and for already-resolved github `/tree/<ref>/...` URLs).
     let stored;
     try {
-      // Both canonicalizations `addSource` will run, so the duplicate
-      // lookup below compares the same spelling the store holds.
-      stored = canonicalSourceInput(await normalizeSourceInput(path));
+      // Both canonicalizations `addCollection` will run, so the
+      // duplicate lookup below compares the same spelling the store
+      // holds.
+      stored = canonicalCollectionInput(await normalizeCollectionInput(path));
     } catch (err) {
       showAddError(err instanceof Error ? err.message : String(err));
       return false;
     }
-    const result = await addSource(stored);
+    const result = await addCollection(stored);
     addInput.value = '';
     if (!result) {
-      // Duplicate: either the source path is already registered, or
+      // Duplicate: either the collection path is already registered, or
       // (for a single-file input) the matching container already
       // contains this URL/path. Surface the message and jump to
       // whichever section owns it.
-      const sources = await getSources();
-      const existing = findDuplicateOwner(stored, sources)
-        ?? sources.find((s) => s.path === stored);
+      const collections = await getCollections();
+      const existing = findDuplicateOwner(stored, collections)
+        ?? collections.find((s) => s.path === stored);
       if (existing) {
         showAddError(
-          isContainerSource(existing.path)
+          isContainerCollection(existing.path)
             ? 'This script is already in its container'
-            : 'This source is already registered',
+            : 'This collection is already registered',
         );
-        if (jump) jumpToSource(existing.id);
+        if (jump) jumpToCollection(existing.id);
       }
       return true;
     }
@@ -1300,7 +1306,7 @@ async function onAddDirectory(
     // an existing container, folds the new row into the section already
     // on screen) and puts everything in index order.
     await repaintPage();
-    if (jump) jumpToSource(result.source.id);
+    if (jump) jumpToCollection(result.collection.id);
     return true;
   } finally {
     setAddFormBusy(false);
@@ -1310,17 +1316,17 @@ async function onAddDirectory(
 // For a duplicate add, find the section that already owns this
 // input. Single-file inputs route into a container, so the duplicate
 // is owned by the container of the matching kind; everything else
-// matches by stored source path. Returns the source row (or
+// matches by stored collection path. Returns the collection row (or
 // undefined when nothing matches — caller surfaces no jump).
 function findDuplicateOwner(
   normalizedInput: string,
-  sources: readonly StoredSource[],
-): StoredSource | undefined {
+  collections: readonly StoredCollection[],
+): StoredCollection | undefined {
   if (isSingleFileInput(normalizedInput)) {
     const kind = containerKindForSingleFileInput(normalizedInput);
-    return sources.find((s) => s.path === containerPath(kind));
+    return collections.find((s) => s.path === containerPath(kind));
   }
-  return sources.find((s) => s.path === normalizedInput);
+  return collections.find((s) => s.path === normalizedInput);
 }
 
 // Accept three forms: an http(s):// URL, a file:// URL, or an
@@ -1328,12 +1334,12 @@ function findDuplicateOwner(
 // paths, bare names, other schemes, bare `/`) is rejected so the
 // user gets a clear message instead of a downstream scan failure or
 // a scan of the filesystem root.
-function isValidSourceInput(value: string): boolean {
+function isValidCollectionInput(value: string): boolean {
   if (isHttpUrl(value) || isFileUrl(value)) return true;
   return value.startsWith('/') && value.length > 1;
 }
 
-// Show or clear the Add Source error line below the form. Pass null
+// Show or clear the Add error line below the form. Pass null
 // to hide it; pass a string to surface a validation failure.
 function showAddError(message: string | null): void {
   if (message === null) {
@@ -1349,43 +1355,44 @@ function showAddError(message: string | null): void {
 // reload or share-the-URL preserves the selection. Triggered after a
 // successful add and after a duplicate-add (where the section already
 // existed).
-function jumpToSource(sourceId: string): void {
-  const section = findSection(sourceId);
+function jumpToCollection(collectionId: string): void {
+  const section = findSection(collectionId);
   if (!section) return;
-  history.replaceState(null, '', `#${sourceAnchorId(sourceId)}`);
+  history.replaceState(null, '', `#${collectionAnchorId(collectionId)}`);
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// Build an Up or Down arrow button for a source row. Centralizes the
-// arrow glyph, the visible/announced label, and the click wiring so
+// Build an Up or Down arrow button for a collection row. Centralizes
+// the arrow glyph, the visible/announced label, and the click wiring so
 // both buttons stay in lockstep when copy or behaviour changes.
-function makeMoveButton(direction: 'up' | 'down', sourceId: string): HTMLButtonElement {
+function makeMoveButton(direction: 'up' | 'down', collectionId: string): HTMLButtonElement {
   const arrow = direction === 'up' ? '↑' : '↓';
-  const label = `Move source ${direction}`;
+  const label = `Move collection ${direction}`;
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = `move-source move-${direction}`;
+  btn.className = `move-collection move-${direction}`;
   btn.textContent = arrow;
   btn.title = label;
   btn.setAttribute('aria-label', label);
-  btn.addEventListener('click', () => void onMoveSource(sourceId, direction));
+  btn.addEventListener('click', () => void onMoveCollection(collectionId, direction));
   return btn;
 }
 
-// Serializes Up/Down clicks across every source row. A user clicking
-// two arrows in quick succession (or one arrow on each of two rows)
-// would otherwise issue two interleaved read-modify-write cycles on the
-// `"sources"` index, last-write-wins — leaving the DOM out of sync with
-// storage. Routing every move through this gate keeps the index write
+// Serializes Up/Down clicks across every collection row. A user
+// clicking two arrows in quick succession (or one arrow on each of two
+// rows) would otherwise issue two interleaved read-modify-write cycles
+// on the `"collections"` index, last-write-wins — leaving the DOM out
+// of sync with storage. Routing every move through this gate keeps the
+// index write
 // + DOM swap atomic w.r.t. other moves on this page.
 let moveInFlight: Promise<void> = Promise.resolve();
 
-// Swap the source one position up or down in the index and reflect the
-// change in the DOM without rebuilding any section. The store call
+// Swap the collection one position up or down in the index and reflect
+// the change in the DOM without rebuilding any section. The store call
 // rewrites the index row; the local DOM move swaps the two sibling
 // sections (cheaper than a re-render and preserves the per-section
 // state — checkbox spinners, scroll position, row highlights).
-async function onMoveSource(
+async function onMoveCollection(
   id: string,
   direction: 'up' | 'down',
 ): Promise<void> {
@@ -1395,14 +1402,14 @@ async function onMoveSource(
     const sibling = direction === 'up'
       ? section.previousElementSibling
       : section.nextElementSibling;
-    if (!(sibling instanceof HTMLElement) || !sibling.classList.contains('directory')) return;
+    if (!(sibling instanceof HTMLElement) || !sibling.classList.contains('collection')) return;
     setMoveButtonsBusy(true);
     try {
-      await moveSource(id, direction);
+      await moveCollection(id, direction);
       if (direction === 'up') {
-        directoriesEl.insertBefore(section, sibling);
+        collectionsEl.insertBefore(section, sibling);
       } else {
-        directoriesEl.insertBefore(sibling, section);
+        collectionsEl.insertBefore(sibling, section);
       }
     } finally {
       // Clearing the busy flag first lets refreshMoveButtons run: it
@@ -1432,20 +1439,20 @@ let moveButtonsBusy = false;
 
 function setMoveButtonsBusy(busy: boolean): void {
   moveButtonsBusy = busy;
-  for (const btn of directoriesEl.querySelectorAll<HTMLButtonElement>('.move-source')) {
+  for (const btn of collectionsEl.querySelectorAll<HTMLButtonElement>('.move-collection')) {
     btn.disabled = busy;
   }
 }
 
-// Walk every rendered source section and set each Up/Down button's
+// Walk every rendered collection section and set each Up/Down button's
 // disabled state from its current position: Up off on the first
 // section, Down off on the last. Called after the initial render,
 // after any move, and after add/remove flows change the section count.
-// Filters on `section.directory` so the empty-list placeholder
+// Filters on `section.collection` so the empty-list placeholder
 // (`p.empty-placeholder`) that shares this container is ignored.
 function refreshMoveButtons(): void {
   if (moveButtonsBusy) return;
-  const sections = directoriesEl.querySelectorAll<HTMLElement>('section.directory');
+  const sections = collectionsEl.querySelectorAll<HTMLElement>('section.collection');
   const last = sections.length - 1;
   sections.forEach((section, i) => {
     const up = section.querySelector<HTMLButtonElement>('.move-up');
@@ -1455,18 +1462,19 @@ function refreshMoveButtons(): void {
   });
 }
 
-async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButtonElement): Promise<void> {
-  // Guard non-empty sources behind a confirm: removing a source drops
-  // every script it owns, and the action is irreversible from the UI.
-  // For an empty source there's nothing to lose, so skip the prompt.
+async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  // Guard non-empty collections behind a confirm: removing a collection
+  // drops every script it owns, and the action is irreversible from the
+  // UI. For an empty collection there's nothing to lose, so skip the
+  // prompt.
   //
   // The count read is a snapshot — a background refresh adding or
   // removing a script while the dialog is open could leave the number
   // slightly stale. The window is short and the error bounded; not
   // worth a re-read.
-  const data = await getSourceWithScripts(id);
+  const data = await getCollectionWithScripts(id);
   if (!data) {
-    // Source row has been removed elsewhere (e.g. another tab).
+    // Collection row has been removed elsewhere (e.g. another tab).
     // Nothing to remove from the store; drop the orphan section.
     section.remove();
     return;
@@ -1474,14 +1482,14 @@ async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButt
   const scriptCount = data.scripts.length;
   if (scriptCount > 0) {
     const scriptWord = scriptCount === 1 ? 'script' : 'scripts';
-    if (!confirm(`Remove source with ${scriptCount} ${scriptWord}?`)) return;
+    if (!confirm(`Remove collection with ${scriptCount} ${scriptWord}?`)) return;
   }
 
   section.classList.add('removing');
   btn.disabled = true;
   try {
-    await removeSource(id);
-    // The repaint drops the section and, if that was the last source,
+    await removeCollection(id);
+    // The repaint drops the section and, if that was the last collection,
     // puts the empty placeholder back.
     await repaintPage();
   } catch (err) {
@@ -1491,19 +1499,19 @@ async function onRemoveDirectory(id: string, section: HTMLElement, btn: HTMLButt
   }
 }
 
-async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<void> {
+async function onRefreshCollection(id: string, btn: HTMLButtonElement): Promise<void> {
   const prevText = btn.textContent ?? 'Refresh';
   btn.disabled = true;
   btn.textContent = 'Refreshing…';
   try {
     // Snapshot the prior scripts so we can highlight rows that
     // actually changed after the refresh lands.
-    const before = await getSourceWithScripts(id);
+    const before = await getCollectionWithScripts(id);
     const priorScripts = before?.scripts ?? [];
     // Goes through script-updater so a background opportunistic check
-    // already in flight for this source coalesces with our click instead
-    // of doing redundant work.
-    await updateSource(id, 'manual');
+    // already in flight for this collection coalesces with our click
+    // instead of doing redundant work.
+    await updateCollection(id, 'manual');
     // Refresh may have added/removed scripts, flipped statuses, etc.
     // The repaint brings this section's rows in line with what was just
     // written; then the rows that actually changed get their highlight.
@@ -1511,7 +1519,7 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
     // `<tr>` the user was already looking at.
     await repaintPage();
     const section = findSection(id);
-    const after = await getSourceWithScripts(id);
+    const after = await getCollectionWithScripts(id);
     if (section) applyChangeHighlights(section, priorScripts, after?.scripts ?? []);
   } finally {
     btn.disabled = false;
@@ -1525,25 +1533,25 @@ async function onRefreshDirectory(id: string, btn: HTMLButtonElement): Promise<v
 async function onRefreshAll(): Promise<void> {
   setRefreshAllBusy(true);
   try {
-    // Snapshot each source's prior scripts before kicking off the
+    // Snapshot each collection's prior scripts before kicking off the
     // refresh so we can compute "what changed" per row.
-    const sources = await getSources();
-    const priorsBySource = new Map<string, StoredScript[]>();
-    await Promise.all(sources.map(async (s) => {
-      const before = await getSourceWithScripts(s.id);
-      priorsBySource.set(s.id, before?.scripts ?? []);
+    const collections = await getCollections();
+    const priorsByCollection = new Map<string, StoredScript[]>();
+    await Promise.all(collections.map(async (s) => {
+      const before = await getCollectionWithScripts(s.id);
+      priorsByCollection.set(s.id, before?.scripts ?? []);
     }));
 
-    await updateAllSources('manual');
+    await updateAllCollections('manual');
 
     // One repaint brings the whole page in line with what was written;
     // then each section's changed rows get their highlight.
     await repaintPage();
-    for (const s of sources) {
+    for (const s of collections) {
       const section = findSection(s.id);
       if (!section) continue;
-      const after = await getSourceWithScripts(s.id);
-      applyChangeHighlights(section, priorsBySource.get(s.id) ?? [], after?.scripts ?? []);
+      const after = await getCollectionWithScripts(s.id);
+      applyChangeHighlights(section, priorsByCollection.get(s.id) ?? [], after?.scripts ?? []);
     }
   } finally {
     setRefreshAllBusy(false);
@@ -1602,7 +1610,7 @@ function classifyChange(
   if (next.status === 'missing') return null;             // was already missing
   // A fresh refresh failure (the cached body keeps running, so status
   // stays `ok` and loadedAt doesn't move) still deserves a red flash so
-  // the user notices the source went stale.
+  // the user notices the collection went stale.
   if (next.refreshError && next.refreshError !== prior.refreshError) return 'row-failed';
   // Recovery: a row that WAS refresh-failed and now isn't gets a green
   // flash even when the body is unchanged (HTTP 304 / size+mtime skip,
@@ -1615,30 +1623,31 @@ function classifyChange(
   return next.status === 'ok' ? 'row-updated' : 'row-failed';
 }
 
-async function onToggleSource(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
+async function onToggleCollection(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
   setToggleBusy(label, true);
   try {
-    await setSourceEnabled(id, enabled);
+    await setCollectionEnabled(id, enabled);
     const section = findSection(id);
-    if (section) applySourceEnabledToDom(section, enabled);
+    if (section) applyCollectionEnabledToDom(section, enabled);
   } finally {
     setToggleBusy(label, false);
   }
 }
 
-// The per-source "Local files" switch: may a script under this source
-// load a `@require` / `@resource` from a file on disk next to it,
-// instead of the URL the declaration names? See docs/local-file-overrides.md.
+// The per-collection "Local files" switch: may a script in this
+// collection load a `@require` / `@resource` from a file on disk next
+// to it, instead of the URL the declaration names? See
+// docs/local-file-overrides.md.
 //
 // A labeled checkbox rather than the bare `makeToggle` switch used for
 // enable/disable: this one sits among named buttons, and an unlabeled
 // second switch in the header would read as a second enable control.
 //
-// Default-on, and only meaningful for local sources — which is why the
-// off position is the one worth reaching for: a directory of scripts
-// you didn't write is exactly where a file sitting next to one should
-// NOT quietly stand in for the library it names.
-function makeLocalFilesToggle(source: StoredSource): HTMLLabelElement {
+// Default-on, and only meaningful for local collections — which is why
+// the off position is the one worth reaching for: a directory of
+// scripts you didn't write is exactly where a file sitting next to one
+// should NOT quietly stand in for the library it names.
+function makeLocalFilesToggle(collection: StoredCollection): HTMLLabelElement {
   const label = document.createElement('label');
   label.className = 'local-files-toggle';
   label.title =
@@ -1648,20 +1657,20 @@ function makeLocalFilesToggle(source: StoredSource): HTMLLabelElement {
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
-  cb.checked = sourceUsesLocalFiles(source);
-  cb.addEventListener('change', () => void onToggleLocalFiles(source.id, cb));
+  cb.checked = collectionUsesLocalFiles(collection);
+  cb.addEventListener('change', () => void onToggleLocalFiles(collection.id, cb));
   label.append(cb, document.createTextNode('Local files'));
   return label;
 }
 
 // Writing the flag only changes what the NEXT refresh resolves to, so
 // the refresh is part of the click — otherwise the switch would appear
-// to do nothing until something else happened to touch the source.
+// to do nothing until something else happened to touch the collection.
 async function onToggleLocalFiles(id: string, cb: HTMLInputElement): Promise<void> {
   cb.disabled = true;
   try {
-    await setSourceLocalFiles(id, cb.checked);
-    await updateSource(id, 'manual');
+    await setCollectionLocalFiles(id, cb.checked);
+    await updateCollection(id, 'manual');
     await repaintPage();
   } finally {
     cb.disabled = false;
@@ -1673,10 +1682,10 @@ async function onToggleScript(id: string, enabled: boolean, label: HTMLLabelElem
   try {
     await setScriptEnabled(id, enabled);
     const row = label.closest('tr') as HTMLTableRowElement | null;
-    const section = label.closest('.directory') as HTMLElement | null;
+    const section = label.closest('.collection') as HTMLElement | null;
     if (row && section) {
-      const sourceOn = !section.classList.contains('disabled');
-      row.classList.toggle('disabled', !sourceOn || !enabled);
+      const collectionOn = !section.classList.contains('disabled');
+      row.classList.toggle('disabled', !collectionOn || !enabled);
       refreshBulkToggle(section);
     }
   } finally {
@@ -1684,8 +1693,8 @@ async function onToggleScript(id: string, enabled: boolean, label: HTMLLabelElem
   }
 }
 
-async function onBulkToggleScripts(sourceId: string, btn: HTMLButtonElement): Promise<void> {
-  const section = findSection(sourceId);
+async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement): Promise<void> {
+  const section = findSection(collectionId);
   if (!section) return;
 
   const checkboxes = Array.from(
@@ -1704,8 +1713,8 @@ async function onBulkToggleScripts(sourceId: string, btn: HTMLButtonElement): Pr
     // syncRegistrations in the background SW. The old code wrote each
     // script's row individually, so a 15-script flip kicked off 15
     // full re-syncs of chrome.userScripts (each O(N)).
-    const sourceOn = !section.classList.contains('disabled');
-    const data = await getSourceWithScripts(sourceId);
+    const collectionOn = !section.classList.contains('disabled');
+    const data = await getCollectionWithScripts(collectionId);
     const scripts = data?.scripts ?? [];
     const toFlip = scripts
       .filter((s) => isScriptEnabled(s) !== next)
@@ -1715,7 +1724,7 @@ async function onBulkToggleScripts(sourceId: string, btn: HTMLButtonElement): Pr
     // Reflect the new state in every row.
     for (const cb of checkboxes) cb.checked = next;
     for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
-      row.classList.toggle('disabled', !sourceOn || !next);
+      row.classList.toggle('disabled', !collectionOn || !next);
     }
   } finally {
     for (const lab of labels) setToggleBusy(lab, false);
@@ -1726,13 +1735,13 @@ async function onBulkToggleScripts(sourceId: string, btn: HTMLButtonElement): Pr
 
 // ---------- In-place DOM mutators ----------
 
-function findSection(sourceId: string): HTMLElement | null {
-  return directoriesEl.querySelector<HTMLElement>(
-    `.directory[data-source-id="${cssEscape(sourceId)}"]`,
+function findSection(collectionId: string): HTMLElement | null {
+  return collectionsEl.querySelector<HTMLElement>(
+    `.collection[data-collection-id="${cssEscape(collectionId)}"]`,
   );
 }
 
-// Apply a source enable/disable to its section without rebuilding it:
+// Apply a collection enable/disable to its section without rebuilding it:
 // flip the section's `.disabled` class and its own header toggle,
 // retitle the per-script toggle labels, enable/disable each per-script
 // checkbox, and update the bulk-toggle's disabled state. Per-script
@@ -1742,23 +1751,24 @@ function findSection(sourceId: string): HTMLElement | null {
 // A checkbox whose label carries a `.busy-spinner` belongs to a click
 // this page is still awaiting, and is left alone: it shows the value the
 // user just picked, and the handler's `finally` settles it. The label's
-// styling and tooltip are updated anyway — they say what the SOURCE is,
+// styling and tooltip are updated anyway — they say what the COLLECTION is,
 // not what the user clicked, and `setToggleBusy`'s restore reads
 // `toggle-disabled` back to decide the checkbox's final disabled state.
-// Skipping the label too would leave a checkbox enabled under a source
+// Skipping the label too would leave a checkbox enabled under a collection
 // that was disabled while its spinner was up, with nothing left to
 // repaint it.
-function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
+function applyCollectionEnabledToDom(section: HTMLElement, enabled: boolean): void {
   section.classList.toggle('disabled', !enabled);
 
-  // The source's own toggle lives in the section header, outside tbody.
-  // `onToggleSource` arrives with it already flipped by the click, but
-  // the watcher does not — without this a source disabled from another
-  // tab greys the whole section while its toggle still reads "on".
-  const sourceLabel = section.querySelector<HTMLLabelElement>('.directory-toggle');
-  const sourceCb = sourceLabel?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-  if (sourceCb && !sourceLabel?.querySelector('.busy-spinner')) {
-    sourceCb.checked = enabled;
+  // The collection's own toggle lives in the section header, outside
+  // tbody. `onToggleCollection` arrives with it already flipped by the
+  // click, but the watcher does not — without this a collection
+  // disabled from another tab greys the whole section while its toggle
+  // still reads "on".
+  const collectionLabel = section.querySelector<HTMLLabelElement>('.collection-toggle');
+  const collectionCb = collectionLabel?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  if (collectionCb && !collectionLabel?.querySelector('.busy-spinner')) {
+    collectionCb.checked = enabled;
   }
 
   for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
@@ -1766,7 +1776,7 @@ function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
     const lab = row.querySelector<HTMLLabelElement>('.toggle');
     if (!cb || !lab) continue;
     lab.classList.toggle('toggle-disabled', !enabled);
-    lab.title = enabled ? 'Enable this script' : 'Source is disabled';
+    lab.title = enabled ? 'Enable this script' : 'Collection is disabled';
     if (!lab.querySelector('.busy-spinner')) cb.disabled = !enabled;
     row.classList.toggle('disabled', !enabled || !cb.checked);
   }
@@ -1780,34 +1790,34 @@ function applySourceEnabledToDom(section: HTMLElement, enabled: boolean): void {
 function refreshBulkToggle(section: HTMLElement): void {
   const btn = section.querySelector<HTMLButtonElement>('.bulk-toggle');
   if (!btn) return;
-  const sourceOn = !section.classList.contains('disabled');
+  const collectionOn = !section.classList.contains('disabled');
   const checkboxes = Array.from(
     section.querySelectorAll<HTMLInputElement>('tbody .toggle input[type="checkbox"]'),
   );
   const allOn = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
-  btn.title = bulkTitle(sourceOn, allOn);
+  btn.title = bulkTitle(collectionOn, allOn);
   // While busy the symbol is replaced by a spinner and the button is
   // held disabled by setBulkBusy; don't overwrite either. A bulk toggle
   // writes every row at once, and the echo of that write reaches this
   // function once per row — each call would otherwise re-enable the
   // button under its own spinner, mid-operation.
   if (!btn.classList.contains('busy')) {
-    btn.disabled = !sourceOn;
+    btn.disabled = !collectionOn;
     btn.textContent = allOn ? '−' : '+';
   } else {
     btn.dataset.idleText = allOn ? '−' : '+';
   }
 }
 
-function bulkTitle(sourceOn: boolean, allOn: boolean): string {
-  if (!sourceOn) return 'Source is disabled';
+function bulkTitle(collectionOn: boolean, allOn: boolean): string {
+  if (!collectionOn) return 'Collection is disabled';
   return allOn
-    ? 'Disable all scripts in this source'
-    : 'Enable all scripts in this source';
+    ? 'Disable all scripts in this collection'
+    : 'Enable all scripts in this collection';
 }
 
 function removeEmptyPlaceholder(): void {
-  directoriesEl.querySelector('.empty-placeholder')?.remove();
+  collectionsEl.querySelector('.empty-placeholder')?.remove();
 }
 
 // ---------- Busy indicators ----------
@@ -1929,7 +1939,7 @@ function viewerUrl(scriptId: string, tab?: 'log'): string {
 }
 
 // CSS.escape isn't on every old runtime; fall back to a minimal escape
-// for the characters that show up in a UUID-shaped sourceId.
+// for the characters that show up in a UUID-shaped collectionId.
 function cssEscape(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value);
   return value.replace(/["\\]/g, '\\$&');

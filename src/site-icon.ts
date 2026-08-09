@@ -2,7 +2,7 @@ import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
 import { localFileCandidates } from './local-file-overrides.js';
 import { representativeMatch } from './match-targets.js';
 
-// Site-icon (favicon) extraction + cache. Used by the sources page
+// Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon next to each script.
 //
 // Two-tier lookup, so deep-targeted scripts (e.g. one userscript per
@@ -424,7 +424,7 @@ function arrayBufferToDataUrl(buffer: ArrayBuffer, mime: string): string {
 // Promise. Cache rows that go stale and trigger a refetch land here
 // too — the second caller waits on the first. The map is keyed by the
 // full storage key (e.g. `siteIcon:<origin>` vs `iconUrl:<url>`) so the
-// two icon-source paths don't collide.
+// two icon-collection paths don't collide.
 const inflight = new Map<string, Promise<string | null>>();
 
 export async function ensureSiteIcon(
@@ -571,7 +571,7 @@ interface ScriptWithMatching {
 // `<all_urls>`, etc.). Either wrapper starts with a globe placeholder,
 // swapped for the real favicon once it loads.
 //
-// Icon source priority: a script-declared `@icon` (or its aliases)
+// Icon collection priority: a script-declared `@icon` (or its aliases)
 // wins outright over the origin-discovered favicon. The click-through
 // link is always the site's linkUrl regardless — the @icon header is
 // only a visual override.
@@ -579,9 +579,10 @@ export function renderSiteIconInto(
   slot: HTMLElement,
   script: ScriptWithMatching,
   // Local override roots for a script-declared `@icon`, from the
-  // caller's `StoredSource`. Passed in rather than derived here because
-  // the per-source opt-out lives on the source row, which this module
-  // has no reason to load. Omitted → no overrides, no local reads.
+  // caller's `StoredCollection`. Passed in rather than derived here
+  // because the per-collection opt-out lives on the collection row,
+  // which this module has no reason to load. Omitted → no overrides, no
+  // local reads.
   localRoots: readonly string[] = [],
 ): void {
   const target = representativeMatch(script.matching);
@@ -637,7 +638,7 @@ export function renderSiteIconInto(
 // dozens of scripts targeting the same site, every row otherwise
 // inlined its own copy of the favicon's base64 `data:` URL — a handful
 // of distinct icons re-inlined across ~every row, which ballooned the
-// sources page past half a megabyte. Pointing every row at a shared
+// collections page past half a megabyte. Pointing every row at a shared
 // ~55-char blob: handle instead drops all that duplication out of the
 // DOM; the bytes live once in the browser's blob table.
 //

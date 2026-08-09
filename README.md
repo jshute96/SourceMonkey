@@ -64,17 +64,17 @@ zip or [build from source](#development).
    The permission toggles persist across browser restarts, and
    SourceMonkey shows a banner with a link to the toggle whenever one is
    missing.
-3. Click the SourceMonkey toolbar icon to open the **sources page**.
-   On first run it seeds a few default sources so the page isn't empty;
-   remove them like any other source.
+3. Click the SourceMonkey toolbar icon to open the **collections page**.
+   On first run it seeds a few default collections so the page isn't empty;
+   remove them like any other collection.
 
 ## Using SourceMonkey
 
-### The sources page
+### The collections page
 
-The sources page is where scripts are registered and managed. Each
-source has a section listing its scripts, with enable toggles (per
-source and per script), reorder buttons, and **Refresh** / **Remove**.
+The collections page is where scripts are registered and managed. Each
+collection has a section listing its scripts, with enable toggles (per
+collection and per script), reorder buttons, and **Refresh** / **Remove**.
 **Refresh All** re-checks everything at once.
 
 Each script row shows a status, linking to that script's log, where there
@@ -85,7 +85,7 @@ are usually more details:
 | `OK` | Loaded and registered |
 | `INVALID` | The script can't run: bad or missing headers, a `@require` that wouldn't load, or a syntax error |
 | `REJECTED` | The script is fine, but Chrome refused to register it |
-| `MISSING` | The file is gone from its source (deleted on disk, dropped from a manifest) |
+| `MISSING` | The file is gone from its collection (deleted on disk, dropped from a manifest) |
 | `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
 | `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
 | `ERROR` / `WARNING` | Loaded fine, but some errors or warnings have been logged |
@@ -95,7 +95,7 @@ headers, content (including the `@require` files it loads), status, and a
 **Log** tab showing errors and other log messages.
 
 When the same script is installed more than once — the same URL under two
-sources, or the same `@name` and `@namespace` from two different places — the
+collections, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel, where each one can be
 enabled, updated, opened, or removed. Enabling one copy disables the others,
 since two enabled copies of a script both run — ctrl-click a checkbox
@@ -111,10 +111,10 @@ Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-log.md](docs/script-log.md),
 [docs/diagnostics.md](docs/diagnostics.md).
 
-### Registering sources
+### Registering collections
 
-Type a path or URL into the Add Source field and click **Add source**.
-A source can be:
+Type a path or URL into the Add field and click **Add**. What you type
+can be:
 
 - An **absolute path or `file://` URL to a directory** of userscripts.
   Scanned recursively; every `*.user.js` becomes a row.
@@ -126,12 +126,12 @@ A source can be:
   `/tree/…` directory, or a `/blob/…` file all work; directories are
   scanned via the GitHub API.
 
-Single scripts are grouped into one of three container sources, created
+Single scripts are grouped into one of three container collections, created
 on demand — `Scripts from local disk`, `Scripts from web`,
 `Scripts from GitHub`.
 
 Details: [docs/file-access.md](docs/file-access.md),
-[docs/http-sources.md](docs/http-sources.md).
+[docs/http-collections.md](docs/http-collections.md).
 
 ### Installing scripts from a `.user.js` link
 
@@ -142,10 +142,10 @@ download the file.
 The preview shows the script's source code and some summary information,
 and validates the script and its `@require` libraries, reporting errors for
 invalid scripts.  **Install** loads the script, the same as adding its
-URL on the sources page.
+URL on the collections page.
 
 If the script is already registered, the preview allows updating the
-existing copy. A script that arrives via a collection source you already
+existing copy. A script that arrives via a collection you already
 subscribe to can still be installed as a copy of your own — the preview
 lists both and lets you pick.
 
@@ -180,10 +180,10 @@ See [docs/local-file-overrides.md](docs/local-file-overrides.md).
 
 ### Manifest files (`script_manifest.json`)
 
-SourceMonkey allows adding a directory as a source, and then
+SourceMonkey allows adding a directory as a collection, and then
 automatically loading all userscripts under that directory.
 
-For local directories, and supported web sources like GitHub,
+For local directories, and supported web hosts like GitHub,
 SourceMonkey can list files to find the userscripts. Other file hosting
 sites may not support listing files. Manifest files allow loading
 multi-userscript collections from these sites too.
@@ -224,10 +224,10 @@ To generate a manifest from a directory of userscripts, run
 - **Reloading a tab picks up edits on the same click** — SourceMonkey
   races a quick re-check against the page load, so a script you just
   saved usually runs on that very reload.
-- **Refresh** (per source, or **Refresh All**) checks for updates manually.
+- **Refresh** (per collection, or **Refresh All**) checks for updates manually.
   External tools can trigger it by opening
-  `chrome-extension://<extension-id>/sources.html?refresh`.
-- Re-fetches are cheap: HTTP sources use conditional GETs, local files
+  `chrome-extension://<extension-id>/collections.html?refresh`.
+- Re-fetches are cheap: HTTP collections use conditional GETs, local files
   compare size + mtime, and unchanged content is detected by hash.
 - Every script updates from the place you installed it. A declared
   `@updateURL` / `@downloadURL` is read for its `@version` and reported

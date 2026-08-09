@@ -26,17 +26,17 @@ test.describe('parse check at install time', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   async function installAndRead(sm: {
-    addSource: (p: string) => Promise<unknown>;
-    getSources: () => Promise<{ id: string }[]>;
-    getSourceWithScripts: (id: string) => Promise<{ scripts: {
+    addCollection: (p: string) => Promise<unknown>;
+    getCollections: () => Promise<{ id: string }[]>;
+    getCollectionWithScripts: (id: string) => Promise<{ scripts: {
       id: string; status: string; errorMessage?: string; relativePath: string;
       errorLocation?: { file: string; line?: number; column?: number };
       parseCheckedHash?: string;
     }[] } | null>;
   }) {
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     return withScripts!.scripts;
   }
 
@@ -211,9 +211,9 @@ test.describe('parse check at install time', () => {
       meta: { name: 'Recovers', match: ['https://example.com/*'] },
       body: 'const x = (;',
     });
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    let scripts = (await sm.getSourceWithScripts(sources[0].id))!.scripts;
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    let scripts = (await sm.getCollectionWithScripts(collections[0].id))!.scripts;
     expect(scripts[0].status).toBe('invalid');
 
     scriptsDir.write({
@@ -221,8 +221,8 @@ test.describe('parse check at install time', () => {
       meta: { name: 'Recovers', match: ['https://example.com/*'] },
       body: 'const x = 1;\nvoid x;',
     });
-    await sm.updateSource(sources[0].id, 'manual');
-    scripts = (await sm.getSourceWithScripts(sources[0].id))!.scripts;
+    await sm.updateCollection(collections[0].id, 'manual');
+    scripts = (await sm.getCollectionWithScripts(collections[0].id))!.scripts;
     expect(scripts[0].status).toBe('ok');
     expect(scripts[0].errorMessage).toBeUndefined();
   });
@@ -239,17 +239,17 @@ test.describe('parse check at install time', () => {
       meta: { name: 'Cached', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet;',
     });
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
     const afterInstall = await sm.getParseCheckRuns();
     expect(afterInstall, 'installing should compile once').toBeGreaterThan(0);
 
     // Nothing changed on disk, so neither refresh should compile.
     for (const mode of ['opportunistic', 'manual'] as const) {
-      await sm.updateSource(sources[0].id, mode);
+      await sm.updateCollection(collections[0].id, mode);
       expect(await sm.getParseCheckRuns(), `${mode} refresh re-compiled unchanged content`)
         .toBe(afterInstall);
-      const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+      const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
       expect(after.status).toBe('ok');
       expect(after.parseCheckedHash, `${mode} refresh should keep the fingerprint`).toBeTruthy();
     }
@@ -261,7 +261,7 @@ test.describe('parse check at install time', () => {
       meta: { name: 'Cached', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet; const added = 2; void added;',
     });
-    await sm.updateSource(sources[0].id, 'manual');
+    await sm.updateCollection(collections[0].id, 'manual');
     expect(await sm.getParseCheckRuns(), 'a changed body must be re-compiled')
       .toBeGreaterThan(afterInstall);
   });
@@ -279,9 +279,9 @@ test.describe('parse check at install time', () => {
       meta: { name: 'OppEdit', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet;',
     });
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('ok');
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    expect((await sm.getCollectionWithScripts(collections[0].id))!.scripts[0].status).toBe('ok');
 
     // Body edited, `@require` list untouched.
     scriptsDir.write({
@@ -289,8 +289,8 @@ test.describe('parse check at install time', () => {
       meta: { name: 'OppEdit', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet; const broken = (;',
     });
-    await sm.updateSource(sources[0].id, 'opportunistic');
-    const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    await sm.updateCollection(collections[0].id, 'opportunistic');
+    const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(after.status).toBe('invalid');
     expect(after.errorMessage).toMatch(/syntax error/i);
   });
@@ -305,13 +305,13 @@ test.describe('parse check at install time', () => {
       meta: { name: 'ReqEdit', match: ['https://example.com/*'], extra: ['// @require     lib.js'] },
       body: 'void greet;',
     });
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    expect((await sm.getSourceWithScripts(sources[0].id))!.scripts[0].status).toBe('ok');
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    expect((await sm.getCollectionWithScripts(collections[0].id))!.scripts[0].status).toBe('ok');
 
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = (;');
-    await sm.updateSource(sources[0].id, 'manual');
-    const after = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    await sm.updateCollection(collections[0].id, 'manual');
+    const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(after.status).toBe('invalid');
     expect(after.errorMessage).toMatch(/syntax error/i);
   });
@@ -324,9 +324,9 @@ test.describe('parse check at install time', () => {
       meta: { name: 'NoStaleCache', match: ['https://example.com/*'] },
       body: 'const x = (;',
     });
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    const broken = (await sm.getSourceWithScripts(sources[0].id))!.scripts[0];
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    const broken = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
     expect(broken.status).toBe('invalid');
     expect(broken.parseCheckedHash).toBeUndefined();
   });
@@ -371,13 +371,13 @@ test.describe('parse check at install time', () => {
         '',
       ].join('\n');
       server.setRoute('/main.user.js', good);
-      const source = await sm.addSource(`${server.baseUrl}/main.user.js`);
-      let scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+      const collection = await sm.addCollection(`${server.baseUrl}/main.user.js`);
+      let scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
       expect(scripts[0].status).toBe('ok');
 
       server.setRoute('/main.user.js', `${good}\nconst broken = (;`);
-      await sm.updateSource(source!.id, 'manual');
-      scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+      await sm.updateCollection(collection!.id, 'manual');
+      scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
       expect(scripts[0].status).toBe('ok');
       expect(scripts[0].refreshError).toMatch(/not a valid userscript|syntax/i);
     } finally {

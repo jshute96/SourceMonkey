@@ -7,7 +7,7 @@
 - The extension's ID differs between unpacked installs and Web Store
   installs, so no fixed URL can be baked into external pages.
 - We still want one-click flows from the web into specific extension
-  pages — "open the sources page", "add this source", "view this
+  pages — "open the collections page", "add this collection", "view this
   script".
 
 ## Not to be confused with `.user.js` link capture
@@ -37,9 +37,9 @@
   while `regexSubstitution` / `transform` preserve everything but
   require the ID to be baked into the rule.
 - We need both: no hardcoded ID *and* arbitrary passthrough params
-  (e.g. `add_source=<url>`).
+  (e.g. `add=<url>`).
 - `webNavigation.onBeforeNavigate` gives the service worker the full
-  source URL as a string, so it can parse the query in JS and call
+  collection URL as a string, so it can parse the query in JS and call
   `chrome.tabs.update(tabId, { url: chrome.runtime.getURL(page) + '?' + rest })`.
 - `onBeforeNavigate` fires *before* Chrome issues the network
   request, but the SW may be cold-starting in MV3, so a very fast
@@ -48,7 +48,7 @@
 
 ## URL contract
 
-- Source URL prefix:
+- Collection URL prefix:
   `https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md`
 - Required query parameter: `page=<name>` where `<name>` is on the
   allowlist below.
@@ -62,7 +62,7 @@
 
 | `page=` | Target | Recognised forwarded params |
 |---------|--------|-----------------------------|
-| `sources.html` | Sources page | `refresh`, `add_source=<path-or-url>` (a single `.user.js` hands off to the viewer's preview — see [script-viewer.md](script-viewer.md#preview-mode)) |
+| `collections.html` | Collections page | `refresh`, `add=<path-or-url>` (a single `.user.js` hands off to the viewer's preview — see [script-viewer.md](script-viewer.md#preview-mode)) |
 | `options.html` | Options page | — |
 | `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` |
 
@@ -91,7 +91,7 @@
   asked for it.
 - Other query parameters pass through unfiltered. Each extension
   page is responsible for validating its own parameters (e.g. an
-  eventual `add_source` handler must not blindly trust the value).
+  eventual `add` handler must not blindly trust the value).
 - The redirect only fires on top-level navigations (`frameId === 0`),
   so embedding the stub URL in an iframe will not trigger it.
 - **A deep link can name a URL for the viewer to fetch and display.**
@@ -100,14 +100,14 @@
   `fetchHttpText` attaches the user's stored PAT. Nothing is installed
   and the linking page can't read what came back, but a crafted link
   can put a private-repo file on screen. This is the same class of
-  reach `add_source=` has always had (which went further and *added*
-  the source); routing single scripts through the preview means the
+  reach `add=` has always had (which went further and *added*
+  the collection); routing single scripts through the preview means the
   user now sees and confirms what arrived.
 - **Privacy: passthrough params reach GitHub when the extension is
   not installed.** A user clicking
-  `…/redirect-page.md?page=sources.html&add_source=https://corp/internal.user.js`
+  `…/redirect-page.md?page=collections.html&add=https://corp/internal.user.js`
   without SourceMonkey installed loads the URL on GitHub normally,
-  and the full query string (including `add_source=…`) appears in
+  and the full query string (including `add=…`) appears in
   GitHub's request logs and any `Referer` chain from there. Anyone
   authoring these links should treat passthrough params as
   potentially visible to GitHub.

@@ -9,14 +9,14 @@
 //     other end is the same bytes we would fetch.
 //
 //     The key is `fileUrl`, not `relativePath`. A script inside a
-//     directory, manifest, or repo source stores a path relative to
-//     its source root, which shares no text with the full URL the
+//     directory, manifest, or repo collection stores a path relative to
+//     its collection root, which shares no text with the full URL the
 //     same script carries when installed on its own — so comparing
 //     `relativePath` (what the preview page did) can never match a
 //     collection copy against a single-file copy. `fileUrl` is the
-//     absolute form the load pipeline already builds for every source
+//     absolute form the load pipeline already builds for every collection
 //     kind (`scriptFileUrl` in directories.ts), so it is the one
-//     spelling all source kinds agree on.
+//     spelling all collection kinds agree on.
 //
 //     Display is unaffected: a collection copy still *shows* its
 //     relative path, which is what the user recognizes. Only the
@@ -40,14 +40,14 @@
 // See [docs/script-identity.md].
 
 import {
-  canonicalSourceInput,
+  canonicalCollectionInput,
   containerKindForSingleFileInput,
   containerPath,
   isSingleFileInput,
   type ContainerKind,
 } from './directories.js';
-import { isScriptEnabled, isSourceEnabled, type StoredScript, type StoredSource } from './script-store.js';
-import { effectiveDisplayName } from './source-display.js';
+import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
+import { effectiveDisplayName } from './collection-display.js';
 import { getValue, type ParsedHeader } from './userscript-header.js';
 
 // The ecosystem identity key: `@namespace` and `@name`, trimmed and
@@ -81,32 +81,32 @@ export function identityKey(header: ParsedHeader | null): string | null {
 }
 
 // The location key: the one true spelling of an absolute script
-// location. `canonicalSourceInput` is the same helper `addSource`
-// uses, so a `file://` URL and the bare path spelling of the same
-// file collapse together — which is what lets a directory source's
-// `fileUrl` (always a `file://` URL) match a container row's bare
-// path, and what makes a capture's URL match a row stored before
-// canonicalization existed.
+// location. `canonicalCollectionInput` is the same helper
+// `addCollection` uses, so a `file://` URL and the bare path spelling
+// of the same file collapse together — which is what lets a directory
+// collection's `fileUrl` (always a `file://` URL) match a container
+// row's bare path, and what makes a capture's URL match a row stored
+// before canonicalization existed.
 export function locationKey(absoluteUrl: string): string {
-  return canonicalSourceInput(absoluteUrl);
+  return canonicalCollectionInput(absoluteUrl);
 }
 
 // One installed row that relates to the script being viewed, paired
-// with the source that holds it so the UI can render both without a
+// with the collection that holds it so the UI can render both without a
 // second lookup.
 export interface RelatedScript {
   script: StoredScript;
-  // `null` only if the row's `sourceId` dangles — shouldn't happen,
+  // `null` only if the row's `collectionId` dangles — shouldn't happen,
   // but the renderer must not crash on a partially-written store.
-  source: StoredSource | null;
+  collection: StoredCollection | null;
   // Why it matched. A row can be both: the same URL installed twice
-  // under two sources still carries the same `@name`/`@namespace`.
+  // under two collections still carries the same `@name`/`@namespace`.
   sameLocation: boolean;
   sameIdentity: boolean;
 }
 
 export interface RelatedVersions {
-  // Installed rows at the very same location. Ordered by source
+  // Installed rows at the very same location. Ordered by collection
   // display name so the list is stable across renders.
   sameLocation: RelatedScript[];
   // Installed rows that are the same script per `@namespace`+`@name`
@@ -115,23 +115,23 @@ export interface RelatedVersions {
   // stronger relationship is the one worth showing.
   sameIdentity: RelatedScript[];
   // Where a "keep your own single-file copy" install would land: the
-  // container source matching the location's scheme. Present only
+  // container collection matching the location's scheme. Present only
   // when the location is a single-file input (a script inside a
-  // directory/manifest source has no single-file spelling to install)
-  // and no `sameLocation` row already sits in that container.
+  // directory/manifest collection has no single-file spelling to
+  // install) and no `sameLocation` row already sits in that container.
   //
-  // `source` is `null` when the container doesn't exist yet — the
+  // `collection` is `null` when the container doesn't exist yet — the
   // first single-file install of that scheme creates it.
   installTarget?: {
     kind: ContainerKind;
     path: string;
-    source: StoredSource | null;
+    collection: StoredCollection | null;
   };
 }
 
 export interface RelatedVersionsQuery {
   scripts: readonly StoredScript[];
-  sources: readonly StoredSource[];
+  collections: readonly StoredCollection[];
   // The **absolute** location of the script under consideration:
   // a stored row's `fileUrl`, or the URL/path a preview was opened
   // for. Canonicalized here, so either spelling of a local file
@@ -145,7 +145,7 @@ export interface RelatedVersionsQuery {
 export function findRelatedVersions(q: RelatedVersionsQuery): RelatedVersions {
   const loc = locationKey(q.location);
   const identity = identityKey(q.header);
-  const sourceById = new Map(q.sources.map((s) => [s.id, s]));
+  const collectionById = new Map(q.collections.map((s) => [s.id, s]));
 
   const sameLocation: RelatedScript[] = [];
   const sameIdentity: RelatedScript[] = [];
@@ -156,7 +156,7 @@ export function findRelatedVersions(q: RelatedVersionsQuery): RelatedVersions {
     if (!atLocation && !isIdentity) continue;
     const rel: RelatedScript = {
       script,
-      source: sourceById.get(script.sourceId) ?? null,
+      collection: collectionById.get(script.collectionId) ?? null,
       sameLocation: atLocation,
       sameIdentity: isIdentity,
     };
@@ -166,12 +166,12 @@ export function findRelatedVersions(q: RelatedVersionsQuery): RelatedVersions {
   }
 
   const byName = (a: RelatedScript, b: RelatedScript): number =>
-    sourceSortKey(a).localeCompare(sourceSortKey(b))
+    collectionSortKey(a).localeCompare(collectionSortKey(b))
     || a.script.relativePath.localeCompare(b.script.relativePath);
   sameLocation.sort(byName);
   sameIdentity.sort(byName);
 
-  return { sameLocation, sameIdentity, installTarget: installTargetFor(loc, sameLocation, q.sources) };
+  return { sameLocation, sameIdentity, installTarget: installTargetFor(loc, sameLocation, q.collections) };
 }
 
 // The container a single-file install of `loc` would land in — but
@@ -181,13 +181,13 @@ export function findRelatedVersions(q: RelatedVersionsQuery): RelatedVersions {
 function installTargetFor(
   loc: string,
   sameLocation: readonly RelatedScript[],
-  sources: readonly StoredSource[],
+  collections: readonly StoredCollection[],
 ): RelatedVersions['installTarget'] {
   if (!isSingleFileInput(loc)) return undefined;
   const kind = containerKindForSingleFileInput(loc);
   const path = containerPath(kind);
-  if (sameLocation.some((r) => r.source?.path === path)) return undefined;
-  return { kind, path, source: sources.find((s) => s.path === path) ?? null };
+  if (sameLocation.some((r) => r.collection?.path === path)) return undefined;
+  return { kind, path, collection: collections.find((s) => s.path === path) ?? null };
 }
 
 // One row's share of an enable/disable click. A plain click produces
@@ -218,10 +218,10 @@ export function enableChanges(
   return changes;
 }
 
-// Whether a row is actually running: its own flag AND its source's.
+// Whether a row is actually running: its own flag AND its collection's.
 function isRunning(rel: RelatedScript): boolean {
   if (!isScriptEnabled(rel.script)) return false;
-  return rel.source ? isSourceEnabled(rel.source) : true;
+  return rel.collection ? isCollectionEnabled(rel.collection) : true;
 }
 
 // The copies an exclusive enable of `keepId` has to switch off: every
@@ -234,11 +234,11 @@ function isRunning(rel: RelatedScript): boolean {
 // Two exclusions, both deliberate:
 //   - **Rows that aren't running already.** Nothing to gain by
 //     rewriting a value they effectively hold.
-//   - **Rows under a disabled source.** Not competing with the copy
+//   - **Rows under a disabled collection.** Not competing with the copy
 //     being enabled, and their own checkbox renders disabled — so a
 //     flip made here could not be undone from the panel at all, and
 //     would silently destroy the user's stored intent for whenever
-//     they re-enable that source.
+//     they re-enable that collection.
 export function otherRunningCopies(
   rows: readonly RelatedScript[],
   keepId: string,
@@ -254,9 +254,9 @@ export function allRelatedRows(related: RelatedVersions): RelatedScript[] {
 }
 
 // Sorts by the name the row will actually show. Using the raw
-// `displayName` would leave any source without one — directory and
-// manifest sources, which only get an inferred name — sorted under a
-// string the user never sees, so the table would look unsorted.
-function sourceSortKey(r: RelatedScript): string {
-  return r.source ? effectiveDisplayName(r.source) : '';
+// `displayName` would leave any collection without one — directory and
+// manifest collections, which only get an inferred name — sorted under
+// a string the user never sees, so the table would look unsorted.
+function collectionSortKey(r: RelatedScript): string {
+  return r.collection ? effectiveDisplayName(r.collection) : '';
 }

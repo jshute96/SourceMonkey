@@ -304,7 +304,7 @@ test('ensureIconForUrl: a data: URL with a payload passes through', async () => 
 });
 
 // ---------- dataUrlToBlob ----------
-// Backs the per-page blob: URL dedup that keeps the sources page from
+// Backs the per-page blob: URL dedup that keeps the collections page from
 // inlining a copy of every favicon's base64 into each row.
 
 test('dataUrlToBlob: decodes a base64 data URL to the right bytes + MIME', async () => {
