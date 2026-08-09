@@ -159,10 +159,13 @@ the *other* rows.
   reads it back, and the repaint that follows draws from stored state,
   so a failed write corrects itself.
 - **One tooltip, both surfaces**: *Enable this script*, the same pair
-  the collections page uses (with *Collection is disabled* when the parent is
-  off). It does not name the copy — the Collection and Location cells are
-  an inch to the right — and it does not swap to "Disable" when
-  checked, which would make one control read two ways for no gain.
+  the collections page uses (with *Collection is disabled* when the
+  parent is off). Both are single constants — `ENABLE_TITLE` in
+  `src/script-display.ts` and `COLLECTION_OFF_TITLE` in
+  `src/collection-display.ts` — so no surface can drift. It does not
+  name the copy — the Collection and Location cells are an inch to the
+  right — and it does not swap to "Disable" when checked, which would
+  make one control read two ways for no gain.
   - *(Ctrl-click for multi-enable)* is appended only where the sweep
     can actually fire. It matters most on the controls-row toggle,
     whose effect on other copies is otherwise invisible from where it

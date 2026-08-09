@@ -30,6 +30,12 @@ import type { StoredCollection } from './script-store.js';
 
 export type CollectionTypeKey = 'file' | 'http' | 'github';
 
+// Why a script's enable checkbox is greyed out when its parent is off.
+// Stands in for `ENABLE_TITLE` on every surface that draws one, so the
+// collections page, the viewer's controls row, and the "Other versions"
+// panel all explain it the same way.
+export const COLLECTION_OFF_TITLE = 'Collection is disabled';
+
 const GITHUB_HOST_RE = /^https?:\/\/(www\.)?github\.com\//i;
 const RAW_GITHUB_HOST_RE = /^https?:\/\/raw\.githubusercontent\.com\//i;
 
@@ -219,10 +225,13 @@ export function makeCollectionTypeBubble(path: string): HTMLElement {
   const key = collectionBubbleKey(path);
   const href = collectionClickUrl(path);
   if (href === null) {
+    // No URL to link to, so the tooltip says why rather than naming the
+    // internal "container" kind — the user never sees that word, only
+    // the "Scripts from …" heading these collections carry.
     const span = document.createElement('span');
     span.className = `collection-type-bubble bubble-${key}`;
     span.textContent = key;
-    span.title = `Container: ${key}`;
+    span.title = 'Scripts added one at a time — no URL to open';
     return span;
   }
   const a = document.createElement('a');

@@ -54,6 +54,7 @@ import {
 } from './local-file-overrides.js';
 import {
   appendWithSlashBreaks,
+  COLLECTION_OFF_TITLE,
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
@@ -67,6 +68,7 @@ import {
 import {
   displayLocation,
   effectiveScriptStatus,
+  ENABLE_TITLE,
   formatScriptSize,
   formatScriptStatusLabel,
   logIdDupeSuffix,
@@ -663,7 +665,7 @@ function syncScriptRow(
   // the checkbox.
   if (label) {
     label.classList.toggle('toggle-disabled', !collectionOn);
-    label.title = collectionOn ? 'Enable this script' : 'Collection is disabled';
+    label.title = collectionOn ? ENABLE_TITLE : COLLECTION_OFF_TITLE;
   }
   row.classList.toggle('disabled', !collectionOn || !scriptOn);
 }
@@ -1022,7 +1024,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
     return makeMessage(
       'empty',
       inContainer
-        ? 'No scripts in this container yet — add one above.'
+        ? 'No scripts here yet — add one above.'
         : 'No *.user.js files found.',
     );
   }
@@ -1093,7 +1095,7 @@ function renderScriptRow(
     scriptOn,
     !collectionOn,    // disabled (greyed out) when the parent collection is off
     (next, label) => void onToggleScript(script.id, next, label),
-    collectionOn ? 'Enable this script' : 'Collection is disabled',
+    collectionOn ? ENABLE_TITLE : COLLECTION_OFF_TITLE,
   ));
   tr.appendChild(toggleCell);
 
@@ -1210,7 +1212,7 @@ async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTML
     // Hand-rolling the row removal here also meant hand-rolling the
     // "collection is now empty" message, which said "No *.user.js files
     // found." even on a container collection, whose empty state is
-    // "No scripts in this container yet". Only container rows have this
+    // "No scripts here yet". Only container rows have this
     // button, so that was the common case, and no later repaint would
     // correct it.
     await repaintPage();
@@ -1293,9 +1295,12 @@ async function onAddCollection(
       const existing = findDuplicateOwner(stored, collections)
         ?? collections.find((s) => s.path === stored);
       if (existing) {
+        // Name the collection rather than the internal "container"
+        // kind: it is the heading the jump below scrolls to, so the
+        // message and the destination read as the same thing.
         showAddError(
           isContainerCollection(existing.path)
-            ? 'This script is already in its container'
+            ? `This script is already in ${effectiveDisplayName(existing)}`
             : 'This collection is already registered',
         );
         if (jump) jumpToCollection(existing.id);
@@ -1776,7 +1781,7 @@ function applyCollectionEnabledToDom(section: HTMLElement, enabled: boolean): vo
     const lab = row.querySelector<HTMLLabelElement>('.toggle');
     if (!cb || !lab) continue;
     lab.classList.toggle('toggle-disabled', !enabled);
-    lab.title = enabled ? 'Enable this script' : 'Collection is disabled';
+    lab.title = enabled ? ENABLE_TITLE : COLLECTION_OFF_TITLE;
     if (!lab.querySelector('.busy-spinner')) cb.disabled = !enabled;
     row.classList.toggle('disabled', !enabled || !cb.checked);
   }
@@ -1810,7 +1815,7 @@ function refreshBulkToggle(section: HTMLElement): void {
 }
 
 function bulkTitle(collectionOn: boolean, allOn: boolean): string {
-  if (!collectionOn) return 'Collection is disabled';
+  if (!collectionOn) return COLLECTION_OFF_TITLE;
   return allOn
     ? 'Disable all scripts in this collection'
     : 'Enable all scripts in this collection';

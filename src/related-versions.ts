@@ -20,10 +20,11 @@
 // See [docs/script-identity.md].
 
 import { isContainerCollection } from './directories.js';
-import { displayLocation } from './script-display.js';
+import { displayLocation, ENABLE_TITLE } from './script-display.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
 import {
   appendWithSlashBreaks,
+  COLLECTION_OFF_TITLE,
   CONTAINER_DISPLAY_NAMES,
   effectiveDisplayName,
   makeCollectionTypeBubble,
@@ -57,7 +58,6 @@ import {
 // gesture their keyboard doesn't have. The docs say "Ctrl/Cmd" because
 // they describe every platform at once; the app knows which one it is
 // running on.
-const ENABLE_TITLE = 'Enable this script';
 const SOLO_HINT = ` (${isApplePlatform() ? 'Cmd' : 'Ctrl'}-click for multi-enable)`;
 
 // Resolved once, at module load — the platform can't change under us.
@@ -75,10 +75,6 @@ function isApplePlatform(): boolean {
 export function enableTitle(sweepsOthers: boolean): string {
   return sweepsOthers ? `${ENABLE_TITLE}${SOLO_HINT}` : ENABLE_TITLE;
 }
-
-// …and when the parent collection is off, so the box can't be clicked
-// at all. Same string the controls row has always used.
-export const COLLECTION_OFF_TITLE = 'Collection is disabled';
 
 // Wire a checkbox so its `change` handler can find out whether the
 // click that produced it carried the exclusive-opt-out modifier.

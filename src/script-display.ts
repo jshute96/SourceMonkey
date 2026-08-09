@@ -23,6 +23,13 @@ const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 // percent in a filename) would make decodeURIComponent raise URIError,
 // and losing the whole string is far worse than leaving one escape
 // undecoded.
+// Tooltip on a script's enable checkbox, wherever one is drawn: the
+// collections page's per-row toggle, the viewer's controls row, and the
+// "Other versions" panel. The viewer's panel appends a multi-enable hint
+// to it (see `enableTitle` in related-versions.ts); everyone else shows
+// it bare.
+export const ENABLE_TITLE = 'Enable this script';
+
 export function decodeForDisplay(text: string): string {
   try {
     return decodeURIComponent(text);

@@ -55,7 +55,6 @@ import {
 import {
   enableTitle,
   renderRelatedVersions,
-  COLLECTION_OFF_TITLE,
   watchSoloModifier,
   type RelatedVersionsActions,
 } from './related-versions.js';
@@ -122,7 +121,10 @@ import {
   scriptAbsolutePath,
   collectionCanonicalUrl,
 } from './directories.js';
-import { appendWithSlashBreaks } from './collection-display.js';
+import {
+  appendWithSlashBreaks,
+  COLLECTION_OFF_TITLE,
+} from './collection-display.js';
 import { renderSiteIconInto } from './site-icon.js';
 import { resolveScriptResource } from './file-loader.js';
 import {

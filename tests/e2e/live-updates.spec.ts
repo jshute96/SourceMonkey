@@ -279,7 +279,7 @@ test.describe('collections page live updates', () => {
     // Two things at once. The table and the "no scripts" message are
     // different elements, so this is the one path a repaint can't update
     // in place — it swaps the block whole. And the copy has to be the
-    // CONTAINER's ("No scripts in this container yet"), not the
+    // CONTAINER's ("No scripts here yet"), not the
     // directory-scan one: the per-row Remove button only exists on
     // container rows, so hand-rolling that message here got it wrong on
     // every row that has the button.
@@ -301,7 +301,7 @@ test.describe('collections page live updates', () => {
 
     await expect(section.locator('table.script-table')).toHaveCount(0);
     await expect(section.locator('p.empty'))
-      .toHaveText('No scripts in this container yet — add one above.');
+      .toHaveText('No scripts here yet — add one above.');
 
     await page.close();
   });
