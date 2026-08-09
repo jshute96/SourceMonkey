@@ -142,8 +142,19 @@ export function outdatedProbe(
   return furthestAhead;
 }
 
-// Row label for a probe: "update URL", "download URL", or the combined
-// form when one URL is named by both headers.
+// Row label for a probe: "update URL" or "download URL".
+//
+// When ONE url is named by both headers the label says "update URL"
+// rather than spelling out both. `@updateURL` is the header that means
+// "check here for a new version", so it is the accurate name for what
+// we did; `@downloadURL` naming the same file is a detail of the
+// script's headers, not of the check. Spelling out both made the
+// longest label in the panel, for a distinction the reader can't act
+// on — the row's tooltip carries the URL either way.
+//
+// No ambiguity with a plain update probe: the combined form only
+// exists when the two headers resolve to the same URL, and two probes
+// for one URL is exactly what it's collapsing.
 export function probeLabel(kinds: readonly ProbeKind[]): string {
-  return `${kinds.join('/')} URL`;
+  return kinds.includes('update') ? 'update URL' : 'download URL';
 }

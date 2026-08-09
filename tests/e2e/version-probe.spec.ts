@@ -259,6 +259,139 @@ test.describe('update probes', () => {
     await page.close();
   });
 
+  // The viewer drops probe rows the reader would learn nothing from,
+  // so "no row" has to mean "nothing to act on" — which only holds if
+  // the cases that DO need acting on always keep theirs.
+  test('a probe that agrees with the running version gets no row', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/thing.meta.js', metaBlock('1.0'));
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
+    // The probe really did resolve — this is a dropped row, not a
+    // missing probe, which is what makes the assertion below mean
+    // something.
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(script.versionProbes![0].version).toBe('1.0');
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    // Anchored, since a bare `hasText` would also match the
+    // `Version at update URL` row this test is asserting is absent.
+    await expect(page.locator('#header-summary dt').filter({ hasText: /^Version$/ }))
+      .toHaveCount(1);
+    await expect(page.locator('#header-summary dt', { hasText: 'Version at' })).toHaveCount(0);
+    await page.close();
+  });
+
+  // The other half of the rule: a probe whose version AGREES is
+  // dropped, but not when its latest check failed. A script whose
+  // @updateURL dies after one good check would otherwise look
+  // permanently up to date.
+  test('an agreeing probe whose latest check failed still gets a row', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/thing.meta.js', metaBlock('1.0'));
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
+    await sm.updateSource(source!.id, 'manual');
+    // First check agrees, so at this point there is deliberately no row.
+    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}`);
+    await expect(page.locator('#header-summary dt', { hasText: 'Version at' })).toHaveCount(0);
+
+    // Now the upstream goes away.
+    server.removeRoute('/thing.meta.js');
+    await sm.syncNow();
+    await sm.updateSource(source!.id, 'manual');
+    const probe = (await sm.getSourceWithScripts(source!.id))!.scripts[0].versionProbes![0];
+    expect(probe.version).toBe('1.0');
+    expect(probe.error).toBeTruthy();
+
+    await page.reload();
+    const row = page.locator('#header-summary dt', { hasText: 'Version at update URL' })
+      .locator('+ dd');
+    // The version matches ours and is old news; the failed re-check is
+    // what the row is here to say, so it's the value.
+    await expect(row).toHaveText(probe.error!);
+    // …and the version it displaced rides along in the tooltip.
+    await expect(row).toHaveAttribute('title', /last known version 1\.0/);
+    await page.close();
+  });
+
+  // One side declaring a version and the other not is a difference
+  // worth seeing, even though it can't be ranked. The script's own row
+  // says `<none>` so the comparison has both halves on screen.
+  test('an upstream version with no local @version shows <none> against it', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/thing.meta.js', metaBlock('2.0'));
+    // Deliberately no `@version` on the installed script.
+    server.setRoute('/thing.user.js', [
+      '// ==UserScript==',
+      '// @name        Unversioned',
+      '// @match       https://example.com/*',
+      `// @updateURL   ${server.baseUrl}/thing.meta.js`,
+      '// ==/UserScript==',
+      '',
+    ].join('\n'));
+    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(script.versionProbes![0].version).toBe('2.0');
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    await expect(page.locator('#header-summary dt').filter({ hasText: /^Version$/ })
+      .locator('+ dd')).toHaveText('<none>');
+    const row = page.locator('#header-summary dt', { hasText: 'Version at update URL' })
+      .locator('+ dd');
+    // Bare number: we can't say which is ahead, so no (Newer)/(Older)…
+    await expect(row).toHaveText('2.0');
+    // …and no highlight, which is reserved for a known-newer upstream.
+    await expect(page.locator('#header-summary dd.version-newer')).toHaveCount(0);
+    await page.close();
+  });
+
+  // A probe can't set a status and nothing logs it, so this row is the
+  // only place a permanently broken @updateURL is ever reported. It
+  // must survive the row-dropping rule above.
+  test('a probe that never resolved a version keeps its row, showing the error', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/gone.meta.js`,
+    }));
+    const source = await sm.addSource(`${server.baseUrl}/thing.user.js`);
+    await sm.updateSource(source!.id, 'manual');
+    await sm.syncNow();
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const probeError = script.versionProbes![0].error!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    const row = page.locator('#header-summary dt', { hasText: 'Version at update URL' })
+      .locator('+ dd');
+    await expect(row).toHaveText(probeError);
+    // Not highlighted — there's no newer version, there's no answer.
+    await expect(page.locator('#header-summary dd.version-newer')).toHaveCount(0);
+    // And the status is untouched: a probe failure is not a script failure.
+    await expect(page.locator('#header-summary dt', { hasText: 'Status' }).locator('+ dd'))
+      .toHaveText('OK');
+    await page.close();
+  });
+
   test('a copy ahead of its upstream reads Older, and stays OK', async ({
     extensionContext, extensionId, sm,
   }) => {

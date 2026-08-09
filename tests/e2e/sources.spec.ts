@@ -222,7 +222,6 @@ test.describe('sources', () => {
     const viewer = await extensionContext.newPage();
     await viewer.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
     await expect(viewer.locator('h1#filename')).toHaveText('a%20b.user.js');
-    await expect(viewer.locator('.log-id-cell')).toHaveText('a%20b.user.js');
     await viewer.close();
 
     const sources = await extensionContext.newPage();

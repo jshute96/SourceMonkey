@@ -26,9 +26,11 @@ or UI surface refers to it.
 - Sources page — a faint `#N` is rendered after the filename link
   whenever a script is part of a dupe group. No suffix for unique
   basenames.
-- Userscript viewer — a `Log ID` row in the details panel, always
-  visible for an installed script. Absent in preview mode, which is
-  showing a script that has never run.
+- Userscript viewer — a `Log ID` row in the details panel, but only
+  for a script whose ID carries a `#N`. A unique log ID is just the
+  basename, which the heading and the `Location` row already say.
+  Absent in preview mode, which is showing a script that has never
+  run.
 
 ### Implementation
 

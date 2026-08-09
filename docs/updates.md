@@ -161,17 +161,48 @@ version; hovering gives the version and the URL.
   [storage.md](storage.md#displayed-status-ui-level).
 - Running *ahead* of the published version is normal for a local edit,
   so it isn't a status — only a details row.
+- A probe *failure* isn't a status either, which is why the details row
+  is load-bearing rather than supplementary — see the viewer section
+  below.
 
 ### Script viewer
 
 Under the `Version` row, one row per probe:
 
-- Label — `Version at update URL`, `Version at download URL`, or
-  `Version at update/download URL` when one URL is named by both.
-- Value — `same`, `2.1 (Newer)`, `1.0 (Older)`, the bare number when
-  there's nothing to compare against, or the probe's error.
-- The URL is the row's tooltip.
-- The `(Newer)` case is highlighted; nothing else is.
+- Label — `Version at update URL` or `Version at download URL`. One URL
+  named by BOTH headers is labeled `update URL`, not spelled out as
+  both: `@updateURL` is the header that means "check here for a new
+  version", so it names what we did, and the combined form was the
+  longest label in the panel for a distinction nobody can act on.
+- **A probe only gets a row when it has something to say**, so any row
+  present is one to act on. Exactly one case is dropped: its version
+  matches ours **and** the latest check succeeded — the expected state
+  of an up-to-date script.
+- Three things each earn a row:
+  - **The versions differ** (`newer` / `older`).
+  - **Exactly one side declares a `@version`.** We can't rank them, but
+    "they publish 2.0 and we declare nothing" is still a difference
+    worth seeing. The `Version` row above then reads `<none>`, so both
+    halves of the comparison are on screen.
+  - **The latest check failed**, whatever the version says — see below.
+- **Any probe carrying an `error` keeps its row**, because this row is
+  the failure's *only* surface: probes run downstream of the refresh and
+  can't set a status or a `refreshError` (see `runVersionProbes`), and
+  nothing logs them. Two shapes of that:
+  - never resolved a version at all — a permanently broken
+    `@updateURL`, which would otherwise read as up to date;
+  - resolved one earlier and is failing now — the host went away after
+    a good check, which is the more common way this breaks.
+- Value and tooltip split by which of the two is the news:
+  - versions differ → value `2.1 (Newer)` / `1.0 (Older)`.
+  - only they have a version → value is the bare number, no qualifier.
+  - versions agree, check failed → value is the error, tooltip adds
+    `last known version 2.0`.
+  - no version at all → value is the error.
+  - The tooltip is always the URL, plus `last check failed: …` whenever
+    there's an error the value isn't already showing.
+- The `(Newer)` case is highlighted; nothing else is — an upstream we
+  can't rank is not "newer".
 
 Preview mode shows no probe rows. A not-yet-installed script hasn't
 been probed, and rendering a row would imply we had checked.

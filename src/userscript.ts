@@ -151,6 +151,7 @@ import { remapStackRef, type MappedSegment, type StackRef } from './source-map.j
 import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
+import { makeCopyButton } from './copy-button.js';
 import { renderDetails } from './script-details.js';
 
 // Install and Refresh run the load pipeline here in the page, so this
@@ -206,34 +207,18 @@ refreshBtn.addEventListener('click', () => void onRefresh());
 const takeControlsRowSolo = watchSoloModifier(enableCheckboxEl);
 enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
 
-// Static markup for the Lucide-style copy / check icons. Safe to embed
-// via innerHTML because there's no interpolation; the strings ship as
-// part of the extension bundle.
-const COPY_ICON_SVG =
-  '<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
-  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
-  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
-  '</svg>';
-const CHECK_ICON_SVG =
-  '<svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
-  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polyline points="20 6 9 17 4 12"/>' +
-  '</svg>';
-
-// One shared copy button: created once, appendChild'd into the dl on
-// each render (appendChild moves it, so no duplication). Keeping it
-// shared means we don't have to re-wire the click handler.
-const filenameCopyBtn = (() => {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'copy-btn';
-  btn.title = 'Copy location to clipboard';
-  btn.setAttribute('aria-label', 'Copy location to clipboard');
-  btn.innerHTML = COPY_ICON_SVG + CHECK_ICON_SVG;
-  btn.addEventListener('click', () => void onCopyFilename());
-  return btn;
-})();
+// The Location row's copy button. One long-lived element, appendChild'd
+// into the dl on each render (appendChild moves it, so no duplication),
+// which is what lets an in-flight "Copied" flash survive a repaint.
+// Reads `currentFilenamePath` at click time.
+//
+// Copies the raw location, not the decoded form the row displays: a
+// pasted URL has to still work in a terminal, an address bar, or the
+// Add Source field.
+const filenameCopyBtn = makeCopyButton({
+  label: 'Copy location to clipboard',
+  text: () => currentFilenamePath,
+});
 
 // Whether the per-extension "Allow access to file URLs" toggle is on.
 // Probed once per page rather than per failure: the toggle lives on
@@ -416,10 +401,9 @@ function cacheSource(source: StoredSource | undefined): void {
   sourcePath = source?.path ?? '';
   sourceRow = source ?? null;
 }
-let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
-// Path currently shown in the Location cell. onCopyFilename copies
-// this rather than reading textContent, which would also break if the
-// dl ever wraps the path across multiple text nodes.
+// Path currently shown in the Location cell. The copy button reads
+// this rather than the cell's textContent, which would also break if
+// the dl ever wraps the path across multiple text nodes.
 let currentFilenamePath = '';
 // This script's log ID. Computed at load(), re-derived after refresh,
 // and kept fresh while the viewer is open by listening to
@@ -599,29 +583,6 @@ function paintEnabledOptimistically(changes: readonly ScriptEnableChange[]): voi
       `tr[data-script-id="${CSS.escape(change.scriptId)}"] input[type=checkbox]`,
     );
     if (row) row.checked = change.enabled;
-  }
-}
-
-async function onCopyFilename(): Promise<void> {
-  if (!currentFilenamePath) return;
-  try {
-    // Copies the raw location, not the decoded form the row displays:
-    // a pasted URL has to still work when it goes into a terminal, an
-    // address bar, or the Add Source field.
-    await navigator.clipboard.writeText(currentFilenamePath);
-    // .copied swaps the visible icon to a checkmark via CSS. A fresh
-    // timer per click keeps rapid double-clicks from leaving the
-    // checkmark stuck — each new click cancels the prior reset and
-    // schedules its own.
-    filenameCopyBtn.classList.add('copied');
-    if (copyResetTimer !== null) clearTimeout(copyResetTimer);
-    copyResetTimer = setTimeout(() => {
-      filenameCopyBtn.classList.remove('copied');
-      copyResetTimer = null;
-    }, 1200);
-  } catch {
-    // Clipboard write can be rejected (e.g. permission denied); the
-    // path is selectable on the page, so no fallback UI is needed.
   }
 }
 
@@ -1175,8 +1136,8 @@ const previewFetchCache: FileFetchCache = new Map();
 // re-sets the tab list when it finds one.
 const previewLocalFiles = new Map<string, string>();
 // The parse check's resolved `@require` / `@resource` entries, for the
-// details panel's dependency rows. Empty until the check lands, at
-// which point the panel repaints — see `recordPreviewFiles`.
+// byte total in the details panel's Size row. Empty until the check
+// lands, at which point the panel repaints — see `recordPreviewFiles`.
 let previewFiles: { requires: readonly StoredRequire[]; resources: readonly StoredResource[] } | undefined;
 // Session keys backing raw-view tabs, all dropped when this page goes
 // away. A set rather than a single key because each click opens its own
@@ -1635,11 +1596,12 @@ function previewTabs(text: string, header: ParsedHeader | null): CodeTab[] {
 // The preview's details panel. Its own function because it is painted
 // twice: once as soon as the body renders, and again when the parse
 // check comes back with the resolved `@require` / `@resource` entries —
-// the panel's dependency rows annotate each declaration with what it
-// actually loaded, which isn't known on the first pass.
+// the Size row totals their bytes, which aren't known on the first
+// pass.
 function renderPreviewDetails(): void {
   renderDetails(summaryEl, {
     header: previewHeader,
+    mode: 'preview',
     files: previewFiles,
     location: {
       text: displayLocation(previewLocation),
@@ -1663,8 +1625,8 @@ function previewLocalRoots(): string[] {
 }
 
 // Fold the parse check's resolved files into the preview's state and
-// repaint what depends on them: the details panel's dependency rows
-// (size + `local` chip) and the tab strip's tooltips and chips.
+// repaint what depends on them: the details panel's Size total and the
+// tab strip's tooltips and chips.
 //
 // Repainting the strip is safe at any time — `setTabs` keeps the
 // selected index, so a user who has already opened a require tab stays

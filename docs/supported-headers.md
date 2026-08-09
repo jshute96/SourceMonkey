@@ -139,9 +139,10 @@ the SRI fragment is parsed-and-preserved only — not yet validated.
 TM documents the full syntax; VM and GM4 don't document SRI in their
 metadata pages.
 
-It is stripped from what a human reads — the viewer's tab tooltips,
-details rows, and Log lines — since a 64-hex-digit tail is most of the
-width of those surfaces and nothing the reader can act on. Fetching,
+It is stripped from what a human reads — the viewer's tab tooltips, the
+details panel's `Local overrides` tooltips, and Log lines — since a
+64-hex-digit tail is most of the width of those surfaces and nothing the
+reader can act on. Fetching,
 resolution, dedup, storage, and error messages all keep the verbatim
 reference.
 

@@ -137,9 +137,8 @@ test.describe('.user.js link capture', () => {
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
-    // Heading, tab label, and Log ID all show the decoded name…
+    // Heading and tab label both show the decoded name…
     await expect(page.locator('h1#filename')).toContainText(decodedName);
-    await expect(page.locator('.log-id-cell')).toHaveText(decodedName);
     await expect(page.locator('#tabs')).toContainText(decodedName);
     // …and so does the Location row, while its href stays encoded.
     const location = page.locator('.filename-text');

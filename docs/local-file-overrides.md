@@ -243,7 +243,9 @@ Both `StoredRequire` and `StoredResource` gain one field:
 persisted before the field existed read as enabled.
 
 - Rendered as a **Local files** checkbox in the source's header on the
-  sources page, next to Refresh / Remove.
+  sources page, next to Refresh / Remove. (Distinct from the viewer's
+  **Local overrides** row below — this switches the feature on for a
+  source, that lists what it actually substituted for one script.)
 - Shown only where it can do something: http(s) sources and the http /
   github containers are excluded, since every script under them loads
   over the network.
@@ -276,12 +278,22 @@ be silent, so several surfaces say so:
   - Every code tab has the URL tooltip, the main script's included:
     labels are bare basenames, so "which file is this" is a fair
     question on any of them. Only the chip is override-specific.
-- **Details panel** — the `Loads libraries` / `Loads resources` rows
-  annotate each declaration with its loaded size and, when overridden, a
-  `local` chip whose tooltip is `Loaded from <url>`, the same wording and
-  URL form as the tab tooltip.
-- **`@icon` has no marker.** The favicon slot is a 16×16 image with no
-  room for a chip, and an icon served from the wrong place is a cosmetic
+- **Details panel `Local overrides` row** — one entry per overridden file,
+  naming the kind (`@require` / `@resource`), the local path we read,
+  and a copy button for it. The declaration it replaced is the entry's
+  tooltip.
+  - Absent when nothing was overridden, so the row's presence is
+    itself the disclosure.
+  - This is the surface that covers `@resource`, which gets **no code
+    tab** in either mode. Before it, a resource stand-in was reported
+    only by the Log line below — and in the install preview, which has
+    no Log tab, not at all.
+  - The stand-in's bytes also land in the `Size` row's
+    `(plus N @require files: …)` tail, though nothing there names it.
+- **`@icon` has no marker**, including in the `Local overrides` row,
+  whose name would otherwise read as exhaustive — it lists `@require`
+  and `@resource` only. The favicon slot is a 16×16 image with no room
+  for a chip, and an icon served from the wrong place is a cosmetic
   surprise rather than a code-execution one.
 - **Log tab** — an `info` line (`… is loading from file://…`) when a
   stand-in starts, stops, or changes on disk. Gated on `contentHash`, so an unchanged stand-in stays quiet
@@ -295,8 +307,9 @@ case that bites before install. Two caveats there:
   page loaded needs a reload — unlike the installed path, which gets a
   fresh cache per refresh.
 - When any declared file fails, `attachFiles` reports the failure with
-  empty lists, so there are no per-file annotations to show at all. Every
-  declaration still appears; none of them carries a size or a chip.
+  empty lists, so there is nothing resolved to annotate: every
+  declaration still gets its tab, but none carries a chip, and the
+  `Size` row shows no dependency total.
 
 ## Wording
 
@@ -321,11 +334,11 @@ A `@require` may carry its expected hash in the URL fragment, in
 Tampermonkey's form (`#md5=…`, `#sha256=…`, comma-separated for
 several). `stripSriFragment` in
 [`src/file-loader.ts`](../src/file-loader.ts) drops it from every
-human-facing surface — tab tooltip, Log lines, and the details panel's
-`Loads libraries` / `Loads resources` rows.
+human-facing surface — tab tooltips, Log lines, and the `Stands in for
+<url>` tooltip on a `Local overrides` entry.
 
-- A 64-hex-digit tail is most of the width of a tooltip or a row and
-  tells the reader nothing they can act on.
+- A 64-hex-digit tail is most of the width of a tooltip or a log line
+  and tells the reader nothing they can act on.
 - Stripped only when **every** comma-separated part looks like a hash
   declaration, so an ordinary `#section` fragment survives.
 - A malformed hash tail survives too — a reader wondering why validation

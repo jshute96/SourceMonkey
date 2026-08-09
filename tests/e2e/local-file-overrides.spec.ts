@@ -279,12 +279,6 @@ test.describe('local file overrides', () => {
     const title = await page.locator('.tab').nth(1).getAttribute('title');
     expect(title).not.toContain(hash);
     expect(title).toContain(`${server.baseUrl}/lib/util.js\n\nLoaded from file://`);
-
-    const libRow = page.locator('#header-summary dt', { hasText: 'Loads libraries' })
-      .locator('xpath=following-sibling::dd[1]');
-    const rowText = await libRow.innerText();
-    expect(rowText).not.toContain('c45f9b0d');
-    expect(rowText).toContain(`${server.baseUrl}/lib/util.js`);
     await page.close();
   });
 
@@ -427,12 +421,101 @@ test.describe('local file overrides', () => {
     expect(req?.localUrl).toBeUndefined();
   });
 
+  // The `Local overrides` details row is the disclosure that covers what
+  // the tab strip can't: `@resource` gets no code tab in either mode,
+  // so before this row a resource stand-in was invisible in the install
+  // preview (which also has no Log tab).
+  test('the Local overrides row lists both @require and @resource stand-ins', async ({
+    sm, extensionContext, extensionId,
+  }) => {
+    server.setRoute('/assets/style.css', '.remote{}', { contentType: 'text/css' });
+    fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
+    fs.writeFileSync(path.join(scriptsDir.path, 'style.css'), '.local{}');
+    writeScript([`// @resource    css ${server.baseUrl}/assets/style.css`]);
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(script.status, script.errorMessage).toBe('ok');
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    const items = page.locator('#header-summary dt', { hasText: 'Local overrides' })
+      .locator('+ dd').locator('li');
+    await expect(items).toHaveCount(2);
+    // Each entry names the kind it stood in for and the file we read.
+    await expect(items.nth(0)).toContainText('@require');
+    await expect(items.nth(0)).toContainText(path.join(scriptsDir.path, 'util.js'));
+    await expect(items.nth(1)).toContainText('@resource');
+    await expect(items.nth(1)).toContainText(path.join(scriptsDir.path, 'style.css'));
+    // A BARE filesystem path, not the `file://` URL — the Location row
+    // renders its own local source the same way, and two path styles in
+    // one panel would read as two different kinds of thing.
+    await expect(items.nth(0).locator('.local-override-path'))
+      .toHaveText(path.join(scriptsDir.path, 'util.js'));
+    // The declaration it replaced is the tooltip — the "asked for this,
+    // got that" pairing, same as the code tab's.
+    await expect(items.nth(1).locator('.local-override-path')).toHaveAttribute(
+      'title', `Stands in for ${server.baseUrl}/assets/style.css`,
+    );
+    // And each carries its own copy button, like the Location row.
+    await expect(items.locator('button.copy-btn')).toHaveCount(2);
+    await page.close();
+  });
+
+  // The row's stated justification: a `@resource` gets no code tab in
+  // either mode and the preview has no Log tab, so before install this
+  // row is the ONLY place a resource stand-in is reported. Installed
+  // mode is covered above; this is the case that motivated the row.
+  test('the install preview surfaces a @resource stand-in in Local overrides', async ({
+    extensionContext, extensionId,
+  }) => {
+    server.setRoute('/assets/style.css', '.remote{}', { contentType: 'text/css' });
+    fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
+    fs.writeFileSync(path.join(scriptsDir.path, 'style.css'), '.local{}');
+    writeScript([`// @resource    css ${server.baseUrl}/assets/style.css`]);
+    const file = path.join(scriptsDir.path, 'main.user.js');
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
+    );
+    // Nothing has run, so there is no Log tab to fall back on…
+    await expect(page.locator('.tab', { hasText: 'Log' })).toHaveCount(0);
+    // …and the resource has no tab of its own either: the script plus
+    // its one @require, and that's all.
+    await expect(page.locator('.tab')).toHaveCount(2);
+    // The row lands once the parse check resolves the declared files.
+    const items = page.locator('#header-summary dt', { hasText: 'Local overrides' })
+      .locator('+ dd').locator('li');
+    await expect(items).toHaveCount(2);
+    await expect(items.nth(1)).toContainText('@resource');
+    await expect(items.nth(1)).toContainText(path.join(scriptsDir.path, 'style.css'));
+    await page.close();
+  });
+
+  test('a script with no stand-ins has no Local overrides row', async ({
+    sm, extensionContext, extensionId,
+  }) => {
+    // No local `util.js`, so the declared URL is what gets fetched.
+    writeScript();
+    const source = await sm.addSource(scriptsDir.path);
+    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    expect(script.requires?.[0]?.localUrl).toBeUndefined();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+    // The panel painted (so this isn't an empty-page false negative)…
+    await expect(page.locator('#header-summary dt', { hasText: 'Location' })).toHaveCount(1);
+    // …and the row is absent, which is the common case.
+    await expect(page.locator('#header-summary dt', { hasText: 'Local overrides' })).toHaveCount(0);
+    await page.close();
+  });
+
   // The install preview resolves stand-ins too — and it matters most
   // there, since a not-yet-published `@require` URL is exactly what a
   // script being written for the first time carries. The preview keeps
   // its own state (its own roots, its own fetch cache, its own
   // ref→localUrl map), so it needs its own coverage.
-  test('the install preview shows a stand-in on the tab and in the details', async ({
+  test('the install preview shows a stand-in on its tab, and counts its bytes', async ({
     extensionContext, extensionId,
   }) => {
     fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
@@ -448,20 +531,20 @@ test.describe('local file overrides', () => {
     const requireTab = page.locator('.tab').nth(1);
     await expect(requireTab.locator('.tab-mark')).toHaveText('local');
     await expect(requireTab).toHaveAttribute('title', /Loaded from file:\/\/.*\/util\.js$/);
-    // The details row carries the same chip, so the panel and the strip
-    // agree about which files came off disk.
-    await expect(page.locator('#header-summary .local-chip')).toHaveCount(1);
+    // The stand-in's bytes are what the Size row totals — the panel and
+    // the strip are describing the same resolved file.
+    await expect(page.locator('#header-summary dt', { hasText: 'Size' })
+      .locator('xpath=following-sibling::dd[1]'))
+      .toContainText('(plus 1 @require file: 28 B)');
     await page.close();
   });
 
-  // A broken dependency must not take the declaration list down with
-  // it. `attachFiles` reports a failure with EMPTY lists, so there are
-  // no per-file annotations to show — but every declaration the script
-  // makes still has to appear, which is the contract stated in
-  // `script-details.ts` ("a ref that failed to load has no entry and
-  // must still appear"). Folding those empty lists into the panel as if
-  // they were results is what would break it.
-  test('a broken dependency does not strip the preview\'s declaration rows', async ({
+  // A broken dependency must not take the other declarations down with
+  // it. `attachFiles` reports a failure with EMPTY lists, so there is
+  // nothing resolved to show — but every declaration the script makes
+  // still has to get its own tab, including the broken one, whose tab
+  // is where its rejection gets reported.
+  test('a broken dependency does not strip the preview\'s require tabs', async ({
     extensionContext, extensionId,
   }) => {
     fs.writeFileSync(path.join(scriptsDir.path, 'util.js'), 'window.__SM_LOCAL = "local";');
@@ -474,15 +557,11 @@ test.describe('local file overrides', () => {
     );
     // The failure is surfaced…
     await expect(page.locator('#banner-slot')).toContainText(/could not be checked/);
-    // …and BOTH declarations still appear in the details panel, the
-    // broken one included.
-    const libRow = page.locator('#header-summary dt', { hasText: 'Loads libraries' })
-      .locator('xpath=following-sibling::dd[1]');
-    await expect(libRow).toContainText('/lib/util.js');
-    await expect(libRow).toContainText('/missing/gone.js');
-    // Both also keep their own tab, so the reader can still open the one
-    // that loaded.
+    // …and BOTH declarations still keep a tab — the script's own, plus
+    // one each — so the reader can still open the one that loaded.
     await expect(page.locator('.tab')).toHaveCount(3);
+    await expect(page.locator('.tab').nth(1)).toContainText('util.js');
+    await expect(page.locator('.tab').nth(2)).toContainText('gone.js');
     await page.close();
   });
 

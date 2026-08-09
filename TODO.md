@@ -839,5 +839,11 @@ they follow are in
   separate — the refresh still does its own conditional GET. Worth
   little for hosts that return ETags; worth more for a large script on
   a host that doesn't.
-
-
+- surface `GM_download` / `GM_openInTab` in the details panel. The
+  panel dropped the `@grant` row on the grounds that `@connect` already
+  carries the network story and the rest of the GM surface acts within
+  the page's own reach — but these two are the exception: they reach
+  the user's download directory and any URL respectively, and neither
+  is `@connect`-gated. A `@grant` row for those two names alone would
+  be noise-free, but it needs a wording that reads as a capability
+  rather than a tag dump.

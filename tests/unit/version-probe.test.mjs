@@ -46,7 +46,9 @@ test('probeTargets: one URL named by both headers collapses to one target', () =
   const targets = probeTargets(header(`@updateURL ${url}`, `@downloadURL ${url}`), OWN);
   assert.equal(targets.length, 1);
   assert.deepEqual(targets[0].kinds, ['update', 'download']);
-  assert.equal(probeLabel(targets[0].kinds), 'update/download URL');
+  // Labeled for the header that means "check here", not spelled out as
+  // both — see probeLabel.
+  assert.equal(probeLabel(targets[0].kinds), 'update URL');
 });
 
 test('probeTargets: distinct update and download URLs are both probed', () => {

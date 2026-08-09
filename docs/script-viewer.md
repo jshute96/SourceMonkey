@@ -114,34 +114,65 @@ One page, one set of panels, two query strings:
 4. **Details panel** (`#header-summary` → `<dl>`) — built by
    `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
-   the panel doesn't reshuffle between modes:
+   the panel doesn't reshuffle between modes.
+   - **Every label carries a tooltip**, from the one table in
+     [`src/details-tooltips.ts`](../src/details-tooltips.ts). Several
+     rows report something the label can't convey — what we checked but
+     deliberately didn't act on, what a value is *not*, where a name
+     shows up outside this page — so the tooltip corrects the likely
+     misreading rather than restating the label.
+     - One-sentence tooltips take no trailing period; two-sentence ones
+       end both and put a newline between, which `title` renders as a
+       line break.
+     - `Version` is the one that differs by mode: a preview has nothing
+       installed, so it describes the file's claim instead.
+   - **What earns a row.** The panel is not a mirror of the metadata
+     block — that block is already on screen, since the first code tab
+     opens on it. A row has to pay for the second reading:
+     - identity a reader scans for: `Name`, `Description`, `Version`
+     - something resolved or computed that the file doesn't state:
+       `Source`, `Location`, `<Site> page`, `Size`, `Status`, the
+       version probes
+     - a claim worth acting on: `Homepage`, `Match` / `Include` /
+       `Exclude`, `Network access`
+   - Tags that pay for none of it stay in the code view: `@author`,
+     `@namespace`, `@run-at`, `@icon`, `@noframes`, and the rest.
+   - **`@grant` gets no row**, which is a judgement about our GM
+     surface rather than a general one:
+     - `GM_xmlhttpRequest` is the API that reaches other origins, and it
+       does nothing without `@connect`.
+       - A script declaring no `@connect` is blocked from every
+         cross-origin request (see [GM-APIs.md](GM-APIs.md)), leaving it
+         no further than the page's own `fetch`.
+       - So `Network access` already carries that story, and carries it
+         more precisely than a grant name would.
+     - Most other grants act within reach the page already has:
+       `GM_addStyle`, `GM_addElement`, `GM_registerMenuCommand`,
+       `GM_getResourceText`, the value store.
+     - `GM_download` and `GM_openInTab` are the exception. Both reach
+       outside the page — the user's download directory; any URL, whose
+       query string is an exfiltration channel — and neither is
+       `@connect`-gated.
+       - Surfacing those two specifically is filed in
+         [TODO.md](../TODO.md).
    - Parsed-header fields (when a metadata block is present):
-     - `Name`, `Version`, `Description`, `Author`, `Namespace`
-     - `Version at <update|download|update/download> URL` — one row per
-       stored update probe, immediately under `Version`. Value is
-       `same` / `2.1 (Newer)` / `1.0 (Older)` / the probe's error; the
-       probed URL is the row's tooltip; only `(Newer)` is highlighted.
-       Installed mode only — a preview hasn't been probed. See
-       [updates.md](updates.md).
-     - `Homepage` (`@homepage` / `@homepageURL`) — an anchor when the
-       value parses as an absolute http(s) URL, plain text otherwise.
-   - `Log ID` — short file-derived handle used in every SW log line
-     (basename, or `basename#N` for dupes). See
-     [logging.md](logging.md). A script added by URL shows its
-     decoded filename — see
-     [names-and-paths.md](names-and-paths.md). Installed mode only —
-     a script that has never run has no log.
-   - Parsed-header fields, continued — one row per tag, each pattern
-     linkified by the rule in Link rendering below:
-     - `Match`, `Include`, `Exclude`
-   - What the script is asking for. These are the rows an install
-     decision turns on, and they're worth re-reading on an installed
-     script too:
-     - `Permissions` (`@grant`) and `Network access` (`@connect`),
-       rendered monospace — they're API names and hosts, not prose.
-     - `Loads libraries` (`@require`)
-     - `Loads resources` — the whole `@resource <name> <url>` line;
-       the URL is the part that says what gets fetched.
+     - `Name`, `Description`, `Version`
+     - `Version at <update|download> URL` — one row per
+       stored update probe, immediately under `Version`. The probed URL
+       is the row's tooltip; only `(Newer)` is highlighted.
+       - **Only for a probe that has something to say** — the one
+         dropped case is a version matching ours whose latest check
+         also succeeded.
+       - **Any probe carrying an error keeps its row**, whatever its
+         version says — that row is the failure's only surface anywhere
+         in the UI.
+       - **A `@version` on only one side earns a row too.** The `Version`
+         row above then reads `<none>`, putting both halves of the
+         comparison on screen; the probe row shows the bare number, with
+         no `(Newer)`/`(Older)` we can't justify.
+       - Installed mode only — a preview hasn't been probed, and a row
+         would imply it had.
+       - Full rules and the reasoning in [updates.md](updates.md).
    - Location rows:
      - `Source` — colored type bubble (linking to the source's
        file:// / http(s) URL) + the source's display name (linking
@@ -150,23 +181,26 @@ One page, one set of panels, two query strings:
        page renders. Installed mode only; row omitted if the parent
        source row has vanished. See
        [`src/source-display.ts`](../src/source-display.ts).
-     - `Location` — anchor wrapping the resolved location. Display
-       form depends on source kind:
+     - `Location` — anchor wrapping the resolved location. Display form
+       depends on source kind:
        - `file://` → bare fs path
        - `github` (any flavour) → `github.com/<o>/<r>/blob/<ref>/<path>`
          page URL (raw URL is internal-only)
        - non-github `http(s)://` → URL, percent-decoded for reading
-       Anchor href matches the display URL for everything except
-       `file://`, where the href is the file:// URL (the bare fs path
-       isn't navigable) — and the href always keeps the *encoded* URL,
-       with the tooltip showing it. Adjacent square button copies that
-       raw location (not the decoded display text) to the clipboard
-       via `navigator.clipboard.writeText`; icon swaps to a checkmark
-       for ~1.2 s on success. Row omitted if the
-       parent source row has vanished. In preview mode this is the
-       normalized URL being previewed. Activating the anchor is
-       intercepted in both modes — a plain navigation to a `.user.js`
-       URL gets captured — see the Link rendering section below.
+       - In preview mode it's the normalized URL being previewed.
+       - **href vs display text.** The href matches the display URL for
+         everything except `file://`, where it's the `file://` URL (the
+         bare fs path isn't navigable). The href always keeps the
+         *encoded* form, and the tooltip shows it.
+       - **Copy button** (`makeCopyButton` in
+         [`src/copy-button.ts`](../src/copy-button.ts), shared with the
+         `Local overrides` entries). Copies the raw location, not the
+         decoded display text; the icon swaps to a checkmark for ~1.2 s
+         on success.
+       - Row omitted if the parent source row has vanished.
+       - Activating the anchor is intercepted in both modes — a plain
+         navigation to a `.user.js` URL gets captured — see the Link
+         rendering section below.
      - `<Site> page` — the human-facing listing page on the site the
        script was published on, derived from the Location URL. Shown in
        both modes, whenever the location matches a known hosting site;
@@ -174,26 +208,77 @@ One page, one set of panels, two query strings:
        [Hosting-site pages](#hosting-site-pages-srcscript-sitests).
        - Labeled with the site's own name (`Greasy Fork page`) — a
          second row called `Homepage` would collide with the
-         `@homepage` row above.
+         `@homepage` row directly beneath it.
        - Omitted when the row would only repeat what's already on
          screen: the script's own `@homepage` / `@homepageURL` names
          the same script, or the Location is itself the page URL.
-     - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
-       preview, the byte length of the fetched text.
-     - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
-       `MISSING` / `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
-       (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
-       color-coded; the row's `title` carries Chrome's refusal reason
-       for a `REJECTED` row, the `refreshError` reason for a
-       `REFRESH FAILED` one, the newer upstream version for an
-       `OUTDATED` one, else `errorMessage` when present.
-       Rendered as an `<a href="#Log">` so clicking switches
-       to the Log tab via the same hashchange listener as a manual
-       tab click. The level promotes live as new log entries arrive
-       — the `storage.session.onChanged` listener for
-       `loglevel:<scriptId>` repaints just this row, and the same
-       listener repaints it (plus the message bar) when the injector's
-       `injector-rejections` map changes.
+     - `Homepage` (`@homepage` / `@homepageURL`) — straight after the
+       hosting-site row: both name a page about this script, one
+       derived from where it lives and one claimed by the file itself,
+       so reading them together is what shows when they disagree. An
+       anchor when the value parses as an absolute http(s) URL, plain
+       text otherwise.
+   - `Log ID` — short file-derived handle used in every SW log line.
+     See [logging.md](logging.md). Installed mode only.
+     - **Only when it carries a `#N` dupe suffix.** Without one the log
+       ID is the script's own basename, which the heading and the
+       `Location` row already say. The `#N` is the part written nowhere
+       in the file, and it's what a stack trace or `//# sourceURL=`
+       names — so a reader holding a `foo.user.js#2` can ask whether
+       that's this one.
+     - A script added by URL shows its decoded filename — see
+       [names-and-paths.md](names-and-paths.md).
+   - Parsed-header fields, continued — one row per tag, each pattern
+     linkified by the rule in Link rendering below:
+     - `Match`, `Include`, `Exclude`
+     - `Network access` (`@connect`) — directly under the match
+       targets, because it's the same question asked outward: those
+       rows say which pages the script reads, this one says where it
+       may send what it read. Monospace (hostnames, not prose) and
+       deliberately unlinked — a `@connect` value is a matching rule
+       (`self`, `*`, `*.example.com`), not an address.
+   - `Local overrides` — every `@require` / `@resource` whose body was read
+     from a local stand-in instead of the URL it declares, one entry per
+     file. Shown in both modes; **absent whenever nothing was
+     overridden**, which is the overwhelming majority of scripts, so its
+     presence is the whole signal.
+     - Each entry: the `@require` / `@resource` tag it stood in for, the
+       local path we actually read, and a copy button (the same
+       `makeCopyButton` the Location row uses, copying the raw `file://`
+       URL rather than the displayed path).
+     - The declaration it replaced is the entry's tooltip (`Stands in
+       for <url>`) — the same "asked for this, got that" pairing as the
+       code tab's, in the same URL display form.
+     - Last of the "what does this actually pull in" group: under the
+       reach rows, above the byte total those files contribute to. See
+       [local-file-overrides.md](local-file-overrides.md#surfacing-it).
+   - `Size` — `formatScriptSize` output (bytes, or `—` when the script
+     has never loaded); in preview, the byte length of the fetched
+     text.
+     - Suffixed with what the script loads alongside itself, when it
+       loads anything: `12.4 KB (plus 2 @require files: 125 KB, 1
+       @resource file: 4 KB)`. The script's own bytes understate what a
+       page pays to run it when the script pulls in a jQuery.
+     - Counts entries that **actually loaded and reported a size**, not
+       declarations. A `@require` that failed to fetch contributes no
+       bytes, so counting it would promise a total the number beside it
+       doesn't include; that it was declared at all is the code view's
+       story, where it has its own tab.
+   - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
+     `MISSING` / `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
+     (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
+     color-coded.
+     - The row's `title` carries Chrome's refusal reason for a
+       `REJECTED` row, the `refreshError` reason for a `REFRESH FAILED`
+       one, the newer upstream version for an `OUTDATED` one, else
+       `errorMessage` when present.
+     - Rendered as an `<a href="#Log">` so clicking switches to the Log
+       tab via the same hashchange listener as a manual tab click.
+     - The level promotes live as new log entries arrive — the
+       `storage.session.onChanged` listener for `loglevel:<scriptId>`
+       repaints just this row, and the same listener repaints it (plus
+       the message bar) when the injector's `injector-rejections` map
+       changes.
 5. **Other versions panel** (`#other-versions`) — every installed copy
    of this script, when there is more than one to talk about. Built by
    `renderRelatedVersions` in
@@ -528,7 +613,10 @@ clicking Install.
   re-hitting the host. Reload the page to retry a transient failure.
 - No Log tab, and no stack-ref linkification: nothing has run, so the
   tabs carry no `sourcemonkey://` `sourceUrl`.
-- `@resource` entries are a details row only — they're bytes, not code.
+- `@resource` entries get no tab — they're bytes, not code. Their bytes
+  do reach the `Size` row's `(plus 1 @resource file: 4 KB)` tail, and an
+  overridden one gets a `Local overrides` entry. Only the resolved URL
+  of a non-overridden resource has no surface here.
 
 **URLs in a not-yet-installed file are clickable.** The old install
 prompt rendered `Homepage` and the source URL inert, on the grounds

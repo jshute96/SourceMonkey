@@ -109,17 +109,14 @@
       .banner.preview { border-color: #6b7280; background: #f3f4f6; }
       @keyframes sm-spin { to { transform: rotate(360deg); } }
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
-      /* @grant / @connect rows: API names and hosts, not prose. */
-      .grant-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      /* The "loaded from local disk" chip, worn by both the tab strip
-         (`.tab-mark`, which adds only positioning) and a `@require` /
-         `@resource` declaration row. Loud enough to notice without
-         hovering, which is the whole reason the fact isn't left to the
-         tooltip — the reader is being told the body came off local disk
-         rather than from the URL the declaration names. The loaded size
-         beside it is muted: one is a detail, the other is a
-         substitution the reader has to see. */
-      .local-chip, .tab-mark {
+      /* @connect row: hostnames and match rules, not prose. */
+      .host-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      /* The "loaded from local disk" chip, worn by a code tab whose
+         body came off local disk rather than from the URL its
+         declaration names. Loud enough to notice without hovering,
+         which is the whole reason that fact isn't left to the
+         tooltip. */
+      .tab-mark {
         padding: 0 0.4em;
         border-radius: 3px;
         background: #d97706;
@@ -129,10 +126,10 @@
         text-transform: uppercase;
         letter-spacing: 0.04em;
       }
-      .file-size { color: #777; font-size: 11px; }
-      /* Details panel: parsed-header fields (when a metadata block is
-         present) plus Filename / Size / Status. Cleared via :empty
-         when there's no script. */
+      /* Details panel: the header fields worth surfacing (when a
+         metadata block is present) plus the resolved Source /
+         Location / Size / Status rows. Cleared via :empty when there's
+         no script. */
       #header-summary {
         margin: 0 0 0.8em;
         padding: 0.6em 0.8em;
@@ -186,6 +183,33 @@
         word-break: normal;
         min-width: 0;
       }
+      /* Local overrides row: one entry per overridden `@require` /
+         `@resource`. Same flex shape as the Location cell — it's the
+         same kind of value (a path plus its copy button). */
+      .local-override-cell {
+        display: flex;
+        align-items: baseline;
+        gap: 0.4em;
+        min-width: 0;
+      }
+      /* The `@require` / `@resource` tag that says which kind of
+         declaration this entry stood in for. Muted and monospace: it's
+         a label on the path beside it, not the value. */
+      .local-override-kind {
+        flex: none;
+        color: #777;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+      }
+      .local-override-path {
+        /* Slash-aware wrap; see h1 above. */
+        overflow-wrap: anywhere;
+        word-break: normal;
+        min-width: 0;
+      }
+      /* The copy button sits on the text baseline in a flex row that
+         otherwise aligns on it; nudge it back to optical centre. */
+      .local-override-cell .copy-btn { align-self: center; }
       /* Anchors in the details panel (Match patterns, Location)
          read as plain text by default; underline only on hover so
          the rows stay calm. The bubble is excluded so its `color:#fff`
@@ -198,10 +222,11 @@
          clickability. */
       pre.code-box a.code-link { color: inherit; text-decoration: none; }
       pre.code-box a.code-link:hover { text-decoration: underline; }
-      .log-id-cell {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        word-break: break-all;
-      }
+      /* `.log-id-cell` deliberately has no rules: the log ID reads as
+         regular text like every other value in the panel. It's a
+         filename, not code, and it was the only monospace row. The
+         class stays as a hook for finding the cell. Wrapping comes from
+         the `dd`'s own slash-aware rule. */
       /* ---- "Other versions" panel (src/related-versions.ts) ----
          Same card shape as #header-summary, but a green ground rather
          than the details panel's grey: the two sit directly on top of
@@ -447,8 +472,7 @@
         border-bottom-color: #fafafa;
       }
       .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
-      /* Positioning only — the chip's own look lives in `.local-chip`,
-         shared with the details panel so the two can't drift. */
+      /* Positioning only — the chip's own look is above. */
       .tab-mark { margin-left: 0.5em; vertical-align: 1px; }
       /* The code box fills the rest of the viewport and scrolls. The
          padding/border give it a textbox-like look; tabindex makes it
