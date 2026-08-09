@@ -39,12 +39,20 @@ common headers including `@require` and `@resource` are supported. See
 [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
 [docs/supported-headers.md](docs/supported-headers.md) for details.
 
-There's no released version yet, so you have to [build from
-source](#development).
+SourceMonkey isn't in the Chrome Web Store — install it from a release
+zip or [build from source](#development).
 
 ## Getting started
 
-1. Build and load the extension — see [Development](#development).
+1. Get an extension directory, either way:
+   - **From a release zip:** download `SourceMonkey-vX.Y.Z.zip` from the
+     [Releases page](https://github.com/jshute96/VibeMonkey/releases)
+     and unzip it.
+   - **From source:** build it — see [Development](#development) — which
+     writes `dist/`.
+
+   Then in Chrome open `chrome://extensions`, enable **Developer mode**,
+   click **Load unpacked**, and select that directory.
 2. On `chrome://extensions`, for SourceMonkey enable:
    - **Pin to toolbar**, so the SourceMonkey icon is visible.
    - **"Allow User Scripts"** (on Chrome 120–137, the page-wide
@@ -366,11 +374,39 @@ the network, which is how the GreasyFork corpus
 (`tests/greasyfork-examples/`) gets checked in bulk. See
 [docs/offline-validation.md](docs/offline-validation.md).
 
+### Releasing
+
+Cut a GitHub release with `scripts/release-extension.sh` (tag `vX.Y.Z`).
+
+1. Bump the version in **both** `package.json` and `src/manifest.json`
+   to the same value, and commit.
+2. From a clean `main`, run:
+   ```sh
+   scripts/release-extension.sh             # draft (default)
+   scripts/release-extension.sh --publish   # publish immediately
+   ```
+
+The script verifies the versions match, `main` is clean and in sync with
+`origin/main`, and the tag is unused; then builds + zips the extension as
+`/tmp/SourceMonkey-vX.Y.Z.zip`, creates and pushes an annotated tag, and
+calls `gh release create` (the [GitHub CLI](https://cli.github.com/)) with
+auto-generated notes and the zip attached. The default is a draft so you can
+review and publish from the GitHub UI.
+
+To build a distributable zip without releasing:
+
+```sh
+scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
+```
+
 ### Code layout
 
 - `src/` — extension source (TypeScript + manifest + HTML).
 - `scripts/build.mjs` — bundler-free build script.
 - `scripts/validate-userscripts.mjs` — offline validator CLI (above).
+- `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
+- `scripts/release-extension.sh` — cuts a tagged GitHub release with the
+  zip attached.
 - `tests/unit/` — Node `--test` unit tests.
 - `tests/e2e/` — Playwright tests that load the unpacked extension.
 - `tests/examples/` — interactive GM API example pages with paired
