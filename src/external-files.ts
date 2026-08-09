@@ -488,7 +488,8 @@ interface LoadedBytes {
 // Candidates are tried in order and the first that READS wins — the
 // probe and the real read are the same fetch, so a hit costs nothing
 // extra. A total miss costs one local read PER CANDIDATE, i.e. one per
-// path segment of the declared URL, not one overall. `ensureFetch`
+// path segment of the declared URL plus one for the host-qualified
+// form, not one overall. `ensureFetch`
 // caches those for the rest of the pass, misses included.
 //
 // Returns `null` when no stand-in was found, so the caller can take its

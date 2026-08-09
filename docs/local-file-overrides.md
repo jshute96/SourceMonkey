@@ -23,27 +23,44 @@ rest of the loading pipelines.
 ## The rule
 
 Given an ordered list of local root directories, try progressively
-shorter **path suffixes** of the declared URL under each root, longest
-first. The first readable file wins.
+shorter suffixes of **`<host>/<path>`** of the declared URL under each
+root, longest first. The first readable file wins.
 
 ```
 root  /home/me/dev/mystuff
 ref   https://cdn.example.com/lib/util.js
+→     /home/me/dev/mystuff/cdn.example.com/lib/util.js
 →     /home/me/dev/mystuff/lib/util.js
 →     /home/me/dev/mystuff/util.js
 ```
 
+- **The host is the outermost segment**, so a mirror-style tree — one
+  directory per site, the layout `wget -x` and scraped-copy directories
+  produce — matches, and matches first.
+  - Written the way the URL has it, port included when there is a
+    non-default one (`localhost:8080`).
+  - An international host is therefore its **punycode** form
+    (`xn--bcher-kva.de`), which is also what `wget` writes. A hand-made
+    tree holding the Unicode name will not match.
+  - A `file://` ref has no host, so it just yields the path suffixes.
 - **Longest first**, so a deliberate `lib/` layout beats a loose
   `util.js` in the root.
 - **First readable wins.** The probe and the real read are the same
   fetch, so a hit costs nothing extra. A miss costs one local read *per
-  candidate*, i.e. one per path segment of the declared URL — a
-  `…/npm/jquery@3.6.0/dist/jquery.min.js` produces four.
+  candidate*, i.e. one per path segment of the declared URL plus one for
+  the host-qualified form — a `…/npm/jquery@3.6.0/dist/jquery.min.js`
+  produces five.
+- **A ref that names no file matches nothing.** A path that is empty or
+  ends in `/` yields no candidates at all: the suffix would name a
+  directory, and Chrome answers a directory read with a listing rather
+  than a failure — which `@resource` and `@icon`, having no `.js` gate,
+  would happily bind as the file's body.
 - **No stand-in → the declared URL is fetched**, exactly as before.
 
 The same-directory case is not a separate rule — it is this rule with an
-implicit root of the script's own folder, where the only suffix that can
-match is the bare filename. One code path, so the two can't drift.
+implicit root of the script's own folder, where the file sitting next to
+the script is the suffix that usually matches. One code path, so the two
+can't drift.
 
 ### Where roots come from
 
@@ -139,12 +156,17 @@ Not which tag is being resolved, but **who the host script is**:
   will be allowed for any host script, because naming the file *is* the
   authorization. Not built yet — see [TODO.md](../TODO.md).
 
-Traversal is closed by construction:
+Traversal is closed:
 
-- Candidates are built only from `URL.pathname` segments, which the URL
-  parser has already normalized — no `..` and no `%2e%2e` survives into
-  a segment.
-- Every candidate is re-checked against its root prefix before being
+- **Path segments** come from `URL.pathname`, which the parser has
+  already normalized — no `..` and no `%2e%2e` survives into one.
+- **The host segment is not normalized.** `new URL('https://../x.js')`
+  really does have a host of `..`, so for that one segment the prefix
+  re-check below is the enforcement, not a second opinion.
+- **An encoded separator** (`%2F`, `%5C`) in any segment, host included,
+  makes the whole URL ineligible: the parser leaves those alone and the
+  filesystem layer may not.
+- **Every candidate is re-checked** against its root prefix before being
   offered.
 - A root is therefore a floor, not a starting point for climbing.
 
@@ -208,9 +230,10 @@ exception:
   keeping it would serve a stand-in that no longer exists.
 
 Cost when enabled, for local-source scripts only: up to one local read
-per path segment of each declared dependency's URL, per refresh. A hit
-short-circuits the rest, and `ensureFetch` dedups within a pass. Note
-that a script with local roots also skips the whole-list `preserve`
+per path segment of each declared dependency's URL, plus one for the
+host-qualified form, per refresh. A hit short-circuits the rest, and
+`ensureFetch` dedups within a pass. Note that a script with local
+roots also skips the whole-list `preserve`
 shortcut, so it re-runs resolution every opportunistic refresh — that is
 the price of edits showing up without a Refresh click.
 

@@ -69,8 +69,9 @@
       <h2 class="settings-heading">Search paths for local <code>@require</code> and <code>@resource</code> files (for scripts in local files)</h2>
       <p class="settings-hint">
         Scripts loaded from a local file can also load resources from local files, overriding the original URL.<br/>
-        The script's local directory is searched first.
-        Then these directories are searched, in order.<br/>
+        The script's local directory is searched first.<br/>
+        Then these directories are searched, in order, looking for
+        files matching any trailing part of the URL, site name included.<br/>
         If not found locally, files are loaded from their original URL.
       </p>
       <p class="settings-hint">

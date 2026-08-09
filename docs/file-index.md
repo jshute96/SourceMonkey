@@ -112,7 +112,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the slot renderer for sources page + viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
-| `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (implicit + configured), suffix candidates, containment |
+| `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (implicit + configured), host/path suffix candidates, containment |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
@@ -200,7 +200,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |
 | `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) and the failure wording |
-| `tests/unit/local-file-overrides.test.mjs` | Unit tests for local stand-in search roots, path-suffix candidates, containment, and the `attachFiles` `localRoots` leg |
+| `tests/unit/local-file-overrides.test.mjs` | Unit tests for local stand-in search roots, host/path-suffix candidates, containment, and the `attachFiles` `localRoots` leg |
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
 | `tests/e2e/parse-check-install.spec.ts` | Install/refresh-time parse failures surface as `invalid`, and healthy scripts stay `ok` |
 | `tests/e2e/parse-check-pages.spec.ts` | The parse check holds on page-driven paths: the install preview's warning, Install, Refresh, Refresh All |

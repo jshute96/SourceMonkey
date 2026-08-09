@@ -198,10 +198,11 @@ test('localFileCandidates: no roots means no candidates and no probing', () => {
   assert.deepEqual(localFileCandidates('https://cdn.example.com/lib/util.js', []), []);
 });
 
-test('localFileCandidates: path suffixes, longest first', () => {
+test('localFileCandidates: host-qualified first, then path suffixes, longest first', () => {
   assert.deepEqual(
     localFileCandidates('https://cdn.example.com/a/b/util.js', [SCRIPT_DIR]),
     [
+      `${SCRIPT_DIR}cdn.example.com/a/b/util.js`,
       `${SCRIPT_DIR}a/b/util.js`,
       `${SCRIPT_DIR}b/util.js`,
       `${SCRIPT_DIR}util.js`,
@@ -209,10 +210,31 @@ test('localFileCandidates: path suffixes, longest first', () => {
   );
 });
 
+// The mirror-style layout the host segment exists for: one directory per
+// site under a single root, as scraped-copy trees and `wget -x` produce.
+test('localFileCandidates: a site directory under the root matches', () => {
+  assert.equal(
+    localFileCandidates('https://code.jquery.com/jquery-latest.js', ['file:///home/me/files/'])[0],
+    'file:///home/me/files/code.jquery.com/jquery-latest.js',
+  );
+});
+
+// A non-default port is part of the directory name, the way a mirroring
+// tool writes it.
+test('localFileCandidates: a port survives into the host segment', () => {
+  assert.equal(
+    localFileCandidates('http://localhost:8080/lib/util.js', [SCRIPT_DIR])[0],
+    `${SCRIPT_DIR}localhost:8080/lib/util.js`,
+  );
+});
+
 test('localFileCandidates: a root without a trailing slash still joins correctly', () => {
   assert.deepEqual(
     localFileCandidates('https://cdn.example.com/util.js', ['file:///home/me/lib']),
-    ['file:///home/me/lib/util.js'],
+    [
+      'file:///home/me/lib/cdn.example.com/util.js',
+      'file:///home/me/lib/util.js',
+    ],
   );
 });
 
@@ -220,8 +242,10 @@ test('localFileCandidates: roots are searched in order, each longest-suffix firs
   assert.deepEqual(
     localFileCandidates('https://cdn.example.com/lib/util.js', [SCRIPT_DIR, 'file:///opt/js/']),
     [
+      `${SCRIPT_DIR}cdn.example.com/lib/util.js`,
       `${SCRIPT_DIR}lib/util.js`,
       `${SCRIPT_DIR}util.js`,
+      'file:///opt/js/cdn.example.com/lib/util.js',
       'file:///opt/js/lib/util.js',
       'file:///opt/js/util.js',
     ],
@@ -275,9 +299,31 @@ test('localFileCandidates: an encoded separator yields no candidates', () => {
   );
 });
 
-test('localFileCandidates: a URL with no path segments yields nothing', () => {
+// A ref that names no file gets no candidates: the suffix would name a
+// directory, and Chrome answers a directory read with a listing rather
+// than a failure — which `@resource` / `@icon`, having no `.js` gate,
+// would bind as the file's body. With a host segment in play
+// `<root>/example.com/assets` is a directory that plausibly exists.
+test('localFileCandidates: a URL naming no file yields nothing', () => {
   assert.deepEqual(localFileCandidates('https://cdn.example.com/', [SCRIPT_DIR]), []);
+  assert.deepEqual(localFileCandidates('https://cdn.example.com/assets/', [SCRIPT_DIR]), []);
   assert.deepEqual(localFileCandidates('not a url', [SCRIPT_DIR]), []);
+});
+
+// The host segment, unlike a path segment, is NOT normalized by the URL
+// parser — `new URL('https://../x.js').host` is `..`. The prefix
+// re-check is what keeps the root a floor for it.
+test('localFileCandidates: a dotted host cannot climb or duplicate', () => {
+  assert.deepEqual(
+    localFileCandidates('https://../x.js', [SCRIPT_DIR]),
+    [`${SCRIPT_DIR}x.js`],
+  );
+  // `<root>/./x.js` and `<root>/x.js` are two candidate strings naming
+  // one file; de-duping on the normalized form collapses them.
+  assert.deepEqual(
+    localFileCandidates('https://./x.js', [SCRIPT_DIR]),
+    [`${SCRIPT_DIR}x.js`],
+  );
 });
 
 // ---------- sourceSupportsLocalFiles ----------

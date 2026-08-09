@@ -7,19 +7,24 @@
 // exist yet).
 //
 // The rule: given an ordered list of local root directories, try
-// progressively shorter **path suffixes** of the declared URL under each
-// root, longest first. The first readable file wins; if none is
-// readable, the declared URL is fetched as usual.
+// progressively shorter suffixes of `<host>/<path>` under each root,
+// longest first. The first readable file wins; if none is readable, the
+// declared URL is fetched as usual.
 //
 //   root  /home/me/dev/mystuff
 //   ref   https://cdn.example.com/lib/util.js
+//   →     /home/me/dev/mystuff/cdn.example.com/lib/util.js
 //   →     /home/me/dev/mystuff/lib/util.js
 //   →     /home/me/dev/mystuff/util.js
 //
+// The host is included so a mirror-style tree (one directory per site,
+// as scraped-copy layouts and `wget -x` produce) matches, and matches
+// first — it is the most specific thing the ref can say.
+//
 // The same-directory case is not a separate rule — it is this rule with
-// an implicit root of the host script's own folder, where the only
-// suffix that can match is the bare filename. One code path, so the
-// implicit and configured forms can't drift.
+// an implicit root of the host script's own folder, where the file
+// sitting next to the script is the suffix that usually matches. One
+// code path, so the implicit and configured forms can't drift.
 //
 // ## What keeps this safe
 //
@@ -41,12 +46,21 @@
 //     setting, stated where it's configured; roots are meant to name
 //     directories of script content, not home directories.
 //
-// On top of that, candidates are built only from `URL.pathname`
-// segments, which the URL parser has already normalized — no `..` and no
-// `%2e%2e` can survive into a segment. A segment carrying an ENCODED
-// separator (`%2F`, `%5C`) is rejected outright, because the parser
-// leaves those alone and the filesystem layer may not. And every
-// candidate is re-checked against its root prefix before being offered.
+// On top of that:
+//
+//   - Path segments come from `URL.pathname`, which the parser has
+//     already normalized — no `..` and no `%2e%2e` survives into one.
+//   - The HOST segment gets no such normalization: `new URL('https://../
+//     x.js').host` really is `..`. So for that one segment the prefix
+//     re-check in `localFileCandidates` is not belt-and-braces, it is
+//     the enforcement. Don't remove it.
+//   - Any segment carrying an ENCODED separator (`%2F`, `%5C`) makes the
+//     whole URL ineligible — the parser leaves those alone and the
+//     filesystem layer may not. The host is checked too, since it is
+//     unshifted onto the segment list before that guard runs.
+//   - Every candidate is re-checked against its root prefix before being
+//     offered.
+//
 // So a search root is a floor, not a starting point for climbing.
 //
 // Explicit per-file overrides (a path the user typed for one specific
@@ -288,7 +302,14 @@ export function sourceSupportsLocalFiles(sourcePath: string): boolean {
 //
 // Suffixes run longest-first so a deliberate layout (`lib/util.js` under
 // the root) beats an incidental basename collision (`util.js` sitting
-// loose in the root).
+// loose in the root). The declared URL's HOST counts as the outermost
+// segment, so a mirror-style tree — the layout `wget -x` and every
+// scraped-copy directory uses — matches before any bare path suffix:
+//
+//   root  /home/me/files
+//   ref   https://code.jquery.com/jquery-latest.js
+//   →     /home/me/files/code.jquery.com/jquery-latest.js
+//   →     /home/me/files/jquery-latest.js
 export function localFileCandidates(
   declaredUrl: string,
   roots: readonly string[],
@@ -296,19 +317,34 @@ export function localFileCandidates(
   if (roots.length === 0) return [];
   let segments: string[];
   try {
+    const parsed = new URL(declaredUrl);
     // `pathname` is already normalized and percent-encoded by the URL
     // parser: `..` and `%2e%2e` have been resolved away, so splitting on
     // `/` here can't manufacture a climbing component. What it does NOT
     // resolve is an encoded separator — see the guard just below.
-    segments = new URL(declaredUrl).pathname.split('/').filter(Boolean);
+    segments = parsed.pathname.split('/').filter(Boolean);
+    // A ref with no path names no file, so there is nothing to stand in
+    // for — checked BEFORE the host goes on, or the host alone would be
+    // offered as a candidate and Chrome answers a directory read with a
+    // listing rather than a failure.
+    if (segments.length === 0) return [];
+    // Same reason, one level down: `…/assets/` names a directory, and
+    // with a host segment in play `<root>/example.com/assets` is a
+    // directory that plausibly EXISTS in a mirror tree. `@require` has a
+    // `.js` gate, but `@resource` and `@icon` don't — a hit there would
+    // bind a directory listing as the file's body.
+    if (parsed.pathname.endsWith('/')) return [];
+    // `host`, not `hostname`, so a non-default port survives into the
+    // directory name the way a mirroring tool would write it. Empty for
+    // a `file://` ref, which then just yields the plain path suffixes.
+    if (parsed.host) segments.unshift(parsed.host);
   } catch {
     return [];
   }
-  if (segments.length === 0) return [];
   // `pathname` normalizes `..` and `%2e%2e` away, but it deliberately
   // leaves an ENCODED separator (`%2F`, `%5C`) inside a segment — so
   // `/a/..%2f../secret.js` survives as a single segment `..%2f..` and
-  // would pass both the segment reasoning and the prefix re-check below,
+  // would pass both the path-segment reasoning and the prefix re-check below,
   // while Chrome's file-URL → filesystem-path conversion may well decode
   // it back into a real separator on the way to the OS.
   //
@@ -332,10 +368,10 @@ export function localFileCandidates(
   for (const base of bases) {
     for (let k = segments.length; k >= 1; k--) {
       const candidate = base + segments.slice(-k).join('/');
-      if (seen.has(candidate)) continue;
-      // Belt-and-braces containment: the segments above can't climb, but
-      // re-parsing costs nothing and makes the floor an enforced
-      // property rather than an argued one.
+      // Containment. Belt-and-braces for a PATH segment, which can't
+      // climb — but load-bearing for the host segment, which the URL
+      // parser does not normalize (`https://../x.js` really does have a
+      // host of `..`). This is what keeps the root a floor for it.
       let normalized: string;
       try {
         normalized = new URL(candidate).toString();
@@ -343,7 +379,11 @@ export function localFileCandidates(
         continue;
       }
       if (!normalized.startsWith(base)) continue;
-      seen.add(candidate);
+      // Keyed on the NORMALIZED form, since that is what's returned: a
+      // host of `.` makes `<root>/./x.js` and `<root>/x.js` two distinct
+      // candidate strings that name one file.
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
       out.push(normalized);
     }
   }

@@ -168,14 +168,13 @@ Therefore, when publishing a script, absolute http paths are preferred.
 
 SourceMonkey enables local development on these scripts by **reading local files
 in place of http references**. For scripts run from local files, if there's
-a file in the same directory matching the end of the requested path,
+a file under the script's directory matching any suffix of the requested host and path,
 the local file will be read instead.
+
+Additional local directories can be added to the search path on the Options page.
 
 This allows local development of the script and its resource files, without
 adjusting the file paths.
-
-Additional directories to search can be listed on the Options page.
-They're searched after the script's own directory, in the order listed.
 
 See [docs/local-file-overrides.md](docs/local-file-overrides.md).
 

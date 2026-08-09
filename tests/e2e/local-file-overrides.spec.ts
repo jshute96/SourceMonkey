@@ -7,7 +7,8 @@
 // asserts on which body actually landed:
 //
 //   - a file next to the script wins over the published URL;
-//   - a deeper `lib/` layout matches by path suffix, longest first;
+//   - a deeper `lib/` layout matches by path suffix, longest first, and
+//     a `<host>/` directory under a root beats any bare path suffix;
 //   - editing the local file surfaces on an opportunistic refresh (the
 //     dev loop), while a remote dependency stays cached;
 //   - the per-source opt-out turns all of it off;
@@ -630,6 +631,23 @@ test.describe('local file overrides', () => {
       const source = await sm.addSource(scriptsDir.path);
       const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
       expect(req?.source).toBe('window.__SM_LOCAL = "own-folder";');
+    });
+
+    // The mirror layout: one directory per site under a shared root, as
+    // a scraped copy of a set of CDN files is organized. The host-
+    // qualified form is the longest suffix, so it beats the same path
+    // sitting loose in the root.
+    test('a site directory under a configured root wins over a bare path', async ({ sm }) => {
+      const host = new URL(server.baseUrl).host;
+      writeLib(`${host}/lib/util.js`, 'window.__SM_LOCAL = "mirror";');
+      writeLib('lib/util.js', 'window.__SM_LOCAL = "configured";');
+      await sm.setLocalRoots([libDir.path]);
+      writeScript();
+      const source = await sm.addSource(scriptsDir.path);
+      const req = (await sm.getSourceWithScripts(source!.id))!.scripts[0].requires?.[0];
+      expect(req?.source).toBe('window.__SM_LOCAL = "mirror";');
+      expect(req?.localUrl).toBe(`file://${libDir.path}/${host}/lib/util.js`);
+      expect(server.countResponses('/lib/util.js', 200)).toBe(0);
     });
 
     test('roots are searched in the order listed', async ({ sm }) => {
