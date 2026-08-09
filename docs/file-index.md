@@ -244,18 +244,19 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 | `tests/examples/README.md` | Overview of the interactive GM-API example pages; how to serve and use as a cross-manager compliance reference |
 | `tests/examples/index.html` | Index page linking the per-API example subdirs |
-| `tests/examples/examples.css` | Shared styling for all example pages |
+| `tests/examples/examples.css` | Shared styling for all example pages, including the API explorer's boxes, forms, and log |
+| `tests/examples/lib/api-explorer.js` | Shared API-explorer library `@require`d by example userscripts: builds preset buttons + an editable argument form from a spec, and logs every call |
 | `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
 | `tests/examples/gm-info/` | `GM_info` dump example |
 | `tests/examples/gm-log/` | `GM_log` per-script-prefix demo |
-| `tests/examples/gm-storage/` | `GM_setValue`/`getValue`/`deleteValue`/`listValues` examples (form-driven) |
+| `tests/examples/gm-storage/` | `GM_setValue`/`getValue`/`deleteValue`/`listValues` examples (API explorer, one box per API) |
 | `tests/examples/gm-value-listeners/` | `GM_addValueChangeListener` / `GM_removeValueChangeListener` examples |
 | `tests/examples/gm-dom/` | `GM_addStyle` and `GM_addElement` DOM-injection examples |
 | `tests/examples/gm-clipboard/` | `GM_setClipboard` round-trip example |
 | `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, abort) |
 | `tests/examples/gm-open-in-tab/` | `GM_openInTab` call-shape examples (active, background, positional, onclose) |
 | `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
-| `tests/examples/gm-download/` | `GM_download` call-shape examples (relative + absolute http(s), `data:`, `blob:`, abort, 404, refused cases) |
+| `tests/examples/gm-download/` | `GM_download` API explorer (relative + absolute http(s), `data:`, `blob:`, `saveAs`, abort, 404, refused cases) |
 | `tests/examples/gm-menu/` | `GM_registerMenuCommand` / `GM_unregisterMenuCommand` button-driven examples |
 | `tests/examples/gm-resource/` | `GM_getResourceText` / `GM_getResourceURL` examples reading prefetched CSS, JSON, and SVG `@resource` files |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |

@@ -23,11 +23,15 @@
 
     <h2>Details</h2>
     <ul>
-      <li>Each button downloads something into your normal downloads
-        folder &mdash; a small text file next to this page, an absolute
-        cross-origin <code>https://</code> URL, a <code>data:</code>
-        URL, and a <code>blob:</code> URL built in the page.</li>
-      <li>Some buttons are deliberate failures, and they fail at
+      <li>Each preset button runs a canned call <em>and</em> fills the
+        form with the arguments it used, so the next call can be a small
+        edit of one that worked. Hover a preset to see the exact call it
+        makes.</li>
+      <li>Every call saves into your normal downloads folder &mdash; a
+        small text file next to this page, an absolute cross-origin
+        <code>https://</code> URL, a <code>data:</code> URL, and a
+        <code>blob:</code> URL built in the page.</li>
+      <li>Some presets are deliberate failures, and they fail at
         different stages:
         <ul>
           <li><strong>404</strong> &mdash; passes every check and fails
@@ -41,6 +45,14 @@
         </ul>
         Managers differ in the error value they report; the log shows
         whatever yours says.</li>
+      <li>An empty form field means the argument is <em>omitted</em>,
+        not passed as an empty value &mdash; managers treat those
+        differently. Use <code>""</code> in a JSON field to send an
+        actual empty string.</li>
+      <li>The form doesn&rsquo;t check arguments before calling.
+        Submitting with no <code>url</code> makes the call anyway, so
+        the log shows how <code>GM_download</code> itself refuses
+        it.</li>
       <li>In SourceMonkey, a failed download shows up on the
         script&rsquo;s Log tab at <em>warning</em> level, so there&rsquo;s
         somewhere to look when nothing arrives. Successful downloads
@@ -52,32 +64,33 @@
         first poll logs none &mdash; expect ticks only on a slow link
         or a large file. A server that sends no
         <code>Content-Length</code> yields ticks with no total.</li>
-      <li><code>abort()</code> only reaches transfers the manager
-        actually controls. The <code>blob:</code>/<code>data:</code>
-        path is handed straight to the browser, so aborting it after
-        the fact does nothing.</li>
+      <li><code>abort()</code> acts on the most recent call, and only
+        reaches transfers the manager actually controls. The
+        <code>blob:</code>/<code>data:</code> path is handed straight to
+        the browser, so aborting it after the fact does nothing.</li>
       <li>Opening this page from disk (a <code>file://</code> URL)
-        makes the button that fetches <code>sample.txt</code> resolve to
+        makes the <em>relative filename</em> preset resolve to
         <code>file://</code> too, which SourceMonkey refuses for the
-        same reason as the <code>file://</code> button. Only the
-        <em>relative filename</em> button does that &mdash; serve the
-        page over http(s) to see it succeed. Every other button uses an
+        same reason as the <code>file://</code> preset &mdash; serve the
+        page over http(s) to see it succeed. Every other preset uses an
         absolute URL, so they behave the same either way.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>
+
+    <h2>Examples</h2>
+    <div id="examples"></div>
+
+    <h3>Other call shapes</h3>
+    <p class="hint">These aren&rsquo;t variations on the details
+      argument, so they don&rsquo;t fill the form.</p>
     <div class="buttons">
-      <button id="btn-file"      type="button">GM_download (relative filename)</button>
-      <button id="btn-http"      type="button">GM_download (absolute http(s) URL)</button>
-      <button id="btn-404"       type="button">GM_download (404 &mdash; fails)</button>
-      <button id="btn-positional" type="button">GM_download (url, name)</button>
-      <button id="btn-data"      type="button">GM_download (data: URL)</button>
-      <button id="btn-blob"      type="button">GM_download (blob: URL)</button>
-      <button id="btn-abort"     type="button">GM_download + abort()</button>
-      <button id="btn-scheme"    type="button">GM_download (file:// &mdash; refused)</button>
-      <button id="btn-traversal" type="button">GM_download (../ name &mdash; refused)</button>
-      <button id="btn-clear"     type="button">Clear log</button>
+      <button id="btn-positional" type="button">GM_download(url, name)</button>
+      <button id="btn-abort"      type="button">abort() the last download</button>
     </div>
+
+    <h2>API Explorer</h2>
+    <div id="explorer"></div>
 
     <h2>Log</h2>
     <ul id="log"></ul>
@@ -86,6 +99,8 @@
     <a href="../index.html">&larr; all examples</a>
     &nbsp;|&nbsp;
     <a href="gm-download.user.js">userscript source</a>
+    &nbsp;|&nbsp;
+    <a href="../lib/api-explorer.js">explorer library</a>
   </footer>
 </body>
 </html>
