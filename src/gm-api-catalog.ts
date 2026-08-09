@@ -17,7 +17,9 @@
 //
 // Each API entry says:
 //   - The canonical `GM_x` name and the GM4-style `GM.x` alias (if
-//     any). Scripts can @grant either form and we honor both.
+//     any). Scripts can @grant either form and we honor both. A
+//     couple of APIs answer to a second `GM.` spelling as well — see
+//     `gmDotSpellings` below for why.
 //   - Whether the call resolves in-page (`sync`) — runs in
 //     USER_SCRIPT world via the shared __SM_GM__ runtime — or makes a
 //     SW round-trip (`async`).
@@ -137,6 +139,50 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   { name: 'GM_download', gmDotName: 'download', kind: 'async', subsystem: 'download' },
 ]);
 
+// Every `GM.` property name one API answers to, in priority order
+// (the GM4 alias first, then the literal prefix rewrite).
+//
+// Why there can be two. Violentmonkey resolves a `GM.foo` grant by
+// consulting a two-entry alias table (`xmlHttpRequest` →
+// `GM_xmlhttpRequest`, `getResourceUrl` → `GM_getResourceURL`) and
+// otherwise rewriting the name to `'GM_' + foo` verbatim
+// (`src/injected/web/gm-api-wrapper.js`). Inverting that rule, the
+// `GM.` spellings VM accepts for an API are its GM4 alias *and* its
+// legacy name minus the `GM_` prefix. For most APIs those are the
+// same string; they differ only where GM4 re-cased the name:
+//
+//   GM_xmlhttpRequest  → GM.xmlHttpRequest (GM4)   + GM.xmlhttpRequest (rewrite)
+//   GM_getResourceURL  → GM.getResourceUrl (GM4)   + GM.getResourceURL (rewrite)
+//
+// `GM.xmlhttpRequest` is the one with real usage — published
+// GreasyFork scripts both grant it and call it. `GM.getResourceURL`
+// has no corpus hits; we accept it because it falls out of the same
+// VM rule and leaving it out would be an arbitrary exception.
+//
+// Tampermonkey does NOT accept the rewrite spellings — its grant
+// table is a fixed list of exact names per API. But TM gates that
+// whole list on one boolean, so granting any member exposes every
+// member. We borrow that "a grant names an API, not a spelling"
+// model and apply it to a larger spelling set, which makes us a
+// strict superset of both: a script granting `GM_xmlhttpRequest` and
+// calling `GM.xmlhttpRequest` works here and nowhere else.
+//
+// We also do NOT copy VM's quirk that the rewrite spelling gets
+// synchronous semantics while the GM4 spelling is promisified — our
+// two spellings behave identically. See docs/supported-GM-APIs.md.
+//
+// Deriving this instead of hand-listing it keeps a new catalog entry
+// from silently missing an alias.
+export function gmDotSpellings(spec: GmApiSpec): string[] {
+  const out: string[] = [];
+  if (spec.gmDotName) out.push(spec.gmDotName);
+  if (spec.name.startsWith('GM_')) {
+    const rewritten = spec.name.slice(3);
+    if (!out.includes(rewritten)) out.push(rewritten);
+  }
+  return out;
+}
+
 // Quick lookup. Built lazily so unit tests that only import types or
 // constants don't pay the Map cost; callers that hit this in a hot
 // loop should cache the result of `findApi` themselves.
@@ -146,9 +192,33 @@ function ensureIndex(): Map<string, GmApiSpec> {
   const m = new Map<string, GmApiSpec>();
   for (const a of GM_APIS) {
     m.set(a.name, a);
-    if (a.gmDotName) m.set(`GM.${a.gmDotName}`, a);
+    for (const dot of gmDotSpellings(a)) m.set(`GM.${dot}`, a);
   }
   byName = m;
+  return m;
+}
+
+// Case-folded index over the same keys, used only to explain a
+// near-miss to the user. NOT used for matching — TM and VM both
+// compare grant names byte-exactly, and we deliberately don't
+// diverge (see docs/supported-GM-APIs.md → "Granting").
+//
+// Values are index keys, not canonical `GM_x` names, so a `GM.` miss
+// suggests a `GM.` spelling and a `GM_` miss suggests a `GM_` one.
+// (A cross-form suggestion is structurally impossible: `.` and `_`
+// don't case-fold together.) Where two keys collide —
+// `GM.xmlHttpRequest` and `GM.xmlhttpRequest` fold to the same
+// string — first-write-wins picks the GM4 spelling, which is the
+// better one to suggest anyway.
+let byLowerName: Map<string, string> | null = null;
+function ensureCaseFoldedIndex(): Map<string, string> {
+  if (byLowerName !== null) return byLowerName;
+  const m = new Map<string, string>();
+  for (const key of ensureIndex().keys()) {
+    const lower = key.toLowerCase();
+    if (!m.has(lower)) m.set(lower, key);
+  }
+  byLowerName = m;
   return m;
 }
 
@@ -157,6 +227,20 @@ function ensureIndex(): Map<string, GmApiSpec> {
 // yet — `GM_webRequest`, `GM_audio`, etc.).
 export function findApi(name: string): GmApiSpec | undefined {
   return ensureIndex().get(name);
+}
+
+// For an unrecognized `@grant` name, the known spelling it differs
+// from only in capitalization — or null when there isn't one.
+//
+// Purely a diagnostic aid: `@grant GM_xmlHttpRequest` (capital H) is
+// dropped by TM/VM and by us, and the resulting `ReferenceError` at
+// call time gives the author no hint about why. Naming the near miss
+// in the unknown-grant warning does.
+export function suggestGrant(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  if (findApi(trimmed)) return null; // not a miss at all
+  return ensureCaseFoldedIndex().get(trimmed.toLowerCase()) ?? null;
 }
 
 // Normalize a single `@grant` line to its canonical `GM_x` name.

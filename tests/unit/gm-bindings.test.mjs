@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 import { emitGmBindings } from '../../dist/gm-bindings.js';
+import { GM_APIS } from '../../dist/gm-api-catalog.js';
 
 function makeInfo(over = {}) {
   return {
@@ -226,6 +227,49 @@ test('emitGmBindings: emits a GM object with the GM4 aliases for granted APIs', 
   assert.match(out.js, /xmlHttpRequest:/);
   // GM4 storage forms wrap in Promise.resolve.
   assert.match(out.js, /setValue: function [^}]*Promise\.resolve\(GM_setValue/);
+});
+
+test('emitGmBindings: both GM. spellings land on the GM object', () => {
+  // `GM.xmlhttpRequest` (lower-case h) and `GM.getResourceURL`
+  // (upper-case URL) are the literal `GM_` prefix rewrites VM also
+  // accepts, and published scripts call them. Both must be present
+  // alongside the GM4 spellings.
+  const out = emitGmBindings(['GM_xmlhttpRequest', 'GM_getResourceURL'], makeInfo({
+    grants: ['GM_xmlhttpRequest', 'GM_getResourceURL'],
+  }));
+  assert.match(out.js, /xmlHttpRequest: function/);
+  assert.match(out.js, /xmlhttpRequest: function/);
+  assert.match(out.js, /getResourceUrl: function/);
+  assert.match(out.js, /getResourceURL: function/);
+});
+
+test('emitGmBindings: granting only the rewrite spelling still binds both', () => {
+  // The canonical name is what reaches the emitter either way, so a
+  // script that wrote `@grant GM.xmlhttpRequest` gets the same object.
+  const out = emitGmBindings(['GM_xmlhttpRequest'], makeInfo({
+    grants: ['GM_xmlhttpRequest'],
+  }));
+  assert.match(out.js, /xmlHttpRequest: function/);
+  assert.match(out.js, /xmlhttpRequest: function/);
+});
+
+test('emitGmBindings: APIs with one GM. spelling are not duplicated', () => {
+  const out = emitGmBindings(['GM_setValue'], makeInfo());
+  const matches = out.js.match(/setValue: function/g) ?? [];
+  assert.equal(matches.length, 1);
+});
+
+test('emitGmBindings: the GM object has no duplicate keys with everything granted', () => {
+  // Two APIs contribute two `GM.` property names each, so a future
+  // catalog entry whose gmDotName collides with another entry's
+  // `name.slice(3)` would silently shadow it in the object literal.
+  const all = GM_APIS.map((a) => a.name);
+  const out = emitGmBindings(all, makeInfo({ grants: all }));
+  const literal = /const GM = Object\.freeze\(\{ (.*) \}\);/.exec(out.js);
+  assert.ok(literal, 'GM object literal emitted');
+  const keys = [...literal[1].matchAll(/(?:^|, )(\w+):/g)].map((m) => m[1]);
+  assert.ok(keys.length > 0);
+  assert.equal(new Set(keys).size, keys.length, `duplicate GM key in: ${keys.join(', ')}`);
 });
 
 test('emitGmBindings: GM.info is exposed (not GM.GM_info)', () => {

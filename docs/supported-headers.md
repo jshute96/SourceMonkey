@@ -5,9 +5,11 @@ encounter, what it does, and how completely we honor it.
 
 The parser in [`src/userscript-header.ts`](../src/userscript-header.ts)
 is intentionally generic — it accepts any `@tag` line, lowercases the
-tag, and stashes the value. Whether a tag actually changes behavior
-depends on which downstream module asks for it. This page is the
-inventory of which tags downstream modules consult today.
+tag (and any locale suffix), and stashes the value. Whether a tag
+actually changes behavior depends on which downstream module asks for
+it. This page is the inventory of which tags downstream modules
+consult today. See [Tag-name case](#tag-name-case) for how the
+lowercasing compares to TM/VM.
 
 ## Status legend
 
@@ -87,8 +89,8 @@ below can repeat; order doesn't matter.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@grant none` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → MAIN. Multiple `@grant none` lines are accepted. |
-| `@grant <api>` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → USER_SCRIPT and emits a compile-in binding for the named API. Both legacy `GM_x` and GM4 `GM.x` forms are accepted on the same line; both map to the same canonical name and both bindings are exposed in scope. Unknown / typoed names log a `console.info` and are silently dropped (the script gets a natural `ReferenceError` at call time). For the inventory of which API names are implemented vs stubbed see [supported-GM-APIs.md](supported-GM-APIs.md). |
+| `@grant none` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → MAIN. Multiple `@grant none` lines are accepted. We match the sentinel case-insensitively (`NONE` counts); TM and VM both require lower-case `none`. |
+| `@grant <api>` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → USER_SCRIPT and emits a compile-in binding for the named API. Both legacy `GM_x` and GM4 `GM.x` forms are accepted; both map to the same canonical name and every spelling of that API is exposed in scope. API names are matched **byte-exactly** (as in TM and VM) — a mis-capitalised `GM_xmlHttpRequest` resolves to nothing. Unknown / typoed names log a `console.info` naming any case-only near miss, and are dropped (the script gets a natural `ReferenceError` at call time). See [supported-GM-APIs.md → Granting](supported-GM-APIs.md#granting) for the casing rules and [supported-GM-APIs.md](supported-GM-APIs.md) for which API names are implemented vs stubbed. |
 | `@connect` | ✅ | ✓ | ✓ |   | Allowlist for `GM_xmlhttpRequest` URLs **only** — it does not gate `GM_download` (see [supported-GM-APIs.md](supported-GM-APIs.md#connect-does-not-gate-downloads); TM doesn't gate downloads on it either). **Strict-by-default**: a script with no `@connect` lines is blocked from every cross-origin request — matches VM. Forms: `*` (wildcard), `self` (script's own `@match`/`@include` hosts), `example.com` (exact host), `*.example.com` (host + any subdomain). Scheme-prefixed URLs (`https://example.com`) normalize to host. See [GM-APIs.md](GM-APIs.md#connect-url-gating-phase-10). |
 | `@webRequest` | ⚪ | ✓ |   |   | TM-only, experimental, MV2 only. |
 
@@ -128,6 +130,44 @@ locale → value map.
 
 SourceMonkey does not currently surface localized values anywhere in the
 UI — the canonical (un-suffixed) value is always used.
+
+The suffix is **case-folded** (lowercased), so `@name:ZH-CN` and
+`@name:zh-CN` are the same entry:
+
+- TM normalizes the suffix on both write and lookup (`zh-CN` and
+  `ZH-cn` both become `zh_CN`), and also treats `-` and `_` as
+  interchangeable. VM lowercases it and matches
+  `navigator.languages` case-insensitively.
+- Both spellings occur in the wild — the GreasyFork top-2000 corpus
+  has a script using `@description:ZH-CN`.
+- We do not yet fold `-` ↔ `_` the way TM does. Nothing consumes
+  locales yet, so it can't matter today; see `TODO.md`.
+
+---
+
+## Tag-name case
+
+We lowercase tag names, so `@Match` and `@GRANT` work.
+
+**This is looser than both TM and VM**, which look the tag up by
+exact string and silently ignore anything that misses:
+
+- TM's tag table is a plain property lookup, and it hand-enumerates
+  case variants where it wants them (`downloadURL` *and*
+  `downloadUrl`, `supportURL` *and* `supportUrl`) — pointless under
+  case-insensitive matching.
+- VM's `parseMeta` only converts `-`/`_` to camelCase
+  (`@run-at` → `runAt`); it never case-folds.
+
+We are keeping the looser behavior for now:
+
+- A script with `@Match` runs under SourceMonkey and nowhere else —
+  a genuine compatibility trap.
+- But tightening it would break scripts that work here today.
+- And the GreasyFork top-2000 corpus contains **no** mis-cased tag
+  names, so the practical exposure is nil either way.
+
+Tracked in `TODO.md`.
 
 ---
 

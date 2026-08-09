@@ -6,8 +6,10 @@ import { strict as assert } from 'node:assert';
 import {
   GM_APIS,
   findApi,
+  gmDotSpellings,
   canonicalizeGrant,
   resolveGrants,
+  suggestGrant,
   isSupportedApi,
 } from '../../dist/gm-api-catalog.js';
 
@@ -73,6 +75,60 @@ test('storage APIs return a Promise from the GM. namespace (per GM4 spec)', () =
   }
 });
 
+// ---- `GM.` spellings ----
+//
+// VM resolves `GM.foo` through a two-entry alias table and otherwise
+// rewrites it to `'GM_' + foo` verbatim, so both the GM4 name and the
+// legacy-minus-prefix name are accepted spellings. See the
+// `gmDotSpellings` comment in src/gm-api-catalog.ts.
+
+test('gmDotSpellings yields both spellings only where GM4 re-cased the name', () => {
+  assert.deepEqual(gmDotSpellings(findApi('GM_xmlhttpRequest')), [
+    'xmlHttpRequest',
+    'xmlhttpRequest',
+  ]);
+  assert.deepEqual(gmDotSpellings(findApi('GM_getResourceURL')), [
+    'getResourceUrl',
+    'getResourceURL',
+  ]);
+  // Every other API's GM4 name is just the legacy name minus `GM_`.
+  assert.deepEqual(gmDotSpellings(findApi('GM_setValue')), ['setValue']);
+  assert.deepEqual(gmDotSpellings(findApi('GM_log')), ['log']);
+  // unsafeWindow has neither a `GM_` prefix nor a GM4 alias.
+  assert.deepEqual(gmDotSpellings(findApi('unsafeWindow')), []);
+});
+
+test('exactly the GM4-re-cased APIs carry a second GM. spelling', () => {
+  // Locks *which* entries are double-spelled, so adding a catalog
+  // entry whose gmDotName re-cases the legacy name is a deliberate
+  // act rather than a silently-extra alias. (Asserting `length <= 2`
+  // instead would be true by construction and could never fail.)
+  const doubled = GM_APIS.filter((a) => gmDotSpellings(a).length === 2).map((a) => a.name);
+  assert.deepEqual(doubled.sort(), ['GM_getResourceURL', 'GM_xmlhttpRequest']);
+  for (const a of GM_APIS) {
+    const spellings = gmDotSpellings(a);
+    assert.equal(new Set(spellings).size, spellings.length, `${a.name} has a duplicate spelling`);
+  }
+});
+
+test('both GM. spellings resolve to the same spec', () => {
+  const xhr = findApi('GM_xmlhttpRequest');
+  assert.equal(findApi('GM.xmlHttpRequest'), xhr);
+  assert.equal(findApi('GM.xmlhttpRequest'), xhr);
+  const res = findApi('GM_getResourceURL');
+  assert.equal(findApi('GM.getResourceUrl'), res);
+  assert.equal(findApi('GM.getResourceURL'), res);
+});
+
+test('matching stays byte-exact — mis-cased legacy names are still unknown', () => {
+  // TM/VM both compare grant names exactly; we don't diverge. The
+  // `GM.` spellings above are extra accepted *names*, not a
+  // case-insensitive matcher.
+  for (const n of ['GM_xmlHttpRequest', 'GM_Log', 'gm_setvalue', 'GM.SetValue', 'GM_XMLHttpRequest']) {
+    assert.equal(findApi(n), undefined, `${n} should not resolve`);
+  }
+});
+
 test('unsupported names return undefined', () => {
   assert.equal(findApi('GM_audio'), undefined);
   assert.equal(findApi('GM_webRequest'), undefined);
@@ -119,6 +175,37 @@ test('@grant none wins — even if other lines are present', () => {
 test('duplicate @grant lines collapse to one entry', () => {
   const r = resolveGrants(['GM_setValue', 'GM_setValue', 'GM.setValue']);
   assert.deepEqual([...r.granted], ['GM_setValue']);
+});
+
+test('resolveGrants accepts the rewrite-form GM. spellings', () => {
+  const r = resolveGrants(['GM.xmlhttpRequest', 'GM.getResourceURL']);
+  assert.deepEqual(r.unknown, []);
+  assert.deepEqual([...r.granted].sort(), ['GM_getResourceURL', 'GM_xmlhttpRequest']);
+});
+
+test('resolveGrants keeps mis-cased legacy names unknown', () => {
+  const r = resolveGrants(['GM_xmlHttpRequest', 'GM_Log']);
+  assert.equal(r.granted.size, 0);
+  assert.deepEqual(r.unknown, ['GM_xmlHttpRequest', 'GM_Log']);
+});
+
+test('suggestGrant names the case-only near miss', () => {
+  assert.equal(suggestGrant('GM_xmlHttpRequest'), 'GM_xmlhttpRequest');
+  assert.equal(suggestGrant('GM_Log'), 'GM_log');
+  assert.equal(suggestGrant('gm_setvalue'), 'GM_setValue');
+  assert.equal(suggestGrant('GM.SETVALUE'), 'GM.setValue');
+  assert.equal(suggestGrant('  GM_LISTVALUES  '), 'GM_listValues');
+});
+
+test('suggestGrant returns null for exact hits and for real unknowns', () => {
+  // Already valid — nothing to suggest.
+  assert.equal(suggestGrant('GM_setValue'), null);
+  assert.equal(suggestGrant('GM.xmlhttpRequest'), null);
+  // Genuinely not in the catalog: no case-folded neighbour either.
+  assert.equal(suggestGrant('GM_audio'), null);
+  assert.equal(suggestGrant('GM_webRequest'), null);
+  assert.equal(suggestGrant(''), null);
+  assert.equal(suggestGrant('none'), null);
 });
 
 test('isSupportedApi covers GM. aliases', () => {

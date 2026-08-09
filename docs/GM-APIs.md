@@ -199,6 +199,13 @@ GM4 spec.
 `GM.info` aliases the literal `GM_info` object. There is no
 `GM.unsafeWindow` (the legacy form lacks a `gmDotName`).
 
+Property names come from `gmDotSpellings(spec)`, not `gmDotName`
+alone. Where GM4 re-cased a name, the API gets a second property so
+both spellings work — `GM.xmlHttpRequest` *and* `GM.xmlhttpRequest`,
+`GM.getResourceUrl` *and* `GM.getResourceURL`. The rationale and the
+TM/VM comparison are in
+[supported-GM-APIs.md → Granting](supported-GM-APIs.md#the-re-cased-gm-spellings).
+
 ## Storage (`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`)
 
 See [`GM-APIs-storage.md`](GM-APIs-storage.md) for the full

@@ -115,7 +115,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (implicit + configured), host/path suffix candidates, containment |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
-| `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
+| `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; `@grant` resolution + near-miss hints |
 | `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
 | `src/wrapper-gm-runtime.js` | USER_SCRIPT-world shared runtime — installs `window.__SM_GM__` (shim cache, async sendMessage helper, storage cache + batched writes) |
@@ -261,6 +261,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
+| `tests/examples/grant-case/` | `@grant` name-casing example: canonical, `GM.` prefix-rewrite, and mis-capitalised legacy spellings on one page |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
