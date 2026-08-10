@@ -56,6 +56,7 @@ import {
   type ProbePolicy,
 } from './version-probe.js';
 import { probeVersions } from './version-probe-fetch.js';
+import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
 import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
 import { githubTokenLogSuffix } from './github-auth.js';
@@ -320,11 +321,12 @@ async function runAllCollectionsCheck(
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] refresh all failed: ${msg}`);
-    // `refreshAllCollections` fans out with Promise.all, so one
-    // collection throwing rejects the whole batch and NO collection
-    // gets summarized — not even the ones that succeeded. Same fan-out
-    // as runCollectionCheck so the two paths can't drift, applied
-    // across every collection.
+    // `refreshAllCollections` rejects on the first collection that
+    // throws, so NO collection gets summarized — not even the ones that
+    // succeeded, and not the ones still draining behind the failure
+    // (they do finish and write; we just never see their results). Same
+    // fan-out as runCollectionCheck so the two paths can't drift,
+    // applied across every collection.
     for (const snapshot of priorByCollectionId.values()) {
       logCollectionEventToScripts(
         [...snapshot.scripts.values()], mode, `Could not refresh this collection: ${msg}`,
@@ -368,11 +370,16 @@ async function runVersionProbes(
   scripts: readonly StoredScript[],
   probe: ProbePolicy,
 ): Promise<void> {
-  await Promise.all(scripts.map((s) => probeOneScript(s, probe).catch(() => {
-    // A probe is an annotation. Nothing downstream depends on it, so a
-    // failure that escaped runProbe's own handling dies here rather
-    // than propagating into the refresh the user actually asked for.
-  })));
+  // Bounded for the same reason the refresh fan-out is (see
+  // src/concurrency.ts): "Refresh All" hands this every script in every
+  // collection, and each one expands into its own pool of probe fetches.
+  // Unbounded here would put the product in flight at once.
+  await mapWithConcurrency(scripts, PROBE_SCRIPTS_CONCURRENCY, (s) =>
+    probeOneScript(s, probe).catch(() => {
+      // A probe is an annotation. Nothing downstream depends on it, so a
+      // failure that escaped runProbe's own handling dies here rather
+      // than propagating into the refresh the user actually asked for.
+    }));
 }
 
 async function probeOneScript(

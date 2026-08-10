@@ -90,6 +90,11 @@ import { displayLocation, stripSriFragment } from './script-display.js';
 import { inferDisplayName } from './collection-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
+import {
+  mapWithConcurrency,
+  FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
+  FETCH_COLLECTIONS_CONCURRENCY,
+} from './concurrency.js';
 import { dlog } from './debug-log.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
@@ -1123,10 +1128,12 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   // Each scanned entry resolves to one StoredScript. Most paths are
   // synchronous (unchanged, error, defensive fallbacks); the `ok`
   // path goes through buildScriptFromText which is async because the
-  // content-hash uses SubtleCrypto. We wrap every branch in a Promise
-  // and Promise.all at the end so the hash work overlaps and the
-  // output order matches scan order.
-  const entryPromises: Promise<StoredScript>[] = [];
+  // content-hash uses SubtleCrypto, and applyFiles which fetches this
+  // entry's `@require` / `@resource` bodies. We collect every branch as
+  // a thunk and run them with bounded concurrency at the end, so the
+  // async work overlaps without putting every entry's dependency
+  // payloads in flight at once, and the output order matches scan order.
+  const entryTasks: (() => Promise<StoredScript>)[] = [];
   const handledPaths = new Set<string>();
   for (const found of args.scan) {
     handledPaths.add(found.relativePath);
@@ -1135,7 +1142,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
     const fileUrl = scriptFileUrl(args.collectionPath, found.relativePath);
     const fr = args.fetchResults.get(found.relativePath);
     if (fr && 'ok' in fr && fr.ok) {
-      entryPromises.push((async (): Promise<StoredScript> => {
+      entryTasks.push(async (): Promise<StoredScript> => {
         const built = await buildScriptFromText({
           id,
           collectionId: args.collectionId,
@@ -1192,7 +1199,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
           };
         }
         return withFiles;
-      })());
+      });
     } else if (fr && 'unchanged' in fr) {
       // Optimization path: the listing's size+mtime matched the prior
       // entry, so we never fetched. Reuse the prior entry verbatim.
@@ -1217,11 +1224,11 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // pick up remote dep updates without touching the main
         // script). The opportunistic path passes 'preserve' which
         // short-circuits.
-        entryPromises.push(
-          applyFiles(next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles),
+        entryTasks.push(
+          () => applyFiles(next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles),
         );
       } else {
-        entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
+        entryTasks.push(() => Promise.resolve(buildInitialInvalidEntry({
           id,
           collectionId: args.collectionId,
           relativePath: found.relativePath,
@@ -1238,9 +1245,9 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
       const errorMessage =
         'errorMessage' in fr ? fr.errorMessage : 'Could not be read (no reason reported)';
       if (prior) {
-        entryPromises.push(Promise.resolve(applyFetchError(prior, errorMessage)));
+        entryTasks.push(() => Promise.resolve(applyFetchError(prior, errorMessage)));
       } else {
-        entryPromises.push(Promise.resolve(buildInitialInvalidEntry({
+        entryTasks.push(() => Promise.resolve(buildInitialInvalidEntry({
           id,
           collectionId: args.collectionId,
           relativePath: found.relativePath,
@@ -1253,7 +1260,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
       // No fetch attempted at all. Treat like a fetch error with a
       // generic message; this branch is mostly defensive — the
       // orchestrator should always supply a result.
-      entryPromises.push(Promise.resolve(prior
+      entryTasks.push(() => Promise.resolve(prior
         ? applyFetchError(prior, NOT_READ)
         : buildInitialInvalidEntry({
             id, collectionId: args.collectionId, relativePath: found.relativePath,
@@ -1262,7 +1269,8 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
     }
   }
 
-  const out = await Promise.all(entryPromises);
+  const out = await mapWithConcurrency(
+    entryTasks, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, (task) => task());
 
   // Anything in `existing` that the scan didn't see → either marked
   // missing (directory collections: file may come back) or dropped
@@ -1879,8 +1887,8 @@ export async function refreshCollection(
     });
   }
 
-  // Fetch every scanned file in parallel except those whose size+mtime
-  // are already current.
+  // Fetch every scanned file — with bounded concurrency — except those
+  // whose size+mtime are already current.
   const fetchResults = await fetchOrSkipInParallel(
     collection.path,
     scan,
@@ -2053,7 +2061,8 @@ function preserveConcurrentEdits(
   return out;
 }
 
-// Fetch each scanned file in parallel.
+// Fetch each scanned file, at most
+// FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY at a time.
 //
 // Dispatch is per *entry URL*, not per collection: a manifest
 // collection may list http(s):// entries, file:// entries, or a mix, so
@@ -2077,8 +2086,12 @@ export async function fetchOrSkipInParallel(
   existing: StoredScript[],
 ): Promise<Map<string, FetchResult>> {
   const byPath = new Map(existing.map((s) => [s.relativePath, s]));
-  const results = await Promise.all(
-    scan.map(async (found): Promise<[string, FetchResult]> => {
+  // Bounded, not `Promise.all`: an unbounded fan-out over a large
+  // collection holds every fetched body live at once. See
+  // src/concurrency.ts.
+  const results = await mapWithConcurrency(
+    scan, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
+    async (found): Promise<[string, FetchResult]> => {
       const prior = byPath.get(found.relativePath);
       const url = scriptFileUrl(collectionPath, found.relativePath);
       if (isHttpUrl(url)) {
@@ -2114,12 +2127,13 @@ export async function fetchOrSkipInParallel(
       } catch (err) {
         return [found.relativePath, { ok: false, errorMessage: describeError(err) }];
       }
-    }),
+    },
   );
   return new Map(results);
 }
 
-// Refresh every registered collection in parallel. Returns the new
+// Refresh every registered collection, a bounded few at a time.
+// Returns the new
 // state per collection so callers can compute "what changed" without a
 // second read. A failed collection-level refresh (e.g. one collection's
 // scan throws) doesn't take the rest down — its slot in the result map
@@ -2133,11 +2147,18 @@ export async function refreshAllCollections(
   // two scripts (across two collections) referencing the same canonical
   // URL share one fetch. Caller can override by passing their own.
   const fileFetchCache = opts.fileFetchCache ?? new Map();
-  const entries = await Promise.all(
-    collections.map(async (s) => {
+  // Bounded like the per-file fan-out inside each collection: without a
+  // cap here, N collections would each run their own in-flight set at
+  // the same time and the per-collection bound wouldn't cap anything.
+  // Deliberately the smaller limit of the pair, because each slot here
+  // expands into a whole collection's worth of fetches — and because a
+  // profile with many collections is the rarer case. See
+  // src/concurrency.ts.
+  const entries = await mapWithConcurrency(
+    collections, FETCH_COLLECTIONS_CONCURRENCY, async (s) => {
       const r = await refreshCollection(s.id, { ...opts, fileFetchCache });
       return [s.id, r] as const;
-    }),
+    },
   );
   const out = new Map<string, { collection: StoredCollection; scripts: StoredScript[] }>();
   for (const [id, r] of entries) {

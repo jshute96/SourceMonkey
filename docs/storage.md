@@ -425,6 +425,46 @@ Every load path goes through the same pipeline:
 5. Persist the collection row + every script row in a single
    `chrome.storage.local.set` call.
 
+### Fan-out is bounded
+
+Steps 2–4 run concurrently across entries, but with a cap
+(`src/concurrency.ts`).
+
+- **Why**: an unbounded `Promise.all` over the scan starts one fetch per
+  scanned file. On a collection with thousands of scripts, that puts every
+  decoded body — plus each entry's prefetched `@require` / `@resource`
+  payloads — live at the same instant.
+- **What that cost**: enough peak memory to abort the extension process.
+  Chrome reports that only as "this extension crashed"; no JavaScript
+  error is raised, and nothing reaches the Log or the Errors panel.
+- **The limits nest, so read them as a product**:
+  - `FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY` — scripts in flight
+    within one collection.
+  - `FETCH_COLLECTIONS_CONCURRENCY` — collections in flight during
+    `refreshAllCollections`. Each slot expands into a whole collection's
+    worth of fetches, so the worst case is the two multiplied.
+- **The inner limit carries the balance**, and is the larger of the two.
+  Most profiles have one or a few collections, and a per-collection
+  Refresh button never engages the outer limit at all — so the inner one
+  is what the common cases actually hit. A larger outer limit would only
+  speed up a many-collection profile, at the cost of capping the
+  single-collection case everyone hits.
+- **Ordering**: `mapWithConcurrency` returns results in input order, so
+  rebuilt rows still come back in scan order.
+- **Rejection**: the first failure rejects the call right away, and every
+  remaining entry still runs (its result is just discarded). A failure
+  never skips the entries behind it, not even when every entry fails.
+- **Same helper elsewhere**: the update probes (`probeVersions`,
+  `runVersionProbes`) use it too, under their own pair — a separate pair
+  because the scripts in one probe pass can span every collection, so
+  neither refresh limit describes the shape. See
+  [updates.md](updates.md#when-it-runs); only the scripts-at-once half
+  of that pair can actually bind.
+- **Bounds the working set, not the total.** Every result is still
+  retained until the write, so a large enough collection is still a
+  large enough peak. A hard per-collection entry cap is still open — see
+  TODO.md.
+
 ### Scan failure: leave scripts untouched
 
 - **Triggers**: unreadable directory listing, unreadable manifest,
@@ -462,7 +502,7 @@ Every load path goes through the same pipeline:
 - `refreshCollection(id)` — full rescan + reload of one collection
   (with the unchanged-file skip described above).
 - `refreshAllCollections()` — runs `refreshCollection` for every registered
-  collection in parallel. Used by the collections page's "Refresh All"
+  collection, a bounded few at a time. Used by the collections page's "Refresh All"
   button and by the `?refresh` URL trigger.
 - `removeCollection(id)` — drop the collection row + every child script row +
   rewrite the index.

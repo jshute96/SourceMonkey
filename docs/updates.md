@@ -89,8 +89,13 @@ Staleness rules:
   OUTDATED against a URL the script doesn't name.
 - A failed probe still records `checkedAt`, so an unreachable host
   isn't retried on every navigation.
-- At most `PROBE_CONCURRENCY` fetches run at once, so Refresh All over
-  a large collection doesn't open one request per script.
+- `PROBE_SCRIPTS_CONCURRENCY` caps how many scripts probe at once, so
+  Refresh All over a large collection doesn't open one request per
+  script (see [storage.md](storage.md#fan-out-is-bounded)).
+  - A per-script cap on probe URLs sits inside it
+    (`PROBE_URLS_PER_SCRIPT_CONCURRENCY`) but never binds: a script has
+    at most two targets. It is a guard against a future third target
+    kind, not a working limit.
 
 Awaited by the collection-level entry points, not by the per-script one:
 

@@ -864,3 +864,27 @@ they follow are in
   is `@connect`-gated. A `@grant` row for those two names alone would
   be noise-free, but it needs a wording that reads as a capability
   rather than a tag dump.
+- large collections still blow past `chrome.storage.local` (and RAM). The
+  refresh fan-out is bounded now (`src/concurrency.ts`), but the whole
+  result set — every script body, plus prefetched `@require` /
+  `@resource` payloads — is still held live and then written in one
+  `set`. Open pieces:
+  - No `unlimitedStorage` permission, so the whole extension shares a
+    10 MB `storage.local` budget. Decide between taking the permission
+    and moving bodies out of `storage.local`.
+  - A quota failure at the write rejects out of `refreshCollection`,
+    which (unlike a scan failure) has no `scanError` landing spot. It
+    propagates through `refreshAllCollections` — the sibling collections
+    do still refresh, but the caller has already been rejected by then,
+    so their results are dropped. `onRefreshAll` has no `catch` either,
+    so the user sees the button un-busy and no message at all. Wants a
+    per-collection landing spot for write failures, the way `scanError`
+    is one for scan failures.
+  - No cap on scripts per collection; a directory of a few thousand is
+    accepted silently and then fails late.
+  - Other unbounded `Promise.all` fan-outs on the same
+    thousands-of-scripts path, all of them storage writes rather than
+    fetches (so lighter per item, but still one-per-script):
+    `emitInitialLoadLog` over a freshly added collection
+    (`src/script-store.ts`), and the boot log replay in
+    `src/script-updater.ts`. Both want `mapWithConcurrency`.
