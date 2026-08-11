@@ -105,6 +105,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/concurrency.ts` | Bounded-concurrency `mapWithConcurrency` plus the nested per-collection / per-script / probe limits that cap peak memory |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) and chunked `bytesToBase64` (XHR + `@resource` transport) |
+| `src/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the collections/viewer UI |
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, plus a sibling `loglevel:` sentinel |
 | `src/log-format.ts` | Log cell formatting (time, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
@@ -166,6 +167,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (HTTP soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
 | `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, raw view, option off |
 | `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |
+| `tests/e2e/refresh-error.spec.ts` | A refresh that reads fine but can't be saved: the recorded reason, untouched scripts, sibling collections, and the page's message + banner |
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, `@require` tabs |
@@ -200,6 +202,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |
+| `tests/unit/refresh-error.test.mjs` | Unit tests for the refresh-error message wording and the storage-value coercion |
 | `tests/unit/concurrency.test.mjs` | Unit tests for `mapWithConcurrency`: result ordering, the in-flight cap, edge limits, and what a rejection does to the rest |
 | `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) and the failure wording |
 | `tests/unit/local-file-overrides.test.mjs` | Unit tests for local stand-in search roots, host/path-suffix candidates, containment, and the `attachFiles` `localRoots` leg |

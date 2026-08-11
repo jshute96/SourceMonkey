@@ -872,14 +872,12 @@ they follow are in
   - No `unlimitedStorage` permission, so the whole extension shares a
     10 MB `storage.local` budget. Decide between taking the permission
     and moving bodies out of `storage.local`.
-  - A quota failure at the write rejects out of `refreshCollection`,
-    which (unlike a scan failure) has no `scanError` landing spot. It
-    propagates through `refreshAllCollections` — the sibling collections
-    do still refresh, but the caller has already been rejected by then,
-    so their results are dropped. `onRefreshAll` has no `catch` either,
-    so the user sees the button un-busy and no message at all. Wants a
-    per-collection landing spot for write failures, the way `scanError`
-    is one for scan failures.
+  - Reporting the failure is done (`src/refresh-error.ts`) — what's
+    left is not hitting it. The user still has to work out for
+    themselves that one enormous collection is what filled the budget;
+    the banner names total usage, not the collection responsible. A
+    per-collection size figure would point straight at the culprit, and
+    needs a cheap way to measure one collection's share.
   - No cap on scripts per collection; a directory of a few thousand is
     accepted silently and then fails late.
   - Other unbounded `Promise.all` fan-outs on the same

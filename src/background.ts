@@ -43,6 +43,7 @@ import {
 } from './local-file-overrides.js';
 import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
+import { readRefreshErrors, type RefreshErrorMap } from './refresh-error.js';
 import { installUserJsCapture } from './install-capture.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
@@ -101,6 +102,7 @@ import {
   getCollectionWithScripts,
   isFirstRunComplete,
   resetCollectionKeyMigrationForTests,
+  _setCollectionWriteFailureForTests,
   markFirstRunComplete,
   removeCollection,
   setScriptEnabled,
@@ -257,6 +259,15 @@ interface SourceMonkeyApi {
   // script id — the state the UI renders as REJECTED. Empty unless
   // something is broken, which is what most tests assert.
   getRejections: () => Promise<RejectionMap>;
+  // Collections whose last refresh was read but could not be saved,
+  // keyed by collection id (src/refresh-error.ts). Empty unless a
+  // storage write failed, which is what most tests assert.
+  getRefreshErrors: () => Promise<RefreshErrorMap>;
+  // Make every collection-refresh write fail, so a test can drive the
+  // out-of-quota path without having to actually fill 10 MB. Stays armed
+  // until cleared with null, matching a real exhausted quota — which
+  // fails every collection, not just the next one.
+  failCollectionWrites: (message: string | null) => Promise<void>;
   // Compile-only parse check (src/parse-check.ts). Null means the
   // check could not run, which callers must not read as failure.
   checkParses: (sources: string[]) => Promise<ParseVerdict[] | null>;
@@ -360,6 +371,10 @@ const api: SourceMonkeyApi = {
   },
   appendScriptLog,
   getRejections: readRejections,
+  getRefreshErrors: readRefreshErrors,
+  failCollectionWrites: async (message: string | null) => {
+    _setCollectionWriteFailureForTests(message);
+  },
   clearScriptLog,
   getGmValues: loadAllValues,
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
@@ -426,6 +441,11 @@ const api: SourceMonkeyApi = {
     // Same reason: a retry from the previous test would otherwise
     // rate-limit the next one's out of existence.
     resetRejectionRetryGate();
+    // Also a module variable in the worker, so a test that armed the
+    // write failure would otherwise break every refresh after it. (The
+    // recorded errors themselves live in the session storage cleared
+    // below, so they need no separate reset.)
+    _setCollectionWriteFailureForTests(null);
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the

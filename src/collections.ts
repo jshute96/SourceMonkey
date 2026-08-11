@@ -27,6 +27,7 @@ import {
   addCollection,
   backfillCollectionDisplayNames,
   DEFAULT_COLLECTIONS,
+  describeError,
   getAllScripts,
   getCollectionWithScripts,
   getCollections,
@@ -35,6 +36,7 @@ import {
   isCollectionEnabled,
   markFirstRunComplete,
   moveCollection,
+  readLocalStorageUsage,
   removeScript,
   removeCollection,
   setScriptEnabled,
@@ -42,6 +44,7 @@ import {
   setCollectionEnabled,
   setCollectionLocalFiles,
   collectionUsesLocalFiles,
+  STORAGE_NEARLY_FULL,
   touchesStructuralRows,
   type StoredScript,
   type StoredCollection,
@@ -69,6 +72,7 @@ import {
   displayLocation,
   effectiveScriptStatus,
   ENABLE_TITLE,
+  formatBytes,
   formatScriptSize,
   formatScriptStatusLabel,
   logIdDupeSuffix,
@@ -88,6 +92,13 @@ import {
   readRejections,
   type RejectionMap,
 } from './script-rejection.js';
+import {
+  REFRESH_ERRORS_KEY,
+  coerceRefreshErrorMap,
+  describeRefreshError,
+  readRefreshErrors,
+  type RefreshErrorMap,
+} from './refresh-error.js';
 import { iconRefFromHeader, renderSiteIconInto } from './site-icon.js';
 import {
   canonicalCollectionInput,
@@ -182,6 +193,14 @@ if (chrome.storage?.session?.onChanged) {
         touched = true;
         continue;
       }
+      if (key === REFRESH_ERRORS_KEY) {
+        // Also a whole-map key. Repainted rather than status-cell
+        // patched: it changes a section's message line and the page
+        // banner, neither of which `applyStatusCellsToDom` touches.
+        currentRefreshErrors = coerceRefreshErrorMap(changes[key]?.newValue);
+        void repaintPage();
+        continue;
+      }
       if (!key.startsWith(LOG_LEVEL_KEY_PREFIX)) continue;
       const scriptId = key.slice(LOG_LEVEL_KEY_PREFIX.length);
       const next = changes[key]?.newValue;
@@ -241,6 +260,13 @@ const currentOutdated = new Map<string, VersionProbe>();
 // on a healthy profile. Seeded in `render()` and kept fresh by the
 // `chrome.storage.session.onChanged` listener above.
 let currentRejections: RejectionMap = {};
+
+// Page-wide {collectionId → why its last refresh couldn't be saved},
+// mirroring the session-storage map in src/refresh-error.ts. Drives both
+// the per-section message and the storage banner; empty on a healthy
+// profile. Seeded in `render()` and kept fresh by the
+// `chrome.storage.session.onChanged` listener above.
+let currentRefreshErrors: RefreshErrorMap = {};
 
 async function refreshLogIds(): Promise<void> {
   const all = await getAllScripts();
@@ -463,6 +489,11 @@ function repaintPage(): Promise<void> {
 // refresh highlights, in-flight spinners, and focus survive.
 async function repaintFromStorage(): Promise<void> {
   const collections = await getCollections();
+  // Ahead of the sections, so a page that just failed to save shows the
+  // explanation at the top by the time the reader's eye follows the
+  // section messages down. Needs the collection list, hence after the
+  // read rather than first.
+  await syncStorageBanner(new Set(collections.map((s) => s.id)));
   // Read each collection's scripts ONCE, up front, and paint from that.
   // The obvious shape — `refreshLogIds()` then render each section —
   // reads the whole store twice per pass: `getAllScripts` is a
@@ -542,19 +573,56 @@ async function syncSectionFromStorage(
     appendWithSlashBreaks(nameEl, displayName);
   }
 
-  const priorError = section.querySelector<HTMLElement>(':scope > p.error');
-  const errorText = scanErrorText(collection);
-  if (!errorText) {
-    priorError?.remove();
-  } else if (priorError) {
-    priorError.textContent = errorText;
-  } else {
-    // The error line sits between the header and the script list.
-    section.querySelector('.collection-header')
-      ?.after(makeMessage('error', errorText));
-  }
+  syncSectionMessage(section, 'scan', scanErrorText(collection));
+  syncSectionMessage(section, 'refresh', refreshErrorText(collection.id));
 
   await syncScriptRowsFromStorage(section, collection, collectionOn, scripts);
+}
+
+// The section's message lines, in the order they are drawn between the
+// header and the script list. A section can carry both at once — they
+// describe different attempts with different fixes — so each is tagged
+// and synced on its own rather than by "the first `p.error`", which
+// would have the two overwrite each other.
+const SECTION_MESSAGE_KINDS = ['scan', 'refresh'] as const;
+type SectionMessageKind = typeof SECTION_MESSAGE_KINDS[number];
+
+function makeSectionMessage(kind: SectionMessageKind, text: string): HTMLElement {
+  const p = makeMessage('error', text);
+  p.dataset.messageKind = kind;
+  return p;
+}
+
+// Add, update, or drop one of a section's message lines to match `text`
+// (empty meaning "no message of this kind"). Shared by the initial build
+// and the repaint so the two can't render the same failure differently.
+function syncSectionMessage(
+  section: HTMLElement,
+  kind: SectionMessageKind,
+  text: string,
+): void {
+  const prior = section.querySelector<HTMLElement>(
+    `:scope > p.error[data-message-kind="${kind}"]`,
+  );
+  if (!text) {
+    prior?.remove();
+    return;
+  }
+  if (prior) {
+    prior.textContent = text;
+    return;
+  }
+  // Insert after whichever earlier line is present, so the kinds keep a
+  // stable order however they arrive — a section that gains its scan
+  // line second must not end up showing it below the refresh line.
+  let anchor: Element | null = section.querySelector('.collection-header');
+  for (const earlier of SECTION_MESSAGE_KINDS) {
+    if (earlier === kind) break;
+    anchor = section.querySelector<HTMLElement>(
+      `:scope > p.error[data-message-kind="${earlier}"]`,
+    ) ?? anchor;
+  }
+  anchor?.after(makeSectionMessage(kind, text));
 }
 
 // Update the section's script list in place: reuse the `<tr>` for a
@@ -834,7 +902,10 @@ function scrollToHashCollectionIfPresent(): void {
 // Drive the Add flow from a `?add=` query param. Pre-
 // fills the form field (so the user sees what was attempted) and
 // runs the same flow as the manual Add button. The URL is scrubbed
-// only on success/duplicate; an invalid value is left in place so
+// once the location was accepted — success, duplicate, or a storage
+// failure that still created the row — because in all three the
+// collection now exists and re-running the param would only re-report a
+// duplicate. Only a value the validator REJECTED is left in place, so
 // the user can copy/share/edit it.
 async function handleAddParam(raw: string): Promise<void> {
   addInput.value = raw;
@@ -872,6 +943,7 @@ async function render(): Promise<void> {
   // event happened along.
   currentLogLevels = await getAllMaxLogLevels();
   currentRejections = await readRejections();
+  currentRefreshErrors = await readRefreshErrors();
 
   // One-shot backfill so older collection rows (pre-displayName) pick
   // up an inferred label on first view after upgrade. Cheap no-op once
@@ -896,6 +968,14 @@ async function render(): Promise<void> {
   }
 
   const collections = await getCollections();
+
+  // Last of the three banners, because it is the most situational: it
+  // appears only once a refresh has actually failed to save, where the
+  // other two describe a setting that is wrong right now. Unlike them it
+  // can also come and go WITHOUT a reload — a failed refresh raises it,
+  // the next successful one clears it — so it owns a sync of its own
+  // that the repaint calls too.
+  await syncStorageBanner(new Set(collections.map((s) => s.id)));
 
   await refreshLogIds();
   if (collections.length === 0) {
@@ -982,10 +1062,23 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   header.appendChild(buttons);
   section.appendChild(header);
 
+  // Both can be present: a collection can fail to save on one refresh
+  // and fail to scan on the next. They describe different attempts and
+  // different fixes, so neither replaces the other.
   const scanError = scanErrorText(collection);
-  if (scanError) section.appendChild(makeMessage('error', scanError));
+  if (scanError) section.appendChild(makeSectionMessage('scan', scanError));
+  const refreshError = refreshErrorText(collection.id);
+  if (refreshError) section.appendChild(makeSectionMessage('refresh', refreshError));
   section.appendChild(await renderScriptBlock(collection, collectionOn));
   return section;
+}
+
+// The section's could-not-save line, or '' when this collection's last
+// refresh stored cleanly. Reads the page-wide map rather than taking a
+// parameter so the repaint path and the initial render can't disagree.
+function refreshErrorText(collectionId: string): string {
+  const reason = currentRefreshErrors[collectionId];
+  return reason ? describeRefreshError(reason) : '';
 }
 
 // The section's scan-failure line, or '' when the collection scanned
@@ -1284,7 +1377,29 @@ async function onAddCollection(
       showAddError(err instanceof Error ? err.message : String(err));
       return false;
     }
-    const result = await addCollection(stored);
+    // `addCollection` seeds the collection row inside its write lock and
+    // then refreshes it, so a storage failure surfaces here as a throw
+    // with the seeded row already committed. Without this the add would
+    // dead-end: the form un-busies and nothing says why no section
+    // appeared.
+    //
+    // The repaint is what makes it recoverable. Re-adding won't work —
+    // the row exists, so a second attempt is a duplicate — but painting
+    // the section puts its Refresh button on screen, next to the
+    // could-not-be-saved message explaining what to fix first.
+    //
+    // Returns `true` for the same reason: a row WAS created, so this is
+    // a partial success rather than the rejected-input case below, and
+    // `handleAddParam` should scrub `?add=` exactly as it would for a
+    // duplicate.
+    let result;
+    try {
+      result = await addCollection(stored);
+    } catch (err) {
+      showAddError(describeError(err));
+      await repaintPage();
+      return true;
+    }
     addInput.value = '';
     if (!result) {
       // Duplicate: either the collection path is already registered, or
@@ -1526,6 +1641,14 @@ async function onRefreshCollection(id: string, btn: HTMLButtonElement): Promise<
     const section = findSection(id);
     const after = await getCollectionWithScripts(id);
     if (section) applyChangeHighlights(section, priorScripts, after?.scripts ?? []);
+  } catch (err) {
+    // A refresh that couldn't be saved already recorded its reason in
+    // session storage, so the repaint is what puts it on screen. Caught
+    // rather than rethrown because there is nothing above this to
+    // handle it: the click handler's `void` would drop it silently and
+    // the user would watch the button finish with no explanation.
+    console.info('[SourceMonkey] collection refresh failed', err);
+    await repaintPage();
   } finally {
     btn.disabled = false;
     btn.textContent = prevText;
@@ -1558,6 +1681,13 @@ async function onRefreshAll(): Promise<void> {
       const after = await getCollectionWithScripts(s.id);
       applyChangeHighlights(section, priorsByCollection.get(s.id) ?? [], after?.scripts ?? []);
     }
+  } catch (err) {
+    // `refreshAllCollections` records each collection's failure and
+    // keeps going, so reaching here means something outside that loop
+    // broke. Repaint anyway: whatever DID save should show, and any
+    // recorded per-collection reason goes up with it.
+    console.info('[SourceMonkey] refresh all failed', err);
+    await repaintPage();
   } finally {
     setRefreshAllBusy(false);
   }
@@ -1969,6 +2099,78 @@ async function probeUserScriptsApi(): Promise<{ usable: true } | { usable: false
     return { usable: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+// Put the storage banner in the slot, or take it out, to match the
+// current refresh-error map.
+//
+// Replaces only its own element, leaving the file-access and
+// user-scripts banners alone: those two are probed once per render and
+// re-running them on every repaint would mean an API call per structural
+// storage write.
+const STORAGE_BANNER_ID = 'storage-banner';
+
+async function syncStorageBanner(liveIds: ReadonlySet<string>): Promise<void> {
+  document.getElementById(STORAGE_BANNER_ID)?.remove();
+  const banner = await buildStorageBanner(liveIds);
+  if (!banner) return;
+  banner.id = STORAGE_BANNER_ID;
+  bannerSlot.appendChild(banner);
+}
+
+// The banner for "a refresh was read but couldn't be saved", or null
+// when every collection saved fine.
+//
+// Gated on an actual failure rather than on the usage number alone. A
+// profile sitting at 95% is working perfectly well, and a banner that
+// appears before anything has gone wrong trains the reader to ignore
+// it. Once a save HAS failed, the usage figure is what turns the report
+// into something actionable, so it's fetched then and not before.
+async function buildStorageBanner(liveIds: ReadonlySet<string>): Promise<HTMLElement | null> {
+  // Counted against the collections actually on the page. A removal
+  // racing a failing refresh of the same collection can leave an entry
+  // behind (the prune runs before the failure is recorded), and a banner
+  // pointing at a section that isn't there would be unexplainable.
+  if (!Object.keys(currentRefreshErrors).some((id) => liveIds.has(id))) return null;
+
+  const div = document.createElement('div');
+  div.className = 'banner';
+
+  const usage = await readLocalStorageUsage();
+  const full = usage !== null && usage.used >= usage.quota * STORAGE_NEARLY_FULL;
+
+  const heading = document.createElement('strong');
+  // Never singular: on an exhausted quota every collection fails, which
+  // is the case this banner exists for.
+  heading.textContent = full
+    ? 'SourceMonkey is out of storage space.'
+    : 'Some collections could not be saved.';
+  div.appendChild(heading);
+
+  const explain = document.createElement('p');
+  explain.textContent = full
+    ? 'Collections below were read successfully, but Chrome refused to '
+      + 'store them, so their scripts are still running the last version '
+      + 'that fit. Removing a collection you no longer need — or trimming '
+      + 'a very large one — frees the space to save them.'
+    // The non-full branch is genuinely unexplained, so it says so
+    // rather than guessing a cause the reader would then chase.
+    : 'Collections below were read successfully, but Chrome refused to '
+      + 'store them, so their scripts are still running the last version '
+      + 'that saved. Storage is not full, so the reason is in the message '
+      + 'on each collection.';
+  div.appendChild(explain);
+
+  if (usage) {
+    const detail = document.createElement('p');
+    detail.className = 'banner-detail';
+    detail.textContent =
+      `Using ${formatBytes(usage.used)} of ${formatBytes(usage.quota)}`;
+    div.appendChild(detail);
+  }
+
+  return div;
+}
+
 
 function renderUserScriptsBanner(error?: string): HTMLElement {
   const div = document.createElement('div');

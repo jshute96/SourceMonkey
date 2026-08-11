@@ -202,10 +202,21 @@ What gets fanned out:
   cached copy`. `refreshCollection` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
-- **A throw out of `refreshCollection` / `refreshAllCollections`** —
-  `Could not refresh this collection: <reason>`. Both entry points use the same
-  helper so a Refresh All that dies on one collection still explains
-  itself in every affected script's Log.
+- **A refresh that read fine but couldn't be saved** — the shared
+  `describeRefreshError` sentence (see
+  [diagnostics.md](diagnostics.md#refreshes-that-could-not-be-saved)).
+  Both entry points reach it through `collectionFailureMessage`, which
+  picks the wording from the recorded map rather than from the caught
+  error, so each collection names its own reason and the two paths
+  cannot word the same failure differently.
+- **A throw with nothing recorded** — `Could not refresh this
+  collection: <reason>`. `refreshCollection` records only when its write
+  fails, so an unrecorded throw came from earlier in the pipeline and
+  must not claim the read succeeded. Same fallback in both paths.
+- **A throw that takes down a whole pass** — the same generic sentence,
+  fanned out to every script in every collection. Only for a failure
+  outside the per-collection handling, where nothing was summarized and
+  there is one reason to give.
 
 ## When the log stays quiet
 
@@ -352,8 +363,9 @@ tracked in `TODO.md`.
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
   - `This collection did not load: <reason> — still running the cached
-    copy` (info) and `Could not refresh this collection: <reason>` (info) — a
-    collection-level failure, fanned out to every script under it. See
+    copy` (info), the `describeRefreshError` sentence (info), and
+    `Could not refresh this collection: <reason>` (info) — collection-level
+    failures, fanned out to every script under the collection. See
     [Collection-level failures](#collection-level-failures) for why info.
   - `Could not check for updates: <reason>` (error) — `refreshScript`
     itself threw (a storage failure, not a load failure).

@@ -73,6 +73,13 @@ export interface SmApi {
   // the last sync — what the UI renders as REJECTED. Empty when
   // everything registered.
   getRejections(): Promise<Record<string, string>>;
+  // {collectionId → why its last refresh could not be saved}. Empty
+  // when every refresh stored cleanly.
+  getRefreshErrors(): Promise<Record<string, string>>;
+  // Make every collection-refresh write throw, standing in for an
+  // exhausted `chrome.storage.local` quota without having to fill it.
+  // Stays armed until cleared with null; also cleared by `resetAllState`.
+  failCollectionWrites(message: string | null): Promise<void>;
   debugMatchIndex(url: string): Promise<{
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledCollections: string[] };

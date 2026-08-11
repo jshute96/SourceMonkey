@@ -57,6 +57,7 @@ import {
 } from './version-probe.js';
 import { probeVersions } from './version-probe-fetch.js';
 import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
+import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
 import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
 import { githubTokenLogSuffix } from './github-auth.js';
@@ -283,13 +284,12 @@ async function runCollectionCheck(
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] collection refresh failed: ${label}: ${msg}`);
-    // A throw out of refreshCollection (storage failure, and nothing
-    // else today — scan failures are caught inside and surface as
-    // scanError) leaves every script under this collection unrefreshed.
-    // Say so in each one's Log rather than letting the failure live
-    // only in the SW console.
+    // A throw out of refreshCollection leaves every script under this
+    // collection unrefreshed. Say so in each one's Log rather than
+    // letting the failure live only in the SW console.
     logCollectionEventToScripts(
-      [...(prior?.scripts.values() ?? [])], mode, `Could not refresh this collection: ${msg}`,
+      [...(prior?.scripts.values() ?? [])], mode,
+      await collectionFailureMessage(collectionId, msg),
     );
     throw err;
   }
@@ -304,6 +304,26 @@ async function runCollectionCheck(
     );
   }
   return result;
+}
+
+// The one sentence a collection-level refresh failure gets in every
+// affected script's Log, whichever entry point caught it. Both callers
+// route through here so the same failure can't read two ways.
+//
+// Which sentence depends on WHERE it failed, and the recorded map is the
+// evidence: `refreshCollection` records only when its write throws, so
+// an entry means the collection was read fine and couldn't be stored.
+// A throw with nothing recorded came from earlier in the pipeline — a
+// storage read, a hash, a rebuild — and must not claim the read
+// succeeded, so it gets the generic wording.
+async function collectionFailureMessage(
+  collectionId: string,
+  fallbackReason: string,
+): Promise<string> {
+  const recorded = (await readRefreshErrors())[collectionId];
+  return recorded
+    ? describeRefreshError(recorded)
+    : `Could not refresh this collection: ${fallbackReason}`;
 }
 
 async function runAllCollectionsCheck(
@@ -321,18 +341,36 @@ async function runAllCollectionsCheck(
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] refresh all failed: ${msg}`);
-    // `refreshAllCollections` rejects on the first collection that
-    // throws, so NO collection gets summarized — not even the ones that
-    // succeeded, and not the ones still draining behind the failure
-    // (they do finish and write; we just never see their results). Same
-    // fan-out as runCollectionCheck so the two paths can't drift,
-    // applied across every collection.
+    // Reached only when the PASS itself broke — a per-collection failure
+    // is recorded and skipped inside `refreshAllCollections`, and handled
+    // below. Nothing was summarized here, so every script hears the same
+    // reason. Same fan-out as runCollectionCheck so the two paths can't
+    // drift.
     for (const snapshot of priorByCollectionId.values()) {
       logCollectionEventToScripts(
         [...snapshot.scripts.values()], mode, `Could not refresh this collection: ${msg}`,
       );
     }
     throw err;
+  }
+
+  // Collections that were refreshed but couldn't be saved are absent
+  // from `result` without the pass having failed. They still owe their
+  // scripts a Log entry — a Refresh All that silently skipped this would
+  // say less than refreshing the same collection on its own, which does
+  // log (see runCollectionCheck).
+  //
+  // Keyed off the recorded map so each collection gets ITS reason, and so
+  // a collection absent for the other reason — removed mid-refresh, which
+  // clears its entry — stays quiet.
+  const refreshErrors = await readRefreshErrors();
+  for (const [id, snapshot] of priorByCollectionId) {
+    if (result.has(id)) continue;
+    const reason = refreshErrors[id];
+    if (!reason) continue;
+    logCollectionEventToScripts(
+      [...snapshot.scripts.values()], mode, describeRefreshError(reason),
+    );
   }
   for (const [, refreshed] of result) {
     summarizeCollectionOutcome(

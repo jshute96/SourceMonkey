@@ -465,6 +465,33 @@ Steps 2–4 run concurrently across entries, but with a cap
   large enough peak. A hard per-collection entry cap is still open — see
   TODO.md.
 
+### Write failure: report, don't lose it
+
+The write in step 5 is the last thing that can fail, and the one failure
+`chrome.storage.local` cannot record.
+
+- **Trigger**: `chrome.storage.local.set` rejects. In practice an
+  exhausted quota — 10 MB for the whole extension, since the manifest
+  does not take `unlimitedStorage`.
+- **Outcome**: nothing is written, so every script keeps its prior
+  content and keeps running. The reason goes to the session-storage map
+  in `src/refresh-error.ts`, keyed by collection.
+- **Why not the collection row**: writing the error there needs the
+  bucket that just rejected. `chrome.storage.session` is a separate
+  quota, so it still has room in exactly the situation being reported.
+- **Why session lifetime**: "your last refresh didn't save" describes
+  this session's attempt, not a property of the collection. A new
+  browser session refreshes from scratch.
+- **Cleared** on the next refresh of that collection that does save, and
+  pruned when the collection is removed.
+- **Surfaced** on the collections page as a per-section message plus a
+  page banner naming storage usage — see
+  [diagnostics.md](diagnostics.md#refreshes-that-could-not-be-saved).
+- **One collection failing doesn't stop the others.**
+  `refreshAllCollections` records each failure and keeps going rather
+  than rejecting at the first, because an exhausted quota fails *every*
+  collection — a first-failure abort would be the normal case.
+
 ### Scan failure: leave scripts untouched
 
 - **Triggers**: unreadable directory listing, unreadable manifest,

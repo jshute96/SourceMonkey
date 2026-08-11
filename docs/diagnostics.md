@@ -192,6 +192,41 @@ canonicalizer rejects, or whatever it tightens next. See
 the state, and [injection.md](injection.md#rejected-registrations) for
 the registration path that produces it.
 
+## Refreshes that could not be saved
+
+A refresh that read everything successfully and then failed to store it.
+Sibling to [rejected registrations](#rejected-registrations): another
+verdict about a script's *fate* rather than its content.
+
+- **Not a script-level fact at all.** It belongs to the collection, not
+  to any row under it — every script failed together, for a reason that
+  has nothing to do with any of them. So it carries no
+  `DiagnosticLocation` and never touches `errorMessage`.
+- **Not `scanError` either.** That one means the listing failed and
+  nothing was fetched. This means the listing and every fetch worked and
+  the *write* failed. Both can be present at once, from different
+  attempts, so a section shows both lines.
+- **The scripts are fine and still running.** Nothing was written, so
+  every row keeps the content it had. The message says so — what the
+  reader needs to know is that what they see on the page is not what is
+  on disk, not that something is broken.
+- **One string, one place**: `describeRefreshError` in
+  `src/refresh-error.ts`, listed under
+  [One string, one place](#one-string-one-place).
+
+Where it shows up:
+
+- **Per collection**, as a message line in that section, next to a
+  `scanError` line if there is one.
+- **Page banner** on the collections page, which adds the one thing the
+  per-collection message can't: how full storage actually is. That turns
+  "the write failed" into "you are out of space, remove something",
+  which is the only version the reader can act on.
+- **Not on the toolbar badge.** The badge is per-tab — its count is the
+  scripts expected ∪ actual for *that document* — so a global condition
+  rendered there would claim something about every unrelated page. See
+  [matching.md](matching.md).
+
 ## Wording
 
 One message per problem, phrased to survive every place it lands.
@@ -321,6 +356,7 @@ constant, so the copies can't drift:
 | `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
+| `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
 | `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |
 
 The last one is the cautionary case: it was two literals, and the Log

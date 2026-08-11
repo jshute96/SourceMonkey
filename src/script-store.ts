@@ -90,6 +90,7 @@ import { displayLocation, stripSriFragment } from './script-display.js';
 import { inferDisplayName } from './collection-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
+import { setRefreshError, pruneRefreshErrors } from './refresh-error.js';
 import {
   mapWithConcurrency,
   FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
@@ -1456,6 +1457,62 @@ async function readCollectionIndex(): Promise<string[]> {
   return (await getRaw<string[]>(COLLECTIONS_INDEX_KEY)) ?? [];
 }
 
+// Test-only: while set, EVERY collection-refresh write throws this
+// message instead of touching storage.
+//
+// Module state, so it only arms the context that set it. The service
+// worker and each extension page run their own copy of this module, and
+// the collections page does its own storage work — so a test arming
+// this over the SW test surface does NOT affect an add or refresh the
+// page performs itself. Sticky until cleared with null —
+// the out-of-quota case it stands in for fails every collection, not
+// just the next one, and a test covering that needs one arming call.
+//
+// Exists because the failure it stands in for — an exhausted
+// `chrome.storage.local` quota — is impractical to produce honestly in a
+// test. Filling 10 MB means writing ~10 MB of userscripts through the
+// real pipeline on every run, which is slow, and it leaves the profile
+// wedged for whatever runs next. The reporting path is the same either
+// way: the write throws, and everything downstream reacts to that.
+let collectionWriteFailure: string | null = null;
+export function _setCollectionWriteFailureForTests(message: string | null): void {
+  collectionWriteFailure = message;
+}
+
+// How full `chrome.storage.local` is, or null when the browser won't
+// say. `quota` is Chrome's own `QUOTA_BYTES` — 10 MB shared by the whole
+// extension, because the manifest does not take `unlimitedStorage`.
+//
+// That coupling is load-bearing and unenforced: `QUOTA_BYTES` reads the
+// same 10485760 whether or not the permission is held, so taking
+// `unlimitedStorage` (still an open option in TODO.md) would leave this
+// reporting a ceiling that no longer applies, and the collections page
+// calling a healthy profile full. Revisit here if that permission lands.
+//
+// Read live rather than tracked, so it needs nothing persisted and is
+// correct after a write from any context. The collections page uses it
+// to explain a refresh that couldn't be saved: "the write failed" is a
+// symptom, "storage is full" is the cause and the thing the user can
+// act on.
+export async function readLocalStorageUsage(): Promise<
+  { used: number; quota: number } | null
+> {
+  try {
+    const quota = chrome.storage.local.QUOTA_BYTES;
+    if (typeof quota !== 'number' || quota <= 0) return null;
+    return { used: await chrome.storage.local.getBytesInUse(null), quota };
+  } catch {
+    // Purely advisory — a page that can't measure simply doesn't show
+    // the banner.
+    return null;
+  }
+}
+
+// Fraction of the quota at which the page starts warning. Below this a
+// refresh that failed to save had some other cause, and pointing at
+// storage would send the reader somewhere useless.
+export const STORAGE_NEARLY_FULL = 0.9;
+
 // Read every registered collection's metadata (without scripts). Order
 // preserved from the index.
 export async function getCollections(): Promise<StoredCollection[]> {
@@ -1759,14 +1816,20 @@ export async function moveCollection(
 }
 
 export async function removeCollection(id: string): Promise<void> {
-  await mutate(async () => {
+  const nextIndex = await mutate(async () => {
     const collection = await getRaw<StoredCollection>(collectionKey(id));
     const ids = await readCollectionIndex();
-    const nextIndex = ids.filter((sid) => sid !== id);
+    const next = ids.filter((sid) => sid !== id);
     const removeKeys = [collectionKey(id), ...(collection?.scriptIds ?? []).map(scriptKey)];
-    await chrome.storage.local.set({ [COLLECTIONS_INDEX_KEY]: nextIndex });
+    await chrome.storage.local.set({ [COLLECTIONS_INDEX_KEY]: next });
     await chrome.storage.local.remove(removeKeys);
+    return next;
   });
+  // Session-storage bookkeeping, so a removed collection can't leave a
+  // banner counting a section that is no longer on the page. After the
+  // write, not inside it: the local write is the one that has to be
+  // atomic, and a failure here must not undo a removal that succeeded.
+  await pruneRefreshErrors(nextIndex);
 }
 
 // Drop a single script row from storage and remove its ID from the
@@ -1917,44 +1980,70 @@ export async function refreshCollection(
   // started from — that's the signal a setScriptEnabled landed
   // mid-fetch.
   const priorById = new Map(existingScripts.map((s) => [s.id, s]));
-  return await mutate(async () => {
-    const curCollection = await getRaw<StoredCollection>(collectionKey(id));
-    if (!curCollection) {
-      // Collection was removed during the refresh — abandon the write
-      // rather than resurrect a deleted collection row.
-      return null;
-    }
-    const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
-    const finalScripts = scripts.map((s) => preserveConcurrentEdits(
-      s,
-      priorById.get(s.id),
-      curScripts[scriptKey(s.id)] as StoredScript | undefined,
-    ));
+  // The write is the last thing that can fail, and it is the one failure
+  // `chrome.storage.local` can't record — an exhausted quota rejects the
+  // error row for the same reason it rejected the refresh. The reason
+  // goes to `chrome.storage.session` instead, where the collections page
+  // reads it. Every refresh path funnels through here, including the one
+  // `addCollection` runs directly, so this is the only place that needs
+  // to know. See src/refresh-error.ts.
+  try {
+    const written = await writeRefreshedCollection();
+    // Clears on the way out, so a collection that recovers stops
+    // reporting a failure the next refresh already fixed.
+    await setRefreshError(id, null);
+    return written;
+  } catch (err) {
+    await setRefreshError(id, describeError(err));
+    throw err;
+  }
 
-    const nextCollection: StoredCollection = {
-      ...curCollection,
-      lastRefreshedAt: now,
-      scriptIds: finalScripts.map((s) => s.id),
-    };
-    // Clear any scanError left by a previous failed refresh — control
-    // only reaches here when the scan succeeded (the early-return above
-    // handles the failure case).
-    delete nextCollection.scanError;
+  async function writeRefreshedCollection(): Promise<
+    { collection: StoredCollection; scripts: StoredScript[] } | null
+  > {
+    return await mutate(async () => {
+      const curCollection = await getRaw<StoredCollection>(collectionKey(id));
+      if (!curCollection) {
+        // Collection was removed during the refresh — abandon the write
+        // rather than resurrect a deleted collection row.
+        return null;
+      }
+      const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
+      const finalScripts = scripts.map((s) => preserveConcurrentEdits(
+        s,
+        priorById.get(s.id),
+        curScripts[scriptKey(s.id)] as StoredScript | undefined,
+      ));
 
-    // Drop rows whose IDs are no longer referenced. Hit by manifest
-    // collections whose user removed an entry; also defensive against
-    // any future per-script Remove.
-    const priorIds = new Set(existingScripts.map((s) => s.id));
-    const nextIds = new Set(finalScripts.map((s) => s.id));
-    const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
+      const nextCollection: StoredCollection = {
+        ...curCollection,
+        lastRefreshedAt: now,
+        scriptIds: finalScripts.map((s) => s.id),
+      };
+      // Clear any scanError left by a previous failed refresh — control
+      // only reaches here when the scan succeeded (the early-return above
+      // handles the failure case).
+      delete nextCollection.scanError;
 
-    const toSet: Record<string, unknown> = { [collectionKey(id)]: nextCollection };
-    for (const s of finalScripts) toSet[scriptKey(s.id)] = s;
-    await chrome.storage.local.set(toSet);
-    if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
+      // Drop rows whose IDs are no longer referenced. Hit by manifest
+      // collections whose user removed an entry; also defensive against
+      // any future per-script Remove.
+      const priorIds = new Set(existingScripts.map((s) => s.id));
+      const nextIds = new Set(finalScripts.map((s) => s.id));
+      const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
 
-    return { collection: nextCollection, scripts: finalScripts };
-  });
+      const toSet: Record<string, unknown> = { [collectionKey(id)]: nextCollection };
+      for (const s of finalScripts) toSet[scriptKey(s.id)] = s;
+      // Placed where a real quota rejection lands — after everything was
+      // fetched and reconciled, with nothing written — so the test
+      // exercises the same state the production failure produces.
+      if (collectionWriteFailure !== null) throw new Error(collectionWriteFailure);
+      await chrome.storage.local.set(toSet);
+      if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
+
+      return { collection: nextCollection, scripts: finalScripts };
+    });
+  }
 }
 
 // Refetch a single script. Goes through the same per-file pipeline as
@@ -2132,13 +2221,21 @@ export async function fetchOrSkipInParallel(
   return new Map(results);
 }
 
-// Refresh every registered collection, a bounded few at a time.
-// Returns the new
-// state per collection so callers can compute "what changed" without a
-// second read. A failed collection-level refresh (e.g. one collection's
-// scan throws) doesn't take the rest down — its slot in the result map
-// is just absent, and the collection's `scanError` field carries the
-// reason.
+// Refresh every registered collection, a bounded few at a time. Returns
+// the new state per collection so callers can compute "what changed"
+// without a second read.
+//
+// One collection failing never takes the pass down, and never costs the
+// others their results — its slot in the result map is simply absent.
+// Both failure kinds have a durable home to be read from afterwards, so
+// dropping the throw loses nothing:
+//   - a scan failure → the collection row's `scanError`
+//   - a write failure → the session-storage map in src/refresh-error.ts
+//
+// Rethrowing instead would reject the caller at the first failure while
+// the remaining collections were still being written, so their outcomes
+// could never be reported — and on an exhausted quota EVERY collection
+// fails, which made that the normal case rather than the rare one.
 export async function refreshAllCollections(
   opts: RefreshOptions = {},
 ): Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>> {
@@ -2156,8 +2253,20 @@ export async function refreshAllCollections(
   // src/concurrency.ts.
   const entries = await mapWithConcurrency(
     collections, FETCH_COLLECTIONS_CONCURRENCY, async (s) => {
-      const r = await refreshCollection(s.id, { ...opts, fileFetchCache });
-      return [s.id, r] as const;
+      try {
+        const r = await refreshCollection(s.id, { ...opts, fileFetchCache });
+        return [s.id, r] as const;
+      } catch (err) {
+        // `refreshCollection` already recorded the reason where the UI
+        // reads it; all this has to do is keep the sibling collections
+        // running. The console line is for the SW log, not the user —
+        // named, because the motivating case fails every collection at
+        // once and an unattributed line would be noise. Says "failed"
+        // rather than naming a cause: most throws here are the write,
+        // but this catch doesn't verify that.
+        console.info(`[SourceMonkey] collection refresh failed: ${s.path}: ${describeError(err)}`);
+        return [s.id, null] as const;
+      }
     },
   );
   const out = new Map<string, { collection: StoredCollection; scripts: StoredScript[] }>();
