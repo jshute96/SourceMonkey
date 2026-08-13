@@ -837,14 +837,24 @@ they follow are in
 
 ## Feature TODOs and ideas
 
-- nice UI for collections page
-- nice UI for script page and logging
-- status widget instead of context menu for running scripts
+### Collections page
+
+- control to view by file/url location or by name
+- sort by name or location
+- filtered view
+- collapse a collection
 - smoother add collection/script flow, maybe a dialog box
+
+### Page status menu / widget
+
+- status widget instead of context menu for running scripts
+- enable / disable a script on that page
+- choose which version of a script to use
+
+### Other
+
+- auto-reload any page if scripts on it have updated (maybe just for manual focused refresh, and do double-refresh if a new script is discovered but not ready)
 - relative paths for dev, absolute paths for release (for requires & resources)
-- fix caveats with the new multi-file script injection model:
-  - reload fast-path doesn't work right?
-  - global vars don't go across scripts (except with exports)
 - download a script to local disk for editing / debugging
 - keep links between local and remote version of a script, select which
   to run. (The *reporting* half shipped — see

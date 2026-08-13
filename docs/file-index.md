@@ -310,7 +310,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/names-and-paths.md` | Decode-for-display rule for names/URLs: what gets percent-decoded, what stays encoded, and why |
 | `docs/script-log.md` | Per-script event log: schema, storage layout, what gets logged, viewer Log tab behavior |
 | `docs/diagnostics.md` | The shared location every content-derived verdict carries, who produces one, and how surfaces make it clickable |
-| `docs/site-icons.md` | Favicon fetch+cache + the icon slot rendered beside each script filename; URL extraction lives in `match-targets.ts` |
+| `docs/site-icons.md` | Favicon fetch+cache + the icon slot rendered beside each script name; URL extraction lives in `match-targets.ts` |
 | `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |
 | `docs/local-file-overrides.md` | Loading `@require` / `@resource` / `@icon` from local disk instead of the declared URL: suffix rule, safety gate, refresh + cache policy, UI |
 | `docs/resources.md` | `@resource` pipeline + GM_getResourceText / GM_getResourceURL plumbing: prefetch, base64 storage, blob URL minting, shared infra with @require |

@@ -692,7 +692,7 @@ collection**:
 - **Remove** button → `removeCollection`. If the collection owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove collection with N scripts?" first;
   cancel aborts the remove. An empty collection removes silently.
-- Table with columns **(bulk toggle) | Filename | Size | Status**.
+- Table with columns **(bulk toggle) | Name | Size | Status**.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
     flips every script under this collection on (when not all are on) or
     off (when all are on). Greyed when the collection itself is off.
@@ -701,8 +701,15 @@ collection**:
     the checkbox itself is `disabled` (the underlying value is
     preserved so flipping the collection back on restores each script's
     prior state).
-  - Filename links to the viewer at
-    `userscript.html?script=<scriptId>`.
+  - Name shows the script's `@name`, falling back to its location when
+    it declares none — see
+    [names-and-paths.md](names-and-paths.md#the-collections-page-shows-name).
+    It links to the viewer at `userscript.html?script=<scriptId>`.
+  - The name's tooltip is the whole location (never the shortened
+    form the column may fall back to), a blank line, then the
+    `@description` (or `No description`).
+  - Rows stay in stored scan order, which is by location — so the Name
+    column does not read alphabetically.
   - Size shows the UTF-8 byte count of the cached content — including
     a `"0 B"` for an empty file, and the prior size for `missing` /
     `invalid` rows that retain their last-read body. Only rows that have
@@ -851,10 +858,10 @@ have to be.
 - **Re-seating** into stored order happens only when the order actually
   differs — moving an attached node detaches it first, and Chrome blurs
   anything focused inside it.
-- **The Filename and Status cells** are rebuilt only when one of their
+- **The Name and Status cells** are rebuilt only when one of their
   inputs moved, tracked per row by `nameCellKeys` / `statusCellKeys`.
   Both discard and recreate their contents, which would drop focus off
-  a link the user had tabbed to; the Filename cell would also re-run the
+  a link the user had tabbed to; the Name cell would also re-run the
   favicon fetch and flash the globe placeholder.
 - **Reads are proportionate.** One pass reads the collection index and each
   collection's scripts once, and derives the dedup `#N` map from those rows.

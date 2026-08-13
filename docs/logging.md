@@ -23,9 +23,17 @@ or UI surface refers to it.
 
 - SW console — every `[SourceMonkey] …` line that mentions a script
   uses its log ID. See [the message list below](#message-catalog).
-- Collections page — a faint `#N` is rendered after the filename link
+- Collections page — a faint `#N` is rendered after the name link
   whenever a script is part of a dupe group. No suffix for unique
   basenames.
+  - The column shows the script's `@name`, so the suffix can sit beside
+    a name that isn't the basename it was computed from. It is still
+    the marker that tells two rows apart in the SW console, which is
+    what it is there for.
+  - The converse: two scripts sharing an `@name` but not a basename
+    render as two identically labelled rows with no suffix.
+  - Either way the name link's tooltip leads with the location, so what
+    tells the rows apart is one hover away.
 - Userscript viewer — a `Log ID` row in the details panel, but only
   for a script whose ID carries a `#N`. A unique log ID is just the
   basename, which the heading and the `Location` row already say.

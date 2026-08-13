@@ -2,7 +2,7 @@
 // collection (a local directory of userscripts, an http(s) directory or
 // JSON manifest, a GitHub tree, or one of the three built-in containers
 // that hold individually added scripts), with Refresh + Remove buttons
-// and a script table showing filename, size, and parse status.
+// and a script table showing name, size, and parse status.
 //
 // Add submits the raw string; the store classifies it by shape (path vs
 // URL, suffix) and scans accordingly, loading every script it finds into
@@ -77,6 +77,7 @@ import {
   formatScriptStatusLabel,
   logIdDupeSuffix,
   scriptBasename,
+  scriptDisplayName,
   scriptOutdatedProbe,
 } from './script-display.js';
 import { probeLabel, type VersionProbe } from './version-probe.js';
@@ -235,7 +236,7 @@ if (chrome.storage?.local?.onChanged) {
 
 // Page-wide map of {scriptId → log ID}, refreshed whenever scripts are
 // added / removed / refreshed. Renders the `#N` dupe suffix in the
-// filename cell. Empty until `refreshLogIds()` runs.
+// name cell. Empty until `refreshLogIds()` runs.
 let currentLogIds = new Map<string, string>();
 
 // Page-wide map of {scriptId → highest log level seen}. Drives the
@@ -689,7 +690,7 @@ function syncScriptRow(
 ): void {
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
-  // Like the Filename cell below, the Status cell is only rebuilt when
+  // Like the Name cell below, the Status cell is only rebuilt when
   // what it shows moved. `paintStatusCell` discards and recreates the
   // `<a>` (and the 🗑 on a missing row), so repainting it
   // unconditionally would drop focus off it — and a repaint runs on any
@@ -705,7 +706,7 @@ function syncScriptRow(
   const size = formatScriptSize(script);
   if (sizeCell && sizeCell.textContent !== size) sizeCell.textContent = size;
 
-  // The Filename cell is only rebuilt when something it shows actually
+  // The Name cell is only rebuilt when something it shows actually
   // moved. Rebuilding unconditionally would re-run the favicon fetch and
   // flash the globe placeholder on every unrelated repaint.
   const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
@@ -746,8 +747,8 @@ function sameNodeOrder(container: Element, wanted: readonly Element[]): boolean 
   );
 }
 
-// Everything the Filename cell renders, as one comparable string: the
-// name text, the description tooltip, and the favicon's inputs
+// Everything the Name cell renders, as one comparable string: the
+// name text, its location + description tooltip, and the favicon's inputs
 // (`renderSiteIconInto` reads `matching`, the header's `@icon`, and
 // `fileUrl` for resolving a relative one). Recorded per row by
 // `fillNameCell` so a repaint can tell a cell that needs rebuilding from
@@ -758,7 +759,13 @@ function nameCellKey(script: StoredScript, useLocalFiles: boolean): string {
   return JSON.stringify([
     script.relativePath,
     script.fileUrl,
-    scriptDescription(script),
+    // The header values the name text and its tooltip are built from,
+    // raw rather than formatted — comparing the inputs is enough.
+    script.header && getValue(script.header, 'name'),
+    script.header && getValue(script.header, 'description'),
+    // `inContainer`, the other input to the name text, is deliberately
+    // absent: it's a property of the collection the script sits in, and
+    // a script that moves between collections is a different row.
     iconRefFromHeader(script.header),
     script.matching,
     // The collection's local-files setting decides whether the `@icon`
@@ -1141,7 +1148,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   bulkHead.appendChild(bulkBtn);
   headRow.appendChild(bulkHead);
 
-  for (const label of ['Filename', 'Size', 'Status']) {
+  for (const label of ['Name', 'Size', 'Status']) {
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
@@ -1229,7 +1236,7 @@ function renderScriptRow(
   return tr;
 }
 
-// Build (or rebuild) the Filename cell's contents: favicon slot, the
+// Build (or rebuild) the Name cell's contents: favicon slot, the
 // linked name, and the dedup `#N` suffix. Shared with the live in-place
 // row update, which re-runs it when a refresh changed something this
 // cell shows — otherwise a script whose `@match` or `@description` was
@@ -1245,7 +1252,7 @@ function fillNameCell(
   useLocalFiles: boolean,
 ): void {
   nameCell.textContent = '';
-  // Slot for the favicon: a fixed-width container so the filename
+  // Slot for the favicon: a fixed-width container so the name
   // text always starts at the same x-position. renderSiteIconInto
   // synchronously paints a globe placeholder (clickable when the
   // script's @match yields a usable origin) and swaps it for the real
@@ -1255,24 +1262,15 @@ function fillNameCell(
   nameCell.appendChild(iconSlot);
   renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, useLocalFiles));
   const a = document.createElement('a');
-  // For container scripts the `relativePath` is the full URL/path —
-  // show just the basename in the filename column to keep rows
-  // scannable. The viewer's Location row carries the URL in full.
-  // A manifest entry may itself be an absolute URL, so the non-
-  // container branch goes through displayLocation too — otherwise the
-  // same script reads encoded here and decoded in the viewer. Local
-  // directory entries have no scheme and pass through untouched.
-  const nameText = inContainer
-    ? scriptBasename(script.relativePath)
-    : displayLocation(script.relativePath);
   // Slash-aware appender (not textContent) so a long name wraps at `/`
   // boundaries before breaking mid-segment, matching the collection
   // heading and the viewer's Location row.
-  appendWithSlashBreaks(a, nameText);
-  // Hovering the filename surfaces the `@description`. Scoped to the
-  // anchor so the Size / Status cells (which carry their own meaning)
-  // don't inherit the description as a row-wide tooltip.
-  a.title = scriptDescription(script);
+  appendWithSlashBreaks(a, nameCellText(script, inContainer));
+  // Hovering the name surfaces where the script came from and what it
+  // says it does. Scoped to the anchor so the Size / Status cells
+  // (which carry their own meaning) don't inherit it as a row-wide
+  // tooltip.
+  a.title = nameCellTooltip(script);
   a.href = viewerUrl(script.id).toString();
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
@@ -1289,12 +1287,33 @@ function fillNameCell(
   nameCellKeys.set(script.id, nameCellKey(script, useLocalFiles));
 }
 
-// Tooltip text for a script row: the parsed `@description` value, or
-// "No description" when the script declares none (or hasn't parsed
-// far enough to have a header at all).
-function scriptDescription(script: StoredScript): string {
+// Text in the Name column: the script's own `@name`, falling back to
+// its location when it declares none (or hasn't parsed far enough to
+// have a header at all).
+//
+// The fallback is shortened for container scripts, whose `relativePath`
+// is the whole URL — a column that has to stay scannable at table width
+// can't carry one. A manifest entry may itself be an absolute URL, so
+// the non-container branch goes through displayLocation too — otherwise
+// the same script reads encoded here and decoded in the viewer. Local
+// directory entries have no scheme and pass through untouched.
+//
+// Only the column shortens. The tooltip below always gives the location
+// in full, which is the point of having it there.
+function nameCellText(script: StoredScript, inContainer: boolean): string {
+  const location = inContainer
+    ? scriptBasename(script.relativePath)
+    : displayLocation(script.relativePath);
+  return scriptDisplayName(script, location);
+}
+
+// Tooltip on the name link: the whole location first — the column no
+// longer shows it, and it's what tells two same-named scripts apart —
+// then a blank line, then the parsed `@description`, or "No description"
+// when the script declares none.
+function nameCellTooltip(script: StoredScript): string {
   const desc = script.header ? getValue(script.header, 'description') : undefined;
-  return desc?.trim() || 'No description';
+  return `${displayLocation(script.relativePath)}\n\n${desc?.trim() || 'No description'}`;
 }
 
 async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTMLButtonElement): Promise<void> {
@@ -2063,7 +2082,7 @@ function makeToggle(
 // Relative — not the absolute `chrome.runtime.getURL(...)` form — because
 // both pages live at the extension root, so the browser resolves it
 // against the current page; this keeps the long `chrome-extension://<id>/`
-// prefix from being inlined twice per row (filename + status link) across
+// prefix from being inlined twice per row (name + status link) across
 // a table that can hold hundreds of scripts. Returns a string; the two
 // callers already `.toString()` it (a no-op on a string).
 function viewerUrl(scriptId: string, tab?: 'log'): string {

@@ -93,4 +93,29 @@ test.describe('container collections', () => {
     )!;
     expect(fooAfter.loadedAt).toBe(fooPrior.loadedAt);
   });
+
+  test('a container row shows the @name and tooltips the whole URL', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // A container script's `relativePath` is its whole URL. The Name
+    // column shows the `@name` (and shortens to the basename only when
+    // there is no `@name` to show), but the tooltip has no width limit
+    // and must carry the full URL — it's what tells two identically
+    // named scripts apart. See docs/names-and-paths.md.
+    server.setRoute('/deep/path/foo.user.js', userscriptText('Foo'));
+    const collection = await sm.addCollection(`${server.baseUrl}/deep/path/foo.user.js`);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const nameLink = page.locator(
+      `tr[data-script-id="${script.id}"] td.name-cell a:not(.site-icon-inner)`,
+    );
+    await expect(nameLink).toHaveText('Foo');
+    await expect(nameLink).toHaveAttribute(
+      'title',
+      `${server.baseUrl}/deep/path/foo.user.js\n\nNo description`,
+    );
+    await page.close();
+  });
 });

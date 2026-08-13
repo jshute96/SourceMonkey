@@ -88,13 +88,24 @@ export function logIdDupeSuffix(logId: string): string {
   return /#\d+$/.exec(logId)?.[0] ?? '';
 }
 
-// The name to show for a script in badges, menus, and match listings:
-// its `@name` when it declares one, else its location in readable
-// form. Shared so every surface labels the same script the same way.
+// The name to show for a script in badges, menus, the collections list,
+// and match listings: its `@name` when it declares a usable one, else
+// its location in readable form. Shared so every surface labels the
+// same script the same way.
+//
+// A whitespace-only `@name` counts as no name — a header that parsed
+// but declared `// @name   ` must not paint a blank row where a name
+// belongs.
+//
+// `fallback` lets a caller substitute its own location text (the
+// collections page shortens a container script's URL to its basename);
+// omitted, the whole location is used.
 export function scriptDisplayName(
   script: Pick<StoredScript, 'header' | 'relativePath'>,
+  fallback?: string,
 ): string {
-  return (script.header && getValue(script.header, 'name')) || displayLocation(script.relativePath);
+  const name = script.header ? getValue(script.header, 'name')?.trim() : undefined;
+  return name || fallback || displayLocation(script.relativePath);
 }
 
 // Format a byte count for the size column. Returns "1.2 KB", "950 B",

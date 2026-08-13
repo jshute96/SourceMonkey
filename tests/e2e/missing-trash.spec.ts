@@ -99,10 +99,11 @@ test.describe('missing-row trash-can', () => {
     await expect(section.locator('tbody tr')).toHaveCount(1);
     await expect(section.locator('button.remove-script')).toHaveCount(0);
 
-    // The surviving row is the ok one (filename "a.user.js"); it
-    // shouldn't carry a trash button.
+    // The surviving row is the ok one; it shouldn't carry a trash
+    // button. The fixtures give each script its filename as its
+    // `@name`, so the Name column reads "a.user.js" either way.
     await expect(section.locator('tbody tr')).toHaveCount(1);
-    // Filename link, not the favicon anchor (also an `<a>` in the row).
+    // Name link, not the favicon anchor (also an `<a>` in the row).
     await expect(section.locator('tbody tr td.name-cell a:not(.site-icon-inner)'))
       .toHaveText('a.user.js');
 

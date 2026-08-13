@@ -273,6 +273,31 @@ test('scriptDisplayName: prefers @name, falls back to the readable location', ()
   );
 });
 
+test('scriptDisplayName: a blank @name is no name', () => {
+  // A header that parsed but declared `// @name    ` must not paint a
+  // blank row where a name belongs.
+  const header = { tags: [{ tag: 'name', value: '   ' }] };
+  assert.equal(
+    scriptDisplayName({ header, relativePath: 'https://x/y%20z.user.js' }),
+    'https://x/y z.user.js',
+  );
+});
+
+test('scriptDisplayName: the caller can supply its own location fallback', () => {
+  // The collections page shortens a container script's URL to its
+  // basename before handing it over as the fallback.
+  assert.equal(
+    scriptDisplayName({ relativePath: 'https://x/deep/y%20z.user.js' }, 'y z.user.js'),
+    'y z.user.js',
+  );
+  // A usable @name still wins over the fallback.
+  const header = { tags: [{ tag: 'name', value: 'Nice Name' }] };
+  assert.equal(
+    scriptDisplayName({ header, relativePath: 'https://x/deep/y.user.js' }, 'y.user.js'),
+    'Nice Name',
+  );
+});
+
 test('scriptBasename: an escaped slash cannot smuggle a path separator in', () => {
   // `%2F` decodes to a real `/`. This value becomes a log ID, so a
   // "basename" carrying a separator would read as a directory in every
