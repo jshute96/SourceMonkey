@@ -422,8 +422,52 @@ Every load path goes through the same pipeline:
      - **Container collections** — vanished is never observed, because
        the synthetic scan is built from the existing scripts. Per-
        script removal goes through `removeScript` instead.
-5. Persist the collection row + every script row in a single
-   `chrome.storage.local.set` call.
+5. Persist the collection row + **every script row that actually
+   changed** in a single `chrome.storage.local.set` call. See
+   [Only changed rows are written](#only-changed-rows-are-written).
+
+### Only changed rows are written
+
+Every refresh rebuilds a full row per script, including the ones that
+took a pre-fetch skip and came back byte-identical.
+
+Writing all of them would mean a refresh of N scripts persists N rows to
+answer a question about one. So both refresh paths compare first, and
+write only the difference:
+
+- **`refreshCollection`** filters its rows through `changedScriptRows`.
+  `refreshAllCollections` and `addCollection` delegate to it, so they
+  are covered too.
+- **`refreshScript`** — the opportunistic per-navigation path, where
+  this matters most — compares its single merged row directly.
+
+Why it's shaped this way:
+
+- **The comparison uses the rows read inside the write lock**, never the
+  pre-fetch snapshot. Comparing against a stale read would skip a write
+  that a concurrent edit had made necessary.
+- **The collection row is always written.** `lastRefreshedAt` moved, and
+  that timestamp is the record of the check having happened at all.
+  Scripts have no equivalent field, and nothing looks for one.
+- **Rows are compared with `sameStoredValue`** — structural equality
+  over the JSON shapes storage round-trips.
+  - Key order is not significant. A rebuilt row's order comes from the
+    spread-and-delete that built it, a stored row's from its last
+    serialization, so a `JSON.stringify` comparison would call every row
+    changed and quietly do nothing.
+  - `undefined`-valued keys count as absent, matching what the
+    round-trip does to them.
+- **No listener sees a difference.** Chrome already declines to fire
+  `storage.onChanged` for a `set` whose value matches what's stored —
+  the behavior the rejection retry is built around (see
+  [injection.md](injection.md#rejected-registrations)).
+  - What this drops is the serialize-and-store cost paid before Chrome
+    gets far enough to compare. Not small: a `@resource` rides in the
+    row as base64.
+- **What a refresh *reports* is unnarrowed.** Both paths still return
+  every row, so the outcome summary, the Log entries, the update probes,
+  and the collections page's changed-row highlights all see the full
+  set.
 
 ### Fan-out is bounded
 
@@ -737,8 +781,9 @@ extension with:
 google-chrome chrome-extension://<extension-id>/collections.html?refresh
 ```
 
-after writing new userscripts to disk. Combined with the unchanged-
-file skip, this is cheap when most files are untouched.
+after writing new userscripts to disk. Combined with the unchanged-file
+skip and the [changed-rows-only write](#only-changed-rows-are-written),
+this is cheap when most files are untouched.
 
 Similarly, `?add=<path-or-url>`:
 

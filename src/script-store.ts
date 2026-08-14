@@ -1866,7 +1866,8 @@ export async function removeScript(id: string): Promise<void> {
 // reconciles vanished files per collection kind: directory collections
 // mark them `missing` (the file may come back), manifest collections
 // delete them (the user explicitly removed the entry). Persists the
-// updated collection row plus every script row in one set call.
+// updated collection row plus every script row that actually changed,
+// in one set call — see `changedScriptRows`.
 //
 // Scan failure (unreadable directory listing, unreadable manifest, bad
 // URL) records a `scanError` on the collection and **leaves every script
@@ -2032,8 +2033,14 @@ export async function refreshCollection(
       const nextIds = new Set(finalScripts.map((s) => s.id));
       const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
 
+      // The collection row always goes: `lastRefreshedAt` moved, and
+      // that's the record of the check having happened at all. The
+      // script rows only go if they actually changed — see
+      // `changedScriptRows`.
       const toSet: Record<string, unknown> = { [collectionKey(id)]: nextCollection };
-      for (const s of finalScripts) toSet[scriptKey(s.id)] = s;
+      for (const s of changedScriptRows(finalScripts, curScripts)) {
+        toSet[scriptKey(s.id)] = s;
+      }
       // Placed where a real quota rejection lands — after everything was
       // fetched and reconciled, with nothing written — so the test
       // exercises the same state the production failure produces.
@@ -2119,7 +2126,14 @@ export async function refreshScript(
   return await mutate(async () => {
     const cur = await getRaw<StoredScript>(scriptKey(scriptId));
     const merged = preserveConcurrentEdits(next, prior, cur);
-    await chrome.storage.local.set({ [scriptKey(scriptId)]: merged });
+    // Same rule as the collection path: a check that found nothing new
+    // doesn't rewrite the row. This one matters most — it's the
+    // opportunistic path, so it runs on navigations rather than clicks.
+    // There's no collection row here to carry a "we checked" timestamp,
+    // and that's fine: nothing reads a per-script one.
+    if (!sameStoredValue(merged, cur)) {
+      await chrome.storage.local.set({ [scriptKey(scriptId)]: merged });
+    }
     return merged;
   });
 }
@@ -2148,6 +2162,75 @@ function preserveConcurrentEdits(
   if (cur.versionProbes) out.versionProbes = cur.versionProbes;
   else delete out.versionProbes;
   return out;
+}
+
+// Which of `finalScripts` actually differ from what's already stored.
+//
+// Every refresh path rebuilds a full row per script — including the ones
+// that took the size+mtime / 304 skip and came back byte-identical — so
+// without this a refresh of N scripts writes N rows to answer a question
+// about one. The rows are not small: a `@resource` rides in the row as
+// base64, so re-persisting an unchanged script means re-serializing its
+// payloads too.
+//
+// Chrome already declines to fire `storage.onChanged` for a `set` whose
+// value matches what's stored (the behavior `retryRejectedRegistrations`
+// in injector.ts is built around), so this changes no downstream
+// listener — it drops the serialize-and-store cost that happens before
+// Chrome gets far enough to compare.
+//
+// Callers must still return the FULL list to their own callers: what
+// gets written narrows, what a refresh reports does not.
+//
+// Takes the rows as read inside the write lock, never the pre-fetch
+// snapshot — comparing against a stale read would skip a write that a
+// concurrent edit had made necessary.
+function changedScriptRows(
+  finalScripts: readonly StoredScript[],
+  curByKey: Record<string, unknown>,
+): StoredScript[] {
+  return finalScripts.filter(
+    (s) => !sameStoredValue(s, curByKey[scriptKey(s.id)]),
+  );
+}
+
+// Structural equality over the JSON shapes `chrome.storage.local` round-
+// trips: objects, arrays, and primitives.
+//
+// Key ORDER is deliberately not significant. A stored row's order comes
+// from however it was last serialized, while a rebuilt one's comes from
+// the spread-and-delete sequence that built it (`{...prior}` then
+// `delete next.refreshError`, say) — so two rows that mean the same
+// thing routinely disagree on order, and a `JSON.stringify` comparison
+// would call every one of them changed and quietly do nothing.
+//
+// `undefined`-valued keys are treated as absent, matching what a storage
+// round-trip does to them: a freshly built row carrying `foo: undefined`
+// and a stored row with no `foo` at all are the same row.
+//
+// Exported for unit tests.
+export function sameStoredValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    return a.every((v, i) => sameStoredValue(v, b[i]));
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const aKeys = Object.keys(ao).filter((k) => ao[k] !== undefined);
+  const bKeys = Object.keys(bo).filter((k) => bo[k] !== undefined);
+  if (aKeys.length !== bKeys.length) return false;
+  // `hasOwnProperty`, not `k in bo`: a row that came back through
+  // `JSON.parse` can carry an own `__proto__`, and `in` would answer for
+  // the prototype chain — comparing a stored value against an inherited
+  // function. That direction only ever yields "changed" (a redundant
+  // write), but own-keys-only is what this means, so it says so.
+  return aKeys.every(
+    (k) => Object.prototype.hasOwnProperty.call(bo, k) && sameStoredValue(ao[k], bo[k]),
+  );
 }
 
 // Fetch each scanned file, at most

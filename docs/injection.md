@@ -133,12 +133,15 @@ rules and why it carries no location.
   for whichever of the scripts it just checked are rejected.
   - Without it a rejected script is never retried by a Refresh that
     finds no new content. The normal trigger is `onCacheChanged`, which
-    rides on `chrome.storage.onChanged` — and Chrome raises **no change
-    event when a `set` writes a value identical to the stored one**. So
-    the refresh rewrites the same row, nothing fires, and the spec is
-    never re-offered. For a healthy script that's correct (its
-    registration already matches); for a rejected one it stranded the
-    row.
+    rides on `chrome.storage.onChanged` — and a refresh that changes
+    nothing raises no such event, by either of two routes:
+    - It skips the write entirely for a row that didn't change (see
+      [storage.md](storage.md#only-changed-rows-are-written)).
+    - Chrome raises **no change event when a `set` writes a value
+      identical to the stored one** anyway.
+  - So nothing fires and the spec is never re-offered. For a healthy
+    script that's correct (its registration already matches); for a
+    rejected one it stranded the row.
   - **Targeted, not a full `syncRegistrations()`.** A re-sync wipes and
     re-registers everything, which is far too heavy per navigation and
     would briefly deregister *healthy* scripts while a page is

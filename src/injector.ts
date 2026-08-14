@@ -1183,12 +1183,14 @@ export function resetRejectionRetryGate(): void {
 //
 // Why the refresh paths need this at all: `syncRegistrations` is
 // normally driven by `onCacheChanged`, which rides on
-// `chrome.storage.onChanged` — and Chrome raises no change event when a
-// `set` writes a value identical to what's already stored. A Refresh
-// that finds nothing new therefore rewrites the same row, fires
-// nothing, and never re-offers the spec. For a healthy script that's
-// right (its registration already matches); for a rejected one it left
-// the row reading REJECTED with nothing retrying it.
+// `chrome.storage.onChanged` — and a Refresh that finds nothing new
+// raises no such event, so it never re-offers the spec. Nothing fires
+// by either of two routes: the refresh skips the write entirely for a
+// row that didn't change (see `changedScriptRows` in script-store.ts),
+// and Chrome raises no change event even when a `set` does write a
+// value identical to what's already stored. For a healthy script that
+// silence is right — its registration already matches. For a rejected
+// one it left the row reading REJECTED with nothing retrying it.
 //
 // Deliberately NOT `syncRegistrations()`. That wipes and re-registers
 // everything, which (a) is far too heavy to run per navigation and (b)

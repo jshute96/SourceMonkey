@@ -54,7 +54,20 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'badge green=1');
+    // The title is part of the wait, not just the assertion — as it is
+    // in every other title check in this file. `getTabState` reads the
+    // badge text, color, and title as separate chrome.action calls, so a
+    // repaint landing between them returns a snapshot that mixes two
+    // states: green (settled) beside `MISSING` (the moment before). That
+    // pairing is impossible in the product — MISSING forces amber — so
+    // waiting on only the badge and asserting on the title is a race
+    // against the read, not against the state.
+    const snap = await waitForTabState(
+      sm,
+      tabId,
+      (s) => s.badgeText === '1' && hasColor(s, GREEN) && s.title.includes('Hello | OK'),
+      'badge green=1 + OK title',
+    );
     expect(snap.badgeText).toBe('1');
     expect(snap.title).toContain('Hello | OK');
     await page.close();

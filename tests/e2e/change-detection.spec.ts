@@ -187,4 +187,72 @@ test.describe('change detection', () => {
     expect(result!.scripts[0].status).toBe('ok');
     expect(typeof (result!.scripts[0] as { contentHash?: string }).contentHash).toBe('string');
   });
+  // The change-detection pipeline above decides whether a row's CONTENT
+  // moved. This is the storage consequence of that verdict: a row that
+  // didn't move isn't rewritten at all.
+  //
+  // Worth an explicit test because the regression is invisible twice
+  // over. Restoring the unconditional write breaks no behavior (Chrome
+  // drops a `set` whose value equals what's stored), and it costs only
+  // time — so nothing else in the suite would notice. What is asserted
+  // here is the `chrome.storage.local.set` call itself.
+  test('a refresh writes only the script rows that changed', async ({ sm, getServiceWorker }) => {
+    const dir = ScriptsDir.create();
+    try {
+      dir.write({ relativePath: 'one.user.js', meta: { name: 'One', match: ['https://e.com/*'] }, body: 'void 0;' });
+      dir.write({ relativePath: 'two.user.js', meta: { name: 'Two', match: ['https://e.com/*'] }, body: 'void 0;' });
+      const collection = await sm.addCollection(dir.path);
+      await sm.syncNow();
+
+      // Record the keys of every local write from here on. Installed
+      // after the add, so the row-creating writes aren't counted.
+      const sw = await getServiceWorker();
+      await sw.evaluate(() => {
+        const w = self as unknown as {
+          __setKeys: string[];
+          __origSet: typeof chrome.storage.local.set;
+        };
+        w.__setKeys = [];
+        const orig = chrome.storage.local.set.bind(chrome.storage.local);
+        w.__origSet = orig;
+        chrome.storage.local.set = ((items: Record<string, unknown>) => {
+          w.__setKeys.push(...Object.keys(items));
+          return orig(items);
+        }) as typeof chrome.storage.local.set;
+      });
+      const written = async (): Promise<string[]> => {
+        const keys = await sw.evaluate(
+          () => (self as unknown as { __setKeys: string[] }).__setKeys.splice(0),
+        );
+        return keys.filter((k) => k.startsWith('script:') || k.startsWith('collection:'));
+      };
+
+      // Nothing touched on disk: the collection row still goes (its
+      // lastRefreshedAt moved), no script row does.
+      await sm.updateCollection(collection!.id, 'manual');
+      const quiet = await written();
+      expect(quiet.filter((k) => k.startsWith('script:'))).toEqual([]);
+      expect(quiet).toContain(`collection:${collection!.id}`);
+
+      // Positive control — the filter has to be selective, not just
+      // silent. Edit one of the two and exactly its row is written.
+      const before = await sm.getCollectionWithScripts(collection!.id);
+      const changedId = before!.scripts.find((s) => s.relativePath === 'two.user.js')!.id;
+      // Longer than the original on purpose. `ScriptsDir` stamps mtime
+      // at an absolute `now + 1s`, so two writes inside the same second
+      // land the same mtime — a same-length edit would then match on
+      // both size and mtime and take the pre-fetch skip, which is the
+      // fixture's resolution rather than anything this test is about.
+      dir.rewriteBody('two.user.js', 'void 1; void 2; void 3;');
+      await sm.updateCollection(collection!.id, 'manual');
+      const afterEdit = await written();
+      expect(afterEdit.filter((k) => k.startsWith('script:'))).toEqual([`script:${changedId}`]);
+    } finally {
+      await (await getServiceWorker()).evaluate(() => {
+        const w = self as unknown as { __origSet: typeof chrome.storage.local.set };
+        if (w.__origSet) chrome.storage.local.set = w.__origSet;
+      });
+      dir.cleanup();
+    }
+  });
 });

@@ -17,6 +17,7 @@ import {
   hashSource,
   loadStateLogEntry,
   rebuildCollection,
+  sameStoredValue,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
 } from '../../dist/script-store.js';
@@ -1124,4 +1125,90 @@ test('loadStateLogEntry ranks a broken load above a stale refresh', () => {
     }),
     { level: 'error', message: 'no metadata block' },
   );
+});
+
+// ---------- sameStoredValue ----------
+//
+// The predicate behind the "don't rewrite unchanged rows" skip in
+// refreshCollection / refreshScript. Its failure modes are asymmetric:
+// a false negative costs a redundant write (what we're removing), while
+// a false positive silently drops a real change on the floor. The tests
+// below lean on the second.
+
+test('sameStoredValue ignores key order', () => {
+  // The case that rules out JSON.stringify: a rebuilt row's key order
+  // comes from the spread-and-delete that built it, a stored row's from
+  // its last serialization, and they routinely differ.
+  assert.equal(
+    sameStoredValue({ a: 1, b: 2 }, { b: 2, a: 1 }),
+    true,
+  );
+});
+
+test('sameStoredValue treats an undefined-valued key as absent', () => {
+  // A storage round-trip drops these, so a freshly built row carrying
+  // one must still compare equal to the stored row that lost it.
+  assert.equal(sameStoredValue({ a: 1, b: undefined }, { a: 1 }), true);
+  assert.equal(sameStoredValue({ a: 1 }, { a: 1, b: undefined }), true);
+});
+
+test('sameStoredValue sees a key added or removed', () => {
+  // `delete next.refreshError` on the unchanged path is exactly this
+  // shape — the row is otherwise identical and still has to be written.
+  assert.equal(sameStoredValue({ a: 1, refreshError: 'x' }, { a: 1 }), false);
+  assert.equal(sameStoredValue({ a: 1 }, { a: 1, refreshError: 'x' }), false);
+});
+
+test('sameStoredValue compares nested objects and arrays by value', () => {
+  const row = { requires: [{ url: 'u', contentHash: 'h' }] };
+  assert.equal(
+    sameStoredValue(row, { requires: [{ url: 'u', contentHash: 'h' }] }),
+    true,
+  );
+  assert.equal(
+    sameStoredValue(row, { requires: [{ url: 'u', contentHash: 'CHANGED' }] }),
+    false,
+  );
+  // Length differences, in both directions.
+  assert.equal(sameStoredValue(row, { requires: [] }), false);
+  assert.equal(
+    sameStoredValue(row, { requires: [{ url: 'u', contentHash: 'h' }, { url: 'v' }] }),
+    false,
+  );
+});
+
+test('sameStoredValue does not confuse an array with an object', () => {
+  assert.equal(sameStoredValue([], {}), false);
+  assert.equal(sameStoredValue({ 0: 'a' }, ['a']), false);
+});
+
+test('sameStoredValue handles null and a missing stored row', () => {
+  // `undefined` is what `curByKey[...]` yields for a script row that
+  // isn't in storage yet — a brand-new row, which must always write.
+  assert.equal(sameStoredValue({ a: 1 }, undefined), false);
+  assert.equal(sameStoredValue(null, {}), false);
+  assert.equal(sameStoredValue(null, null), true);
+});
+
+test('sameStoredValue distinguishes values a loose compare would merge', () => {
+  assert.equal(sameStoredValue(0, false), false);
+  assert.equal(sameStoredValue('1', 1), false);
+  assert.equal(sameStoredValue(1, 1), true);
+});
+
+test('sameStoredValue sees a real content change on a full row', async () => {
+  // End-to-end on the shape this actually guards: two builds of the
+  // same file compare equal, a changed body does not.
+  const base = {
+    id: 'a', collectionId: 's', relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js', now: 1,
+  };
+  const first = await buildScriptFromText({ ...base, text: VALID_SCRIPT });
+  const again = await buildScriptFromText({ ...base, text: VALID_SCRIPT, prior: first });
+  assert.equal(sameStoredValue(first, again), true);
+
+  const edited = await buildScriptFromText({
+    ...base, text: VALID_SCRIPT + '\nconsole.log("more");\n', prior: first,
+  });
+  assert.equal(sameStoredValue(first, edited), false);
 });
