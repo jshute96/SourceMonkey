@@ -518,16 +518,50 @@ test('parseManifest rejects non-JSON input with a helpful message', () => {
 test('parseManifest rejects shapes other than array / {scripts: ...}', () => {
   assert.throws(
     () => parseManifest('{"items": []}'),
-    /JSON array of URL strings/,
+    /JSON array of entries/,
   );
 });
 
-test('parseManifest rejects non-string entries', () => {
-  assert.throws(
-    () => parseManifest('["a.user.js", 42]'),
-    /entries must all be strings/,
+test('parseManifest rejects entries that are neither strings nor objects', () => {
+  // An array is `typeof 'object'`, so it needs its own rejection path
+  // rather than falling into the `path`-lookup branch.
+  for (const body of ['["a.user.js", 42]', '[["a.user.js"]]', '[null]']) {
+    assert.throws(
+      () => parseManifest(body),
+      /entries must all be URL strings or objects with a "path"/,
+      body,
+    );
+  }
+});
+
+test('parseManifest accepts object entries with a path, ignoring other fields', () => {
+  // The extra fields are the point of the object form: a manifest can
+  // carry its own bookkeeping per script and we only read `path`.
+  assert.deepEqual(
+    parseManifest('[{"path": "  a.user.js  ", "note": "mine"}, "b.user.js"]'),
+    ['a.user.js', 'b.user.js'],
+  );
+  assert.deepEqual(
+    parseManifest('{"scripts": [{"path": "a.user.js", "tags": ["x"]}]}'),
+    ['a.user.js'],
   );
 });
+
+test('parseManifest drops object entries whose path is empty', () => {
+  assert.deepEqual(parseManifest('[{"path": "  "}, "b.user.js"]'), ['b.user.js']);
+});
+
+test('parseManifest rejects object entries without a string path', () => {
+  assert.throws(
+    () => parseManifest('[{"note": "no path here"}]'),
+    /entry objects must have a "path" string/,
+  );
+  assert.throws(
+    () => parseManifest('[{"path": 42}]'),
+    /entry objects must have a "path" string/,
+  );
+});
+
 
 test('parseManifest accepts any string entry — scheme gating happens at scanManifest', () => {
   // parseManifest is just JSON-shape validation; the actual scheme

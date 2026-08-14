@@ -193,7 +193,8 @@ load, typically using relative paths starting from the manifest file's
 location.
 
 The manifest body is JSON in one of two shapes — a bare array, or an
-object with a `scripts` key:
+object with a `scripts` key. Each entry is a URL string, or an object
+with a `path` field holding that string; other fields are ignored:
 
 ```json
 ["foo.user.js", "sub/bar.user.js", "https://elsewhere/baz.user.js"]
@@ -203,7 +204,16 @@ object with a `scripts` key:
 { "scripts": ["foo.user.js", "sub/bar.user.js"] }
 ```
 
-Each entry is a URL string:
+```json
+{
+  "scripts": [
+    { "path": "foo.user.js", "note": "my fork of upstream" },
+    { "path": "sub/bar.user.js", "note": "another script" }
+  ]
+}
+```
+
+Entry paths resolve like this:
 
 - **Relative** entries resolve against the manifest's own location, so
   the same manifest works unchanged whether it's served over HTTP or

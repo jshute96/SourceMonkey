@@ -506,10 +506,16 @@ export async function statFromListing(
 
 // ---------- Scanning ----------
 
-// Parse a manifest body. Accepts either a bare JSON array of strings
-// or `{scripts: [...]}`. Anything else is rejected with a message that
+// Parse a manifest body. Accepts either a bare JSON array or
+// `{scripts: [...]}`. Anything else is rejected with a message that
 // points at the supported shapes. Empty strings inside the list are
 // dropped so a trailing newline / typo doesn't fail the whole source.
+//
+// List elements are either a URL string or an object with a `path`
+// holding that string. The object form lets a manifest carry extra
+// per-script bookkeeping (author's notes, tags, …) alongside the URL;
+// every field other than `path` is ignored here, so unknown keys are
+// forward-compatible rather than an error.
 export function parseManifest(body: string): string[] {
   let parsed: unknown;
   try {
@@ -523,14 +529,25 @@ export function parseManifest(body: string): string[] {
   } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { scripts?: unknown }).scripts)) {
     arr = (parsed as { scripts: unknown[] }).scripts;
   } else {
-    throw new Error('Manifest must be a JSON array of URL strings, or `{"scripts": [...]}`');
+    throw new Error('Manifest must be a JSON array of entries, or `{"scripts": [...]}`');
   }
   const entries: string[] = [];
   for (const item of arr as unknown[]) {
-    if (typeof item !== 'string') {
-      throw new Error('Manifest entries must all be strings');
+    let value: string;
+    if (typeof item === 'string') {
+      value = item;
+    } else if (item && typeof item === 'object' && !Array.isArray(item)) {
+      // An array is also `typeof 'object'`, hence the isArray guard —
+      // otherwise `[["a.user.js"]]` would look for a `path` field on it.
+      const entryPath = (item as { path?: unknown }).path;
+      if (typeof entryPath !== 'string') {
+        throw new Error('Manifest entry objects must have a "path" string');
+      }
+      value = entryPath;
+    } else {
+      throw new Error('Manifest entries must all be URL strings or objects with a "path"');
     }
-    const trimmed = item.trim();
+    const trimmed = value.trim();
     if (trimmed) entries.push(trimmed);
   }
   return entries;

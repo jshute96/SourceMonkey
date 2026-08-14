@@ -137,7 +137,18 @@ The manifest body is JSON. Two shapes are accepted:
   { "scripts": ["foo.user.js", "sub/bar.user.js"] }
   ```
 
-Each entry is a URL (string). Resolution rules:
+A list element is either a URL string, or an object whose `path`
+field holds that string:
+
+```json
+{ "scripts": [{ "path": "foo.user.js", "note": "my fork" }] }
+```
+
+- Fields other than `path` are ignored, so a manifest can carry extra
+  per-script bookkeeping without SourceMonkey needing to know about it.
+- An object entry without a string `path` fails the source.
+
+Resolution rules for the entry URL:
 
 - **Absolute** URLs are used verbatim (any scheme `fetch()` accepts).
 - **Relative** URLs resolve against the manifest URL via standard
@@ -149,8 +160,9 @@ Each entry is a URL (string). Resolution rules:
   `file:///home/me/scripts/foo.user.js`.
 
 Entries are trimmed; empty strings are dropped. Duplicates collapse
-to the first occurrence. A non-string entry, or a body that isn't one
-of the two supported shapes, fails the whole source with a `scanError`.
+to the first occurrence. An entry that is neither a string nor an
+object with a `path` string, or a body that isn't one of the two
+supported shapes, fails the whole source with a `scanError`.
 
 ### Local vs HTTP — same manifest, different scheme
 
@@ -164,7 +176,7 @@ HTTP. A typical workflow:
    as a collection in SourceMonkey to verify the entries load and inject.
 3. Serve the directory over HTTP; replace the collection with the
    `https://…/script_manifest.json` URL. The script contents and
-   stable IDs come from `relativePath` (the raw entry text), so
+   stable IDs come from `relativePath` (the entry's path text), so
    identity carries across the swap.
 
 ## Conditional GETs (the `unchanged` path)
@@ -216,10 +228,14 @@ collection row is tracked in `TODO.md`.
   `enabled: true`. This is an intentional asymmetry with directory
   collections, where a `missing` file that returns keeps its prior
   `enabled: false` (the user has to opt back in).
-- **Identity is by raw entry text**: `relativePath` for manifest
-  collections is the literal string from the JSON, so reformatting
-  `foo.user.js` to `./foo.user.js` is treated as deleting the old
-  entry and adding a new one — the old row's `enabled` state is lost.
+- **Identity is by entry text**: `relativePath` for manifest
+  collections is the entry string from the JSON (the `path` value, for
+  object entries), so reformatting `foo.user.js` to `./foo.user.js` is
+  treated as deleting the old entry and adding a new one — the old
+  row's `enabled` state is lost.
+  - The JSON *shape* doesn't matter: rewriting `"foo.user.js"` as
+    `{"path": "foo.user.js"}` keeps the same row, and editing the
+    other fields on an object entry changes nothing.
 - **Scripts in a container can't vanish**: the URL either fetches or
   errors; there's no listing for it to disappear from.
 
