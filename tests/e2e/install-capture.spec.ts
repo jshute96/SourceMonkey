@@ -214,13 +214,15 @@ test.describe('.user.js link capture', () => {
     await page.close();
   });
 
-  test('Continue to page bypasses the capture and reaches the real URL', async ({
+  test('a captured URL that answers with a web page continues on its own', async ({
     extensionContext, sm,
   }) => {
-    // The forge-blob-view case: a path ending in `.user.js` that is
-    // really an HTML page. The capture can't know that before the
-    // response arrives, so the preview has to offer a way through to
-    // the page — and that way must not be re-captured back into it.
+    // The forge-blob-view case for a host we don't know in advance: a
+    // path ending in `.user.js` that is really an HTML page. The
+    // capture can't know that before the response arrives, so it fires
+    // — and then undoes itself once the response says otherwise, with
+    // no banner and no click. The bypass has to hold, or the
+    // navigation would be pulled straight back into the preview.
     server.setRoute(
       '/page.user.js',
       '<!doctype html><title>Blob view</title><p id="page">a web page</p>',
@@ -230,12 +232,57 @@ test.describe('.user.js link capture', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(pageUrl).catch(() => {});
+
+    // Polled rather than `waitForURL`: this tab navigates twice (the
+    // capture aborts the first request, the preview then sends it back
+    // out), and `waitForURL` surfaces that aborted first leg as a
+    // failure.
+    await expect.poll(() => page.url()).toBe(pageUrl);
+    await expect(page.locator('#page')).toHaveText('a web page');
+    await page.close();
+  });
+
+  test('a mislabelled web page is recognized by its body, not its Content-Type', async ({
+    extensionContext, sm,
+  }) => {
+    // Same escape, proved through the other half of the gate: the
+    // server claims JavaScript, so only the leading `<` gives it away.
+    server.setRoute(
+      '/liar.user.js',
+      '<!doctype html><title>Blob view</title><p id="page">a mislabelled page</p>',
+      { contentType: 'text/javascript; charset=utf-8' },
+    );
+    const pageUrl = `${server.baseUrl}/liar.user.js`;
+
+    const page = await extensionContext.newPage();
+    await page.goto(pageUrl).catch(() => {});
+
+    // Landing on the URL is the whole assertion. What the tab then
+    // RENDERS is version-dependent: below Chrome 152 the download
+    // workaround rewrites this response to `text/html` and it paints as
+    // a page; at 152+ the rule isn't registered and the same bytes
+    // render as source text.
+    await expect.poll(() => page.url()).toBe(pageUrl);
+    await page.close();
+  });
+
+  test('Continue to page reaches a location that is not a script but not a page either', async ({
+    extensionContext, sm,
+  }) => {
+    // What is left for the button once markup leaves on its own: real
+    // text that simply isn't a userscript. Nothing about the response
+    // says "get out of the way", so the user is asked — and that way
+    // through must not be re-captured back into the preview.
+    server.setRoute('/plain.user.js', 'alert("no metadata block here");');
+    const pageUrl = `${server.baseUrl}/plain.user.js`;
+
+    const page = await extensionContext.newPage();
+    await page.goto(pageUrl).catch(() => {});
     await waitForInstallPrompt(page);
     await expect(page.locator('#continue-btn')).toBeVisible();
     await page.locator('#continue-btn').click();
 
     await page.waitForURL(pageUrl);
-    await expect(page.locator('#page')).toHaveText('a web page');
     await page.close();
   });
 

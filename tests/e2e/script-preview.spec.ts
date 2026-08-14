@@ -133,6 +133,37 @@ test.describe('script preview', () => {
     await page.close();
   });
 
+  test('a preview the user asked for reports a web page instead of following it', async ({
+    extensionContext, extensionId,
+  }) => {
+    // The other half of the capture's markup escape. A CAPTURED
+    // preview navigates itself to the page (install-capture.spec.ts);
+    // this one was asked for — by the collections page's Add field, or
+    // by hand — so navigating the tab off SourceMonkey would be
+    // answering a question with a disappearance. It reports instead,
+    // and offers the same way through the invalid path offers.
+    const server = await UserscriptServer.start();
+    try {
+      server.setRoute('/login.user.js', '<!doctype html><title>Please log in</title>', {
+        contentType: 'text/html; charset=utf-8',
+      });
+      const pageUrl = `${server.baseUrl}/login.user.js`;
+
+      const page = await extensionContext.newPage();
+      await page.goto(
+        `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(pageUrl)}`,
+      );
+      await expect(page.locator('#message')).toContainText('HTML page, not JavaScript');
+      await expect(page.locator('#install-btn')).toBeHidden();
+      await expect(page.locator('#continue-btn')).toBeVisible();
+      // Still here — the whole point.
+      expect(page.url()).toContain('userscript.html?preview=');
+      await page.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
   test('@require bodies are fetched once up front, and the tab reuses them', async ({
     extensionContext, extensionId, sm,
   }) => {

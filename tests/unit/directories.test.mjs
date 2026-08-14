@@ -631,6 +631,55 @@ test('fetchHttpText: non-ok status throws with the HTTP code in the message', as
   );
 });
 
+test('fetchHttpText: an HTML response is rejected, by header or by body', async () => {
+  // A 200 that answers with a web page — a login wall, a forge's file
+  // browser — must not reach the parser as script source. Rejecting it
+  // here is what keeps a refresh from replacing a working script with
+  // a page of markup (the failure preserves the prior copy).
+  const htmlHeader = async () => fakeResponse({
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    body: '<!doctype html><title>Log in</title>',
+  });
+  await assert.rejects(
+    withFetch(htmlHeader, () => fetchHttpText('https://x/foo.user.js')),
+    (err) => {
+      assert.equal(err.name, 'MarkupResponseError');
+      // The header is the evidence, so the message names it.
+      assert.match(err.message, /HTML page, not JavaScript \(Content-Type "text\/html; charset=utf-8"\)/);
+      return true;
+    },
+  );
+
+  // Mislabelled: only the leading `<` gives this one away.
+  const htmlBody = async () => fakeResponse({
+    status: 200,
+    headers: { 'Content-Type': 'text/javascript' },
+    body: '\n  <!doctype html><title>Log in</title>',
+  });
+  await assert.rejects(
+    withFetch(htmlBody, () => fetchHttpText('https://x/foo.user.js')),
+    (err) => {
+      assert.equal(err.name, 'MarkupResponseError');
+      // The body is the evidence, so quoting the (lying) header would
+      // read as a contradiction.
+      assert.ok(!err.message.includes('Content-Type'));
+      return true;
+    },
+  );
+});
+
+test('fetchHttpText: a script whose code contains a tag is not mistaken for markup', async () => {
+  // Only the FIRST character decides. A script that builds HTML, or a
+  // comparison like `a < b`, is ordinary JavaScript.
+  const fakeFetch = async () => fakeResponse({
+    status: 200,
+    body: '// ==UserScript==\n// ==/UserScript==\ndocument.body.innerHTML = "<p>hi</p>";',
+  });
+  const result = await withFetch(fakeFetch, () => fetchHttpText('https://x/foo.user.js'));
+  assert.equal(result.kind, 'ok');
+});
+
 test('fetchHttpText: a thrown fetch surfaces with the underlying message', async () => {
   const fakeFetch = async () => { throw new TypeError('Failed to fetch'); };
   await assert.rejects(

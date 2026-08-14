@@ -82,6 +82,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
+| `src/markup-response.ts` | Detects an HTML page served where JavaScript was expected (Content-Type + leading `<`), and words the failure |
 | `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-collection dispatch in addCollection, parse-time diagnostics, refreshAllCollections, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
@@ -164,13 +165,13 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits |
 | `tests/e2e/rejected-registration.spec.ts` | REJECTED state end to end: a `@match` Chrome refuses stays `ok` but never runs, and every retry re-reports until it's fixed |
-| `tests/e2e/refresh-failed.spec.ts` | Refresh failures (HTTP soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
-| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, raw view, option off |
+| `tests/e2e/refresh-failed.spec.ts` | Refresh failures (markup response, soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
+| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, web-page auto-continue, raw view, option off |
 | `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |
 | `tests/e2e/refresh-error.spec.ts` | A refresh that reads fine but can't be saved: the recorded reason, untouched scripts, sibling collections, and the page's message + banner |
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
-| `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, `@require` tabs |
+| `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, a web page reported rather than followed, `@require` tabs |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/github-provider.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
@@ -237,7 +238,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
-| `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, install-page URL, Chrome-version gate, one-shot bypass |
+| `tests/unit/markup-response.test.mjs` | Unit tests for the markup guard: content-type families, leading-`<` body test, message wording |
+| `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, Chrome-version gate, one-shot bypass |
 | `tests/unit/raw-view.test.mjs` | Unit tests for the raw-view hand-off: key shape, round-trip, drop, and rejection of keys we didn't mint |
 | `tests/unit/action-menu.test.mjs` | Unit tests for the action context-menu planner: 6-item cap, More-submenu overflow, group cohesion, order preservation |
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |

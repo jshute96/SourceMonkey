@@ -112,7 +112,7 @@ import {
 } from './userscript-header.js';
 import {
   canonicalCollectionInput,
-  fetchFileUrlText,
+  fetchScriptFileUrlText,
   fetchHttpText,
   isFileUrl,
   isHttpUrl,
@@ -126,6 +126,7 @@ import {
   COLLECTION_OFF_TITLE,
 } from './collection-display.js';
 import { renderSiteIconInto } from './site-icon.js';
+import { MarkupResponseError } from './markup-response.js';
 import { resolveScriptResource } from './file-loader.js';
 import {
   installLocalRootsListener,
@@ -136,7 +137,7 @@ import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from './github-auth.js';
-import { markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
+import { CAPTURED_PARAM, markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
 import {
@@ -176,6 +177,10 @@ const scriptId = params.get('script');
 // the preview-mode section below for the normalized forms derived
 // from it.
 const previewInput = params.get('preview');
+// True when the link capture put us here rather than the user asking
+// for this preview. Gates the "it's a web page, get out of the way"
+// escape below — see CAPTURED_PARAM.
+const previewWasCaptured = params.get(CAPTURED_PARAM) === '1';
 
 const filenameEl = document.getElementById('filename')!;
 const controlsRowEl = document.getElementById('meta-row')!;
@@ -1187,6 +1192,22 @@ async function loadPreview(): Promise<void> {
     previewFileUrl = collectionCanonicalUrl(previewLocation);
     text = await fetchPreviewText(previewFileUrl);
   } catch (err) {
+    // The URL answered with a web page, and we only came here because
+    // the capture guessed it was a script. That guess is wrong, so
+    // undo it: continue to the page the user was heading for, without
+    // asking. A banner offering "Continue to page" for a navigation
+    // the user never asked us to intercept is a dialog about our own
+    // mistake.
+    //
+    // Only for a captured navigation: `?preview=` reached from the
+    // collections page is a question the user asked, and it gets an
+    // answer instead.
+    if (
+      previewWasCaptured && err instanceof MarkupResponseError &&
+      continueToPage('This location is a web page, not a script — continuing to it')
+    ) {
+      return;
+    }
     // Keep the heading and the action row: the location is still worth
     // showing, and "View raw source" is a real retry — that navigation
     // carries cookies the extension's fetch doesn't.
@@ -1213,6 +1234,13 @@ async function loadPreview(): Promise<void> {
     // normalizeCollectionInput is what threw, there's nothing to match
     // on.
     if (previewLocation) void offerOpenExisting();
+    // A markup response that we did NOT navigate away from (the user
+    // asked for this preview) still deserves the way out the invalid
+    // path offers — before this guard existed the page rendered as
+    // "invalid" and carried this button. There is no body to show
+    // alongside it, so View raw source stays as the way to see what
+    // actually came back.
+    if (err instanceof MarkupResponseError) offerContinueButton();
     return;
   }
 
@@ -1232,7 +1260,7 @@ function isPreviewableInput(input: string): boolean {
 // canonicalized, so it is http(s) or file:// — the two shapes a
 // single-file location can take.
 async function fetchPreviewText(url: string): Promise<string> {
-  if (isFileUrl(url)) return fetchFileUrlText(url);
+  if (isFileUrl(url)) return fetchScriptFileUrlText(url);
   const result = await fetchHttpText(url);
   // `unchanged` needs a conditional request to happen, and we send
   // none — but the type includes it, so fail loudly rather than
@@ -1537,30 +1565,66 @@ function renderInvalidPreview(error: PreviewWarning): void {
     // Only costs the user the Open button; the banner already says
     // what's wrong with the file.
   });
-  // Most likely this location is not a script at all: a web page whose
-  // path merely ends in `.user.js` (a forge's blob view, say), or a
-  // local `.user.js` the user opened to read. The capture can't tell —
-  // it runs before any response exists — so give the user the way
-  // through that landing on nothing else offers: go to the location
-  // itself, in this tab, with the capture stood down.
+  // Most likely this location isn't a script at all — a local
+  // `.user.js` the user opened to read, or a file that never had a
+  // metadata block. The capture can't tell in advance; it runs before
+  // any response exists. So give the user the way through that landing
+  // on nothing else offers: go to the location itself, with the
+  // capture stood down.
   //
-  // The target is the navigable spelling: the verbatim input for
-  // http(s), the `file://` form for a local file (a bare `/path` would
-  // resolve against the extension's own origin).
-  const continueTarget = isHttpUrl(previewInput ?? '')
+  // The one shape that does NOT reach here is a markup response: that
+  // continues on its own without asking (see `loadPreview`).
+  offerContinueButton();
+}
+
+// Show the escape hatch: leave the preview for the location itself.
+// Shared by the invalid-file path and the markup one, so the two can't
+// drift on the wording or on the bypass.
+function offerContinueButton(): void {
+  const target = continueTarget();
+  if (!target) return;
+  // "page" is wrong for a local file, and this button's whole job is
+  // to tell the user where they'll end up.
+  if (isFileUrl(target)) continueBtn.textContent = 'Continue to file';
+  continueBtn.hidden = false;
+  continueBtn.addEventListener('click', () => { continueToPage(); });
+}
+
+// The navigable spelling of the previewed location: the verbatim input
+// for http(s), the `file://` form for a local file (a bare `/path`
+// would resolve against the extension's own origin). Empty when
+// neither is available — the input was rejected on shape, so there is
+// nowhere to send anyone.
+function continueTarget(): string {
+  return isHttpUrl(previewInput ?? '')
     ? previewInput ?? ''
     : isFileUrl(previewFileUrl) ? previewFileUrl : '';
-  if (continueTarget) {
-    // "page" is wrong for a local file, and this button's whole job is
-    // to tell the user where they'll end up.
-    if (isFileUrl(continueTarget)) continueBtn.textContent = 'Continue to file';
-    continueBtn.hidden = false;
-    // Same bypass-then-go as the raw view, but in THIS tab: the user
-    // asked to leave the preview, not to open a second tab.
-    continueBtn.addEventListener('click', () => {
-      withBypass(continueTarget, (url) => { location.href = url; });
-    });
-  }
+}
+
+// Leave the preview for the location itself, in THIS tab — the user is
+// going there instead of installing, not opening a second tab.
+//
+// Returns false when there is no navigable target, so a caller that
+// was counting on leaving can fall back to rendering the problem. A
+// `true` only promises the navigation was *started*: the bypass write
+// is async, and if it fails `withBypass` reports that into the message
+// bar of a page the caller has already stopped rendering. Storage
+// writes at this size don't realistically fail, and awaiting one on
+// the way out would cost every reader the delay.
+// Both callers stand the capture down first (`withBypass`), or the
+// navigation would be pulled straight back into this preview.
+//
+// `note` is for the leg that leaves on its own: an extension page that
+// blanks and jumps elsewhere should say why, even though the line is
+// only ever seen if the navigation is slow. The button needs none —
+// the banner above it already said what this file is, and the user
+// clicked knowing where they were going.
+function continueToPage(note?: string): boolean {
+  const target = continueTarget();
+  if (!target) return false;
+  if (note) setMessage(note);
+  withBypass(target, (url) => { location.href = url; });
+  return true;
 }
 
 // Tab strip for a preview: the fetched text, then one tab per declared

@@ -628,6 +628,16 @@ that need doing *here* rather than describing there:
   access unconditionally to `--load-extension` builds (writing
   `allow_file_access: false` into Preferences does not override it),
   so the e2e suite can only ever exercise the ON case.
+- **Widen the forge page-view list as needed.** `CODE_HOST_PAGE_VIEWS`
+  (`install-capture.ts`) knows github / gitlab / bitbucket / codeberg.
+  An unlisted forge's blob view is still captured; it costs one wasted
+  fetch before the markup guard sends the user on to the page, so this
+  is a polish item, not a correctness one.
+- **Markup gate for `file://` manifests.** `fetchHttpText` rejects a
+  markup response, so an http manifest that answers with a login page
+  is named properly. The `file://` leg of `fetchManifestText` has no
+  such check, and a directory read there surfaces as a `JSON.parse`
+  complaint about `<`.
 - **Drop the Chrome < 152 download workaround** once 152 is the
   supported floor. The DNR session rule, `needsDownloadWorkaround`,
   `parseChromeMajor`, and their tests go together, and the
@@ -817,6 +827,10 @@ they follow are in
   - Same condition covers `fetchResourceText`, which still returns
     `string | null`: the bytes fetcher knows which failure it was, and
     the probe is the only caller that throws that away.
+  - A probe URL that answers with a web page is the same story: nothing
+    on that path applies the markup gate (`markup-response.ts`), so a
+    login wall reads as `no @version` rather than as a page. Worth
+    folding in whenever the row's wording is revisited.
 
 ## Testing and example TODOs
 

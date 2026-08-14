@@ -225,6 +225,13 @@ record the reason. Triggers:
 - **Hard fetch failure** (any scheme): network error, 404, unreadable
   file, a disconnected network mount. Covers the case where a read
   throws.
+- **Markup response** (any scheme): the fetch succeeded but answered
+  with a web page — a login wall, a forge's file-browser page, a
+  `file://` directory listing. Rejected at the fetcher
+  (`markup-response.ts`), so it arrives here as a hard fetch failure
+  and the good copy keeps running. Previously the HTML was stored as
+  the script's source and reported as a syntax error in the user's
+  script.
 - **Soft failure** (http(s) only): the fetch returned 200 but the body
   parsed `invalid` — a login / error page served in place of the
   script (e.g. a logged-out collection). Scoped to http(s): a `file://`
@@ -232,7 +239,7 @@ record the reason. Triggers:
   genuine local edit and is flagged `invalid` immediately.
 - **Dependency failure**: a `@require` / `@resource` fetch failed, so
   the script keeps running on its cached deps. (A `@require` returning
-  an HTML login page is caught earlier by the Content-Type gate in
+  an HTML login page is caught earlier by the markup gate in
   `external-files.ts` and surfaces as a fetch failure; `@resource`
   bodies are arbitrary bytes and can't be validated this way — see
   [requires.md](requires.md).)

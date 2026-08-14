@@ -106,15 +106,29 @@ Any of these is a dependency failure, named by the offending URL:
   won't read says so rather than blaming the network, and both
   `file://` legs (page XHR, service-worker `fetch`) report it the same
   way.
-- HTML `Content-Type` — see [below](#content-type-gate). Checked after
-  the fetch, not as part of it.
+- An HTML response — see [below](#markup-gate). Checked after the
+  fetch, not as part of it, and by two tests: the `Content-Type` and
+  the bytes.
 - `data:` URLs (resolution accepts them; the require gate rejects).
 - **Non-UTF-8 response body** (strict decode fails). A `.js` URL that
   serves binary slips past the suffix gate and the content-type
   predicate but gets caught here, so the user sees "not valid UTF-8"
   rather than a confusing `SyntaxError` at eval.
 
-### Content-Type gate
+### Markup gate
+
+Two tests for one problem, because each catches what the other misses.
+Both use the shared helpers in `markup-response.ts`, so the `@require`
+gate and the script-body fetchers agree on what markup is and say the
+same thing about it.
+
+**Not applied to `@resource`** (either test) — an HTML resource is a
+legitimate thing to fetch and hand to `GM_getResourceText`. The shared
+fetch cache stores raw bytes and each call site applies its own rules,
+so a `@require` and a `@resource` on the same URL still share one fetch
+without poisoning each other.
+
+**By `Content-Type`:**
 
 - **Markup is the only rejected family** — `text/html*` (which covers
   `text/html-sandboxed`) and `application/xhtml*`. A `@require` is
@@ -137,6 +151,23 @@ Any of these is a dependency failure, named by the offending URL:
   GitHub release, and installing it failed outright.
 - Tampermonkey does no content-type gating on `@require` at all.
 
+**By the bytes** (`looksLikeMarkup`), after the UTF-8 decode:
+
+- The first thing in the body, past a BOM and any whitespace, is `<`.
+- Catches what the header can't: a response with **no** `Content-Type`
+  at all — the `file://` case, and the one where the ref names a local
+  *directory*, which Chrome answers with a generated HTML listing — and
+  a server that labels its login page `text/plain`.
+- Position is the whole point. A forge's file-browser page embeds the
+  file's own lines, metadata block included, so any "does it contain
+  JavaScript / a header" test would call that page the script.
+- Not "the metadata block must be first": a license banner above the
+  block is common and supported (`leadingText`). A `.js` file starts
+  with code or a comment; only markup starts with a tag.
+- Known false positive, accepted: `<!--` at the top of a file is valid
+  JavaScript (Annex B HTML-like comments). That spelling belongs to
+  1990s inline `<script>` blocks.
+
 ### Effect on the parent script
 
 Depends on whether we already had a good copy:
@@ -156,8 +187,10 @@ Depends on whether we already had a good copy:
 
 - `@resource` bodies are arbitrary bytes with no "is this valid"
   check, so a `@resource` soft failure (a 200 login page) can't be
-  detected the way the `@require` Content-Type gate detects it. Only a
-  hard `@resource` fetch failure gets the keep-the-good-copy treatment.
+  detected the way the `@require` markup gate detects it — and an HTML
+  resource is legitimate, so the gate would be wrong there anyway. Only
+  a hard `@resource` fetch failure gets the keep-the-good-copy
+  treatment.
 
 ## Reload fast-path interaction
 

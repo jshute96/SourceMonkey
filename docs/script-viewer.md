@@ -73,6 +73,7 @@ One page, one set of panels, two query strings:
 |-----|------|---------------------|
 | `userscript.html?script=<scriptId>` | **Installed** | collections page, badge menu, Install / Update |
 | `userscript.html?preview=<url>` | **Preview** | [`.user.js` capture](install-capture.md), a single-script Add |
+| … `&captured=1` | Preview, capture-opened | the capture only — see [install-capture.md](install-capture.md#the-captured1-marker) for who sets, strips, and reads it |
 
 - **Installed** hydrates from the [script store](storage.md) — it does
   **not** re-fetch from disk on open, so what the user sees matches
@@ -533,11 +534,23 @@ Banner (`#banner-slot`) states what this file is; the action row
   is the `// ==UserScript==` marker and for a file with no block at all
   is the file itself. See [diagnostics.md](diagnostics.md).
 - The collection is still rendered. Seeing what actually came back is the
-  whole point when a URL returns a login page instead of a script.
+  whole point when a URL returns something other than a script.
 - **Continue to page** loads the location itself, with the capture
   stood down: a path ending in `.user.js` and carrying no metadata
-  block is usually an ordinary web page. See
+  block is usually not a script at all. See
   [install-capture.md](install-capture.md#when-the-url-isnt-a-script).
+- A response that is outright **markup** never reaches this state — the
+  fetchers reject it before there is a body to render. What happens
+  next depends on who asked:
+  - **Capture-opened** (`captured=1`): the preview continues to the
+    page by itself, no banner and no button. The capture guessed; it
+    was wrong; it gets out of the way.
+  - **Asked for** (Add field, or a hand-typed `?preview=`): the message
+    bar names it, and **Continue to page** is offered exactly as it is
+    for a file that isn't a script. There is no body to show alongside
+    it, so View raw source is the way to see what came back.
+  - See
+    [install-capture.md](install-capture.md#when-the-url-turns-out-to-be-a-web-page).
 - For a local file the button reads **Continue to file** and targets
   the `file://` form — a bare path would resolve against the
   extension's own origin.

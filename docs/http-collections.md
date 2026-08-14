@@ -229,6 +229,12 @@ collection row is tracked in `TODO.md`.
   …) or doesn't parse as JSON / one of the supported shapes, the
   collection records a `scanError` and **leaves every script untouched** —
   content, status, and `enabled` state all preserved.
+- An http(s) manifest that answers with a *web page* (a login wall)
+  counts as unfetchable rather than unparseable: `fetchHttpText`
+  rejects markup, so the error names the page instead of complaining
+  about a `<` in the JSON. It says "not JSON", not "not JavaScript" —
+  the fetcher takes an `expects` hint for exactly this call. The
+  `file://` leg has no such check yet — see TODO.md.
 - This matches the [storage.md](storage.md) policy for unreadable
   directory listings: we don't auto-disable scripts because the collection
   is temporarily unreachable (timed-out creds, flaky network).
