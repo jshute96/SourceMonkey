@@ -213,7 +213,7 @@ test.describe('collections', () => {
     // which is what this test wants to read.
     scriptsDir.write({
       relativePath: 'a%20b.user.js',
-      meta: { match: ['https://example.com/*'] },
+      meta: { name: '', match: ['https://example.com/*'] },
       body: '',
     });
     const collection = await sm.addCollection(scriptsDir.path);
