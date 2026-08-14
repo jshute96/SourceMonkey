@@ -14,6 +14,7 @@
 import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
+import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
 
@@ -25,16 +26,6 @@ const CHROME_USERJS_FIX_VERSION = 152;
 
 function chromeMajor(page: Page): Promise<number> {
   return page.evaluate(() => Number(/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent)?.[1] ?? 0));
-}
-
-// `page.waitForURL` rejects here: the captured navigation ends in
-// net::ERR_ABORTED (Chrome was mid-download when the tab was pointed
-// elsewhere), and Playwright surfaces that as the navigation's result
-// even though the tab goes on to load the preview. Poll the tab's URL
-// instead, then wait for the preview itself to be interactive.
-async function waitForInstallPrompt(page: Page): Promise<void> {
-  await expect.poll(() => page.url(), { timeout: 15_000 }).toContain('userscript.html?preview=');
-  await expect(page.locator('#preview-actions')).toBeVisible();
 }
 
 // The viewer URL an Install / Update lands on, as distinct from the
@@ -69,7 +60,7 @@ test.describe('.user.js link capture', () => {
     const page = await extensionContext.newPage();
     // The capture aborts this navigation mid-flight, which surfaces to
     // Playwright as a failed goto; the tab redirect is what we assert.
-    await page.goto(scriptUrl).catch(() => {});
+    await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
 
     // The preview carries the clicked URL and describes the script,
@@ -93,7 +84,7 @@ test.describe('.user.js link capture', () => {
     const scriptUrl = `${server.baseUrl}/hello.user.js`;
 
     const page = await extensionContext.newPage();
-    await page.goto(scriptUrl).catch(() => {});
+    await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
@@ -127,7 +118,7 @@ test.describe('.user.js link capture', () => {
     const scriptUrl = `${server.baseUrl}${encodedPath}`;
 
     const page = await extensionContext.newPage();
-    await page.goto(scriptUrl).catch(() => {});
+    await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
     // The preview's heading and Location row read plainly, but the
     // href is still the URL the browser would request.
@@ -162,7 +153,7 @@ test.describe('.user.js link capture', () => {
     await sm.addCollection(`${server.baseUrl}/first.user.js`);
 
     const page = await extensionContext.newPage();
-    await page.goto(`${server.baseUrl}/second.user.js`).catch(() => {});
+    await startCapturedNavigation(page, `${server.baseUrl}/second.user.js`);
     await waitForInstallPrompt(page);
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
@@ -186,7 +177,7 @@ test.describe('.user.js link capture', () => {
     await sm.addCollection(scriptUrl);
 
     const page = await extensionContext.newPage();
-    await page.goto(scriptUrl).catch(() => {});
+    await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
@@ -204,7 +195,7 @@ test.describe('.user.js link capture', () => {
     server.setRoute('/broken.user.js', 'alert("no metadata block here");');
 
     const page = await extensionContext.newPage();
-    await page.goto(`${server.baseUrl}/broken.user.js`).catch(() => {});
+    await startCapturedNavigation(page, `${server.baseUrl}/broken.user.js`);
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
@@ -231,7 +222,7 @@ test.describe('.user.js link capture', () => {
     const pageUrl = `${server.baseUrl}/page.user.js`;
 
     const page = await extensionContext.newPage();
-    await page.goto(pageUrl).catch(() => {});
+    await startCapturedNavigation(page, pageUrl);
 
     // Polled rather than `waitForURL`: this tab navigates twice (the
     // capture aborts the first request, the preview then sends it back
@@ -255,7 +246,7 @@ test.describe('.user.js link capture', () => {
     const pageUrl = `${server.baseUrl}/liar.user.js`;
 
     const page = await extensionContext.newPage();
-    await page.goto(pageUrl).catch(() => {});
+    await startCapturedNavigation(page, pageUrl);
 
     // Landing on the URL is the whole assertion. What the tab then
     // RENDERS is version-dependent: below Chrome 152 the download
@@ -277,7 +268,7 @@ test.describe('.user.js link capture', () => {
     const pageUrl = `${server.baseUrl}/plain.user.js`;
 
     const page = await extensionContext.newPage();
-    await page.goto(pageUrl).catch(() => {});
+    await startCapturedNavigation(page, pageUrl);
     await waitForInstallPrompt(page);
     await expect(page.locator('#continue-btn')).toBeVisible();
     await page.locator('#continue-btn').click();
@@ -294,7 +285,7 @@ test.describe('.user.js link capture', () => {
     const scriptUrl = `${server.baseUrl}/hello.user.js`;
 
     const page = await extensionContext.newPage();
-    await page.goto(scriptUrl).catch(() => {});
+    await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
 
     const [rawPage] = await Promise.all([
@@ -343,7 +334,7 @@ test.describe('.user.js link capture', () => {
       await expect.poll(() => workaroundRules(getServiceWorker)).toHaveLength(0);
     }
 
-    await page.goto(scriptUrl).catch(() => {});
+    await startCapturedNavigation(page, scriptUrl);
     // With capture off Chrome does its own thing (download, or render
     // as text depending on version) — either way the tab must not end
     // up on the preview.

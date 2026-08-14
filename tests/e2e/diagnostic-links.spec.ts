@@ -43,7 +43,9 @@ test.describe('diagnostic location links', () => {
     const script = withScripts!.scripts.find((s) => s.relativePath === relativePath)!;
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
-    await page.waitForFunction(() => document.title.includes('—'));
+    // The suffix render() writes, not just the dash — the page's static
+    // title already has one, so `includes('—')` waits for nothing.
+    await page.waitForFunction(() => document.title.endsWith('— SourceMonkey'));
     return { page, scriptId: script.id };
   }
 
@@ -192,7 +194,7 @@ test.describe('diagnostic location links', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?script=${scriptId}#Log`,
     );
-    await page.waitForFunction(() => document.title.includes('—'));
+    await page.waitForFunction(() => document.title.endsWith('— SourceMonkey'));
 
     const row = page.locator('#log-pane tr', { hasText: 'Ignoring @grant' });
     await expect(row).toBeVisible();

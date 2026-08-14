@@ -127,6 +127,12 @@ It runs against real headless Chromium with `chrome.userScripts`,
   `match`, `include`, `exclude`, `injectInto`, `runAt`, plus a raw
   `extra: string[]` escape hatch for header lines the typed fields
   don't cover.
+- `capture-nav.ts` — the two waits both `.user.js`-capture specs
+  need. `startCapturedNavigation(page, url)` kicks off the
+  navigation the capture aborts, with a bounded timeout so a stuck
+  first leg can't eat the whole test budget and report a bare
+  "Test timeout exceeded"; `waitForInstallPrompt(page)` then waits
+  for the preview.
 - `sw-api.ts` — `makeSwApi(getServiceWorker)` returns a typed proxy
   over the SW's test surface; `waitFor(read, predicate)` polls a
   SW-side query until a condition is met (or throws with the last

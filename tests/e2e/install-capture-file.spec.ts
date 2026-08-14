@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
 
@@ -33,14 +34,6 @@ const CHROME_USERJS_FIX_VERSION = 152;
 
 function chromeMajor(page: Page): Promise<number> {
   return page.evaluate(() => Number(/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent)?.[1] ?? 0));
-}
-
-// The captured navigation ends in a download / ERR_ABORTED, which
-// Playwright surfaces as a failed `goto` even though the tab goes on to
-// load the preview. Poll the tab URL instead.
-async function waitForInstallPrompt(page: Page): Promise<void> {
-  await expect.poll(() => page.url(), { timeout: 15_000 }).toContain('userscript.html?preview=');
-  await expect(page.locator('#preview-actions')).toBeVisible();
 }
 
 const INSTALLED_VIEWER_URL = /userscript\.html\?script=/;
@@ -69,7 +62,7 @@ test.describe('.user.js capture for local files', () => {
     const { url } = writeScript('hello.user.js', 'Hello From Disk');
 
     const page = await extensionContext.newPage();
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await waitForInstallPrompt(page);
 
     // The clicked URL travels verbatim in `?preview=` — a bypass has to
@@ -91,7 +84,7 @@ test.describe('.user.js capture for local files', () => {
     const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
 
     const page = await extensionContext.newPage();
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await waitForInstallPrompt(page);
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
@@ -130,7 +123,7 @@ test.describe('.user.js capture for local files', () => {
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
@@ -146,7 +139,7 @@ test.describe('.user.js capture for local files', () => {
     const { url } = writeScript('hello.user.js', 'Hello From Disk');
 
     const page = await extensionContext.newPage();
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await waitForInstallPrompt(page);
 
     const [rawPage] = await Promise.all([
@@ -179,7 +172,7 @@ test.describe('.user.js capture for local files', () => {
     const url = `file://${path}`;
 
     const page = await extensionContext.newPage();
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await waitForInstallPrompt(page);
     await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
@@ -237,7 +230,7 @@ test.describe('.user.js capture for local files', () => {
     }, [before!.scripts[0].id, url]);
 
     const page = await extensionContext.newPage();
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
@@ -332,7 +325,7 @@ test.describe('.user.js capture for local files', () => {
       }).toBe(0);
     }
 
-    await page.goto(url).catch(() => {});
+    await startCapturedNavigation(page, url);
     await page.waitForTimeout(500);
     expect(page.url()).not.toContain('userscript.html');
     await page.close();

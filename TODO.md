@@ -18,6 +18,11 @@ A backlog of **candidates**, not a list of obligations.
   section of [docs/injection.md](docs/injection.md): `@noframes` /
   `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
   all implemented; per-area follow-ups below.)
+  - `allFrames` is no longer a self-contained change: `src/gm-menu.ts`
+    keys menu commands by one `documentId` per tab, which only works
+    while every wrapper shares the top-level document. Re-key it by
+    (tabId, documentId) first, or subframe and top-frame scripts will
+    wipe each other's menu commands.
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -248,6 +253,19 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
+- **Menu commands vanish on a bfcache restore.** `src/gm-menu.ts`
+  holds ONE document's commands per tab, so leaving a page drops its
+  registrations — and Chrome doesn't re-inject on back/forward, so
+  nothing re-registers them. The restored page's callbacks are still
+  alive in its document; only the SW-side mirror is gone, and its
+  action-menu rows stay missing until a real document load.
+  - Fix is a mirror per (tab, document) with an LRU like the one
+    `updateTabMatches` already keeps for `TabMatchState` (see
+    [docs/matching.md](docs/matching.md#per-tab-document-lru-bfcache-restore)),
+    plus a render path that reads the tab's *current* document.
+  - Pre-existing, not introduced by the documentId keying — that
+    only changed the symptom from "shows the previous document's
+    dead rows" to "shows none".
 - **Live `@grant` revocation.** Today `@grant` is baked into the
   wrapper at register time, so changes only take effect on reload.
   Worth doing per-call permission checks (with caching + invalidation
