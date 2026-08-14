@@ -43,7 +43,7 @@ import {
   canonicalCollectionInput,
   containerKindForSingleFileInput,
   containerPath,
-  fetchFileUrlText,
+  fetchScriptFileUrlText,
   fetchHttpText,
   isContainerCollection,
   isHttpUrl,
@@ -896,7 +896,7 @@ export async function applyFiles(
     // (or a logged-out CDN) must never silently disable a working
     // script. Note we can only catch dep *fetch* failures this way —
     // a 200 returning a login page in place of a @require is caught by
-    // the require Content-Type gate (HTML rejected) in external-files;
+    // the require markup gate (HTML rejected) in external-files;
     // @resource bodies are arbitrary bytes and can't be validated.
     if (prior && prior.status === 'ok') {
       return { ...prior, refreshError: result.errorMessage };
@@ -2283,7 +2283,7 @@ export async function fetchOrSkipInParallel(
           return [found.relativePath, { ok: false, errorMessage: describeError(err) }];
         }
       }
-      // file:// (or any other non-HTTP URL fetchFileUrlText can handle).
+      // file:// (or any other non-HTTP URL the file fetcher can handle).
       const canSkip =
         prior != null &&
         prior.status === 'ok' &&
@@ -2294,7 +2294,7 @@ export async function fetchOrSkipInParallel(
         return [found.relativePath, { unchanged: true }];
       }
       try {
-        const text = await fetchFileUrlText(url);
+        const text = await fetchScriptFileUrlText(url);
         return [found.relativePath, { ok: true, text }];
       } catch (err) {
         return [found.relativePath, { ok: false, errorMessage: describeError(err) }];

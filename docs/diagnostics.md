@@ -358,6 +358,7 @@ constant, so the copies can't drift:
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
 | `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |
+| `markupResponseMessage` (`markup-response.ts`) | "we got a web page, not JavaScript", from the script fetchers and the `@require` gate alike |
 
 The last one is the cautionary case: it was two literals, and the Log
 copy had already lost the "reload the page to retry" half — the only
@@ -376,6 +377,14 @@ names a culprit has to be reachable only when that culprit is real:
 - `loadConnectPolicy` splits "this script is gone" (a race the user
   fixes by reloading) from "its header is missing" (ours). The first
   must not carry the `internal error:` prefix.
+- `markupResponseMessage` names the server or the local file, never
+  both: blaming a server for bytes that came off local disk is a flatly
+  wrong diagnosis, and the usual way to hit the local case is a
+  *directory* whose name matches the ref, which Chrome answers with a
+  generated HTML listing.
+  - It quotes the `Content-Type` only when the header is what proved
+    it. Body-sniffed markup leaves it out — quoting `text/plain` next
+    to a claim that the response is HTML reads as a contradiction.
 
 ## Testing
 

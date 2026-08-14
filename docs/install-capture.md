@@ -48,6 +48,38 @@ in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
   - the suffix must be on the *path*, so a page whose query string
     mentions a `.user.js` URL isn't captured.
   - the match is case-sensitive.
+  - known forge **page views** are excluded — see below.
+
+### Forge page views are not captured
+
+`https://github.com/<o>/<r>/blob/<ref>/foo.user.js` ends in the suffix
+but serves an HTML page: GitHub's file browser, with highlighting and
+navigation. Capturing it hijacks a page the user opened to *read*.
+
+- Excluded hosts + path shapes (`CODE_HOST_PAGE_VIEWS`): github.com
+  `/<o>/<r>/blob/`, gitlab.com `/-/blob/`, bitbucket.org and
+  codeberg.org `/<o>/<r>/src/`. `www.` is stripped first.
+- The **raw** URL for each of those (`raw.githubusercontent.com`,
+  `/-/raw/`, `/raw/`) is still captured — that one really is the script,
+  and really does dead-end in the browser.
+- So is a blob URL carrying GitHub's own `?raw=true` switch. It 302s to
+  the raw host, and `onBeforeNavigate` doesn't fire again for a server
+  redirect, so skipping it would lose the capture rather than defer it.
+  (`?plain=1` is not that switch — it's still the page.)
+- Chrome renders these pages fine on its own, so unlike a raw
+  `.user.js` there is no broken download to rescue. Not capturing is
+  also what makes the behavior consistent: clicking a link *inside*
+  GitHub is a same-page SPA navigation that never fires
+  `onBeforeNavigate`, so it was never captured — only pasting the URL
+  into the address bar was.
+- Not a completeness claim, and it doesn't need to be. An unlisted
+  forge's blob view is still captured, but the response then gives it
+  away and the preview continues to the page by itself — see
+  [below](#when-the-url-turns-out-to-be-a-web-page). The list only
+  saves the round trip for the hosts worth knowing in advance.
+- Installing from a blob URL still works: paste it into the collections
+  page's Add field, which rewrites it to the raw URL
+  (`normalizeCollectionInput`).
 
 ### Local files
 
@@ -120,6 +152,8 @@ between them is a bug, not a nuance:
 - The DNR rule needs `isUrlFilterCaseSensitive: true` explicitly (DNR
   defaults to insensitive) and `^[^?]*` to keep the suffix on the path
   (`regexFilter` matches the whole URL).
+- The forge page-view exclusion needs no DNR clause: those URLs answer
+  `text/html`, which the rule's content-type condition already skips.
 
 ### Why not a `declarativeNetRequest` redirect
 
@@ -195,26 +229,91 @@ Capture-specific points:
     installed script's fetches do.
   - Nothing is stored, and nothing runs.
 
+### When the URL turns out to be a web page
+
+The host list above is a guess made *before* the request. Once the
+response is in hand there is a real answer, and it costs nothing:
+
+- The script fetchers reject a markup response outright —
+  `Content-Type: text/html`, or a body that starts with `<`. See
+  [requires.md → Markup gate](requires.md#markup-gate) for the two
+  tests and why the body one keys on position.
+- For a **captured** navigation the preview then continues to the page
+  on its own: bypass, navigate, no banner. The capture was our guess
+  that the URL was a script; being wrong means getting out of the way,
+  not opening a dialog about it.
+- A preview the **user** asked for (the collections page's Add field)
+  never navigates itself. That is a question we owe an answer to, so it
+  reports the problem and offers **Continue to page** instead.
+- This is what covers a forge that isn't on the host list: one wasted
+  fetch, then the user lands where they were going.
+
+#### The `captured=1` marker
+
+The preview page is reached two ways, and once you are on it they look
+the same:
+
+```
+you clicked a .user.js link, and we redirected the tab
+  → userscript.html?preview=https://x.test/a.user.js&captured=1
+
+you typed that URL into the collections page's Add field
+  → userscript.html?preview=https://x.test/a.user.js
+```
+
+Only the first has `captured=1`. It means *the extension opened this
+preview on its own initiative* — nothing about the script.
+
+That one bit decides what happens when the fetch comes back as a web
+page rather than a script:
+
+- **With it**, the page navigates the tab to the URL and disappears. We
+  interrupted a navigation that turned out to be fine; the repair is to
+  stop interrupting it.
+- **Without it**, the page stays and says what it found. The user
+  pointed us at this URL deliberately, and vanishing is not an answer.
+
+Where the marker comes from and goes:
+
+- Only `buildPreviewPageUrl` (`install-capture.ts`) adds it, and the
+  capture is the only thing that calls it.
+- The collections page builds its own preview URL and does not add it.
+- `deep-link.ts` — the redirect that lets a web page link into the
+  extension, forwarding its query string — deletes this parameter from
+  whatever it forwards.
+- `userscript.ts` reads it once, into `previewWasCaptured`, for the
+  decision above. Nothing else looks at it.
+
+That third point is the security-relevant one. Acting on the marker
+means navigating the user's tab and writing a capture bypass for the
+target URL, so a web page must not be able to set it. Web pages cannot
+open `chrome-extension://` URLs at all, which leaves the deep-link
+redirect as the only way a parameter could cross from the web onto an
+extension page — hence the strip.
+
 ### When the URL isn't a script
 
 - A file with no (or an unterminated) metadata block can't be
   installed: the preview says so and hides Install, rather than letting
   `addCollection` create an `invalid` row.
 - Usually that means the URL is an ordinary **web page** whose path
-  happens to end in `.user.js` — a forge's blob view, say. The capture
-  runs before any response exists, so it can't apply the
-  `mime != text/html` half of Chrome's own test the way the DNR rule
-  can.
+  happens to end in `.user.js` — the blob view of a forge not in
+  `CODE_HOST_PAGE_VIEWS`, say. The capture runs before any response
+  exists, so it can't apply the `mime != text/html` half of Chrome's
+  own test the way the DNR rule can; the host list is the stand-in for
+  the hosts worth knowing about in advance.
 - **Continue to page** is the way out: it sets a bypass and loads the
   URL, so the capture doesn't pull the tab straight back. Without it
   the only escape would be turning the whole option off.
+- What reaches this banner is the *non-markup* remainder: a `.txt`, a
+  truncated file, a script whose metadata block never closed. A web
+  page has already continued on its own (above).
 - For a local file the same button reads **Continue to file** and
   targets the `file://` form — the bare path the preview may have been
   opened with would resolve against the extension's own origin.
-- GitHub blob URLs never reach this state — `normalizeCollectionInput`
-  rewrites them to their raw counterpart, so the preview describes the
-  real script. The flip side is that a captured GitHub blob URL can no
-  longer be used to reach GitHub's own file page.
+- A GitHub blob URL that *is* previewed — reached through the Add
+  field, not a capture — describes the real script:
+  `normalizeCollectionInput` rewrites it to its raw counterpart first.
 
 ### How the raw view stays readable
 

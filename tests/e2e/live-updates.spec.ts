@@ -109,10 +109,10 @@ test.describe('collections page live updates', () => {
     await page.close();
   });
 
-  test('an edited @description reaches the filename tooltip', async ({
+  test('an edited @description reaches the name tooltip', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // The Filename cell is only rebuilt when one of its inputs moved, so
+    // The Name cell is only rebuilt when one of its inputs moved, so
     // the skip has to be able to tell "moved" from "didn't" — a repaint
     // that never rebuilds leaves the old tooltip and the old favicon on
     // screen for good.
@@ -127,7 +127,7 @@ test.describe('collections page live updates', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const nameLink = page.locator(`tr[data-script-id="${script.id}"] td.name-cell a:not(.site-icon-inner)`);
-    await expect(nameLink).toHaveAttribute('title', 'first');
+    await expect(nameLink).toHaveAttribute('title', 'a.user.js\n\nfirst');
 
     scriptsDir.write({
       relativePath: 'a.user.js',
@@ -135,7 +135,7 @@ test.describe('collections page live updates', () => {
       body: '',
     });
     await sm.updateCollection(collection!.id, 'manual');
-    await expect(nameLink).toHaveAttribute('title', 'second');
+    await expect(nameLink).toHaveAttribute('title', 'a.user.js\n\nsecond');
 
     await page.close();
   });

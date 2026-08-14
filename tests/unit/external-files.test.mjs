@@ -534,6 +534,49 @@ test('attachFiles: @require accepts text/plain and rejects xhtml', async () => {
   assert.match(await check('text/html-sandboxed'), /returned an HTML page/);
 });
 
+test('attachFiles: @require rejects an HTML body even when the type says otherwise', async () => {
+  // The half of the gate the Content-Type test can't cover: a server
+  // that mislabels its login page, or (the common one) a file:// read
+  // with no Content-Type at all — which is what a local *directory*
+  // matching the ref looks like, since Chrome answers it with a
+  // generated HTML listing.
+  const url = 'https://example.com/lib.js';
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['require', url]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(
+      fakeFetched('<!doctype html><title>Log in</title>', 'text/plain'),
+    )]]),
+    now: 2000,
+  });
+  assert.match(r.errorMessage, /returned an HTML page/);
+  // The body is the evidence here, so the message doesn't quote a
+  // Content-Type that says something else.
+  assert.ok(!r.errorMessage.includes('Content-Type'));
+});
+
+test('attachFiles: @require accepts JavaScript that merely contains markup', async () => {
+  // Position is what decides. A library that writes HTML is still a
+  // library.
+  const url = 'https://example.com/lib.js';
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['require', url]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(
+      fakeFetched('function widget() { return "<div>hi</div>"; }', 'text/javascript'),
+    )]]),
+    now: 2000,
+  });
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(r.requires.length, 1);
+});
+
 test('attachFiles: @require rejects a text/html Content-Type (soft-failure login page)', async () => {
   // A @require is always JavaScript, never HTML. An HTML response at 200
   // is the classic soft failure — a login / error page served in place

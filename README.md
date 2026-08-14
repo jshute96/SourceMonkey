@@ -135,7 +135,7 @@ Details: [docs/file-access.md](docs/file-access.md),
 
 ### Installing scripts from a `.user.js` link
 
-Click a `.user.js` link anywhere — Greasy Fork, GitHub, a file on your
+Click a `.user.js` raw file link anywhere — Greasy Fork, GitHub, a file on your
 own disk, etc. — and SourceMonkey previews it instead of letting Chrome
 download the file.
 

@@ -53,7 +53,8 @@
 - Required query parameter: `page=<name>` where `<name>` is on the
   allowlist below.
 - All other query parameters are forwarded verbatim to the extension
-  page (with `page` stripped).
+  page, with two stripped: `page` (consumed here) and `captured` (see
+  below).
 - Anything that fails the match (wrong URL, missing or disallowed
   `page`) short-circuits — the listener does nothing and the browser
   shows the GitHub doc as the fallback.
@@ -64,7 +65,7 @@
 |---------|--------|-----------------------------|
 | `collections.html` | Collections page | `refresh`, `add=<path-or-url>` (a single `.user.js` hands off to the viewer's preview — see [script-viewer.md](script-viewer.md#preview-mode)) |
 | `options.html` | Options page | — |
-| `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` |
+| `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` (`captured` is stripped — see Security) |
 
 - Adding a new entrypoint means:
   - Add the page filename to `ALLOWED_PAGES` in `src/deep-link.ts`.
@@ -92,6 +93,13 @@
 - Other query parameters pass through unfiltered. Each extension
   page is responsible for validating its own parameters (e.g. an
   eventual `add` handler must not blindly trust the value).
+- **`captured` is the exception, and is stripped by name.** It tells
+  the viewer that the `.user.js` capture opened the preview, which
+  licenses the page to navigate the tab away on its own (and write a
+  capture bypass) when the URL turns out to be a web page. That is the
+  service worker's claim to make, and this redirect is the only place a
+  web page could forge it. Full flow:
+  [install-capture.md](install-capture.md#the-captured1-marker).
 - The redirect only fires on top-level navigations (`frameId === 0`),
   so embedding the stub URL in an iframe will not trigger it.
 - **A deep link can name a URL for the viewer to fetch and display.**

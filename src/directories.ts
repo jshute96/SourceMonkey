@@ -222,6 +222,12 @@ import {
 export { githubRawToBlobUrl } from './github-provider.js';
 import { githubAuthHeaders } from './github-auth.js';
 import { decodeForDisplay, leafName } from './script-display.js';
+import {
+  MarkupResponseError,
+  isMarkupContentType,
+  looksLikeMarkup,
+  markupResponseMessage,
+} from './markup-response.js';
 
 // Leaf name (last path segment) of an http(s) URL, percent-decoded —
 // used as the FoundScript.name for HTTP manifest entries so the
@@ -320,6 +326,29 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   return await response.text();
 }
 
+// `fetchFileUrlText` for text that is about to be treated as a script.
+//
+// The markup guard can't live in `fetchFileUrlText` itself: among its
+// other callers is the one that reads Chrome's `file://` directory
+// listing, which is HTML *by design* (`parseListing`). So the two
+// script-body call sites — the refresh pipeline and the preview —
+// share this wrapper instead.
+//
+// What it catches locally: an `.user.js` path that is really a
+// directory (Chrome answers with a generated listing), and an HTML
+// file that got the suffix by mistake. The `file://` legs often report
+// no Content-Type at all, so the body test is the only one available.
+export async function fetchScriptFileUrlText(url: string): Promise<string> {
+  const text = await fetchFileUrlText(url);
+  if (looksLikeMarkup(text)) {
+    // No `Could not read ${url}: ` prefix, unlike its siblings here:
+    // the local wording already names the file, and the prefix would
+    // print the same URL twice in one sentence.
+    throw new MarkupResponseError(markupResponseMessage({ localUrl: url }));
+  }
+  return text;
+}
+
 // Best-effort "does the path point to a readable file" probe. Used to
 // turn the otherwise-cryptic "Could not read …/" message into a
 // clearer one when the user types a path to an existing non-userscript
@@ -339,11 +368,18 @@ async function isReadableFile(absolutePath: string): Promise<boolean> {
 export interface HttpFetchOptions {
   etag?: string;          // last-seen ETag — sent as If-None-Match
   lastModified?: string;  // last-seen Last-Modified — sent as If-Modified-Since
+  expects?: HttpFetchExpects;  // defaults to JavaScript — see the type
 }
 
 export type HttpFetchResult =
   | { kind: 'ok'; text: string; etag?: string; lastModified?: string }
   | { kind: 'unchanged' };  // 304
+
+// What the caller is going to do with the bytes, for the one message
+// that has to name it: this fetcher reads both script bodies and
+// collection manifests, and "not JavaScript" is the wrong complaint
+// about a manifest.
+export type HttpFetchExpects = 'JavaScript' | 'JSON';
 
 // Fetch an http(s) URL, optionally with conditional headers. A 304
 // response surfaces as `{kind: 'unchanged'}` so callers can preserve
@@ -375,6 +411,25 @@ export async function fetchHttpText(
   if (response.status === 304) return { kind: 'unchanged' };
   if (!response.ok) throw new Error(`Could not read ${url}: HTTP ${response.status}`);
   const text = await response.text();
+  // Every caller of this treats the result as JavaScript (a script
+  // body) or JSON (a manifest); neither can be markup. Rejecting here
+  // rather than letting it through is what keeps a refresh that lands
+  // on a login page from replacing a working script with a page of
+  // HTML — a fetch failure preserves the prior copy, a "successful"
+  // fetch of garbage does not.
+  //
+  // The header is quoted verbatim, not lowercased: it is evidence, and
+  // evidence should read as what the server actually sent.
+  const contentType = response.headers.get('content-type') ?? '';
+  const markupHeader = isMarkupContentType(contentType);
+  if (markupHeader || looksLikeMarkup(text)) {
+    throw new MarkupResponseError(
+      `Could not read ${url}: ${markupResponseMessage({
+        ...(markupHeader ? { contentType } : {}),
+        expected: opts.expects ?? 'JavaScript',
+      })}`,
+    );
+  }
   const result: HttpFetchResult = { kind: 'ok', text };
   const etag = response.headers.get('ETag');
   if (etag) result.etag = etag;
@@ -564,7 +619,7 @@ export async function scanForUserScripts(
 // a body, not negotiate freshness.
 async function fetchManifestText(canonicalUrl: string): Promise<string> {
   if (isHttpUrl(canonicalUrl)) {
-    const fetched = await fetchHttpText(canonicalUrl);
+    const fetched = await fetchHttpText(canonicalUrl, { expects: 'JSON' });
     if (fetched.kind !== 'ok') {
       // Unreachable in practice: this call sends no conditional-GET
       // headers, so `fetchHttpText` can only answer `ok` or throw.

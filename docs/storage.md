@@ -225,6 +225,13 @@ record the reason. Triggers:
 - **Hard fetch failure** (any scheme): network error, 404, unreadable
   file, a disconnected network mount. Covers the case where a read
   throws.
+- **Markup response** (any scheme): the fetch succeeded but answered
+  with a web page — a login wall, a forge's file-browser page, a
+  `file://` directory listing. Rejected at the fetcher
+  (`markup-response.ts`), so it arrives here as a hard fetch failure
+  and the good copy keeps running. Previously the HTML was stored as
+  the script's source and reported as a syntax error in the user's
+  script.
 - **Soft failure** (http(s) only): the fetch returned 200 but the body
   parsed `invalid` — a login / error page served in place of the
   script (e.g. a logged-out collection). Scoped to http(s): a `file://`
@@ -232,7 +239,7 @@ record the reason. Triggers:
   genuine local edit and is flagged `invalid` immediately.
 - **Dependency failure**: a `@require` / `@resource` fetch failed, so
   the script keeps running on its cached deps. (A `@require` returning
-  an HTML login page is caught earlier by the Content-Type gate in
+  an HTML login page is caught earlier by the markup gate in
   `external-files.ts` and surfaces as a fetch failure; `@resource`
   bodies are arbitrary bytes and can't be validated this way — see
   [requires.md](requires.md).)
@@ -736,7 +743,7 @@ collection**:
 - **Remove** button → `removeCollection`. If the collection owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove collection with N scripts?" first;
   cancel aborts the remove. An empty collection removes silently.
-- Table with columns **(bulk toggle) | Filename | Size | Status**.
+- Table with columns **(bulk toggle) | Name | Size | Status**.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
     flips every script under this collection on (when not all are on) or
     off (when all are on). Greyed when the collection itself is off.
@@ -745,8 +752,15 @@ collection**:
     the checkbox itself is `disabled` (the underlying value is
     preserved so flipping the collection back on restores each script's
     prior state).
-  - Filename links to the viewer at
-    `userscript.html?script=<scriptId>`.
+  - Name shows the script's `@name`, falling back to its location when
+    it declares none — see
+    [names-and-paths.md](names-and-paths.md#the-collections-page-shows-name).
+    It links to the viewer at `userscript.html?script=<scriptId>`.
+  - The name's tooltip is the whole location (never the shortened
+    form the column may fall back to), a blank line, then the
+    `@description` (or `No description`).
+  - Rows stay in stored scan order, which is by location — so the Name
+    column does not read alphabetically.
   - Size shows the UTF-8 byte count of the cached content — including
     a `"0 B"` for an empty file, and the prior size for `missing` /
     `invalid` rows that retain their last-read body. Only rows that have
@@ -896,10 +910,10 @@ have to be.
 - **Re-seating** into stored order happens only when the order actually
   differs — moving an attached node detaches it first, and Chrome blurs
   anything focused inside it.
-- **The Filename and Status cells** are rebuilt only when one of their
+- **The Name and Status cells** are rebuilt only when one of their
   inputs moved, tracked per row by `nameCellKeys` / `statusCellKeys`.
   Both discard and recreate their contents, which would drop focus off
-  a link the user had tabbed to; the Filename cell would also re-run the
+  a link the user had tabbed to; the Name cell would also re-run the
   favicon fetch and flash the globe placeholder.
 - **Reads are proportionate.** One pass reads the collection index and each
   collection's scripts once, and derives the dedup `#N` map from those rows.

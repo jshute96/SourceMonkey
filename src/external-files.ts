@@ -43,6 +43,11 @@ import { localFileCandidates } from './local-file-overrides.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64 } from './bytes.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
+import {
+  isMarkupContentType,
+  looksLikeMarkup,
+  markupResponseMessage,
+} from './markup-response.js';
 
 // Per-file limit. Big enough for jQuery (~90 KB) and most chunky
 // userscript libraries; small enough to keep a runaway from draining
@@ -558,28 +563,30 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   if (isFailure(got)) {
     return { errorMessage: `@require ${args.ref}: ${got.errorMessage}` };
   }
-  // @require-specific content-type predicate. Applied here (not in
-  // the shared fetch) so a @require + @resource pair pointing at the
-  // same URL share one fetch without the require's stricter rule
-  // poisoning the resource's cache entry.
-  // No empty-string guard needed: an absent Content-Type (the file://
-  // XHR case) is accepted by the predicate like any other non-markup
-  // type.
-  if (!requireAcceptContentType(got.contentType)) {
-    // Two different situations, so two different sentences. Blaming the
-    // server when the bytes came off local disk would be a flatly wrong
-    // diagnosis — the common way to hit that is a local *directory*
-    // whose name matches the ref, which Chrome answers with a generated
-    // HTML listing.
+  // @require-specific markup gate. Applied here (not in the shared
+  // fetch) so a @require + @resource pair pointing at the same URL
+  // share one fetch without the require's stricter rule poisoning the
+  // resource's cache entry — a `@resource` may legitimately BE an HTML
+  // file.
+  //
+  // Only markup is rejected. `application/octet-stream` and other
+  // vague types are accepted on purpose — they are common and
+  // legitimate for JavaScript (GitHub serves every release asset that
+  // way, and release URLs are a normal thing to pin a library to), and
+  // the strict-UTF-8 decode below is what actually closes the
+  // "anything binary gets through" hole. Tampermonkey does no
+  // content-type gating on `@require` at all.
+  if (isMarkupContentType(got.contentType)) {
     return {
-      errorMessage: loaded.localUrl
-        ? `@require ${args.ref}: The local file ${loaded.localUrl} is an HTML page, not JavaScript (Content-Type "${got.contentType}") — a folder with that name would look like this`
-        : `@require ${args.ref}: The server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login`,
+      errorMessage: `@require ${args.ref}: ${markupResponseMessage({
+        ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+        contentType: got.contentType,
+      })}`,
     };
   }
   // Strict UTF-8 decode: catches binary regardless of what the server
   // claimed the type was (a misconfigured CDN serving a PNG, or the
-  // generic octet-stream the content-type gate deliberately lets
+  // generic octet-stream the markup gate deliberately lets
   // through). Previously we used fatal:false and the bytes were
   // mojibake'd into JS source, where they'd produce a confusing
   // SyntaxError at eval. This is the gate that closes that hole.
@@ -588,6 +595,18 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
     source = new TextDecoder('utf-8', { fatal: true }).decode(got.bytes);
   } catch {
     return { errorMessage: `@require ${args.ref}: The response is not valid UTF-8 (binary or wrong-encoding file)` };
+  }
+  // Second half of the same gate, on the bytes rather than the header.
+  // The Content-Type test above can't fire when there is no
+  // Content-Type — the common `file://` case, which is exactly where a
+  // directory-listing HTML page comes from — nor when a server labels
+  // its login page `text/plain`.
+  if (looksLikeMarkup(source)) {
+    return {
+      errorMessage: `@require ${args.ref}: ${markupResponseMessage({
+        ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      })}`,
+    };
   }
   const u8 = new Uint8Array(got.bytes);
   const contentHash = await sha256Hex(got.bytes);
@@ -610,39 +629,6 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
     },
   };
 }
-
-// A denylist of markup types, not an allowlist. HTML is the only
-// family worth rejecting: a `@require` is always JavaScript, never
-// markup, so an HTML response is the classic soft-failure signature —
-// a login / error page served at 200 in place of the real library.
-// Rejecting it turns that into a clean fetch failure, which the
-// refresh pipeline treats as a refresh failure (keep the prior good
-// copy running) rather than silently swapping a working dependency for
-// a page of markup. `text/html-sandboxed` is caught by the prefix and
-// deserves to be; XHTML is spelled `application/xhtml+xml`, so it
-// needs its own clause to match the same intent.
-//
-// `application/json` is deliberately *not* rejected: a JSON error
-// envelope at 200 is a real soft-failure shape, but so is a legitimate
-// JS module served by a mislabelling host, and the eval-side try/catch
-// already contains the damage.
-//
-// Everything else is accepted, including `application/octet-stream`.
-// That used to be rejected as a "give us anything binary" hole next to
-// the suffix-only `.js` URL gate, but the strict-UTF-8 decode below is
-// what actually closes that hole — and the generic type is common in
-// practice, not exotic: GitHub serves *every* release asset as
-// octet-stream regardless of extension, and release URLs are a normal
-// place for a userscript to pin a library. Tampermonkey does no
-// content-type gating on `@require` at all.
-//
-// Trims defensively so the rule holds for a caller that hands over a
-// raw header rather than the lowercased/trimmed one every producer in
-// file-loader.ts currently passes.
-const requireAcceptContentType = (ct: string): boolean => {
-  const type = ct.trim();
-  return !type.startsWith('text/html') && !type.startsWith('application/xhtml');
-};
 
 interface LoadResourceArgs {
   decl: ResourceDecl;

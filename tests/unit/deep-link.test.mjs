@@ -101,6 +101,19 @@ test('hash fragment does not block the match and is not forwarded', () => {
   );
 });
 
+test('the captured marker never rides in from the web', () => {
+  // `captured=1` tells the viewer the install capture opened it, which
+  // lets the page navigate the tab away on its own. This redirect is
+  // the only way a web page can put a param onto an extension page, so
+  // that one claim does not carry — everything else still does.
+  const target = buildDeepLinkTarget(
+    `${PREFIX}?page=userscript.html&preview=https%3A%2F%2Fx.test%2Fa.user.js&captured=1`,
+  );
+  const params = new URL(target).searchParams;
+  assert.equal(params.get('captured'), null);
+  assert.equal(params.get('preview'), 'https://x.test/a.user.js');
+});
+
 test('userinfo on the URL rejects the match', () => {
   assert.equal(
     buildDeepLinkTarget(`https://user:pass@github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=collections.html`),

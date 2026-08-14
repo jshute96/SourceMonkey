@@ -23,8 +23,8 @@ How a stored location becomes the text a user reads. Helpers live in
 - Not decoded: `href`s, the Location row's copy button, fetch URLs,
   stored `relativePath`, `@match` patterns, anything compared for
   identity (e.g. the preview's already-installed check).
-- A row's tooltip carries the raw href, so the encoded form is always
-  one hover away.
+- The viewer's `Location` row carries the raw href in its tooltip, so
+  the encoded form is always one hover away.
 - **`Local overrides` is the one row whose copy button gives you the
   displayed string.** Its value is a bare filesystem path, not a URL, so
   there is no encoded form to preserve — decoding already happened in
@@ -38,8 +38,38 @@ How a stored location becomes the text a user reads. Helpers live in
 | `leafName(p)` | last `/`-separated segment, no decoding |
 | `displayLocation(s)` | readable form of a whole URL or path |
 | `scriptBasename(s)` | short name: URL filename (decoded, no query) or path leaf |
-| `scriptDisplayName(script)` | `@name`, else `displayLocation(relativePath)` |
+| `scriptDisplayName(script, fallback?)` | `@name`, else `fallback`, else `displayLocation(relativePath)` |
 | `appendWithSlashBreaks(el, s)` | append text with a `<wbr>` after each `/` so long values wrap at slashes |
+
+### The collections page shows `@name`
+
+- The Name column shows the script's own `@name` — what its author
+  calls it, and what every other surface (badge, action menu, match
+  listings) already calls it.
+- Falls back to the location when the `@name` is missing, blank, or the
+  header never parsed. Whitespace-only counts as missing.
+- The fallback text is the same location text the column used to show:
+  the leaf basename for a script inside a container collection (whose
+  location is a whole URL), the `displayLocation` otherwise.
+- **The location moves to the tooltip**, not out of the UI: first line
+  location, blank line, then the `@description` (or `No description`).
+  Two scripts can share an `@name`, so the location is what tells their
+  rows apart.
+- **Only the column shortens.** The tooltip always gives the whole
+  location — it has no width to run out of, and a container row
+  shortened to `foo.user.js` would tell two same-named scripts from
+  different hosts apart no better than the name did.
+- `scriptDisplayName(script, fallback)` does the pick, so the column and
+  the badge/menu labels can't drift.
+- The `#N` dupe suffix beside the name still comes from the log ID,
+  which is basename-derived — so it can sit beside a name it wasn't
+  computed from, and two rows sharing an `@name` but not a basename get
+  no suffix at all. The tooltip's first line is the disambiguator in
+  both directions. See [logging.md](logging.md#log-ids).
+- **The viewer keeps the location as its heading.** The collections page
+  is a list you scan, where the author's name for a script is the
+  useful label; the viewer is where you go *for* the file, so its `<h1>`
+  and tab title stay `displayLocation(relativePath)`.
 
 ### Only URLs get decoded
 

@@ -276,6 +276,7 @@ test.describe('site-icon slot', () => {
 
       const page = await extensionContext.newPage();
       await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      // The Name column shows each script's `@name`, not its filename.
       const rowFor = (name: string) =>
         page.locator(
           `section.collection[data-collection-id="${collection!.id}"] tbody tr:has-text("${name}")`,
@@ -286,11 +287,11 @@ test.describe('site-icon slot', () => {
       // root, so it bypasses the path layer and lands on the
       // origin-level fallback — which begins with a root-HTML probe
       // and therefore sees ICON_ROOT.
-      await expect(rowFor('section-a.user.js').locator('.site-icon img'))
+      await expect(rowFor('SectionA').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_A}`);
-      await expect(rowFor('section-b.user.js').locator('.site-icon img'))
+      await expect(rowFor('SectionB').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_B}`);
-      await expect(rowFor('root.user.js').locator('.site-icon img'))
+      await expect(rowFor('Root').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_ROOT}`);
       await page.close();
     } finally {

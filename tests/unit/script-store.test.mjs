@@ -632,9 +632,14 @@ test('rebuildCollection keeps a known script running when its fetch fails (refre
 });
 
 test('rebuildCollection: http 200 that parses invalid keeps the prior good copy (soft failure)', async () => {
-  // The logged-out-HTTP case: the fetch "succeeds" (200) but returns a
-  // login / error page in place of the script. We must NOT clobber the
-  // working copy — keep it running and flag refreshError.
+  // The fetch "succeeds" (200) but the body isn't the script — real
+  // JavaScript with no metadata block, say, which nothing about the
+  // response gives away. We must NOT clobber the working copy: keep it
+  // running and flag refreshError.
+  //
+  // A body that is outright markup (the classic login page) never gets
+  // this far — `fetchHttpText` rejects it, so it arrives as a fetch
+  // failure instead. See markup-response.ts.
   const existing = [
     await buildScriptFromText({
       id: 'h-id',
@@ -651,7 +656,7 @@ test('rebuildCollection: http 200 that parses invalid keeps the prior good copy 
     existing,
     scan: [{ relativePath: 'h.user.js' }],
     fetchResults: new Map([
-      ['h.user.js', { ok: true, text: '<!doctype html><title>Log in</title>' }],
+      ['h.user.js', { ok: true, text: 'alert("no metadata block here");' }],
     ]),
     now: 100,
     newId: fakeIdSequence(),

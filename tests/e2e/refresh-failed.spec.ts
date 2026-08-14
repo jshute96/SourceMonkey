@@ -26,7 +26,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
   test.beforeEach(async () => { server = await UserscriptServer.start(); });
   test.afterEach(async () => { await server.stop(); });
 
-  test('soft failure: a 200 login page does not replace the working script', async ({ sm }) => {
+  test('markup response: a 200 login page does not replace the working script', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
     const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
     const before = await sm.getCollectionWithScripts(collection!.id);
@@ -36,8 +36,9 @@ test.describe('refresh failed (keep prior good copy)', () => {
     const priorLoadedAt = good.loadedAt;
 
     // Now the server is "logged out": it answers 200 with an HTML login
-    // page instead of the script. The fetch succeeds, but the body is
-    // not a userscript.
+    // page instead of the script. The response is markup, so the
+    // fetcher rejects it outright rather than letting a page of HTML
+    // reach the parser and be reported as a problem with the script.
     server.setRoute('/app.user.js', '<!doctype html><title>Please log in</title>', {
       contentType: 'text/html; charset=utf-8',
     });
@@ -50,6 +51,25 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(after.bodyText).toBe(priorBody);
     expect(after.bodyText).not.toContain('login');
     expect(after.loadedAt).toBe(priorLoadedAt);
+    expect(after.refreshError).toMatch(/HTML page, not JavaScript/);
+  });
+
+  test('soft failure: a 200 that parses invalid does not replace the working script', async ({ sm }) => {
+    // The non-markup half of the same protection: real JavaScript, but
+    // no metadata block, so it can't be the script we had. Nothing
+    // about the response gives it away — only the parse does.
+    server.setRoute('/app.user.js', userscriptText('App'));
+    const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
+    const good = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+    const priorBody = good.bodyText;
+
+    server.setRoute('/app.user.js', 'alert("no metadata block here");\n');
+    await sm.syncNow();
+    await sm.updateCollection(collection!.id, 'manual');
+
+    const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+    expect(after.status).toBe('ok');
+    expect(after.bodyText).toBe(priorBody);
     expect(after.refreshError).toMatch(/not a valid userscript/);
   });
 
@@ -76,7 +96,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
     const priorLoadedAt = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].loadedAt;
 
-    // Break it (soft failure) → refresh-failed.
+    // Break it (markup response) → refresh-failed.
     server.setRoute('/app.user.js', '<!doctype html><title>Please log in</title>', {
       contentType: 'text/html; charset=utf-8',
     });
@@ -134,7 +154,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     expect(afterRecovery.some((e) => /Loaded new content/.test(e.message))).toBe(true);
   });
 
-  test('a soft failure (200 login page) is explained in the Log too', async ({ sm }) => {
+  test('a markup response (200 login page) is explained in the Log too', async ({ sm }) => {
     server.setRoute('/app.user.js', userscriptText('App'));
     const collection = await sm.addCollection(`${server.baseUrl}/app.user.js`);
     const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
@@ -150,7 +170,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     const failures = log.filter((e) => /Refresh failed/.test(e.message));
     expect(failures.length).toBe(1);
     expect(failures[0].level).toBe('warning');
-    expect(failures[0].message).toMatch(/not a valid userscript/);
+    expect(failures[0].message).toMatch(/HTML page, not JavaScript/);
   });
 
   test('a script that cannot load at all logs an error on every check', async ({ sm }) => {

@@ -1,7 +1,7 @@
 # Site icons
 
 - Each row in the collections page (and the H1 of the script viewer)
-  shows a small favicon next to the script filename.
+  shows a small favicon next to the script name.
 - Collection priority:
   - A script-declared `@icon` (or its TM aliases — see below) wins
     outright when set.
@@ -213,7 +213,7 @@ just trigger a fresh fetch if the user re-adds the collection.
 
 ## Display
 
-- A 16×16 `<span class="site-icon">` slot sits before the filename
+- A 16×16 `<span class="site-icon">` slot sits before the name
   link in each row. The viewer page mirrors the same slot inside its
   `<h1>`.
 - `renderSiteIconInto` paints the slot synchronously:

@@ -222,20 +222,21 @@ async function serveLocalFile(file, url, missingReason) {
 }
 
 // A downloaded file carries no record of the Content-Type its server
-// sent, and the `@require` loader gates on exactly that header: an
-// HTML response is rejected as the classic soft-failure signature (a
-// login or error page served in place of the library). Sniffing the
-// bytes reproduces that decision better than trusting the extension
-// would — a `.js` URL whose content is a `<!DOCTYPE html>` page is
-// precisely the case the gate exists for. Everything else is typed off
-// the extension, and falls back to `application/octet-stream`, which
-// the loader accepts (see `requireAcceptContentType`).
+// sent, and the `@require` loader gates on that header: an HTML
+// response is rejected as the classic soft-failure signature (a login
+// or error page served in place of the library). Sniffing the bytes
+// reproduces that decision better than trusting the extension would —
+// a `.js` URL whose content is a `<!DOCTYPE html>` page is precisely
+// the case the gate exists for. Everything else is typed off the
+// extension, and falls back to `application/octet-stream`, which the
+// loader accepts (see `isMarkupContentType`, markup-response.ts).
 //
-// The sniff is deliberately only the two unambiguous openings. A page
-// starting with `<?xml`, a BOM, or a comment is left to its extension —
-// which under-reports the HTML gate rather than over-reporting it, and
-// a false accusation about someone's dependency is the worse error of
-// the two. Such a file still fails, one step later, as a syntax error.
+// The sniff is deliberately only the two unambiguous openings, and it
+// no longer has to be exhaustive: the loader's own `looksLikeMarkup`
+// runs on the decoded bytes, so a page opening with `<?xml` or a
+// comment is caught there whatever this guesses. Under-reporting here
+// is still the safer direction — a false accusation about someone's
+// dependency is the worse error of the two.
 const CONTENT_TYPES = {
   '.js': 'application/javascript',
   '.mjs': 'application/javascript',

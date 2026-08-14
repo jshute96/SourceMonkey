@@ -209,9 +209,11 @@ test.describe('collections', () => {
     // that way in the viewer and on the collections page. Decoding it here
     // would show a name that matches nothing on disk. See
     // docs/names-and-paths.md.
+    // No `@name`, so the collections page falls back to the location —
+    // which is what this test wants to read.
     scriptsDir.write({
       relativePath: 'a%20b.user.js',
-      meta: { name: 'Literal Percent', match: ['https://example.com/*'] },
+      meta: { match: ['https://example.com/*'] },
       body: '',
     });
     const collection = await sm.addCollection(scriptsDir.path);
@@ -227,9 +229,13 @@ test.describe('collections', () => {
     const collections = await extensionContext.newPage();
     await collections.goto(`chrome-extension://${extensionId}/collections.html`);
     // `.name-cell a` also matches the favicon slot's link, so target
-    // the filename anchor by its viewer href.
-    await expect(collections.locator(`tr[data-script-id="${script.id}"] .name-cell a[href*="userscript.html"]`))
-      .toHaveText('a%20b.user.js');
+    // the name anchor by its viewer href.
+    const nameLink = collections.locator(
+      `tr[data-script-id="${script.id}"] .name-cell a[href*="userscript.html"]`,
+    );
+    await expect(nameLink).toHaveText('a%20b.user.js');
+    // …and the tooltip leads with the same literal location.
+    await expect(nameLink).toHaveAttribute('title', /^a%20b\.user\.js\n/);
     await collections.close();
   });
 
@@ -237,14 +243,14 @@ test.describe('collections', () => {
     extensionContext, extensionId, sm,
   }) => {
     // Web-installed scripts routinely carry a whole marketing title as
-    // their filename. A `nowrap` name cell made the table wider than
+    // their `@name`. A `nowrap` name cell made the table wider than
     // its `.directory` card, pushing Size / Status outside the border.
     // See docs/names-and-paths.md.
     const longName =
-      'YouTube Ultimate Downloader v132 - All-in-One Media Suite - Ad-Free + SponsorBlock.user.js';
+      'YouTube Ultimate Downloader v132 - All-in-One Media Suite - Ad-Free + SponsorBlock';
     scriptsDir.write({
-      relativePath: longName,
-      meta: { name: 'Long', match: ['https://example.com/*'] },
+      relativePath: `${longName}.user.js`,
+      meta: { name: longName, match: ['https://example.com/*'] },
       body: '',
     });
     const collection = await sm.addCollection(scriptsDir.path);
