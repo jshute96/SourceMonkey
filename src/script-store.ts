@@ -95,6 +95,7 @@ import {
   mapWithConcurrency,
   FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
   FETCH_COLLECTIONS_CONCURRENCY,
+  PARSE_RECHECK_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from './debug-log.js';
 
@@ -1062,6 +1063,110 @@ async function applyParseCheck(
   // prior `ok`.)
   delete built.parseCheckedHash;
   return built;
+}
+
+// The fields a parse verdict owns, copied from the checked row onto
+// the stored one. Everything else on the stored row is left as it is
+// found — the check has no opinion about it.
+function applyVerdictFields(current: StoredScript, checked: StoredScript): StoredScript {
+  const merged: StoredScript = { ...current, status: checked.status };
+  setScriptError(merged, checked.errorMessage, checked.errorLocation);
+  if (checked.parseCheckedHash) merged.parseCheckedHash = checked.parseCheckedHash;
+  else delete merged.parseCheckedHash;
+  return merged;
+}
+
+// Re-derive the parse verdict for rows that carry none, and persist
+// what comes back.
+//
+// ---------- Why a second entry point ----------
+//
+// `applyParseCheck` runs inside the load pipeline, so it only ever
+// sees rows that are being *built* — added, refreshed, edited. A row
+// that was stored before the check existed, or while the check was
+// failing open (no offscreen document, sandbox unavailable), keeps
+// `status: 'ok'` with no `parseCheckedHash` and is never revisited
+// until something rebuilds it. Registering one of those is how
+// unparsable source reaches Chrome.
+//
+// That matters beyond the script not running. A registered entry that
+// V8 refuses to compile raises an uncaught `SyntaxError` attributed to
+// the extension, which Chrome files under
+// `chrome://extensions/?errors` — nothing can catch it in-page, and it
+// reads as SourceMonkey being broken rather than the script being
+// broken. Not registering it is the only way to keep it out of there;
+// the seal entry (`__smSealed`) stays as the backstop for whatever
+// still gets through.
+//
+// Caller passes the rows it is about to register — checking a
+// disabled script would spend a round trip on code nothing will run.
+// Returns the rows that CHANGED, keyed by id, so the caller can swap
+// them into the set it holds.
+//
+// Fails open exactly like the pipeline check: no checker, an
+// inconclusive verdict, or a throw all leave the row alone.
+export async function verifyParseChecks(
+  scripts: StoredScript[],
+): Promise<Map<string, StoredScript>> {
+  const changed = new Map<string, StoredScript>();
+  if (!parseChecker) return changed;
+  // A row the check couldn't decide on records nothing, so it stays
+  // stale and is asked about again on the next sync. That is
+  // deliberate: the two ways to be undecided are "the machinery isn't
+  // there" (answered without compiling anything, and it can come back
+  // — the off-switch the tests use lives here) and "V8 ran out of
+  // parser budget", which the sandbox's own circuit breaker already
+  // rations. Remembering the verdict-free attempt instead would mean a
+  // row checked while the machinery was down never gets checked again.
+  const stale = scripts.filter(
+    (s) => s.status === 'ok' && s.parseCheckedHash !== parseCheckKey(s),
+  );
+  if (stale.length === 0) return changed;
+  // `prior` is deliberately undefined: the short-circuit it exists for
+  // is the one the filter above already applied.
+  //
+  // Capped rather than `Promise.all`: `stale` is normally empty or
+  // tiny, but the first sync after an extension update finds the whole
+  // library stale at once (the version is part of the key), and each
+  // compile composes a whole program in memory.
+  const checked = await mapWithConcurrency(
+    stale,
+    PARSE_RECHECK_CONCURRENCY,
+    (s) => applyParseCheck({ ...s }, undefined),
+  );
+  for (const next of checked) {
+    // Nothing to record when the check couldn't decide — no verdict,
+    // no fingerprint, and the row is untouched.
+    if (next.status === 'ok' && !next.parseCheckedHash) continue;
+    changed.set(next.id, next);
+  }
+  if (changed.size === 0) return changed;
+  await mutate(async () => {
+    const keys = [...changed.keys()].map(scriptKey);
+    const got = await getMany(keys);
+    const toSet: Record<string, unknown> = {};
+    for (const [id, next] of changed) {
+      // Re-read rather than trusting the copy we checked: the check is
+      // a round trip to another context, and a refresh could have
+      // rewritten the row while it was out. A row whose fingerprint
+      // inputs moved is one our verdict is no longer about.
+      const current = got[scriptKey(id)] as StoredScript | undefined;
+      if (!current || parseCheckKey(current) !== parseCheckKey(next)) {
+        changed.delete(id);
+        continue;
+      }
+      // Merge the verdict ONTO the row we just read, rather than
+      // writing the copy we checked. Same fingerprint doesn't mean same
+      // row: `enabled`, `versionProbes` and the rest can have moved
+      // while the check was out, and writing our copy would roll them
+      // back.
+      const merged = applyVerdictFields(current, next);
+      changed.set(id, merged);
+      toSet[scriptKey(id)] = merged;
+    }
+    if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
+  });
+  return changed;
 }
 
 interface ScanEntry {

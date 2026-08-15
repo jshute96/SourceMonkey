@@ -144,6 +144,35 @@ relevant DevTools console only. Severity for the viewer's Log tab is a
 separate channel (the per-script log `level` + `sm:*` reports) and is
 unaffected.
 
+## Keeping the Errors panel clean
+
+The `console.warn` / `.error` ban above is only the loudest route into
+`chrome://extensions/?errors`. Other routes reach it without any
+console call at all, and each has its own countermeasure:
+
+- **Unhandled promise rejections in an extension page.** A dropped
+  `chrome.*` promise is reported as an uncaught error against the
+  extension. `chrome.tabs.create` on a `file://` URL rejects outright
+  while "Allow access to file URLs" is off, so the viewer's
+  open-in-a-tab paths return their promises and report the failure into
+  the message bar (plus the file-access banner) instead of dropping
+  them.
+- **A registered userscript entry that doesn't compile.** V8's
+  `SyntaxError` is raised before any of our code runs, so nothing can
+  catch it. The answer is to never register such an entry — the parse
+  check ([parse-check.md](parse-check.md)) runs at install/refresh
+  time, and `runSync` re-checks any candidate whose verdict is missing
+  or stale before registering it.
+- **Preload hints on a response an extension PAGE fetched.** Chrome
+  applies a response's `Link: <…>; rel=preload; as=script` header to
+  the document that asked, then refuses the preload under the page's
+  `script-src 'self'`. Any site that preloads its bundles sends one, and
+  we fetch site HTML (the site-icon probe) and arbitrary script URLs
+  (Add / Refresh / the install preview) from pages. So a page hands its
+  http(s) reads to the service worker, which has no document for the
+  hint to apply to — `src/http-read.ts`, used by both `fetchHttpText`
+  and `fetchResourceBytes`. See `tests/e2e/preload-hints.spec.ts`.
+
 ## Page-console "startup logs"
 
 The SW console is hard for end users to find. For diagnostics the

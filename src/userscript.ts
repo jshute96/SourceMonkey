@@ -1978,7 +1978,7 @@ function openRawSource(): void {
     .then((url) => {
       const key = new URL(url).searchParams.get('key');
       if (key) rawViewKeys.add(key);
-      openTab(url);
+      return openTab(url);
     })
     // `chrome.storage.session` is quota-limited and shared with the
     // per-script logs, so a big script can genuinely fail here. Say so
@@ -1999,10 +1999,16 @@ function openRawSource(): void {
 // `chrome.storage.session` is quota-limited and shared with the
 // per-script logs, so the write can genuinely fail; say so rather than
 // leaving the button inert.
-function withBypass(url: string, go: (url: string) => void): void {
+function withBypass(url: string, go: (url: string) => void | Promise<void>): void {
   markInstallBypass(url)
     .then(() => go(url))
-    .catch((err) => setMessage(`Could not open ${url}: ${describeError(err)}`, 'error'));
+    .catch((err) => {
+      setMessage(`Could not open ${url}: ${describeError(err)}`, 'error');
+      // Chrome refuses to navigate a tab to a `file://` URL while
+      // "Allow access to file URLs" is off, and says so in terms that
+      // don't name the setting. The banner does.
+      showFileAccessBannerIfBlocked(url);
+    });
 }
 
 // Open the real URL in a new tab, leaving this preview in place.
@@ -2014,8 +2020,15 @@ function navigateRaw(url: string): void {
 // `window.open`: an extension page opened through `window.open` comes
 // up without the `chrome.*` APIs, so `raw.html` would have no way to
 // read the text handed to it.
-function openTab(url: string): void {
-  void chrome.tabs.create({ url });
+//
+// Returns the promise rather than dropping it. `tabs.create` rejects
+// for reasons the user can act on — a `file://` target with "Allow
+// access to file URLs" off is refused outright — and an unhandled
+// rejection in an extension page is reported into
+// chrome://extensions/?errors, where it reads as SourceMonkey being
+// broken instead of a setting being off. Callers report it instead.
+function openTab(url: string): Promise<void> {
+  return chrome.tabs.create({ url }).then(() => undefined);
 }
 
 // The handed-off text outlives this page unless dropped. The tabs that

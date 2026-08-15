@@ -401,8 +401,9 @@ test.describe('@require', () => {
     // The install-time parse check normally catches this first and the
     // script never registers at all — see parse-check-install.spec.ts.
     // Turn it off here so the run-time backstop is still exercised: it
-    // is what covers a browser without `chrome.offscreen`, a check that
-    // times out, and rows stored before the check existed.
+    // is what covers a browser without `chrome.offscreen` and a check
+    // that times out. (A row that dodged the check at install time is
+    // now caught by the re-check in `runSync` before it registers.)
     await sm.setParseCheckEnabled(false);
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const ok = 1;\n/* unterminated');
     scriptsDir.write({

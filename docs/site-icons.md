@@ -145,6 +145,10 @@ the first one discovered for the host.
   - HTML body capped at 1MB; icon body at 128KB.
   - `referrerPolicy: 'no-referrer'` to avoid leaking the
     `chrome-extension://<id>/...` URL to third-party hosts.
+  - Made **by the service worker**, even though the caller is a page.
+    A site's HTML routinely carries `Link: rel=preload; as=script`
+    headers, and a document-initiated fetch acts on them — see
+    [logging.md](logging.md#keeping-the-errors-panel-clean).
 - On any failure (network error, non-icon `Content-Type`, oversized
   body) the layer caches a `null` entry so the same broken page or
   host doesn't get hammered on every render.

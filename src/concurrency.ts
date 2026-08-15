@@ -70,6 +70,21 @@ export const PROBE_SCRIPTS_CONCURRENCY = 3;
 // unbounded fan-out — the failure this whole module exists to prevent.
 export const PROBE_URLS_PER_SCRIPT_CONCURRENCY = 4;
 
+// ---------- Parse-check limit ----------
+
+// How many rows the registration-time re-check compiles at once
+// (`verifyParseChecks`).
+//
+// The list this bounds is normally empty — a row keeps its verdict
+// until its content changes. The pass that isn't empty is the first
+// sync after a SourceMonkey update: `parseCheckKey` carries the
+// extension version (the checked text contains OUR `GM_*` bindings), so
+// an upgrade makes every stored row stale at once, and every compile
+// composes the body plus each `@require` in memory before shipping it
+// to the sandbox. Registration waits on the whole pass, so this is a
+// memory bound on a step that runs before any script is injected.
+export const PARSE_RECHECK_CONCURRENCY = 4;
+
 // Run `fn` over `items` with at most `limit` calls outstanding.
 //
 // Results come back in `items` order regardless of completion order, so

@@ -67,6 +67,7 @@ import {
   ensureCollectionKeysMigrated,
   isScriptEnabled,
   isCollectionEnabled,
+  verifyParseChecks,
   type StartupLog,
   type StoredScript,
   type StoredCollection,
@@ -827,12 +828,28 @@ export async function buildRegistrationSpec(
   return spec;
 }
 
-// Pure: pick the scripts that should be registered right now. Both the
-// script's own enabled flag and its parent collection's flag must be
-// true. `ok` scripts are eligible; `missing` scripts are eligible too
-// when the user has explicitly re-enabled them (the cached body +
-// header from the last good load is what gets injected). `error`
-// scripts never run. Async because each spec build is async (storage
+// Pure: would this script be registered right now? Both the script's
+// own enabled flag and its parent collection's flag must be true. `ok`
+// scripts are eligible; `missing` scripts are eligible too when the
+// user has explicitly re-enabled them (the cached body + header from
+// the last good load is what gets injected). `error` scripts never run.
+//
+// Shared with `runSync`'s parse re-verification, which spends a compile
+// round trip per row and so must ask about exactly the rows that are
+// about to be registered — one predicate, so "eligible" can't come to
+// mean two different things.
+export function isRegistrationCandidate(
+  script: StoredScript,
+  collections: Map<string, StoredCollection>,
+): boolean {
+  if (script.status !== 'ok' && script.status !== 'missing') return false;
+  if (!isScriptEnabled(script)) return false;
+  const collection = collections.get(script.collectionId);
+  return !!collection && isCollectionEnabled(collection);
+}
+
+// Pick the scripts that should be registered right now and build a
+// spec for each. Async because each spec build is async (storage
 // pre-load). We parallelize the per-script builds with Promise.all
 // rather than awaiting sequentially.
 export async function collectActiveSpecs(
@@ -849,10 +866,7 @@ export async function collectActiveSpecs(
   })));
   const promises: Array<Promise<RegistrationSpec | null>> = [];
   for (const s of scripts) {
-    if (s.status !== 'ok' && s.status !== 'missing') continue;
-    if (!isScriptEnabled(s)) continue;
-    const src = collections.get(s.collectionId);
-    if (!src || !isCollectionEnabled(src)) continue;
+    if (!isRegistrationCandidate(s, collections)) continue;
     const label = logIds.get(s.id) ?? scriptBasename(s.relativePath);
     promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label));
   }
@@ -1050,6 +1064,50 @@ export async function unregisterAllRegistrations(): Promise<void> {
   await withRegistrationLock(unregisterAll);
 }
 
+// Compile-check every candidate whose stored verdict is missing or
+// stale, and return the script set with any re-derived rows swapped in.
+//
+// What this is for: a row stored before the parse check existed — or
+// while it was failing open — carries `status: 'ok'` and no verdict,
+// and nothing in the load pipeline revisits it. Registering unparsable
+// source raises an uncaught `SyntaxError` that Chrome files under
+// `chrome://extensions/?errors`, where it is both uncatchable and
+// indistinguishable from SourceMonkey itself being broken. See
+// `verifyParseChecks` in script-store.ts.
+//
+// Cost: one compile per unchecked row per extension version. The
+// verdict is persisted, so the next sync finds nothing stale — but
+// `parseCheckKey` carries the version, so the first sync after an
+// update re-checks the whole library (capped fan-out; see
+// `PARSE_RECHECK_CONCURRENCY`). The write it makes fires
+// `storage.onChanged` and therefore one more sync, which then has
+// nothing to do.
+//
+// Never throws: the checker fails open on its own, and a failure of
+// this step must not take the whole registration set down with it.
+async function revalidateCandidates(
+  scripts: StoredScript[],
+  collections: Map<string, StoredCollection>,
+): Promise<StoredScript[]> {
+  let changed: Map<string, StoredScript>;
+  try {
+    changed = await verifyParseChecks(
+      scripts.filter((s) => isRegistrationCandidate(s, collections)),
+    );
+  } catch (err) {
+    console.info('[SourceMonkey] parse re-verification skipped:', describeError(err));
+    return scripts;
+  }
+  if (changed.size === 0) return scripts;
+  for (const row of changed.values()) {
+    if (row.status === 'ok') continue;   // re-checked and fine, nothing to say
+    console.info(
+      `[SourceMonkey] not registering ${row.relativePath}: ${row.errorMessage ?? 'it does not parse'}`,
+    );
+  }
+  return scripts.map((s) => changed.get(s.id) ?? s);
+}
+
 // Wipe Chrome's current registration set and replace it with `specs`.
 // Cheap full resync — simpler than a diff and fine at the script counts
 // we expect.
@@ -1095,7 +1153,8 @@ async function runSync(): Promise<void> {
     await ensureWorldConfigured();
     const { scripts, collections } = await readAll();
     const handlerVersion = chrome.runtime.getManifest().version;
-    const userSpecs = await collectActiveSpecs(scripts, collections, handlerVersion);
+    const effective = await revalidateCandidates(scripts, collections);
+    const userSpecs = await collectActiveSpecs(effective, collections, handlerVersion);
     const bridge = buildBridgeSpec(userSpecs);
     const gmRuntime = buildGmRuntimeSpec(userSpecs);
     // GM runtime first so it installs window.__SM_GM__ ahead of any

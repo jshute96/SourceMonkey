@@ -119,7 +119,11 @@ What benefits automatically (no per-call opt-in needed):
 - `@require` / `@resource` / `@icon` fetches targeting GitHub.
 
 All flow through `fetchHttpText` / `fetchResourceBytes`, both of
-which spread `githubAuthHeaders(url)` into the request headers.
+which spread `githubAuthHeaders(url)` into the request headers. From a
+page the read itself is made by the service worker
+([logging.md](logging.md#keeping-the-errors-panel-clean)), which
+attaches the same headers from its own copy of the token — so the token
+never rides on a message.
 
 Token scope: **Contents: Read-only** is enough for a fine-grained
 PAT. See the Options page for the step-by-step.
@@ -361,7 +365,8 @@ don't need to know about the module split.
 
 Fetchers and parsers:
 
-- `fetchHttpText(url, opts?)` — conditional `fetch()`; returns
+- `fetchHttpText(url, opts?)` — conditional read (made by the service
+  worker when a page asks — see `src/http-read.ts`); returns
   `{kind: 'ok', text, etag?, lastModified?}` or `{kind: 'unchanged'}`,
   throws on 4xx/5xx.
 - `parseManifest(body)` — array-or-`{scripts}` JSON parser, exported

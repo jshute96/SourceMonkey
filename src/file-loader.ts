@@ -37,6 +37,7 @@
 
 import { isFileUrl, isHttpUrl } from './directories.js';
 import { githubAuthHeaders } from './github-auth.js';
+import { mustHopToWorker, readHttpViaWorker, replyBytes } from './http-read.js';
 
 export type ResolvedKind = 'http' | 'file' | 'data';
 
@@ -209,7 +210,52 @@ export async function fetchResourceBytes(
   return fetchFailed('unsupported-scheme');
 }
 
+// Page contexts hand the read to the service worker — a document
+// fetch acts on the response's `Link: rel=preload` headers, which our
+// pages can't have. See src/http-read.ts for the whole story.
 async function fetchHttpBytes(
+  url: string,
+  opts: FetchBytesOptions,
+): Promise<FetchedBytes | FetchFailure> {
+  if (mustHopToWorker()) {
+    const viaSw = await fetchHttpBytesViaWorker(url, opts);
+    if (viaSw) return viaSw;
+  }
+  return fetchHttpBytesHere(url, opts);
+}
+
+// Map the worker's report of what came back onto this module's own
+// verdict about it — which statuses are failures, which content types
+// are acceptable, what counts as too big. Returns null when the worker
+// never answered, so the caller falls back to fetching here.
+async function fetchHttpBytesViaWorker(
+  url: string,
+  opts: FetchBytesOptions,
+): Promise<FetchedBytes | FetchFailure | null> {
+  const reply = await readHttpViaWorker({
+    url,
+    as: 'bytes',
+    maxBytes: opts.maxBytes,
+    timeoutMs: opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
+  });
+  if (!reply) return null;
+  if (reply.kind === 'error') return fetchFailed(reply.reason);
+  if (reply.status < 200 || reply.status > 299) return httpError(reply.status);
+  const contentType = reply.contentType.toLowerCase();
+  if (opts.acceptContentType && contentType && !opts.acceptContentType(contentType)) {
+    return fetchFailed('wrong-content-type');
+  }
+  const body = replyBytes(reply);
+  // Re-checked here rather than trusted: these caps are what each
+  // caller's own limit is expressed in, and `body` is what they get.
+  if (body.byteLength === 0) return fetchFailed('empty');
+  if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
+  return { body, contentType, finalUrl: reply.finalUrl };
+}
+
+// The fetch itself. Runs in the service worker for page-initiated
+// reads (see above) and directly in whatever context asked otherwise.
+async function fetchHttpBytesHere(
   url: string,
   opts: FetchBytesOptions,
 ): Promise<FetchedBytes | FetchFailure> {

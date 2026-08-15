@@ -32,7 +32,7 @@ import {
 } from './debug-log.js';
 import {
   installGithubAuthListener,
-  loadGithubAuthToken,
+  ensureGithubAuthTokenLoaded,
 } from './github-auth.js';
 import {
   LOCAL_ROOTS_KEY,
@@ -45,6 +45,11 @@ import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { readRefreshErrors, type RefreshErrorMap } from './refresh-error.js';
 import { installUserJsCapture } from './install-capture.js';
+import {
+  HTTP_READ_MESSAGE,
+  handleHttpReadRequest,
+  type HttpReadRequest,
+} from './http-read.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
 import { attachParseLocation } from './parse-location.js';
@@ -108,6 +113,7 @@ import {
   setScriptEnabled,
   setCollectionEnabled,
   setCollectionLocalFiles,
+  describeError,
   type AddCollectionResult,
   type StoredScript,
   type StoredCollection,
@@ -934,7 +940,12 @@ function installActionContextMenu(): void {
       // Log tab so the user sees why; everything else opens on the
       // default (main script) view.
       const tab = erroredScriptRows.has(scriptId) ? 'log' : undefined;
-      void chrome.tabs.create({ url: viewerUrlForScript(scriptId, tab) });
+      // Caught rather than dropped: an unhandled rejection in the SW
+      // lands in chrome://extensions/?errors the same as one in a page.
+      // The target is our own viewer page, so a failure here is not
+      // something the user can act on — hence info, not a surface.
+      chrome.tabs.create({ url: viewerUrlForScript(scriptId, tab) })
+        .catch((err) => console.info('[SourceMonkey] could not open the viewer:', describeError(err)));
       return;
     }
   });
@@ -2200,6 +2211,38 @@ function installScriptMessageListener(): void {
   });
 }
 
+// Read an http(s) URL on behalf of an extension PAGE, because a page
+// that fetches for itself acts on the response's `Link: rel=preload`
+// headers and lands an uncatchable CSP refusal in the Errors panel.
+// The reasoning, and the reply shape, live in src/http-read.ts.
+//
+// Sender check, not decoration: the extension holds `<all_urls>`, so
+// answering anyone would make this an open fetch proxy. Userscript
+// worlds are on a different event (`onUserScriptMessage`) and could
+// never reach this listener, but the guard is what keeps that true
+// after some future context gains `chrome.runtime.sendMessage`.
+function installPageFetchListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as { type?: unknown } | null;
+    if (!msg || msg.type !== HTTP_READ_MESSAGE) return undefined;
+    if (sender.id !== chrome.runtime.id) return undefined;
+    const origin = `chrome-extension://${chrome.runtime.id}`;
+    if (!sender.url || !sender.url.startsWith(`${origin}/`)) return undefined;
+    void handleHttpReadRequest(msg as HttpReadRequest).then(
+      (reply) => { try { sendResponse(reply); } catch { /* page gone */ } },
+      (err) => {
+        // An unexpected throw is not a verdict about the URL, so don't
+        // dress it up as one: answering with nothing sends the page to
+        // its own fallback fetch, which at worst leaks one preload hint.
+        console.info('[SourceMonkey] page http-read handler threw:', describeError(err));
+        try { sendResponse(undefined); } catch { /* page gone */ }
+      },
+    );
+    // Keep the message channel open for the async reply.
+    return true;
+  });
+}
+
 // Combine the wrapper's message + stack into the multiline string that
 // goes into the per-script log. V8/SpiderMonkey both prepend the
 // message to the stack ("Error: foo\n    at …"), so the stack is the
@@ -2431,6 +2474,7 @@ installNavigationListeners();
 installDeepLinkRedirect();
 installUserJsCapture();
 installScriptMessageListener();
+installPageFetchListener();
 installDebugLoggingListener();
 installLocalRootsListener();
 installGithubAuthListener();
@@ -2446,7 +2490,7 @@ void loadDebugLoggingFlag();
 // Kicked off here so the read is already in flight by the time the
 // first refresh awaits `localRootsReady()`.
 void loadLocalRootsSetting();
-void loadGithubAuthToken();
+void ensureGithubAuthTokenLoaded();
 // Refill each script's Log tab from persisted state (current load
 // failures + parse-time diagnostics) the first time the SW boots in a
 // Chrome session — session storage, and so the log, was wiped on
