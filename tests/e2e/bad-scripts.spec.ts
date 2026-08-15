@@ -55,8 +55,23 @@ async function openViewer(extensionContext: BrowserContext, extensionId: string,
   // code box has no syntax tokens to wait on. Using the title as the
   // "viewer has hydrated" signal lets us cover both well-formed and
   // malformed scripts with the same wait.
-  await page.waitForFunction(() => document.title.includes('—'));
+  //
+  // Match the suffix, not just the dash: the page ships a static
+  // `<title>SourceMonkey — Userscript</title>`, so an `includes('—')`
+  // test is satisfied before any script has run and waits for nothing.
+  await page.waitForFunction(() => document.title.endsWith('— SourceMonkey'));
   return page;
+}
+
+// Assert the code box holds exactly `expected`, polling until it does.
+// The paint is a step behind the title wait in `openViewer`, and an
+// empty `#content` is a legitimate intermediate state (it is also the
+// correct final state for `empty.user.js`), so poll on the comparison
+// being asserted rather than on any proxy for "painted".
+async function expectContent(page: Page, expected: string, message: string): Promise<void> {
+  await expect
+    .poll(() => page.locator('#content').textContent(), { message })
+    .toBe(expected);
 }
 
 test.describe('bad-examples corpus', () => {
@@ -148,9 +163,8 @@ test.describe('bad-examples corpus', () => {
       const s = byFile.get(c.file)!;
       const page = await openViewer(extensionContext, extensionId, s.id);
       try {
-        const rendered = await page.locator('#content').textContent();
         const onDisk = fs.readFileSync(path.join(BAD_SCRIPTS_DIR, c.file), 'utf8');
-        expect(rendered ?? '', `viewer textContent mismatch for ${c.file}`).toBe(onDisk);
+        await expectContent(page, onDisk, `viewer textContent mismatch for ${c.file}`);
       } finally {
         await page.close();
       }
@@ -171,9 +185,8 @@ test.describe('bad-examples corpus', () => {
 
     const page = await openViewer(extensionContext, extensionId, s!.id);
     try {
-      const rendered = await page.locator('#content').textContent();
       const onDisk = fs.readFileSync(path.join(GM_INFO_DIR, 'gm-info.user.js'), 'utf8');
-      expect(rendered ?? '').toBe(onDisk);
+      await expectContent(page, onDisk, 'viewer textContent mismatch for gm-info.user.js');
     } finally {
       await page.close();
     }

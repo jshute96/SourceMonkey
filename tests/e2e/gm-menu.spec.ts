@@ -13,9 +13,11 @@
 // globals — userscripts surface state via `document.body.dataset.*`
 // and accept test signals via DOM events on pre-created elements.
 
+import type { BrowserContext, Page, Worker } from '@playwright/test';
+
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { waitFor } from '../fixtures/sw-api';
+import { waitFor, waitForTabState, type SmApi } from '../fixtures/sw-api';
 
 async function activeTabId(
   getServiceWorker: () => Promise<import('@playwright/test').Worker>,
@@ -125,7 +127,12 @@ test.describe('GM_registerMenuCommand', () => {
         runAt: 'document-end',
         grant: ['GM_registerMenuCommand'],
       },
-      body: `GM_registerMenuCommand('One', () => {});`,
+      // The name carries the path so the assertions below can tell
+      // WHICH document a command came from. A fixed name would make
+      // the post-navigation state identical to the pre-navigation one,
+      // and the test would pass just as well if the commands had
+      // simply been carried over and never re-registered at all.
+      body: `GM_registerMenuCommand('One ' + location.pathname, () => {});`,
     });
     await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
@@ -135,20 +142,25 @@ test.describe('GM_registerMenuCommand', () => {
     const tabId = await activeTabId(getServiceWorker);
     await waitFor(
       () => sm.getActionContextMenu(tabId),
-      (g) => g.length === 1 && g[0]!.commands.length === 1,
+      (g) => g.length === 1 && g[0]!.commands[0]?.name === 'One /target.html',
       { label: 'first registration lands' },
     );
 
     // Navigate to a different page that the script also matches. The
     // SW clears the per-tab menu state on the fresh document, then the
-    // new wrapper re-registers.
+    // new wrapper re-registers — and the new document's name is what
+    // proves the second half of that actually happened.
     await page.goto(`${fixtureServer.baseUrl}/other.html`);
+    // The name is in the PREDICATE, not just the assertion after it: a
+    // carried-over command satisfies `commands.length === 1` the
+    // instant we look, so waiting on the count would race the
+    // re-registration and fail on a state that was about to be right.
     const afterNav = await waitFor(
       () => sm.getActionContextMenu(tabId),
-      (g) => g.length === 1 && g[0]!.commands.length === 1,
+      (g) => g.length === 1 && g[0]!.commands[0]?.name === 'One /other.html',
       { label: 'fresh document re-registers' },
     );
-    expect(afterNav[0]!.commands[0]!.name).toBe('One');
+    expect(afterNav[0]!.commands[0]!.name).toBe('One /other.html');
 
     // Navigate to about:blank — the script doesn't run there. The
     // non-injectable-scheme branch of updateTabMatches explicitly calls
@@ -163,6 +175,101 @@ test.describe('GM_registerMenuCommand', () => {
     expect(afterAway).toEqual([]);
 
     await page.close();
+  });
+
+  // The two cases where updateTabMatches must NOT touch the mirror.
+  // Both are invisible to the fresh-document test above — an
+  // unconditional wipe on every call would still pass it — so they get
+  // their own coverage. Each waits on independent evidence that the SW
+  // processed the event before reading the mirror; without that the
+  // assertion could pass simply by running first.
+  async function menuScriptOnTarget(
+    extensionContext: BrowserContext,
+    fixtureServer: { baseUrl: string },
+    sm: SmApi,
+    getServiceWorker: () => Promise<Worker>,
+  ): Promise<{ page: Page; tabId: number }> {
+    scriptsDir.write({
+      relativePath: 'menu.user.js',
+      meta: {
+        name: 'MenuScript',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_registerMenuCommand'],
+      },
+      body: `GM_registerMenuCommand('One ' + location.pathname, () => {});`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitFor(
+      () => sm.getActionContextMenu(tabId),
+      (g) => g.length === 1 && g[0]!.commands[0]?.name === 'One /target.html',
+      { label: 'registration lands' },
+    );
+    return { page, tabId };
+  }
+
+  test('an in-document URL change keeps the menu state', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const { page, tabId } = await menuScriptOnTarget(extensionContext, fixtureServer, sm, getServiceWorker);
+
+    // pushState keeps the document alive, so the wrapper's callbacks
+    // are still there and nothing re-registers. Chrome reuses the
+    // documentId, which is what the clear keys off.
+    await page.evaluate(() => history.pushState({}, '', '/pushed.html'));
+    await waitForTabState(
+      sm, tabId,
+      (s) => s.record?.byDoc[s.record.currentDocId]?.url.endsWith('/pushed.html') ?? false,
+      'pushState reached the SW',
+    );
+
+    // Still the name the ORIGINAL load registered — proof the commands
+    // were kept rather than cleared and re-registered.
+    const after = await sm.getActionContextMenu(tabId);
+    expect(after).toHaveLength(1);
+    expect(after[0]!.commands[0]!.name).toBe('One /target.html');
+    await page.close();
+  });
+
+  test('a script-set change re-evaluates the tab without clearing the menu state', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const { page, tabId } = await menuScriptOnTarget(extensionContext, fixtureServer, sm, getServiceWorker);
+
+    // A second collection matching the same page changes the match
+    // index, which sends `refreshAllOpenTabs` through updateTabMatches
+    // for this already-loaded tab — trigger 'refresh', no documentId.
+    // No navigation happened, so the mirror must survive.
+    const other = ScriptsDir.create();
+    try {
+      other.write({
+        relativePath: 'second.user.js',
+        meta: { name: 'Second', match: [`${fixtureServer.baseUrl}/*`] },
+        body: '',
+      });
+      await sm.addCollection(other.path);
+      await sm.syncNow();
+
+      // The tab's expected set growing is the refresh landing — it
+      // comes from the same match-index walk, and needs no reload.
+      await waitForTabState(
+        sm, tabId,
+        (s) => (s.record?.byDoc[s.record.currentDocId]?.matches.length ?? 0) === 2,
+        'refresh re-evaluated the tab',
+      );
+
+      const after = await sm.getActionContextMenu(tabId);
+      expect(after).toHaveLength(1);
+      expect(after[0]!.commands[0]!.name).toBe('One /target.html');
+    } finally {
+      other.cleanup();
+      await page.close();
+    }
   });
 
   test('two scripts on the same page can share an explicit options.id without callback collisions', async ({

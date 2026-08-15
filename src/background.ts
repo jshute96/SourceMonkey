@@ -643,13 +643,39 @@ async function updateTabMatches(
   const restored = prev != null;
   const matches = restored ? mergeMatches(prev.matches, incoming) : incoming;
   const actual = restored ? prev.actual : {};
-  // Fresh document → the previous wrapper(s) and their menu-command
-  // callbacks are gone. Drop the SW-side mirror so the new document's
-  // wrapper starts from a clean menu. SPA pushState / bfcache restores
-  // (restored === true) keep the existing commands, matching the
-  // "callbacks survive" lifecycle on the page side.
-  if (!restored) {
-    clearMenuCommandsForTab(tabId);
+  // Menu-command mirror: the one invariant is that it holds commands
+  // for the document the tab is on NOW. The wrapper's callbacks live
+  // in that document, so a mirror pointing anywhere else renders rows
+  // that can never fire.
+  //
+  // One rule covers every case, keyed on the document being entered:
+  //   - fresh document → the old document's commands go, and the new
+  //     wrapper re-registers from scratch;
+  //   - bfcache restore back to an EARLIER document → the later
+  //     document's commands go too, which `restored` alone would have
+  //     kept (they'd render as dead rows);
+  //   - SPA pushState within the same document → mirror matches, kept,
+  //     which is the page-side "callbacks survive" lifecycle.
+  //
+  // Scoped to "anything that isn't this document" rather than an
+  // unconditional wipe because we got here after several awaits: a
+  // document-end wrapper in the new document can beat us to
+  // registering, and dropping those registrations would leave the tab
+  // with no menu commands until the next navigation — nothing resends
+  // them.
+  //
+  // Gated on `trigger`, not on whether we know the documentId — those
+  // are different questions:
+  //   - 'refresh' (`refreshAllOpenTabs` after a script-set change) is
+  //     not a navigation at all. The document didn't change, so the
+  //     mirror is still correct and must be left alone.
+  //   - 'navigation' with no documentId is the `chrome.tabs.onUpdated`
+  //     fallback for a Chrome without `webNavigation`. A navigation
+  //     DID happen and we can't say to what, so `''` falls through to
+  //     the unconditional clear — stale commands must not outlive the
+  //     document that registered them.
+  if (trigger === 'navigation') {
+    clearMenuCommandsForTab(tabId, documentId ?? '');
     // The new document's wrapper will resend sm:gm-menu-register from
     // scratch; until then the active tab's menu should reflect the
     // cleared mirror. renderBadge at the end of this function takes
@@ -2093,6 +2119,9 @@ function installScriptMessageListener(): void {
       // surfacing.
       return respondAsync('gm-batch-write', handleBatchWrite(msg as BatchWritePayload, sender), sendResponse);
     }
+    // Which document the menu message came from. The registry is keyed
+    // by it, so both the register and unregister branches below need it.
+    const menuDocId = (sender as { documentId?: string }).documentId ?? '';
     if (type === 'sm:gm-menu-register') {
       // Page side has stashed the callback locally; we just track the
       // (commandId, name) so the action context menu can render it.
@@ -2103,13 +2132,18 @@ function installScriptMessageListener(): void {
       // never sees a clearTab event. Same shape as gm-tab/gm-notification
       // dropOriginator races — left as-is for symmetry. Worst case
       // is a small in-memory leak until the SW restarts.
+      //
+      // The same window against a *navigation* is not survivable that
+      // way (nothing would re-register the lost command), so the
+      // registry is keyed by document: we pass the sender's documentId
+      // and the navigation clear only drops another document's state.
       const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
       if (
         typeof payload.scriptId === 'string' &&
         typeof payload.commandId === 'string' &&
         typeof payload.name === 'string'
       ) {
-        const changed = registerMenuCommand(tabId, payload.scriptId, payload.commandId, payload.name);
+        const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
         if (changed && tabId === activeTabId) void refreshActiveTabMenu();
       }
       try { sendResponse({ ok: true }); } catch { /* gone */ }
@@ -2118,7 +2152,7 @@ function installScriptMessageListener(): void {
     if (type === 'sm:gm-menu-unregister') {
       const payload = msg as { scriptId?: unknown; commandId?: unknown };
       if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
-        const changed = unregisterMenuCommand(tabId, payload.scriptId, payload.commandId);
+        const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
         // Unknown ids (silent no-op contract) don't change visible
         // state; skip the rebuild so a noisy unregister loop doesn't
         // churn chrome.contextMenus.

@@ -439,8 +439,12 @@ primitive, and any host that acts on a plain GET is reachable.
 ### Menu lifecycle
 
 - Entries are scoped to the (tab, document) the wrapper ran in. SPA
-  pushState / bfcache restore preserves them; a fresh document load
-  clears them and the new wrapper re-registers.
+  pushState preserves them; a fresh document load clears them and the
+  new wrapper re-registers.
+- A bfcache restore (back/forward) does **not** bring them back: the
+  entries were dropped when the tab left the page, and Chrome doesn't
+  re-run the script on a restore, so the page's menu stays empty until
+  a real document load. Re-registering on `pageshow` works around it.
 - The SW restart drops the mirror; the page-side callbacks vanish
   with the document anyway, so there's nothing for the SW to route
   a fire event to. After SW restart, the script must re-register

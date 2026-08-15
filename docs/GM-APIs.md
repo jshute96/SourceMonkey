@@ -719,9 +719,15 @@ Why the split:
   `{scriptId, commandId, name}`; `unregister` drops the local
   entry and sends `sm:gm-menu-unregister`.
 - **SW side (`src/gm-menu.ts`)** — mirrors the (tabId → scriptId →
-  commands[]) registry that the action menu renders from. No
-  callbacks live here — only the name + id needed to render the
-  row and route a fire event back.
+  commands[]) registry that the action menu renders from, tagged
+  with the `documentId` those commands came from. No callbacks live
+  here — only the name + id needed to render the row and route a
+  fire event back.
+  - Register and unregister both carry the sender's documentId, so a
+    message from a document we're no longer holding commands for
+    can't reach into the current document's entries. That is
+    reachable with an explicit `{id: '...'}`, where the same
+    commandId legitimately exists in both documents.
 - **Action menu rebuild (`src/background.ts`,
   `doRebuildActionContextMenu`)** — folds the per-tab mirror into
   the rebuild after the script rows: each script row gets its
@@ -738,16 +744,44 @@ Why the split:
 
 ### Lifecycle
 
-- Registration is scoped to the (tab, document). The SW clears
-  the mirror on:
-  - Fresh-document navigation (the new wrapper's `sm:start` will
-    re-register from scratch).
+- Registration is scoped to the (tab, document), and the mirror
+  stores the `documentId` its commands came from.
+- **The invariant**: the mirror holds commands for the document the
+  tab is on *now*. The callbacks live in that document, so a mirror
+  pointing anywhere else renders rows that can never fire.
+- One rule enforces it on navigation, keyed on the document being
+  entered: **drop the mirror unless it already belongs to that
+  document.**
+  - Fresh document → the old commands go; the new wrapper
+    re-registers from scratch.
+  - bfcache restore back to an *earlier* document → the later
+    document's commands go too.
+    - **Known gap**: the restored document's own commands do not come
+      back. The clear that ran when the tab left it dropped them, and
+      Chrome does not re-inject on a bfcache restore, so nothing
+      re-registers — that page's menu stays empty until a real
+      document load. Pre-existing; the fix is a mirror per document
+      rather than one per tab. Filed in TODO.md.
+  - SPA pushState within the same document → kept, which is the
+    page-side "callbacks survive in this document" lifecycle.
+  - Why "unless" and not an unconditional wipe: the navigation
+    handler clears after several awaits, so a `document-end` wrapper
+    in the new document can register first. Dropping those leaves the
+    tab with no menu commands until the next navigation — nothing
+    resends them.
+- The mirror is left alone when no navigation happened: a
+  script-set-driven re-evaluation (`refreshAllOpenTabs`, which passes
+  no `documentId`) must not touch it.
+- Cleared unconditionally on:
   - Navigating to a non-injectable URL (`chrome://`, `about:blank`,
     ...).
   - Tab close (`chrome.tabs.onRemoved`).
-- SPA pushState / bfcache restore preserves the document, so
-  registered commands stay live — matches the page-side
-  "callbacks survive in this document" invariant.
+- **One document per tab is an assumption, not a guarantee.** It holds
+  only because scripts run in the top frame only (we never set
+  `allFrames`). Scripts in subframes would name different documents
+  and clobber each other's commands here — re-key this registry before
+  flipping `allFrames`. See
+  [injection.md](injection.md#limitations--future-work).
 - SW restart wipes the in-memory mirror. Page-side callbacks are
   scoped to the same document so they're already gone; the symmetric
   drop is correct.

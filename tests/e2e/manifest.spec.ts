@@ -12,7 +12,11 @@ import path from 'node:path';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
-function writeManifest(dir: string, entries: string[]): string {
+// Entries are URL strings, or objects with a `path` field (extra fields
+// on those objects are the manifest author's own bookkeeping).
+type ManifestEntry = string | { path: string; [k: string]: unknown };
+
+function writeManifest(dir: string, entries: ManifestEntry[]): string {
   const manifestPath = path.join(dir, 'script_manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify(entries));
   return manifestPath;
@@ -53,6 +57,47 @@ test.describe('manifest collection refresh', () => {
     const paths = after!.scripts.map((s) => s.relativePath);
     expect(paths).toEqual(['a.user.js']);
     expect(after!.collection.scanError).toBeUndefined();
+  });
+
+  test('object entries with a path install, and match the string form', async ({ sm }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    // Mixed shapes in one manifest; the object entry carries extra
+    // fields SourceMonkey knows nothing about and must ignore.
+    const manifestPath = writeManifest(scriptsDir.path, [
+      { path: 'a.user.js', note: 'my fork', tags: ['x'] },
+      'b.user.js',
+    ]);
+
+    const collection = await sm.addCollection(manifestPath);
+    const before = await sm.getCollectionWithScripts(collection!.id);
+    expect(before!.collection.scanError).toBeUndefined();
+    expect(before!.scripts.map((s) => s.relativePath).sort()).toEqual([
+      'a.user.js',
+      'b.user.js',
+    ]);
+    const idA = before!.scripts.find((s) => s.relativePath === 'a.user.js')!.id;
+
+    // Script identity keys off the resolved path, not the entry's JSON
+    // shape, so rewriting the object entry as a plain string keeps the
+    // same row rather than deleting and re-adding it.
+    writeManifest(scriptsDir.path, ['a.user.js', { path: 'b.user.js' }]);
+    await sm.updateCollection(collection!.id, 'manual');
+
+    const after = await sm.getCollectionWithScripts(collection!.id);
+    expect(after!.scripts.map((s) => s.relativePath).sort()).toEqual([
+      'a.user.js',
+      'b.user.js',
+    ]);
+    expect(after!.scripts.find((s) => s.relativePath === 'a.user.js')!.id).toBe(idA);
   });
 
   test('manifest entry pointing at a missing file shows as error', async ({ sm }) => {
