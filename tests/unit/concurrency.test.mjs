@@ -189,13 +189,23 @@ test('scripts-per-collection is the larger of the refresh pair', () => {
   assert.ok(FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY > FETCH_COLLECTIONS_CONCURRENCY);
 });
 
-// Probes have their own nested pair. Kept small because nothing waits on
-// a probe's result. The per-script half cannot bind at today's
-// two-targets-per-script maximum — it guards a future third target kind
-// — so the product overstates the real worst case, which is fine for a
-// ceiling but is why this asserts a smaller one than the refresh pair.
-test('the probe limits are positive and bound their product', () => {
+// Probes have their own nested pair, and the outer half is sized for the
+// callers that AWAIT the pass — a Refresh holds its spinner until the
+// probes land, so this cap is wall-clock the user sees. It was tuned for
+// the fire-and-forget per-script caller until measurement showed the
+// collection paths paying for it.
+//
+// The bound worth asserting is the REALISTIC peak, not the product.
+// `probeTargets` yields at most two URLs per script, so the per-script
+// cap cannot bind today — it guards a future third target kind. Policing
+// the product would police a number no run can reach, and would block a
+// change to the guard that has no effect on anything in flight.
+test('the probe limits are positive and bound their realistic peak', () => {
+  const MAX_TARGETS_PER_SCRIPT = 2; // @updateURL + @downloadURL, deduped by URL
   assert.ok(PROBE_SCRIPTS_CONCURRENCY > 0);
   assert.ok(PROBE_URLS_PER_SCRIPT_CONCURRENCY > 0);
-  assert.ok(PROBE_SCRIPTS_CONCURRENCY * PROBE_URLS_PER_SCRIPT_CONCURRENCY <= 16);
+  assert.ok(PROBE_SCRIPTS_CONCURRENCY * MAX_TARGETS_PER_SCRIPT <= 24);
+  // The guard has to stay a guard: drop it below the real target count
+  // and it starts binding, silently serializing each script's probes.
+  assert.ok(PROBE_URLS_PER_SCRIPT_CONCURRENCY >= MAX_TARGETS_PER_SCRIPT);
 });

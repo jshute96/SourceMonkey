@@ -57,9 +57,23 @@ export const FETCH_COLLECTIONS_CONCURRENCY = 2;
 
 // How many scripts are probed for updates at once.
 //
-// This is the one that binds. Small, because a probe is an annotation
-// nothing waits on — see [docs/updates.md].
-export const PROBE_SCRIPTS_CONCURRENCY = 3;
+// This is the one that binds — a script yields at most two probe URLs,
+// so the inner limit never does.
+//
+// It was 3, on the reasoning that a probe is an annotation nothing
+// waits on. That is true of the per-script caller, which fires and
+// forgets on the navigation path, and false of the collection ones: a
+// Refresh / Refresh All awaits the probe pass so the row is current
+// when the spinner stops. The limit sized for the caller that doesn't
+// wait was being paid by the two that do — measured at 1772ms for 30
+// probed scripts, ten serialized rounds of a couple-KB header fetch.
+//
+// So it is sized for the awaiting caller now. Still bounded, because
+// the pass can span every collection at once and the nesting rule below
+// still applies; a probe is also cheap in the way that matters here —
+// it holds one small response, not a script body plus its dependency
+// payloads, which is what forces the refresh limits to stay low.
+export const PROBE_SCRIPTS_CONCURRENCY = 10;
 
 // How many of ONE script's probe URLs are fetched at once.
 //

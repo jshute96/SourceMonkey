@@ -92,6 +92,11 @@ Staleness rules:
 - `PROBE_SCRIPTS_CONCURRENCY` caps how many scripts probe at once, so
   Refresh All over a large collection doesn't open one request per
   script (see [storage.md](storage.md#fan-out-is-bounded)).
+  - Sized for the callers that **await** the pass — a Refresh holds its
+    spinner until the probes land, so the cap is wall-clock the user
+    sees, not just background load. It was tuned much lower for the
+    fire-and-forget per-script caller until measurement showed the
+    collection paths paying for it.
   - A per-script cap on probe URLs sits inside it
     (`PROBE_URLS_PER_SCRIPT_CONCURRENCY`) but never binds: a script has
     at most two targets. It is a guard against a future third target
