@@ -722,4 +722,70 @@ test.describe('@require', () => {
       await server.stop();
     }
   });
+  // `@resource` shares the conditional path with `@require` but not the
+  // reconstruction: its prior body round-trips through base64 rather
+  // than a UTF-8 re-encode, and its bytes are arbitrary — a corrupted
+  // one doesn't fail loudly, it just renders wrong. Binary content on
+  // purpose, since that is where a text-shaped bug would hide.
+  //
+  // Also pins the shared-cache claim: a second script declaring the same
+  // URL, added AFTER the first stored a validator, still ends up with
+  // the bytes even though the 304 was answered against someone else's
+  // copy and carried no body of its own.
+  test('a @resource re-checks conditionally, and a co-declaring script still gets the bytes', async ({ sm }) => {
+    const server = await UserscriptServer.start();
+    try {
+      // Includes a 0x00 and a byte that is not valid UTF-8 on its own.
+      const BODY = Buffer.from([0x89, 0x50, 0x00, 0xff, 0x41, 0x42]);
+      server.setRoute('/blob.bin', BODY, {
+        etag: '"blob-v1"',
+        contentType: 'application/octet-stream',
+      });
+      const script = (name: string) => [
+        '// ==UserScript==',
+        `// @name        ${name}`,
+        '// @match       https://example.com/*',
+        `// @resource    payload ${server.baseUrl}/blob.bin`,
+        '// ==/UserScript==',
+        'void 0;',
+      ].join('\n') + '\n';
+
+      scriptsDir.writeRaw('res-a.user.js', script('Res A'));
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.syncNow();
+      const firstA = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(firstA.status).toBe('ok');
+      const expected = BODY.toString('base64');
+      expect(firstA.resources![0].bytesBase64).toBe(expected);
+      expect(firstA.resources![0].httpEtag).toBe('"blob-v1"');
+
+      // A second script on the same URL, with no stored copy of its own.
+      scriptsDir.writeRaw('res-b.user.js', script('Res B'));
+      const before = server.requestLog.filter((e) => e.path === '/blob.bin').length;
+      await sm.updateCollection(collection!.id, 'manual');
+
+      const hits = server.requestLog.filter((e) => e.path === '/blob.bin');
+      // One fetch for the pair — the cross-script cache — and conditional.
+      expect(hits.length).toBe(before + 1);
+      expect(hits[hits.length - 1].ifNoneMatch).toBe('"blob-v1"');
+      expect(hits[hits.length - 1].status).toBe(304);
+
+      const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+      expect(after).toHaveLength(2);
+      for (const s of after) {
+        expect(s.status).toBe('ok');
+        // Byte-exact through the 304, for the script that had a prior
+        // AND the one that never fetched this URL before.
+        expect(s.resources![0].bytesBase64).toBe(expected);
+        expect(s.resources![0].contentType).toContain('application/octet-stream');
+      }
+      // The one that did have a prior kept its identity untouched.
+      const a = after.find((s) => s.relativePath === 'res-a.user.js')!;
+      expect(a.resources![0].contentHash).toBe(firstA.resources![0].contentHash);
+      expect(a.resources![0].loadedAt).toBe(firstA.resources![0].loadedAt);
+      expect(a.resources![0].size).toBe(firstA.resources![0].size);
+    } finally {
+      await server.stop();
+    }
+  });
 });

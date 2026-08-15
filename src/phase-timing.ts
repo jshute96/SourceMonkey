@@ -30,7 +30,12 @@ export interface PhaseTimer {
   mark(phase: string): void;
   // Attach a trailing fact — counts, sizes, whatever makes the numbers
   // interpretable. Repeat calls append.
-  note(text: string): void;
+  //
+  // Takes a thunk as well as a string because some of these facts cost
+  // real work to produce (walking every script to count probe targets,
+  // say). A disabled timer must not pay for a line nobody prints —
+  // least of all on the path being optimised.
+  note(text: string | (() => string)): void;
   // Emit the single summary line.
   done(): void;
 }
@@ -55,8 +60,8 @@ class ActiveTimer implements PhaseTimer {
     this.last = now;
   }
 
-  note(text: string): void {
-    this.notes.push(text);
+  note(text: string | (() => string)): void {
+    this.notes.push(typeof text === 'function' ? text() : text);
   }
 
   done(): void {
@@ -116,24 +121,46 @@ export function resetPhaseTotals(): void {
 // whatever `fn` returns; a throw still records the time, since work
 // that failed still cost what it cost.
 export async function timePhase<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  if (!totals) return fn();
+  // The map is captured, NOT re-read in the `finally`. Two things go
+  // wrong otherwise, and one of them is severe:
+  //
+  //   - `reportPhaseTotals` nulls the global, and a concurrent pass can
+  //     do that while this call is still awaiting. The `finally` would
+  //     then dereference null and throw a TypeError OUT OF A FINALLY,
+  //     which discards the wrapped call's successful result and rejects
+  //     in its place. These wrap `attachFiles`, `buildScriptFromText`
+  //     and the dep fetches, so a diagnostic racing itself would fail
+  //     the whole collection refresh — with debug logging on, i.e.
+  //     exactly when someone is diagnosing a slow refresh.
+  //   - Even without the throw, a sample would land in whichever pass
+  //     happened to be current when it FINISHED rather than the one it
+  //     started in.
+  //
+  // TypeScript won't catch this: the `if (!totals)` narrowing doesn't
+  // survive the `await`, so reading the global in the `finally` type-
+  // checks fine.
+  const bucket = totals;
+  if (!bucket) return fn();
   const start = performance.now();
   try {
     return await fn();
   } finally {
-    const bucket = totals.get(label) ?? { ms: 0, n: 0 };
-    bucket.ms += performance.now() - start;
-    bucket.n += 1;
-    totals.set(label, bucket);
+    const entry = bucket.get(label) ?? { ms: 0, n: 0 };
+    entry.ms += performance.now() - start;
+    entry.n += 1;
+    bucket.set(label, entry);
   }
 }
 
 // Emit one line, largest bucket first — the ordering IS the finding.
 export function reportPhaseTotals(label: string): void {
-  if (!totals || totals.size === 0) return;
-  const parts = [...totals.entries()]
+  // Cleared even when there is nothing to say, so a pass that recorded
+  // nothing doesn't leave its map open for the next one to append to.
+  const finished = totals;
+  totals = null;
+  if (!finished || finished.size === 0) return;
+  const parts = [...finished.entries()]
     .sort((a, b) => b[1].ms - a[1].ms)
     .map(([name, t]) => `${name} ${round(t.ms)}ms/${t.n}`);
   console.log(`[SourceMonkey] timing — ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
-  totals = null;
 }

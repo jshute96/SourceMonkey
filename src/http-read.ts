@@ -107,8 +107,17 @@ export async function handleHttpReadRequest(req: HttpReadRequest): Promise<HttpR
     if (timer != null) clearTimeout(timer);
   }
 
+  // Size checks are for a body we are about to read. A 304 has none —
+  // its `Content-Length`, where a server sends one at all, describes the
+  // entity that WOULD have been sent. Rejecting on it would fail a
+  // conditional read as "too large" for a file that didn't change, and
+  // only on this leg: the local path tests 304 before any size check, so
+  // the two would disagree about the same response.
   const contentLength = response.headers.get('content-length');
-  if (req.maxBytes != null && contentLength && Number(contentLength) > req.maxBytes) {
+  if (
+    response.status !== 304 &&
+    req.maxBytes != null && contentLength && Number(contentLength) > req.maxBytes
+  ) {
     return { kind: 'error', reason: 'oversize' };
   }
   const base = {

@@ -213,8 +213,9 @@ interface SharedFileFields {
   // it; required on StoredResource because the field is load-bearing
   // for blob URL creation.
   contentType?: string;
-  // HTTP validators (http(s) only). Captured for future conditional
-  // GET support — not yet round-tripped through the byte fetcher.
+  // HTTP validators (http(s) only), sent back as `If-None-Match` /
+  // `If-Modified-Since` on the next explicit Refresh. Absent for
+  // file://, for a local stand-in, and for servers that offer neither.
   httpEtag?: string;
   httpLastModified?: string;
 }
@@ -246,6 +247,11 @@ export interface FetchedFile {
   failed?: false;
   bytes: ArrayBuffer;
   contentType: string;
+  // Set when these bytes came from the caller's own prior copy because
+  // the server answered 304 — carrying the hash that prior was stored
+  // under, so a loader can tell "this is MY unchanged copy" from "these
+  // are someone else's bytes off the shared cache". See `loadRequire`.
+  priorContentHash?: string;
   // Validators to send on the NEXT refresh's conditional request.
   // Absent for file://, for servers that offer neither, and on the
   // 304 path — where they are carried over from the prior entry by
@@ -264,6 +270,8 @@ export interface PriorCopy {
   lastModified?: string;
   bytes: ArrayBuffer;
   contentType: string;
+  // What this copy is stored under, echoed back on the 304 path.
+  contentHash: string;
 }
 
 interface FileFailure {
@@ -585,6 +593,25 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   if (isFailure(got)) {
     return { errorMessage: `@require ${args.ref}: ${got.errorMessage}` };
   }
+  // The server answered 304 against OUR validator, so the copy we hold
+  // IS the current one — reuse it whole.
+  //
+  // Not merely an optimisation (though it does drop a SHA-256 per
+  // dependency per manual refresh). Rebuilding from the reconstructed
+  // bytes would be wrong: `source` was decoded with a BOM-stripping
+  // decoder, so re-encoding it does not reproduce the original bytes
+  // for a BOM-prefixed file. That would hash differently, bump
+  // `loadedAt`, shrink the stored `size` by three, and report a content
+  // change the server just told us did not happen.
+  //
+  // Matched on the hash rather than on "did we send a validator",
+  // because the shared cache may have resolved this URL from ANOTHER
+  // script's prior. Equal hashes mean equal content, so reusing this
+  // caller's own row is right; unequal means these are someone else's
+  // bytes and the normal path below has to run.
+  if (prior && got.priorContentHash !== undefined && got.priorContentHash === prior.contentHash) {
+    return { entry: { ...prior, ref: args.ref, url: resolved.url, ...validatorFields(got) } };
+  }
   // @require-specific markup gate. Applied here (not in the shared
   // fetch) so a @require + @resource pair pointing at the same URL
   // share one fetch without the require's stricter rule poisoning the
@@ -675,15 +702,29 @@ function priorResourceBytes(prior: StoredResource | undefined): ArrayBuffer | nu
 // copy, so pairing them would ask the server about one file and answer
 // with another.
 function priorCopyOf(
-  prior: { httpEtag?: string; httpLastModified?: string; contentType?: string; localUrl?: string } | undefined,
+  prior: {
+    httpEtag?: string;
+    httpLastModified?: string;
+    contentType?: string;
+    contentHash: string;
+    localUrl?: string;
+  } | undefined,
   bytes: ArrayBuffer | null,
 ): PriorCopy | undefined {
   if (!prior || !bytes) return undefined;
   if (prior.localUrl) return undefined;
   if (!prior.httpEtag && !prior.httpLastModified) return undefined;
+  // Without a Content-Type the prior can't fully stand in for a
+  // response. `StoredRequire.contentType` is optional — rows written
+  // before it existed don't carry one — and a 304 resolved from such a
+  // row would hand `''` to every sharer of that URL through the fetch
+  // cache, including a `@resource` whose blob URL needs a real MIME.
+  // Refetching unconditionally costs one body and keeps that honest.
+  if (!prior.contentType) return undefined;
   return {
     bytes,
-    contentType: prior.contentType ?? '',
+    contentType: prior.contentType,
+    contentHash: prior.contentHash,
     ...(prior.httpEtag ? { etag: prior.httpEtag } : {}),
     ...(prior.httpLastModified ? { lastModified: prior.httpLastModified } : {}),
   };
@@ -752,6 +793,18 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `${subject}: ${got.errorMessage}` };
+  }
+  // Same 304 reuse as `loadRequire`. The name has to match too: a
+  // `@resource` renamed to the same URL is a changed declaration even
+  // though the body is identical, and the normal path below is what
+  // stamps the new name and bumps `loadedAt`.
+  if (
+    prior && prior.name === args.decl.name &&
+    got.priorContentHash !== undefined && got.priorContentHash === prior.contentHash
+  ) {
+    return {
+      entry: { ...prior, ref: args.decl.ref, url: resolved.url, ...validatorFields(got) },
+    };
   }
   const u8 = new Uint8Array(got.bytes);
   const contentHash = await sha256Hex(got.bytes);
@@ -831,7 +884,11 @@ async function fetchFileBytes(
       }
       // Validators carried forward, not re-read: a 304 need not repeat
       // them, and the ones we sent are by definition still current.
-      const out: FetchedFile = { bytes: prior.bytes, contentType: prior.contentType };
+      const out: FetchedFile = {
+        bytes: prior.bytes,
+        contentType: prior.contentType,
+        priorContentHash: prior.contentHash,
+      };
       if (prior.etag) out.etag = prior.etag;
       if (prior.lastModified) out.lastModified = prior.lastModified;
       return out;

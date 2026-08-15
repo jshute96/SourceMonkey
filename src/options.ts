@@ -4,7 +4,11 @@
 // `collections.html` / `collections.ts`; a header link points users
 // back and forth.
 
-import { DEBUG_LOGGING_KEY } from './debug-log.js';
+import {
+  DEBUG_LOGGING_KEY,
+  installDebugLoggingListener,
+  loadDebugLoggingFlag,
+} from './debug-log.js';
 import { GITHUB_AUTH_TOKEN_KEY } from './github-auth.js';
 import { INSTALL_CAPTURE_KEY } from './install-capture.js';
 import {
@@ -31,6 +35,14 @@ openCollectionsBtn.addEventListener('click', () => {
 // an unset key reads back as — capture is opt-out, debug logging is
 // opt-in.
 initBooleanSetting('capture-userjs', INSTALL_CAPTURE_KEY, true);
+// This page both sets the flag AND runs refreshes (`updateCollection`
+// on a search-roots save), so it needs to observe it like any other
+// context — each one reads the flag for itself. Without this a refresh
+// started from Options produces no timing output while the identical
+// refresh from the collections page does.
+installDebugLoggingListener();
+void loadDebugLoggingFlag();
+
 initBooleanSetting('debug-logging', DEBUG_LOGGING_KEY, false);
 initGithubTokenControls();
 initLocalRootControls();

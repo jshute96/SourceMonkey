@@ -61,8 +61,16 @@ The refresh path takes a `recheckFiles: 'all' | 'preserve'` option
   declared dep so the user can pick up remote updates even when the
   main script body hasn't changed.
   - **Conditionally.** The stored `httpEtag` / `httpLastModified` go
-    back as `If-None-Match` / `If-Modified-Since`, and a 304 keeps the
-    entry — body, `contentHash`, and `loadedAt` — exactly as it was.
+    back as `If-None-Match` / `If-Modified-Since`. A 304 reuses the
+    stored entry outright — body, `contentHash`, `size` and `loadedAt`
+    all carried over rather than re-derived.
+    - Reused, not recomputed, for correctness and not just speed: a
+      require's `source` was decoded by a BOM-stripping decoder, so
+      re-encoding it would not reproduce a BOM-prefixed file's bytes,
+      and rebuilding from them would report a change the server had
+      just denied.
+    - The match is on `contentHash`, because the per-URL fetch cache
+      may have resolved this URL from a different script's copy.
     ETag wins where a server offers both: it is exact, where
     `Last-Modified` cannot distinguish two edits in the same second.
   - Measured on a 46-script collection: 13 unique requires, every one

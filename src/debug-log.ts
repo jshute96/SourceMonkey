@@ -31,7 +31,14 @@ export async function loadDebugLoggingFlag(): Promise<void> {
   }
 }
 
+// Idempotent, matching `match-index.ts`'s storage listener. Three
+// contexts install this now (worker, collections page, options page)
+// and a context that called twice would double every flag update.
+let listenerInstalled = false;
+
 export function installDebugLoggingListener(): void {
+  if (listenerInstalled) return;
+  listenerInstalled = true;
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
     const change = changes[DEBUG_LOGGING_KEY];

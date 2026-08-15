@@ -2068,11 +2068,10 @@ export async function refreshCollection(
     scan,
     existingScripts,
   );
-  timer.mark('fetch');
-  // Split out so the breakdown says whether the time went to reading
+  // Marked here so the breakdown says whether the time went to reading
   // files or to everything downstream of having read them (dependency
   // fetches, hashing, the parse check).
-  const skipped = [...fetchResults.values()].filter((r) => 'unchanged' in r).length;
+  timer.mark('fetch');
 
   const scripts = await rebuildCollection({
     collectionId: collection.id,
@@ -2086,7 +2085,12 @@ export async function refreshCollection(
     useLocalFiles: collectionUsesLocalFiles(collection),
   });
   timer.mark('rebuild');
-  timer.note(`${scripts.length} scripts, ${skipped} unchanged`);
+  // Thunked: counting the skips walks every fetch result, which a
+  // disabled timer must not pay for.
+  timer.note(() => {
+    const skipped = [...fetchResults.values()].filter((r) => 'unchanged' in r).length;
+    return `${scripts.length} scripts, ${skipped} unchanged`;
+  });
 
   // Re-read the current rows INSIDE the lock and write atomically, so a
   // concurrent enable toggle (setCollectionEnabled / setScriptEnabled)

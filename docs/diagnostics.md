@@ -414,8 +414,9 @@ timing — collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
 ```
 
 - **read** — loading the collection and its existing script rows.
-- **scan** — the directory listing. Recurses one subdirectory at a
-  time, so it grows with tree depth rather than script count.
+- **scan** — the directory listing. Sibling directories are listed
+  together, so it grows with tree DEPTH (each level waits on the one
+  above) rather than with directory count or script count.
 - **fetch** — reading changed files. Near zero when the size+mtime skip
   catches everything; `N unchanged` says how often it did.
 - **rebuild** — everything downstream of having the bytes: `@require` /
@@ -472,7 +473,6 @@ symptom that led to `onlyProbesChanged` (see
 [injection.md](injection.md#lifecycle)): probe results are written one
 row at a time, and each write used to schedule its own re-registration.
 If they come back, that suppression is the first place to look.
-
 
 ## Testing
 

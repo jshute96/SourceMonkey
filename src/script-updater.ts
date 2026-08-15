@@ -305,7 +305,7 @@ async function runCollectionCheck(
     summarizeCollectionOutcome(label, prior, result, mode);
     await runVersionProbes(result.scripts, probe);
     timer.mark('probes');
-    timer.note(`${probedCount(result.scripts)} of ${result.scripts.length} scripts have a probe target`);
+    timer.note(() => `${probedCount(result.scripts)} of ${result.scripts.length} scripts have a probe target`);
     // Retry any script under this collection that Chrome is refusing —
     // refreshing a collection is one of the places a user goes to say
     // "try again". See `retryRejectedRegistrations`.
@@ -420,7 +420,7 @@ async function runAllCollectionsCheck(
   // and a write is what schedules a registration re-sync. The number of
   // probed scripts is therefore the number of re-syncs this pass can
   // provoke, which is not something the elapsed time shows.
-  timer.note(`${probedCount(allScripts)} of ${allScripts.length} scripts have a probe target`);
+  timer.note(() => `${probedCount(allScripts)} of ${allScripts.length} scripts have a probe target`);
   // Refresh All is the other "try again" button, so it retries every
   // refused registration it just re-read. See
   // `retryRejectedRegistrations`.
