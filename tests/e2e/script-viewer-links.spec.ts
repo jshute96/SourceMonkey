@@ -106,6 +106,49 @@ test.describe('userscript viewer link rendering', () => {
     await page.close();
   });
 
+  test('site-less Match patterns link into the script directory', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The shape the bundled example scripts use: a host-wildcard pair
+    // naming a page that ships beside the script. Both members resolve
+    // to the same file next to `demo.user.js`; the third pattern names
+    // no directory to anchor on and stays plain text.
+    scriptsDir.write({
+      relativePath: 'demo/demo.user.js',
+      meta: {
+        name: 'D',
+        match: [
+          '*://*/demo/demo.html',
+          'file:///*/demo/demo.html',
+          '*://*/loose.html',
+        ],
+      },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
+    const script = got!.scripts.find((s) => s.relativePath === 'demo/demo.user.js')!;
+    const expectedHref = script.fileUrl.replace(/demo\.user\.js$/, 'demo.html');
+
+    const page = await openViewer(extensionContext, extensionId, script.id);
+    const matchRow = page.locator('#header-summary dt', { hasText: 'Match' }).locator('+ dd');
+
+    for (const i of [0, 1]) {
+      const anchor = matchRow.locator('li').nth(i).locator('a');
+      await expect(anchor).toHaveAttribute('href', expectedHref);
+    }
+    await expect(matchRow.locator('li').nth(2).locator('a')).toHaveCount(0);
+    await expect(matchRow.locator('li').nth(2)).toHaveText('*://*/loose.html');
+
+    // Same rule in the code box, where the anchor text is the pattern.
+    await expect(page.locator('#content .token.comment').first()).toBeVisible();
+    const bodyAnchor = page.locator(`#content a[href="${expectedHref}"]`);
+    await expect(bodyAnchor).toHaveCount(2);
+    await expect(bodyAnchor.first()).toHaveText('*://*/demo/demo.html');
+
+    await page.close();
+  });
+
   test('header @match lines in the code body become anchors', async ({
     extensionContext, extensionId, sm,
   }) => {

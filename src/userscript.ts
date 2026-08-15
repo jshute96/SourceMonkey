@@ -656,6 +656,7 @@ function render(script: StoredScript): void {
   renderDetails(summaryEl, {
     header: script.header,
     files: { requires: script.requires, resources: script.resources },
+    scriptUrl: script.fileUrl,
     logId: currentLogId,
     collection: collectionRow,
     location: currentFilenamePath
@@ -1676,6 +1677,7 @@ function renderPreviewDetails(): void {
     header: previewHeader,
     mode: 'preview',
     files: previewFiles,
+    scriptUrl: previewFileUrl,
     location: {
       text: displayLocation(previewLocation),
       href: previewFileUrl,

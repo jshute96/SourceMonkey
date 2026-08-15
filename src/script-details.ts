@@ -37,7 +37,7 @@
 import { openInNewTabAnchor } from './code-links.js';
 import { makeCopyButton } from './copy-button.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
-import { matchTargetInfo } from './match-targets.js';
+import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
 import { isContainerCollection, locationFsPath } from './directories.js';
@@ -94,6 +94,12 @@ export interface DetailsModel {
     requires?: readonly StoredRequire[];
     resources?: readonly StoredResource[];
   };
+  // Where the script itself was loaded from. Only the Match / Include /
+  // Exclude rows read it: a pattern that names no site can still be
+  // linked when it points into the script's own directory (see
+  // `sameDirLinkUrl`). Distinct from `location.href`, which for a
+  // github collection is the blob *page*, not the file.
+  scriptUrl?: string;
   // Installed scripts only.
   logId?: string;
   collection?: StoredCollection | null;
@@ -164,9 +170,9 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   }
 
   if (h) {
-    addPatterns(dl, 'Match', getValues(h, 'match'));
-    addPatterns(dl, 'Include', getValues(h, 'include'));
-    addPatterns(dl, 'Exclude', getValues(h, 'exclude'));
+    addPatterns(dl, 'Match', getValues(h, 'match'), model.scriptUrl);
+    addPatterns(dl, 'Include', getValues(h, 'include'), model.scriptUrl);
+    addPatterns(dl, 'Exclude', getValues(h, 'exclude'), model.scriptUrl);
     // Directly under the match targets, because it is the same
     // question asked outward: those rows say which pages the script
     // reads, this one says where it may send what it read. `@grant`
@@ -451,12 +457,19 @@ interface LoadedFile {
 
 // `@match` / `@include` / `@exclude` row: each pattern that resolves to
 // a usable linkUrl via the same wildcard-trim rule as the site favicon
-// becomes a clickable open-in-new-tab anchor. Patterns we can't linkify
-// (host wildcard, `<all_urls>`, regex literals, file://) render as
-// plain text so the row still shows every entry.
-function addPatterns(dl: HTMLDListElement, label: string, values: string[]): void {
+// becomes a clickable open-in-new-tab anchor. A pattern naming no site
+// gets a second chance against the script's own directory. Patterns we
+// can't linkify either way (`<all_urls>`, regex literals, a host
+// wildcard with nothing to anchor on) render as plain text so the row
+// still shows every entry.
+function addPatterns(
+  dl: HTMLDListElement,
+  label: string,
+  values: string[],
+  scriptUrl: string | undefined,
+): void {
   if (values.length === 0) return;
-  appendRow(dl, label, listNode(values, patternValueNode));
+  appendRow(dl, label, listNode(values, (p) => patternValueNode(p, scriptUrl)));
 }
 
 // One value renders inline; several render as a `<ul>`. Generic in the
@@ -474,9 +487,9 @@ function listNode<T>(values: readonly T[], make: (v: T) => Node): Node {
   return ul;
 }
 
-function patternValueNode(pattern: string): Node {
-  const info = matchTargetInfo(pattern);
-  if (!info) {
+function patternValueNode(pattern: string, scriptUrl: string | undefined): Node {
+  const linkUrl = matchTargetInfo(pattern)?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl);
+  if (!linkUrl) {
     // Non-linkable pattern (`<all_urls>`, regex literal, etc.); render
     // as plain text but still allow slash-aware wrapping in case the
     // pattern is long.
@@ -484,7 +497,7 @@ function patternValueNode(pattern: string): Node {
     appendWithSlashBreaks(span, pattern);
     return span;
   }
-  return openInNewTabAnchor(info.linkUrl, pattern);
+  return openInNewTabAnchor(linkUrl, pattern);
 }
 
 function logIdCell(logId: string): Node {

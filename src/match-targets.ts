@@ -7,13 +7,18 @@
 //   - site-icon.ts — picks `representativeMatch(matching)` to drive
 //     favicon discovery (origin caching, page URL for HTML probe,
 //     click target).
-//   - userscript.ts — calls `matchTargetInfo(pattern)` per-pattern
-//     when linkifying `@match`/`@exclude`/`@include` values.
+//   - script-details.ts / code-links.ts — call `matchTargetInfo(pattern)`
+//     per-pattern when linkifying `@match`/`@exclude`/`@include` values,
+//     falling back to `sameDirLinkUrl` for patterns that name no site.
 //
 // No fetching, no DOM, no chrome.storage — that all lives in the
 // modules that consume these primitives.
 
 import { canonicalMatchPatterns } from './url-match.js';
+// Pure regex rewrite, no fetching — imported so the same-directory
+// fallback below points a github-hosted script's neighbour at the
+// github.com page instead of its raw bytes.
+import { githubRawToBlobUrl } from './github-provider.js';
 
 export interface MatchTarget {
   // `scheme://host[:port]` — no path. Cache key for the origin-scoped
@@ -132,6 +137,105 @@ export function matchTargetInfo(pattern: string): MatchTarget | null {
   const origin = `${p.scheme}://${p.host}`;
   const linkUrl = origin + linkPathFromMatchPath(p.path);
   return { origin, linkUrl };
+}
+
+// Fallback for patterns that name no site: link to a page sitting in
+// the same directory as the script itself. Full rule, worked examples
+// and rationale in docs/script-viewer.md#same-directory-fallback; in
+// short, a pattern with no host whose literal trailing directories
+// match the tail of the script's own directory D links to D + its
+// filename.
+//
+// The shape this exists for is the host-wildcard pair an example
+// script uses to name the page it ships beside:
+//
+//   @match *://*/gm-menu/gm-menu.html
+//   @match file:///*/gm-menu/gm-menu.html
+//
+// Neither yields a target above — one has a host of `*`, the other a
+// `file:` scheme — so both rows rendered as plain text even though the
+// page is sitting next to the script we're viewing.
+//
+// Two properties worth keeping in mind when editing:
+//   - The result is D plus one literal filename, so no pattern can
+//     walk out of the script's own directory.
+//   - Existence is never checked, so a script linkifies identically
+//     whether it was loaded from disk or from a server.
+export function sameDirLinkUrl(pattern: string, scriptUrl: string | undefined): string | null {
+  if (!scriptUrl) return null;
+  // Only the schemes a site-less pattern is written with. Anchoring
+  // the scheme (rather than accepting any `x://`) keeps
+  // `/^https?:\/\/x/`-style regex literals — legal in `@include` /
+  // `@exclude` — out of here, and `https?\*?` admits the
+  // `http*://` shorthand those tags are often written with.
+  const parts = /^(?:\*|https?\*?|file):\/\/([^/]*)(\/.*)$/i.exec(pattern.trim());
+  if (!parts) return null;
+  const [, host, path] = parts;
+  if (host !== '' && host !== '*') return null;
+
+  const segments = path.split('/').slice(1);
+  const filename = segments.pop() ?? '';
+  // A query or fragment means the page is parametrised, not a plain
+  // file next door — and `?` is legal in a `@match` path glob
+  // (`ol.php?type=precip*`), so it has to be rejected explicitly
+  // rather than left to the extension check.
+  if (!filename || /[*?#]/.test(filename) || !/\.[A-Za-z0-9]+$/.test(filename)) return null;
+
+  // Everything at or before the last wildcard segment is absorbed by
+  // that wildcard; what follows has to be matched literally.
+  // (A hand-rolled findLastIndex — the project's lib target predates it.)
+  let lastWildcard = -1;
+  segments.forEach((seg, i) => {
+    if (seg.includes('*')) lastWildcard = i;
+  });
+  const literalDirs = segments.slice(lastWildcard + 1);
+  if (literalDirs.length === 0 || literalDirs.some((s) => s === '')) return null;
+
+  const dir = scriptDirUrl(scriptUrl);
+  if (!dir) return null;
+  const dirSegments = dir.pathname.split('/').filter(Boolean).map(decodeSegment);
+  if (dirSegments.length < literalDirs.length) return null;
+  const tail = dirSegments.slice(dirSegments.length - literalDirs.length);
+  if (tail.some((seg, i) => seg !== decodeSegment(literalDirs[i]))) return null;
+
+  // Resolved through the URL parser rather than concatenated, so a
+  // filename carrying a space or other raw character is escaped the
+  // same way the directory around it already is. Safe against
+  // traversal: the checks above leave a filename with no `/`.
+  let href: string;
+  try {
+    href = new URL(filename, dir).href;
+  } catch {
+    return null;
+  }
+  // Same reasoning as `collectionClickUrl`: a github collection fetches
+  // `raw.githubusercontent.com`, which serves HTML as `text/plain`, so
+  // the raw neighbour of a script is a plaintext dump. Humans clicking
+  // want the github.com page — the same URL the Location row shows.
+  return githubRawToBlobUrl(href) ?? href;
+}
+
+// The script's parent directory as a URL ending in `/`. Only the
+// schemes a script can be loaded from — the href becomes an anchor.
+function scriptDirUrl(scriptUrl: string): URL | null {
+  try {
+    const dir = new URL('.', scriptUrl);
+    if (!['http:', 'https:', 'file:'].includes(dir.protocol)) return null;
+    return dir;
+  } catch {
+    return null;
+  }
+}
+
+// A directory read off a URL is percent-encoded; the same directory
+// written into a `@match` pattern usually isn't. Compare both decoded
+// so `my dir` and `my%20dir` are the same segment.
+function decodeSegment(seg: string): string {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
 }
 
 // Build the click-through path for a `@match` pattern. Walk segments

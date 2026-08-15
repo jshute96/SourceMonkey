@@ -68,7 +68,10 @@ consumed by the userscript-viewer linkifier for
 [script-viewer.md](script-viewer.md#link-rendering). The icon module
 picks the first `@match` whose pattern yields a usable origin via
 `representativeMatch`; it then uses the same `linkUrl` for both
-HTML icon discovery and the favicon click-through.
+HTML icon discovery and the favicon click-through. The viewer's
+[same-directory fallback](script-viewer.md#same-directory-fallback)
+for site-less patterns is not used here — it points at a page beside
+the script, which is not a site to take an icon from.
 
 `@include` patterns are not consulted: they're free-form globs and
 regexes over the whole URL, not URL templates, so the origin you'd

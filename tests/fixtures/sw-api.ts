@@ -125,6 +125,9 @@ export interface StoredScriptLike {
   id: string;
   collectionId: string;
   relativePath: string;
+  // Where the script was fetched from — a `file://` URL for a
+  // directory collection, the raw URL for the http kinds.
+  fileUrl: string;
   status: 'ok' | 'invalid' | 'missing';
   errorMessage?: string;
   errorLocation?: DiagnosticLocationLike;
