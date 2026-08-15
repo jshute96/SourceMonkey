@@ -97,7 +97,7 @@ import {
   FETCH_COLLECTIONS_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from './debug-log.js';
-import { startPhaseTimer } from './phase-timing.js';
+import { startPhaseTimer, timePhase } from './phase-timing.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
 // metadata-block parse failure, header validation failure, fetch
@@ -871,10 +871,10 @@ export async function applyFiles(
       // The check itself is usually free on this path: the deps are
       // the prior's by construction, so the fingerprint matches unless
       // the BODY changed — which is exactly when a re-check is right.
-      return applyParseCheck(built, prior);
+      return timePhase('parse-check', () => applyParseCheck(built, prior));
     }
   }
-  const result = await attachFiles({
+  const result = await timePhase('deps', () => attachFiles({
     scriptFileUrl: built.fileUrl,
     header: built.header,
     priorRequires,
@@ -883,7 +883,7 @@ export async function applyFiles(
     fetchCache,
     now,
     localRoots,
-  });
+  }));
   if (result.errorMessage) {
     // Preserve the last-known-good script state when we have one.
     // This rolls the *entire* refresh back to the prior — the new
@@ -919,7 +919,7 @@ export async function applyFiles(
   else delete built.requires;
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
-  return applyParseCheck(built, prior);
+  return timePhase('parse-check', () => applyParseCheck(built, prior));
 }
 
 // ---------- Parse check hook ----------
@@ -1145,7 +1145,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
     const fr = args.fetchResults.get(found.relativePath);
     if (fr && 'ok' in fr && fr.ok) {
       entryTasks.push(async (): Promise<StoredScript> => {
-        const built = await buildScriptFromText({
+        const built = await timePhase('build', () => buildScriptFromText({
           id,
           collectionId: args.collectionId,
           relativePath: found.relativePath,
@@ -1158,7 +1158,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
           prior,
           httpEtag: fr.httpEtag,
           httpLastModified: fr.httpLastModified,
-        });
+        }));
         // Preserve the user's per-script enabled choice across refreshes.
         // `versionProbes` is deliberately NOT carried here — it's
         // re-applied from the persisted row by preserveConcurrentEdits

@@ -439,6 +439,31 @@ The other two lines cover work the refresh triggers rather than does:
   snapshot, plus the probe and rejected-registration passes that run
   once over every script rather than per collection.
 
+### Inside `rebuild`
+
+`rebuild` is a fan-out — every script in the collection is processed
+concurrently — so no single sequence describes it. A second line breaks
+it down by cumulative time per stage:
+
+```
+collection check cumulative (concurrent, sums past wall clock):
+  deps 1626ms/46, dep-fetch 761ms/13, parse-check 64ms/46, local-standin 4.5ms/76
+```
+
+- `ms/n` is total time and call count. The totals **sum past the wall
+  clock** they happened in, because the work overlapped — they answer
+  "which stage dominates", which is a ratio, not "how long did it take".
+- `deps` is the whole dependency stage per script; `dep-fetch` is the
+  network leg inside it, counted once per *unique URL* thanks to the
+  cross-script cache. `deps` far exceeding `dep-fetch` is expected and
+  not a finding: it is N scripts waiting on the same shared fetches.
+- **The count is the number that matters for `dep-fetch`.** Measured on
+  a real 46-script collection, its 76 declarations resolved to 13
+  fetches at ~58ms each — so `rebuild` tracks unique-dependency count
+  times latency, and neither hashing nor the parse check
+  (~1.4ms/script) nor local stand-in probing (~0.06ms/probe) is
+  material.
+
 ### What a healthy run looks like
 
 `registration sync` should appear **once or twice** per Refresh All, not

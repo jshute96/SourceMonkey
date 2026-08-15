@@ -60,7 +60,7 @@ import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js'
 import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
 import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
-import { startPhaseTimer } from './phase-timing.js';
+import { startPhaseTimer, resetPhaseTotals, reportPhaseTotals } from './phase-timing.js';
 import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
 import { appendScriptLog, logScriptEvent, type AppendLogInput } from './script-log.js';
@@ -284,6 +284,7 @@ async function runCollectionCheck(
   // question "is the refresh slow or is the annotation pass slow?" is
   // exactly what the split answers.
   const timer = startPhaseTimer(`collection check (${mode})`);
+  resetPhaseTotals();
   let result: { collection: StoredCollection; scripts: StoredScript[] } | null;
   try {
     result = await refreshCollection(collectionId, { recheckFiles: fileRecheckMode(mode) });
@@ -314,6 +315,7 @@ async function runCollectionCheck(
     timer.mark('retry-rejected');
   }
   timer.done();
+  reportPhaseTotals('collection check');
   return result;
 }
 
@@ -358,6 +360,7 @@ async function runAllCollectionsCheck(
   // once over every script in every collection rather than per
   // collection.
   const timer = startPhaseTimer(`all-collections check (${mode})`);
+  resetPhaseTotals();
   // Snapshot priors BEFORE the refresh; reading after would just give
   // back the post-refresh state and the summary would always say 0
   // updated / 0 added.
@@ -426,6 +429,7 @@ async function runAllCollectionsCheck(
   );
   timer.mark('retry-rejected');
   timer.done();
+  reportPhaseTotals('all-collections check');
   return result;
 }
 

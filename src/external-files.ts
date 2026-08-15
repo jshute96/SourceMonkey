@@ -43,6 +43,7 @@ import {
 import { localFileCandidates } from './local-file-overrides.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
+import { timePhase } from './phase-timing.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
 import {
   isMarkupContentType,
@@ -572,7 +573,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // Local stand-in first, and before the preserve shortcut — see
   // `readLocalStandIn` for why an overridden file is never cached past
   // a refresh.
-  const local = await readLocalStandIn(resolved.url, args.localRoots, args.fetchCache);
+  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
   if (!local && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
   }
@@ -734,7 +735,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
 
   // Local stand-in first, and before the preserve shortcut — same rule
   // and same reasoning as `@require`; see `readLocalStandIn`.
-  const local = await readLocalStandIn(resolved.url, args.localRoots, args.fetchCache);
+  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
   if (
     !local && args.recheck === 'preserve' &&
     prior && prior.name === args.decl.name && !prior.localUrl
@@ -796,7 +797,7 @@ function ensureFetch(
   // either's rules biasing the other's outcome.
   const cached = cache.get(url);
   if (cached) return cached;
-  const promise = fetchFileBytes(url, prior);
+  const promise = timePhase('dep-fetch', () => fetchFileBytes(url, prior));
   cache.set(url, promise);
   return promise;
 }

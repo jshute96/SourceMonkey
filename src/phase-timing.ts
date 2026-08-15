@@ -80,3 +80,60 @@ function round(ms: number): number {
 export function startPhaseTimer(label: string): PhaseTimer {
   return isDebugLoggingEnabled() ? new ActiveTimer(label) : NOOP;
 }
+
+// ---------- Cumulative totals ----------
+//
+// The timers above measure one sequence. This measures where time went
+// inside a fan-out: `rebuildCollection` runs its entries concurrently,
+// so no single sequence describes the cost, and "rebuild 384ms" says
+// nothing about whether that was dependency fetches, hashing, or the
+// parse check.
+//
+// Totals are CUMULATIVE across concurrent work, so they sum to more
+// than the wall clock they happened in — deliberately. The question
+// being answered is "which of these dominates", which is a ratio, and
+// a ratio survives the overlap. The report labels them so nobody reads
+// them as elapsed.
+//
+// Global to the JS context rather than threaded through: reaching the
+// leaf call sites otherwise means a parameter through `applyFiles`,
+// `attachFiles` and both per-kind loaders, plus the offline validator
+// that shares them. For a debug-only diagnostic that is a bad trade.
+// The cost is that two concurrently refreshing collections land in one
+// bucket — which is why the report is emitted per REFRESH PASS, where
+// that is the granularity you want anyway.
+
+interface Total { ms: number; n: number }
+let totals: Map<string, Total> | null = null;
+
+// Begin (or restart) accumulation. No-op when debug logging is off, so
+// the leaf calls stay free.
+export function resetPhaseTotals(): void {
+  totals = isDebugLoggingEnabled() ? new Map() : null;
+}
+
+// Run `fn`, adding its elapsed time to `label`'s bucket. Returns
+// whatever `fn` returns; a throw still records the time, since work
+// that failed still cost what it cost.
+export async function timePhase<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  if (!totals) return fn();
+  const start = performance.now();
+  try {
+    return await fn();
+  } finally {
+    const bucket = totals.get(label) ?? { ms: 0, n: 0 };
+    bucket.ms += performance.now() - start;
+    bucket.n += 1;
+    totals.set(label, bucket);
+  }
+}
+
+// Emit one line, largest bucket first — the ordering IS the finding.
+export function reportPhaseTotals(label: string): void {
+  if (!totals || totals.size === 0) return;
+  const parts = [...totals.entries()]
+    .sort((a, b) => b[1].ms - a[1].ms)
+    .map(([name, t]) => `${name} ${round(t.ms)}ms/${t.n}`);
+  console.log(`[SourceMonkey] timing — ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
+  totals = null;
+}
