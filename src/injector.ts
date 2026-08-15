@@ -80,6 +80,7 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
+import { startPhaseTimer } from './phase-timing.js';
 import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
 import {
   buildSourceMap,
@@ -1091,11 +1092,19 @@ async function runSync(): Promise<void> {
     await writeRejections(await readRejections(), {});
     return;
   }
+  // The sweep nobody clicked: any single script row changing triggers a
+  // full unregister-all + register-all across EVERY script, each spec
+  // rebuilt from scratch. It runs on a debounce after the write, so it
+  // lands just after a Refresh button releases rather than inside it —
+  // which makes it easy to blame the refresh for time spent here.
+  const timer = startPhaseTimer('registration sync');
   try {
     await ensureWorldConfigured();
     const { scripts, collections } = await readAll();
+    timer.mark('read');
     const handlerVersion = chrome.runtime.getManifest().version;
     const userSpecs = await collectActiveSpecs(scripts, collections, handlerVersion);
+    timer.mark('build-specs');
     const bridge = buildBridgeSpec(userSpecs);
     const gmRuntime = buildGmRuntimeSpec(userSpecs);
     // GM runtime first so it installs window.__SM_GM__ ahead of any
@@ -1118,7 +1127,11 @@ async function runSync(): Promise<void> {
     if (bridge) specs.push(bridge);
     specs.push(...userSpecs);
     await unregisterAll();
+    timer.mark('unregister');
     const registered = await registerWithFallback(specs);
+    timer.mark('register');
+    timer.note(`${specs.length} specs, ${scripts.length} stored scripts`);
+    timer.done();
     const failed = specs.length - registered;
     if (failed > 0) {
       console.info(

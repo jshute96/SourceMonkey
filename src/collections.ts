@@ -64,6 +64,7 @@ import {
 } from './collection-display.js';
 import { getValue } from './userscript-header.js';
 import { describeDiagnostic } from './diagnostic-location.js';
+import { installDebugLoggingListener, loadDebugLoggingFlag } from './debug-log.js';
 import {
   updateAllCollections,
   updateCollection,
@@ -215,6 +216,16 @@ if (chrome.storage?.session?.onChanged) {
     if (touched) applyStatusCellsToDom();
   });
 }
+
+// The debug-logging toggle is global, but each JS context reads it for
+// itself — and until this, only the service worker did. That left every
+// `dlog` / phase timer in page-context code permanently silent, which
+// matters because the refresh pipeline runs HERE: the collections page
+// imports `script-updater` directly rather than messaging the worker.
+// The listener keeps the flag live, so flipping the Options checkbox
+// takes effect without reloading the page.
+installDebugLoggingListener();
+void loadDebugLoggingFlag();
 
 // Keep the page current with `chrome.storage.local` writes from ANY
 // origin — the viewer's Refresh, a background opportunistic refresh, an

@@ -97,6 +97,7 @@ import {
   FETCH_COLLECTIONS_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from './debug-log.js';
+import { startPhaseTimer } from './phase-timing.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
 // metadata-block parse failure, header validation failure, fetch
@@ -1901,9 +1902,12 @@ export async function refreshCollection(
   id: string,
   opts: RefreshOptions = {},
 ): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
+  const timer = startPhaseTimer('collection refresh');
   const prior = await getCollectionWithScripts(id);
   if (!prior) return null;
   const { collection, scripts: existingScripts } = prior;
+  timer.mark('read');
+  timer.note(collection.path);
 
   let scan: { relativePath: string; size?: number; mtime?: number }[] = [];
   let scanError: string | undefined;
@@ -1922,6 +1926,7 @@ export async function refreshCollection(
     }
   }
 
+  timer.mark('scan');
   const now = Date.now();
 
   // Scan failure (unreadable manifest, unreadable top-level directory,
@@ -1958,6 +1963,11 @@ export async function refreshCollection(
     scan,
     existingScripts,
   );
+  timer.mark('fetch');
+  // Split out so the breakdown says whether the time went to reading
+  // files or to everything downstream of having read them (dependency
+  // fetches, hashing, the parse check).
+  const skipped = [...fetchResults.values()].filter((r) => 'unchanged' in r).length;
 
   const scripts = await rebuildCollection({
     collectionId: collection.id,
@@ -1970,6 +1980,8 @@ export async function refreshCollection(
     fileFetchCache: opts.fileFetchCache,
     useLocalFiles: collectionUsesLocalFiles(collection),
   });
+  timer.mark('rebuild');
+  timer.note(`${scripts.length} scripts, ${skipped} unchanged`);
 
   // Re-read the current rows INSIDE the lock and write atomically, so a
   // concurrent enable toggle (setCollectionEnabled / setScriptEnabled)
@@ -1990,6 +2002,8 @@ export async function refreshCollection(
   // to know. See src/refresh-error.ts.
   try {
     const written = await writeRefreshedCollection();
+    timer.mark('write');
+    timer.done();
     // Clears on the way out, so a collection that recovers stops
     // reporting a failure the next refresh already fixed.
     await setRefreshError(id, null);
@@ -2038,9 +2052,9 @@ export async function refreshCollection(
       // script rows only go if they actually changed — see
       // `changedScriptRows`.
       const toSet: Record<string, unknown> = { [collectionKey(id)]: nextCollection };
-      for (const s of changedScriptRows(finalScripts, curScripts)) {
-        toSet[scriptKey(s.id)] = s;
-      }
+      const changed = changedScriptRows(finalScripts, curScripts);
+      for (const s of changed) toSet[scriptKey(s.id)] = s;
+      timer.note(`rows written: ${changed.length}`);
       // Placed where a real quota rejection lands — after everything was
       // fetched and reconciled, with nothing written — so the test
       // exercises the same state the production failure produces.

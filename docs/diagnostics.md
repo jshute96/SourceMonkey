@@ -386,6 +386,56 @@ names a culprit has to be reachable only when that culprit is real:
     it. Body-sniffed markup leaves it out — quoting `text/plain` next
     to a claim that the response is HTML reads as a contradiction.
 
+## Measuring where a refresh's time goes
+
+A diagnostic for "the refresh felt slow", which nothing else answers —
+the Log tab records what a refresh *decided*, never what it cost.
+
+Turn on **Options → Debug logging**, then click Refresh. Each phase
+group emits one line via `src/phase-timing.ts`.
+
+### Where to look
+
+The refresh pipeline runs in the **collections page**, not the service
+worker — `collections.ts` imports `script-updater` directly. So the
+lines land in two consoles, and you need both:
+
+| Console | Lines |
+|---------|-------|
+| Collections page (F12) | `collection check`, `collection refresh` |
+| Service worker (`chrome://extensions` → *service worker*) | `registration sync` |
+
+### Reading it
+
+```
+timing — collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
+  rebuild 0.7, write 21) — /path/to/scripts, 5 scripts, 5 unchanged,
+  rows written: 0
+```
+
+- **read** — loading the collection and its existing script rows.
+- **scan** — the directory listing. Recurses one subdirectory at a
+  time, so it grows with tree depth rather than script count.
+- **fetch** — reading changed files. Near zero when the size+mtime skip
+  catches everything; `N unchanged` says how often it did.
+- **rebuild** — everything downstream of having the bytes: `@require` /
+  `@resource` fetches, hashing, the parse check.
+- **write** — the storage write, plus the in-lock re-read. Never zero
+  even at `rows written: 0`, because the collection row always goes
+  (see [storage.md](storage.md#only-changed-rows-are-written)).
+
+The other two lines cover work the refresh triggers rather than does:
+
+- `collection check` wraps the refresh with the update probes and the
+  rejected-registration retry, so it separates "the refresh is slow"
+  from "the annotation pass is slow". Its `N of M scripts have a probe
+  target` matters — a `0ms` probe leg means nothing to check, not
+  everything already fresh.
+- `registration sync` is the sweep no one clicked: any single row
+  changing re-registers **every** script. It runs on a debounce *after*
+  the write, so it lands just past the button release and is easy to
+  mistake for refresh time.
+
 ## Testing
 
 - `tests/unit/diagnostic-location.test.mjs` — the label and the

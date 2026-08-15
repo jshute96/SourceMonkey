@@ -60,6 +60,7 @@ import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js'
 import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
 import { getValue } from './userscript-header.js';
 import { dlog } from './debug-log.js';
+import { startPhaseTimer } from './phase-timing.js';
 import { githubTokenLogSuffix } from './github-auth.js';
 import { getScriptLogLabel } from './script-log-id.js';
 import { appendScriptLog, logScriptEvent, type AppendLogInput } from './script-log.js';
@@ -278,6 +279,11 @@ async function runCollectionCheck(
   // hitting unauthenticated rate limits" is hard to diagnose).
   const tokenSuffix = prior?.collection.path ? githubTokenLogSuffix(prior.collection.path) : '';
   console.log(`[SourceMonkey] collection refresh (${mode}): ${label}${tokenSuffix}`);
+  // Sits OUTSIDE refreshCollection's own timer rather than extending it:
+  // the probes and the rejection retry are this layer's work, and the
+  // question "is the refresh slow or is the annotation pass slow?" is
+  // exactly what the split answers.
+  const timer = startPhaseTimer(`collection check (${mode})`);
   let result: { collection: StoredCollection; scripts: StoredScript[] } | null;
   try {
     result = await refreshCollection(collectionId, { recheckFiles: fileRecheckMode(mode) });
@@ -293,17 +299,32 @@ async function runCollectionCheck(
     );
     throw err;
   }
+  timer.mark('refresh');
   if (result) {
     summarizeCollectionOutcome(label, prior, result, mode);
     await runVersionProbes(result.scripts, probe);
+    timer.mark('probes');
+    timer.note(`${probedCount(result.scripts)} of ${result.scripts.length} scripts have a probe target`);
     // Retry any script under this collection that Chrome is refusing —
     // refreshing a collection is one of the places a user goes to say
     // "try again". See `retryRejectedRegistrations`.
     await retryRejectedRegistrations(
       result.scripts.map((s) => s.id), { userInitiated: probe === 'force' },
     );
+    timer.mark('retry-rejected');
   }
+  timer.done();
   return result;
+}
+
+// How many of these scripts a probe pass would actually fetch for.
+// Reported alongside the probe phase because a `0ms` probe leg means
+// two very different things — nothing to check, or everything already
+// fresh — and only the count separates them.
+function probedCount(scripts: readonly StoredScript[]): number {
+  return scripts.filter(
+    (s) => s.status === 'ok' && probeTargets(s.header, s.fileUrl).length > 0,
+  ).length;
 }
 
 // The one sentence a collection-level refresh failure gets in every

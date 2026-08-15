@@ -104,6 +104,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
+| `src/phase-timing.ts` | Debug-gated phase timers behind the refresh / registration paths — one summary line each, no-op when off |
 | `src/concurrency.ts` | Bounded-concurrency `mapWithConcurrency` plus the nested per-collection / per-script / probe limits that cap peak memory |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) and chunked `bytesToBase64` (XHR + `@resource` transport) |
 | `src/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
