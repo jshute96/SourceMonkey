@@ -60,6 +60,15 @@ fails.
   `onCacheChanged` for `script:*` / `collection:*` mutations. The SW
   subscribes a second listener that re-runs `syncRegistrations()`,
   alongside the existing badge re-evaluation.
+  - **Except a probe-only write.** `versionProbes` is a display
+    annotation no spec reads, and a Refresh All writes one probe result
+    per script — so counting those as cache changes cost a full
+    re-registration per probed script. `onlyProbesChanged` in
+    `src/match-index.ts` suppresses exactly that case, and nothing
+    wider: the check diffs the whole stored row, because
+    `onCacheChanged` drives re-registration and a spec reads far more of
+    the row than matching does. See
+    [Measuring](diagnostics.md#measuring-where-a-refreshs-time-goes).
 - **One-time world config** — `chrome.userScripts.configureWorld({
   messaging: true })` is called before the first `register()`. This is
   what lets the injected wrapper call `chrome.runtime.sendMessage`

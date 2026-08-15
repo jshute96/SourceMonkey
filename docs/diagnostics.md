@@ -435,6 +435,19 @@ The other two lines cover work the refresh triggers rather than does:
   changing re-registers **every** script. It runs on a debounce *after*
   the write, so it lands just past the button release and is easy to
   mistake for refresh time.
+- `all-collections check` is the Refresh All wrapper — the prior
+  snapshot, plus the probe and rejected-registration passes that run
+  once over every script rather than per collection.
+
+### What a healthy run looks like
+
+`registration sync` should appear **once or twice** per Refresh All, not
+once per collection and never once per script. A long run of them is the
+symptom that led to `onlyProbesChanged` (see
+[injection.md](injection.md#lifecycle)): probe results are written one
+row at a time, and each write used to schedule its own re-registration.
+If they come back, that suppression is the first place to look.
+
 
 ## Testing
 

@@ -99,7 +99,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
-| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local` |
+| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local`; suppresses probe-only writes |
 | `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts` and wraps each body with an activation/error shim |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
@@ -195,6 +195,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |
+| `tests/unit/match-index.test.mjs` | `onlyProbesChanged` — which `script:*` writes may skip a re-registration, and the many that may not |
 | `tests/unit/log-format.test.mjs` | Unit tests for the log cell strings, the CSV rendering (quoting, order), and the export filename |
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
 | `tests/unit/match-targets.test.mjs` | Unit tests for `@match` pattern parsing: origin / linkUrl extraction and the wildcard-trim path rule |

@@ -21,6 +21,7 @@ import {
   ensureCollectionKeysMigrated,
   isScriptEnabled,
   isCollectionEnabled,
+  sameStoredValue,
   type ScriptMatching,
   type StoredScript,
   type StoredCollection,
@@ -134,6 +135,29 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
   let touched = false;
   for (const [key, change] of Object.entries(changes)) {
     if (key.startsWith(SCRIPT_PREFIX)) {
+      // A write that only moved `versionProbes` is not a change to
+      // anything downstream of this listener, and saying otherwise is
+      // expensive: `notifyChange` schedules a full unregister-all +
+      // register-all across EVERY script. A "Refresh All" probes each
+      // script in turn and writes each result as its own row, so
+      // treating those as cache changes turned one refresh into a
+      // re-registration per probed script — measured at 23 syncs
+      // averaging 356ms for a 177-script profile, most of them landing
+      // after the refresh had already finished.
+      //
+      // Safe because a probe is a display annotation and nothing else:
+      // `toEntry` doesn't read it, and neither does `injector.ts`
+      // (registration specs), `tab-status.ts`, or `background.ts`. The
+      // pages that DO render it — the viewer and the collections page —
+      // repaint from their own `chrome.storage.local.onChanged`
+      // listeners, not from `onCacheChanged`, so the badge still
+      // updates the moment a probe lands.
+      if (onlyProbesChanged(
+        change.oldValue as StoredScript | undefined,
+        change.newValue as StoredScript | undefined,
+      )) {
+        continue;
+      }
       touched = true;
       const id = key.slice(SCRIPT_PREFIX.length);
       if (change.newValue === undefined) {
@@ -158,6 +182,32 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
     }
   }
   if (touched) notifyChange();
+}
+
+// Whether a `script:*` write moved nothing but `versionProbes`.
+//
+// Deliberately a diff of the two stored rows rather than of the derived
+// cache entries. The entry holds only what MATCHING needs, but
+// `notifyChange` also drives re-registration, which reads the whole row
+// — body, `@require` bodies, grants, world, run-at. Comparing entries
+// would call a body-only edit "no change" and leave the old code
+// registered, which is a correctness bug, not a missed optimisation.
+// So the rule is inverted: assume a change matters unless it is exactly
+// the one field proven not to.
+//
+// Exported for unit tests.
+export function onlyProbesChanged(
+  before: StoredScript | undefined,
+  after: StoredScript | undefined,
+): boolean {
+  // A creation or a deletion is never "just a probe update".
+  if (!before || !after) return false;
+  // `sameStoredValue` treats an undefined-valued key as absent, so
+  // overwriting the field is how you ask "equal apart from this one".
+  return sameStoredValue(
+    { ...before, versionProbes: undefined },
+    { ...after, versionProbes: undefined },
+  );
 }
 
 // Allow the background SW to refresh open-tab badges when the script

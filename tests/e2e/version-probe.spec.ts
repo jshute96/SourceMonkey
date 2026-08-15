@@ -416,4 +416,71 @@ test.describe('update probes', () => {
     await expect(page.locator('#header-summary dd.version-newer')).toHaveCount(0);
     await page.close();
   });
+  // A probe result is a display annotation, but it is stored on the
+  // script row — and every `script:*` write used to schedule a full
+  // unregister-all + register-all across every registered script. A
+  // Refresh All probes each script in turn and writes each result
+  // separately, so the annotation pass alone produced a re-registration
+  // per probed script: measured at 23 syncs averaging 356ms on a
+  // 177-script profile, most of them after the refresh had finished.
+  //
+  // Both halves are asserted together on purpose. The suppression is
+  // only correct if it is narrow, and "we stopped re-registering" is a
+  // bug, not a fix, if a real edit stops re-registering too.
+  test('a probe-only write does not re-register, but a body change still does', async ({ sm, getServiceWorker }) => {
+    server.setRoute('/thing.user.js', versionedScript({ version: '1.0' }));
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.syncNow();
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+
+    // Count what actually reaches Chrome, rather than trusting a log
+    // line: `register` is the expensive half of a sync and the half a
+    // regression here would restore.
+    const sw = await getServiceWorker();
+    await sw.evaluate(() => {
+      const w = self as unknown as { __regCalls: number };
+      w.__regCalls = 0;
+      const orig = chrome.userScripts.register.bind(chrome.userScripts);
+      chrome.userScripts.register = ((specs: unknown[]) => {
+        w.__regCalls++;
+        return orig(specs as Parameters<typeof orig>[0]);
+      }) as typeof chrome.userScripts.register;
+    });
+    const regCalls = () => sw.evaluate(() => (self as unknown as { __regCalls: number }).__regCalls);
+    // Longer than scheduleSync's 50ms debounce, so a sync that WAS
+    // scheduled has landed by the time we read the counter.
+    const settle = () => new Promise((r) => setTimeout(r, 400));
+
+    // Write a probe onto the row, changing nothing else — the exact
+    // shape `setVersionProbes` produces.
+    await sw.evaluate(async (id: string) => {
+      const key = `script:${id}`;
+      const got = await chrome.storage.local.get(key);
+      const row = got[key] as Record<string, unknown>;
+      await chrome.storage.local.set({
+        [key]: {
+          ...row,
+          versionProbes: [{
+            kinds: ['update'], url: 'https://example.com/x.meta.js',
+            checkedAt: 123, version: '9.9',
+          }],
+        },
+      });
+    }, scriptId);
+    await settle();
+    expect(await regCalls()).toBe(0);
+
+    // Same row, real content change: this one has to reach Chrome, or
+    // the page keeps running the old body.
+    await sw.evaluate(async (id: string) => {
+      const key = `script:${id}`;
+      const got = await chrome.storage.local.get(key);
+      const row = got[key] as Record<string, unknown>;
+      await chrome.storage.local.set({
+        [key]: { ...row, bodyText: 'console.log("edited");', contentHash: 'changed' },
+      });
+    }, scriptId);
+    await settle();
+    expect(await regCalls()).toBeGreaterThan(0);
+  });
 });
