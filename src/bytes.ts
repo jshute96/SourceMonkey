@@ -25,3 +25,17 @@ export function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+// base64 → bytes. The inverse of `bytesToBase64`, used to rebuild a
+// stored `@resource` body when a conditional GET answers 304 and the
+// server sends no bytes of its own.
+//
+// Not chunked: `atob` takes one string and the size cap that bounds
+// what we store (MAX_FILE_BYTES) bounds this too. The reverse needed
+// chunking only because it SPREADS into String.fromCharCode.
+export function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}

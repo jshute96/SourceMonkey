@@ -60,6 +60,16 @@ The refresh path takes a `recheckFiles: 'all' | 'preserve'` option
 - **Explicit Refresh** (manual button click) → `'all'`: refetch every
   declared dep so the user can pick up remote updates even when the
   main script body hasn't changed.
+  - **Conditionally.** The stored `httpEtag` / `httpLastModified` go
+    back as `If-None-Match` / `If-Modified-Since`, and a 304 keeps the
+    entry — body, `contentHash`, and `loadedAt` — exactly as it was.
+    ETag wins where a server offers both: it is exact, where
+    `Last-Modified` cannot distinguish two edits in the same second.
+  - Measured on a 46-script collection: 13 unique requires, every one
+    of them offering a validator, ~924 KB of transfer replaced by 13
+    empty 304s. The wall-clock saving is modest on a fast link — the
+    dedup below is what already collapsed those 76 declarations to 13
+    — so this is a bandwidth fix first and a latency fix second.
 - **Opportunistic refresh** (background check on navigation) →
   `'preserve'`: reuse every cached entry verbatim; only fetch refs
   the script newly declares. Keeps per-navigation cost bounded — the

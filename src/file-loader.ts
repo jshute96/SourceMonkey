@@ -160,12 +160,40 @@ export interface FetchBytesOptions {
   // @resource pointing at the same URL isn't rejected by the require's
   // rule. An empty content-type skips the predicate entirely.
   acceptContentType?: (contentType: string) => boolean;
+
+  // Validators from the copy we already hold, for a conditional GET.
+  // http(s) only — a `file://` read has no such protocol, and the
+  // callers that skip those use the directory listing's size+mtime
+  // instead.
+  //
+  // Supplying either turns the request conditional: a server that says
+  // 304 returns `{ notModified: true }` and transfers no body, which is
+  // the whole point. Callers that pass this must hold the prior bytes,
+  // because a 304 gives them nothing to rebuild from.
+  conditional?: { etag?: string; lastModified?: string };
 }
 
 export interface FetchedBytes {
   body: ArrayBuffer;
   contentType: string;
   finalUrl: string;
+  // Validators the server offered, for the NEXT conditional request.
+  // Absent for file:// and for servers that send neither.
+  etag?: string;
+  lastModified?: string;
+}
+
+// The server confirmed the caller's copy is current. Only ever returned
+// when `opts.conditional` was supplied, so callers that don't ask for it
+// can never observe it.
+export interface NotModified {
+  notModified: true;
+}
+
+export function isNotModified(
+  v: FetchedBytes | NotModified | FetchFailure,
+): v is NotModified {
+  return (v as NotModified).notModified === true;
 }
 
 // Why a fetch produced no bytes. Each is known at the point the fetcher
@@ -203,7 +231,7 @@ const httpError = (status: number): FetchFailure =>
 export async function fetchResourceBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | FetchFailure> {
+): Promise<FetchedBytes | NotModified | FetchFailure> {
   if (isHttpUrl(url)) return fetchHttpBytes(url, opts);
   if (isFileUrl(url)) return fetchFileBytes(url, opts);
   return fetchFailed('unsupported-scheme');
@@ -212,7 +240,7 @@ export async function fetchResourceBytes(
 async function fetchHttpBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | FetchFailure> {
+): Promise<FetchedBytes | NotModified | FetchFailure> {
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -229,7 +257,7 @@ async function fetchHttpBytes(
       // `@require` / `@resource` / icon fetches against private raw
       // URLs work. Host-gated inside `githubAuthHeaders` so non-GitHub
       // hosts never see the token.
-      headers: { ...githubAuthHeaders(url) },
+      headers: { ...githubAuthHeaders(url), ...conditionalHeaders(opts.conditional) },
     });
   } catch {
     // Our own timer is the only thing that aborts this request, so an
@@ -239,6 +267,10 @@ async function fetchHttpBytes(
   } finally {
     clearTimeout(timer);
   }
+  // Before the `ok` check: 304 is not in the 200-299 range, so testing
+  // `response.ok` first would report the server's confirmation that
+  // nothing changed as an HTTP error.
+  if (response.status === 304) return { notModified: true };
   if (!response.ok) return httpError(response.status);
 
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
@@ -257,7 +289,25 @@ async function fetchHttpBytes(
   if (body.byteLength === 0) return fetchFailed('empty');
   if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
 
-  return { body, contentType, finalUrl: response.url || url };
+  const out: FetchedBytes = { body, contentType, finalUrl: response.url || url };
+  const etag = response.headers.get('etag');
+  const lastModified = response.headers.get('last-modified');
+  if (etag) out.etag = etag;
+  if (lastModified) out.lastModified = lastModified;
+  return out;
+}
+
+// `If-None-Match` wins where a server offers both: an ETag is exact,
+// where `Last-Modified` has one-second resolution and cannot represent
+// two edits inside the same second. Sending both would let the server
+// pick the weaker one.
+function conditionalHeaders(
+  conditional: FetchBytesOptions['conditional'],
+): Record<string, string> {
+  if (!conditional) return {};
+  if (conditional.etag) return { 'If-None-Match': conditional.etag };
+  if (conditional.lastModified) return { 'If-Modified-Since': conditional.lastModified };
+  return {};
 }
 
 async function fetchFileBytes(
@@ -404,7 +454,10 @@ export async function fetchResourceText(
   opts: FetchBytesOptions,
 ): Promise<string | null> {
   const res = await fetchResourceBytes(url, opts);
-  if ('failed' in res) return null;
+  // A caller wanting text has nothing to do with a 304 — it holds no
+  // prior copy to pair the answer with. Treated as "no text", the same
+  // as a failure.
+  if ('failed' in res || isNotModified(res)) return null;
   try {
     return new TextDecoder('utf-8', { fatal: false }).decode(res.body);
   } catch {

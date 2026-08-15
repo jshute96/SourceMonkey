@@ -34,6 +34,7 @@
 
 import {
   fetchResourceBytes,
+  isNotModified,
   isJsResourceUrl,
   resolveScriptResourceDetailed,
   type FetchFailure,
@@ -41,7 +42,7 @@ import {
 } from './file-loader.js';
 import { localFileCandidates } from './local-file-overrides.js';
 import { splitResourceValue } from './script-links.js';
-import { sha256Hex, bytesToBase64 } from './bytes.js';
+import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
 import {
   isMarkupContentType,
@@ -242,6 +243,24 @@ export type FileFetchCache = Map<string, Promise<FetchedFile | FileFailure>>;
 
 export interface FetchedFile {
   failed?: false;
+  bytes: ArrayBuffer;
+  contentType: string;
+  // Validators to send on the NEXT refresh's conditional request.
+  // Absent for file://, for servers that offer neither, and on the
+  // 304 path — where they are carried over from the prior entry by
+  // `ensureFetch` instead, since a 304 body has no headers worth
+  // keeping beyond what we already stored.
+  etag?: string;
+  lastModified?: string;
+}
+
+// What a caller already holds for a URL, so the fetch can be made
+// conditional. `bytes` is required, not optional: a 304 transfers no
+// body, so a caller that can't produce the prior bytes has nothing to
+// resolve the shared cache entry with and must not ask for one.
+export interface PriorCopy {
+  etag?: string;
+  lastModified?: string;
   bytes: ArrayBuffer;
   contentType: string;
 }
@@ -558,7 +577,9 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
     return { entry: prior };
   }
 
-  const loaded = local ?? { got: await ensureFetch(args.fetchCache, resolved.url) };
+  const loaded = local ?? {
+    got: await ensureFetch(args.fetchCache, resolved.url, priorCopyOf(prior, priorRequireBytes(prior))),
+  };
   const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `@require ${args.ref}: ${got.errorMessage}` };
@@ -626,7 +647,56 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
       // and JSON-round-tripped, and an explicit `undefined` would
       // survive as a key in some of those comparisons.
       ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...validatorFields(got),
     },
+  };
+}
+
+// The prior copy's bytes, for a conditional request. `source` was
+// decoded from those bytes with a strict UTF-8 decoder, so re-encoding
+// reproduces them exactly.
+function priorRequireBytes(prior: StoredRequire | undefined): ArrayBuffer | null {
+  if (!prior) return null;
+  return new TextEncoder().encode(prior.source).buffer as ArrayBuffer;
+}
+
+// The prior copy's bytes, decoded back from storage.
+function priorResourceBytes(prior: StoredResource | undefined): ArrayBuffer | null {
+  if (!prior) return null;
+  return base64ToBytes(prior.bytesBase64).buffer as ArrayBuffer;
+}
+
+// Assemble the conditional-request input, or nothing when this entry
+// can't support one.
+//
+// Withheld for a local stand-in (`localUrl`): the bytes we hold came
+// off disk, and the validators — if any survived — describe the remote
+// copy, so pairing them would ask the server about one file and answer
+// with another.
+function priorCopyOf(
+  prior: { httpEtag?: string; httpLastModified?: string; contentType?: string; localUrl?: string } | undefined,
+  bytes: ArrayBuffer | null,
+): PriorCopy | undefined {
+  if (!prior || !bytes) return undefined;
+  if (prior.localUrl) return undefined;
+  if (!prior.httpEtag && !prior.httpLastModified) return undefined;
+  return {
+    bytes,
+    contentType: prior.contentType ?? '',
+    ...(prior.httpEtag ? { etag: prior.httpEtag } : {}),
+    ...(prior.httpLastModified ? { lastModified: prior.httpLastModified } : {}),
+  };
+}
+
+// Validators onto the stored entry, absent rather than `undefined` for
+// the same reason `localUrl` is spread above.
+function validatorFields(got: FetchedFile): {
+  httpEtag?: string;
+  httpLastModified?: string;
+} {
+  return {
+    ...(got.etag ? { httpEtag: got.etag } : {}),
+    ...(got.lastModified ? { httpLastModified: got.lastModified } : {}),
   };
 }
 
@@ -675,7 +745,9 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // Resources accept anything — including HTML. A script that wants
   // to embed a fragment of HTML as a string via GM_getResourceText
   // shouldn't be blocked.
-  const loaded = local ?? { got: await ensureFetch(args.fetchCache, resolved.url) };
+  const loaded = local ?? {
+    got: await ensureFetch(args.fetchCache, resolved.url, priorCopyOf(prior, priorResourceBytes(prior))),
+  };
   const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `${subject}: ${got.errorMessage}` };
@@ -695,15 +767,26 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
       contentType: got.contentType,
       loadedAt,
       ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...validatorFields(got),
     },
   };
 }
 
 // ---------- Shared byte fetcher ----------
 
+// `prior` is used only by the FIRST caller to ask for a given URL —
+// whoever populates the cache entry. A later caller sharing the URL
+// takes that entry as-is.
+//
+// That is safe even when the two hold different copies, because a 304
+// resolves to the prior's BYTES rather than to a "nothing changed"
+// marker. The cache entry always means "the current bytes for this
+// URL", however they were obtained, so a script with no prior of its
+// own still gets a body it can build from.
 function ensureFetch(
   cache: FileFetchCache,
   url: string,
+  prior?: PriorCopy,
 ): Promise<FetchedFile | FileFailure> {
   // The cache stores raw bytes + Content-Type, no kind-specific
   // filtering applied. Per-kind acceptance (the @require Content-Type
@@ -713,18 +796,49 @@ function ensureFetch(
   // either's rules biasing the other's outcome.
   const cached = cache.get(url);
   if (cached) return cached;
-  const promise = fetchFileBytes(url);
+  const promise = fetchFileBytes(url, prior);
   cache.set(url, promise);
   return promise;
 }
 
-async function fetchFileBytes(url: string): Promise<FetchedFile | FileFailure> {
+async function fetchFileBytes(
+  url: string,
+  prior?: PriorCopy,
+): Promise<FetchedFile | FileFailure> {
   try {
-    const res = await fetchResourceBytes(url, { maxBytes: MAX_FILE_BYTES });
+    const res = await fetchResourceBytes(url, {
+      maxBytes: MAX_FILE_BYTES,
+      // Only conditional when we hold a validator to offer. A bare
+      // prior with neither would send no header and just refetch.
+      ...(prior && (prior.etag ?? prior.lastModified)
+        ? { conditional: { etag: prior.etag, lastModified: prior.lastModified } }
+        : {}),
+    });
     if ('failed' in res) {
       return { failed: true, errorMessage: describeFetchFailure(res) };
     }
-    return { bytes: res.body, contentType: res.contentType };
+    if (isNotModified(res)) {
+      // Unreachable without a prior — `conditional` is only set above
+      // when one exists — but the type doesn't know that, and resolving
+      // to the prior's bytes is what makes the shared cache entry mean
+      // the same thing on both paths.
+      if (!prior) {
+        return {
+          failed: true,
+          errorMessage: 'Internal error: the server reported no change for a file we do not hold',
+        };
+      }
+      // Validators carried forward, not re-read: a 304 need not repeat
+      // them, and the ones we sent are by definition still current.
+      const out: FetchedFile = { bytes: prior.bytes, contentType: prior.contentType };
+      if (prior.etag) out.etag = prior.etag;
+      if (prior.lastModified) out.lastModified = prior.lastModified;
+      return out;
+    }
+    const out: FetchedFile = { bytes: res.body, contentType: res.contentType };
+    if (res.etag) out.etag = res.etag;
+    if (res.lastModified) out.lastModified = res.lastModified;
+    return out;
   } catch (err) {
     return {
       failed: true,

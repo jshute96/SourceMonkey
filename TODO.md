@@ -571,13 +571,6 @@ during cumulative review of the GM_* phases:
   count badge / chip per collections-page row ("3 requires") and a sub-
   list in the viewer details panel showing each require's URL, size,
   and loadedAt.
-- **HTTP conditional GETs on require fetches.** `fetchResourceText`
-  doesn't thread `If-None-Match` / `If-Modified-Since` through the
-  byte fetcher, so every explicit Refresh re-downloads every require
-  body even when the server would have answered 304. Extend
-  fetchResourceBytes (or the require fetcher itself) to send the
-  prior `httpEtag` / `httpLastModified` and to surface a 304 to the
-  caller for the "preserve prior" shortcut.
 - **SRI hash validation.** Tampermonkey honors
   `@require <url>#sha256=…` (and `md5/sha1/sha384/sha512`); we parse
   the URL through resolveScriptResource verbatim and never check the

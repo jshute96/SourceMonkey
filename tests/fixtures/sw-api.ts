@@ -150,6 +150,9 @@ export interface StoredScriptLike {
     // Set when a local file stood in for `url` — see
     // docs/local-file-overrides.md.
     localUrl?: string;
+    // Validators for the next refresh's conditional GET (http(s) only).
+    httpEtag?: string;
+    httpLastModified?: string;
   }[];
   resources?: {
     name: string;
@@ -161,6 +164,8 @@ export interface StoredScriptLike {
     contentHash?: string;
     loadedAt: number;
     localUrl?: string;
+    httpEtag?: string;
+    httpLastModified?: string;
   }[];
   versionProbes?: {
     kinds: string[];

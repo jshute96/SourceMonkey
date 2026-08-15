@@ -602,4 +602,70 @@ test.describe('@require', () => {
       await server.stop();
     }
   });
+  // A manual Refresh rebuilds dependencies from scratch so a user can
+  // pick up a library update without touching the script — which meant
+  // re-downloading every `@require` and `@resource` body on every click,
+  // measured at ~1.3s of a Refresh All on a real profile even when
+  // nothing had changed.
+  //
+  // Now the refetch is conditional. The point of the test is that BOTH
+  // halves hold: the request really is conditional (the server saw the
+  // validator and answered 304, not a fresh 200), and the entry survives
+  // a response that carried no body at all.
+  test('a manual refresh re-checks requires conditionally and keeps the body on 304', async ({ sm }) => {
+    const server = await UserscriptServer.start();
+    try {
+      const LIB = 'function libFn() { return 42; }\n';
+      server.setRoute('/lib.js', LIB, { etag: '"lib-v1"' });
+      scriptsDir.writeRaw('uses-lib.user.js', [
+        '// ==UserScript==',
+        '// @name        Uses Lib',
+        '// @match       https://example.com/*',
+        `// @require     ${server.baseUrl}/lib.js`,
+        '// ==/UserScript==',
+        'void libFn;',
+      ].join('\n') + '\n');
+
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.syncNow();
+      const first = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(first.status).toBe('ok');
+      expect(first.requires![0].source).toBe(LIB);
+      // The validator has to be stored, or the next request can't be
+      // conditional and the whole optimisation silently does nothing.
+      expect(first.requires![0].httpEtag).toBe('"lib-v1"');
+
+      const before = server.requestLog.filter((e) => e.path === '/lib.js').length;
+      await sm.updateCollection(collection!.id, 'manual');
+
+      // The refresh asked again — this is a manual click, which
+      // deliberately re-checks dependencies — but conditionally.
+      const hits = server.requestLog.filter((e) => e.path === '/lib.js');
+      expect(hits.length).toBe(before + 1);
+      const latest = hits[hits.length - 1];
+      expect(latest.ifNoneMatch).toBe('"lib-v1"');
+      expect(latest.status).toBe(304);
+
+      // A 304 sends no body. The entry has to come back whole anyway,
+      // rebuilt from the copy we already held — and `loadedAt` must not
+      // move, since the content did not.
+      const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(after.status).toBe('ok');
+      expect(after.requires![0].source).toBe(LIB);
+      expect(after.requires![0].contentHash).toBe(first.requires![0].contentHash);
+      expect(after.requires![0].loadedAt).toBe(first.requires![0].loadedAt);
+      expect(after.requires![0].httpEtag).toBe('"lib-v1"');
+
+      // And a real change still lands: the validator moves, the server
+      // answers 200, and the new body replaces the old.
+      server.setRoute('/lib.js', 'function libFn() { return 43; }\n', { etag: '"lib-v2"' });
+      await sm.updateCollection(collection!.id, 'manual');
+      const updated = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(updated.requires![0].source).toContain('43');
+      expect(updated.requires![0].httpEtag).toBe('"lib-v2"');
+      expect(updated.requires![0].loadedAt).not.toBe(first.requires![0].loadedAt);
+    } finally {
+      await server.stop();
+    }
+  });
 });
