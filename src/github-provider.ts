@@ -31,6 +31,7 @@
 
 import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './collection-scan.js';
 import { githubAuthHeaders, getGithubAuthToken } from './github-auth.js';
+import { mapWithConcurrency, SCAN_GITHUB_DIRS_CONCURRENCY } from './concurrency.js';
 
 const GITHUB_URL_RE = /^https?:\/\/github\.com\/([^\/?#]+)\/([^\/?#]+)\/(blob|tree)\/([^\/?#]+)(?:\/([^?#]*))?(?:\?[^#]*)?(?:#.*)?$/i;
 
@@ -358,6 +359,7 @@ export async function scanGithubDir(
   const apiUrl = githubContentsApiUrl(p, subPath);
   const entries = await fetchGithubContents(apiUrl);
   const results: FoundScript[] = [];
+  const subdirs: GithubContentsEntry[] = [];
   for (const entry of entries) {
     if (entry.type === 'file' && entry.name.endsWith('.user.js')) {
       const found: FoundScript = {
@@ -367,10 +369,23 @@ export async function scanGithubDir(
       if (typeof entry.size === 'number') found.size = entry.size;
       results.push(found);
     } else if (entry.type === 'dir' && depth < MAX_SCAN_DEPTH) {
-      const sub = await scanGithubDir(input, depth + 1, prefix + entry.name + '/');
-      results.push(...sub);
+      subdirs.push(entry);
     }
   }
+  // Listed together rather than one after another — same reasoning as
+  // the local scan, but the round trips here are API calls rather than
+  // disk reads, so the saving is far bigger per directory. A repo whose
+  // root holds three subdirectories cost four serialized calls before.
+  //
+  // Bounded tighter than the local walk: these all hit api.github.com,
+  // which throttles concurrent bursts on top of the hourly quota. The
+  // request COUNT is unchanged either way, which is what the quota
+  // actually meters.
+  const nested = await mapWithConcurrency(
+    subdirs, SCAN_GITHUB_DIRS_CONCURRENCY,
+    (entry) => scanGithubDir(input, depth + 1, prefix + entry.name + '/'),
+  );
+  for (const sub of nested) results.push(...sub);
   results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   return results;
 }

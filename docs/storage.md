@@ -505,6 +505,14 @@ Steps 2–4 run concurrently across entries, but with a cap
 - **Rejection**: the first failure rejects the call right away, and every
   remaining entry still runs (its result is just discarded). A failure
   never skips the entries behind it, not even when every entry fails.
+- **Scans use it too**, under their own pair
+  (`SCAN_DIRS_CONCURRENCY`, `SCAN_GITHUB_DIRS_CONCURRENCY`). Sibling
+  directories are listed together rather than one after another —
+  serialized, the scan cost a round trip per directory regardless of how
+  shallow the tree was. The GitHub half is bounded tighter: those round
+  trips are `api.github.com` requests, which are throttled in bursts on
+  top of an hourly quota. Parallelising changes the concurrency, never
+  the request count, which is what the quota meters.
 - **Same helper elsewhere**: the update probes (`probeVersions`,
   `runVersionProbes`) use it too, under their own pair — a separate pair
   because the scripts in one probe pass can span every collection, so

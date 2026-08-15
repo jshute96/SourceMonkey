@@ -48,6 +48,32 @@ export const FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY = 16;
 // to make that profile fast.
 export const FETCH_COLLECTIONS_CONCURRENCY = 2;
 
+// ---------- Directory-scan limits ----------
+//
+// A scan lists a directory, then lists each subdirectory it found. Those
+// siblings are independent, but walking them with an `await` in the loop
+// made the whole scan one round trip per directory — measured at 195ms
+// for a local tree of 78 directories, and 1151ms for a GitHub repo whose
+// listing needs four API calls. The depth cap means these nest at most
+// twice, so read each as a product with itself.
+
+// Sibling `file://` directories listed at once.
+//
+// The larger of the pair: a local listing is a cheap read with no
+// per-host connection limit to respect, and deep trees are the common
+// shape (a userscripts folder organised by site).
+export const SCAN_DIRS_CONCURRENCY = 12;
+
+// Sibling GitHub directories listed at once.
+//
+// Deliberately small, and NOT for memory: every listing is a request
+// against api.github.com, which applies a secondary limit to bursts of
+// concurrent requests from one client on top of the hourly quota. Being
+// throttled costs far more than the serialization this saves, and the
+// win here is mostly the first fan-out anyway — a repo needing four
+// calls goes from four round trips to two.
+export const SCAN_GITHUB_DIRS_CONCURRENCY = 4;
+
 // ---------- Update-probe limits ----------
 //
 // Their own pair rather than a reuse of the refresh limits above: the

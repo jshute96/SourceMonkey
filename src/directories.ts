@@ -45,6 +45,7 @@
 
 export type { FoundScript } from './collection-scan.js';
 import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './collection-scan.js';
+import { mapWithConcurrency, SCAN_DIRS_CONCURRENCY } from './concurrency.js';
 export { MAX_SCAN_DEPTH } from './collection-scan.js';
 
 // ---------- Collection-kind detection ----------
@@ -609,6 +610,7 @@ export async function scanForUserScripts(
     throw err;
   }
   const results: FoundScript[] = [];
+  const subdirs: ListingEntry[] = [];
   for (const entry of entries) {
     if (!entry.isDir && entry.name.endsWith('.user.js')) {
       const found: FoundScript = { name: entry.name, relativePath: prefix + entry.name };
@@ -616,14 +618,29 @@ export async function scanForUserScripts(
       if (entry.mtime !== undefined) found.mtime = entry.mtime;
       results.push(found);
     } else if (entry.isDir && depth < MAX_SCAN_DEPTH) {
-      const sub = await scanForUserScripts(
-        joinPath(absolutePath, entry.name),
-        depth + 1,
-        prefix + entry.name + '/',
-      );
-      results.push(...sub);
+      subdirs.push(entry);
     }
   }
+  // Sibling directories are independent, so they are listed together
+  // rather than one after another. This used to be an `await` inside the
+  // loop, which made the scan cost one round trip per directory however
+  // shallow the tree — the dominant phase of a refresh once the other
+  // fan-outs were fixed.
+  //
+  // Rejection still fails the whole scan, as it did: the caller turns
+  // that into the collection's `scanError`, and a listing we couldn't
+  // read means we don't know what's there.
+  const nested = await mapWithConcurrency(
+    subdirs, SCAN_DIRS_CONCURRENCY,
+    (entry) => scanForUserScripts(
+      joinPath(absolutePath, entry.name),
+      depth + 1,
+      prefix + entry.name + '/',
+    ),
+  );
+  for (const sub of nested) results.push(...sub);
+  // Sorted here, so the concurrent walk above can finish in any order
+  // without changing what the caller sees.
   results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   return results;
 }
