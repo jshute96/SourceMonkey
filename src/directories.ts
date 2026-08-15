@@ -223,6 +223,7 @@ import {
 export { githubRawToBlobUrl } from './github-provider.js';
 import { githubAuthHeaders } from './github-auth.js';
 import { decodeForDisplay, leafName } from './script-display.js';
+import { mustHopToWorker, readHttpViaWorker } from './http-read.js';
 import {
   MarkupResponseError,
   isMarkupContentType,
@@ -395,12 +396,38 @@ export async function fetchHttpText(
   const headers: Record<string, string> = {};
   if (opts.etag) headers['If-None-Match'] = opts.etag;
   if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified;
+
+  // Page contexts hand the read to the service worker: a document that
+  // fetches for itself acts on the response's `Link: rel=preload`
+  // headers, and a login page — the case the markup check below exists
+  // for — is exactly the kind of response that sends them. See
+  // src/http-read.ts.
+  if (mustHopToWorker()) {
+    const reply = await readHttpViaWorker({ url, as: 'text', headers });
+    if (reply) {
+      if (reply.kind === 'error') {
+        throw new Error(`Could not read ${url}: ${reply.message ?? reply.reason}`);
+      }
+      return interpretHttpText(url, opts, {
+        status: reply.status,
+        contentType: reply.contentType,
+        etag: reply.etag,
+        lastModified: reply.lastModified,
+        text: reply.text ?? '',
+      });
+    }
+    // No answer at all (worker evicted mid-message, extension
+    // reloading). Falling through reads it here, which beats failing a
+    // read the user asked for.
+  }
+
   // Attach the configured GitHub token when the URL targets a GitHub
   // host. No-op for any other URL. Lets private-repo raw URLs and
   // private repo manifests fetch under auth without each call site
   // having to opt in. Header host-gating is enforced inside
   // githubAuthHeaders so a token can never be leaked to a non-GitHub
-  // host.
+  // host. (Over the hop the worker attaches the same headers from its
+  // own copy of the token, so it never rides on a message.)
   Object.assign(headers, githubAuthHeaders(url));
 
   let response: Response;
@@ -410,8 +437,37 @@ export async function fetchHttpText(
     throw new Error(`Could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (response.status === 304) return { kind: 'unchanged' };
-  if (!response.ok) throw new Error(`Could not read ${url}: HTTP ${response.status}`);
-  const text = await response.text();
+  return interpretHttpText(url, opts, {
+    status: response.status,
+    contentType: response.headers.get('content-type') ?? '',
+    etag: response.headers.get('ETag'),
+    lastModified: response.headers.get('Last-Modified'),
+    text: await response.text(),
+  });
+}
+
+// What the response MEANS, applied identically to a response we read
+// here and to one the worker read for us — so the two paths can't come
+// to disagree about which statuses fail or which bodies are markup.
+//
+// A 304 never reaches here from the local path (it has no body to
+// read); over the hop it arrives as an ordinary status and is answered
+// the same way.
+function interpretHttpText(
+  url: string,
+  opts: HttpFetchOptions,
+  res: {
+    status: number;
+    contentType: string;
+    etag: string | null;
+    lastModified: string | null;
+    text: string;
+  },
+): HttpFetchResult {
+  if (res.status === 304) return { kind: 'unchanged' };
+  if (res.status < 200 || res.status > 299) {
+    throw new Error(`Could not read ${url}: HTTP ${res.status}`);
+  }
   // Every caller of this treats the result as JavaScript (a script
   // body) or JSON (a manifest); neither can be markup. Rejecting here
   // rather than letting it through is what keeps a refresh that lands
@@ -421,21 +477,18 @@ export async function fetchHttpText(
   //
   // The header is quoted verbatim, not lowercased: it is evidence, and
   // evidence should read as what the server actually sent.
-  const contentType = response.headers.get('content-type') ?? '';
-  const markupHeader = isMarkupContentType(contentType);
-  if (markupHeader || looksLikeMarkup(text)) {
+  const markupHeader = isMarkupContentType(res.contentType);
+  if (markupHeader || looksLikeMarkup(res.text)) {
     throw new MarkupResponseError(
       `Could not read ${url}: ${markupResponseMessage({
-        ...(markupHeader ? { contentType } : {}),
+        ...(markupHeader ? { contentType: res.contentType } : {}),
         expected: opts.expects ?? 'JavaScript',
       })}`,
     );
   }
-  const result: HttpFetchResult = { kind: 'ok', text };
-  const etag = response.headers.get('ETag');
-  if (etag) result.etag = etag;
-  const lastModified = response.headers.get('Last-Modified');
-  if (lastModified) result.lastModified = lastModified;
+  const result: HttpFetchResult = { kind: 'ok', text: res.text };
+  if (res.etag) result.etag = res.etag;
+  if (res.lastModified) result.lastModified = res.lastModified;
   return result;
 }
 

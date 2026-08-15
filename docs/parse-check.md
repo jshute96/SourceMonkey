@@ -223,6 +223,38 @@ whose content didn't move reuses the prior verdict.
   later refresh re-derives the verdict rather than inheriting a stale
   pass.
 
+## The gate before registration
+
+The load pipeline only checks rows it is *building*. A row stored
+before this feature existed — or while the check was failing open —
+keeps `status: 'ok'` with no `parseCheckedHash`, and nothing revisits
+it.
+
+`runSync` (`src/injector.ts`) closes that. Before it builds specs it
+calls `verifyParseChecks` with exactly the rows it is about to
+register:
+
+- A row with a matching `parseCheckedHash` is left alone — the normal
+  case, and no round trip.
+- After a SourceMonkey update every row mismatches at once, because
+  `parseCheckKey` carries the extension version (the checked text
+  contains our own `GM_*` bindings). That pass is capped —
+  `PARSE_RECHECK_CONCURRENCY` — and registration waits for it, so the
+  bound is on memory, not on politeness.
+- Anything else is compiled now. A `syntax-error` verdict writes the
+  row as `invalid` (so the collections page says why) and the script is
+  not registered.
+- An undecided answer changes nothing and registers as before, so a
+  browser without the machinery behaves exactly as it used to.
+
+Why it isn't enough to let the seal entry report it at run time: a
+registered entry V8 refuses to compile raises an uncaught `SyntaxError`
+that no code of ours can catch, and Chrome files it under
+`chrome://extensions/?errors` as an extension error. Not registering is
+the only way to keep it out of there. The seal entry remains the
+backstop for whatever still slips through — see
+[logging.md](logging.md#keeping-the-errors-panel-clean).
+
 ## Interaction with refresh policy
 
 The check sets `status: 'invalid'`, and `rebuildCollection`'s existing

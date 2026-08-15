@@ -401,8 +401,9 @@ test.describe('@require', () => {
     // The install-time parse check normally catches this first and the
     // script never registers at all — see parse-check-install.spec.ts.
     // Turn it off here so the run-time backstop is still exercised: it
-    // is what covers a browser without `chrome.offscreen`, a check that
-    // times out, and rows stored before the check existed.
+    // is what covers a browser without `chrome.offscreen` and a check
+    // that times out. (A row that dodged the check at install time is
+    // now caught by the re-check in `runSync` before it registers.)
     await sm.setParseCheckEnabled(false);
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const ok = 1;\n/* unterminated');
     scriptsDir.write({
@@ -665,6 +666,59 @@ test.describe('@require', () => {
       expect(updated.requires![0].httpEtag).toBe('"lib-v2"');
       expect(updated.requires![0].loadedAt).not.toBe(first.requires![0].loadedAt);
     } finally {
+      await server.stop();
+    }
+  });
+  // The same conditional re-check, driven from the collections PAGE.
+  //
+  // Not redundant with the test above, which drives the service worker
+  // through the test surface. The refresh pipeline runs in whichever
+  // context calls it, and a page-initiated http read is handed to the
+  // worker over `chrome.runtime` (see src/http-read.ts) rather than
+  // fetched locally. That hop carries a headers field, and a conditional
+  // re-check that forgot to populate it would still 200 happily —
+  // correct, silently unconditional, and green in every worker-driven
+  // test. Which is where the real Refresh button lives.
+  test('the conditional re-check survives the page → worker fetch hop', async ({
+    sm, extensionContext, extensionId,
+  }) => {
+    const server = await UserscriptServer.start();
+    const page = await extensionContext.newPage();
+    try {
+      server.setRoute('/hop-lib.js', 'function hopFn() {}\n', { etag: '"hop-v1"' });
+      scriptsDir.writeRaw('hop.user.js', [
+        '// ==UserScript==',
+        '// @name        Hop',
+        '// @match       https://example.com/*',
+        `// @require     ${server.baseUrl}/hop-lib.js`,
+        '// ==/UserScript==',
+        'void hopFn;',
+      ].join('\n') + '\n');
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.syncNow();
+
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const card = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
+      await expect(card).toBeVisible();
+
+      const before = server.requestLog.filter((e) => e.path === '/hop-lib.js').length;
+      await card.getByRole('button', { name: 'Refresh' }).click();
+      await expect.poll(
+        () => server.requestLog.filter((e) => e.path === '/hop-lib.js').length,
+      ).toBeGreaterThan(before);
+
+      const hits = server.requestLog.filter((e) => e.path === '/hop-lib.js');
+      const latest = hits[hits.length - 1];
+      expect(latest.ifNoneMatch).toBe('"hop-v1"');
+      expect(latest.status).toBe(304);
+
+      // And the body survived a response that carried none.
+      await expect.poll(async () => {
+        const s = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+        return s.requires?.[0]?.source;
+      }).toBe('function hopFn() {}\n');
+    } finally {
+      await page.close();
       await server.stop();
     }
   });

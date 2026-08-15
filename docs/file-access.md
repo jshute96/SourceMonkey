@@ -48,6 +48,12 @@ For any reading to work the user must:
   search root exists, since that is the page's one `file://` read. See
   [local-file-overrides.md](local-file-overrides.md#validation).
 
+Reads aren't the only thing the toggle stops. Chrome also refuses to
+navigate a tab to a `file://` URL while it is off, so the viewer's
+open-in-a-new-tab paths (`withBypass`) raise the same banner when
+`chrome.tabs.create` rejects — otherwise the only signal is Chrome's
+own wording, which never names the setting.
+
 Why it takes a probe rather than error text: a blocked read and a
 missing file both surface as the XHR `onerror` below, with no status
 or message to tell them apart.

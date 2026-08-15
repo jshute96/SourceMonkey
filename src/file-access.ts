@@ -67,7 +67,13 @@ export function extensionDetailsLink(): HTMLElement {
   a.className = 'chrome-link';
   a.addEventListener('click', (event) => {
     event.preventDefault();
-    void chrome.tabs.create({ url });
+    // Caught, not dropped: an unhandled rejection in an extension page
+    // is filed under chrome://extensions/?errors, which is the panel
+    // this banner is trying to send the user to — arriving there to
+    // find SourceMonkey's own error would be its own kind of confusing.
+    // A `chrome://` target has no realistic failure, so there is
+    // nothing to say beyond leaving the link inert.
+    chrome.tabs.create({ url }).catch(() => { /* nothing to fall back to */ });
   });
   return a;
 }

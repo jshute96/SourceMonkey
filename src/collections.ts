@@ -130,9 +130,10 @@ import { installPageParseChecker } from './parse-check-client.js';
 // re-derived. See src/parse-check-client.ts.
 installPageParseChecker();
 
-// Refresh-from-collections-page paths run fetchHttpText in the page
-// context, so the page needs its own copy of the cached GitHub token
-// — the SW's cached value isn't reachable from here. Listen
+// The page needs its own copy of the cached GitHub token — the SW's
+// cached value isn't reachable from here, and the page still decides
+// whether a URL is GitHub-authed (for the log-line suffix) and still
+// fetches locally when the read can't be handed to the worker. Listen
 // synchronously; bootstrap() awaits the initial load before any
 // refresh can fire so a `?refresh` query-param can't race against
 // hydration and run unauthenticated.

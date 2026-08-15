@@ -501,6 +501,11 @@ Banner (`#banner-slot`) states what this file is; the action row
   - **Preview** — the fetch behind `Could not fetch this script: …`.
   - **Installed** — a load error or a failed **Refresh** on a script
     that lives on disk.
+- A refused *navigation* raises it too. With the toggle off Chrome
+  won't open a tab on a `file://` URL either, so the paths that do
+  (**View raw source** on a local file) report the rejection into the
+  message bar and raise the banner beside it, rather than dropping the
+  promise — which Chrome files under `chrome://extensions/?errors`.
 - Gated on the URL being `file://`, so an http fetch that failed for
   its own reasons isn't blamed on a toggle that wouldn't have helped.
 - Gated on the failure being a **read**, not a verdict on what was

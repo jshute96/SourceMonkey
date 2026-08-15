@@ -541,6 +541,16 @@ the expected match set.
 > `chrome.runtime.onMessage` event. Listening on the wrong event
 > manifests as `"Receiving end does not exist"` on every send.
 
+The regular `chrome.runtime.onMessage` event carries one type, from our
+own extension PAGES rather than from any script:
+
+- `sm:fetch-bytes` — a page asking the SW to make an http(s) read for
+  it, because a document-initiated fetch acts on the response's
+  `Link: rel=preload` headers. The handler checks `sender.url` against
+  our own origin: the extension holds `<all_urls>`, so answering
+  anyone would be an open fetch proxy. See
+  [logging.md](logging.md#keeping-the-errors-panel-clean).
+
 ## Reload fast-path
 
 When the user explicitly reloads a tab (Ctrl-R, toolbar reload,

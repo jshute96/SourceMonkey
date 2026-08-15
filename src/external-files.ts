@@ -664,7 +664,7 @@ function priorRequireBytes(prior: StoredRequire | undefined): ArrayBuffer | null
 // The prior copy's bytes, decoded back from storage.
 function priorResourceBytes(prior: StoredResource | undefined): ArrayBuffer | null {
   if (!prior) return null;
-  return base64ToBytes(prior.bytesBase64).buffer as ArrayBuffer;
+  return base64ToBytes(prior.bytesBase64);
 }
 
 // Assemble the conditional-request input, or nothing when this entry

@@ -47,6 +47,16 @@ export async function loadGithubAuthToken(): Promise<void> {
   }
 }
 
+// The load, memoized. A service worker that woke up to answer a fetch
+// request has a startup read in flight; a caller that needs the token
+// to be *there* awaits this instead of racing it. Subsequent changes
+// arrive through the onChanged listener below, so one load is enough.
+let loadOnce: Promise<void> | null = null;
+export function ensureGithubAuthTokenLoaded(): Promise<void> {
+  if (!loadOnce) loadOnce = loadGithubAuthToken();
+  return loadOnce;
+}
+
 export function installGithubAuthListener(): void {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;

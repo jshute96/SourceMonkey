@@ -144,6 +144,24 @@ The compile-only check is in (see
     `invalid` at the same `parseCheckKey`, carry the prior status and
     message forward. Nothing was re-derived, so nothing justifies the
     recovery.
+- **A sync-time `invalid` writes no Log entry.** The install/refresh
+  paths seed the script's Log tab; `verifyParseChecks` only flips the
+  row and writes a line to the SW console. So the collections page
+  says "Syntax error: …" while the script's own Log tab can stay empty
+  for the session. Whether the boot-time replay picks it up is a race
+  with `syncRegistrations`.
+- **A tripped sandbox breaker still costs a composed source per row
+  per sync.** `compileParseChecker` builds the checked text *before*
+  `checkParses` reports that the circuit breaker is open, so a browser
+  whose offscreen document never works pays that build for every
+  candidate on every sync. Asking the breaker first would make the
+  degraded case free.
+- **Re-verify `missing` rows too.** The `runSync` gate only re-checks
+  candidates whose status is `ok`; a `missing` row re-enabled from its
+  cached body registers on whatever verdict it last had. Those bodies
+  were checked when they were `ok`, so the hole is narrow — but a row
+  stored before the check existed and then flipped to `missing` skips
+  it entirely.
 - **Don't fetch dependencies twice on install-from-preview.** The
   preview fills `previewFetchCache` to run its check; clicking Install
   then runs `addCollection` → `attachFiles` against the store's own cache,
@@ -690,6 +708,16 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   too in practice — a 0-byte require is almost always a missing
   file). Worth revisiting if a real use case turns up; today the
   reject is uniform.
+- Page http(s) reads hop to the service worker so a response's
+  `Link: rel=preload` header can't be applied to an extension page
+  (`src/http-read.ts`, and
+  [docs/logging.md](docs/logging.md#keeping-the-errors-panel-clean)).
+  Two loose ends: the hop falls back to fetching in the page when the
+  worker can't be reached, which reopens the leak for that request;
+  and the `acceptContentType` predicate now runs after the body has
+  been downloaded, since a function can't cross the message boundary.
+  Passing a serializable content-type rule instead would restore the
+  early reject.
 - Surface failed / blocked file loads. Today every failure mode in
   `resolveScriptResource` + `fetchResourceBytes` for `@icon` is
   silent (the corresponding `@require` path correctly flips the

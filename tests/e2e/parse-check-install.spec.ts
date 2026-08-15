@@ -355,6 +355,48 @@ test.describe('parse check at install time', () => {
     expect(scripts[0].parseCheckedHash).toBeUndefined();
   });
 
+  test('a row that dodged the install check is caught before it registers', async ({ sm }) => {
+    // The gap this closes: a row stored before the check existed — or
+    // while it was failing open — carries `status: 'ok'` and no
+    // verdict, and nothing in the load pipeline revisits it. Registering
+    // one raises an uncaught SyntaxError that no page can catch and that
+    // Chrome files under chrome://extensions/?errors as if SourceMonkey
+    // were the broken thing.
+    //
+    // Turning the check off for the install is how a test gets such a
+    // row: the same shape, by the same route the real ones took.
+    await sm.setParseCheckEnabled(false);
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'LegacyBroken', match: ['https://example.com/*'] },
+      body: 'const x = (;',
+    });
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    const stored = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
+    expect(stored.status).toBe('ok');
+    expect(stored.parseCheckedHash).toBeUndefined();
+
+    await sm.setParseCheckEnabled(true);
+    const { registered } = await sm.syncNow();
+    expect(registered.map((r) => r.id)).not.toContain(stored.id);
+
+    // And the row now says why, so the collections page shows it
+    // instead of the script silently not running.
+    const after = (await sm.getCollectionWithScripts(collections[0].id))!.scripts[0];
+    expect(after.status).toBe('invalid');
+    expect(after.errorMessage).toMatch(/syntax error/i);
+
+    // The verdict is persisted, so the sync after this one asks
+    // nothing. Without this the "one compile, then never again" claim
+    // the gate rests on would be untested — and a gate that recompiled
+    // the library on every storage change would still pass everything
+    // above.
+    const before = await sm.getParseCheckRuns();
+    await sm.syncNow();
+    expect(await sm.getParseCheckRuns()).toBe(before);
+  });
+
   test('an http refresh that returns a broken body keeps the prior good copy running', async ({ sm }) => {
     // Existing soft-failure policy, which the parse check now feeds:
     // an http 200 that doesn't parse is usually a login or error page
