@@ -352,10 +352,17 @@ async function runAllCollectionsCheck(
   probe: ProbePolicy,
 ): Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>> {
   console.log(`[SourceMonkey] refreshing all collections (${mode})`);
+  // Same split as runCollectionCheck: each collection times its own
+  // refresh, so what this adds is the work Refresh All does AROUND
+  // them — the prior snapshot, and the probe + retry pass that runs
+  // once over every script in every collection rather than per
+  // collection.
+  const timer = startPhaseTimer(`all-collections check (${mode})`);
   // Snapshot priors BEFORE the refresh; reading after would just give
   // back the post-refresh state and the summary would always say 0
   // updated / 0 added.
   const priorByCollectionId = await snapshotAllCollectionScripts();
+  timer.mark('snapshot');
   let result: Map<string, { collection: StoredCollection; scripts: StoredScript[] }>;
   try {
     result = await refreshAllCollections({ recheckFiles: fileRecheckMode(mode) });
@@ -384,6 +391,7 @@ async function runAllCollectionsCheck(
   // Keyed off the recorded map so each collection gets ITS reason, and so
   // a collection absent for the other reason — removed mid-refresh, which
   // clears its entry — stays quiet.
+  timer.mark('refresh');
   const refreshErrors = await readRefreshErrors();
   for (const [id, snapshot] of priorByCollectionId) {
     if (result.has(id)) continue;
@@ -402,13 +410,22 @@ async function runAllCollectionsCheck(
     );
   }
   const allScripts = [...result.values()].flatMap((r) => r.scripts);
+  timer.mark('summarize');
   await runVersionProbes(allScripts, probe);
+  timer.mark('probes');
+  // Counted, not just timed: each probe result is its own storage write,
+  // and a write is what schedules a registration re-sync. The number of
+  // probed scripts is therefore the number of re-syncs this pass can
+  // provoke, which is not something the elapsed time shows.
+  timer.note(`${probedCount(allScripts)} of ${allScripts.length} scripts have a probe target`);
   // Refresh All is the other "try again" button, so it retries every
   // refused registration it just re-read. See
   // `retryRejectedRegistrations`.
   await retryRejectedRegistrations(
     allScripts.map((s) => s.id), { userInitiated: probe === 'force' },
   );
+  timer.mark('retry-rejected');
+  timer.done();
   return result;
 }
 
