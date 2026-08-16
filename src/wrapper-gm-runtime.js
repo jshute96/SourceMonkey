@@ -874,6 +874,11 @@
         data: details.data,
         timeout: typeof details.timeout === "number" ? details.timeout : undefined,
         responseType: typeof details.responseType === "string" ? details.responseType : undefined,
+        /* Truthy, not `=== true`: TM/VM both treat `anonymous` as a
+           truthy flag, and a privacy opt-out has to fail toward
+           omitting credentials — reading `anonymous: 1` as "send my
+           cookies anyway" is the wrong direction to get it wrong. */
+        anonymous: details.anonymous ? true : undefined,
       };
       api.sendAsync({
         type: "sm:gm-xhr-start",

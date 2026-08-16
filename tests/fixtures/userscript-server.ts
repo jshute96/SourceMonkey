@@ -35,6 +35,10 @@ export interface RequestLogEntry {
   status: number;
   ifNoneMatch?: string;
   ifModifiedSince?: string;
+  // Raw `Cookie` request header, when the client sent one. Lets the
+  // GM_xmlhttpRequest credentials tests assert whether the browser
+  // attached the user's cookies to an extension-initiated fetch.
+  cookie?: string;
 }
 
 export class UserscriptServer {
@@ -138,6 +142,8 @@ export class UserscriptServer {
     if (typeof ifNoneMatch === 'string') entry.ifNoneMatch = ifNoneMatch;
     const ifModifiedSince = req.headers['if-modified-since'];
     if (typeof ifModifiedSince === 'string') entry.ifModifiedSince = ifModifiedSince;
+    const cookie = req.headers['cookie'];
+    if (typeof cookie === 'string') entry.cookie = cookie;
     try {
       const route = this.routes.get(url.pathname);
       if (!route) {

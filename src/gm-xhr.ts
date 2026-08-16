@@ -2,6 +2,8 @@
 // page's request, sends events back to the originating tab via
 // `chrome.tabs.sendMessage`. Supports text and binary response types
 // (text/json/blob/arraybuffer/document) and `@connect` URL gating.
+// Requests are credentialed (the user's cookies go out) unless the
+// caller passes `anonymous: true` — see `runXhr`.
 // Header surgery (setting forbidden request headers like Origin /
 // Cookie / Referer) is not yet wired — see TODO.md "XHR header
 // surgery".
@@ -34,6 +36,9 @@
 //     gives no per-hop hook and `redirect:'manual'` yields an opaque
 //     response with no readable Location), so the outbound hop still
 //     happens — but no disallowed-host data flows back to the script.
+//     That hop carries the user's cookies, so a script can provoke a
+//     credentialed request to an off-allowlist host it can't read the
+//     answer from. Blind, but a real side effect.
 //
 // AbortController per request. Stored in a Map keyed by id so an
 // aborted request can be cancelled mid-fetch.
@@ -56,6 +61,10 @@ export interface GmXhrRequestPayload {
   timeout?: number;
   // 'text' | 'json'. Anything else is treated as 'text' for now.
   responseType?: string;
+  // Opt out of sending the user's cookies / HTTP auth for the target
+  // origin. Requests are credentialed by default (TM/VM behavior) —
+  // see the `credentials` note in `runXhr`.
+  anonymous?: boolean;
   // GET/HEAD requests can't have a body — we don't enforce here;
   // fetch() will reject and the page sees an error event.
 }
@@ -196,6 +205,22 @@ export async function runXhr(
     const init: RequestInit = {
       method: (request.method ?? 'GET').toUpperCase(),
       headers: request.headers ?? undefined,
+      // Credentialed by default, matching Tampermonkey/Violentmonkey —
+      // the point of GM_xmlhttpRequest is usually to read another site
+      // *as the signed-in user*, and `anonymous: true` opts out.
+      //
+      // 'include' is stated rather than left to the default because the
+      // default's behavior here isn't ours to rely on: Chrome already
+      // attaches cookies to an extension fetch aimed at a host the
+      // extension has permission for (we hold `<all_urls>`), so
+      // 'same-origin' happens to send them today. That is a property of
+      // the host-permission grant, not of the request we wrote. Saying
+      // 'include' pins the intent and gives `anonymous` a symmetric
+      // counterpart.
+      //
+      // The `@connect` allowlist is what gates which hosts a script may
+      // act as the user on.
+      credentials: request.anonymous ? 'omit' : 'include',
       signal: controller.signal,
     };
     // GET / HEAD with no body — fetch() rejects "body not allowed".

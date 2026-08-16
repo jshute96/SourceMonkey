@@ -249,6 +249,28 @@ Architecture:
   `controller.abort()`. A shadow flag distinguishes timeout from
   user-initiated abort so the right callback fires.
 
+Credentials:
+
+- `runXhr` (`src/gm-xhr.ts`) passes `credentials: 'include'` in the
+  options object it hands `fetch`, so requests carry the user's
+  cookies for the target host. TM/VM do the same.
+- `anonymous: true` in the details object opts one request out
+  (`'omit'`).
+- `'include'` is explicitness rather than a behavior fix. Chrome
+  already sends cookies on an extension fetch to a host the extension
+  has permission for, and we hold `<all_urls>` — measured: the
+  default-case e2e test passes with the option removed. What the
+  option buys is that the behavior stops depending on that grant, and
+  `anonymous` gets a symmetric counterpart.
+- Off-permission hosts (Chrome's restricted set) become ordinary CORS
+  requests, where `'include'` rejects an
+  `Access-Control-Allow-Origin: *` response the default mode would
+  have taken. `anonymous: true` restores the wildcard-compatible mode.
+- `@connect` is the gate: allowlisting a host lets the script act as
+  the user there. The off-allowlist redirect hop described under
+  "Known limitations" is credentialed too — unreadable by the script,
+  but a real side effect on a host the header never named.
+
 HTTP error statuses (404, 500, …) fire **`onload`** with the error
 status — matches XHR semantics; non-network errors are still
 "loads". Only network-level failures (DNS, ECONNREFUSED, etc.) and
@@ -325,9 +347,9 @@ if real reports come in.
 Known limitations (post-Phase 10):
 
 - **No header surgery yet.** `Origin` is the SW's origin
-  (`chrome-extension://<id>`), Cookies are SW-managed, forbidden
-  headers (Host, Origin, Cookie when overriding the SW's default,
-  etc.) silently get stripped by `fetch()`. A future phase will
+  (`chrome-extension://<id>`), and forbidden headers (Host, Origin,
+  an explicit `Cookie` overriding the browser's own jar, etc.)
+  silently get stripped by `fetch()`. A future phase will
   add `webRequest.onBeforeSendHeaders` (or DNR session rules) to
   let scripts override these — VM's `requests-core.js` is the
   reference shape. Tagging via a custom request header that the
@@ -339,6 +361,9 @@ Known limitations (post-Phase 10):
   and `redirect:'manual'` yields an opaque response with no readable
   `Location`). So a redirect can still cause an outbound request to a
   disallowed host; no disallowed-host data flows *back* to the script.
+  That hop carries the user's cookies, so what a script can provoke is
+  a blind credentialed request — the response stays out of reach, the
+  side effect on the target doesn't.
 - **Response size cap of 50 MB.** The body is streamed and the request
   is aborted once it exceeds `MAX_RESPONSE_BYTES`, so a script can't
   OOM the service worker with a huge fetch. The script sees an `error`

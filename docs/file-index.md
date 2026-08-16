@@ -125,7 +125,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
 | `src/wrapper-gm-runtime.js` | USER_SCRIPT-world shared runtime — installs `window.__SM_GM__` (shim cache, async sendMessage helper, storage cache + batched writes) |
 | `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
-| `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, timeout |
+| `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, cookies, timeout |
 | `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL, phrase the denial |
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
@@ -239,6 +239,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/e2e/gm-xhr.spec.ts` | E2E tests for `GM_xmlhttpRequest` text path — GET text, JSON, POST body, HTTP errors firing onload, network failure → onerror, abort, permission gating |
+| `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
 | `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching exact allowed, `*` wildcard, subdomain match, mismatched host blocked |
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
@@ -269,7 +270,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/gm-value-listeners/` | `GM_addValueChangeListener` / `GM_removeValueChangeListener` examples |
 | `tests/examples/gm-dom/` | `GM_addStyle` and `GM_addElement` DOM-injection examples |
 | `tests/examples/gm-clipboard/` | `GM_setClipboard` round-trip example |
-| `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, abort) |
+| `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, anonymous, abort) |
 | `tests/examples/gm-open-in-tab/` | `GM_openInTab` call-shape examples (active, background, positional, onclose) |
 | `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
 | `tests/examples/gm-download/` | `GM_download` call-shape examples (relative + absolute http(s), `data:`, `blob:`, abort, 404, refused cases) |

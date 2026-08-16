@@ -217,6 +217,7 @@ strict `Content-Security-Policy: script-src 'self'`.
 | `data` | Body. String only today; non-string falls through `String(...)`. |
 | `timeout` | Milliseconds. Aborts the request and fires `ontimeout`. |
 | `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document`. |
+| `anonymous` | `true` sends the request without the user's cookies (and any cached HTTP-auth credentials). Default `false` — see [Credentials](#credentials). |
 | `onload`, `onerror`, `ontimeout`, `onabort` | Callbacks. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
 
 ### XHR response shape
@@ -264,15 +265,44 @@ the script's header isn't what refused the call:
 - A failure to evaluate the rules at all, which carries `internal
   error:`.
 
+### Credentials
+
+- Requests carry the user's cookies for the target host by default, as
+  in Tampermonkey and Violentmonkey. Reading another site *as the
+  signed-in user* is most of the reason to reach for
+  `GM_xmlhttpRequest`.
+- `SameSite=Lax` / `Strict` cookies are sent too.
+- `anonymous: true` opts a single request out — no cookies, and no
+  cached HTTP-auth credentials.
+- Chrome's restricted hosts (the Web Store, policy-blocked hosts) are
+  the one place the credentialed default can *lose*: a response that
+  allows any origin refuses a credentialed reader. `anonymous: true`
+  is the way through.
+
+Why the request is written the way it is — and the rest of the
+cookie-handling detail — is in
+[`GM-APIs.md`](GM-APIs.md#gm_xmlhttprequest).
+
+### What `@connect` grants
+
+- `@connect <host>` lets the script *act as the user* on that host,
+  not merely fetch a URL from it. `@connect *` says that about every
+  host. The script details' "Network access" tooltip spells this out.
+- A redirect off the allowlist still makes its outbound hop, and that
+  hop is credentialed too. The script can't read the response (the
+  post-redirect re-check drops it), but it can provoke a
+  cookie-bearing request to a host `@connect` never named.
+
 ### XHR caveats
 
 - HTTP error statuses (404, 500, …) fire `onload` with the
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
 - No `onprogress` events — only the final terminal event lands.
-- No header surgery: `Origin` is the extension's origin, Cookies
-  are SW-managed, forbidden headers can't be overridden. (Future
-  phase.)
+- No header surgery: `Origin` is the extension's origin, and
+  forbidden headers (including an explicit `Cookie`) can't be
+  overridden — the browser attaches its own stored cookies instead.
+  (Future phase.)
 - A narrow abort-after-response race can fire `onabort` instead of
   `onload` if the page calls `abort()` while the load event is in
   the in-flight message queue.

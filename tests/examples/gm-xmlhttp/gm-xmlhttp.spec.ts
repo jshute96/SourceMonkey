@@ -10,7 +10,7 @@ import { test, expect } from '../../fixtures/manager';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-xmlhttp', () => {
-  test('GET against the fixture server populates the output panel', async ({
+  test('GET against the fixture server appends to the log', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     await setup.installScriptsFrom(__dirname);
@@ -23,8 +23,8 @@ test.describe('examples / gm-xmlhttp', () => {
     await page.locator('#url').fill(`${fixtureServer.baseUrl}/target.html`);
     await page.locator('#btn-send').click();
 
-    await expect(page.locator('#output')).toContainText('status: 200');
-    await expect(page.locator('#output')).toContainText('original content');
+    await expect(page.locator('#log')).toContainText('status: 200');
+    await expect(page.locator('#log')).toContainText('original content');
 
     await page.close();
   });
@@ -41,8 +41,8 @@ test.describe('examples / gm-xmlhttp', () => {
     await page.locator('#url').fill(`${fixtureServer.baseUrl}/no-such-file.html`);
     await page.locator('#btn-send').click();
 
-    await expect(page.locator('#output')).toContainText('onload');
-    await expect(page.locator('#output')).toContainText('status: 404');
+    await expect(page.locator('#log')).toContainText('onload');
+    await expect(page.locator('#log')).toContainText('status: 404');
 
     await page.close();
   });

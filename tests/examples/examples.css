@@ -74,6 +74,18 @@ form input {
   font: inherit;
 }
 
+/* Checkbox rows read left-to-right — the column default above would
+   stack the box over its text and stretch it to the form's width. */
+form label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5em;
+}
+
+form label.checkbox input {
+  flex: none;
+}
+
 ul#log {
   list-style: none;
   padding: 0.5em;
@@ -90,6 +102,12 @@ ul#log li {
   font-size: 0.85em;
   padding: 0.1em 0;
   white-space: pre-wrap;
+}
+
+/* For logs whose entries are multi-line blocks — without the gap,
+   one entry's last line and the next one's first line read as one. */
+ul#log.blocks li + li {
+  margin-top: 1em;
 }
 
 footer {
