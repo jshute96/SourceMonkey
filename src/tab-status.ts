@@ -71,9 +71,9 @@ export const BADGE_ORANGE = '#f57c00';
 export const BADGE_GREEN = '#2e7d32';
 // Red = at least one script reported an error.
 export const BADGE_RED = '#d32f2f';
-// Purple = at least one running script's source on disk has changed and
-// a reload would pick up the new version. Loses to RED (errors still
-// matter most) but wins over ORANGE. Picked bright (≈ Material
+// Purple = at least one running script's collection on disk has changed
+// and a reload would pick up the new version. Loses to RED (errors
+// still matter most) but wins over ORANGE. Picked bright (≈ Material
 // purple-A400) so the badge reads as a vivid "something changed"
 // signal, not a muted/inactive color.
 export const BADGE_PURPLE = '#d500f9';
@@ -107,7 +107,7 @@ const RELOAD_LABEL = 'Reload to update';
 // may still be on its way, or the user may have loaded the page before
 // installing the script — so it earns amber. A rejected registration is
 // settled: Chrome refused it, so nothing is coming, and red says so.
-// It reads the same word as the sources page and the viewer.
+// It reads the same word as the collections page and the viewer.
 //
 // `rejected` is passed in rather than stored on TabMatchState because
 // it's global (one refusal applies to every tab) while the state is

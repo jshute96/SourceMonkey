@@ -50,14 +50,14 @@ test.describe('file-access banner', () => {
   test.beforeEach(() => { dir = ScriptsDir.create(); });
   test.afterEach(() => { dir.cleanup(); });
 
-  test('the sources page says so up front', async ({
+  test('the collections page says so up front', async ({
     extensionContext, extensionId, sm,
   }) => {
     // Not tied to any failure: with the toggle off every fetch this
     // page could make is already doomed, so it leads with the reason.
     const page = await extensionContext.newPage();
     await denyFileAccess(page);
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
 
     // Scoped to this banner, not the slot: the slot can also hold the
     // "Allow User Scripts" banner, which carries its own chrome-link.
@@ -101,8 +101,8 @@ test.describe('file-access banner', () => {
       meta: { name: 'Hello', match: ['*://*/*'] },
       body: 'console.log("hi");\n',
     });
-    const source = await sm.addSource(filePath);
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const collection = await sm.addCollection(filePath);
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -148,8 +148,8 @@ test.describe('file-access banner', () => {
     // message would offer an unrelated setting as the explanation.
     const filePath = `${dir.path}/broken.user.js`;
     fs.writeFileSync(filePath, 'console.log("no metadata block here");\n');
-    const source = await sm.addSource(filePath);
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const collection = await sm.addCollection(filePath);
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

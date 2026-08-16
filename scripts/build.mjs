@@ -7,7 +7,7 @@
 //   3. Copies src/manifest.json -> dist/manifest.json verbatim. Chrome loads
 //      the unpacked extension from dist/, so the manifest must live there.
 //   4. Copies src/*.html -> dist/*.html (extension pages such as
-//      sources.html).
+//      collections.html).
 //   5. Runs the TypeScript compiler (tsc) to compile src/*.ts -> dist/*.js.
 //      With --watch, tsc keeps running and rebuilds on change.
 //
@@ -58,7 +58,7 @@ await cp(
 //    unpacked from dist/.
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
 
-// 4. Copy every top-level HTML / CSS asset (sources.html, etc., plus
+// 4. Copy every top-level HTML / CSS asset (collections.html, etc., plus
 //    any shared *.css the pages <link> in). Iterate so new pages and
 //    stylesheets get picked up automatically without editing this script.
 for (const entry of await readdir(src, { withFileTypes: true })) {
@@ -95,7 +95,7 @@ for (const entry of await readdir(src, { withFileTypes: true })) {
 await generateWrappers();
 
 async function generateWrappers() {
-  const sources = [
+  const wrapperFiles = [
     'userscript-prelude.js',
     'wrapper-bridge.js',
     'wrapper-gm-runtime.js',
@@ -106,7 +106,7 @@ async function generateWrappers() {
     'wrapper-bridge.js': 'WRAPPER_BRIDGE',
     'wrapper-gm-runtime.js': 'WRAPPER_GM_RUNTIME',
   };
-  for (const name of sources) {
+  for (const name of wrapperFiles) {
     const text = await readFile(resolve(src, name), 'utf8');
     const minified = minifyForInjection(text);
     out.push(`export const ${exportName[name]} = ${JSON.stringify(minified)};`);

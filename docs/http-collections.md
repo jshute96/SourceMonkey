@@ -1,8 +1,8 @@
-# HTTP and manifest sources
+# HTTP and manifest collections
 
 SourceMonkey accepts userscripts from `http(s)://` URLs in addition to
 local `file://` paths, and supports a JSON **manifest** format that
-works for both local and remote sources. Implemented in
+works for both local and remote collections. Implemented in
 `src/directories.ts` (URL detection, fetchers, scanners) and consumed
 by the [script store](storage.md). Companion to
 [file-access.md](file-access.md) for the local-filesystem story.
@@ -10,10 +10,10 @@ by the [script store](storage.md). Companion to
 ## What you can point at
 
 - An **http(s) URL ending in `.user.js`** → folded into the matching
-  container source (`Scripts from web` or `Scripts from GitHub` —
-  see [storage.md](storage.md#container-sources)). The script is
+  container collection (`Scripts from web` or `Scripts from GitHub` —
+  see [storage.md](storage.md#container-collections)). The script is
   added to the container's `scriptIds` list rather than minting its
-  own source row.
+  own collection row.
 - **Anything whose pathname's basename is `script_manifest.json`** →
   treated as a **manifest** that lists script URLs. The manifest itself
   can live at:
@@ -42,34 +42,34 @@ recognises three shapes:
   whose path ends in `.user.js`, or whose basename is
   `script_manifest.json`.
   - Rewritten to its `raw.githubusercontent.com` counterpart at
-    add-source time. A `.user.js` URL is folded into the
+    add-collection time. A `.user.js` URL is folded into the
     `Scripts from GitHub` container; a `script_manifest.json` URL is
-    stored as a regular HTTP manifest source.
+    stored as a regular HTTP manifest collection.
   - Why: the `github.com/.../blob/...` URL serves an HTML rendering, not
     the raw bytes.
-  - The reverse `githubRawToBlobUrl` (in `github-source.ts`) converts
+  - The reverse `githubRawToBlobUrl` (in `github-provider.ts`) converts
     back for any UI link target — the bubble and Location row link to
     the github page, not the raw URL.
 - **A directory**: `https://github.com/<o>/<r>/tree/<ref>/<path>`
   (a `/blob/<ref>/<dir>` typo is also accepted).
   - Stored as-is. Scanned via the GitHub Contents API (one call per
     walked directory) to discover `.user.js` entries recursively, with
-    the same `MAX_SCAN_DEPTH` cap as local directory sources.
+    the same `MAX_SCAN_DEPTH` cap as local directory collections.
   - Each entry fetches from its raw URL; the viewer's Location row
     links to the github.com `/blob/<ref>/<path>` view.
 - **A repo root**: `https://github.com/<o>/<r>` (with optional
   trailing `/` or `.git`).
   - Treated as the equivalent of `https://github.com/<o>/<r>/tree/<default-branch>`.
   - The default branch is resolved once at add time via the repo
-    metadata endpoint and baked into the stored source path so refresh
+    metadata endpoint and baked into the stored collection path so refresh
     is deterministic afterwards. The resolved URL is what appears in
-    the sources-page heading.
+    the collections-page heading.
 
 Limits:
 
 - A `.user.js` file deleted from the repo (or absent on the resolved
   branch) is tagged `missing` and auto-disabled — same handling as a
-  local-directory source, since the file might come back if the user
+  local-directory collection, since the file might come back if the user
   reverts. Use the per-row trash to clear it for good.
 - Unauthenticated GitHub API budget is **60 requests / hour / IP**.
   Each repo-root add costs one call (metadata); each refresh costs one
@@ -84,7 +84,7 @@ Limits:
 - Branch names containing slashes (e.g. `feature/foo`) aren't
   supported — the parser takes the first ref segment as `<ref>` and
   treats everything after as the path.
-- A repo's default branch can change after the source is added; the
+- A repo's default branch can change after the collection is added; the
   stored URL keeps the originally-resolved branch (re-add to track a
   new default).
 
@@ -114,12 +114,16 @@ Notable omission: `github.com/<o>/<r>/raw/<ref>/<path>`.
 
 What benefits automatically (no per-call opt-in needed):
 
-- Single-file HTTP sources at a GitHub URL.
-- Manifest sources, including per-entry resolved URLs.
+- Single-file HTTP collections at a GitHub URL.
+- Manifest collections, including per-entry resolved URLs.
 - `@require` / `@resource` / `@icon` fetches targeting GitHub.
 
 All flow through `fetchHttpText` / `fetchResourceBytes`, both of
-which spread `githubAuthHeaders(url)` into the request headers.
+which spread `githubAuthHeaders(url)` into the request headers. From a
+page the read itself is made by the service worker
+([logging.md](logging.md#keeping-the-errors-panel-clean)), which
+attaches the same headers from its own copy of the token — so the token
+never rides on a message.
 
 Token scope: **Contents: Read-only** is enough for a fine-grained
 PAT. See the Options page for the step-by-step.
@@ -137,7 +141,18 @@ The manifest body is JSON. Two shapes are accepted:
   { "scripts": ["foo.user.js", "sub/bar.user.js"] }
   ```
 
-Each entry is a URL (string). Resolution rules:
+A list element is either a URL string, or an object whose `path`
+field holds that string:
+
+```json
+{ "scripts": [{ "path": "foo.user.js", "note": "my fork" }] }
+```
+
+- Fields other than `path` are ignored, so a manifest can carry extra
+  per-script bookkeeping without SourceMonkey needing to know about it.
+- An object entry without a string `path` fails the source.
+
+Resolution rules for the entry URL:
 
 - **Absolute** URLs are used verbatim (any scheme `fetch()` accepts).
 - **Relative** URLs resolve against the manifest URL via standard
@@ -149,8 +164,9 @@ Each entry is a URL (string). Resolution rules:
   `file:///home/me/scripts/foo.user.js`.
 
 Entries are trimmed; empty strings are dropped. Duplicates collapse
-to the first occurrence. A non-string entry, or a body that isn't one
-of the two supported shapes, fails the whole source with a `scanError`.
+to the first occurrence. An entry that is neither a string nor an
+object with a `path` string, or a body that isn't one of the two
+supported shapes, fails the whole source with a `scanError`.
 
 ### Local vs HTTP — same manifest, different scheme
 
@@ -161,15 +177,15 @@ HTTP. A typical workflow:
 1. Write `script_manifest.json` next to your `*.user.js` files (or
    generate it with `scripts/make_manifest.sh`).
 2. Add the local path (e.g. `/home/me/scripts/script_manifest.json`)
-   as a source in SourceMonkey to verify the entries load and inject.
-3. Serve the directory over HTTP; replace the source with the
+   as a collection in SourceMonkey to verify the entries load and inject.
+3. Serve the directory over HTTP; replace the collection with the
    `https://…/script_manifest.json` URL. The script contents and
-   stable IDs come from `relativePath` (the raw entry text), so
+   stable IDs come from `relativePath` (the entry's path text), so
    identity carries across the swap.
 
 ## Conditional GETs (the `unchanged` path)
 
-The fetch-or-skip optimisation is per *entry URL*, not per source.
+The fetch-or-skip optimisation is per *entry URL*, not per collection.
 That means a manifest can mix schemes and each entry picks the right
 strategy:
 
@@ -178,13 +194,13 @@ strategy:
   the script row (`httpEtag` / `httpLastModified`, see
   [storage.md](storage.md)). On the next refresh those values are
   replayed as `If-None-Match` and `If-Modified-Since`. A `304` response
-  surfaces as `FetchResult.unchanged` and `rebuildSource` keeps the
+  surfaces as `FetchResult.unchanged` and `rebuildCollection` keeps the
   prior content + validators verbatim — no re-parse, no `loadedAt`
   bump. A `200` response replaces both the body and the validators.
 - **file://** entries reached through a manifest are always re-fetched
   (file:// fetches are cheap; there's no listing-step skip the way
-  local-directory sources have).
-- **Local-directory** sources keep their existing pre-fetch listing
+  local-directory collections have).
+- **Local-directory** collections keep their existing pre-fetch listing
   skip: if Chrome's `addRow(...)` listing reports the same `size +
   mtime` as the stored entry, no fetch happens at all.
 
@@ -192,7 +208,7 @@ When none of the cheap pre-fetch skips fire (manifest entries; HTTP
 servers that don't return validators), `buildScriptFromText` falls
 back to a content-hash compare against the prior row's `contentHash`
 and preserves `loadedAt` if the bytes are identical. So the
-"unchanged → no flash" outcome is uniform across every source/scheme
+"unchanged → no flash" outcome is uniform across every collection/scheme
 combination; see [storage.md](storage.md#change-detection-the-last-change-token).
 
 We pass `cache: 'no-store'` on the underlying HTTP `fetch()` so the
@@ -202,7 +218,7 @@ our own stored validators are the source of truth.
 **Manifest body**: only the per-script fetches use conditional GETs
 today. The manifest URL itself is re-downloaded every refresh — the
 parsed list is small, and stashing a manifest-level ETag on the
-source row is tracked in `TODO.md`.
+collection row is tracked in `TODO.md`.
 
 ## Vanished entries (manifest only)
 
@@ -214,25 +230,35 @@ source row is tracked in `TODO.md`.
 - **Re-adding an entry mints a fresh row.** Identity isn't preserved
   across a delete + re-add — the new row gets a new UUID and starts
   `enabled: true`. This is an intentional asymmetry with directory
-  sources, where a `missing` file that returns keeps its prior
+  collections, where a `missing` file that returns keeps its prior
   `enabled: false` (the user has to opt back in).
-- **Identity is by raw entry text**: `relativePath` for manifest
-  sources is the literal string from the JSON, so reformatting
-  `foo.user.js` to `./foo.user.js` is treated as deleting the old
-  entry and adding a new one — the old row's `enabled` state is lost.
-- **Single-file sources can't vanish**: the URL either fetches or
+- **Identity is by entry text**: `relativePath` for manifest
+  collections is the entry string from the JSON (the `path` value, for
+  object entries), so reformatting `foo.user.js` to `./foo.user.js` is
+  treated as deleting the old entry and adding a new one — the old
+  row's `enabled` state is lost.
+  - The JSON *shape* doesn't matter: rewriting `"foo.user.js"` as
+    `{"path": "foo.user.js"}` keeps the same row, and editing the
+    other fields on an object entry changes nothing.
+- **Scripts in a container can't vanish**: the URL either fetches or
   errors; there's no listing for it to disappear from.
 
 ## Unreadable manifest
 
 - If the manifest body itself can't be fetched (network error, 404,
   …) or doesn't parse as JSON / one of the supported shapes, the
-  source records a `scanError` and **leaves every script untouched** —
+  collection records a `scanError` and **leaves every script untouched** —
   content, status, and `enabled` state all preserved.
+- An http(s) manifest that answers with a *web page* (a login wall)
+  counts as unfetchable rather than unparseable: `fetchHttpText`
+  rejects markup, so the error names the page instead of complaining
+  about a `<` in the JSON. It says "not JSON", not "not JavaScript" —
+  the fetcher takes an `expects` hint for exactly this call. The
+  `file://` leg has no such check yet — see TODO.md.
 - This matches the [storage.md](storage.md) policy for unreadable
-  directory listings: we don't auto-disable scripts because the source
+  directory listings: we don't auto-disable scripts because the collection
   is temporarily unreachable (timed-out creds, flaky network).
-- The sources page surfaces the `scanError` as a banner on the source
+- The collections page surfaces the `scanError` as a banner on the collection
   section so the failure is visible.
 
 ## Query-string propagation
@@ -256,49 +282,49 @@ source row is tracked in `TODO.md`.
   no per-host grant is needed for HTTP manifests or entries.
 - Local manifests + file:// entries still need the
   `chrome://extensions` "Allow access to file URLs" toggle (the same
-  one local directory sources already require).
+  one local directory collections already require).
 - Manifest entries are scheme-gated: a resolved entry URL must use
   `http:`, `https:`, or `file:`. Anything else (`data:`,
-  `chrome-extension:`, `blob:`, …) fails the source with a clear
-  error. This mirrors the suffix-test policy on the source URL
+  `chrome-extension:`, `blob:`, …) fails the collection with a clear
+  error. This mirrors the suffix-test policy on the collection URL
   itself — a manifest the user added shouldn't be able to escalate
   the SW's `<all_urls>` reach into smuggled inline content or
   cross-extension probing.
 
 ## Where `relativePath` and `fileUrl` come from
 
-| Source kind            | `relativePath` (display + identity)    | `fileUrl` (what gets fetched)                       |
+| Collection kind            | `relativePath` (display + identity)    | `fileUrl` (what gets fetched)                       |
 |------------------------|----------------------------------------|-----------------------------------------------------|
 | Local directory        | path relative to the root              | `pathToFileUrl(join(root, rel))`                    |
 | Container (file)       | full URL or absolute fs path           | `relativePath` (URL-coerced via `pathToFileUrl`)    |
 | Container (http)       | full http(s) URL                       | `relativePath` (URL passes through)                 |
 | Container (github)     | full raw.githubusercontent.com URL     | `relativePath` (URL passes through)                 |
-| Manifest entry         | raw manifest entry (relative or abs)   | `resolveManifestEntryUrl(rel, sourceCanonicalUrl(manifest)).href` |
-| GitHub directory entry | path relative to the source dir        | `https://raw.githubusercontent.com/<o>/<r>/<ref>/<dir>/<rel>`     |
+| Manifest entry         | raw manifest entry (relative or abs)   | `resolveManifestEntryUrl(rel, collectionCanonicalUrl(manifest)).href` |
+| GitHub directory entry | path relative to the collection dir        | `https://raw.githubusercontent.com/<o>/<r>/<ref>/<dir>/<rel>`     |
 
-`sourceCanonicalUrl()` turns a raw local path into its `file://` URL;
+`collectionCanonicalUrl()` turns a raw local path into its `file://` URL;
 URLs pass through. `scriptAbsolutePath()` returns the resolved URL
-for any URL-backed source so the viewer's **Location** row works the
+for any URL-backed collection so the viewer's **Location** row works the
 same way for all kinds.
 
 ## Module surface
 
-Source-kind classifiers (all scheme-agnostic — they classify by the
+Collection-kind classifiers (all scheme-agnostic — they classify by the
 input's pathname suffix, regardless of `http://`, `file://`, or raw
 path form):
 
 - `isSingleFileInput(s)` — pathname ends in `.user.js`. Gates the
-  add-source dispatch that routes the input into the matching
-  container source.
-- `isManifestSource(s)` — pathname's basename is `script_manifest.json`
+  add-collection dispatch that routes the input into the matching
+  container collection.
+- `isManifestCollection(s)` — pathname's basename is `script_manifest.json`
   (re-exported as `MANIFEST_FILENAME`). Arbitrary `.json` files are
   rejected.
-- `isGithubDirSource(s)` — github.com URL pointing at a directory.
-- `isContainerSource(s)` / `containerKind(s)` / `containerPath(kind)`
+- `isGithubDirCollection(s)` — github.com URL pointing at a directory.
+- `isContainerCollection(s)` / `containerKind(s)` / `containerPath(kind)`
   — recognise / extract / build the synthetic `container:<kind>`
-  identifiers used by the three container source rows.
+  identifiers used by the three container collection rows.
 - `containerKindForSingleFileInput(s)` — classify a single-file input
-  into `'file' | 'http' | 'github'` so `addSource` can pick the right
+  into `'file' | 'http' | 'github'` so `addCollection` can pick the right
   container.
 
 Scheme classifiers (used at the rare call sites that genuinely care):
@@ -308,38 +334,39 @@ Scheme classifiers (used at the rare call sites that genuinely care):
 Normalisers (turn whichever input form the user gave into the form
 needed for I/O — used everywhere instead of branching on scheme):
 
-- `sourceCanonicalUrl(s)` — to URL form (raw paths get wrapped as
+- `collectionCanonicalUrl(s)` — to URL form (raw paths get wrapped as
   `file://`, URLs pass through).
-- `sourceFsPath(s)` — the inverse for local inputs (file:// → bare
+- `locationFsPath(s)` — the inverse for local inputs (file:// → bare
   fs path with percent-decoded segments; raw paths pass through).
-- `normalizeSourceInput(s)` — at add-source time, rewrites the user's
+- `normalizeCollectionInput(s)` — at add-collection time, rewrites the user's
   input to the canonical form the rest of the pipeline expects: a
   github.com `/blob/.../foo.user.js` (or a `/blob/.../script_manifest.json`)
   URL becomes its raw counterpart; a bare repo URL becomes
   `tree/<default-branch>` after a metadata API call; everything else
   passes through. Async because the bare-repo case does I/O and can
   throw on rate-limit / 404.
-- `canonicalSourceInput(s)` — runs right after it, and picks one
+- `canonicalCollectionInput(s)` — runs right after it, and picks one
   spelling per location so every entry point stores the same
   `relativePath`: a plain POSIX `file://` URL collapses to its bare
   path; http(s), raw paths, and Windows drive-letter / UNC file URLs
   pass through. See
   [install-capture.md](install-capture.md#one-file-one-installed-row).
 
-GitHub helpers (live in `src/github-source.ts`):
+GitHub helpers (live in `src/github-provider.ts`):
 
 - `parseGithubUrl(s)` — splits a `(blob|tree)/<ref>/<path>` URL into
   `{owner, repo, kind, ref, path}` (null on no match).
 - `scanGithubDir(s)` — Contents-API-driven recursive directory scan,
   returns the same `FoundScript[]` shape as the other scanners.
 
-`isGithubDirSource` and `normalizeGithubInput` are re-exported through
-`directories.ts` (the latter as `normalizeSourceInput`) so consumers
+`isGithubDirCollection` and `normalizeGithubInput` are re-exported through
+`directories.ts` (the latter as `normalizeCollectionInput`) so consumers
 don't need to know about the module split.
 
 Fetchers and parsers:
 
-- `fetchHttpText(url, opts?)` — conditional `fetch()`; returns
+- `fetchHttpText(url, opts?)` — conditional read (made by the service
+  worker when a page asks — see `src/http-read.ts`); returns
   `{kind: 'ok', text, etag?, lastModified?}` or `{kind: 'unchanged'}`,
   throws on 4xx/5xx.
 - `parseManifest(body)` — array-or-`{scripts}` JSON parser, exported

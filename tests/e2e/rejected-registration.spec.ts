@@ -20,7 +20,7 @@
 //     failed) but displays REJECTED, because it never runs;
 //   - the reason is in the script's Log, and in the status cell's
 //     hover text;
-//   - other scripts in the same source still register — the per-script
+//   - other scripts in the same collection still register — the per-script
 //     fallback in registerWithFallback exists for exactly this;
 //   - every re-attempt says so again — a Refresh, or a "Clear log"
 //     followed by one, must not leave a REJECTED row with nothing
@@ -65,10 +65,10 @@ test.describe('rejected registrations', () => {
   test('a script Chrome refuses is recorded as rejected, not as a load failure', async ({ sm }) => {
     writeBad();
     writeGood();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     const sync = await sm.syncNow();
 
-    const scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+    const scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
     const bad = scripts.find((s) => s.relativePath === 'bad-match.user.js')!;
     const good = scripts.find((s) => s.relativePath === 'good-match.user.js')!;
 
@@ -90,9 +90,9 @@ test.describe('rejected registrations', () => {
 
   test('the reason lands in the script Log', async ({ sm }) => {
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const log = await sm.getScriptLog(bad.id);
     const rows = log.filter((e) => e.source === 'chrome-injector');
@@ -125,9 +125,9 @@ test.describe('rejected registrations', () => {
     // runs. Without an explicit retry the spec is never re-offered and
     // the Log stays silent while the row still reads REJECTED.
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(Object.keys(await sm.getRejections())).toEqual([bad.id]);
     expect(await rejectionRows(sm, bad.id)).toHaveLength(1);
 
@@ -145,23 +145,23 @@ test.describe('rejected registrations', () => {
     await sm.updateScript(bad.id, 'manual', 'force');
     await pollRows(sm, bad.id).toBeGreaterThanOrEqual(3);
 
-    const after = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(after.bodyText).toContain('edited');
     expect(after.status).toBe('ok');
     expect(Object.keys(await sm.getRejections())).toEqual([bad.id]);
   });
 
-  test('refreshing the source retries too', async ({ sm }) => {
+  test('refreshing the collection retries too', async ({ sm }) => {
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(await rejectionRows(sm, bad.id)).toHaveLength(1);
 
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await pollRows(sm, bad.id).toBe(2);
 
-    await sm.updateAllSources('manual');
+    await sm.updateAllCollections('manual');
     await pollRows(sm, bad.id).toBe(3);
   });
 
@@ -181,9 +181,9 @@ test.describe('rejected registrations', () => {
       },
       body: 'console.log("bad");\n',
     });
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(Object.keys(await sm.getRejections())).toEqual([bad.id]);
     const before = (await rejectionRows(sm, bad.id)).length;
 
@@ -218,9 +218,9 @@ test.describe('rejected registrations', () => {
       },
       body: 'console.log("bad");\n',
     });
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -248,9 +248,9 @@ test.describe('rejected registrations', () => {
     // A REJECTED row whose Log is empty explains nothing, and reads as
     // though the retry stopped happening.
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(await rejectionRows(sm, bad.id)).toHaveLength(1);
 
     await sm.clearScriptLog(bad.id);
@@ -265,9 +265,9 @@ test.describe('rejected registrations', () => {
     sm, extensionContext, extensionId,
   }) => {
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(Object.keys(await sm.getRejections())).toEqual([bad.id]);
 
     // Same file, now with a path Chrome accepts.
@@ -306,9 +306,9 @@ test.describe('rejected registrations', () => {
     // script nobody is trying to register can't be REJECTED, or its row
     // would keep a badge the user has no way to clear.
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     expect(Object.keys(await sm.getRejections())).toEqual([bad.id]);
 
     await sm.setScriptEnabled(bad.id, false);
@@ -316,19 +316,19 @@ test.describe('rejected registrations', () => {
     expect(await sm.getRejections()).toEqual({});
   });
 
-  test('the sources page shows REJECTED with Chrome\'s reason on hover', async ({
+  test('the collections page shows REJECTED with Chrome\'s reason on hover', async ({
     sm, extensionContext, extensionId,
   }) => {
     writeBad();
     writeGood();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const scripts = (await sm.getSourceWithScripts(source!.id))!.scripts;
+    const scripts = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
     const bad = scripts.find((s) => s.relativePath === 'bad-match.user.js')!;
     const good = scripts.find((s) => s.relativePath === 'good-match.user.js')!;
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
 
     const badCell = page.locator(`tr[data-script-id="${bad.id}"] td.status-cell a`);
     await expect(badCell).toHaveText('REJECTED');
@@ -343,9 +343,9 @@ test.describe('rejected registrations', () => {
     sm, extensionContext, extensionId,
   }) => {
     writeBad();
-    const source = await sm.addSource(dir.path);
+    const collection = await sm.addCollection(dir.path);
     await sm.syncNow();
-    const bad = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${bad.id}`);

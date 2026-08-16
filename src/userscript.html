@@ -28,7 +28,7 @@
         /* Hanging indent past the favicon slot below, so a wrapped
            name's continuation lines align with the first line's text
            instead of tucking under the icon. No `0.6em` term here (an
-           h1 has no cell padding to absorb) — don't copy the sources
+           h1 has no cell padding to absorb) — don't copy the collections
            page's constant. */
         padding-left: calc(16px + 0.4em);
         text-indent: calc(-16px - 0.4em);
@@ -98,19 +98,38 @@
       .actions button:disabled { cursor: not-allowed; opacity: 0.5; }
       .actions .primary { font-weight: 600; }
       .actions .spacer { margin-left: auto; }
-      /* The banner box is in styles.css (shared with the sources page,
+      /* The banner box is in styles.css (shared with the collections page,
          which is also where the file-access banner comes from). Only
          the viewer's own colour variants live here — the amber default
          is a warning, and "already installed" / "preview" are not. */
-      .banner.installed { border-color: #2563eb; background: #eff6ff; }
+      /* Matches the "Existing versions" panel below it — this banner is
+         about which of those copies the buttons act on, so the two are
+         one thought and share a ground. */
+      .banner.installed { border-color: #b9d4b1; background: #dbecd6; }
       .banner.preview { border-color: #6b7280; background: #f3f4f6; }
       @keyframes sm-spin { to { transform: rotate(360deg); } }
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
-      /* @grant / @connect rows: API names and hosts, not prose. */
-      .grant-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      /* Details panel: parsed-header fields (when a metadata block is
-         present) plus Filename / Size / Status. Cleared via :empty
-         when there's no script. */
+      /* @connect row: hostnames and match rules, not prose. */
+      .host-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      /* The "loaded from local disk" chip, worn by a code tab whose
+         body came off local disk rather than from the URL its
+         declaration names. Loud enough to notice without hovering,
+         which is the whole reason that fact isn't left to the
+         tooltip. */
+      .tab-mark {
+        padding: 0 0.4em;
+        border-radius: 3px;
+        background: #d97706;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      /* Details panel: the header fields worth surfacing (when a
+         metadata block is present) plus the resolved Collection /
+         Location / Size / Status rows. Cleared via :empty when there's
+         no script. */
       #header-summary {
         margin: 0 0 0.8em;
         padding: 0.6em 0.8em;
@@ -164,27 +183,232 @@
         word-break: normal;
         min-width: 0;
       }
+      /* Local overrides row: one entry per overridden `@require` /
+         `@resource`. Same flex shape as the Location cell — it's the
+         same kind of value (a path plus its copy button). */
+      .local-override-cell {
+        display: flex;
+        align-items: baseline;
+        gap: 0.4em;
+        min-width: 0;
+      }
+      /* The `@require` / `@resource` tag that says which kind of
+         declaration this entry stood in for. Muted and monospace: it's
+         a label on the path beside it, not the value. */
+      .local-override-kind {
+        flex: none;
+        color: #777;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+      }
+      .local-override-path {
+        /* Slash-aware wrap; see h1 above. */
+        overflow-wrap: anywhere;
+        word-break: normal;
+        min-width: 0;
+      }
+      /* The copy button sits on the text baseline in a flex row that
+         otherwise aligns on it; nudge it back to optical centre. */
+      .local-override-cell .copy-btn { align-self: center; }
       /* Anchors in the details panel (Match patterns, Location)
          read as plain text by default; underline only on hover so
          the rows stay calm. The bubble is excluded so its `color:#fff`
          survives — its hover affordance is the opacity dip below. */
-      #header-summary dd a:not(.source-type-bubble) { color: inherit; text-decoration: none; }
-      #header-summary dd a:not(.source-type-bubble):hover { text-decoration: underline; }
+      #header-summary dd a:not(.collection-type-bubble) { color: inherit; text-decoration: none; }
+      #header-summary dd a:not(.collection-type-bubble):hover { text-decoration: underline; }
       /* Anchors inside the highlighted code block. Inherit Prism's
          token color (comment-grey, string-green, etc.) so the code
          box keeps reading as code; only the hover underline signals
          clickability. */
       pre.code-box a.code-link { color: inherit; text-decoration: none; }
       pre.code-box a.code-link:hover { text-decoration: underline; }
-      .log-id-cell {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        word-break: break-all;
+      /* `.log-id-cell` deliberately has no rules: the log ID reads as
+         regular text like every other value in the panel. It's a
+         filename, not code, and it was the only monospace row. The
+         class stays as a hook for finding the cell. Wrapping comes from
+         the `dd`'s own slash-aware rule. */
+      /* ---- "Other versions" panel (src/related-versions.ts) ----
+         Same card shape as #header-summary, but a green ground rather
+         than the details panel's grey: the two sit directly on top of
+         each other, and the panel is the one that carries live
+         controls, so it has to read as a different kind of thing at a
+         glance. Empty when nothing relates, and hidden by the :empty
+         rule rather than a `hidden` attribute the renderer would have
+         to manage. */
+      #other-versions {
+        margin: 0 0 0.8em;
+        padding: 0.6em 0.8em;
+        border: 1px solid #b9d4b1;
+        border-radius: 4px;
+        background: #dbecd6;
       }
-      /* Source row layout. Grid layout so a long display name wraps
+      #other-versions:empty { display: none; }
+      #other-versions h2 {
+        font-size: 1.1em;
+        font-weight: 650;
+        color: #333;
+        margin: 0 0 0.6em;
+      }
+      .versions-section-heading {
+        font-size: 1em;
+        font-weight: 600;
+        color: #444;
+        margin: 0.9em 0 0.3em;
+      }
+      .versions-section-heading:first-of-type { margin-top: 0; }
+      /* The parenthesized gloss names which match produced the rows
+         below. It belongs to the heading, so it lives inside the
+         <h3> — but at body weight, or the two sections would read as
+         equally emphatic. */
+      .versions-heading-gloss {
+        font-weight: 400;
+        color: #777;
+        font-size: 12px;
+      }
+      /* `fixed` + the <colgroup> the renderer emits is what keeps the
+         two sections' columns aligned with each other: without it each
+         <table> sizes its own columns from its own content and the
+         panel reads as two unrelated grids. */
+      .versions-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .versions-table col.col-enabled  { width: 2.2em; }
+      .versions-table col.col-collection { width: 26%; }
+      .versions-table col.col-version  { width: 7em; }
+      .versions-table col.col-actions  { width: 6.5em; }
+      .versions-table col.col-remove   { width: 2.4em; }
+      .versions-table th {
+        text-align: left;
+        font-size: 11px;
+        font-weight: 600;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 0 0.5em 0.2em 0;
+        border-bottom: 1px solid #b9d4b1;
+      }
+      .versions-table td {
+        padding: 0.35em 0.5em 0.35em 0;
+        vertical-align: top;
+        border-bottom: 1px solid #c9e0c2;
+      }
+      .versions-table tr:last-child td { border-bottom: none; }
+      .versions-table .col-actions {
+        text-align: right;
+        padding-right: 0;
+        white-space: nowrap;
+      }
+      .versions-table th.col-actions button { font-size: 12px; padding: 1px 8px; }
+      .versions-table .col-version {
+        color: #555;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
+         a long URL shrink its column rather than widening the table. */
+      .versions-table .col-collection,
+      .versions-table .col-location {
+        overflow-wrap: anywhere;
+        word-break: normal;
+        min-width: 0;
+      }
+      .versions-table .col-location { font-size: 12px; color: #555; }
+      .versions-collection-name {
+        color: inherit;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .versions-collection-name:hover { text-decoration: underline; }
+      .versions-table .col-location a { color: inherit; text-decoration: none; }
+      .versions-table .col-location a:hover { text-decoration: underline; }
+      /* A deeper tint of the panel's own green, not the blue used
+         elsewhere for "current" — on this ground a blue row would read
+         as a different kind of highlight rather than as emphasis. */
+      .versions-table tr.is-current { background: #c3e0ba; }
+      .versions-current-marker { color: #666; }
+      .versions-this-page { font-weight: 700; color: #333; }
+      .versions-table tr.is-offer .versions-offer-text {
+        color: #888;
+        font-style: italic;
+      }
+      .versions-table .toggle {
+        display: inline-flex;
+        align-items: center;
+        cursor: pointer;
+      }
+      .versions-table .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
+      /* Same treatment as the controls-row toggle when the parent
+         collection is off: the box can't be clicked, so it must not look
+         clickable. */
+      .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
+      .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
+      /* Trash can, in its own column hard against the table's right
+         edge. Same glyph and red hover as the collections page's
+         `.remove-script`, so the two read as one control in two
+         places; the border and resting colour are the panel's own,
+         since it sits on green rather than white. Disabled (a script
+         inside a collection) keeps the button on screen — the
+         column would otherwise look ragged with no clue why — but
+         drops it to a plain dimmed glyph with no border, so it doesn't
+         invite a click its tooltip has to then refuse. `not-allowed`
+         to match the disabled toggle two rules up. */
+      .versions-table .col-remove {
+        text-align: right;
+        padding-right: 0;
+        white-space: nowrap;
+      }
+      .versions-remove {
+        padding: 0 0.3em;
+        font: inherit;
+        line-height: 1;
+        border: 1px solid #b9d4b1;
+        border-radius: 3px;
+        background: transparent;
+        cursor: pointer;
+        color: #6a7b66;
+      }
+      .versions-remove:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
+      /* A bare glyph has no shape of its own to show focus with. */
+      .versions-remove:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+      .versions-remove:disabled {
+        cursor: not-allowed;
+        border-color: transparent;
+        opacity: 0.35;
+      }
+      /* The panel reports its own action failures here rather than in
+         the page's `#message` bar — see related-versions.ts. */
+      .versions-message {
+        margin: 0 0 0.5em;
+        color: #b3261e;
+        font-size: 12px;
+      }
+      /* Narrow windows shed the Version column rather than letting
+         every cell wrap to an unreadable ribbon. It is the least
+         load-bearing: nothing acts on it, and the copies it
+         distinguishes are still distinguished by collection and location.
+         It stays in the DOM (hidden, not dropped) so nothing has to
+         re-render on resize.
+         Zeroing the <col> width alongside `display: none` on the
+         cells is what actually reclaims the space: under
+         `table-layout: fixed` the colgroup, not the cells, is what
+         sets column width.
+
+         Location does NOT shed, though it used to. Its link is the
+         only way to reach another copy's page now that a preview with
+         several targets drops its header Open button in favour of this
+         table — hiding it would leave a narrow window with no route to
+         a copy at all. Wrapping a long path is the lesser cost. */
+      @media (max-width: 640px) {
+        .versions-table col.col-version { width: 0; }
+        .versions-table .col-version { display: none; }
+      }
+      /* Collection row layout. Grid layout so a long display name wraps
          inside the right-hand column instead of dropping back to the
          row's left edge. The bubble's own styling (color, padding,
          hover) is in styles.css, the cross-page shared stylesheet. */
-      .source-cell {
+      .collection-cell {
         display: grid;
         grid-template-columns: max-content 1fr;
         column-gap: 0.5em;
@@ -248,6 +472,8 @@
         border-bottom-color: #fafafa;
       }
       .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* Positioning only — the chip's own look is above. */
+      .tab-mark { margin-left: 0.5em; vertical-align: 1px; }
       /* The code box fills the rest of the viewport and scrolls. The
          padding/border give it a textbox-like look; tabindex makes it
          keyboard-focusable so it scrolls with arrow keys. The
@@ -444,7 +670,7 @@
   </head>
   <body>
     <!-- Shared globe glyph referenced by the icon slot's <use href="#sm-globe">
-         (see sources.html for the rationale). -->
+         (see collections.html for the rationale). -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
     <h1 id="filename"></h1>
     <div id="meta-row" class="meta-row" hidden>
@@ -475,6 +701,7 @@
     </div>
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
+    <div id="other-versions"></div>
     <div id="tabs" class="tabs" role="tablist" hidden></div>
     <pre id="code-pane" class="code-box line-numbers" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>

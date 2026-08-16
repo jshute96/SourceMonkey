@@ -20,25 +20,25 @@ const { buildDeepLinkTarget } = await import('../../dist/deep-link.js');
 const PREFIX = 'https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md';
 const EXT = `chrome-extension://${EXT_ID}`;
 
-test('sources.html with no extra params', () => {
+test('collections.html with no extra params', () => {
   assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=sources.html`),
-    `${EXT}/sources.html`,
+    buildDeepLinkTarget(`${PREFIX}?page=collections.html`),
+    `${EXT}/collections.html`,
   );
 });
 
-test('sources.html forwards refresh flag', () => {
+test('collections.html forwards refresh flag', () => {
   assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=sources.html&refresh`),
-    `${EXT}/sources.html?refresh=`,
+    buildDeepLinkTarget(`${PREFIX}?page=collections.html&refresh`),
+    `${EXT}/collections.html?refresh=`,
   );
 });
 
-test('sources.html forwards add_source value', () => {
+test('collections.html forwards add value', () => {
   const src = 'https://example.com/foo.user.js';
   assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=sources.html&add_source=${encodeURIComponent(src)}`),
-    `${EXT}/sources.html?add_source=${encodeURIComponent(src)}`,
+    buildDeepLinkTarget(`${PREFIX}?page=collections.html&add=${encodeURIComponent(src)}`),
+    `${EXT}/collections.html?add=${encodeURIComponent(src)}`,
   );
 });
 
@@ -57,7 +57,7 @@ test('userscript.html forwards script id', () => {
 });
 
 test('page param is stripped from passthrough query', () => {
-  const out = buildDeepLinkTarget(`${PREFIX}?page=sources.html&a=1&b=2`);
+  const out = buildDeepLinkTarget(`${PREFIX}?page=collections.html&a=1&b=2`);
   assert.ok(out);
   assert.ok(!out.includes('page='));
   assert.ok(out.includes('a=1'));
@@ -78,11 +78,11 @@ test('missing page returns null', () => {
 
 test('non-matching URL returns null', () => {
   assert.equal(
-    buildDeepLinkTarget('https://github.com/jshute96/SourceMonkey/blob/main/README.md?page=sources.html'),
+    buildDeepLinkTarget('https://github.com/jshute96/SourceMonkey/blob/main/README.md?page=collections.html'),
     null,
   );
   assert.equal(
-    buildDeepLinkTarget('https://example.com/redirect-page.md?page=sources.html'),
+    buildDeepLinkTarget('https://example.com/redirect-page.md?page=collections.html'),
     null,
   );
 });
@@ -93,17 +93,30 @@ test('garbage URL returns null', () => {
 });
 
 test('hash fragment does not block the match and is not forwarded', () => {
-  // The hash on the source URL addresses the markdown's section, not
+  // The hash on the collection URL addresses the markdown's section, not
   // the extension page; intentionally dropped on the rewrite.
   assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=sources.html#section`),
-    `${EXT}/sources.html`,
+    buildDeepLinkTarget(`${PREFIX}?page=collections.html#section`),
+    `${EXT}/collections.html`,
   );
+});
+
+test('the captured marker never rides in from the web', () => {
+  // `captured=1` tells the viewer the install capture opened it, which
+  // lets the page navigate the tab away on its own. This redirect is
+  // the only way a web page can put a param onto an extension page, so
+  // that one claim does not carry — everything else still does.
+  const target = buildDeepLinkTarget(
+    `${PREFIX}?page=userscript.html&preview=https%3A%2F%2Fx.test%2Fa.user.js&captured=1`,
+  );
+  const params = new URL(target).searchParams;
+  assert.equal(params.get('captured'), null);
+  assert.equal(params.get('preview'), 'https://x.test/a.user.js');
 });
 
 test('userinfo on the URL rejects the match', () => {
   assert.equal(
-    buildDeepLinkTarget(`https://user:pass@github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=sources.html`),
+    buildDeepLinkTarget(`https://user:pass@github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md?page=collections.html`),
     null,
   );
 });

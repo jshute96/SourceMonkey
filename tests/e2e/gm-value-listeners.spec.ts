@@ -46,7 +46,7 @@ test.describe('GM_addValueChangeListener (Phase 7)', () => {
         document.body.dataset.smEvents = JSON.stringify(events);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -86,7 +86,7 @@ test.describe('GM_addValueChangeListener (Phase 7)', () => {
         document.body.dataset.smEvents = JSON.stringify(events);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -127,7 +127,7 @@ test.describe('GM_addValueChangeListener (Phase 7)', () => {
         document.body.dataset.smEvents = JSON.stringify(events);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -176,7 +176,7 @@ test.describe('GM_addValueChangeListener (Phase 7)', () => {
         }, 50);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     // Two tabs, same script.
@@ -221,7 +221,7 @@ test.describe('GM_addValueChangeListener (Phase 7)', () => {
         document.body.dataset.smRemoveType = typeof GM_removeValueChangeListener;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

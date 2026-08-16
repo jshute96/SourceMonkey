@@ -18,7 +18,9 @@ same rules as `@icon`:
 
 Extension over TM/VM/GM: relative paths. None of the major managers
 support them — a script that relies on this will only work in
-SourceMonkey.
+SourceMonkey. To keep a script portable *and* develop it locally, write
+the absolute URL and let a file on disk stand in for it — see
+[local-file-overrides.md](local-file-overrides.md).
 
 ## `.js` suffix gate
 
@@ -42,6 +44,8 @@ Per-entry fields:
 - `loadedAt` — epoch ms; bumps only on a true content change.
 - `httpEtag?`, `httpLastModified?` — captured from the last HTTP
   fetch. Not yet round-tripped to the byte fetcher — see TODO.
+- `localUrl?` — the local file read instead of `url`, when one stood
+  in. See [local-file-overrides.md](local-file-overrides.md#storage).
 
 Storage layout today: every script stores its own copy of every
 required file, so two scripts requiring jQuery store jQuery twice.
@@ -56,6 +60,24 @@ The refresh path takes a `recheckFiles: 'all' | 'preserve'` option
 - **Explicit Refresh** (manual button click) → `'all'`: refetch every
   declared dep so the user can pick up remote updates even when the
   main script body hasn't changed.
+  - **Conditionally.** The stored `httpEtag` / `httpLastModified` go
+    back as `If-None-Match` / `If-Modified-Since`. A 304 reuses the
+    stored entry outright — body, `contentHash`, `size` and `loadedAt`
+    all carried over rather than re-derived.
+    - Reused, not recomputed, for correctness and not just speed: a
+      require's `source` was decoded by a BOM-stripping decoder, so
+      re-encoding it would not reproduce a BOM-prefixed file's bytes,
+      and rebuilding from them would report a change the server had
+      just denied.
+    - The match is on `contentHash`, because the per-URL fetch cache
+      may have resolved this URL from a different script's copy.
+    ETag wins where a server offers both: it is exact, where
+    `Last-Modified` cannot distinguish two edits in the same second.
+  - Measured on a 46-script collection: 13 unique requires, every one
+    of them offering a validator, ~924 KB of transfer replaced by 13
+    empty 304s. The wall-clock saving is modest on a fast link — the
+    dedup below is what already collapsed those 76 declarations to 13
+    — so this is a bandwidth fix first and a latency fix second.
 - **Opportunistic refresh** (background check on navigation) →
   `'preserve'`: reuse every cached entry verbatim; only fetch refs
   the script newly declares. Keeps per-navigation cost bounded — the
@@ -65,18 +87,22 @@ If both the `@require` and `@resource` lists on a script are
 unchanged across an opportunistic refresh, the work short-circuits
 entirely — no resolution, no fetching.
 
-Consequence for `file://` sources: editing a require file on disk
+Consequence for a require reached by its declared URL: editing it
 (without touching the host script) does **not** surface on the next
 navigation. The opportunistic path treats requires as opaque-by-URL
-and only the explicit Refresh button rechecks remote (or local)
-require bodies. Mirrors how TM/VM treat requires — they're fetched
-on install, not on every page load — and keeps per-navigation cost
-bounded for users with many requires.
+and only the explicit Refresh button rechecks those bodies. Mirrors how
+TM/VM treat requires — they're fetched on install, not on every page
+load — and keeps per-navigation cost bounded for users with many
+requires.
+
+A require served by a **local stand-in** is the deliberate exception:
+it is re-read every pass, so an edit shows up on the next navigation.
+See [local-file-overrides.md](local-file-overrides.md#refresh-policy).
 
 ## Cross-script + cross-kind dedup
 
 A `FileFetchCache` is threaded through every refresh entry point.
-Two scripts (within or across sources) that reference the same
+Two scripts (within or across collections) that reference the same
 canonical URL in the same refresh pass share one fetch.
 
 - A `@require` and a `@resource` pointing at the same URL also share
@@ -98,15 +124,29 @@ Any of these is a dependency failure, named by the offending URL:
   won't read says so rather than blaming the network, and both
   `file://` legs (page XHR, service-worker `fetch`) report it the same
   way.
-- HTML `Content-Type` — see [below](#content-type-gate). Checked after
-  the fetch, not as part of it.
+- An HTML response — see [below](#markup-gate). Checked after the
+  fetch, not as part of it, and by two tests: the `Content-Type` and
+  the bytes.
 - `data:` URLs (resolution accepts them; the require gate rejects).
 - **Non-UTF-8 response body** (strict decode fails). A `.js` URL that
   serves binary slips past the suffix gate and the content-type
   predicate but gets caught here, so the user sees "not valid UTF-8"
   rather than a confusing `SyntaxError` at eval.
 
-### Content-Type gate
+### Markup gate
+
+Two tests for one problem, because each catches what the other misses.
+Both use the shared helpers in `markup-response.ts`, so the `@require`
+gate and the script-body fetchers agree on what markup is and say the
+same thing about it.
+
+**Not applied to `@resource`** (either test) — an HTML resource is a
+legitimate thing to fetch and hand to `GM_getResourceText`. The shared
+fetch cache stores raw bytes and each call site applies its own rules,
+so a `@require` and a `@resource` on the same URL still share one fetch
+without poisoning each other.
+
+**By `Content-Type`:**
 
 - **Markup is the only rejected family** — `text/html*` (which covers
   `text/html-sandboxed`) and `application/xhtml*`. A `@require` is
@@ -129,6 +169,23 @@ Any of these is a dependency failure, named by the offending URL:
   GitHub release, and installing it failed outright.
 - Tampermonkey does no content-type gating on `@require` at all.
 
+**By the bytes** (`looksLikeMarkup`), after the UTF-8 decode:
+
+- The first thing in the body, past a BOM and any whitespace, is `<`.
+- Catches what the header can't: a response with **no** `Content-Type`
+  at all — the `file://` case, and the one where the ref names a local
+  *directory*, which Chrome answers with a generated HTML listing — and
+  a server that labels its login page `text/plain`.
+- Position is the whole point. A forge's file-browser page embeds the
+  file's own lines, metadata block included, so any "does it contain
+  JavaScript / a header" test would call that page the script.
+- Not "the metadata block must be first": a license banner above the
+  block is common and supported (`leadingText`). A `.js` file starts
+  with code or a comment; only markup starts with a tag.
+- Known false positive, accepted: `<!--` at the top of a file is valid
+  JavaScript (Annex B HTML-like comments). That spelling belongs to
+  1990s inline `<script>` blocks.
+
 ### Effect on the parent script
 
 Depends on whether we already had a good copy:
@@ -148,8 +205,10 @@ Depends on whether we already had a good copy:
 
 - `@resource` bodies are arbitrary bytes with no "is this valid"
   check, so a `@resource` soft failure (a 200 login page) can't be
-  detected the way the `@require` Content-Type gate detects it. Only a
-  hard `@resource` fetch failure gets the keep-the-good-copy treatment.
+  detected the way the `@require` markup gate detects it — and an HTML
+  resource is legitimate, so the gate would be wrong there anyway. Only
+  a hard `@resource` fetch failure gets the keep-the-good-copy
+  treatment.
 
 ## Reload fast-path interaction
 
@@ -259,7 +318,7 @@ buys most of it back:
   [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
   A script that reads its own `err.stack` still sees generated
   coordinates — we rewrite the string on the way into our views, not
-  at the source.
+  at the collection.
 - `sourcesContent` is embedded without a size cap: `sourcemonkey://`
   URLs aren't fetchable, so dropping the text would leave a map with
   nothing to show. The real limit is whatever

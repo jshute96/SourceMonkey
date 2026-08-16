@@ -9,7 +9,7 @@
 // chrome.* calls, no module state.
 
 import { resolveScriptResource } from './file-loader.js';
-import { matchTargetInfo } from './match-targets.js';
+import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import {
   MATCH_HEADER_TAGS,
   RESOLVABLE_HEADER_TAGS,
@@ -17,7 +17,7 @@ import {
   splitResourceValue,
   splitTextByUrls,
 } from './script-links.js';
-import { appendWithSlashBreaks } from './source-display.js';
+import { appendWithSlashBreaks } from './collection-display.js';
 
 export function openInNewTabAnchor(
   href: string,
@@ -171,7 +171,9 @@ function linkForHeaderTag(
   fileUrl: string,
 ): HeaderTagLink | null {
   if (MATCH_HEADER_TAGS.has(tag)) {
-    const linkUrl = matchTargetInfo(value)?.linkUrl;
+    // Site-less patterns (`*://*/…`, `file:///*/…`) fall through to the
+    // same-directory guess against the script's own location.
+    const linkUrl = matchTargetInfo(value)?.linkUrl ?? sameDirLinkUrl(value, fileUrl);
     if (!linkUrl) return null;
     return { prefix: '', linkText: value, href: linkUrl, suffix: '' };
   }

@@ -1,5 +1,5 @@
 // Placeholder unit test so `npm run test:unit` has something real to run.
-// Replace with tests for real source modules as they appear in `src/`.
+// Replace with tests for real collection modules as they appear in `src/`.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

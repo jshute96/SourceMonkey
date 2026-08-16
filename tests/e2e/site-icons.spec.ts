@@ -45,11 +45,11 @@ test.describe('site-icon slot', () => {
       meta: { name: 'A', match: ['https://example.com/posts/*/edit'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const row = page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // Anchor wrapper with the segment-trimmed linkUrl.
     const anchor = slot.locator('a.site-icon-inner');
@@ -77,11 +77,11 @@ test.describe('site-icon slot', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const row = page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // Anchor still points at the @match-derived linkUrl — the @icon
     // header is a visual override only.
@@ -103,11 +103,11 @@ test.describe('site-icon slot', () => {
       meta: { name: 'B', match: ['<all_urls>'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const row = page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // No anchor — `<all_urls>` doesn't yield an origin to link to.
     await expect(slot.locator('a.site-icon-inner')).toHaveCount(0);
@@ -133,11 +133,11 @@ test.describe('site-icon slot', () => {
       body: '',
     });
     fs.writeFileSync(path.join(scriptsDir.path, 'icon.png'), PNG_BYTES);
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
-    const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const row = page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`).first();
     const slot = row.locator('.site-icon');
     // The MIME prefix Chrome's file:// XHR layer reports is unreliable
     // across platforms (sometimes `image/png`, sometimes empty falling
@@ -160,11 +160,11 @@ test.describe('site-icon slot', () => {
     try {
       server.setRoute('/scripts/foo.user.js', userscriptWithIcon('HttpRel', 'icon.png'));
       server.setRoute('/scripts/icon.png', PNG_BYTES, { contentType: 'image/png' });
-      const source = await sm.addSource(`${server.baseUrl}/scripts/foo.user.js`);
+      const collection = await sm.addCollection(`${server.baseUrl}/scripts/foo.user.js`);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/sources.html`);
-      const row = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`).first();
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const row = page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`).first();
       const slot = row.locator('.site-icon');
       await expect(slot.locator('a.site-icon-inner img'))
         .toHaveAttribute('src', `data:image/png;base64,${PNG_BASE64}`);
@@ -179,7 +179,7 @@ test.describe('site-icon slot', () => {
   test('large icons are de-duped into one shared blob: URL across rows', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // The sources-page size fix: an icon whose data: URL exceeds the
+    // The collections-page size fix: an icon whose data: URL exceeds the
     // inline threshold is converted ONCE to a blob: URL and shared by
     // every row that uses it, instead of each row inlining the full
     // base64 (which, with dozens of scripts per site, ballooned the
@@ -198,12 +198,12 @@ test.describe('site-icon slot', () => {
       meta: { name: 'Two', match: ['https://example.com/*'], extra: [`// @icon ${bigIcon}`] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const imgs = page.locator(
-      `section.directory[data-source-id="${source!.id}"] .site-icon a.site-icon-inner img`,
+      `section.collection[data-collection-id="${collection!.id}"] .site-icon a.site-icon-inner img`,
     );
     await expect(imgs).toHaveCount(2);
     const src0 = await imgs.nth(0).getAttribute('src');
@@ -272,13 +272,14 @@ test.describe('site-icon slot', () => {
         meta: { name: 'Root', match: [`${HOST}/*`] },
         body: '',
       });
-      const source = await sm.addSource(scriptsDir.path);
+      const collection = await sm.addCollection(scriptsDir.path);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/sources.html`);
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      // The Name column shows each script's `@name`, not its filename.
       const rowFor = (name: string) =>
         page.locator(
-          `section.directory[data-source-id="${source!.id}"] tbody tr:has-text("${name}")`,
+          `section.collection[data-collection-id="${collection!.id}"] tbody tr:has-text("${name}")`,
         );
 
       // Each deep-section script gets its own page URL → its own
@@ -286,11 +287,11 @@ test.describe('site-icon slot', () => {
       // root, so it bypasses the path layer and lands on the
       // origin-level fallback — which begins with a root-HTML probe
       // and therefore sees ICON_ROOT.
-      await expect(rowFor('section-a.user.js').locator('.site-icon img'))
+      await expect(rowFor('SectionA').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_A}`);
-      await expect(rowFor('section-b.user.js').locator('.site-icon img'))
+      await expect(rowFor('SectionB').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_B}`);
-      await expect(rowFor('root.user.js').locator('.site-icon img'))
+      await expect(rowFor('Root').locator('.site-icon img'))
         .toHaveAttribute('src', `data:image/png;base64,${ICON_ROOT}`);
       await page.close();
     } finally {
@@ -338,14 +339,14 @@ test.describe('site-icon slot', () => {
           userscriptWithIcon(`Trav${i}`, traversals[i]),
         );
       }
-      const source = await sm.addSource(child);
+      const collection = await sm.addCollection(child);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/sources.html`);
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
       // Every row's icon slot must show only the globe placeholder —
       // never an <img>. If any traversal had been honored we'd see the
       // PNG's data URL swapped in.
-      const rows = page.locator(`section.directory[data-source-id="${source!.id}"] tbody tr`);
+      const rows = page.locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`);
       const slots = rows.locator('.site-icon');
       // `toHaveCount`, not `await slots.count()`: the page renders its
       // rows asynchronously after load, so a one-shot read can see zero
@@ -390,10 +391,10 @@ test.describe('site-icon slot', () => {
         meta: { name: 'Poisoned', match: ['https://example.com/*'] },
         body: '',
       });
-      const source = await sm.addSource(scriptsDir.path);
+      const collection = await sm.addCollection(scriptsDir.path);
 
       const page = await extensionContext.newPage();
-      await page.goto(`chrome-extension://${extensionId}/sources.html`);
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
       // Seed the poisoned row from the page (extension pages hold the
       // same chrome.storage.local the icon cache uses), then reload so
       // the render reads it fresh.
@@ -420,7 +421,7 @@ test.describe('site-icon slot', () => {
         .toBe(null);
 
       const slot = page
-        .locator(`section.directory[data-source-id="${source!.id}"] tbody tr`)
+        .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
         .first()
         .locator('.site-icon');
       await expect(slot.locator('a.site-icon-inner'))

@@ -66,8 +66,8 @@ test.describe('log stack mapping', () => {
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   async function installThrowingScript(
-    sm: { addSource: (p: string) => Promise<unknown>; syncNow: () => Promise<unknown>;
-          getSources: () => Promise<{ scriptIds: string[] }[]> },
+    sm: { addCollection: (p: string) => Promise<unknown>; syncNow: () => Promise<unknown>;
+          getCollections: () => Promise<{ scriptIds: string[] }[]> },
     matchBase: string,
   ): Promise<string> {
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), LIB_JS);
@@ -84,10 +84,10 @@ test.describe('log stack mapping', () => {
       // both files, which is what makes the per-frame mapping visible.
       body: 'requireBoom();',
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
     return scriptIds[0];
   }
@@ -285,8 +285,8 @@ test.describe('log stack mapping', () => {
     // `requires[].source` in place — so best-effort plus a tooltip
     // beats a dead end.
     const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
-    const sources = await sm.getSources();
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     const loadedAt = withScripts!.scripts.find((s) => s.id === scriptId)!.loadedAt;
     const label = 'main.user.js';
     const entryUrl = `sourcemonkey://SourceMonkey/main/${label}`;
@@ -387,7 +387,7 @@ test.describe('log stack mapping', () => {
         },
         body: 'requireBoom();',
       });
-      await sm.addSource(second.path);
+      await sm.addCollection(second.path);
       await sm.syncNow();
 
       // Which twin got `#1` is decided by UUID sort, so ask rather
@@ -486,10 +486,10 @@ test.describe('log stack mapping', () => {
       },
       body: 'throw new Error("plain-boom");',
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const scriptId = sources.flatMap((s) => s.scriptIds)[0];
+    const collections = await sm.getCollections();
+    const scriptId = collections.flatMap((s) => s.scriptIds)[0];
 
     const target = await extensionContext.newPage();
     await target.goto(`${fixtureServer.baseUrl}/target.html`);

@@ -1,46 +1,52 @@
-// Pure display helpers for sources: type classification, display-name
-// inference, and the colored type-bubble bookkeeping shared by the
-// sources page and the userscript viewer.
+// Pure display helpers for collections: type classification,
+// display-name inference, and the colored type-bubble bookkeeping
+// shared by the collections page and the userscript viewer.
 //
-// The three source types here are display-only labels — they don't
+// The three collection types here are display-only labels — they don't
 // drive the scan/fetch dispatch (which lives in `directories.ts` and
-// keys off URL shape and `isGithubDirSource` / manifest detection):
+// keys off URL shape and `isGithubDirCollection` / manifest detection):
 //   - github : github.com/* or raw.githubusercontent.com/*
 //   - http   : any other http(s) URL
 //   - file   : raw filesystem path or file:// URL
 //
 // Manifest is an orthogonal flag (`-manifest` suffix on the bubble
-// label) that mirrors `isManifestSource`. Container sources (whose
-// path is `container:<kind>`) classify to their kind and never carry
-// the manifest suffix.
+// label) that mirrors `isManifestCollection`. Container collections
+// (whose path is `container:<kind>`) classify to their kind and never
+// carry the manifest suffix.
 
 import {
   containerKind,
   githubRawToBlobUrl,
-  isContainerSource,
+  isContainerCollection,
   isFileUrl,
   isHttpUrl,
   pathToFileUrl,
-  isManifestSource,
+  isManifestCollection,
   type ContainerKind,
 } from './directories.js';
-import { MANIFEST_FILENAME } from './source-scan.js';
+import { MANIFEST_FILENAME } from './collection-scan.js';
 import { decodeForDisplay } from './script-display.js';
-import type { StoredSource } from './script-store.js';
+import type { StoredCollection } from './script-store.js';
 
-export type SourceTypeKey = 'file' | 'http' | 'github';
+export type CollectionTypeKey = 'file' | 'http' | 'github';
+
+// Why a script's enable checkbox is greyed out when its parent is off.
+// Stands in for `ENABLE_TITLE` on every surface that draws one, so the
+// collections page, the viewer's controls row, and the "Other versions"
+// panel all explain it the same way.
+export const COLLECTION_OFF_TITLE = 'Collection is disabled';
 
 const GITHUB_HOST_RE = /^https?:\/\/(www\.)?github\.com\//i;
 const RAW_GITHUB_HOST_RE = /^https?:\/\/raw\.githubusercontent\.com\//i;
 
 // Display-only classification. Stable across refreshes because it only
-// depends on the source path. GitHub recognition is intentionally broad
-// — it covers both the canonical browse URL (`github.com/.../tree/...`)
-// and the raw-content host (`raw.githubusercontent.com/...`) so any
-// scheme of GitHub source reads as `github` in the UI. Container
-// sources project to their own container kind so the bubble matches
-// the scripts they hold.
-export function inferSourceType(path: string): SourceTypeKey {
+// depends on the collection path. GitHub recognition is intentionally
+// broad — it covers both the canonical browse URL
+// (`github.com/.../tree/...`) and the raw-content host
+// (`raw.githubusercontent.com/...`) so any scheme of GitHub collection
+// reads as `github` in the UI. Container collections project to their
+// own container kind so the bubble matches the scripts they hold.
+export function inferCollectionType(path: string): CollectionTypeKey {
   const ck = containerKind(path);
   if (ck) return ck;
   if (GITHUB_HOST_RE.test(path) || RAW_GITHUB_HOST_RE.test(path)) return 'github';
@@ -48,44 +54,44 @@ export function inferSourceType(path: string): SourceTypeKey {
   return 'file';
 }
 
-// Fixed human-readable titles for the three container sources. These
-// drive both the displayName backfill and the heading the sources
-// page renders for each container.
+// Fixed human-readable titles for the three container collections.
+// These drive both the displayName backfill and the heading the
+// collections page renders for each container.
 export const CONTAINER_DISPLAY_NAMES: Record<ContainerKind, string> = {
   file: 'Scripts from local disk',
   http: 'Scripts from web',
   github: 'Scripts from GitHub',
 };
 
-// True for manifest sources of any scheme. Thin wrapper so callers
-// don't have to import `directories` just for this. Container sources
-// can never be manifests — their `path` is the synthetic
+// True for manifest collections of any scheme. Thin wrapper so callers
+// don't have to import `directories` just for this. Container
+// collections can never be manifests — their `path` is the synthetic
 // `container:<kind>` identifier.
-export function sourceHasManifest(path: string): boolean {
-  if (isContainerSource(path)) return false;
-  return isManifestSource(path);
+export function collectionHasManifest(path: string): boolean {
+  if (isContainerCollection(path)) return false;
+  return isManifestCollection(path);
 }
 
-// Bubble label / CSS-key for a source. `<type>` when not a manifest,
+// Bubble label / CSS-key for a collection. `<type>` when not a manifest,
 // `<type>-manifest` when it is. Same string powers the CSS class
 // (`bubble-<key>`) and the visible text.
-export function sourceBubbleKey(path: string): string {
-  const t = inferSourceType(path);
-  return sourceHasManifest(path) ? `${t}-manifest` : t;
+export function collectionBubbleKey(path: string): string {
+  const t = inferCollectionType(path);
+  return collectionHasManifest(path) ? `${t}-manifest` : t;
 }
 
-// Openable URL for a source — the link target the bubble uses. For
-// github raw URLs (manifest sources, post-add-time normalization) we
-// return the `github.com/.../blob/...` page URL instead, since the
+// Openable URL for a collection — the link target the bubble uses. For
+// github raw URLs (manifest collections, post-add-time normalization)
+// we return the `github.com/.../blob/...` page URL instead, since the
 // bubble exists for humans to click — the raw bytes are only used
 // internally for fetching. All other http(s) / file:// URLs pass
-// through; raw filesystem paths become file:// URLs so the anchor has
-// a valid href (Chromium typically refuses to navigate to file:// from
-// a chrome-extension page, but the URL is still readable + copyable).
-// Container sources have no underlying URL — return null and let
+// through; raw filesystem paths become file:// URLs so the anchor has a
+// valid href (Chromium typically refuses to navigate to file:// from a
+// chrome-extension page, but the URL is still readable + copyable).
+// Container collections have no underlying URL — return null and let
 // callers render the bubble as a non-link.
-export function sourceClickUrl(path: string): string | null {
-  if (isContainerSource(path)) return null;
+export function collectionClickUrl(path: string): string | null {
+  if (isContainerCollection(path)) return null;
   if (isHttpUrl(path)) {
     return githubRawToBlobUrl(path) ?? path;
   }
@@ -93,11 +99,11 @@ export function sourceClickUrl(path: string): string | null {
   return pathToFileUrl(path);
 }
 
-// Derive a short, human-readable display name from a source path. The
+// Derive a short, human-readable display name from a collection path. The
 // rules trim noise from the beginning, middle, and end of the link:
 //   - drop the protocol prefix (https://, http://, file://)
 //   - drop any `?query` tail
-//   - drop a trailing `/<MANIFEST_FILENAME>` so a manifest source reads
+//   - drop a trailing `/<MANIFEST_FILENAME>` so a manifest collection reads
 //     as the directory that hosts it
 //   - github.com / raw.githubusercontent.com get scheme-specific
 //     simplifications so the common shapes read as `<owner>/<repo>`
@@ -105,7 +111,7 @@ export function sourceClickUrl(path: string): string | null {
 //   - trailing slashes are stripped
 //
 // The result is stable across refreshes (depends only on the path),
-// short enough for the sources-page heading, and a reasonable seed for
+// short enough for the collections-page heading, and a reasonable seed for
 // a future user-renamed displayName.
 export function inferDisplayName(path: string): string {
   const ck = containerKind(path);
@@ -188,7 +194,7 @@ function applyFirstGithubRule(s: string): string {
 // break, not a `/bar` continuation.
 //
 // Use this for any field that may render a long path or URL: the
-// sources page display name, the viewer's Location row, the Match /
+// collections page display name, the viewer's Location row, the Match /
 // Exclude pattern rows, etc.
 export function appendWithSlashBreaks(el: HTMLElement, text: string): void {
   const doc = el.ownerDocument;
@@ -202,46 +208,49 @@ export function appendWithSlashBreaks(el: HTMLElement, text: string): void {
   });
 }
 
-// Canonical sources-page anchor for a source. Lives here (not in
-// sources.ts) so the viewer can link back to the right `#…` without
-// reaching across pages for the helper.
-export function sourceAnchorId(sourceId: string): string {
-  return `source-${sourceId}`;
+// Canonical collections-page anchor for a collection. Lives here (not
+// in collections.ts) so the viewer can link back to the right `#…`
+// without reaching across pages for the helper.
+export function collectionAnchorId(collectionId: string): string {
+  return `collection-${collectionId}`;
 }
 
-// Construct the colored type-bubble for a source. Shared by the
-// sources page (heading) and the userscript viewer (Source row) so the
-// markup, classes, tooltip, and anchor target all stay in lockstep
-// across both views. Returns an `<a>` for sources backed by a real
-// URL/path, and a `<span>` for container sources (which have no
-// underlying URL to link to).
-export function makeSourceTypeBubble(path: string): HTMLElement {
-  const key = sourceBubbleKey(path);
-  const href = sourceClickUrl(path);
+// Construct the colored type-bubble for a collection. Shared by the
+// collections page (heading) and the userscript viewer (Collection row)
+// so the markup, classes, tooltip, and anchor target all stay in
+// lockstep across both views. Returns an `<a>` for collections backed
+// by a real URL/path, and a `<span>` for container collections (which
+// have no underlying URL to link to).
+export function makeCollectionTypeBubble(path: string): HTMLElement {
+  const key = collectionBubbleKey(path);
+  const href = collectionClickUrl(path);
   if (href === null) {
+    // No URL to link to, so the tooltip says why rather than naming the
+    // internal "container" kind — the user never sees that word, only
+    // the "Scripts from …" heading these collections carry.
     const span = document.createElement('span');
-    span.className = `source-type-bubble bubble-${key}`;
+    span.className = `collection-type-bubble bubble-${key}`;
     span.textContent = key;
-    span.title = `Container: ${key}`;
+    span.title = 'Scripts added one at a time — no URL to open';
     return span;
   }
   const a = document.createElement('a');
-  a.className = `source-type-bubble bubble-${key}`;
+  a.className = `collection-type-bubble bubble-${key}`;
   a.textContent = key;
   a.href = href;
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  a.title = `Open source: ${path}`;
+  a.title = `Open collection: ${path}`;
   return a;
 }
 
-// Resolve the display name for a stored source. Prefers an explicit
+// Resolve the display name for a stored collection. Prefers an explicit
 // `displayName` (future user-renamed value); otherwise falls back to
 // the inferred one. The very last fallback is the raw `path` so the
 // UI never renders an empty string.
-export function effectiveDisplayName(source: StoredSource): string {
-  const stored = source.displayName?.trim();
+export function effectiveDisplayName(collection: StoredCollection): string {
+  const stored = collection.displayName?.trim();
   if (stored) return stored;
-  const inferred = inferDisplayName(source.path);
-  return inferred || source.path;
+  const inferred = inferDisplayName(collection.path);
+  return inferred || collection.path;
 }

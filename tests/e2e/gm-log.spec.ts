@@ -28,7 +28,7 @@ test.describe('GM_log', () => {
         document.body.dataset.smLog = typeof GM_log;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -65,7 +65,7 @@ test.describe('GM_log', () => {
         document.body.dataset.smLog = 'ok';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -97,10 +97,10 @@ test.describe('GM_log', () => {
         document.body.dataset.smReady = '1';
       `,
     });
-    const added = await sm.addSource(scriptsDir.path);
+    const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const scriptId = sources.find((s) => s.id === added!.id)!.scriptIds[0];
+    const collections = await sm.getCollections();
+    const scriptId = collections.find((s) => s.id === added!.id)!.scriptIds[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -145,10 +145,10 @@ test.describe('GM_log', () => {
         document.body.dataset.smReady = '1';
       `,
     });
-    const added = await sm.addSource(scriptsDir.path);
+    const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const sources = await sm.getSources();
-    const scriptId = sources.find((s) => s.id === added!.id)!.scriptIds[0];
+    const collections = await sm.getCollections();
+    const scriptId = collections.find((s) => s.id === added!.id)!.scriptIds[0];
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -190,7 +190,7 @@ test.describe('GM_log', () => {
         document.body.dataset.smLogType = typeof GM_log;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

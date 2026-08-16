@@ -1,11 +1,28 @@
 # TODO
 
+A backlog of **candidates**, not a list of obligations.
+
+- Most entries record a deliberate trade-off and the conditions under
+  which it would be worth revisiting — not a defect awaiting a fix.
+  Shipping without any given item here is a valid outcome.
+- Entries exist so a choice already made and reasoned about isn't
+  re-litigated from scratch later. The reasoning matters more than the
+  proposal.
+- Nothing here is scheduled or prioritized. If something genuinely
+  needs doing before release, it belongs in the relevant design doc or
+  an issue, not buried in this file.
+
 ## Skeleton
 
 - Injection follow-ups — see the **Limitations / future work**
   section of [docs/injection.md](docs/injection.md): `@noframes` /
   `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
   all implemented; per-area follow-ups below.)
+  - `allFrames` is no longer a self-contained change: `src/gm-menu.ts`
+    keys menu commands by one `documentId` per tab, which only works
+    while every wrapper shares the top-level document. Re-key it by
+    (tabId, documentId) first, or subframe and top-frame scripts will
+    wipe each other's menu commands.
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -127,9 +144,27 @@ The compile-only check is in (see
     `invalid` at the same `parseCheckKey`, carry the prior status and
     message forward. Nothing was re-derived, so nothing justifies the
     recovery.
+- **A sync-time `invalid` writes no Log entry.** The install/refresh
+  paths seed the script's Log tab; `verifyParseChecks` only flips the
+  row and writes a line to the SW console. So the collections page
+  says "Syntax error: …" while the script's own Log tab can stay empty
+  for the session. Whether the boot-time replay picks it up is a race
+  with `syncRegistrations`.
+- **A tripped sandbox breaker still costs a composed source per row
+  per sync.** `compileParseChecker` builds the checked text *before*
+  `checkParses` reports that the circuit breaker is open, so a browser
+  whose offscreen document never works pays that build for every
+  candidate on every sync. Asking the breaker first would make the
+  degraded case free.
+- **Re-verify `missing` rows too.** The `runSync` gate only re-checks
+  candidates whose status is `ok`; a `missing` row re-enabled from its
+  cached body registers on whatever verdict it last had. Those bodies
+  were checked when they were `ok`, so the hole is narrow — but a row
+  stored before the check existed and then flipped to `missing` skips
+  it entirely.
 - **Don't fetch dependencies twice on install-from-preview.** The
   preview fills `previewFetchCache` to run its check; clicking Install
-  then runs `addSource` → `attachFiles` against the store's own cache,
+  then runs `addCollection` → `attachFiles` against the store's own cache,
   so every `@require` / `@resource` is fetched again. Bridging the two
   caches (or handing the preview's typed entries to the install) would
   halve the third-party traffic that eager fetching introduced.
@@ -228,9 +263,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
   with per-script `@match` validation. VM's `checkCookieOpts` is
   the reference shape.
-- `GM_download` — TM/VM download-to-disk helper. Needs `BLOBS` added
-  to the existing offscreen document's `reasons` (see the clipboard
-  entry — there is only one such document).
 - `window.close` / `window.focus` — TM-only surface. TM's versions
   bypass the browser restrictions that make the page's own
   `window.close()` / `.focus()` no-ops. Both are surprising
@@ -240,10 +272,23 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
+- **Menu commands vanish on a bfcache restore.** `src/gm-menu.ts`
+  holds ONE document's commands per tab, so leaving a page drops its
+  registrations — and Chrome doesn't re-inject on back/forward, so
+  nothing re-registers them. The restored page's callbacks are still
+  alive in its document; only the SW-side mirror is gone, and its
+  action-menu rows stay missing until a real document load.
+  - Fix is a mirror per (tab, document) with an LRU like the one
+    `updateTabMatches` already keeps for `TabMatchState` (see
+    [docs/matching.md](docs/matching.md#per-tab-document-lru-bfcache-restore)),
+    plus a render path that reads the tab's *current* document.
+  - Pre-existing, not introduced by the documentId keying — that
+    only changed the symptom from "shows the previous document's
+    dead rows" to "shows none".
 - **Live `@grant` revocation.** Today `@grant` is baked into the
   wrapper at register time, so changes only take effect on reload.
   Worth doing per-call permission checks (with caching + invalidation
-  broadcasts) if users start expecting sources-page edits to take
+  broadcasts) if users start expecting collections-page edits to take
   effect immediately.
 - **Offscreen-doc fallback for clipboard.** `navigator.clipboard.
   writeText` may reject without focus / transient activation. TM/VM
@@ -282,6 +327,50 @@ Adding any of these is a catalog entry + a body — nothing structural.
   means patching the *page's* `window.addEventListener`.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
+- **`GM_download` follow-ups.**
+  - **Make `downloads` an optional permission.** TM's `not_enabled` /
+    `not_permitted` errors exist because its download support is
+    opt-in. We declare `downloads` unconditionally, which adds a
+    "Manage your downloads" prompt for every user including those who
+    run no downloading scripts. `chrome.permissions.request` needs a
+    user gesture on an extension page, so this means an Options-page
+    toggle plus a `not_permitted` path when it's off (already
+    implemented — the SW checks `chrome.downloads` at call time).
+  - **TM-style file-extension allowlist** (`not_whitelisted`). We rely
+    on Chrome's dangerous-download prompts today. Worth revisiting
+    with the optional-permission work, since both want the same
+    Options-page surface.
+  - **Completion signal for the in-page `blob:` / `data:` path.** The
+    anchor click has none, so `onload` fires ~250 ms after the click
+    rather than on completion — "handed to the browser", not "written
+    to disk". http(s) is unaffected; documented under
+    [download caveats](docs/supported-GM-APIs.md#download-caveats).
+    - The click *does* create a real `chrome.downloads` item and the
+      SW already sees every `onChanged`, so the transfer is
+      observable — we just don't tie it back to a request.
+    - Correlating means matching an unclaimed new download to a
+      pending in-page request by `finalUrl` plus a time window. Two
+      scripts downloading the same blob URL in the same instant are
+      indistinguishable.
+    - The timer would stay as a fallback: a `data:` URL that completes
+      before the SW hears about it must still settle.
+  - **Progress polling interval is fixed at 500 ms.** Fine for a
+    progress bar; a per-request interval (or a rate proportional to
+    file size) would be nicer for very large files. The poll is also
+    what keeps the SW alive across a long download, so a slower rate
+    needs to stay under the ~30 s idle shutdown.
+  - **No recovery after the SW really dies** (browser restart, crash).
+    The `requestId → downloadId → tab` mapping is in-memory, so a
+    download in flight at that moment never reports back. Persisting it
+    in `chrome.storage.session` and re-attaching on SW startup would
+    fix it. Deliberately NOT solved with a page-side TTL the way
+    `GM_xmlhttpRequest` does it — a download can legitimately run for
+    hours, so there's no honest deadline.
+  - **`interrupted` is treated as terminal even when `item.canResume`
+    is true.** Chrome's UI would offer "Resume", and a download the
+    user resumes to completion still reported `not_succeeded` (plus a
+    Log warning). Waiting instead would risk never settling the script
+    at all, so this stays until someone hits it in practice.
 - **Page-side TTL for XHR active requests.** Currently 5 min. Fine
   for now; revisit if real workloads hit it.
 - **Abort-after-response narrow race.** A SW round-trip on abort
@@ -428,7 +517,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **`@connect *` install-time warning.** A wildcard `@connect`
   effectively asks for cross-origin fetch reach against any host.
   TM prompts, VM logs a warning. Surface a "this script wants to
-  talk to any host" signal in the sources-page row at install /
+  talk to any host" signal in the collections-page row at install /
   refresh time.
 
 ## Test coverage gaps
@@ -450,17 +539,34 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
-- **Live repaint** (sources page): a `sources`-index reorder arriving
+- **Live repaint** (collections page): a `collections`-index reorder arriving
   from another origin, and the `.busy-spinner` guards that stop a
   repaint from overwriting a control the user just clicked. The reorder
   case has no test because nothing on the SW test surface moves a
-  source — `moveSource` would have to be exposed first.
+  collection — `moveCollection` would have to be exposed first.
 - **`repaintPage()`'s serialization contract** — that a burst of writes
   collapses into one pass, and that `await repaintPage()` observes the
   caller's own write. The add / remove / refresh tests depend on it but
   only cover it incidentally.
 
-## Sources page — follow-ups
+## Storage-key migration — remove after 2026-09-01
+
+- **`ensureCollectionKeysMigrated` in `src/script-store.ts` is
+  temporary.** "Sources" were renamed to "collections" in August 2026,
+  which moved the `"sources"` index to `"collections"`, every
+  `source:<id>` row to `collection:<id>`, and each script's `sourceId`
+  field to `collectionId`.
+- The helper rewrites a pre-rename profile in place on the first storage
+  read in each JS context, so an upgrade doesn't read as a wiped
+  profile. Every read path in the store awaits it, and `match-index.ts`
+  / `injector.ts` await it before their direct `storage.local` reads.
+- **After 2026-09-01**, delete `ensureCollectionKeysMigrated`,
+  `migrateLegacyCollectionKeys`, `LEGACY_INDEX_KEY`,
+  `LEGACY_COLLECTION_PREFIX`, and the three `await` sites. Any profile
+  still on the old spelling by then re-adds its collections by hand,
+  which is a one-time cost paid by nobody in practice.
+
+## Collections page — follow-ups
 
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
@@ -470,27 +576,27 @@ during cumulative review of the GM_* phases:
   click; the second write then lands and corrects it. A refcount on the
   label would close it.
 
-## HTTP sources — follow-ups
+## HTTP collections — follow-ups
 
-- GitHub directory sources are scanned via the unauthenticated Contents
+- GitHub directory collections are scanned via the unauthenticated Contents
   API (60 req/hour/IP). Worth optimising: stash the listing's ETag and
   send `If-None-Match` on refresh so unchanged dirs don't burn budget.
 - GitHub Contents API pagination. `scanGithubDir` reads only the first
   page; trees with >1000 entries silently truncate. Add `?per_page=100`
-  + Link-header following when a real source hits the cap.
+  + Link-header following when a real collection hits the cap.
 - Branch names containing slashes (e.g. `feature/foo`) aren't supported
   by the github URL parser — the first ref segment is taken as the ref
   and everything after as the path. Disambiguating would need an extra
   branches/tags lookup.
 - Conditional GET on the manifest itself. Today every refresh
   re-fetches and re-parses the manifest body even when nothing
-  changed. Stashing the manifest's ETag/Last-Modified on the source
+  changed. Stashing the manifest's ETag/Last-Modified on the collection
   row would let us skip the manifest-level fetch on 304.
 - End-to-end test coverage for the HTTP pipeline (the in-test
   fixture server can already serve arbitrary files; needs a
-  `*.user.js` route plus a manifest route, then `sm.addSource(url)`).
-- Authenticated sources for non-GitHub hosts (basic-auth header,
-  per-source bearer token, etc.). GitHub PATs are wired up via
+  `*.user.js` route plus a manifest route, then `sm.addCollection(url)`).
+- Authenticated collections for non-GitHub hosts (basic-auth header,
+  per-collection bearer token, etc.). GitHub PATs are wired up via
   `src/github-auth.ts`; everything else still relies on URLs being
   publicly fetchable.
 
@@ -504,18 +610,11 @@ during cumulative review of the GM_* phases:
   contentHash, validators, loadedAt }`. Add a sweeper that drops a
   `require:<hash>` row when its refcount across scripts hits zero.
 - **UI surface for prefetched requires.** The viewer now shows one
-  tab per require with its full source, but the sources page row and
+  tab per require with its full source, but the collections page row and
   the viewer's details panel still don't expose require state. Add a
-  count badge / chip per sources-page row ("3 requires") and a sub-
+  count badge / chip per collections-page row ("3 requires") and a sub-
   list in the viewer details panel showing each require's URL, size,
   and loadedAt.
-- **HTTP conditional GETs on require fetches.** `fetchResourceText`
-  doesn't thread `If-None-Match` / `If-Modified-Since` through the
-  byte fetcher, so every explicit Refresh re-downloads every require
-  body even when the server would have answered 304. Extend
-  fetchResourceBytes (or the require fetcher itself) to send the
-  prior `httpEtag` / `httpLastModified` and to surface a 304 to the
-  caller for the "preserve prior" shortcut.
 - **SRI hash validation.** Tampermonkey honors
   `@require <url>#sha256=…` (and `md5/sha1/sha384/sha512`); we parse
   the URL through resolveScriptResource verbatim and never check the
@@ -530,7 +629,40 @@ during cumulative review of the GM_* phases:
   trusts the local filesystem already. Today the relative-path
   resolution covers same-directory and subdirectory cases; this
   would unblock requiring a file in a sibling directory or under a
-  user-supplied absolute path.
+  user-supplied absolute path. Note the portable answer for that case
+  now exists — see "Local file overrides" below — so this is only about
+  TM-compatible *input*, not about the capability.
+
+## Local file overrides — follow-ups
+
+Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). Search
+roots today: the host script's own folder, then the global list from
+the options page.
+
+- **Per-collection search roots.** The global list covers the common `lib/`
+  layout; a per-collection list would let one directory of scripts search
+  somewhere the rest don't. `StoredCollection.localRoots?: string[]`,
+  ordered implicit-folder → collection → global.
+  - Roots are absolute paths the user types, for the same reason
+    collections are: `<input type="file">` gives no absolute path in
+    Chrome, and `webkitdirectory` only gives relative ones, so a
+    picker can't produce something storable across sessions.
+- **Explicit per-file overrides.** A path the user names for one
+  specific ref, stored as `StoredScript.fileOverrides?: {ref,
+  localPath}[]`, offered from the details panel's dependency rows and
+  from the install preview. Unlike the inferred forms these are safe
+  for an http(s)-sourced host script too — naming the file IS the
+  authorization — which is the case of developing against a script
+  you already installed from the web.
+- **Collections-page visibility.** A collection whose scripts are running on
+  local stand-ins says so only in the viewer today. A per-row marker
+  (or a count on the collection header) would make it visible from the
+  list.
+- **`@icon` stand-ins are not re-read within a page.** They're memoized
+  for the page's lifetime (deliberately — see
+  [docs/local-file-overrides.md](docs/local-file-overrides.md#icon-caching)),
+  so editing an icon needs a reload where editing a `@require` doesn't.
+  Fine today; revisit if icon iteration ever becomes a real workflow.
 
 ## Install capture — follow-ups
 
@@ -545,12 +677,22 @@ that need doing *here* rather than describing there:
   access to file URLs". With the grant missing nothing fires and
   nothing explains why. The options page should read
   `chrome.extension.isAllowedFileSchemeAccess()` and say so next to
-  the capture toggle. The sources page already has a file-access
+  the capture toggle. The collections page already has a file-access
   banner slot to model it on.
 - **Manual check: capture with file access OFF.** Chrome grants file
   access unconditionally to `--load-extension` builds (writing
   `allow_file_access: false` into Preferences does not override it),
   so the e2e suite can only ever exercise the ON case.
+- **Widen the forge page-view list as needed.** `CODE_HOST_PAGE_VIEWS`
+  (`install-capture.ts`) knows github / gitlab / bitbucket / codeberg.
+  An unlisted forge's blob view is still captured; it costs one wasted
+  fetch before the markup guard sends the user on to the page, so this
+  is a polish item, not a correctness one.
+- **Markup gate for `file://` manifests.** `fetchHttpText` rejects a
+  markup response, so an http manifest that answers with a login page
+  is named properly. The `file://` leg of `fetchManifestText` has no
+  such check, and a directory read there surfaces as a `JSON.parse`
+  complaint about `<`.
 - **Drop the Chrome < 152 download workaround** once 152 is the
   supported floor. The DNR session rule, `needsDownloadWorkaround`,
   `parseChromeMajor`, and their tests go together, and the
@@ -560,7 +702,7 @@ that need doing *here* rather than describing there:
 ## Script preview — follow-ups
 
 The preview (`userscript.html?preview=<url>`) is where a captured
-`.user.js` click and a single-script Add Source both land. See
+`.user.js` click and a single-script Add Collection both land. See
 [docs/script-viewer.md](docs/script-viewer.md#preview-mode).
 
 - **Compare against the installed copy.** When the URL is already
@@ -574,7 +716,7 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   before/after per tab, so "what would Update actually change" is
   answerable without leaving the page. Applies to `@require` tabs too.
 - **Preview a whole source.** Directory / manifest / github-dir adds
-  still go straight to `addSource`. Previewing a listing needs a
+  still go straight to `addCollection`. Previewing a listing needs a
   different UI — a table of the scripts that would be added, with
   per-script drill-in — not the single-script layout.
 
@@ -592,6 +734,16 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   too in practice — a 0-byte require is almost always a missing
   file). Worth revisiting if a real use case turns up; today the
   reject is uniform.
+- Page http(s) reads hop to the service worker so a response's
+  `Link: rel=preload` header can't be applied to an extension page
+  (`src/http-read.ts`, and
+  [docs/logging.md](docs/logging.md#keeping-the-errors-panel-clean)).
+  Two loose ends: the hop falls back to fetching in the page when the
+  worker can't be reached, which reopens the leak for that request;
+  and the `acceptContentType` predicate now runs after the body has
+  been downloaded, since a function can't cross the message boundary.
+  Passing a serializable content-type rule instead would restore the
+  early reject.
 - Surface failed / blocked file loads. Today every failure mode in
   `resolveScriptResource` + `fetchResourceBytes` for `@icon` is
   silent (the corresponding `@require` path correctly flips the
@@ -600,7 +752,7 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   viewer can surface a rejected `@icon ../secret.png` in the
   details panel.
 
-## Local directory sources — follow-ups
+## Local directory collections — follow-ups
 
 - Watch for upstream changes to Chrome's `file://` directory-listing
   HTML format that could break `parseListing`.
@@ -623,8 +775,8 @@ Two rough edges are left:
   WARNING/ERROR keeps that badge for the rest of the Chrome session
   even after the Log's newest entry says it recovered. Now that
   recoveries are logged, the badge is the only thing still lying.
-  - It is also why source-level fan-out rows are logged at `info`:
-    anything higher would badge every script under a source from one
+  - It is also why collection-level fan-out rows are logged at `info`:
+    anything higher would badge every script under a collection from one
     transient listing failure.
   - Recomputing the max on every append is too expensive. A recovery
     entry could reset it — but only if the reset can tell "the failure
@@ -637,19 +789,19 @@ Two rough edges are left:
   blocker is that `manual` currently means "not rate-limited", not
   "the user clicked", so the fast-path can't be told apart from a
   Refresh click.
-- **`refreshAllSources` uses `Promise.all`**, so one source throwing
+- **`refreshAllCollections` uses `Promise.all`**, so one collection throwing
   rejects the whole batch — contradicting its own docstring, which
-  claims a failed source doesn't take the rest down. `allSettled`
+  claims a failed collection doesn't take the rest down. `allSettled`
   would make the doc true; the updater currently compensates by
   fanning the throw out to every script.
-- **Vanished manifest entries leak their log rows.** `refreshSource`
+- **Vanished manifest entries leak their log rows.** `refreshCollection`
   drops the `script:` key but not the `log:` / `loglevel:` session
   rows; only `removeScript` cleans both up.
 - **The add-to-existing-container path emits no recovery rows.** It
   refreshes every sibling but only restates load failures, so a
   sibling that recovered during that refresh never logs it (and the
   next refresh compares against the already-healthy row). Sharing
-  `summarizeSourceOutcome` would fix it, but that lives in
+  `summarizeCollectionOutcome` would fix it, but that lives in
   `script-updater.ts`, which imports `script-store.ts`.
 
 ## Registration rejections — follow-ups
@@ -694,7 +846,7 @@ itself once a sync places it. What's missing:
   or a dropped `@match` is only visible after installing.
 - **Registration has no single owner across contexts.** The lock in
   `src/injector.ts` serializes registration work within one JS context,
-  but the sources page and the viewer call
+  but the collections page and the viewer call
   `retryRejectedRegistrations` in theirs, so a page-side registration
   can still land in the middle of the SW's sync. `registerReplacing`
   makes that survivable (the id is replaced, not reported as a
@@ -741,6 +893,10 @@ they follow are in
   - Same condition covers `fetchResourceText`, which still returns
     `string | null`: the bytes fetcher knows which failure it was, and
     the probe is the only caller that throws that away.
+  - A probe URL that answers with a web page is the same story: nothing
+    on that path applies the markup gate (`markup-response.ts`), so a
+    login wall reads as `no @version` rather than as a page. Worth
+    folding in whenever the row's wording is revisited.
 
 ## Testing and example TODOs
 
@@ -761,14 +917,24 @@ they follow are in
 
 ## Feature TODOs and ideas
 
-- nice UI for sources page
-- nice UI for script page and logging
+### Collections page
+
+- control to view by file/url location or by name
+- sort by name or location
+- filtered view
+- collapse a collection
+- smoother add collection/script flow, maybe a dialog box
+
+### Page status menu / widget
+
 - status widget instead of context menu for running scripts
-- smoother add source/script flow, maybe a dialog box
+- enable / disable a script on that page
+- choose which version of a script to use
+
+### Other
+
+- auto-reload any page if scripts on it have updated (maybe just for manual focused refresh, and do double-refresh if a new script is discovered but not ready)
 - relative paths for dev, absolute paths for release (for requires & resources)
-- fix caveats with the new multi-file script injection model:
-  - reload fast-path doesn't work right?
-  - global vars don't go across scripts (except with exports)
 - download a script to local disk for editing / debugging
 - keep links between local and remote version of a script, select which
   to run. (The *reporting* half shipped — see
@@ -780,5 +946,33 @@ they follow are in
   separate — the refresh still does its own conditional GET. Worth
   little for hosts that return ETags; worth more for a large script on
   a host that doesn't.
-
-
+- surface `GM_download` / `GM_openInTab` in the details panel. The
+  panel dropped the `@grant` row on the grounds that `@connect` already
+  carries the network story and the rest of the GM surface acts within
+  the page's own reach — but these two are the exception: they reach
+  the user's download directory and any URL respectively, and neither
+  is `@connect`-gated. A `@grant` row for those two names alone would
+  be noise-free, but it needs a wording that reads as a capability
+  rather than a tag dump.
+- large collections still blow past `chrome.storage.local` (and RAM). The
+  refresh fan-out is bounded now (`src/concurrency.ts`), but the whole
+  result set — every script body, plus prefetched `@require` /
+  `@resource` payloads — is still held live and then written in one
+  `set`. Open pieces:
+  - No `unlimitedStorage` permission, so the whole extension shares a
+    10 MB `storage.local` budget. Decide between taking the permission
+    and moving bodies out of `storage.local`.
+  - Reporting the failure is done (`src/refresh-error.ts`) — what's
+    left is not hitting it. The user still has to work out for
+    themselves that one enormous collection is what filled the budget;
+    the banner names total usage, not the collection responsible. A
+    per-collection size figure would point straight at the culprit, and
+    needs a cheap way to measure one collection's share.
+  - No cap on scripts per collection; a directory of a few thousand is
+    accepted silently and then fails late.
+  - Other unbounded `Promise.all` fan-outs on the same
+    thousands-of-scripts path, all of them storage writes rather than
+    fetches (so lighter per item, but still one-per-script):
+    `emitInitialLoadLog` over a freshly added collection
+    (`src/script-store.ts`), and the boot log replay in
+    `src/script-updater.ts`. Both want `mapWithConcurrency`.

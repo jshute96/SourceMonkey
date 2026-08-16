@@ -11,7 +11,7 @@
 //
 // What gets probed: only `@updateURL` / `@downloadURL` values that
 // differ from the URL we load the script from. We already auto-update
-// from our own source — local files via the scan's size+mtime check,
+// from our own collection — local files via the scan's size+mtime check,
 // http(s) via a conditional GET — so probing it would be a slower way
 // to learn what the refresh that just ran already established.
 //
@@ -57,7 +57,7 @@ export type ProbePolicy = 'force' | 'if-stale';
 // How long a recorded probe stays fresh. Probes hit third-party hosts
 // on somebody else's page load, and an upstream release is a
 // once-in-weeks event, so this is deliberately hours rather than the
-// seconds the source-refresh gate uses.
+// seconds the collection-refresh gate uses.
 export const PROBE_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // Canonical form for comparing a probe URL against the script's own
@@ -142,8 +142,19 @@ export function outdatedProbe(
   return furthestAhead;
 }
 
-// Row label for a probe: "update URL", "download URL", or the combined
-// form when one URL is named by both headers.
+// Row label for a probe: "update URL" or "download URL".
+//
+// When ONE url is named by both headers the label says "update URL"
+// rather than spelling out both. `@updateURL` is the header that means
+// "check here for a new version", so it is the accurate name for what
+// we did; `@downloadURL` naming the same file is a detail of the
+// script's headers, not of the check. Spelling out both made the
+// longest label in the panel, for a distinction the reader can't act
+// on — the row's tooltip carries the URL either way.
+//
+// No ambiguity with a plain update probe: the combined form only
+// exists when the two headers resolve to the same URL, and two probes
+// for one URL is exactly what it's collapsing.
 export function probeLabel(kinds: readonly ProbeKind[]): string {
-  return `${kinds.join('/')} URL`;
+  return kinds.includes('update') ? 'update URL' : 'download URL';
 }

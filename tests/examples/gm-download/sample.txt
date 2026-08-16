@@ -1,0 +1,5 @@
+Hello from the SourceMonkey GM_download example.
+
+This file exists so the example page has something small and boring to
+download over http(s). A `.txt` extension keeps it inside the default
+file-extension allowlists some userscript managers apply to downloads.

@@ -17,25 +17,35 @@ or UI surface refers to it.
 - Dupe basenames: each dupe gets a `#N` suffix
   (`foo.user.js#1`, `foo.user.js#2`, ...).
 - Dupe ordering: sorted by stable UUID `id` lexicographically.
-  Arbitrary but deterministic — the SW and the sources page agree.
+  Arbitrary but deterministic — the SW and the collections page agree.
 
 ### Where you see them
 
 - SW console — every `[SourceMonkey] …` line that mentions a script
   uses its log ID. See [the message list below](#message-catalog).
-- Sources page — a faint `#N` is rendered after the filename link
+- Collections page — a faint `#N` is rendered after the name link
   whenever a script is part of a dupe group. No suffix for unique
   basenames.
-- Userscript viewer — a `Log ID` row in the details panel, always
-  visible for an installed script. Absent in preview mode, which is
-  showing a script that has never run.
+  - The column shows the script's `@name`, so the suffix can sit beside
+    a name that isn't the basename it was computed from. It is still
+    the marker that tells two rows apart in the SW console, which is
+    what it is there for.
+  - The converse: two scripts sharing an `@name` but not a basename
+    render as two identically labelled rows with no suffix.
+  - Either way the name link's tooltip leads with the location, so what
+    tells the rows apart is one hover away.
+- Userscript viewer — a `Log ID` row in the details panel, but only
+  for a script whose ID carries a `#N`. A unique log ID is just the
+  basename, which the heading and the `Location` row already say.
+  Absent in preview mode, which is showing a script that has never
+  run.
 
 ### Implementation
 
 `src/script-log-id.ts`:
 
 - Pure: `computeLogIds(scripts)` (over `scriptBasename` from
-  `script-display.ts`) — used by the sources page + viewer at render
+  `script-display.ts`) — used by the collections page + viewer at render
   time and unit-tested directly.
 - SW runtime: a `Map<id, {id, relativePath}>` populated by one
   `chrome.storage.local.get(null)` scan at SW startup
@@ -49,7 +59,7 @@ or UI surface refers to it.
 ### Dupe reshuffle behavior
 
 Adding/removing a script in a dupe group can renumber siblings. The
-sources page recomputes its `currentLogIds` after every
+collections page recomputes its `currentLogIds` after every
 add/remove/refresh and walks `applyLogIdSuffixesToDom()` over OTHER
 sections so their suffixes stay in sync after a partial re-render.
 
@@ -61,7 +71,7 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 
 - Off by default.
 - Toggle: "Enable debug logging" checkbox on the Options page
-  (linked from the top of the sources page).
+  (linked from the top of the collections page).
 - Storage key: `chrome.storage.local.smDebugLogging` — set/clear
   from DevTools to flip without the UI.
 - Live update: the SW listens via `storage.onChanged` so the change
@@ -69,18 +79,18 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
 
 ## GitHub-token suffix
 
-Source-refresh and per-script update-check log lines get an extra
+Collection-refresh and per-script update-check log lines get an extra
 ` (with GitHub token)` suffix when the URL would carry the Options-
 page GitHub PAT (`src/github-auth.ts`, host-gated):
 
-- `source refresh (mode): <path> (with GitHub token)` — fires when
-  the source is a github.com / raw.githubusercontent.com URL AND a
+- `collection refresh (mode): <path> (with GitHub token)` — fires when
+  the collection is a github.com / raw.githubusercontent.com URL AND a
   token is configured.
 - `update check (mode): <logId> (with GitHub token)` — same idea for
   per-script checks whose `fileUrl` is a GitHub URL.
 
 Empty suffix when no token is set, or when the URL isn't GitHub —
-non-GitHub sources stay quiet.
+non-GitHub collections stay quiet.
 
 ## Message catalog
 
@@ -105,14 +115,20 @@ interpolates the same `message` the Log row uses.
 | `update check: <logId>: invalid — <msg>` | no | info |
 | `refresh failed: <logId>: <reason>` (transition / reason change only) | no | info |
 | `<logId>: Newer version <v> at <kind> URL (running <v>) — <url>` (version change only) | no | info |
-| `source refresh (mode): <path>` | no | log |
-| `source refresh: <path>: <summary>` | no | log |
-| `source refresh failed: <path>: <err>` | no | info |
-| `refreshing all sources (mode)` | no | log |
+| `collection refresh (mode): <path>` | no | log |
+| `collection refresh: <path>: <summary>` | no | log |
+| `collection refresh failed: <path>: <err>` | no | info |
+| `refreshing all collections (mode)` | no | log |
 | `start <logId> tab=<n> <url>` | no | log |
 | `swapped <logId> tab=<n> <url> (loadedAt …)` | no | log |
 | `abandoned <logId> tab=<n> <url> (reason=…)` | no | log |
 | `error <logId> tab=<n> <url>: <msg>` | no | info |
+| `migrated N collections and M scripts to the collection:* key spelling` | no | log |
+| `collection-key migration failed <err>` | no | info |
+
+The last two fire at most once per JS context, and only on a profile
+written before the August 2026 sources → collections rename — see
+[storage.md](storage.md#legacy-key-migration-temporary).
 
 Per-script `parser`-source rows (e.g. `Ignoring @grant <names> — unsupported APIs`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
 
@@ -127,6 +143,35 @@ panel. All diagnostic chatter uses `console.info` so it stays in the
 relevant DevTools console only. Severity for the viewer's Log tab is a
 separate channel (the per-script log `level` + `sm:*` reports) and is
 unaffected.
+
+## Keeping the Errors panel clean
+
+The `console.warn` / `.error` ban above is only the loudest route into
+`chrome://extensions/?errors`. Other routes reach it without any
+console call at all, and each has its own countermeasure:
+
+- **Unhandled promise rejections in an extension page.** A dropped
+  `chrome.*` promise is reported as an uncaught error against the
+  extension. `chrome.tabs.create` on a `file://` URL rejects outright
+  while "Allow access to file URLs" is off, so the viewer's
+  open-in-a-tab paths return their promises and report the failure into
+  the message bar (plus the file-access banner) instead of dropping
+  them.
+- **A registered userscript entry that doesn't compile.** V8's
+  `SyntaxError` is raised before any of our code runs, so nothing can
+  catch it. The answer is to never register such an entry — the parse
+  check ([parse-check.md](parse-check.md)) runs at install/refresh
+  time, and `runSync` re-checks any candidate whose verdict is missing
+  or stale before registering it.
+- **Preload hints on a response an extension PAGE fetched.** Chrome
+  applies a response's `Link: <…>; rel=preload; as=script` header to
+  the document that asked, then refuses the preload under the page's
+  `script-src 'self'`. Any site that preloads its bundles sends one, and
+  we fetch site HTML (the site-icon probe) and arbitrary script URLs
+  (Add / Refresh / the install preview) from pages. So a page hands its
+  http(s) reads to the service worker, which has no document for the
+  hint to apply to — `src/http-read.ts`, used by both `fetchHttpText`
+  and `fetchResourceBytes`. See `tests/e2e/preload-hints.spec.ts`.
 
 ## Page-console "startup logs"
 

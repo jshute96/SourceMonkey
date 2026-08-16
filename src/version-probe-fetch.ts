@@ -1,10 +1,11 @@
 // The fetching half of update probes. Split from `version-probe.ts` so
 // the pure half — target selection, the outdated verdict, the staleness
 // gate — can be imported by display code (`script-display.ts`,
-// `sources.ts`, `script-details.ts`) without dragging the whole fetch
+// `collections.ts`, `script-details.ts`) without dragging the whole fetch
 // stack into every extension page. Only `script-updater.ts` needs this
 // module. See [docs/updates.md].
 
+import { mapWithConcurrency, PROBE_URLS_PER_SCRIPT_CONCURRENCY } from './concurrency.js';
 import { fetchResourceText } from './file-loader.js';
 import { getValue, parseHeader } from './userscript-header.js';
 import type { ProbeTarget, VersionProbe } from './version-probe.js';
@@ -14,10 +15,6 @@ import type { ProbeTarget, VersionProbe } from './version-probe.js';
 // not reading a userscript header, we're downloading something else.
 const PROBE_MAX_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 5000;
-// Cap on simultaneous probe fetches within one pass. Refresh All can
-// hand us every script in every source at once; each probe is a
-// cross-origin request of up to PROBE_MAX_BYTES.
-const PROBE_CONCURRENCY = 4;
 
 // Fetch one target and read its `@version`. Never throws and never
 // reports anything but a `VersionProbe` — a probe failure is a display
@@ -62,24 +59,23 @@ export async function runProbe(
   return { kinds: target.kinds, url: target.url, checkedAt: now, version: version.trim() };
 }
 
-// Probe every target, at most PROBE_CONCURRENCY at a time. Takes the
-// targets rather than re-deriving them from the header, because the
-// caller already needed them for the staleness check and the two must
-// agree. Result order matches `targets`.
+// Probe every target of ONE script, at most
+// PROBE_URLS_PER_SCRIPT_CONCURRENCY at a time — a guard that cannot bind
+// at today's two-targets-per-script maximum. What actually caps a
+// Refresh All burst is PROBE_SCRIPTS_CONCURRENCY, one level up in
+// `runVersionProbes`.
+//
+// Takes the targets rather than re-deriving them from the header,
+// because the caller already needed them for the staleness check and the
+// two must agree. Result order matches `targets`.
 export async function probeVersions(
   targets: readonly ProbeTarget[],
   now: number,
   prior?: readonly VersionProbe[],
 ): Promise<VersionProbe[]> {
   const priorByUrl = new Map((prior ?? []).map((p) => [p.url, p]));
-  const out: VersionProbe[] = new Array<VersionProbe>(targets.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (let i = next++; i < targets.length; i = next++) {
-      out[i] = await runProbe(targets[i], now, priorByUrl.get(targets[i].url));
-    }
-  };
-  const workers = Math.min(PROBE_CONCURRENCY, targets.length);
-  await Promise.all(Array.from({ length: workers }, worker));
-  return out;
+  return await mapWithConcurrency(
+    targets, PROBE_URLS_PER_SCRIPT_CONCURRENCY,
+    (target) => runProbe(target, now, priorByUrl.get(target.url)),
+  );
 }

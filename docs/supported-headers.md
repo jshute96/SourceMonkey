@@ -41,7 +41,7 @@ If you want to cross-check by hand, fetch those three pages.
 | `@namespace` | ⚪ | ✓ | ✓ | ✓ | TM/VM/GM combine it with `@name` as a unique storage key. SourceMonkey keys scripts by their UUID, so this has no effect here. |
 | `@version` | 👁 | ✓ | ✓ | ✓ | Shown in the viewer, and compared against whatever `@updateURL` / `@downloadURL` declare to flag an OUTDATED script — see [updates.md](updates.md). Not used to decide whether to *fetch*: that's driven by `size+mtime` / conditional GET against the install source. |
 | `@description` | 👁 | ✓ | ✓ | ✓ | Shown in the userscript viewer summary. |
-| `@author` | ⚪ | ✓ |   |   | Not part of VM's or GM4's documented tag set (GM explicitly notes it's "ignored but readable" — i.e. preserved in source, not honored as metadata). |
+| `@author` | ⚪ | ✓ |   |   | Not part of VM's or GM4's documented tag set (GM explicitly notes it's "ignored but readable" — i.e. preserved in collection, not honored as metadata). |
 | `@copyright` | ⚪ | ✓ |   |   | TM-only per docs. |
 | `@homepage` / `@website` / `@source` | ⚪ | ✓ |   |   | TM treats these as aliases for `@homepageURL`. VM and GM4 don't document the aliases — only `@homepageURL` (VM) or nothing (GM4). |
 | `@homepageURL` | ⚪ | ✓ | ✓ |   | The canonical form. Links the "home" icon in TM/VM's script list. |
@@ -51,7 +51,7 @@ If you want to cross-check by hand, fetch those three pages.
 | `@icon64` / `@icon64URL` | ✅ | ✓ |   |   | 64×64 variant; TM-only per docs. Lower priority than the regular `@icon` variants since our display target is 16×16. |
 | `@tag` (categorization) | ⚪ | ✓ (5.0+) | ✓ |   | Labels for organising scripts in the dashboard. Distinct from "the metadata tag concept" generally. |
 | `@antifeature` | ⚪ | ✓ |   |   | Monetisation/tracking disclosure. TM documents it; VM and GM4 don't. Widely used by GreasyFork tooling regardless. |
-| `@license` | ⚪ |   |   |   | Not documented by any of TM/VM/GM4. Used in practice by source-sharing sites (OpenUserJS, GreasyFork) as plain metadata. |
+| `@license` | ⚪ |   |   |   | Not documented by any of TM/VM/GM4. Used in practice by collection-sharing sites (OpenUserJS, GreasyFork) as plain metadata. |
 
 ---
 
@@ -75,7 +75,7 @@ below can repeat; order doesn't matter.
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | Every userscript registers with Chrome at `document_start`; the wrapper itself awaits the matching lifecycle event before running the body (`document-end` → `DOMContentLoaded`, `document-idle` → `load`, `document-body` → `document.body` exists). This sidesteps Chrome's `chrome.userScripts` scheduler batching `document_end` and `document_idle` into a single post-`load` burst. See [docs/injection.md](injection.md#run-at-gating). **Not supported:** `context-menu` — falls through to `document-idle`. GM4 docs warn only `document-end` is reliable there. |
 | `@inject-into` | ✅ |   | ✓ |   | VM-specific. `page` → MAIN world. `content` → USER_SCRIPT (isolated) world. `auto` / unset falls through to `@grant` (see [injection.md → Execution world](injection.md#execution-world)). TM uses `@sandbox` for the same purpose. |
-| `@noframes` | ⚪ | ✓ | ✓ | ✓ | Should map to Chrome's `allFrames: false`. Currently every script runs in the top frame only because we don't set `allFrames` at all, so this happens to be the right behavior *by accident* — but a script that wants the opposite (also run in frames) can't get it. |
+| `@noframes` | ⚪ | ✓ | ✓ | ✓ | Should map to Chrome's `allFrames: false`. Currently every script runs in the top frame only because we don't set `allFrames` at all, so this happens to be the right behavior *by accident* — but a script that wants the opposite (also run in frames) can't get it. Running in frames also needs the menu-command registry re-keyed first — see the frame-control note in [injection.md](injection.md#limitations--future-work). |
 | `@run-in` | ⚪ | ✓ (5.3+) |   |   | Normal vs incognito vs Firefox containers. TM-only. |
 | `@sandbox` | ⚪ | ✓ (4.18+) |   |   | TM's world-selector. SourceMonkey uses `@inject-into` instead, mirroring VM. |
 | `@unwrap` | ⚪ | ✓ | ✓ |   | Inject the body without our activation/error shim. We always wrap — see [injection.md](injection.md#the-activation--error-wrapper). |
@@ -89,7 +89,7 @@ below can repeat; order doesn't matter.
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@grant none` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → MAIN. Multiple `@grant none` lines are accepted. |
 | `@grant <api>` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → USER_SCRIPT and emits a compile-in binding for the named API. Both legacy `GM_x` and GM4 `GM.x` forms are accepted on the same line; both map to the same canonical name and both bindings are exposed in scope. Unknown / typoed names log a `console.info` and are silently dropped (the script gets a natural `ReferenceError` at call time). The non-`GM_*` grants (`unsafeWindow`, `window.onurlchange`, …) don't all emit a binding — see [supported-GM-APIs.md](supported-GM-APIs.md#non-gm-grants). For the inventory of which API names are implemented vs stubbed see [supported-GM-APIs.md](supported-GM-APIs.md). |
-| `@connect` | ✅ | ✓ | ✓ |   | Allowlist for `GM_xmlhttpRequest` URLs. **Strict-by-default**: a script with no `@connect` lines is blocked from every cross-origin request — matches VM. Forms: `*` (wildcard), `self` (script's own `@match`/`@include` hosts), `example.com` (exact host), `*.example.com` (host + any subdomain). Scheme-prefixed URLs (`https://example.com`) normalize to host. See [GM-APIs.md](GM-APIs.md#connect-url-gating-phase-10). |
+| `@connect` | ✅ | ✓ | ✓ |   | Allowlist for `GM_xmlhttpRequest` URLs **only** — it does not gate `GM_download` (see [supported-GM-APIs.md](supported-GM-APIs.md#connect-does-not-gate-downloads); TM doesn't gate downloads on it either). **Strict-by-default**: a script with no `@connect` lines is blocked from every cross-origin request — matches VM. Forms: `*` (wildcard), `self` (script's own `@match`/`@include` hosts), `example.com` (exact host), `*.example.com` (host + any subdomain). Scheme-prefixed URLs (`https://example.com`) normalize to host. See [GM-APIs.md](GM-APIs.md#connect-url-gating-phase-10). |
 | `@webRequest` | ⚪ | ✓ |   |   | TM-only, experimental, MV2 only. |
 
 ---
@@ -138,6 +138,21 @@ The URL may carry a `#sha256=…` (or `md5`, `sha1`, `sha384`,
 the SRI fragment is parsed-and-preserved only — not yet validated.
 TM documents the full syntax; VM and GM4 don't document SRI in their
 metadata pages.
+
+It is stripped from what a human reads — the viewer's tab tooltips, the
+details panel's `Local overrides` tooltips, and Log lines — since a
+64-hex-digit tail is most of the width of those surfaces and nothing the
+reader can act on. Fetching,
+resolution, dedup, storage, and error messages all keep the verbatim
+reference.
+
+## Local files in place of a declared URL
+
+For a script loaded from `file://`, an absolute `http(s)` `@require`,
+`@resource`, or `@icon` can be served from a matching file on disk
+beside the script. Lets a published script keep the portable absolute
+URL that other managers require while still being developed locally.
+See [local-file-overrides.md](local-file-overrides.md).
 
 ---
 

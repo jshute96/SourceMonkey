@@ -33,8 +33,8 @@ test.describe('userscript viewer link rendering', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts.find((s) => s.relativePath === 'a.user.js')!;
 
     const page = await openViewer(extensionContext, extensionId, script.id);
@@ -61,8 +61,8 @@ test.describe('userscript viewer link rendering', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts.find((s) => s.relativePath === 'b.user.js')!;
 
     const page = await openViewer(extensionContext, extensionId, script.id);
@@ -70,7 +70,7 @@ test.describe('userscript viewer link rendering', () => {
       .locator('#header-summary dt', { hasText: 'Location' })
       .locator('+ dd a.filename-text');
     // Bare-fs-path display (no file:// scheme), but anchor href is the
-    // canonical fetchable URL — file:// for an addSource(<dir>) case.
+    // canonical fetchable URL — file:// for an addCollection(<dir>) case.
     await expect(locationAnchor).toHaveAttribute('target', '_blank');
     const href = await locationAnchor.getAttribute('href');
     expect(href).toMatch(/^file:\/\//);
@@ -90,8 +90,8 @@ test.describe('userscript viewer link rendering', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts.find((s) => s.relativePath === 'e.user.js')!;
 
     const page = await openViewer(extensionContext, extensionId, script.id);
@@ -103,6 +103,49 @@ test.describe('userscript viewer link rendering', () => {
       'href',
       'https://www.nytimes.com/athletic/',
     );
+    await page.close();
+  });
+
+  test('site-less Match patterns link into the script directory', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The shape the bundled example scripts use: a host-wildcard pair
+    // naming a page that ships beside the script. Both members resolve
+    // to the same file next to `demo.user.js`; the third pattern names
+    // no directory to anchor on and stays plain text.
+    scriptsDir.write({
+      relativePath: 'demo/demo.user.js',
+      meta: {
+        name: 'D',
+        match: [
+          '*://*/demo/demo.html',
+          'file:///*/demo/demo.html',
+          '*://*/loose.html',
+        ],
+      },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
+    const script = got!.scripts.find((s) => s.relativePath === 'demo/demo.user.js')!;
+    const expectedHref = script.fileUrl.replace(/demo\.user\.js$/, 'demo.html');
+
+    const page = await openViewer(extensionContext, extensionId, script.id);
+    const matchRow = page.locator('#header-summary dt', { hasText: 'Match' }).locator('+ dd');
+
+    for (const i of [0, 1]) {
+      const anchor = matchRow.locator('li').nth(i).locator('a');
+      await expect(anchor).toHaveAttribute('href', expectedHref);
+    }
+    await expect(matchRow.locator('li').nth(2).locator('a')).toHaveCount(0);
+    await expect(matchRow.locator('li').nth(2)).toHaveText('*://*/loose.html');
+
+    // Same rule in the code box, where the anchor text is the pattern.
+    await expect(page.locator('#content .token.comment').first()).toBeVisible();
+    const bodyAnchor = page.locator(`#content a[href="${expectedHref}"]`);
+    await expect(bodyAnchor).toHaveCount(2);
+    await expect(bodyAnchor.first()).toHaveText('*://*/demo/demo.html');
+
     await page.close();
   });
 
@@ -124,8 +167,8 @@ test.describe('userscript viewer link rendering', () => {
       },
       body: 'const x = 1;\n',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts.find((s) => s.relativePath === 'c.user.js')!;
 
     const page = await openViewer(extensionContext, extensionId, script.id);
@@ -198,8 +241,8 @@ test.describe('userscript viewer link rendering', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts.find((s) => s.relativePath === 'd.user.js')!;
 
     const page = await extensionContext.newPage();
@@ -232,8 +275,8 @@ test.describe('userscript viewer link rendering', () => {
         'console.log(marker);',
       ].join('\n'),
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts.find((s) => s.relativePath === 'spoof.user.js')!;
 
     const page = await extensionContext.newPage();

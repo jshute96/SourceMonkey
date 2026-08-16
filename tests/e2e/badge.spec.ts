@@ -1,5 +1,5 @@
 // End-to-end badge state: matching → green, error → red, post-update
-// stale → purple, source disabled → empty. Exercises the real
+// stale → purple, collection disabled → empty. Exercises the real
 // chrome.action surface, the chrome.webNavigation listener, and the
 // sm:start / sm:error pipeline from injected wrappers back to the SW.
 
@@ -47,14 +47,27 @@ test.describe('badge', () => {
       meta: { name: 'Hello', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'hello';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    const snap = await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'badge green=1');
+    // The title is part of the wait, not just the assertion — as it is
+    // in every other title check in this file. `getTabState` reads the
+    // badge text, color, and title as separate chrome.action calls, so a
+    // repaint landing between them returns a snapshot that mixes two
+    // states: green (settled) beside `MISSING` (the moment before). That
+    // pairing is impossible in the product — MISSING forces amber — so
+    // waiting on only the badge and asserting on the title is a race
+    // against the read, not against the state.
+    const snap = await waitForTabState(
+      sm,
+      tabId,
+      (s) => s.badgeText === '1' && hasColor(s, GREEN) && s.title.includes('Hello | OK'),
+      'badge green=1 + OK title',
+    );
     expect(snap.badgeText).toBe('1');
     expect(snap.title).toContain('Hello | OK');
     await page.close();
@@ -68,7 +81,7 @@ test.describe('badge', () => {
       meta: { name: 'Boom', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `throw new Error('intentional test failure');`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -97,7 +110,7 @@ test.describe('badge', () => {
       meta: { name: 'Live', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'v1';`,
     });
-    const added = await sm.addSource(scriptsDir.path);
+    const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -110,7 +123,7 @@ test.describe('badge', () => {
     // manual refresh through the updater. The SW's storage.onChanged
     // listener should fire markScriptStale for this tab.
     scriptsDir.rewriteBody('live.user.js', `document.title = 'v2';`);
-    await sm.updateSource(added!.id, 'manual');
+    await sm.updateCollection(added!.id, 'manual');
 
     // Wait on the colour AND the title together. `renderBadge` awaits
     // `setBadgeBackgroundColor` before `setTitle`, so a state sampled
@@ -127,7 +140,7 @@ test.describe('badge', () => {
     // Reload the page → new wrapper runs the fresh body → back to green.
     // syncNow before reload so chrome.userScripts is registered with
     // the v2 body before navigation; otherwise the debounced sync that
-    // updateSource scheduled may not have run yet, and the reload would
+    // updateCollection scheduled may not have run yet, and the reload would
     // re-inject v1.
     await sm.syncNow();
     await page.reload();
@@ -136,7 +149,7 @@ test.describe('badge', () => {
     await page.close();
   });
 
-  test('empty badge when source is disabled', async ({
+  test('empty badge when collection is disabled', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     scriptsDir.write({
@@ -144,8 +157,8 @@ test.describe('badge', () => {
       meta: { name: 'A', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: ``,
     });
-    const added = await sm.addSource(scriptsDir.path);
-    await sm.setSourceEnabled(added!.id, false);
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.setCollectionEnabled(added!.id, false);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -174,7 +187,7 @@ test.describe('badge', () => {
       meta: { name: 'Ghost', match: [`${fixtureServer.baseUrl}/*`], grant: ['unsafeWindow'], runAt: 'document-end' },
       body: ``,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
     // Drop the script from chrome.userScripts so it's expected but
     // never actually runs.

@@ -1,17 +1,17 @@
 // End-to-end coverage of the `@require` pipeline.
 //
-//   - A `@require` declared on a userscript is prefetched at addSource
+//   - A `@require` declared on a userscript is prefetched at addCollection
 //     time and concatenated before the body when chrome.userScripts
 //     registers the script. The DOM mutation is the proof: it only
 //     runs if the require's exported function survived the prepend.
 //   - Relative `@require` paths resolve against the script's parent
 //     dir (the same file-loader rule `@icon` uses) — works for both
-//     file:// and HTTP sources.
+//     file:// and HTTP collections.
 //   - Refusing dangerous refs (path traversal, non-`.js` suffix,
 //     absolute file://) flips the script to status: 'invalid' and the
 //     injection never happens.
 //   - Cross-script dedup: two scripts requiring the same canonical URL
-//     share one fetch in a refreshAllSources pass.
+//     share one fetch in a refreshAllCollections pass.
 //   - Shared scope: requires are concatenated ahead of the body in a
 //     single injected entry, so a library's top-level `const`/`class`
 //     is simply visible to the script — including the minified,
@@ -56,8 +56,8 @@ test.describe('@require', () => {
       },
       body: 'void window.__SM_REQ_VALUE;',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
     expect(data!.scripts[0].requires).toHaveLength(1);
     expect(data!.scripts[0].requires?.[0]?.url).toMatch(/\/lib\.js$/);
@@ -81,8 +81,8 @@ test.describe('@require', () => {
         '// ==/UserScript==',
         '',
       ].join('\n'));
-      const source = await sm.addSource(`${server.baseUrl}/pkg/main.user.js`);
-      const data = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(`${server.baseUrl}/pkg/main.user.js`);
+      const data = await sm.getCollectionWithScripts(collection!.id);
       expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
       expect(data!.scripts[0].requires).toHaveLength(1);
       expect(data!.scripts[0].requires?.[0]?.url).toBe(`${server.baseUrl}/pkg/lib.js`);
@@ -107,8 +107,8 @@ test.describe('@require', () => {
       },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const data = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
     expect(data!.scripts[0].status).toBe('invalid');
     expect(data!.scripts[0].errorMessage).toMatch(/must end in \.js/);
   });
@@ -132,8 +132,8 @@ test.describe('@require', () => {
           '',
         ].join('\n'),
       );
-      const source = await sm.addSource(child);
-      const data = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(child);
+      const data = await sm.getCollectionWithScripts(collection!.id);
       expect(data!.scripts[0].status).toBe('invalid');
       // Names the containment rule specifically — a `../` ref and an
       // unsupported scheme are different mistakes and used to share
@@ -168,9 +168,9 @@ test.describe('@require', () => {
         '',
       ].join('\n'));
       server.setManifest('/pkg/script_manifest.json', ['a.user.js', 'b.user.js']);
-      await sm.addSource(`${server.baseUrl}/pkg/script_manifest.json`);
+      await sm.addCollection(`${server.baseUrl}/pkg/script_manifest.json`);
       // Both scripts' requires resolve to the same URL — must hit it
-      // exactly once during the addSource refresh pass.
+      // exactly once during the addCollection refresh pass.
       expect(server.countResponses('/lib.js', 200)).toBe(1);
     } finally {
       await server.stop();
@@ -195,16 +195,16 @@ test.describe('@require', () => {
         '// ==/UserScript==',
         '',
       ].join('\n'));
-      const source = await sm.addSource(`${server.baseUrl}/main.user.js`);
-      const before = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(`${server.baseUrl}/main.user.js`);
+      const before = await sm.getCollectionWithScripts(collection!.id);
       expect(before!.scripts[0].status).toBe('ok');
       expect(before!.scripts[0].requires?.[0]?.source).toBe(requireBody);
 
       // Pull the dependency from the server. Next refresh: require
       // can't be fetched.
       server.removeRoute('/dep.js');
-      await sm.updateSource(source!.id, 'manual');
-      const after = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      const after = await sm.getCollectionWithScripts(collection!.id);
       // Still OK + injectable, but flagged: refreshError names the URL.
       expect(after!.scripts[0].status).toBe('ok');
       expect(after!.scripts[0].errorMessage).toBeUndefined();
@@ -238,7 +238,7 @@ test.describe('@require', () => {
         if (el) el.textContent = tag('ok');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -279,7 +279,7 @@ test.describe('@require', () => {
         if (el) el.textContent = GM_config.label('ok');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -309,7 +309,7 @@ test.describe('@require', () => {
         if (el) el.textContent = second;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -341,7 +341,7 @@ test.describe('@require', () => {
         if (el) el.textContent = GM_getValue('fromRequire', 'MISSING');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -375,7 +375,7 @@ test.describe('@require', () => {
         if (el) el.textContent = readyAtRequire;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -401,8 +401,9 @@ test.describe('@require', () => {
     // The install-time parse check normally catches this first and the
     // script never registers at all — see parse-check-install.spec.ts.
     // Turn it off here so the run-time backstop is still exercised: it
-    // is what covers a browser without `chrome.offscreen`, a check that
-    // times out, and rows stored before the check existed.
+    // is what covers a browser without `chrome.offscreen` and a check
+    // that times out. (A row that dodged the check at install time is
+    // now caught by the re-check in `runSync` before it registers.)
     await sm.setParseCheckEnabled(false);
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const ok = 1;\n/* unterminated');
     scriptsDir.write({
@@ -418,7 +419,7 @@ test.describe('@require', () => {
         if (el) el.textContent = 'ran';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -430,8 +431,8 @@ test.describe('@require', () => {
     // But the failure IS reported: the sentinel entry is its own
     // script, so it parses and runs even though the one before it
     // didn't.
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
     // The sentinel reports from the page, so the entry lands some time
     // after the navigation settles — wait for it rather than reading
@@ -478,11 +479,11 @@ test.describe('@require', () => {
       },
       body: `document.title = 'ran';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
 
     // A page the regex does NOT match. The script is registered here
@@ -542,7 +543,7 @@ test.describe('@require', () => {
         if (el) el.textContent = 'ran';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -550,8 +551,8 @@ test.describe('@require', () => {
     await page.waitForTimeout(500);
     await expect(page.locator('#target')).not.toHaveText('ran');
 
-    const sources = await sm.getSources();
-    const scriptIds = sources.flatMap((s) => s.scriptIds);
+    const collections = await sm.getCollections();
+    const scriptIds = collections.flatMap((s) => s.scriptIds);
     expect(scriptIds.length).toBe(1);
     // The pause above is for the negative assertion (the body must not
     // run). This read is a positive one, so wait for the entry — same
@@ -580,8 +581,8 @@ test.describe('@require', () => {
       ].join('\n');
       server.setRoute('/dep.js', '/* v1 */', { contentType: 'application/javascript' });
       server.setRoute('/main.user.js', scriptBody);
-      const source = await sm.addSource(`${server.baseUrl}/main.user.js`);
-      const before = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(`${server.baseUrl}/main.user.js`);
+      const before = await sm.getCollectionWithScripts(collection!.id);
       expect(before!.scripts[0].requires?.[0]?.source).toBe('/* v1 */');
 
       // Server replaces the dependency.
@@ -590,14 +591,199 @@ test.describe('@require', () => {
       // Opportunistic refresh: must NOT re-pull the require, even
       // though the underlying body could've changed. The cached
       // version persists.
-      await sm.updateSource(source!.id, 'opportunistic');
-      const afterOpp = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'opportunistic');
+      const afterOpp = await sm.getCollectionWithScripts(collection!.id);
       expect(afterOpp!.scripts[0].requires?.[0]?.source).toBe('/* v1 */');
 
       // Manual refresh: re-checks remote requires and surfaces v2.
-      await sm.updateSource(source!.id, 'manual');
-      const afterManual = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      const afterManual = await sm.getCollectionWithScripts(collection!.id);
       expect(afterManual!.scripts[0].requires?.[0]?.source).toBe('/* v2 */');
+    } finally {
+      await server.stop();
+    }
+  });
+  // A manual Refresh rebuilds dependencies from scratch so a user can
+  // pick up a library update without touching the script — which meant
+  // re-downloading every `@require` and `@resource` body on every click,
+  // measured at ~1.3s of a Refresh All on a real profile even when
+  // nothing had changed.
+  //
+  // Now the refetch is conditional. The point of the test is that BOTH
+  // halves hold: the request really is conditional (the server saw the
+  // validator and answered 304, not a fresh 200), and the entry survives
+  // a response that carried no body at all.
+  test('a manual refresh re-checks requires conditionally and keeps the body on 304', async ({ sm }) => {
+    const server = await UserscriptServer.start();
+    try {
+      const LIB = 'function libFn() { return 42; }\n';
+      server.setRoute('/lib.js', LIB, { etag: '"lib-v1"' });
+      scriptsDir.writeRaw('uses-lib.user.js', [
+        '// ==UserScript==',
+        '// @name        Uses Lib',
+        '// @match       https://example.com/*',
+        `// @require     ${server.baseUrl}/lib.js`,
+        '// ==/UserScript==',
+        'void libFn;',
+      ].join('\n') + '\n');
+
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.syncNow();
+      const first = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(first.status).toBe('ok');
+      expect(first.requires![0].source).toBe(LIB);
+      // The validator has to be stored, or the next request can't be
+      // conditional and the whole optimisation silently does nothing.
+      expect(first.requires![0].httpEtag).toBe('"lib-v1"');
+
+      const before = server.requestLog.filter((e) => e.path === '/lib.js').length;
+      await sm.updateCollection(collection!.id, 'manual');
+
+      // The refresh asked again — this is a manual click, which
+      // deliberately re-checks dependencies — but conditionally.
+      const hits = server.requestLog.filter((e) => e.path === '/lib.js');
+      expect(hits.length).toBe(before + 1);
+      const latest = hits[hits.length - 1];
+      expect(latest.ifNoneMatch).toBe('"lib-v1"');
+      expect(latest.status).toBe(304);
+
+      // A 304 sends no body. The entry has to come back whole anyway,
+      // rebuilt from the copy we already held — and `loadedAt` must not
+      // move, since the content did not.
+      const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(after.status).toBe('ok');
+      expect(after.requires![0].source).toBe(LIB);
+      expect(after.requires![0].contentHash).toBe(first.requires![0].contentHash);
+      expect(after.requires![0].loadedAt).toBe(first.requires![0].loadedAt);
+      expect(after.requires![0].httpEtag).toBe('"lib-v1"');
+
+      // And a real change still lands: the validator moves, the server
+      // answers 200, and the new body replaces the old.
+      server.setRoute('/lib.js', 'function libFn() { return 43; }\n', { etag: '"lib-v2"' });
+      await sm.updateCollection(collection!.id, 'manual');
+      const updated = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(updated.requires![0].source).toContain('43');
+      expect(updated.requires![0].httpEtag).toBe('"lib-v2"');
+      expect(updated.requires![0].loadedAt).not.toBe(first.requires![0].loadedAt);
+    } finally {
+      await server.stop();
+    }
+  });
+  // The same conditional re-check, driven from the collections PAGE.
+  //
+  // Not redundant with the test above, which drives the service worker
+  // through the test surface. The refresh pipeline runs in whichever
+  // context calls it, and a page-initiated http read is handed to the
+  // worker over `chrome.runtime` (see src/http-read.ts) rather than
+  // fetched locally. That hop carries a headers field, and a conditional
+  // re-check that forgot to populate it would still 200 happily —
+  // correct, silently unconditional, and green in every worker-driven
+  // test. Which is where the real Refresh button lives.
+  test('the conditional re-check survives the page → worker fetch hop', async ({
+    sm, extensionContext, extensionId,
+  }) => {
+    const server = await UserscriptServer.start();
+    const page = await extensionContext.newPage();
+    try {
+      server.setRoute('/hop-lib.js', 'function hopFn() {}\n', { etag: '"hop-v1"' });
+      scriptsDir.writeRaw('hop.user.js', [
+        '// ==UserScript==',
+        '// @name        Hop',
+        '// @match       https://example.com/*',
+        `// @require     ${server.baseUrl}/hop-lib.js`,
+        '// ==/UserScript==',
+        'void hopFn;',
+      ].join('\n') + '\n');
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.syncNow();
+
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const card = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
+      await expect(card).toBeVisible();
+
+      const before = server.requestLog.filter((e) => e.path === '/hop-lib.js').length;
+      await card.getByRole('button', { name: 'Refresh' }).click();
+      await expect.poll(
+        () => server.requestLog.filter((e) => e.path === '/hop-lib.js').length,
+      ).toBeGreaterThan(before);
+
+      const hits = server.requestLog.filter((e) => e.path === '/hop-lib.js');
+      const latest = hits[hits.length - 1];
+      expect(latest.ifNoneMatch).toBe('"hop-v1"');
+      expect(latest.status).toBe(304);
+
+      // And the body survived a response that carried none.
+      await expect.poll(async () => {
+        const s = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+        return s.requires?.[0]?.source;
+      }).toBe('function hopFn() {}\n');
+    } finally {
+      await page.close();
+      await server.stop();
+    }
+  });
+  // `@resource` shares the conditional path with `@require` but not the
+  // reconstruction: its prior body round-trips through base64 rather
+  // than a UTF-8 re-encode, and its bytes are arbitrary — a corrupted
+  // one doesn't fail loudly, it just renders wrong. Binary content on
+  // purpose, since that is where a text-shaped bug would hide.
+  //
+  // Also pins the shared-cache claim: a second script declaring the same
+  // URL, added AFTER the first stored a validator, still ends up with
+  // the bytes even though the 304 was answered against someone else's
+  // copy and carried no body of its own.
+  test('a @resource re-checks conditionally, and a co-declaring script still gets the bytes', async ({ sm }) => {
+    const server = await UserscriptServer.start();
+    try {
+      // Includes a 0x00 and a byte that is not valid UTF-8 on its own.
+      const BODY = Buffer.from([0x89, 0x50, 0x00, 0xff, 0x41, 0x42]);
+      server.setRoute('/blob.bin', BODY, {
+        etag: '"blob-v1"',
+        contentType: 'application/octet-stream',
+      });
+      const script = (name: string) => [
+        '// ==UserScript==',
+        `// @name        ${name}`,
+        '// @match       https://example.com/*',
+        `// @resource    payload ${server.baseUrl}/blob.bin`,
+        '// ==/UserScript==',
+        'void 0;',
+      ].join('\n') + '\n';
+
+      scriptsDir.writeRaw('res-a.user.js', script('Res A'));
+      const collection = await sm.addCollection(scriptsDir.path);
+      await sm.syncNow();
+      const firstA = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(firstA.status).toBe('ok');
+      const expected = BODY.toString('base64');
+      expect(firstA.resources![0].bytesBase64).toBe(expected);
+      expect(firstA.resources![0].httpEtag).toBe('"blob-v1"');
+
+      // A second script on the same URL, with no stored copy of its own.
+      scriptsDir.writeRaw('res-b.user.js', script('Res B'));
+      const before = server.requestLog.filter((e) => e.path === '/blob.bin').length;
+      await sm.updateCollection(collection!.id, 'manual');
+
+      const hits = server.requestLog.filter((e) => e.path === '/blob.bin');
+      // One fetch for the pair — the cross-script cache — and conditional.
+      expect(hits.length).toBe(before + 1);
+      expect(hits[hits.length - 1].ifNoneMatch).toBe('"blob-v1"');
+      expect(hits[hits.length - 1].status).toBe(304);
+
+      const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+      expect(after).toHaveLength(2);
+      for (const s of after) {
+        expect(s.status).toBe('ok');
+        // Byte-exact through the 304, for the script that had a prior
+        // AND the one that never fetched this URL before.
+        expect(s.resources![0].bytesBase64).toBe(expected);
+        expect(s.resources![0].contentType).toContain('application/octet-stream');
+      }
+      // The one that did have a prior kept its identity untouched.
+      const a = after.find((s) => s.relativePath === 'res-a.user.js')!;
+      expect(a.resources![0].contentHash).toBe(firstA.resources![0].contentHash);
+      expect(a.resources![0].loadedAt).toBe(firstA.resources![0].loadedAt);
+      expect(a.resources![0].size).toBe(firstA.resources![0].size);
     } finally {
       await server.stop();
     }

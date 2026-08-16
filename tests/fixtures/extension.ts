@@ -101,7 +101,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     const api = makeSwApi(getServiceWorker);
     // Clean slate per test: clears chrome.storage.local + session AND
     // unregisters every chrome.userScripts entry. Without this each
-    // test inherits the previous test's sources and the badge counts
+    // test inherits the previous test's collections and the badge counts
     // are non-deterministic.
     await api.resetAllState();
     await use(api);

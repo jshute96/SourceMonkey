@@ -34,14 +34,22 @@
 
 import {
   fetchResourceBytes,
+  isNotModified,
   isJsResourceUrl,
   resolveScriptResourceDetailed,
   type FetchFailure,
   type ResolveFailure,
 } from './file-loader.js';
+import { localFileCandidates } from './local-file-overrides.js';
 import { splitResourceValue } from './script-links.js';
-import { sha256Hex, bytesToBase64 } from './bytes.js';
+import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
+import { timePhase } from './phase-timing.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
+import {
+  isMarkupContentType,
+  looksLikeMarkup,
+  markupResponseMessage,
+} from './markup-response.js';
 
 // Per-file limit. Big enough for jQuery (~90 KB) and most chunky
 // userscript libraries; small enough to keep a runaway from draining
@@ -187,16 +195,27 @@ interface SharedFileFields {
   // SHA-256 hex of the fetched bytes.
   contentHash: string;
   // Epoch ms of the last successful (re)fetch. Bumps only on a true
-  // content change so the sources-page row-highlight stays accurate.
+  // content change so the collections-page row-highlight stays
+  // accurate.
   loadedAt: number;
+  // The local file we actually read instead of `url`, when a stand-in
+  // was found under one of the script's local search roots. Absent
+  // whenever the declared URL is what was fetched — which is the normal
+  // case, so its presence is exactly "this entry was overridden".
+  //
+  // `url` deliberately keeps the DECLARED URL even then: it is the dedup
+  // key, it is what the script says it depends on, and it is what the
+  // entry falls back to the moment the local file goes away.
+  localUrl?: string;
   // Server-reported (lowercased) Content-Type, or '' when not
   // available (file:// XHR often omits it). Optional on
   // StoredRequire because pre-this-change stored rows won't carry
   // it; required on StoredResource because the field is load-bearing
   // for blob URL creation.
   contentType?: string;
-  // HTTP validators (http(s) only). Captured for future conditional
-  // GET support — not yet round-tripped through the byte fetcher.
+  // HTTP validators (http(s) only), sent back as `If-None-Match` /
+  // `If-Modified-Since` on the next explicit Refresh. Absent for
+  // file://, for a local stand-in, and for servers that offer neither.
   httpEtag?: string;
   httpLastModified?: string;
 }
@@ -228,6 +247,31 @@ export interface FetchedFile {
   failed?: false;
   bytes: ArrayBuffer;
   contentType: string;
+  // Set when these bytes came from the caller's own prior copy because
+  // the server answered 304 — carrying the hash that prior was stored
+  // under, so a loader can tell "this is MY unchanged copy" from "these
+  // are someone else's bytes off the shared cache". See `loadRequire`.
+  priorContentHash?: string;
+  // Validators to send on the NEXT refresh's conditional request.
+  // Absent for file://, for servers that offer neither, and on the
+  // 304 path — where they are carried over from the prior entry by
+  // `ensureFetch` instead, since a 304 body has no headers worth
+  // keeping beyond what we already stored.
+  etag?: string;
+  lastModified?: string;
+}
+
+// What a caller already holds for a URL, so the fetch can be made
+// conditional. `bytes` is required, not optional: a 304 transfers no
+// body, so a caller that can't produce the prior bytes has nothing to
+// resolve the shared cache entry with and must not ask for one.
+export interface PriorCopy {
+  etag?: string;
+  lastModified?: string;
+  bytes: ArrayBuffer;
+  contentType: string;
+  // What this copy is stored under, echoed back on the 304 path.
+  contentHash: string;
 }
 
 interface FileFailure {
@@ -309,6 +353,11 @@ export interface AttachFilesArgs {
   fetchCache: FileFetchCache;
   // Wall-clock for new loadedAt stamps.
   now: number;
+  // Ordered local directories searched for a stand-in before the
+  // declared URL is fetched — see `src/local-file-overrides.ts`. Empty (the
+  // default) restores the pre-feature behavior exactly: no candidate
+  // generation, no probe reads.
+  localRoots?: readonly string[];
 }
 
 export interface AttachFilesResult {
@@ -369,6 +418,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       fetchCache: args.fetchCache,
       now: args.now,
       seenUrls: seenRequireUrls,
+      localRoots: args.localRoots ?? [],
     });
     if (res.errorMessage) {
       return {
@@ -389,6 +439,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       recheck: args.recheck,
       fetchCache: args.fetchCache,
       now: args.now,
+      localRoots: args.localRoots ?? [],
     });
     if (res.errorMessage) {
       return {
@@ -427,6 +478,7 @@ export async function fetchRequireForPreview(
   scriptFileUrl: string,
   fetchCache: FileFetchCache,
   now: number,
+  localRoots: readonly string[] = [],
 ): Promise<StoredRequire> {
   const res = await loadRequire({
     ref,
@@ -435,6 +487,7 @@ export async function fetchRequireForPreview(
     recheck: 'all',
     fetchCache,
     now,
+    localRoots,
     // Fresh per call: dedup across refs is the batch loader's job, and
     // the preview shows one tab per declared ref.
     seenUrls: new Set(),
@@ -455,6 +508,49 @@ interface LoadResult<E> {
   errorMessage?: string;
 }
 
+// What we actually read for a declared URL, and from where.
+interface LoadedBytes {
+  // Set only when the bytes came from a local stand-in rather than the
+  // declared URL, so callers can record it without re-deriving the
+  // comparison. Absent means "the declared URL was fetched".
+  localUrl?: string;
+  got: FetchedFile | FileFailure;
+}
+
+// Read a declared file, preferring a local stand-in when one exists.
+//
+// Candidates are tried in order and the first that READS wins — the
+// probe and the real read are the same fetch, so a hit costs nothing
+// extra. A total miss costs one local read PER CANDIDATE, i.e. one per
+// path segment of the declared URL plus one for the host-qualified
+// form, not one overall. `ensureFetch`
+// caches those for the rest of the pass, misses included.
+//
+// Returns `null` when no stand-in was found, so the caller can take its
+// `recheck: 'preserve'` shortcut on the declared URL. That ordering is
+// deliberate: a stand-in is checked on EVERY refresh, including
+// opportunistic ones, so editing a local library shows up on the next
+// navigation — while a remote dependency still gets the cached-and-left-
+// alone treatment that keeps per-navigation cost bounded.
+//
+// A `null` here does NOT mean the caller can preserve any prior: a prior
+// that itself carries a `localUrl` describes a file we just failed to
+// find, so keeping it would serve a deleted stand-in indefinitely. Each
+// caller's preserve shortcut checks for that.
+async function readLocalStandIn(
+  declaredUrl: string,
+  localRoots: readonly string[],
+  fetchCache: FileFetchCache,
+): Promise<LoadedBytes | null> {
+  for (const candidate of localFileCandidates(declaredUrl, localRoots)) {
+    const got = await ensureFetch(fetchCache, candidate);
+    // A candidate that doesn't read isn't a failure — it just isn't
+    // there. Only an actual hit ends the search.
+    if (!isFailure(got)) return { localUrl: candidate, got };
+  }
+  return null;
+}
+
 interface LoadRequireArgs {
   ref: string;
   scriptFileUrl: string;
@@ -463,6 +559,7 @@ interface LoadRequireArgs {
   fetchCache: FileFetchCache;
   now: number;
   seenUrls: Set<string>;
+  localRoots: readonly string[];
 }
 
 async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequire>> {
@@ -480,28 +577,65 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   args.seenUrls.add(resolved.url);
 
   const prior = args.prior.get(resolved.url);
-  if (args.recheck === 'preserve' && prior) {
+
+  // Local stand-in first, and before the preserve shortcut — see
+  // `readLocalStandIn` for why an overridden file is never cached past
+  // a refresh.
+  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+  if (!local && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
   }
 
-  const pending = ensureFetch(args.fetchCache, resolved.url);
-  const got = await pending;
+  const loaded = local ?? {
+    got: await ensureFetch(args.fetchCache, resolved.url, priorCopyOf(prior, priorRequireBytes(prior))),
+  };
+  const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `@require ${args.ref}: ${got.errorMessage}` };
   }
-  // @require-specific content-type predicate. Applied here (not in
-  // the shared fetch) so a @require + @resource pair pointing at the
-  // same URL share one fetch without the require's stricter rule
-  // poisoning the resource's cache entry.
-  // No empty-string guard needed: an absent Content-Type (the file://
-  // XHR case) is accepted by the predicate like any other non-markup
-  // type.
-  if (!requireAcceptContentType(got.contentType)) {
-    return { errorMessage: `@require ${args.ref}: The server returned an HTML page, not JavaScript (Content-Type "${got.contentType}") — the link may be dead or behind a login` };
+  // The server answered 304 against OUR validator, so the copy we hold
+  // IS the current one — reuse it whole.
+  //
+  // Not merely an optimisation (though it does drop a SHA-256 per
+  // dependency per manual refresh). Rebuilding from the reconstructed
+  // bytes would be wrong: `source` was decoded with a BOM-stripping
+  // decoder, so re-encoding it does not reproduce the original bytes
+  // for a BOM-prefixed file. That would hash differently, bump
+  // `loadedAt`, shrink the stored `size` by three, and report a content
+  // change the server just told us did not happen.
+  //
+  // Matched on the hash rather than on "did we send a validator",
+  // because the shared cache may have resolved this URL from ANOTHER
+  // script's prior. Equal hashes mean equal content, so reusing this
+  // caller's own row is right; unequal means these are someone else's
+  // bytes and the normal path below has to run.
+  if (prior && got.priorContentHash !== undefined && got.priorContentHash === prior.contentHash) {
+    return { entry: { ...prior, ref: args.ref, url: resolved.url, ...validatorFields(got) } };
+  }
+  // @require-specific markup gate. Applied here (not in the shared
+  // fetch) so a @require + @resource pair pointing at the same URL
+  // share one fetch without the require's stricter rule poisoning the
+  // resource's cache entry — a `@resource` may legitimately BE an HTML
+  // file.
+  //
+  // Only markup is rejected. `application/octet-stream` and other
+  // vague types are accepted on purpose — they are common and
+  // legitimate for JavaScript (GitHub serves every release asset that
+  // way, and release URLs are a normal thing to pin a library to), and
+  // the strict-UTF-8 decode below is what actually closes the
+  // "anything binary gets through" hole. Tampermonkey does no
+  // content-type gating on `@require` at all.
+  if (isMarkupContentType(got.contentType)) {
+    return {
+      errorMessage: `@require ${args.ref}: ${markupResponseMessage({
+        ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+        contentType: got.contentType,
+      })}`,
+    };
   }
   // Strict UTF-8 decode: catches binary regardless of what the server
   // claimed the type was (a misconfigured CDN serving a PNG, or the
-  // generic octet-stream the content-type gate deliberately lets
+  // generic octet-stream the markup gate deliberately lets
   // through). Previously we used fatal:false and the bytes were
   // mojibake'd into JS source, where they'd produce a confusing
   // SyntaxError at eval. This is the gate that closes that hole.
@@ -510,6 +644,18 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
     source = new TextDecoder('utf-8', { fatal: true }).decode(got.bytes);
   } catch {
     return { errorMessage: `@require ${args.ref}: The response is not valid UTF-8 (binary or wrong-encoding file)` };
+  }
+  // Second half of the same gate, on the bytes rather than the header.
+  // The Content-Type test above can't fire when there is no
+  // Content-Type — the common `file://` case, which is exactly where a
+  // directory-listing HTML page comes from — nor when a server labels
+  // its login page `text/plain`.
+  if (looksLikeMarkup(source)) {
+    return {
+      errorMessage: `@require ${args.ref}: ${markupResponseMessage({
+        ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      })}`,
+    };
   }
   const u8 = new Uint8Array(got.bytes);
   const contentHash = await sha256Hex(got.bytes);
@@ -524,42 +670,77 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
       contentHash,
       contentType: got.contentType,
       loadedAt,
+      // Spread rather than assigned so the field is ABSENT (not
+      // `undefined`) on the ordinary path — stored rows are compared
+      // and JSON-round-tripped, and an explicit `undefined` would
+      // survive as a key in some of those comparisons.
+      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...validatorFields(got),
     },
   };
 }
 
-// A denylist of markup types, not an allowlist. HTML is the only
-// family worth rejecting: a `@require` is always JavaScript, never
-// markup, so an HTML response is the classic soft-failure signature —
-// a login / error page served at 200 in place of the real library.
-// Rejecting it turns that into a clean fetch failure, which the
-// refresh pipeline treats as a refresh failure (keep the prior good
-// copy running) rather than silently swapping a working dependency for
-// a page of markup. `text/html-sandboxed` is caught by the prefix and
-// deserves to be; XHTML is spelled `application/xhtml+xml`, so it
-// needs its own clause to match the same intent.
+// The prior copy's bytes, for a conditional request. `source` was
+// decoded from those bytes with a strict UTF-8 decoder, so re-encoding
+// reproduces them exactly.
+function priorRequireBytes(prior: StoredRequire | undefined): ArrayBuffer | null {
+  if (!prior) return null;
+  return new TextEncoder().encode(prior.source).buffer as ArrayBuffer;
+}
+
+// The prior copy's bytes, decoded back from storage.
+function priorResourceBytes(prior: StoredResource | undefined): ArrayBuffer | null {
+  if (!prior) return null;
+  return base64ToBytes(prior.bytesBase64);
+}
+
+// Assemble the conditional-request input, or nothing when this entry
+// can't support one.
 //
-// `application/json` is deliberately *not* rejected: a JSON error
-// envelope at 200 is a real soft-failure shape, but so is a legitimate
-// JS module served by a mislabelling host, and the eval-side try/catch
-// already contains the damage.
-//
-// Everything else is accepted, including `application/octet-stream`.
-// That used to be rejected as a "give us anything binary" hole next to
-// the suffix-only `.js` URL gate, but the strict-UTF-8 decode below is
-// what actually closes that hole — and the generic type is common in
-// practice, not exotic: GitHub serves *every* release asset as
-// octet-stream regardless of extension, and release URLs are a normal
-// place for a userscript to pin a library. Tampermonkey does no
-// content-type gating on `@require` at all.
-//
-// Trims defensively so the rule holds for a caller that hands over a
-// raw header rather than the lowercased/trimmed one every producer in
-// file-loader.ts currently passes.
-const requireAcceptContentType = (ct: string): boolean => {
-  const type = ct.trim();
-  return !type.startsWith('text/html') && !type.startsWith('application/xhtml');
-};
+// Withheld for a local stand-in (`localUrl`): the bytes we hold came
+// off disk, and the validators — if any survived — describe the remote
+// copy, so pairing them would ask the server about one file and answer
+// with another.
+function priorCopyOf(
+  prior: {
+    httpEtag?: string;
+    httpLastModified?: string;
+    contentType?: string;
+    contentHash: string;
+    localUrl?: string;
+  } | undefined,
+  bytes: ArrayBuffer | null,
+): PriorCopy | undefined {
+  if (!prior || !bytes) return undefined;
+  if (prior.localUrl) return undefined;
+  if (!prior.httpEtag && !prior.httpLastModified) return undefined;
+  // Without a Content-Type the prior can't fully stand in for a
+  // response. `StoredRequire.contentType` is optional — rows written
+  // before it existed don't carry one — and a 304 resolved from such a
+  // row would hand `''` to every sharer of that URL through the fetch
+  // cache, including a `@resource` whose blob URL needs a real MIME.
+  // Refetching unconditionally costs one body and keeps that honest.
+  if (!prior.contentType) return undefined;
+  return {
+    bytes,
+    contentType: prior.contentType,
+    contentHash: prior.contentHash,
+    ...(prior.httpEtag ? { etag: prior.httpEtag } : {}),
+    ...(prior.httpLastModified ? { lastModified: prior.httpLastModified } : {}),
+  };
+}
+
+// Validators onto the stored entry, absent rather than `undefined` for
+// the same reason `localUrl` is spread above.
+function validatorFields(got: FetchedFile): {
+  httpEtag?: string;
+  httpLastModified?: string;
+} {
+  return {
+    ...(got.etag ? { httpEtag: got.etag } : {}),
+    ...(got.lastModified ? { httpLastModified: got.lastModified } : {}),
+  };
+}
 
 interface LoadResourceArgs {
   decl: ResourceDecl;
@@ -568,6 +749,7 @@ interface LoadResourceArgs {
   recheck: 'all' | 'preserve';
   fetchCache: FileFetchCache;
   now: number;
+  localRoots: readonly string[];
 }
 
 async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredResource>> {
@@ -591,17 +773,38 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
 
   // Prior lookup by URL.
   const prior = args.prior.get(resolved.url);
-  if (args.recheck === 'preserve' && prior && prior.name === args.decl.name) {
+
+  // Local stand-in first, and before the preserve shortcut — same rule
+  // and same reasoning as `@require`; see `readLocalStandIn`.
+  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+  if (
+    !local && args.recheck === 'preserve' &&
+    prior && prior.name === args.decl.name && !prior.localUrl
+  ) {
     return { entry: prior };
   }
 
   // Resources accept anything — including HTML. A script that wants
   // to embed a fragment of HTML as a string via GM_getResourceText
   // shouldn't be blocked.
-  const pending = ensureFetch(args.fetchCache, resolved.url);
-  const got = await pending;
+  const loaded = local ?? {
+    got: await ensureFetch(args.fetchCache, resolved.url, priorCopyOf(prior, priorResourceBytes(prior))),
+  };
+  const got = loaded.got;
   if (isFailure(got)) {
     return { errorMessage: `${subject}: ${got.errorMessage}` };
+  }
+  // Same 304 reuse as `loadRequire`. The name has to match too: a
+  // `@resource` renamed to the same URL is a changed declaration even
+  // though the body is identical, and the normal path below is what
+  // stamps the new name and bumps `loadedAt`.
+  if (
+    prior && prior.name === args.decl.name &&
+    got.priorContentHash !== undefined && got.priorContentHash === prior.contentHash
+  ) {
+    return {
+      entry: { ...prior, ref: args.decl.ref, url: resolved.url, ...validatorFields(got) },
+    };
   }
   const u8 = new Uint8Array(got.bytes);
   const contentHash = await sha256Hex(got.bytes);
@@ -617,15 +820,27 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
       contentHash,
       contentType: got.contentType,
       loadedAt,
+      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...validatorFields(got),
     },
   };
 }
 
 // ---------- Shared byte fetcher ----------
 
+// `prior` is used only by the FIRST caller to ask for a given URL —
+// whoever populates the cache entry. A later caller sharing the URL
+// takes that entry as-is.
+//
+// That is safe even when the two hold different copies, because a 304
+// resolves to the prior's BYTES rather than to a "nothing changed"
+// marker. The cache entry always means "the current bytes for this
+// URL", however they were obtained, so a script with no prior of its
+// own still gets a body it can build from.
 function ensureFetch(
   cache: FileFetchCache,
   url: string,
+  prior?: PriorCopy,
 ): Promise<FetchedFile | FileFailure> {
   // The cache stores raw bytes + Content-Type, no kind-specific
   // filtering applied. Per-kind acceptance (the @require Content-Type
@@ -635,18 +850,53 @@ function ensureFetch(
   // either's rules biasing the other's outcome.
   const cached = cache.get(url);
   if (cached) return cached;
-  const promise = fetchFileBytes(url);
+  const promise = timePhase('dep-fetch', () => fetchFileBytes(url, prior));
   cache.set(url, promise);
   return promise;
 }
 
-async function fetchFileBytes(url: string): Promise<FetchedFile | FileFailure> {
+async function fetchFileBytes(
+  url: string,
+  prior?: PriorCopy,
+): Promise<FetchedFile | FileFailure> {
   try {
-    const res = await fetchResourceBytes(url, { maxBytes: MAX_FILE_BYTES });
+    const res = await fetchResourceBytes(url, {
+      maxBytes: MAX_FILE_BYTES,
+      // Only conditional when we hold a validator to offer. A bare
+      // prior with neither would send no header and just refetch.
+      ...(prior && (prior.etag ?? prior.lastModified)
+        ? { conditional: { etag: prior.etag, lastModified: prior.lastModified } }
+        : {}),
+    });
     if ('failed' in res) {
       return { failed: true, errorMessage: describeFetchFailure(res) };
     }
-    return { bytes: res.body, contentType: res.contentType };
+    if (isNotModified(res)) {
+      // Unreachable without a prior — `conditional` is only set above
+      // when one exists — but the type doesn't know that, and resolving
+      // to the prior's bytes is what makes the shared cache entry mean
+      // the same thing on both paths.
+      if (!prior) {
+        return {
+          failed: true,
+          errorMessage: 'Internal error: the server reported no change for a file we do not hold',
+        };
+      }
+      // Validators carried forward, not re-read: a 304 need not repeat
+      // them, and the ones we sent are by definition still current.
+      const out: FetchedFile = {
+        bytes: prior.bytes,
+        contentType: prior.contentType,
+        priorContentHash: prior.contentHash,
+      };
+      if (prior.etag) out.etag = prior.etag;
+      if (prior.lastModified) out.lastModified = prior.lastModified;
+      return out;
+    }
+    const out: FetchedFile = { bytes: res.body, contentType: res.contentType };
+    if (res.etag) out.etag = res.etag;
+    if (res.lastModified) out.lastModified = res.lastModified;
+    return out;
   } catch (err) {
     return {
       failed: true,

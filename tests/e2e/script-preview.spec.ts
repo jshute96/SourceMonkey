@@ -1,9 +1,9 @@
 // The viewer's preview mode (`userscript.html?preview=<url>`), reached
-// from the sources page's Add Source field for a single script.
+// from the collections page's Add field for a single script.
 //
 // The capture route into the same page is covered by
 // install-capture.spec.ts; this file covers what's specific to Add
-// Source and to preview mode itself: local files, `@require` tabs, and
+// Collection and to preview mode itself: local files, `@require` tabs, and
 // the refusal to offer Install for something that would land as an
 // `invalid` row.
 //
@@ -20,7 +20,7 @@ test.describe('script preview', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('Add Source with one local script previews it, and Install adds it', async ({
+  test('Add with one local script previews it, and Install adds it', async ({
     extensionContext, extensionId, sm,
   }) => {
     const file = scriptsDir.write({
@@ -30,7 +30,7 @@ test.describe('script preview', () => {
     });
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await page.locator('#add-path').fill(file);
     await page.locator('#add-form button[type="submit"]').click();
 
@@ -39,14 +39,14 @@ test.describe('script preview', () => {
     await expect(page.locator('#header-summary')).toContainText('Local Script');
     await expect(page.locator('#content')).toContainText("console.log('local')");
     await expect(page.locator('#banner-slot')).toContainText('not installed yet');
-    expect(await sm.getSources()).toHaveLength(0);
+    expect(await sm.getCollections()).toHaveLength(0);
 
     await page.locator('#install-btn').click();
     await page.waitForURL(/userscript\.html\?script=/);
 
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(1);
     expect(withScripts!.scripts[0].status).toBe('ok');
     await page.close();
@@ -60,7 +60,7 @@ test.describe('script preview', () => {
       meta: { name: 'Local Script', match: ['https://example.com/*'] },
       body: '',
     });
-    await sm.addSource(file);
+    await sm.addCollection(file);
 
     const page = await extensionContext.newPage();
     await page.goto(
@@ -74,8 +74,8 @@ test.describe('script preview', () => {
     await page.waitForURL(/userscript\.html\?script=/);
     // Still one script — Update refreshed the existing row rather than
     // adding a second copy.
-    const sources = await sm.getSources();
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(1);
     await page.close();
   });
@@ -85,7 +85,7 @@ test.describe('script preview', () => {
   }) => {
     // It parses as a userscript, so the "no metadata block" branch
     // doesn't fire — this is the validateHeader branch, which must
-    // refuse just as firmly rather than letting addSource create an
+    // refuse just as firmly rather than letting addCollection create an
     // `invalid` row.
     const file = scriptsDir.write({
       relativePath: 'nomatch.user.js',
@@ -105,10 +105,10 @@ test.describe('script preview', () => {
     // since the bare path the preview was opened with isn't navigable.
     await expect(page.locator('#continue-btn')).toBeVisible();
     await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
-    // The source is still on screen — seeing what you actually got is
+    // The collection is still on screen — seeing what you actually got is
     // the point when a file isn't what you expected.
     await expect(page.locator('#content')).toContainText("console.log('unreachable')");
-    expect(await sm.getSources()).toHaveLength(0);
+    expect(await sm.getCollections()).toHaveLength(0);
     await page.close();
   });
 
@@ -116,7 +116,7 @@ test.describe('script preview', () => {
     extensionContext, extensionId,
   }) => {
     // `?preview=` is reachable by hand and by the capture route, so the
-    // input isn't always something the Add Source field validated. An
+    // input isn't always something the Add field validated. An
     // `ftp://` URL is rejected on shape before any fetch is attempted,
     // and saying "Could not fetch" there would send the reader looking
     // at their network for a problem that's in the address.
@@ -131,6 +131,37 @@ test.describe('script preview', () => {
     await expect(message).not.toContainText('Could not fetch');
     await expect(page.locator('#install-btn')).toBeHidden();
     await page.close();
+  });
+
+  test('a preview the user asked for reports a web page instead of following it', async ({
+    extensionContext, extensionId,
+  }) => {
+    // The other half of the capture's markup escape. A CAPTURED
+    // preview navigates itself to the page (install-capture.spec.ts);
+    // this one was asked for — by the collections page's Add field, or
+    // by hand — so navigating the tab off SourceMonkey would be
+    // answering a question with a disappearance. It reports instead,
+    // and offers the same way through the invalid path offers.
+    const server = await UserscriptServer.start();
+    try {
+      server.setRoute('/login.user.js', '<!doctype html><title>Please log in</title>', {
+        contentType: 'text/html; charset=utf-8',
+      });
+      const pageUrl = `${server.baseUrl}/login.user.js`;
+
+      const page = await extensionContext.newPage();
+      await page.goto(
+        `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(pageUrl)}`,
+      );
+      await expect(page.locator('#message')).toContainText('HTML page, not JavaScript');
+      await expect(page.locator('#install-btn')).toBeHidden();
+      await expect(page.locator('#continue-btn')).toBeVisible();
+      // Still here — the whole point.
+      expect(page.url()).toContain('userscript.html?preview=');
+      await page.close();
+    } finally {
+      await server.stop();
+    }
   });
 
   test('@require bodies are fetched once up front, and the tab reuses them', async ({

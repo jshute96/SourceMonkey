@@ -4,7 +4,7 @@
 // valid content, a valid header, and a status of `ok`), but Chrome
 // would not accept the registration — a `@match` pattern it considers
 // malformed is the usual cause — so the script silently never runs.
-// The sources page and the viewer render that as REJECTED. See
+// The collections page and the viewer render that as REJECTED. See
 // [docs/diagnostics.md](../docs/diagnostics.md#rejected-registrations).
 //
 // Rarer than it used to be: `matchPatternProblem` (src/url-match.ts)
@@ -14,7 +14,7 @@
 //
 // Written only by `src/injector.ts` — `registerWithFallback` and the
 // targeted retry are the only places that ever learn a spec was
-// refused. Read by the sources page and the viewer for the row's
+// refused. Read by the collections page and the viewer for the row's
 // status, and by `src/background.ts` for the tab badge; all three
 // watch `chrome.storage.session.onChanged` so they repaint without a
 // reload.

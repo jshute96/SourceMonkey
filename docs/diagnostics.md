@@ -79,7 +79,7 @@ A failure to fetch the **script itself** produces no location at all.
 
 `parseHeader` records a 1-based `line` on every `HeaderTag`, and
 `startLine` on the block, both counted from the top of the whole
-source — which is what the viewer's gutter shows.
+source file — which is what the viewer's gutter shows.
 
 - Counting and splitting share one line-terminator rule
   (`LINE_BREAK` in `src/userscript-header.ts`). If they diverged, every
@@ -152,7 +152,7 @@ what the row now says.
   `sourcemonkey://…:L:C` refs inside a runtime stack trace: those are
   text the script produced and are found by scanning, whereas this is
   structure we derived.
-- **Sources page** — hover text only. The dataset is a string channel,
+- **Collections page** — hover text only. The dataset is a string channel,
   so the message is flattened there; the row's link opens the viewer,
   which has the clickable form.
 
@@ -191,6 +191,41 @@ canonicalizer rejects, or whatever it tightens next. See
 [file-index](file-index.md) for `src/script-rejection.ts`, which holds
 the state, and [injection.md](injection.md#rejected-registrations) for
 the registration path that produces it.
+
+## Refreshes that could not be saved
+
+A refresh that read everything successfully and then failed to store it.
+Sibling to [rejected registrations](#rejected-registrations): another
+verdict about a script's *fate* rather than its content.
+
+- **Not a script-level fact at all.** It belongs to the collection, not
+  to any row under it — every script failed together, for a reason that
+  has nothing to do with any of them. So it carries no
+  `DiagnosticLocation` and never touches `errorMessage`.
+- **Not `scanError` either.** That one means the listing failed and
+  nothing was fetched. This means the listing and every fetch worked and
+  the *write* failed. Both can be present at once, from different
+  attempts, so a section shows both lines.
+- **The scripts are fine and still running.** Nothing was written, so
+  every row keeps the content it had. The message says so — what the
+  reader needs to know is that what they see on the page is not what is
+  on disk, not that something is broken.
+- **One string, one place**: `describeRefreshError` in
+  `src/refresh-error.ts`, listed under
+  [One string, one place](#one-string-one-place).
+
+Where it shows up:
+
+- **Per collection**, as a message line in that section, next to a
+  `scanError` line if there is one.
+- **Page banner** on the collections page, which adds the one thing the
+  per-collection message can't: how full storage actually is. That turns
+  "the write failed" into "you are out of space, remove something",
+  which is the only version the reader can act on.
+- **Not on the toolbar badge.** The badge is per-tab — its count is the
+  scripts expected ∪ actual for *that document* — so a global condition
+  rendered there would claim something about every unrelated page. See
+  [matching.md](matching.md).
 
 ## Wording
 
@@ -264,8 +299,8 @@ verdicts about a script's content:
   `background.ts`, `injector.ts`) — `Could not check for updates`, not
   `update check threw`; `This script was removed while it was being
   refreshed`, not `row vanished`.
-- **Source-level failures** — `This source did not load`, not `scan
-  failed`. "Scan" is the pipeline stage's name; the sources page never
+- **Collection-level failures** — `This collection did not load`, not `scan
+  failed`. "Scan" is the pipeline stage's name; the collections page never
   shows it.
   - Phrased so it doesn't echo what follows it. `scanError` values
     usually open with their own `Could not read <url>: …`, so a
@@ -285,13 +320,13 @@ One capitalization convention, with carve-outs:
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
     it as INVALID.` Prefer an em-dash and one sentence where that works
-    (`Script not found in storage — open it from the sources page`).
+    (`Script not found in storage — open it from the collections page`).
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
 - **The carve-out is mid-*sentence* splices, not post-colon tails.**
   `LOCATION_SHAPES` stays lowercase because it completes a sentence we
-  wrote — `A source must be an http(s):// or file:// URL…`. A capital
+  wrote — `A location must be an http(s):// or file:// URL…`. A capital
   there would land inside the sentence. A tail after `: ` is not that
   case: it starts its own clause, so it gets a capital, and if it can't
   take one grammatically it wants rewriting rather than exempting.
@@ -301,7 +336,7 @@ One capitalization convention, with carve-outs:
   values above, and the errors GM APIs hand back to script code. None
   of them is a message a user reads in our UI.
 - **Static page copy is not a message.** Headings and empty-state prose
-  (`No sources yet. Add one above.`, `File access is disabled.`) are
+  (`No collections yet. Add one above.`, `File access is disabled.`) are
   layout text, not a report of an outcome, and punctuate as ordinary
   writing. The line is whether the string tells the user what just
   happened: a banner does and follows the message rule, a heading that
@@ -318,10 +353,12 @@ constant, so the copies can't drift:
 | `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
-| `LOCATION_SHAPES` (`directories.ts`) | the add-source and preview validators' description of a valid location |
+| `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
+| `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
 | `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |
+| `markupResponseMessage` (`markup-response.ts`) | "we got a web page, not JavaScript", from the script fetchers and the `@require` gate alike |
 
 The last one is the cautionary case: it was two literals, and the Log
 copy had already lost the "reload the page to retry" half — the only
@@ -340,6 +377,102 @@ names a culprit has to be reachable only when that culprit is real:
 - `loadConnectPolicy` splits "this script is gone" (a race the user
   fixes by reloading) from "its header is missing" (ours). The first
   must not carry the `internal error:` prefix.
+- `markupResponseMessage` names the server or the local file, never
+  both: blaming a server for bytes that came off local disk is a flatly
+  wrong diagnosis, and the usual way to hit the local case is a
+  *directory* whose name matches the ref, which Chrome answers with a
+  generated HTML listing.
+  - It quotes the `Content-Type` only when the header is what proved
+    it. Body-sniffed markup leaves it out — quoting `text/plain` next
+    to a claim that the response is HTML reads as a contradiction.
+
+## Measuring where a refresh's time goes
+
+A diagnostic for "the refresh felt slow", which nothing else answers —
+the Log tab records what a refresh *decided*, never what it cost.
+
+Turn on **Options → Debug logging**, then click Refresh. Each phase
+group emits one line via `src/phase-timing.ts`.
+
+### Where to look
+
+The refresh pipeline runs in the **collections page**, not the service
+worker — `collections.ts` imports `script-updater` directly. So the
+lines land in two consoles, and you need both:
+
+| Console | Lines |
+|---------|-------|
+| Collections page (F12) | `collection check`, `collection refresh` |
+| Service worker (`chrome://extensions` → *service worker*) | `registration sync` |
+
+### Reading it
+
+```
+timing — collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
+  rebuild 0.7, write 21) — /path/to/scripts, 5 scripts, 5 unchanged,
+  rows written: 0
+```
+
+- **read** — loading the collection and its existing script rows.
+- **scan** — the directory listing. Sibling directories are listed
+  together, so it grows with tree DEPTH (each level waits on the one
+  above) rather than with directory count or script count.
+- **fetch** — reading changed files. Near zero when the size+mtime skip
+  catches everything; `N unchanged` says how often it did.
+- **rebuild** — everything downstream of having the bytes: `@require` /
+  `@resource` fetches, hashing, the parse check.
+- **write** — the storage write, plus the in-lock re-read. Never zero
+  even at `rows written: 0`, because the collection row always goes
+  (see [storage.md](storage.md#only-changed-rows-are-written)).
+
+The other two lines cover work the refresh triggers rather than does:
+
+- `collection check` wraps the refresh with the update probes and the
+  rejected-registration retry, so it separates "the refresh is slow"
+  from "the annotation pass is slow". Its `N of M scripts have a probe
+  target` matters — a `0ms` probe leg means nothing to check, not
+  everything already fresh.
+- `registration sync` is the sweep no one clicked: any single row
+  changing re-registers **every** script. It runs on a debounce *after*
+  the write, so it lands just past the button release and is easy to
+  mistake for refresh time.
+- `all-collections check` is the Refresh All wrapper — the prior
+  snapshot, plus the probe and rejected-registration passes that run
+  once over every script rather than per collection.
+
+### Inside `rebuild`
+
+`rebuild` is a fan-out — every script in the collection is processed
+concurrently — so no single sequence describes it. A second line breaks
+it down by cumulative time per stage:
+
+```
+collection check cumulative (concurrent, sums past wall clock):
+  deps 1626ms/46, dep-fetch 761ms/13, parse-check 64ms/46, local-standin 4.5ms/76
+```
+
+- `ms/n` is total time and call count. The totals **sum past the wall
+  clock** they happened in, because the work overlapped — they answer
+  "which stage dominates", which is a ratio, not "how long did it take".
+- `deps` is the whole dependency stage per script; `dep-fetch` is the
+  network leg inside it, counted once per *unique URL* thanks to the
+  cross-script cache. `deps` far exceeding `dep-fetch` is expected and
+  not a finding: it is N scripts waiting on the same shared fetches.
+- **The count is the number that matters for `dep-fetch`.** Measured on
+  a real 46-script collection, its 76 declarations resolved to 13
+  fetches at ~58ms each — so `rebuild` tracks unique-dependency count
+  times latency, and neither hashing nor the parse check
+  (~1.4ms/script) nor local stand-in probing (~0.06ms/probe) is
+  material.
+
+### What a healthy run looks like
+
+`registration sync` should appear **once or twice** per Refresh All, not
+once per collection and never once per script. A long run of them is the
+symptom that led to `onlyProbesChanged` (see
+[injection.md](injection.md#lifecycle)): probe results are written one
+row at a time, and each write used to schedule its own re-registration.
+If they come back, that suppression is the first place to look.
 
 ## Testing
 

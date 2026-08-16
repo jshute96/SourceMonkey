@@ -16,9 +16,9 @@ Keeping them apart is the point of the design. A probe host that's down
 must not disable a working script, and a URL the script names in its
 own header must not silently become an update channel.
 
-## Refresh: the source is the update channel
+## Refresh: the collection is the update channel
 
-Every source kind already auto-updates from where it was installed:
+Every collection kind already auto-updates from where it was installed:
 
 - **`file://`** — the scan reports each file's size + mtime; a change
   refetches and re-stores.
@@ -89,10 +89,20 @@ Staleness rules:
   OUTDATED against a URL the script doesn't name.
 - A failed probe still records `checkedAt`, so an unreachable host
   isn't retried on every navigation.
-- At most `PROBE_CONCURRENCY` fetches run at once, so Refresh All over
-  a large collection doesn't open one request per script.
+- `PROBE_SCRIPTS_CONCURRENCY` caps how many scripts probe at once, so
+  Refresh All over a large collection doesn't open one request per
+  script (see [storage.md](storage.md#fan-out-is-bounded)).
+  - Sized for the callers that **await** the pass — a Refresh holds its
+    spinner until the probes land, so the cap is wall-clock the user
+    sees, not just background load. It was tuned much lower for the
+    fire-and-forget per-script caller until measurement showed the
+    collection paths paying for it.
+  - A per-script cap on probe URLs sits inside it
+    (`PROBE_URLS_PER_SCRIPT_CONCURRENCY`) but never binds: a script has
+    at most two targets. It is a guard against a future third target
+    kind, not a working limit.
 
-Awaited by the source-level entry points, not by the per-script one:
+Awaited by the collection-level entry points, not by the per-script one:
 
 - The per-script check's promise is what the
   [reload fast path](injection.md#reload-fast-path) races against a
@@ -126,7 +136,7 @@ metadata block wherever it sits.
 
 Split across two modules so display code stays off the fetch stack:
 `src/version-probe.ts` is pure (targets, verdict, staleness, types) and
-is what `script-display.ts` / `sources.ts` / `script-details.ts`
+is what `script-display.ts` / `collections.ts` / `script-details.ts`
 import; `src/version-probe-fetch.ts` does the fetching and is reached
 only from `script-updater.ts`.
 
@@ -149,29 +159,60 @@ compare, "same" would be a lie.
 
 ## What the user sees
 
-### Sources page
+### Collections page
 
 The Status cell shows **OUTDATED** (amber) when a probe found a newer
 version; hovering gives the version and the URL.
 
-- Ranks below `REFRESH FAILED` — a source we can't reach at all
+- Ranks below `REFRESH FAILED` — a collection we can't reach at all
   subsumes "some other copy is ahead".
 - Ranks above the log-derived `ERROR` / `WARNING`, which have their own
   surface in the Log tab. See
   [storage.md](storage.md#displayed-status-ui-level).
 - Running *ahead* of the published version is normal for a local edit,
   so it isn't a status — only a details row.
+- A probe *failure* isn't a status either, which is why the details row
+  is load-bearing rather than supplementary — see the viewer section
+  below.
 
 ### Script viewer
 
 Under the `Version` row, one row per probe:
 
-- Label — `Version at update URL`, `Version at download URL`, or
-  `Version at update/download URL` when one URL is named by both.
-- Value — `same`, `2.1 (Newer)`, `1.0 (Older)`, the bare number when
-  there's nothing to compare against, or the probe's error.
-- The URL is the row's tooltip.
-- The `(Newer)` case is highlighted; nothing else is.
+- Label — `Version at update URL` or `Version at download URL`. One URL
+  named by BOTH headers is labeled `update URL`, not spelled out as
+  both: `@updateURL` is the header that means "check here for a new
+  version", so it names what we did, and the combined form was the
+  longest label in the panel for a distinction nobody can act on.
+- **A probe only gets a row when it has something to say**, so any row
+  present is one to act on. Exactly one case is dropped: its version
+  matches ours **and** the latest check succeeded — the expected state
+  of an up-to-date script.
+- Three things each earn a row:
+  - **The versions differ** (`newer` / `older`).
+  - **Exactly one side declares a `@version`.** We can't rank them, but
+    "they publish 2.0 and we declare nothing" is still a difference
+    worth seeing. The `Version` row above then reads `<none>`, so both
+    halves of the comparison are on screen.
+  - **The latest check failed**, whatever the version says — see below.
+- **Any probe carrying an `error` keeps its row**, because this row is
+  the failure's *only* surface: probes run downstream of the refresh and
+  can't set a status or a `refreshError` (see `runVersionProbes`), and
+  nothing logs them. Two shapes of that:
+  - never resolved a version at all — a permanently broken
+    `@updateURL`, which would otherwise read as up to date;
+  - resolved one earlier and is failing now — the host went away after
+    a good check, which is the more common way this breaks.
+- Value and tooltip split by which of the two is the news:
+  - versions differ → value `2.1 (Newer)` / `1.0 (Older)`.
+  - only they have a version → value is the bare number, no qualifier.
+  - versions agree, check failed → value is the error, tooltip adds
+    `last known version 2.0`.
+  - no version at all → value is the error.
+  - The tooltip is always the URL, plus `last check failed: …` whenever
+    there's an error the value isn't already showing.
+- The `(Newer)` case is highlighted; nothing else is — an upstream we
+  can't rank is not "newer".
 
 Preview mode shows no probe rows. A not-yet-installed script hasn't
 been probed, and rendering a row would imply we had checked.

@@ -19,9 +19,11 @@
 // (ID pinned via manifest "key") or installed from the Web Store
 // (different ID).
 
+import { CAPTURED_PARAM } from './install-capture.js';
+
 const REDIRECT_URL = 'https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md';
 
-const ALLOWED_PAGES = new Set(['sources.html', 'options.html', 'userscript.html']);
+const ALLOWED_PAGES = new Set(['collections.html', 'options.html', 'userscript.html']);
 
 // Pure: maps a source URL to its rewrite target, or null when the URL
 // is not a deep link we should act on. Exported for unit tests.
@@ -40,6 +42,11 @@ export function buildDeepLinkTarget(srcUrl: string): string | null {
   if (!page || !ALLOWED_PAGES.has(page)) return null;
   const passthrough = new URLSearchParams(u.searchParams);
   passthrough.delete('page');
+  // `captured` tells the viewer "the install capture opened this",
+  // which lets it navigate the tab away on its own. That claim is only
+  // the service worker's to make — this is the one way a web page
+  // could put a param onto an extension page, so it does not carry.
+  passthrough.delete(CAPTURED_PARAM);
   // Note: passthrough.toString() uses application/x-www-form-urlencoded
   // encoding (spaces → `+`, literal `+` → `%2B`). End-to-end loss-less
   // for consumers that decode via URLSearchParams; consumers that

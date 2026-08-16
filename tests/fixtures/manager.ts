@@ -4,7 +4,7 @@
 //   --project=sourcemonkey  — launches Chromium with the unpacked
 //     dist/ extension, same shape as tests/fixtures/extension.ts.
 //   --project=tampermonkey  — connects via CDP (port 9223) to the
-//     browser opened by scripts/open-test-browser-with-TamperMonkey.sh.
+//     browser opened by scripts/open-test-browser-with-Tampermonkey.sh.
 //     TM must be installed in that profile interactively beforehand.
 //
 // The project's `metadata.manager` field is what we read. The
@@ -13,7 +13,7 @@
 // disagree, we throw.
 //
 // Tests get a single `setup.installScriptsFrom(dir)` helper that does
-// the right thing per manager — adds a directory source under SM, or
+// the right thing per manager — adds a directory collection under SM, or
 // syncs each *.user.js file into TM via the dashboard.
 
 import { test as base, chromium, type BrowserContext } from '@playwright/test';
@@ -79,7 +79,7 @@ const TM_HEADED = process.env.TM_HEADED === '1';
 export interface SetupApi {
   /**
    * Install or sync every `*.user.js` in `dir` into the active manager.
-   * Under SourceMonkey, registers the directory as a source. Under
+   * Under SourceMonkey, registers the directory as a collection. Under
    * Tampermonkey, installs/updates scripts via the dashboard, skipping
    * already-installed entries at the same-or-newer version.
    */
@@ -172,12 +172,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
       if (TM_HEADED) {
         // Headed (debug) mode: connect to a browser the user already
-        // opened with scripts/open-test-browser-with-TamperMonkey.sh.
+        // opened with scripts/open-test-browser-with-Tampermonkey.sh.
         // Don't close at teardown — it's their interactive session.
         const browser = await chromium.connectOverCDP(`http://127.0.0.1:${TM_CDP_PORT}`).catch((err) => {
           throw new Error(
             `Could not connect to Tampermonkey test browser at CDP port ${TM_CDP_PORT}. ` +
-            `Start it first with: scripts/open-test-browser-with-TamperMonkey.sh\n` +
+            `Start it first with: scripts/open-test-browser-with-Tampermonkey.sh\n` +
             `Underlying error: ${err?.message ?? err}`
           );
         });
@@ -204,7 +204,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       if (!fs.existsSync(TM_PROFILE_DIR)) {
         throw new Error(
           `TM profile not found at ${TM_PROFILE_DIR}. ` +
-          `First-time setup: run scripts/open-test-browser-with-TamperMonkey.sh and install TM ` +
+          `First-time setup: run scripts/open-test-browser-with-Tampermonkey.sh and install TM ` +
           `from the Chrome Web Store, then close the browser. ` +
           `See docs/cross-manager-testing.md.`
         );
@@ -245,6 +245,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         return;
       }
       const driver = new TampermonkeyDriver(extensionContext, getTampermonkeyExtensionId());
+      // Nobody is watching to click "OK" on TM's GM-permission prompts
+      // (GM_download raises one), and an unanswered prompt means the GM
+      // call never settles.
+      driver.autoApprovePermissionPrompts();
       await use(driver);
     },
     { scope: 'worker' },
@@ -268,12 +272,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const getServiceWorker = makeGetServiceWorker(extensionContext);
       const sm = makeSwApi(getServiceWorker);
       // Per-test clean slate matches tests/fixtures/extension.ts: each
-      // test starts with no sources registered, no scripts in storage.
+      // test starts with no collections registered, no scripts in storage.
       await sm.resetAllState();
       await use({
         manager,
         installScriptsFrom: async (dir: string) => {
-          await sm.addSource(dir);
+          await sm.addCollection(dir);
           await sm.syncNow();
         },
       });

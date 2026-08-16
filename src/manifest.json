@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "description": "Userscript manager that treats userscripts like source code, built and managed with real coding tools",
   "homepage_url": "https://github.com/jshute96/SourceMonkey",
-  "permissions": ["contextMenus", "declarativeNetRequestWithHostAccess", "notifications", "offscreen", "scripting", "storage", "userScripts", "webNavigation"],
+  "permissions": ["contextMenus", "declarativeNetRequestWithHostAccess", "downloads", "notifications", "offscreen", "scripting", "storage", "userScripts", "webNavigation"],
   "sandbox": {
     "pages": ["parse-sandbox.html"]
   },
@@ -31,7 +31,7 @@
     "128": "icons/icon-128.png"
   },
   "options_ui": {
-    "page": "sources.html",
+    "page": "collections.html",
     "open_in_tab": true
   }
 }

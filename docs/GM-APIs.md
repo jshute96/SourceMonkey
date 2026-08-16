@@ -32,7 +32,7 @@ SourceMonkey actually does today.
     replace per-subsystem methods.
 - **`src/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
-  per-script source; `buildGmRuntimeSpec` returns the runtime
+  per-script collection; `buildGmRuntimeSpec` returns the runtime
   registration alongside `buildBridgeSpec`.
 - **`src/gm-url-change.ts`** — SW-side driver for
   `@grant window.onurlchange`. Forwards
@@ -485,7 +485,7 @@ Known limitations:
 ## `GM_log`
 
 Page-side wrapper around `console.log` with an SW-side fan-out so
-the call also lands on the script's Log tab in the sources-page
+the call also lands on the script's Log tab in the collections-page
 viewer. The binding emitter routes `GM_log(...)` to
 `window.__SM_GM__.log.write(scriptId, arguments)`.
 
@@ -611,6 +611,107 @@ Returns `undefined` (matches TM/VM signature).
 - `tag` is parsed but unused today — `chrome.notifications` has
   its own notification id semantics; we don't coalesce by tag.
 
+## `GM_download`
+
+User-facing surface (call shapes, error values, caveats) lives in
+[supported-GM-APIs.md](supported-GM-APIs.md#downloads). This section
+records the implementation and the choices behind it.
+
+### Split transport
+
+The page-side runtime picks by URL scheme:
+
+- `http(s)` → `sm:gm-download-start` to the SW, which drives
+  `chrome.downloads` (`src/gm-download.ts`).
+- `blob:` / `data:` → an `<a download>` click in the page; the SW is
+  never involved.
+
+Why the split:
+
+- A page-minted `blob:` URL is registered against the *page's* origin.
+  The extension's SW can't resolve it, and MV3 service workers have no
+  `URL.createObjectURL` to re-mint one.
+- Streaming a multi-GB video through `chrome.runtime.sendMessage` to
+  re-materialize it elsewhere would burn memory for a worse result.
+- The anchor click is what the same userscript would do with no
+  `@grant` at all, so the in-page path grants no capability the script
+  didn't already have.
+
+### Rejected alternatives
+
+- **Offscreen document + `BLOBS` reason** (the shape TODO.md
+  originally sketched): only needed if the SW had to fetch bytes and
+  hand them to something that can mint a blob URL.
+  `chrome.downloads.download` fetches the URL itself — including
+  `headers` — so the whole detour disappears.
+- **Fetch in the SW, then download from the result**: loses
+  `Content-Disposition` handling, resume, progress accounting and the
+  Save-As dialog, and re-introduces the memory problem.
+- **`@connect` gating** — see
+  [supported-GM-APIs.md](supported-GM-APIs.md#connect-does-not-gate-downloads)
+  for why download URLs can't live in a header allowlist and why the
+  exfiltration threat `@connect` addresses doesn't apply here.
+
+### SW-side state
+
+- `requestId → entry` plus a `downloadId → requestId` index, both
+  in-memory (same lifetime story as `gm-tab` / `gm-notification`).
+- Each entry carries the emit closure the message handler built, the
+  timeout timer, and the progress interval.
+- `chrome.downloads.onChanged` is the terminal-event collection:
+  `state.current === 'complete'` → `load` (after a
+  `chrome.downloads.search` for filename + size), `'interrupted'` →
+  `error`/`not_succeeded` with `delta.error` passed through as
+  `{current, previous}`.
+- The poll (`chrome.downloads.search`, 500 ms) runs for every in-flight
+  download, not just the ones that asked for progress. It has three
+  jobs: byte counts for `onprogress` (the onChanged delta doesn't carry
+  `bytesReceived`), a backstop for a missed terminal delta, and
+  keep-alive — each API call postpones the SW's ~30 s idle shutdown,
+  which a minutes-long download would otherwise hit, taking the
+  in-memory routing tables with it.
+- Terminal handlers release the entry *before* emitting, so a callback
+  that immediately starts another download can't collide with the one
+  it just settled.
+- **Terminal-state catch-up.** The onChanged delta is keyed by download
+  id, which we only learn when `chrome.downloads.download` resolves —
+  a small or cached file can settle inside that window and its delta
+  is dropped. The poll's first tick fires immediately for that reason.
+  Racing the real delta is harmless: the first one through releases the
+  entry, the loser finds nothing.
+- **The timeout is armed before the download is created**, not after.
+  Chrome doesn't return a download id until the server answers, so a
+  timer armed after the await could never fire for the case that most
+  needs it — a host that accepts the connection and then stalls.
+
+### Cancellation
+
+- The page settles `abort()` locally and immediately (matching
+  `GM_xmlhttpRequest`), then fires `sm:gm-download-abort`.
+- The SW cancels via `chrome.downloads.cancel` and drops the entry, so
+  the `USER_CANCELED` interrupt that follows finds nothing and can't
+  double-report.
+- `abort()` racing the initial `chrome.downloads.download` sets
+  `cancelRequested`; the start path cancels as soon as it has an id
+  (same shape as `gm-tab.ts`'s `closeRequested`). A timeout that fires
+  in the same window takes the same handoff.
+- A tab that closes mid-start is checked for explicitly: the start path
+  re-reads the entry after the await, because `dropOriginator` may have
+  swept it, and re-registering would leave a poll timer nobody can
+  clear.
+
+### Safety gates
+
+- Scheme allowlist in the SW (`http(s)` only) — the URL is
+  page-supplied, so without it a script could ask the privileged SW to
+  pull `file:///…` onto disk.
+- `validateDownloadName` rejects absolute paths, `..` traversal,
+  control characters and empty segments; relative subdirectories are
+  allowed. Chrome would reject most of these anyway, but doing it here
+  turns an opaque `not_succeeded` into a clean `not_permitted`.
+- Both checks run in the SW (not page-side) so refusals also reach the
+  per-script Log.
+
 ## `GM_registerMenuCommand` / `GM_unregisterMenuCommand`
 
 ### Surface
@@ -630,9 +731,15 @@ Returns `undefined` (matches TM/VM signature).
   `{scriptId, commandId, name}`; `unregister` drops the local
   entry and sends `sm:gm-menu-unregister`.
 - **SW side (`src/gm-menu.ts`)** — mirrors the (tabId → scriptId →
-  commands[]) registry that the action menu renders from. No
-  callbacks live here — only the name + id needed to render the
-  row and route a fire event back.
+  commands[]) registry that the action menu renders from, tagged
+  with the `documentId` those commands came from. No callbacks live
+  here — only the name + id needed to render the row and route a
+  fire event back.
+  - Register and unregister both carry the sender's documentId, so a
+    message from a document we're no longer holding commands for
+    can't reach into the current document's entries. That is
+    reachable with an explicit `{id: '...'}`, where the same
+    commandId legitimately exists in both documents.
 - **Action menu rebuild (`src/background.ts`,
   `doRebuildActionContextMenu`)** — folds the per-tab mirror into
   the rebuild after the script rows: each script row gets its
@@ -649,16 +756,44 @@ Returns `undefined` (matches TM/VM signature).
 
 ### Lifecycle
 
-- Registration is scoped to the (tab, document). The SW clears
-  the mirror on:
-  - Fresh-document navigation (the new wrapper's `sm:start` will
-    re-register from scratch).
+- Registration is scoped to the (tab, document), and the mirror
+  stores the `documentId` its commands came from.
+- **The invariant**: the mirror holds commands for the document the
+  tab is on *now*. The callbacks live in that document, so a mirror
+  pointing anywhere else renders rows that can never fire.
+- One rule enforces it on navigation, keyed on the document being
+  entered: **drop the mirror unless it already belongs to that
+  document.**
+  - Fresh document → the old commands go; the new wrapper
+    re-registers from scratch.
+  - bfcache restore back to an *earlier* document → the later
+    document's commands go too.
+    - **Known gap**: the restored document's own commands do not come
+      back. The clear that ran when the tab left it dropped them, and
+      Chrome does not re-inject on a bfcache restore, so nothing
+      re-registers — that page's menu stays empty until a real
+      document load. Pre-existing; the fix is a mirror per document
+      rather than one per tab. Filed in TODO.md.
+  - SPA pushState within the same document → kept, which is the
+    page-side "callbacks survive in this document" lifecycle.
+  - Why "unless" and not an unconditional wipe: the navigation
+    handler clears after several awaits, so a `document-end` wrapper
+    in the new document can register first. Dropping those leaves the
+    tab with no menu commands until the next navigation — nothing
+    resends them.
+- The mirror is left alone when no navigation happened: a
+  script-set-driven re-evaluation (`refreshAllOpenTabs`, which passes
+  no `documentId`) must not touch it.
+- Cleared unconditionally on:
   - Navigating to a non-injectable URL (`chrome://`, `about:blank`,
     ...).
   - Tab close (`chrome.tabs.onRemoved`).
-- SPA pushState / bfcache restore preserves the document, so
-  registered commands stay live — matches the page-side
-  "callbacks survive in this document" invariant.
+- **One document per tab is an assumption, not a guarantee.** It holds
+  only because scripts run in the top frame only (we never set
+  `allFrames`). Scripts in subframes would name different documents
+  and clobber each other's commands here — re-key this registry before
+  flipping `allFrames`. See
+  [injection.md](injection.md#limitations--future-work).
 - SW restart wipes the in-memory mirror. Page-side callbacks are
   scoped to the same document so they're already gone; the symmetric
   drop is correct.
@@ -886,4 +1021,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
-- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `window.onurlchange` (SPA `urlchange` event fed by `chrome.webNavigation`'s same-document events, matching TM's own source)
+- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `GM_download` (SW-side `chrome.downloads` for http(s), in-page anchor for `blob:` / `data:`), `window.onurlchange` (SPA `urlchange` event fed by `chrome.webNavigation`'s same-document events, matching TM's own source)

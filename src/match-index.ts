@@ -10,18 +10,21 @@
 // in-memory loop over the cache.
 //
 // Enabled state: a script is considered for matching only if BOTH its
-// own `enabled` flag and its parent source's `enabled` flag are true.
-// We cache every injectable script (regardless of enabled) and
-// separately track the set of disabled sources, so toggling a source
-// flips every script under it in O(1) without rewalking storage.
+// own `enabled` flag and its parent collection's `enabled` flag are
+// true. We cache every injectable script (regardless of enabled) and
+// separately track the set of disabled collections, so toggling a
+// collection flips every script under it in O(1) without rewalking
+// storage.
 
 import { scriptDisplayName } from './script-display.js';
 import {
+  ensureCollectionKeysMigrated,
   isScriptEnabled,
-  isSourceEnabled,
+  isCollectionEnabled,
+  sameStoredValue,
   type ScriptMatching,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
 
@@ -29,18 +32,18 @@ export interface MatchedScript {
   id: string;
   name: string;       // @name, or the readable relativePath as a fallback
   matching: ScriptMatching;
-  sourceId: string;
+  collectionId: string;
 }
 
 const SCRIPT_PREFIX = 'script:';
-const SOURCE_PREFIX = 'source:';
+const COLLECTION_PREFIX = 'collection:';
 
 interface CacheEntry extends MatchedScript {
-  enabled: boolean;   // the script's own toggle (not the source's)
+  enabled: boolean;   // the script's own toggle (not the collection's)
 }
 
 let cache = new Map<string, CacheEntry>();
-let disabledSources = new Set<string>();
+let disabledCollections = new Set<string>();
 let loaded: Promise<void> | null = null;
 
 // While loadAll() is awaiting its full `get(null)` snapshot, any
@@ -61,6 +64,9 @@ export function ensureLoaded(): Promise<void> {
 
 async function loadAll(): Promise<void> {
   pendingDuringLoad = [];
+  // Before the read, not after: a profile still on the pre-rename key
+  // spelling would otherwise load an empty cache and inject nothing.
+  await ensureCollectionKeysMigrated();
   const all = await chrome.storage.local.get(null);
   const nextCache = new Map<string, CacheEntry>();
   const nextDisabled = new Set<string>();
@@ -68,13 +74,13 @@ async function loadAll(): Promise<void> {
     if (key.startsWith(SCRIPT_PREFIX)) {
       const entry = toEntry(value as StoredScript);
       if (entry) nextCache.set(entry.id, entry);
-    } else if (key.startsWith(SOURCE_PREFIX)) {
-      const source = value as StoredSource;
-      if (!isSourceEnabled(source)) nextDisabled.add(source.id);
+    } else if (key.startsWith(COLLECTION_PREFIX)) {
+      const collection = value as StoredCollection;
+      if (!isCollectionEnabled(collection)) nextDisabled.add(collection.id);
     }
   }
   cache = nextCache;
-  disabledSources = nextDisabled;
+  disabledCollections = nextDisabled;
   // Replay any changes that landed during the await on top of the
   // fresh snapshot, then stop buffering. A change for a key already in
   // the snapshot just re-applies the same (or newer) value; one for a
@@ -100,7 +106,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
     id: script.id,
     name,
     matching: script.matching,
-    sourceId: script.sourceId,
+    collectionId: script.collectionId,
     enabled: isScriptEnabled(script),
   };
 }
@@ -129,6 +135,29 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
   let touched = false;
   for (const [key, change] of Object.entries(changes)) {
     if (key.startsWith(SCRIPT_PREFIX)) {
+      // A write that only moved `versionProbes` is not a change to
+      // anything downstream of this listener, and saying otherwise is
+      // expensive: `notifyChange` schedules a full unregister-all +
+      // register-all across EVERY script. A "Refresh All" probes each
+      // script in turn and writes each result as its own row, so
+      // treating those as cache changes turned one refresh into a
+      // re-registration per probed script — measured at 23 syncs
+      // averaging 356ms for a 177-script profile, most of them landing
+      // after the refresh had already finished.
+      //
+      // Safe because a probe is a display annotation and nothing else:
+      // `toEntry` doesn't read it, and neither does `injector.ts`
+      // (registration specs), `tab-status.ts`, or `background.ts`. The
+      // pages that DO render it — the viewer and the collections page —
+      // repaint from their own `chrome.storage.local.onChanged`
+      // listeners, not from `onCacheChanged`, so the badge still
+      // updates the moment a probe lands.
+      if (onlyProbesChanged(
+        change.oldValue as StoredScript | undefined,
+        change.newValue as StoredScript | undefined,
+      )) {
+        continue;
+      }
       touched = true;
       const id = key.slice(SCRIPT_PREFIX.length);
       if (change.newValue === undefined) {
@@ -138,26 +167,52 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
       const entry = toEntry(change.newValue as StoredScript);
       if (entry) cache.set(id, entry);
       else cache.delete(id);
-    } else if (key.startsWith(SOURCE_PREFIX)) {
-      const id = key.slice(SOURCE_PREFIX.length);
-      const next = change.newValue as StoredSource | undefined;
+    } else if (key.startsWith(COLLECTION_PREFIX)) {
+      const id = key.slice(COLLECTION_PREFIX.length);
+      const next = change.newValue as StoredCollection | undefined;
       if (next === undefined) {
-        // Source was removed entirely — its scripts will be deleted
+        // Collection was removed entirely — its scripts will be deleted
         // via separate script:* changes; just drop our tracking row.
-        if (disabledSources.delete(id)) touched = true;
-      } else if (!isSourceEnabled(next)) {
-        if (!disabledSources.has(id)) { disabledSources.add(id); touched = true; }
+        if (disabledCollections.delete(id)) touched = true;
+      } else if (!isCollectionEnabled(next)) {
+        if (!disabledCollections.has(id)) { disabledCollections.add(id); touched = true; }
       } else {
-        if (disabledSources.delete(id)) touched = true;
+        if (disabledCollections.delete(id)) touched = true;
       }
     }
   }
   if (touched) notifyChange();
 }
 
+// Whether a `script:*` write moved nothing but `versionProbes`.
+//
+// Deliberately a diff of the two stored rows rather than of the derived
+// cache entries. The entry holds only what MATCHING needs, but
+// `notifyChange` also drives re-registration, which reads the whole row
+// — body, `@require` bodies, grants, world, run-at. Comparing entries
+// would call a body-only edit "no change" and leave the old code
+// registered, which is a correctness bug, not a missed optimisation.
+// So the rule is inverted: assume a change matters unless it is exactly
+// the one field proven not to.
+//
+// Exported for unit tests.
+export function onlyProbesChanged(
+  before: StoredScript | undefined,
+  after: StoredScript | undefined,
+): boolean {
+  // A creation or a deletion is never "just a probe update".
+  if (!before || !after) return false;
+  // `sameStoredValue` treats an undefined-valued key as absent, so
+  // overwriting the field is how you ask "equal apart from this one".
+  return sameStoredValue(
+    { ...before, versionProbes: undefined },
+    { ...after, versionProbes: undefined },
+  );
+}
+
 // Allow the background SW to refresh open-tab badges when the script
-// set changes (e.g. after a directory Refresh on the sources page, or a
-// per-source / per-script enabled toggle).
+// set changes (e.g. after a directory Refresh on the collections page,
+// or a per-collection / per-script enabled toggle).
 type ChangeListener = () => void;
 const changeListeners: ChangeListener[] = [];
 export function onCacheChanged(fn: ChangeListener): void {
@@ -173,13 +228,13 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
   const out: MatchedScript[] = [];
   for (const entry of cache.values()) {
     if (!entry.enabled) continue;
-    if (disabledSources.has(entry.sourceId)) continue;
+    if (disabledCollections.has(entry.collectionId)) continue;
     if (urlMatchesScript(url, entry.matching)) {
       out.push({
         id: entry.id,
         name: entry.name,
         matching: entry.matching,
-        sourceId: entry.sourceId,
+        collectionId: entry.collectionId,
       });
     }
   }
@@ -195,11 +250,11 @@ export function cacheSize(): number {
 // Test/debug: dump the current cache contents. Lets e2e tests
 // distinguish "the script never landed in the cache" from "the URL
 // pattern doesn't match" when a badge classification looks wrong.
-export function debugDumpCache(): { entries: { id: string; name: string; enabled: boolean; sourceId: string; matching: ScriptMatching }[]; disabledSources: string[] } {
+export function debugDumpCache(): { entries: { id: string; name: string; enabled: boolean; collectionId: string; matching: ScriptMatching }[]; disabledCollections: string[] } {
   return {
     entries: [...cache.values()].map((e) => ({
-      id: e.id, name: e.name, enabled: e.enabled, sourceId: e.sourceId, matching: e.matching,
+      id: e.id, name: e.name, enabled: e.enabled, collectionId: e.collectionId, matching: e.matching,
     })),
-    disabledSources: [...disabledSources],
+    disabledCollections: [...disabledCollections],
   };
 }

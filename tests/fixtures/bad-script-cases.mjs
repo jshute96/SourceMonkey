@@ -2,7 +2,7 @@
 // the two tests that check them:
 //
 //   - `tests/e2e/bad-scripts.spec.ts` — adds the directory as a real
-//     source in a real browser, and reads the stored rows back.
+//     collection in a real browser, and reads the stored rows back.
 //   - `tests/unit/validate-userscripts.test.mjs` — runs the offline
 //     CLI over the same directory under Node.
 //
@@ -48,7 +48,7 @@ export const BAD_SCRIPTS_DIR = path.resolve(__dirname, '..', 'bad-examples');
 /** @type {BadCase[]} */
 export const BAD_CASES = [
   // No block at all, so no line to name — the location is the file
-  // itself, which still opens the source the reader has to fix.
+  // itself, which still opens the collection the reader has to fix.
   { file: 'empty.user.js',                 expectedStatus: 'invalid', errorMatcher: /No \/\/ ==UserScript== metadata block/,
     errorIn: 'empty.user.js', errorLine: null },
   { file: 'no-header.user.js',             expectedStatus: 'invalid', errorMatcher: /No \/\/ ==UserScript== metadata block/,

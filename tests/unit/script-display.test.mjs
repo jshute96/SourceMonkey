@@ -1,6 +1,6 @@
 // Tests for src/script-display.ts (compiled to dist/script-display.js).
 //
-// Pure display helpers shared by the sources page + userscript viewer.
+// Pure display helpers shared by the collections page + userscript viewer.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +17,7 @@ import {
   scriptBasename,
   scriptDisplayName,
   scriptOutdatedProbe,
+  stripSriFragment,
 } from '../../dist/script-display.js';
 
 // ---------- formatBytes ----------
@@ -84,7 +85,7 @@ test('formatScriptStatusLabel: distinct labels per display status', () => {
   assert.equal(formatScriptStatusLabel('invalid'), 'INVALID');
   assert.equal(formatScriptStatusLabel('missing'), 'MISSING');
   assert.equal(formatScriptStatusLabel('refresh-failed'), 'REFRESH FAILED');
-  // OUTDATED: the script runs and is current with its own source, but a
+  // OUTDATED: the script runs and is current with its own collection, but a
   // URL we deliberately don't update from declares a newer @version.
   assert.equal(formatScriptStatusLabel('outdated'), 'OUTDATED');
   assert.equal(formatScriptStatusLabel('warning'), 'WARNING');
@@ -143,7 +144,7 @@ test('effectiveScriptStatus: refreshError surfaces as refresh-failed', () => {
 
 test('effectiveScriptStatus: outdated ranks under refresh-failed, over log levels', () => {
   // OUTDATED is an update-pipeline fact with no other surface in the
-  // sources list, so it outranks the log-derived levels — but a source
+  // collections list, so it outranks the log-derived levels — but a collection
   // we can't reach at all subsumes "some other copy is ahead".
   assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined, true), 'outdated');
   assert.equal(effectiveScriptStatus({ status: 'ok' }, 'error', true), 'outdated');
@@ -272,6 +273,31 @@ test('scriptDisplayName: prefers @name, falls back to the readable location', ()
   );
 });
 
+test('scriptDisplayName: a blank @name is no name', () => {
+  // A header that parsed but declared `// @name    ` must not paint a
+  // blank row where a name belongs.
+  const header = { tags: [{ tag: 'name', value: '   ' }] };
+  assert.equal(
+    scriptDisplayName({ header, relativePath: 'https://x/y%20z.user.js' }),
+    'https://x/y z.user.js',
+  );
+});
+
+test('scriptDisplayName: the caller can supply its own location fallback', () => {
+  // The collections page shortens a container script's URL to its
+  // basename before handing it over as the fallback.
+  assert.equal(
+    scriptDisplayName({ relativePath: 'https://x/deep/y%20z.user.js' }, 'y z.user.js'),
+    'y z.user.js',
+  );
+  // A usable @name still wins over the fallback.
+  const header = { tags: [{ tag: 'name', value: 'Nice Name' }] };
+  assert.equal(
+    scriptDisplayName({ header, relativePath: 'https://x/deep/y.user.js' }, 'y.user.js'),
+    'Nice Name',
+  );
+});
+
 test('scriptBasename: an escaped slash cannot smuggle a path separator in', () => {
   // `%2F` decodes to a real `/`. This value becomes a log ID, so a
   // "basename" carrying a separator would read as a directory in every
@@ -288,4 +314,67 @@ test('logIdDupeSuffix: only a trailing #<digits> counts', () => {
   // splitting on the first `#` would render half the name as one.
   assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js'), '');
   assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js#3'), '#3');
+});
+
+// ---------- stripSriFragment ----------
+//
+// Display-only: a 64-hex-digit tail is most of the width of a tooltip
+// or a details row and tells the reader nothing they can act on. The
+// fetch / dedup / error-message paths keep the verbatim ref.
+
+test('stripSriFragment: drops a single hash fragment', () => {
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#md5=c45f9b0d19ba69bb2d44918746c4d7ae'),
+    'https://example.com/lib.js',
+  );
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#sha256=e3b0c44298fc1c14'),
+    'https://example.com/lib.js',
+  );
+});
+
+// TM accepts a comma-separated list and uses the last supported one.
+test('stripSriFragment: drops a multi-hash fragment', () => {
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#md5=abc,sha256=def'),
+    'https://example.com/lib.js',
+  );
+});
+
+// The base64 spelling uses `-` where the hex spelling uses `=`.
+test('stripSriFragment: handles the base64 spelling', () => {
+  assert.equal(
+    stripSriFragment('https://example.com/lib.js#sha256-47DEQpj8HBSa+/TImW'),
+    'https://example.com/lib.js',
+  );
+});
+
+test('stripSriFragment: every supported algorithm', () => {
+  for (const algo of ['md5', 'sha1', 'sha256', 'sha384', 'sha512']) {
+    assert.equal(stripSriFragment(`https://example.com/lib.js#${algo}=abc`), 'https://example.com/lib.js');
+  }
+  // Case-insensitive: TM's docs lowercase these but nothing enforces it.
+  assert.equal(stripSriFragment('https://example.com/lib.js#SHA256=abc'), 'https://example.com/lib.js');
+});
+
+// An ordinary fragment is content the author meant, so it survives —
+// this is why the rule matches hash SHAPES rather than just cutting at
+// the first `#`.
+test('stripSriFragment: leaves a non-hash fragment alone', () => {
+  for (const url of [
+    'https://example.com/lib.js#section',
+    'https://example.com/lib.js#',
+    'https://example.com/lib.js#md5',
+    'https://example.com/lib.js#sha256=abc,notahash',
+    'https://example.com/lib.js#crc32=abc',
+    'https://example.com/lib.js',
+  ]) {
+    assert.equal(stripSriFragment(url), url);
+  }
+});
+
+// A malformed hash tail surviving is the right way round: a reader
+// wondering why validation didn't happen needs to see what they typed.
+test('stripSriFragment: leaves a hash with no value alone', () => {
+  assert.equal(stripSriFragment('https://example.com/lib.js#md5='), 'https://example.com/lib.js#md5=');
 });

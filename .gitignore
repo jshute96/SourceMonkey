@@ -34,6 +34,8 @@ dist/
 
 # GreasyFork corpus: bulky or machine-specific inputs and derived data.
 # The checked-in top-scripts.csv is the artifact these reproduce from.
+tests/greasyfork-examples/greasyfork-dump
+tests/greasyfork-examples/files
 tests/greasyfork-examples/greasyfork-dump/
 tests/greasyfork-examples/files/
 tests/greasyfork-examples/corpus.db*

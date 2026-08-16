@@ -1,4 +1,4 @@
-// Tests for src/github-source.ts (compiled to dist/github-source.js):
+// Tests for src/github-provider.ts (compiled to dist/github-provider.js):
 // GitHub URL parsing, default-branch resolution, raw-URL normalization,
 // and the Contents-API recursive directory scanner. The directories.ts
 // dispatch (scriptFileUrl / scriptAbsolutePath / scanForUserScripts
@@ -14,11 +14,11 @@ import assert from 'node:assert/strict';
 
 import {
   githubRawToBlobUrl,
-  isGithubDirSource,
+  isGithubDirCollection,
   normalizeGithubInput,
   parseGithubUrl,
   scanGithubDir,
-} from '../../dist/github-source.js';
+} from '../../dist/github-provider.js';
 import { _setGithubAuthTokenForTests } from '../../dist/github-auth.js';
 
 async function withFetch(impl, fn) {
@@ -69,26 +69,26 @@ test('parseGithubUrl returns null for non-github URLs and bare repo URLs', () =>
   assert.equal(parseGithubUrl('not a url'), null);
 });
 
-// ---------- isGithubDirSource ----------
+// ---------- isGithubDirCollection ----------
 
-test('isGithubDirSource recognises directory URLs and rejects file URLs', () => {
+test('isGithubDirCollection recognises directory URLs and rejects file URLs', () => {
   // Canonical: /tree/<ref>/<dir>
-  assert.equal(isGithubDirSource('https://github.com/foo/bar/tree/main/dir'), true);
+  assert.equal(isGithubDirCollection('https://github.com/foo/bar/tree/main/dir'), true);
   // Repo-root-at-ref.
-  assert.equal(isGithubDirSource('https://github.com/foo/bar/tree/main'), true);
+  assert.equal(isGithubDirCollection('https://github.com/foo/bar/tree/main'), true);
   // Tolerated: a /blob/<ref>/<dir> URL (user editing a blob URL by hand).
-  assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/dir'), true);
-  // File URLs are NOT directory sources — normalizeGithubInput rewrites
-  // these to raw before they reach the source-kind dispatch.
-  assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/a.user.js'), false);
-  assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/script_manifest.json'), false);
+  assert.equal(isGithubDirCollection('https://github.com/foo/bar/blob/main/dir'), true);
+  // File URLs are NOT directory collections — normalizeGithubInput rewrites
+  // these to raw before they reach the collection-kind dispatch.
+  assert.equal(isGithubDirCollection('https://github.com/foo/bar/blob/main/a.user.js'), false);
+  assert.equal(isGithubDirCollection('https://github.com/foo/bar/blob/main/script_manifest.json'), false);
   // An arbitrary `.json` file is NOT a recognised manifest filename, so
   // it's treated as a directory (a later scan attempt will surface the
   // mismatch). The fixed manifest filename is the only one we honor.
-  assert.equal(isGithubDirSource('https://github.com/foo/bar/blob/main/other.json'), true);
+  assert.equal(isGithubDirCollection('https://github.com/foo/bar/blob/main/other.json'), true);
   // Non-github URLs always classify as non-dir.
-  assert.equal(isGithubDirSource('https://example.com/dir'), false);
-  assert.equal(isGithubDirSource('/home/me/scripts'), false);
+  assert.equal(isGithubDirCollection('https://example.com/dir'), false);
+  assert.equal(isGithubDirCollection('/home/me/scripts'), false);
 });
 
 // ---------- normalizeGithubInput ----------
@@ -117,7 +117,7 @@ test('normalizeGithubInput rewrites github blob URLs of .user.js / script_manife
   );
   // A blob URL of an arbitrary .json file is NOT rewritten — it's not
   // a recognised file shape, so it falls through and downstream
-  // classification treats it as a github directory source.
+  // classification treats it as a github directory collection.
   assert.equal(
     await normalizeGithubInput('https://github.com/foo/bar/blob/main/other.json'),
     'https://github.com/foo/bar/blob/main/other.json',
@@ -131,7 +131,7 @@ test('normalizeGithubInput rewrites github blob URLs of .user.js / script_manife
     'https://github.com/foo/bar/blob/main/nope_script_manifest.json',
   );
   assert.equal(
-    isGithubDirSource('https://github.com/foo/bar/blob/main/nope_script_manifest.json'),
+    isGithubDirCollection('https://github.com/foo/bar/blob/main/nope_script_manifest.json'),
     true,
   );
 });
@@ -158,7 +158,7 @@ test('normalizeGithubInput leaves directory URLs and non-github inputs alone', a
 test('normalizeGithubInput resolves a bare repo URL to /tree/<default-branch>', async () => {
   // A bare `https://github.com/<o>/<r>` URL is the form the user gets
   // from the repo's landing page. We resolve the default branch via the
-  // repo metadata endpoint and bake it into the stored source path so
+  // repo metadata endpoint and bake it into the stored collection path so
   // the rest of the pipeline (which assumes an explicit ref) works.
   let captured = null;
   const fakeFetch = async (url) => {
@@ -387,13 +387,13 @@ test('githubRawToBlobUrl handles refs/tags/<tag>/ shape', () => {
 test('githubRawToBlobUrl handles the github.com/<o>/<r>/raw/ shape', () => {
   // The "Raw" button on github.com produces this form. It 302s to
   // raw.githubusercontent.com, but we may store / resolve URLs in
-  // this shape (notably for github-manifest sources whose stored
+  // this shape (notably for github-manifest collections whose stored
   // path is `github.com/.../raw/refs/heads/main/script_manifest.json`).
   assert.equal(
     githubRawToBlobUrl('https://github.com/owner/repo/raw/refs/heads/main/foo.user.js'),
     'https://github.com/owner/repo/blob/main/foo.user.js',
   );
-  // Manifest source itself.
+  // Manifest collection itself.
   assert.equal(
     githubRawToBlobUrl('https://github.com/owner/repo/raw/refs/heads/main/script_manifest.json'),
     'https://github.com/owner/repo/blob/main/script_manifest.json',

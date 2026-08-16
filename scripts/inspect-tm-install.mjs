@@ -15,7 +15,7 @@
 //
 // How to run it
 //   1. Start the TM test browser:
-//      `scripts/open-test-browser-with-TamperMonkey.sh`
+//      `scripts/open-test-browser-with-Tampermonkey.sh`
 //   2. Make sure TM is installed and the script you want to inspect
 //      is on disk. Default target: tests/examples/gm-info/gm-info.user.js.
 //      Set SCRIPT=<absolute or repo-relative path> to inspect a

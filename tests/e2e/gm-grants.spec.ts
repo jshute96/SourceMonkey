@@ -90,7 +90,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
       },
       body: probeBody,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -139,7 +139,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
       },
       body: probeBody,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -170,7 +170,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
       },
       body: probeBody,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -209,7 +209,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
         document.body.dataset.gmDotXhrType = typeof (GM && GM.xmlHttpRequest);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -258,7 +258,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
         document.body.dataset.reqProbe = window.__SM_REQ_PROBE || 'missing';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -293,7 +293,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
         document.body.dataset.dot = typeof (GM && GM.setValue);
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

@@ -71,12 +71,13 @@ One page, one set of panels, two query strings:
 
 | URL | Mode | Where it comes from |
 |-----|------|---------------------|
-| `userscript.html?script=<scriptId>` | **Installed** | sources page, badge menu, Install / Update |
-| `userscript.html?preview=<url>` | **Preview** | [`.user.js` capture](install-capture.md), single-script Add Source |
+| `userscript.html?script=<scriptId>` | **Installed** | collections page, badge menu, Install / Update |
+| `userscript.html?preview=<url>` | **Preview** | [`.user.js` capture](install-capture.md), a single-script Add |
+| … `&captured=1` | Preview, capture-opened | the capture only — see [install-capture.md](install-capture.md#the-captured1-marker) for who sets, strips, and reads it |
 
 - **Installed** hydrates from the [script store](storage.md) — it does
   **not** re-fetch from disk on open, so what the user sees matches
-  what the sources page table reports.
+  what the collections page table reports.
 - **Preview** fetches the URL itself and shows the same heading,
   details panel, and code tabs for a script that isn't in the store.
   Nothing is written until the user says Install.
@@ -92,6 +93,10 @@ One page, one set of panels, two query strings:
    button → `refreshScript(scriptId)`. Installed mode only; preview
    shows the banner + action row in its place (see
    [Preview mode](#preview-mode)).
+   - The toggle is a radio button, not a plain checkbox: enabling this
+     copy disables every other copy that is running, exactly as the
+     panel's own rows do. Ctrl/cmd-click opts out. See
+     [script-identity.md](script-identity.md#enabling-is-exclusive-disabling-is-not).
 3. **Error message** (`<p class="message …">`) — visible when the
    script is flagged. Shows `errorMessage` (red, `.error`) for an
    `invalid` row, or `Refresh failed: <reason>` (amber,
@@ -110,76 +115,194 @@ One page, one set of panels, two query strings:
 4. **Details panel** (`#header-summary` → `<dl>`) — built by
    `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
-   the panel doesn't reshuffle between modes:
+   the panel doesn't reshuffle between modes.
+   - **Every label carries a tooltip**, from the one table in
+     [`src/details-tooltips.ts`](../src/details-tooltips.ts). Several
+     rows report something the label can't convey — what we checked but
+     deliberately didn't act on, what a value is *not*, where a name
+     shows up outside this page — so the tooltip corrects the likely
+     misreading rather than restating the label.
+     - One-sentence tooltips take no trailing period; two-sentence ones
+       end both and put a newline between, which `title` renders as a
+       line break.
+     - `Version` is the one that differs by mode: a preview has nothing
+       installed, so it describes the file's claim instead.
+   - **What earns a row.** The panel is not a mirror of the metadata
+     block — that block is already on screen, since the first code tab
+     opens on it. A row has to pay for the second reading:
+     - identity a reader scans for: `Name`, `Description`, `Version`
+     - something resolved or computed that the file doesn't state:
+       `Collection`, `Location`, `<Site> page`, `Size`, `Status`, the
+       version probes
+     - a claim worth acting on: `Homepage`, `Match` / `Include` /
+       `Exclude`, `Network access`
+   - Tags that pay for none of it stay in the code view: `@author`,
+     `@namespace`, `@run-at`, `@icon`, `@noframes`, and the rest.
+   - **`@grant` gets no row**, which is a judgement about our GM
+     surface rather than a general one:
+     - `GM_xmlhttpRequest` is the API that reaches other origins, and it
+       does nothing without `@connect`.
+       - A script declaring no `@connect` is blocked from every
+         cross-origin request (see [GM-APIs.md](GM-APIs.md)), leaving it
+         no further than the page's own `fetch`.
+       - So `Network access` already carries that story, and carries it
+         more precisely than a grant name would.
+     - Most other grants act within reach the page already has:
+       `GM_addStyle`, `GM_addElement`, `GM_registerMenuCommand`,
+       `GM_getResourceText`, the value store.
+     - `GM_download` and `GM_openInTab` are the exception. Both reach
+       outside the page — the user's download directory; any URL, whose
+       query string is an exfiltration channel — and neither is
+       `@connect`-gated.
+       - Surfacing those two specifically is filed in
+         [TODO.md](../TODO.md).
    - Parsed-header fields (when a metadata block is present):
-     - `Name`, `Version`, `Description`, `Author`, `Namespace`
-     - `Version at <update|download|update/download> URL` — one row per
-       stored update probe, immediately under `Version`. Value is
-       `same` / `2.1 (Newer)` / `1.0 (Older)` / the probe's error; the
-       probed URL is the row's tooltip; only `(Newer)` is highlighted.
-       Installed mode only — a preview hasn't been probed. See
-       [updates.md](updates.md).
-     - `Homepage` (`@homepage` / `@homepageURL`) — an anchor when the
-       value parses as an absolute http(s) URL, plain text otherwise.
-   - `Log ID` — short file-derived handle used in every SW log line
-     (basename, or `basename#N` for dupes). See
-     [logging.md](logging.md). A script added by URL shows its
-     decoded filename — see
-     [names-and-paths.md](names-and-paths.md). Installed mode only —
-     a script that has never run has no log.
-   - Parsed-header fields, continued — one row per tag, each pattern
-     linkified by the rule in Link rendering below:
-     - `Match`, `Include`, `Exclude`
-   - What the script is asking for. These are the rows an install
-     decision turns on, and they're worth re-reading on an installed
-     script too:
-     - `Permissions` (`@grant`) and `Network access` (`@connect`),
-       rendered monospace — they're API names and hosts, not prose.
-     - `Loads libraries` (`@require`)
-     - `Loads resources` — the whole `@resource <name> <url>` line;
-       the URL is the part that says what gets fetched.
+     - `Name`, `Description`, `Version`
+     - `Version at <update|download> URL` — one row per
+       stored update probe, immediately under `Version`. The probed URL
+       is the row's tooltip; only `(Newer)` is highlighted.
+       - **Only for a probe that has something to say** — the one
+         dropped case is a version matching ours whose latest check
+         also succeeded.
+       - **Any probe carrying an error keeps its row**, whatever its
+         version says — that row is the failure's only surface anywhere
+         in the UI.
+       - **A `@version` on only one side earns a row too.** The `Version`
+         row above then reads `<none>`, putting both halves of the
+         comparison on screen; the probe row shows the bare number, with
+         no `(Newer)`/`(Older)` we can't justify.
+       - Installed mode only — a preview hasn't been probed, and a row
+         would imply it had.
+       - Full rules and the reasoning in [updates.md](updates.md).
    - Location rows:
-     - `Source` — colored type bubble (linking to the source's
-       file:// / http(s) URL) + the source's display name (linking
-       back to the parent section on the sources page via
-       `sources.html#source-<id>`). Same bubble/name combo the sources
+     - `Collection` — colored type bubble (linking to the collection's
+       file:// / http(s) URL) + the collection's display name (linking
+       back to the parent section on the collections page via
+       `collections.html#collection-<id>`). Same bubble/name combo the collections
        page renders. Installed mode only; row omitted if the parent
-       source row has vanished. See
-       [`src/source-display.ts`](../src/source-display.ts).
-     - `Location` — anchor wrapping the resolved location. Display
-       form depends on source kind:
+       collection row has vanished. See
+       [`src/collection-display.ts`](../src/collection-display.ts).
+     - `Location` — anchor wrapping the resolved location. Display form
+       depends on collection kind:
        - `file://` → bare fs path
        - `github` (any flavour) → `github.com/<o>/<r>/blob/<ref>/<path>`
          page URL (raw URL is internal-only)
        - non-github `http(s)://` → URL, percent-decoded for reading
-       Anchor href matches the display URL for everything except
-       `file://`, where the href is the file:// URL (the bare fs path
-       isn't navigable) — and the href always keeps the *encoded* URL,
-       with the tooltip showing it. Adjacent square button copies that
-       raw location (not the decoded display text) to the clipboard
-       via `navigator.clipboard.writeText`; icon swaps to a checkmark
-       for ~1.2 s on success. Row omitted if the
-       parent source row has vanished. In preview mode this is the
-       normalized URL being previewed. Activating the anchor is
-       intercepted in both modes — a plain navigation to a `.user.js`
-       URL gets captured — see the Link rendering section below.
-     - `Size` — `formatScriptSize` output (bytes or `MISSING`); in
-       preview, the byte length of the fetched text.
-     - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
-       `MISSING` / `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
-       (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
-       color-coded; the row's `title` carries Chrome's refusal reason
-       for a `REJECTED` row, the `refreshError` reason for a
-       `REFRESH FAILED` one, the newer upstream version for an
-       `OUTDATED` one, else `errorMessage` when present.
-       Rendered as an `<a href="#Log">` so clicking switches
-       to the Log tab via the same hashchange listener as a manual
-       tab click. The level promotes live as new log entries arrive
-       — the `storage.session.onChanged` listener for
-       `loglevel:<scriptId>` repaints just this row, and the same
-       listener repaints it (plus the message bar) when the injector's
-       `injector-rejections` map changes.
-5. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
+       - In preview mode it's the normalized URL being previewed.
+       - **href vs display text.** The href matches the display URL for
+         everything except `file://`, where it's the `file://` URL (the
+         bare fs path isn't navigable). The href always keeps the
+         *encoded* form, and the tooltip shows it.
+       - **Copy button** (`makeCopyButton` in
+         [`src/copy-button.ts`](../src/copy-button.ts), shared with the
+         `Local overrides` entries). Copies the raw location, not the
+         decoded display text; the icon swaps to a checkmark for ~1.2 s
+         on success.
+       - Row omitted if the parent collection row has vanished.
+       - Activating the anchor is intercepted in both modes — a plain
+         navigation to a `.user.js` URL gets captured — see the Link
+         rendering section below.
+     - `<Site> page` — the human-facing listing page on the site the
+       script was published on, derived from the Location URL. Shown in
+       both modes, whenever the location matches a known hosting site;
+       the sites and their rewrites are tabulated in
+       [Hosting-site pages](#hosting-site-pages-srcscript-sitests).
+       - Labeled with the site's own name (`Greasy Fork page`) — a
+         second row called `Homepage` would collide with the
+         `@homepage` row directly beneath it.
+       - Omitted when the row would only repeat what's already on
+         screen: the script's own `@homepage` / `@homepageURL` names
+         the same script, or the Location is itself the page URL.
+     - `Homepage` (`@homepage` / `@homepageURL`) — straight after the
+       hosting-site row: both name a page about this script, one
+       derived from where it lives and one claimed by the file itself,
+       so reading them together is what shows when they disagree. An
+       anchor when the value parses as an absolute http(s) URL, plain
+       text otherwise.
+   - `Log ID` — short file-derived handle used in every SW log line.
+     See [logging.md](logging.md). Installed mode only.
+     - **Only when it carries a `#N` dupe suffix.** Without one the log
+       ID is the script's own basename, which the heading and the
+       `Location` row already say. The `#N` is the part written nowhere
+       in the file, and it's what a stack trace or `//# sourceURL=`
+       names — so a reader holding a `foo.user.js#2` can ask whether
+       that's this one.
+     - A script added by URL shows its decoded filename — see
+       [names-and-paths.md](names-and-paths.md).
+   - Parsed-header fields, continued — one row per tag, each pattern
+     linkified by the rule in Link rendering below:
+     - `Match`, `Include`, `Exclude`
+     - `Network access` (`@connect`) — directly under the match
+       targets, because it's the same question asked outward: those
+       rows say which pages the script reads, this one says where it
+       may send what it read. Monospace (hostnames, not prose) and
+       deliberately unlinked — a `@connect` value is a matching rule
+       (`self`, `*`, `*.example.com`), not an address.
+   - `Local overrides` — every `@require` / `@resource` whose body was read
+     from a local stand-in instead of the URL it declares, one entry per
+     file. Shown in both modes; **absent whenever nothing was
+     overridden**, which is the overwhelming majority of scripts, so its
+     presence is the whole signal.
+     - Each entry: the `@require` / `@resource` tag it stood in for, the
+       local path we actually read, and a copy button (the same
+       `makeCopyButton` the Location row uses, copying the raw `file://`
+       URL rather than the displayed path).
+     - The declaration it replaced is the entry's tooltip (`Stands in
+       for <url>`) — the same "asked for this, got that" pairing as the
+       code tab's, in the same URL display form.
+     - Last of the "what does this actually pull in" group: under the
+       reach rows, above the byte total those files contribute to. See
+       [local-file-overrides.md](local-file-overrides.md#surfacing-it).
+   - `Size` — `formatScriptSize` output (bytes, or `—` when the script
+     has never loaded); in preview, the byte length of the fetched
+     text.
+     - Suffixed with what the script loads alongside itself, when it
+       loads anything: `12.4 KB (plus 2 @require files: 125 KB, 1
+       @resource file: 4 KB)`. The script's own bytes understate what a
+       page pays to run it when the script pulls in a jQuery.
+     - Counts entries that **actually loaded and reported a size**, not
+       declarations. A `@require` that failed to fetch contributes no
+       bytes, so counting it would promise a total the number beside it
+       doesn't include; that it was declared at all is the code view's
+       story, where it has its own tab.
+   - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
+     `MISSING` / `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
+     (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
+     color-coded.
+     - The row's `title` carries Chrome's refusal reason for a
+       `REJECTED` row, the `refreshError` reason for a `REFRESH FAILED`
+       one, the newer upstream version for an `OUTDATED` one, else
+       `errorMessage` when present.
+     - Rendered as an `<a href="#Log">` so clicking switches to the Log
+       tab via the same hashchange listener as a manual tab click.
+     - The level promotes live as new log entries arrive — the
+       `storage.session.onChanged` listener for `loglevel:<scriptId>`
+       repaints just this row, and the same listener repaints it (plus
+       the message bar) when the injector's `injector-rejections` map
+       changes.
+5. **Other versions panel** (`#other-versions`) — every installed copy
+   of this script, when there is more than one to talk about. Built by
+   `renderRelatedVersions` in
+   [`src/related-versions.ts`](../src/related-versions.ts) over the
+   lookup in [`src/script-identity.ts`](../src/script-identity.ts).
+   - Two sections: **This URL** (same absolute `fileUrl`) and **Same
+     script from a different URL** (same `@namespace` + `@name`).
+   - Per row: enable toggle, type bubble + collection name linking to the
+     collections page, location linking to that copy's own viewer tab,
+     version, a refetch button — **Refresh** here, **Update** in a
+     preview, matching whichever control the page already shows — and a
+     trash can, live only for single-file installs.
+   - Enabling a copy disables the others, since two enabled copies both
+     run; ctrl/cmd-click opts out. Same rule on the controls-row
+     toggle, and the whole set flips on screen before the writes land.
+   - Headed *Other versions of this script* installed, *Existing
+     versions* in preview. Empty — and so hidden — when the only row
+     would be the script already on screen, or, in a preview, when
+     nothing is installed anywhere.
+   - Green card, so it doesn't read as more of the grey details panel
+     it sits under.
+   - Full behaviour in [script-identity.md](script-identity.md).
+6. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
    Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`
      (decoded when that path is a URL).
@@ -191,7 +314,7 @@ One page, one set of panels, two query strings:
      main-script tab keeps the viewer's shape consistent.
    - The currently selected tab + highlight is mirrored into
      `location.hash` — see "URL fragment navigation" below.
-6. **Code pane / Log pane** — the active tab decides which is shown:
+7. **Code pane / Log pane** — the active tab decides which is shown:
    - Code tabs paint a `<pre><code>` highlighted by Prism. Main-script
      tab shows `leadingText + headerText + '\n' + bodyText` (the
      `leadingText` covers anything in the source file above the
@@ -235,23 +358,23 @@ load.
 ### Live sync (changes from any origin)
 
 An installed viewer stays current with state written elsewhere — the
-sources page, a background opportunistic refresh, another tab — not just
+collections page, a background opportunistic refresh, another tab — not just
 its own Refresh. A `chrome.storage.onChanged` listener re-hydrates and
 re-renders when:
 
 - a **`script:*`** row changes — this script (status, content, size,
   enabled), or a sibling whose add/remove shifts this script's dedup
   `#N` log ID;
-- **this script's parent `source:*`** row changes, but only in a field
+- **this script's parent `collection:*`** row changes, but only in a field
   this page shows — `enabled` (greys the Enable toggle), `displayName`
-  or `path` (the Source row). The re-hydrate re-reads the source
+  or `path` (the Collection row). The re-hydrate re-reads the collection
   alongside the script, so both reach the panel without a reload.
   - Everything else on that row is ignored on purpose. A refresh
     rewrites `lastRefreshedAt` (and `scanError`) whether or not it
-    achieved anything, so a source stuck retrying a failing scan would
+    achieved anything, so a collection stuck retrying a failing scan would
     otherwise re-render every viewer open on it, on every retry.
 
-If the re-read finds the script gone (its source was removed), the
+If the re-read finds the script gone (its collection was removed), the
 viewer drops into the not-found state. Session-storage changes
 (`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
 repaint separately, as described above.
@@ -306,10 +429,10 @@ what differs is the controls and where the data comes from.
 
 ### Getting the script
 
-- `normalizeSourceInput` runs first, so a `github.com/.../blob/...`
+- `normalizeCollectionInput` runs first, so a `github.com/.../blob/...`
   URL is fetched (and later stored) in its raw form.
-- `canonicalSourceInput` then collapses a `file://` URL to its bare
-  filesystem path, the same spelling `addSource` stores — so a captured
+- `canonicalCollectionInput` then collapses a `file://` URL to its bare
+  filesystem path, the same spelling `addCollection` stores — so a captured
   local script and one added by path are the same installed row, not
   two. See
   [install-capture.md](install-capture.md#one-file-one-installed-row).
@@ -327,17 +450,34 @@ Banner (`#banner-slot`) states what this file is; the action row
 
 | Situation | Banner | Buttons |
 |-----------|--------|---------|
-| Not installed | "not installed yet" | **Install**, Cancel, View raw source |
-| Already installed | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
+| Not installed anywhere | "not installed yet" | **Install**, Cancel, View raw source |
+| Installed here, once, nothing else | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
+| More than one target below | see [the wordings](script-identity.md#the-previews-already-installed-banner) + "Select which instance…" | Cancel, View raw source — the table carries the rest. **Install** stays if the table has no offer row to carry it |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
-- **Install** → `addSource(<input>)`, then jumps to the new script's
+- **Install** → `addCollection(<input>)`, then jumps to the new script's
   viewer. A web install is not a special kind of script: it lands in
-  the http / github container source and picks up normal refresh and
+  the http / github container collection and picks up normal refresh and
   update behavior.
-- "Already installed" is matched on the stored `relativePath` equalling
-  the normalized URL — that's exactly what `addSource` would store. The
-  banner names both versions when `@version` differs.
+- Already-installed rows come from `findRelatedVersions`, matched on
+  the absolute `fileUrl` — the same lookup the Existing versions panel
+  uses, so both apply the same rule for what counts as installed. Each
+  reads storage separately, so a write landing between them can leave
+  them a moment apart; the next storage change reconciles it. See
+  [script-identity.md](script-identity.md). The banner names both
+  versions when `@version` differs.
+- **The banner says WHICH copies exist**, because a header button can
+  only ever act on one of them. With more than one target below it adds
+  *Select which instance to open, update or install below* — and
+  Install / Open / Update leave the header entirely, since the table
+  carries all three per-row. Wordings and the rule in
+  [script-identity.md](script-identity.md#the-previews-already-installed-banner).
+- **Install and Open/Update are not exclusive.** A script already
+  installed inside a collection the user subscribes to is still
+  worth a copy of their own; `installTarget` — "would a standalone
+  install add anything?" — is what decides whether Install is offered.
+  When both apply, though, there are two targets, so both move into the
+  table rather than sitting side by side in the header.
 - **Update now** → `updateScript(id, 'manual')`, then the viewer.
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by
@@ -354,13 +494,18 @@ Banner (`#banner-slot`) states what this file is; the action row
 - When a `file://` read fails, the page asks
   `chrome.extension.isAllowedFileSchemeAccess()`. If the toggle really
   is off, `#banner-slot` gets the **"File access is disabled."**
-  banner — the same one the sources page shows, from
+  banner — the same one the collections page shows, from
   [`src/file-access.ts`](../src/file-access.ts) — with a click-through
   to `chrome://extensions/?id=<our id>`.
 - Both modes raise it, because both can hit the toggle:
   - **Preview** — the fetch behind `Could not fetch this script: …`.
   - **Installed** — a load error or a failed **Refresh** on a script
     that lives on disk.
+- A refused *navigation* raises it too. With the toggle off Chrome
+  won't open a tab on a `file://` URL either, so the paths that do
+  (**View raw source** on a local file) report the rejection into the
+  message bar and raise the banner beside it, rather than dropping the
+  promise — which Chrome files under `chrome://extensions/?errors`.
 - Gated on the URL being `file://`, so an http fetch that failed for
   its own reasons isn't blamed on a toggle that wouldn't have helped.
 - Gated on the failure being a **read**, not a verdict on what was
@@ -370,7 +515,7 @@ Banner (`#banner-slot`) states what this file is; the action row
   does, and no parse or validation message does.
 - The banner's closing instruction differs by caller, because what
   actually retries the read does:
-  - Sources page and preview read on load → *reload this page*.
+  - Collections page and preview read on load → *reload this page*.
   - Installed mode renders a stored row → *click Refresh*. A reload
     would replay the same cached copy and the same error.
 - The toggle is probed **once per page**, not per failure: it lives on
@@ -393,12 +538,24 @@ Banner (`#banner-slot`) states what this file is; the action row
   including a link to the line it is about, which for a header problem
   is the `// ==UserScript==` marker and for a file with no block at all
   is the file itself. See [diagnostics.md](diagnostics.md).
-- The source is still rendered. Seeing what actually came back is the
-  whole point when a URL returns a login page instead of a script.
+- The collection is still rendered. Seeing what actually came back is the
+  whole point when a URL returns something other than a script.
 - **Continue to page** loads the location itself, with the capture
   stood down: a path ending in `.user.js` and carrying no metadata
-  block is usually an ordinary web page. See
+  block is usually not a script at all. See
   [install-capture.md](install-capture.md#when-the-url-isnt-a-script).
+- A response that is outright **markup** never reaches this state — the
+  fetchers reject it before there is a body to render. What happens
+  next depends on who asked:
+  - **Capture-opened** (`captured=1`): the preview continues to the
+    page by itself, no banner and no button. The capture guessed; it
+    was wrong; it gets out of the way.
+  - **Asked for** (Add field, or a hand-typed `?preview=`): the message
+    bar names it, and **Continue to page** is offered exactly as it is
+    for a file that isn't a script. There is no body to show alongside
+    it, so View raw source is the way to see what came back.
+  - See
+    [install-capture.md](install-capture.md#when-the-url-turns-out-to-be-a-web-page).
 - For a local file the button reads **Continue to file** and targets
   the `file://` form — a bare path would resolve against the
   extension's own origin.
@@ -434,7 +591,7 @@ clicking Install.
   same. The sentence names the button on screen, read off
   `updateBtn.hidden` so the two can't disagree.
 - The promised outcome is the real one, which is not one sentence.
-  `rebuildSource` treats an http(s) refresh that doesn't parse as a bad
+  `rebuildCollection` treats an http(s) refresh that doesn't parse as a bad
   *response*, not a bad script — so an Update over http keeps the
   installed body running and flags the refresh, while a first install
   or a `file://` edit really does land `INVALID`.
@@ -474,7 +631,10 @@ clicking Install.
   re-hitting the host. Reload the page to retry a transient failure.
 - No Log tab, and no stack-ref linkification: nothing has run, so the
   tabs carry no `sourcemonkey://` `sourceUrl`.
-- `@resource` entries are a details row only — they're bytes, not code.
+- `@resource` entries get no tab — they're bytes, not code. Their bytes
+  do reach the `Size` row's `(plus 1 @resource file: 4 KB)` tail, and an
+  overridden one gets a `Local overrides` entry. Only the resolved URL
+  of a non-overridden resource has no surface here.
 
 **URLs in a not-yet-installed file are clickable.** The old install
 prompt rendered `Homepage` and the source URL inert, on the grounds
@@ -490,7 +650,9 @@ merged page treats them like any other viewer content:
 - The **Location** row is the exception, and is intercepted: navigating
   a `.user.js` URL for real would be captured straight back into a
   second preview, so the click routes to View raw source instead
-  (which is what the old prompt's "from `<url>`" link did).
+  (which is what the old prompt's "from `<url>`" link did). The
+  `<Site> page` row below it needs no such interception — it points at
+  an HTML listing page, not at the script file.
 - Installed mode intercepts it too, for the same reason, but stands the
   capture down and opens the real location in a new tab — there is no
   fetched copy to show there, and the row should open what it says.
@@ -503,7 +665,7 @@ merged page treats them like any other viewer content:
   a two-pane before/after diff per tab is the intended next step. See
   TODO.md.
 - **Previewing a whole source.** Directory / manifest / github-dir
-  adds still go straight to `addSource`; previewing a listing needs a
+  adds still go straight to `addCollection`; previewing a listing needs a
   different UI. See TODO.md.
 
 ## Syntax highlighting
@@ -598,7 +760,8 @@ so the body header and the details panel agree.
   host wildcards, and regex literals to plain text. `@exclude`'s
   formal grammar is a free-form glob, but values are almost always
   written as match patterns in practice and a click target is more
-  useful than plain text.
+  useful than plain text. A pattern that names no site gets a second
+  chance via the [same-directory fallback](#same-directory-fallback).
 - `Location` — anchor wrapping the path text. Href is the resolved
   location, except for `file://` scripts where it's `script.fileUrl`
   (the bare fs path isn't navigable). Display text stays that bare fs
@@ -606,6 +769,101 @@ so the body header and the details panel agree.
   Chromium typically refuses to navigate to a `file://` link from a
   chrome-extension page; the path is still readable, selectable, and
   copyable via the adjacent button.
+
+### Same-directory fallback
+
+A script that ships beside the page it acts on says so with a
+host-wildcard pair, and neither member names a site:
+
+```
+// @match *://*/gm-menu/gm-menu.html
+// @match file:///*/gm-menu/gm-menu.html
+```
+
+`sameDirLinkUrl` (in `src/match-targets.ts`) links these to the page
+sitting next to the script. Given the script's own directory `D`:
+
+- The pattern must name **no host** — `*`, or the empty host of a
+  `file://` pattern. A concrete host is `matchTargetInfo`'s job.
+- Its scheme must be one a site-less pattern is written with: `*`,
+  `http(s)`, `file`, or the `http*://` shorthand `@include` values
+  often use. The scheme is then discarded (see the notes below), so
+  the check is what keeps `ftp://*/…` from linking.
+- Its **last path segment must be a concrete filename** — non-empty,
+  no `*`, no `?` or `#`, and carrying an extension.
+- The **directory segments after the last wildcard segment** must form
+  a non-empty run matching the tail of `D` exactly.
+
+The link is then `D` + that filename.
+
+| Pattern (script in `…/examples/gm-menu/`) | Link |
+| --- | --- |
+| `*://*/gm-menu/gm-menu.html` | `<D>/gm-menu.html` |
+| `file:///*/gm-menu/gm-menu.html` | same URL |
+| `*://*/examples/gm-menu/gm-menu.html` | same URL (longer overlap) |
+| `*://*/gm-menu.html` | *(no link)* — nothing to anchor on |
+| `*://*/other/gm-menu.html` | *(no link)* — `other` isn't `D`'s tail |
+| `*://*/gm-menu/*` | *(no link)* — not a filename |
+| `*://*/gm-menu/page.html?v=1` | *(no link)* — parametrised, not a file next door |
+
+Notes:
+
+- The **scheme and origin come from the script**, not the pattern, so
+  the `*://` and `file://` members of a pair collapse to one URL —
+  and the rule works the same for an HTTP-hosted script.
+- Requiring at least one matching directory is what makes this a
+  deduction: `*://*/page.html` says only "a file with this name,
+  somewhere", which is no evidence it sits beside the script.
+- The result is `D` plus one literal filename, so no pattern can walk
+  out of the script's own directory. It's resolved through the URL
+  parser, so a filename carrying a space is escaped like the directory
+  around it.
+- A **github collection's** result is mapped raw → blob, the same
+  rewrite the Location row uses: `raw.githubusercontent.com` serves
+  HTML as `text/plain`, so the raw neighbour of a script would open as
+  a plaintext dump.
+- **Segment comparison is exact**, so a pattern that differs in case
+  from the script's directory gets no link. Right for http and for
+  Linux paths; on a case-insensitive filesystem it costs a link, never
+  produces a wrong one.
+- **Existence is never checked.** There's no cheap check for the HTTP
+  case, and a script should linkify identically whether it was loaded
+  from disk or from a server.
+- Site-icon discovery does *not* use it — a page beside the script
+  isn't a site, and probing it for a favicon would be noise.
+
+### Hosting-site pages (`src/script-sites.ts`)
+
+What we fetch from a userscript-hosting site is its *raw code* URL,
+which is not a page a person wants to open. Each supported site
+encodes the script's identity in that URL, so the listing page is a
+pure rewrite — no network call, no stored field.
+
+| Site | URLs recognised | Page URL | Identity key |
+| --- | --- | --- | --- |
+| Greasy Fork | `greasyfork.org/[<locale>/]scripts/<id>[-<slug>]/code/…`, `update.greasyfork.org/scripts/<id>/…`, and the page URL itself | `greasyfork.org/[<locale>/]scripts/<id>[-<slug>]` | `greasyfork.org:<id>` |
+| Sleazy Fork | the same shapes on `sleazyfork.org` | `sleazyfork.org/[<locale>/]scripts/<id>[-<slug>]` | `sleazyfork.org:<id>` |
+| OpenUserJS | `openuserjs.org/install/<user>/<name>.user.js`, `/src/scripts/…`, and the page URL itself | `openuserjs.org/scripts/<user>/<name>` | `openuserjs.org:<user>/<name>` |
+| GitHub Gist | `gist.githubusercontent.com/<user>/<id>/raw/…` and the gist page URL | `gist.github.com/<user>/<id>` | `gist.github.com:<id>` |
+
+- The locale segment is preserved so the page opens in the language the
+  install link came from; the `-<slug>` tail is kept when the URL
+  carried it. Neither is part of the script's identity, hence the key
+  column.
+- **Compare keys, never URL text**, to ask "same script?". A location
+  of `update.greasyfork.org/scripts/12345/x.user.js` and an
+  `@homepage` of `greasyfork.org/en/scripts/12345-my-script` are one
+  page written two ways, and only the key sees that. This is what the
+  row's duplicate suppression runs on.
+- Paths are read without decoding, so a percent-encoded or CJK slug
+  reaches the `href` in the same form every other URL in the panel is
+  printed in.
+- GitHub blob URLs are deliberately absent: `raw.githubusercontent.com`
+  is already rewritten to the `github.com/<o>/<r>/blob/…` page form
+  before the viewer sees it, so the Location row *is* the page link.
+  Gists get a table row because that rewrite doesn't cover them.
+- Anything else (a plain web server, a local file, an unknown host)
+  yields no row.
 
 ### Code box (post-Prism walk)
 
@@ -659,7 +917,7 @@ so the body header and the details panel agree.
 - Closing brackets (`)`, `]`) only peel when the URL has no matching
   open bracket, so `https://en.wikipedia.org/wiki/Foo_(disambig)`
   keeps its `)`.
-- `@require` source tabs have no metadata block, so they stay in
+- `@require` file tabs have no metadata block, so they stay in
   URL-only mode for the entire body.
 
 #### Anchor styling

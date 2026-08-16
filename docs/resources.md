@@ -23,6 +23,10 @@ Same rules as `@require` / `@icon` — see
 - **Not accepted:** absolute `file://`, `data:`, traversal-bearing
   relatives.
 
+A resource declared by absolute URL can still be served from a file on
+disk next to the script — same rule and same gate as `@require`; see
+[local-file-overrides.md](local-file-overrides.md).
+
 ## No suffix gate
 
 - Resources can be any media type. The fetch accepts any
@@ -48,8 +52,8 @@ Per-entry fields:
   storage in `chrome.storage.local`.
 - `contentType` — server-reported Content-Type (lowercased), or `''`
   when unavailable (file:// XHR often omits it).
-- `size`, `contentHash`, `loadedAt`, `httpEtag?`, `httpLastModified?`
-  — same semantics as `StoredRequire`.
+- `size`, `contentHash`, `loadedAt`, `httpEtag?`, `httpLastModified?`,
+  `localUrl?` — same semantics as `StoredRequire`.
 
 Storage cost:
 
@@ -116,6 +120,8 @@ Short form: the `recheckFiles` option drives both kinds together.
 - Explicit Refresh → `'all'`: refetch every declared dep.
 - Opportunistic refresh → `'preserve'`: reuse cached priors verbatim
   unless the declaration list changed.
+- Exception: a resource served by a **local stand-in** is re-read every
+  pass — see [local-file-overrides.md](local-file-overrides.md#refresh-policy).
 
 ## Cross-script + cross-kind dedup
 

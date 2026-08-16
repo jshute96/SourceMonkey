@@ -1,4 +1,4 @@
-// Display helpers shared by the sources page, the userscript viewer,
+// Display helpers shared by the collections page, the userscript viewer,
 // the script preview, and the service worker.
 //
 // Two groups live here: the script-status row formatting (size +
@@ -23,6 +23,13 @@ const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 // percent in a filename) would make decodeURIComponent raise URIError,
 // and losing the whole string is far worse than leaving one escape
 // undecoded.
+// Tooltip on a script's enable checkbox, wherever one is drawn: the
+// collections page's per-row toggle, the viewer's controls row, and the
+// "Other versions" panel. The viewer's panel appends a multi-enable hint
+// to it (see `enableTitle` in related-versions.ts); everyone else shows
+// it bare.
+export const ENABLE_TITLE = 'Enable this script';
+
 export function decodeForDisplay(text: string): string {
   try {
     return decodeURIComponent(text);
@@ -44,9 +51,9 @@ export function leafName(path: string): string {
 // is a wall of `%20` / `%F0%9F…`; Chrome's own omnibox shows those
 // decoded and so do we.
 //
-// Only absolute URLs are decoded. A relativePath from a local
-// directory source is a literal on-disk name, where a `%20` really is
-// a percent followed by two digits.
+// Only absolute URLs are decoded. A relativePath from a local directory
+// collection is a literal on-disk name, where a `%20` really is a
+// percent followed by two digits.
 //
 // Display only: hrefs, clipboard copies, fetches, and stored values
 // all keep the encoded form.
@@ -81,13 +88,24 @@ export function logIdDupeSuffix(logId: string): string {
   return /#\d+$/.exec(logId)?.[0] ?? '';
 }
 
-// The name to show for a script in badges, menus, and match listings:
-// its `@name` when it declares one, else its location in readable
-// form. Shared so every surface labels the same script the same way.
+// The name to show for a script in badges, menus, the collections list,
+// and match listings: its `@name` when it declares a usable one, else
+// its location in readable form. Shared so every surface labels the
+// same script the same way.
+//
+// A whitespace-only `@name` counts as no name — a header that parsed
+// but declared `// @name   ` must not paint a blank row where a name
+// belongs.
+//
+// `fallback` lets a caller substitute its own location text (the
+// collections page shortens a container script's URL to its basename);
+// omitted, the whole location is used.
 export function scriptDisplayName(
   script: Pick<StoredScript, 'header' | 'relativePath'>,
+  fallback?: string,
 ): string {
-  return (script.header && getValue(script.header, 'name')) || displayLocation(script.relativePath);
+  const name = script.header ? getValue(script.header, 'name')?.trim() : undefined;
+  return name || fallback || displayLocation(script.relativePath);
 }
 
 // Format a byte count for the size column. Returns "1.2 KB", "950 B",
@@ -117,11 +135,11 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 //   invalid        — the script can't run (parse / fetch / dep failure)
 //   rejected       — the script loaded fine, but Chrome refused the
 //                    registration, so it never runs (script-rejection.ts)
-//   missing        — the source file vanished from its listing
+//   missing        — the script's own file vanished from its listing
 //   refresh-failed — running fine on its cached copy, but the latest
-//                    refresh failed (unreachable source, or a fetched
+//                    refresh failed (unreachable collection, or a fetched
 //                    copy that wasn't a valid script)
-//   outdated       — running fine and up to date with its own source,
+//   outdated       — running fine and up to date with its own collection,
 //                    but an `@updateURL` / `@downloadURL` elsewhere
 //                    declares a newer `@version` (see version-probe.ts)
 //   error          — script loaded fine but its Log has an error entry
@@ -135,10 +153,10 @@ export function formatScriptSize(script: Pick<StoredScript, 'status' | 'size'>):
 // can't co-occur — an invalid script is never offered to Chrome.)
 // `refresh-failed` and `outdated` rank above the Log-derived levels for
 // the same reason: both are specific facts about the update pipeline
-// that have no other surface in the sources list, whereas the running
-// script's own runtime errors still show up in the Log tab regardless.
-// `refresh-failed` outranks `outdated` because a source we can't reach
-// at all subsumes "some other copy is ahead".
+// that have no other surface in the collections list, whereas the
+// running script's own runtime errors still show up in the Log tab
+// regardless. `refresh-failed` outranks `outdated` because a collection
+// we can't reach at all subsumes "some other copy is ahead".
 export type DisplayStatus =
   | 'ok' | 'invalid' | 'rejected' | 'missing'
   | 'refresh-failed' | 'outdated' | 'warning' | 'error';
@@ -148,7 +166,7 @@ export type LogLevelForStatus = 'info' | 'warning' | 'error';
 // `outdated` and `rejected` come in as caller-computed flags rather
 // than being derived here: neither lives on the script row (one is a
 // version probe, the other is session state the injector writes), and
-// the sources page's repaint path rebuilds status cells from DOM
+// the collections page's repaint path rebuilds status cells from DOM
 // datasets with no script row in hand. Both callers read `outdated`
 // from `scriptOutdatedProbe` below and `rejected` from the shared
 // rejection map, so the two surfaces can't drift.
@@ -198,4 +216,42 @@ export function formatScriptStatusLabel(status: DisplayStatus): string {
     case 'warning': return 'WARNING';
     case 'error': return 'ERROR';
   }
+}
+
+// Drop a Subresource Integrity fragment from a `@require` / `@resource`
+// reference, for DISPLAY only.
+//
+// Lives here rather than in `file-loader.ts` (which owns resolution and
+// fetching) precisely because loading must never use it — it sits
+// beside `displayLocation`, the other transform every human-facing URL
+// goes through.
+//
+// Tampermonkey carries the expected hash in the URL fragment, as a
+// comma-separated list of `<algo>=<hex>` or `<algo>-<base64>` parts:
+//
+//   @require https://example.com/lib.js#sha256=e3b0c44298fc1c149…
+//   @require https://example.com/lib.js#md5=abc,sha256=def
+//
+// A 64-hex-digit tail is most of the width of a tooltip or a details
+// row and tells the reader nothing they can act on, so every surface
+// that shows a ref to a human strips it. Fetching, resolution, dedup,
+// storage, and error messages all keep the verbatim form — an error
+// should name what the author actually wrote.
+//
+// Only stripped when EVERY comma-separated part looks like a hash
+// declaration. An ordinary fragment (`#section`) is content the author
+// meant, so it survives; a malformed hash tail survives too, which is
+// the right way round — a reader wondering why validation didn't happen
+// needs to see what they typed.
+//
+// SourceMonkey does not yet validate these hashes; see TODO.md.
+const SRI_PART_RE = /^(?:md5|sha1|sha256|sha384|sha512)[=-]\S+$/i;
+
+export function stripSriFragment(urlOrRef: string): string {
+  const hash = urlOrRef.indexOf('#');
+  if (hash < 0) return urlOrRef;
+  const fragment = urlOrRef.slice(hash + 1);
+  if (!fragment) return urlOrRef;
+  if (!fragment.split(',').every((part) => SRI_PART_RE.test(part))) return urlOrRef;
+  return urlOrRef.slice(0, hash);
 }

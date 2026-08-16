@@ -53,7 +53,7 @@ test.describe('reload fast-path', () => {
       meta: { name: 'Live', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', injectInto: 'content' },
       body: `document.title = 'v1';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -62,7 +62,7 @@ test.describe('reload fast-path', () => {
     const tabId = await activeTabId(getServiceWorker);
     await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
 
-    // Edit the file on disk. Crucially: do NOT call updateSource. The
+    // Edit the file on disk. Crucially: do NOT call updateCollection. The
     // whole point is that the reload itself discovers the update.
     scriptsDir.rewriteBody('live.user.js', `document.title = 'v2';`);
 
@@ -95,7 +95,7 @@ test.describe('reload fast-path', () => {
       meta: { name: 'Stable', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'same';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -129,7 +129,7 @@ test.describe('reload fast-path', () => {
       meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = 'v1';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -165,7 +165,7 @@ test.describe('reload fast-path', () => {
       meta: { name: 'Nav', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
       body: `document.title = (document.title || '') + '-baked';`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -190,7 +190,7 @@ test.describe('reload fast-path', () => {
   }) => {
     // Regression: the fast-path's `run-new` payload used to ship only
     // `bodyText`, so the wrapper's eval ran the new body without the
-    // prepended `@require` source — any reference to a require-set-up
+    // prepended `@require` collection — any reference to a require-set-up
     // global threw ReferenceError on the swap and only "worked" on the
     // next reload (because by then chrome.userScripts had re-registered
     // the script with the requires baked into the body again).
@@ -217,7 +217,7 @@ test.describe('reload fast-path', () => {
       },
       body: `document.title = 'v1-' + __SM_REQ_FN();`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -268,7 +268,7 @@ test.describe('reload fast-path', () => {
       },
       body: `document.title = 'v1-' + REQ_CONST + '-' + new ReqClass().tag();`,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -317,7 +317,7 @@ test.describe('reload fast-path', () => {
         GM_setValue('marker', 'v1');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

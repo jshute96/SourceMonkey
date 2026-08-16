@@ -25,7 +25,7 @@
 //   - Lifetime matches the log itself — Chrome shutdown drops both
 //     together, so a WARNING/ERROR badge can't outlive its entries.
 //   - One bulk `get(null)` yields every script's level in O(scripts)
-//     rather than O(scripts × entries) — the sources page needs this
+//     rather than O(scripts × entries) — the collections page needs this
 //     to render the Status column cheaply.
 
 import { validLocation, type DiagnosticLocation } from './diagnostic-location.js';
@@ -182,7 +182,7 @@ export async function getMaxLogLevel(
 }
 
 // Read every script's max log level in one storage round trip. The
-// sources page uses this to render the Status column without N
+// collections page uses this to render the Status column without N
 // per-script reads. Returns a Map keyed by scriptId.
 export async function getAllMaxLogLevels(): Promise<Map<string, LogLevel>> {
   const all = await chrome.storage.session.get(null);

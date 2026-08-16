@@ -12,7 +12,7 @@
 // must stay cheap enough that none of them think twice about it.
 
 // A place in one of the files that make up a script: the script's own
-// source, or one of its `@require` bodies.
+// source file, or one of its `@require` bodies.
 //
 // `file` is the same identity the source map uses (`MappedSegment.url`)
 // — the script's `relativePath` for its own body, the resolved URL for
@@ -50,7 +50,7 @@ export function locationLabel(location: DiagnosticLocation): string {
 
 // `<message> (in <where>)`, or just the message when there's nowhere to
 // point. The single phrasing shared by the store's `invalid` message,
-// the install preview's warning, the sources page's hover text and the
+// the install preview's warning, the collections page's hover text and the
 // Log — so the same verdict can never read two different ways.
 export function describeDiagnostic(
   message: string,

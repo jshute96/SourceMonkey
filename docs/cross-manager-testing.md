@@ -14,7 +14,7 @@ compliance reference and surface divergences between managers.
 - `npm run test:e2e` — SM project only (default for `npm test` too).
 - `npm run test:e2e:tm` — TM project, **headless**.
   - Launches its own Chromium against the persistent TM profile.
-  - The headed browser (`open-test-browser-with-TamperMonkey.sh`) must
+  - The headed browser (`open-test-browser-with-Tampermonkey.sh`) must
     **not** be open at the same time — Chromium can't share a profile
     between two processes.
   - Preflight (`pretest:e2e:tm` → `scripts/e2e-tm-preflight.mjs
@@ -25,7 +25,7 @@ compliance reference and surface divergences between managers.
     before Playwright runs.
 - `npm run test:e2e:tm:headed` — TM project, **headed**.
   - Sets `TM_HEADED=1` and connects via CDP to the browser opened by
-    `scripts/open-test-browser-with-TamperMonkey.sh`.
+    `scripts/open-test-browser-with-Tampermonkey.sh`.
   - Use this when you want to watch the run or debug interactively.
   - Preflight (`pretest:e2e:tm:headed` → `scripts/e2e-tm-preflight.mjs
     --need-open`): if CDP 9223 isn't answering, spawns the opener
@@ -62,7 +62,7 @@ profile that already has Tampermonkey installed. The profile lives at
 
 Steps:
 
-1. `scripts/open-test-browser-with-TamperMonkey.sh` — opens Playwright's
+1. `scripts/open-test-browser-with-Tampermonkey.sh` — opens Playwright's
    bundled Chromium with the persistent profile and CDP enabled.
 2. In that browser, install Tampermonkey from the Chrome Web Store:
    <https://chromewebstore.google.com/detail/dhdgffkkebhmkfjojejmpbldmpobfkfo>
@@ -73,6 +73,19 @@ Steps:
 5. Leave the browser running — the suite will connect to it via CDP.
 
 The profile persists across runs, so steps 2–4 only happen once.
+
+Nothing else is manual. What TM would otherwise ask a human for is
+handled by the harness:
+
+- **Chrome's `downloads` permission** (optional in TM's manifest, and
+  required by `GM_download`) is written into the profile's
+  `Preferences` by `scripts/e2e-tm-preflight.mjs`, which runs before
+  the browser starts.
+- **TM's own permission prompts** (`ask.html`) are auto-OK'd by the
+  driver.
+
+Both are explained in
+[cross-manager-test-results.md](cross-manager-test-results.md).
 
 ## How TM script-install works
 
@@ -87,6 +100,10 @@ The profile persists across runs, so steps 2–4 only happen once.
   Install / Reinstall / Update button on TM's confirmation page
   (`<input type="button" class="button install" value="…">`). TM
   auto-detects existing scripts by `@namespace`+`@name`.
+  - Both pages ship an empty `<body>` and build their DOM from script,
+    so the driver **waits** for each element rather than probing once
+    after `domcontentloaded` — a one-shot check finds nothing on a
+    perfectly healthy page.
 
 `syncTampermonkeyScripts(driver, dir)` walks every `*.user.js` in the
 example directory, parses the local `@name`/`@version`, and (using

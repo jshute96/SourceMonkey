@@ -18,7 +18,7 @@
 // `file:///*` host permission so any caller code can read arbitrary
 // local files via the byte fetcher; we don't want a malicious
 // HTTP-sourced userscript pointing `@icon file:///etc/passwd` and
-// having us inline a host file into the sources-page DOM. A file://
+// having us inline a host file into the collections-page DOM. A file://
 // result is only reachable as the *resolution* of a relative path
 // against a file:// script, in which case the containment check
 // confines it to the script's own directory tree.
@@ -37,6 +37,7 @@
 
 import { isFileUrl, isHttpUrl } from './directories.js';
 import { githubAuthHeaders } from './github-auth.js';
+import { mustHopToWorker, readHttpViaWorker, replyBytes } from './http-read.js';
 
 export type ResolvedKind = 'http' | 'file' | 'data';
 
@@ -135,7 +136,7 @@ export function resolveScriptResourceDetailed(
     return { kind: 'file', url: resolvedStr };
   }
   // A relative ref that lands on some other scheme — only reachable
-  // when the script's own URL has one, which the source pipeline
+  // when the script's own URL has one, which the collection pipeline
   // doesn't produce today.
   return { failed: true, reason: 'unsupported-scheme', scheme: resolved.protocol };
 }
@@ -160,12 +161,40 @@ export interface FetchBytesOptions {
   // @resource pointing at the same URL isn't rejected by the require's
   // rule. An empty content-type skips the predicate entirely.
   acceptContentType?: (contentType: string) => boolean;
+
+  // Validators from the copy we already hold, for a conditional GET.
+  // http(s) only — a `file://` read has no such protocol, and the
+  // callers that skip those use the directory listing's size+mtime
+  // instead.
+  //
+  // Supplying either turns the request conditional: a server that says
+  // 304 returns `{ notModified: true }` and transfers no body, which is
+  // the whole point. Callers that pass this must hold the prior bytes,
+  // because a 304 gives them nothing to rebuild from.
+  conditional?: { etag?: string; lastModified?: string };
 }
 
 export interface FetchedBytes {
   body: ArrayBuffer;
   contentType: string;
   finalUrl: string;
+  // Validators the server offered, for the NEXT conditional request.
+  // Absent for file:// and for servers that send neither.
+  etag?: string;
+  lastModified?: string;
+}
+
+// The server confirmed the caller's copy is current. Only ever returned
+// when `opts.conditional` was supplied, so callers that don't ask for it
+// can never observe it.
+export interface NotModified {
+  notModified: true;
+}
+
+export function isNotModified(
+  v: FetchedBytes | NotModified | FetchFailure,
+): v is NotModified {
+  return (v as NotModified).notModified === true;
 }
 
 // Why a fetch produced no bytes. Each is known at the point the fetcher
@@ -203,16 +232,74 @@ const httpError = (status: number): FetchFailure =>
 export async function fetchResourceBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | FetchFailure> {
+): Promise<FetchedBytes | NotModified | FetchFailure> {
   if (isHttpUrl(url)) return fetchHttpBytes(url, opts);
   if (isFileUrl(url)) return fetchFileBytes(url, opts);
   return fetchFailed('unsupported-scheme');
 }
 
+// Page contexts hand the read to the service worker — a document
+// fetch acts on the response's `Link: rel=preload` headers, which our
+// pages can't have. See src/http-read.ts for the whole story.
 async function fetchHttpBytes(
   url: string,
   opts: FetchBytesOptions,
-): Promise<FetchedBytes | FetchFailure> {
+): Promise<FetchedBytes | NotModified | FetchFailure> {
+  if (mustHopToWorker()) {
+    const viaSw = await fetchHttpBytesViaWorker(url, opts);
+    if (viaSw) return viaSw;
+  }
+  return fetchHttpBytesHere(url, opts);
+}
+
+// Map the worker's report of what came back onto this module's own
+// verdict about it — which statuses are failures, which content types
+// are acceptable, what counts as too big. Returns null when the worker
+// never answered, so the caller falls back to fetching here.
+async function fetchHttpBytesViaWorker(
+  url: string,
+  opts: FetchBytesOptions,
+): Promise<FetchedBytes | NotModified | FetchFailure | null> {
+  const reply = await readHttpViaWorker({
+    url,
+    as: 'bytes',
+    // The conditional headers have to cross the hop too. Page contexts
+    // are where the refresh pipeline actually runs — `collections.ts`
+    // imports it directly — so dropping them here would leave every
+    // user-facing refresh unconditional while the worker-side path
+    // (and every test driving it) looked correct.
+    headers: conditionalHeaders(opts.conditional),
+    maxBytes: opts.maxBytes,
+    timeoutMs: opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
+  });
+  if (!reply) return null;
+  if (reply.kind === 'error') return fetchFailed(reply.reason);
+  // Before the success-range check, for the same reason the local path
+  // tests it before `response.ok`: 304 sits outside 200-299 and would
+  // otherwise be reported as an HTTP error.
+  if (reply.status === 304) return { notModified: true };
+  if (reply.status < 200 || reply.status > 299) return httpError(reply.status);
+  const contentType = reply.contentType.toLowerCase();
+  if (opts.acceptContentType && contentType && !opts.acceptContentType(contentType)) {
+    return fetchFailed('wrong-content-type');
+  }
+  const body = replyBytes(reply);
+  // Re-checked here rather than trusted: these caps are what each
+  // caller's own limit is expressed in, and `body` is what they get.
+  if (body.byteLength === 0) return fetchFailed('empty');
+  if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
+  const out: FetchedBytes = { body, contentType, finalUrl: reply.finalUrl };
+  if (reply.etag) out.etag = reply.etag;
+  if (reply.lastModified) out.lastModified = reply.lastModified;
+  return out;
+}
+
+// The fetch itself. Runs in the service worker for page-initiated
+// reads (see above) and directly in whatever context asked otherwise.
+async function fetchHttpBytesHere(
+  url: string,
+  opts: FetchBytesOptions,
+): Promise<FetchedBytes | NotModified | FetchFailure> {
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -229,7 +316,7 @@ async function fetchHttpBytes(
       // `@require` / `@resource` / icon fetches against private raw
       // URLs work. Host-gated inside `githubAuthHeaders` so non-GitHub
       // hosts never see the token.
-      headers: { ...githubAuthHeaders(url) },
+      headers: { ...githubAuthHeaders(url), ...conditionalHeaders(opts.conditional) },
     });
   } catch {
     // Our own timer is the only thing that aborts this request, so an
@@ -239,6 +326,10 @@ async function fetchHttpBytes(
   } finally {
     clearTimeout(timer);
   }
+  // Before the `ok` check: 304 is not in the 200-299 range, so testing
+  // `response.ok` first would report the server's confirmation that
+  // nothing changed as an HTTP error.
+  if (response.status === 304) return { notModified: true };
   if (!response.ok) return httpError(response.status);
 
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
@@ -257,7 +348,25 @@ async function fetchHttpBytes(
   if (body.byteLength === 0) return fetchFailed('empty');
   if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
 
-  return { body, contentType, finalUrl: response.url || url };
+  const out: FetchedBytes = { body, contentType, finalUrl: response.url || url };
+  const etag = response.headers.get('etag');
+  const lastModified = response.headers.get('last-modified');
+  if (etag) out.etag = etag;
+  if (lastModified) out.lastModified = lastModified;
+  return out;
+}
+
+// `If-None-Match` wins where a server offers both: an ETag is exact,
+// where `Last-Modified` has one-second resolution and cannot represent
+// two edits inside the same second. Sending both would let the server
+// pick the weaker one.
+function conditionalHeaders(
+  conditional: FetchBytesOptions['conditional'],
+): Record<string, string> {
+  if (!conditional) return {};
+  if (conditional.etag) return { 'If-None-Match': conditional.etag };
+  if (conditional.lastModified) return { 'If-Modified-Since': conditional.lastModified };
+  return {};
 }
 
 async function fetchFileBytes(
@@ -404,7 +513,10 @@ export async function fetchResourceText(
   opts: FetchBytesOptions,
 ): Promise<string | null> {
   const res = await fetchResourceBytes(url, opts);
-  if ('failed' in res) return null;
+  // A caller wanting text has nothing to do with a 304 — it holds no
+  // prior copy to pair the answer with. Treated as "no text", the same
+  // as a failure.
+  if ('failed' in res || isNotModified(res)) return null;
   try {
     return new TextDecoder('utf-8', { fatal: false }).decode(res.body);
   } catch {

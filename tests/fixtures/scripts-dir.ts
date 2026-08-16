@@ -1,6 +1,6 @@
 // Tmp-dir helper for e2e tests that need real userscript files on
 // disk. Each test gets its own dir under os.tmpdir(); the dir is
-// passed to the extension via addSource(absolutePath), which then
+// passed to the extension via addCollection(absolutePath), which then
 // reads through the production file:// scan + fetch pipeline.
 //
 // Why on disk (and not just seeded into chrome.storage.local):

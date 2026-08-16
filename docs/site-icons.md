@@ -1,8 +1,8 @@
 # Site icons
 
-- Each row in the sources page (and the H1 of the script viewer)
-  shows a small favicon next to the script filename.
-- Source priority:
+- Each row in the collections page (and the H1 of the script viewer)
+  shows a small favicon next to the script name.
+- Collection priority:
   - A script-declared `@icon` (or its TM aliases — see below) wins
     outright when set.
   - Otherwise the icon is discovered from the matched site itself.
@@ -27,6 +27,13 @@
   under the script's parent dir. Caught textually via a post-resolution
   prefix check on the URL string, so `..`, `%2e%2e`, `..\`, and
   host-absolute `/` paths are all rejected uniformly.
+- An absolute `http(s)` `@icon` can be served from a **local file**
+  beside the script — same rule `@require` / `@resource` use, so a
+  script keeps its portable URL while an icon on disk stands in during
+  development. See
+  [local-file-overrides.md](local-file-overrides.md#icon-caching) for
+  the rule, the safety gate, and why the local candidate bypasses the
+  storage cache below.
 - `data:` URLs are length-capped to the same ~170 KB ceiling we apply
   to inline `<link rel="icon">` hrefs.
 - An *empty* `data:` URL (`data:,`, or a `;base64,` with no payload)
@@ -61,7 +68,10 @@ consumed by the userscript-viewer linkifier for
 [script-viewer.md](script-viewer.md#link-rendering). The icon module
 picks the first `@match` whose pattern yields a usable origin via
 `representativeMatch`; it then uses the same `linkUrl` for both
-HTML icon discovery and the favicon click-through.
+HTML icon discovery and the favicon click-through. The viewer's
+[same-directory fallback](script-viewer.md#same-directory-fallback)
+for site-less patterns is not used here — it points at a page beside
+the script, which is not a site to take an icon from.
 
 `@include` patterns are not consulted: they're free-form globs and
 regexes over the whole URL, not URL templates, so the origin you'd
@@ -138,6 +148,10 @@ the first one discovered for the host.
   - HTML body capped at 1MB; icon body at 128KB.
   - `referrerPolicy: 'no-referrer'` to avoid leaking the
     `chrome-extension://<id>/...` URL to third-party hosts.
+  - Made **by the service worker**, even though the caller is a page.
+    A site's HTML routinely carries `Link: rel=preload; as=script`
+    headers, and a document-initiated fetch acts on them — see
+    [logging.md](logging.md#keeping-the-errors-panel-clean).
 - On any failure (network error, non-icon `Content-Type`, oversized
   body) the layer caches a `null` entry so the same broken page or
   host doesn't get hammered on every render.
@@ -181,7 +195,7 @@ the first one discovered for the host.
 
 ## Storage shape
 
-Parallel cache rows for the icon-source paths, sharing the same
+Parallel cache rows for the icon-collection paths, sharing the same
 `{ dataUrl, fetchedAt }` shape and TTLs:
 
 - `pathIcon:<pageUrl>` — HTML-discovery result for a specific
@@ -194,15 +208,19 @@ Parallel cache rows for the icon-source paths, sharing the same
   string; every script on that host shares the row.
 - `iconUrl:<url>` — `@icon`-declared icons. Key is the literal header
   URL; scripts pinning the same icon share one fetch.
+- A local stand-in is NOT written here — it's memoized for the life of
+  the page instead, so a newly created icon file isn't hidden behind a
+  24-hour cached miss. See
+  [local-file-overrides.md](local-file-overrides.md#icon-caching).
 - `data:` URLs render inline and are never stored.
 
 Rows are not garbage-collected when the last script referencing them
 is removed — favicon entries are tiny and removing the row would
-just trigger a fresh fetch if the user re-adds the source.
+just trigger a fresh fetch if the user re-adds the collection.
 
 ## Display
 
-- A 16×16 `<span class="site-icon">` slot sits before the filename
+- A 16×16 `<span class="site-icon">` slot sits before the name
   link in each row. The viewer page mirrors the same slot inside its
   `<h1>`.
 - `renderSiteIconInto` paints the slot synchronously:
@@ -211,7 +229,7 @@ just trigger a fresh fetch if the user re-adds the source.
 - The inner element always starts with a muted globe placeholder so
   users see *something* immediately and rows missing an origin still
   show a consistent placeholder.
-- The async swap picks its source by header priority: if the script
+- The async swap picks its collection by header priority: if the script
   declares an `@icon`, `ensureIconForUrl` runs; otherwise
   `ensureSiteIcon` runs the origin-discovery pipeline. The resolved
   icon is wrapped in an `<img>` that replaces the globe inside
@@ -222,11 +240,11 @@ just trigger a fresh fetch if the user re-adds the source.
 
 A big site can have dozens of scripts, and naive rendering inlined a
 full copy of each favicon — and the globe SVG — into *every* row,
-pushing the live sources-page DOM past half a megabyte (mostly
+pushing the live collections-page DOM past half a megabyte (mostly
 duplicated bytes). Two measures keep it bounded:
 
 - **Shared globe glyph.** The globe is defined once per page as an SVG
-  `<symbol id="sm-globe">` (in `sources.html` / `userscript.html`);
+  `<symbol id="sm-globe">` (in `collections.html` / `userscript.html`);
   each slot renders a tiny `<svg class="site-icon-globe"><use
   href="#sm-globe">`. Stroke/fill styling lives in CSS on
   `.site-icon-globe` so it still inherits `currentColor`.
@@ -242,6 +260,6 @@ duplicated bytes). Two measures keep it bounded:
   Storage is unaffected: icons are still cached as base64 `data:` URLs
   (one row per origin/URL); the blob is minted fresh at render time.
 
-Viewer/sources cross-links are page-relative (`userscript.html?...`,
-`sources.html#...`) rather than absolute `chrome.runtime.getURL(...)`,
+Viewer/collections cross-links are page-relative (`userscript.html?...`,
+`collections.html#...`) rather than absolute `chrome.runtime.getURL(...)`,
 so the `chrome-extension://<id>/` prefix isn't repeated twice per row.

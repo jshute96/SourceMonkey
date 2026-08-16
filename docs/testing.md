@@ -127,6 +127,12 @@ It runs against real headless Chromium with `chrome.userScripts`,
   `match`, `include`, `exclude`, `injectInto`, `runAt`, plus a raw
   `extra: string[]` escape hatch for header lines the typed fields
   don't cover.
+- `capture-nav.ts` — the two waits both `.user.js`-capture specs
+  need. `startCapturedNavigation(page, url)` kicks off the
+  navigation the capture aborts, with a bounded timeout so a stuck
+  first leg can't eat the whole test budget and report a bare
+  "Test timeout exceeded"; `waitForInstallPrompt(page)` then waits
+  for the preview.
 - `sw-api.ts` — `makeSwApi(getServiceWorker)` returns a typed proxy
   over the SW's test surface; `waitFor(read, predicate)` polls a
   SW-side query until a condition is met (or throws with the last
@@ -163,11 +169,11 @@ derivations still resolve correctly.
 SW functions via `serviceWorker.evaluate(...)`. Methods relevant to
 tests:
 
-- Source mgmt: `addSource(path)`, `removeSource(id)`, `getSources()`,
-  `getSourceWithScripts(id)`, `setSourceEnabled(id, on)`,
+- Collection mgmt: `addCollection(path)`, `removeCollection(id)`, `getCollections()`,
+  `getCollectionWithScripts(id)`, `setCollectionEnabled(id, on)`,
   `setScriptEnabled(id, on)`.
-- Updates: `updateScript(id, mode, probe?)`, `updateSource(id, mode)`,
-  `updateAllSources(mode)`. `mode` is `'manual'` or `'opportunistic'`.
+- Updates: `updateScript(id, mode, probe?)`, `updateCollection(id, mode)`,
+  `updateAllCollections(mode)`. `mode` is `'manual'` or `'opportunistic'`.
   `probe` is `'force'` for a genuine Refresh **click** — `mode:
   'manual'` only means "not rate-limited" and the reload fast-path uses
   it too, so behaviours that key off a real click (upstream version
@@ -194,17 +200,17 @@ deliberately doesn't, so a test can't observe a half-written state:
 
 - `getScriptLog` drains that script's in-flight appends first.
   Production logging (`logScriptEvent`) is fire-and-forget — a refresh
-  must not block on writing its own transcript — so `updateSource()`
+  must not block on writing its own transcript — so `updateCollection()`
   can resolve before the entry it produced has landed.
 - `getScriptLogLabel` is the awaited form, so a test never races the
   id table and gets a UUID prefix back.
 
 ### The syncNow contract
 
-`addSource` / `updateSource` / `setSourceEnabled` (etc.) only set
+`addCollection` / `updateCollection` / `setCollectionEnabled` (etc.) only set
 storage; the chrome.userScripts re-registration happens asynchronously
 via a `storage.onChanged → onCacheChanged → scheduleSync` chain with a
-50 ms debounce. A test that does `addSource` → `page.goto(...)` will
+50 ms debounce. A test that does `addCollection` → `page.goto(...)` will
 out-race the registration and the navigation will see the OLD set.
 
 The contract is: **always call `await sm.syncNow()` after any
@@ -238,7 +244,7 @@ own.
 
 - Spin up a fresh `ScriptsDir` in `beforeEach`; `cleanup()` it in
   `afterEach`.
-- Use `sm.addSource(scriptsDir.path)` to register the directory via
+- Use `sm.addCollection(scriptsDir.path)` to register the directory via
   the real pipeline.
 - Chrome match patterns may include `:port` (we follow Chrome's
   matcher, not its docs). A port-less pattern matches any port — use
@@ -286,6 +292,12 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-notification.spec.ts` — `GM_notification` resolves
   with a notification id; details and positional call shapes; the
   GM4 alias returns a Promise; empty `text` rejects.
+- `tests/e2e/gm-download.spec.ts` — `GM_download` over http(s)
+  (a real `chrome.downloads` transfer that completes headlessly),
+  the in-page `blob:` / `data:` path, refusals (`file://` scheme,
+  traversing `name`) including the Log-tab entry, `abort()`, and
+  the deliberate contrast that `@connect` gates `GM_xmlhttpRequest`
+  but not `GM_download`.
 - `tests/e2e/gm-url-change.spec.ts` — `@grant window.onurlchange`:
   page-initiated `pushState` / `replaceState` / hash / back all
   deliver a `urlchange`; the initial load and a same-URL

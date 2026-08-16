@@ -9,25 +9,29 @@ import type { Worker } from '@playwright/test';
 type Mode = 'manual' | 'opportunistic';
 
 export interface SmApi {
-  // Returns the resulting source row (existing container or new
-  // source); the proxy unwraps the `AddSourceResult` discriminant so
+  // Returns the resulting collection row (existing container or new
+  // collection); the proxy unwraps the `AddCollectionResult` discriminant so
   // tests can keep using `result?.id` and `result?.path` directly.
   // Returns null on a duplicate.
-  addSource(path: string): Promise<{ id: string; path: string } | null>;
-  removeSource(id: string): Promise<void>;
-  getSources(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
-  getSourceWithScripts(id: string): Promise<{
-    source: { id: string; path: string; enabled: boolean; scriptIds: string[]; scanError?: string };
+  addCollection(path: string): Promise<{ id: string; path: string } | null>;
+  removeCollection(id: string): Promise<void>;
+  getCollections(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
+  getCollectionWithScripts(id: string): Promise<{
+    collection: { id: string; path: string; enabled: boolean; scriptIds: string[]; scanError?: string };
     scripts: StoredScriptLike[];
   } | null>;
-  setSourceEnabled(id: string, enabled: boolean): Promise<unknown>;
+  setCollectionEnabled(id: string, enabled: boolean): Promise<unknown>;
+  setCollectionLocalFiles(id: string, localFiles: boolean): Promise<unknown>;
+  // The global search-root setting: absolute directory paths, in
+  // search order, as the options page would save them.
+  setLocalRoots(paths: string[]): Promise<void>;
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
-  updateSource(id: string, mode: Mode): Promise<unknown>;
+  updateCollection(id: string, mode: Mode): Promise<unknown>;
   // `probe: 'force'` is what a genuine Refresh click passes. Pass it
   // when a test is modelling a click rather than a background check —
   // it is what bypasses the refused-registration retry rate limit.
   updateScript(id: string, mode: Mode, probe?: 'force' | 'if-stale'): Promise<unknown>;
-  updateAllSources(mode: Mode): Promise<unknown>;
+  updateAllCollections(mode: Mode): Promise<unknown>;
   getTabState(tabId: number): Promise<TabStateSnapshot>;
   resetAllState(): Promise<void>;
   syncNow(): Promise<{ registered: { id: string }[] }>;
@@ -62,16 +66,23 @@ export interface SmApi {
   // Turns the install-time parse check off so a test can drive an
   // unparseable script all the way to injection.
   setParseCheckEnabled(enabled: boolean): Promise<void>;
-  // How many source compiles have run this session — lets a test tell a
+  // How many collection compiles have run this session — lets a test tell a
   // cached verdict from a fresh one.
   getParseCheckRuns(): Promise<number>;
   // {scriptId → why chrome.userScripts refused its registration} for
   // the last sync — what the UI renders as REJECTED. Empty when
   // everything registered.
   getRejections(): Promise<Record<string, string>>;
+  // {collectionId → why its last refresh could not be saved}. Empty
+  // when every refresh stored cleanly.
+  getRefreshErrors(): Promise<Record<string, string>>;
+  // Make every collection-refresh write throw, standing in for an
+  // exhausted `chrome.storage.local` quota without having to fill it.
+  // Stays armed until cleared with null; also cleared by `resetAllState`.
+  failCollectionWrites(message: string | null): Promise<void>;
   debugMatchIndex(url: string): Promise<{
     matches: { id: string; name: string }[];
-    cache: { entries: unknown[]; disabledSources: string[] };
+    cache: { entries: unknown[]; disabledCollections: string[] };
   }>;
   // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
   // member of a dupe group gets which `#N` is decided by UUID sort, so
@@ -112,8 +123,11 @@ export interface ActionMenuScriptLike {
 // what it declares, and it crosses `evaluate()` as plain JSON.
 export interface StoredScriptLike {
   id: string;
-  sourceId: string;
+  collectionId: string;
   relativePath: string;
+  // Where the script was fetched from — a `file://` URL for a
+  // directory collection, the raw URL for the http kinds.
+  fileUrl: string;
   status: 'ok' | 'invalid' | 'missing';
   errorMessage?: string;
   errorLocation?: DiagnosticLocationLike;
@@ -136,6 +150,25 @@ export interface StoredScriptLike {
     size: number;
     contentHash?: string;
     loadedAt: number;
+    // Set when a local file stood in for `url` — see
+    // docs/local-file-overrides.md.
+    localUrl?: string;
+    // Validators for the next refresh's conditional GET (http(s) only).
+    httpEtag?: string;
+    httpLastModified?: string;
+  }[];
+  resources?: {
+    name: string;
+    ref: string;
+    url: string;
+    bytesBase64: string;
+    size: number;
+    contentType: string;
+    contentHash?: string;
+    loadedAt: number;
+    localUrl?: string;
+    httpEtag?: string;
+    httpLastModified?: string;
   }[];
   versionProbes?: {
     kinds: string[];
@@ -147,7 +180,7 @@ export interface StoredScriptLike {
 }
 
 // `DiagnosticLocation` from src/diagnostic-location.ts, restated here so
-// the fixtures don't import extension source into the test build.
+// the fixtures don't import extension collection into the test build.
 export interface DiagnosticLocationLike {
   file: string;
   line?: number;
@@ -205,17 +238,18 @@ export function makeSwApi(getServiceWorker: () => Promise<Worker>): SmApi {
   };
   return new Proxy({} as SmApi, {
     get: (_t, prop) => {
-      // The real SW addSource returns a discriminated `AddSourceResult`
-      // (covers the container-create vs container-reuse vs new-source
-      // distinction). Tests just want the resulting source row; unwrap
-      // here so the SmApi contract stays a thin pass-through.
-      if (prop === 'addSource') {
+      // The real SW addCollection returns a discriminated
+      // `AddCollectionResult` (covers the container-create vs
+      // container-reuse vs new-collection distinction). Tests just want
+      // the resulting collection row; unwrap here so the SmApi contract
+      // stays a thin pass-through.
+      if (prop === 'addCollection') {
         return async (...args: unknown[]) => {
           const result = await call<{
             kind: string;
-            source: { id: string; path: string };
-          } | null>('addSource', args);
-          return result?.source ?? null;
+            collection: { id: string; path: string };
+          } | null>('addCollection', args);
+          return result?.collection ?? null;
         };
       }
       return (...args: unknown[]) => call(prop as keyof SmApi, args);
@@ -262,7 +296,7 @@ export async function waitForGmValues(
   predicate: (values: Record<string, unknown>) => boolean,
   label = 'GM values',
 ): Promise<Record<string, unknown>> {
-  const scriptIds = (await api.getSources()).flatMap((s) => s.scriptIds);
+  const scriptIds = (await api.getCollections()).flatMap((s) => s.scriptIds);
   // Guarded rather than indexed blindly: with no script registered,
   // `loadAllValues(undefined)` returns {} quite happily and the caller
   // burns the full timeout reporting a storage problem, when the real

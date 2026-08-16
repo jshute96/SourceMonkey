@@ -1,6 +1,6 @@
-// Tests for src/source-display.ts (compiled to dist/source-display.js).
+// Tests for src/collection-display.ts (compiled to dist/collection-display.js).
 //
-// Pure display helpers: source-type classification, manifest detection,
+// Pure display helpers: collection-type classification, manifest detection,
 // short-name inference, and the bubble label key.
 
 import { test } from 'node:test';
@@ -9,66 +9,66 @@ import assert from 'node:assert/strict';
 import {
   effectiveDisplayName,
   inferDisplayName,
-  inferSourceType,
-  sourceBubbleKey,
-  sourceClickUrl,
-  sourceHasManifest,
-} from '../../dist/source-display.js';
+  inferCollectionType,
+  collectionBubbleKey,
+  collectionClickUrl,
+  collectionHasManifest,
+} from '../../dist/collection-display.js';
 
-// ---------- inferSourceType ----------
+// ---------- inferCollectionType ----------
 
-test('inferSourceType: file scheme + raw POSIX paths', () => {
-  assert.equal(inferSourceType('/home/me/scripts/foo.user.js'), 'file');
-  assert.equal(inferSourceType('file:///home/me/scripts/foo.user.js'), 'file');
-  assert.equal(inferSourceType('file:///home/me/scripts/'), 'file');
+test('inferCollectionType: file scheme + raw POSIX paths', () => {
+  assert.equal(inferCollectionType('/home/me/scripts/foo.user.js'), 'file');
+  assert.equal(inferCollectionType('file:///home/me/scripts/foo.user.js'), 'file');
+  assert.equal(inferCollectionType('file:///home/me/scripts/'), 'file');
 });
 
-test('inferSourceType: github.com + raw.githubusercontent.com classify as github', () => {
+test('inferCollectionType: github.com + raw.githubusercontent.com classify as github', () => {
   assert.equal(
-    inferSourceType('https://github.com/Mottie/GitHub-userscripts/tree/master'),
+    inferCollectionType('https://github.com/Mottie/GitHub-userscripts/tree/master'),
     'github',
   );
   assert.equal(
-    inferSourceType('https://github.com/Mottie/GitHub-userscripts/blob/master/foo.user.js'),
+    inferCollectionType('https://github.com/Mottie/GitHub-userscripts/blob/master/foo.user.js'),
     'github',
   );
   assert.equal(
-    inferSourceType('https://raw.githubusercontent.com/owner/repo/main/x.user.js'),
+    inferCollectionType('https://raw.githubusercontent.com/owner/repo/main/x.user.js'),
     'github',
   );
 });
 
-test('inferSourceType: non-github http URLs classify as http', () => {
-  assert.equal(inferSourceType('https://example.com/foo.user.js'), 'http');
-  assert.equal(inferSourceType('http://example.com/script_manifest.json'), 'http');
+test('inferCollectionType: non-github http URLs classify as http', () => {
+  assert.equal(inferCollectionType('https://example.com/foo.user.js'), 'http');
+  assert.equal(inferCollectionType('http://example.com/script_manifest.json'), 'http');
 });
 
-// ---------- sourceHasManifest ----------
+// ---------- collectionHasManifest ----------
 
-test('sourceHasManifest: true only for paths whose basename is script_manifest.json', () => {
-  assert.equal(sourceHasManifest('/scripts/script_manifest.json'), true);
-  assert.equal(sourceHasManifest('https://example.com/path/script_manifest.json'), true);
-  assert.equal(sourceHasManifest('https://example.com/path/script_manifest.json?token=abc'), true);
-  assert.equal(sourceHasManifest('/scripts/foo.user.js'), false);
-  assert.equal(sourceHasManifest('https://github.com/owner/repo/tree/master'), false);
+test('collectionHasManifest: true only for paths whose basename is script_manifest.json', () => {
+  assert.equal(collectionHasManifest('/scripts/script_manifest.json'), true);
+  assert.equal(collectionHasManifest('https://example.com/path/script_manifest.json'), true);
+  assert.equal(collectionHasManifest('https://example.com/path/script_manifest.json?token=abc'), true);
+  assert.equal(collectionHasManifest('/scripts/foo.user.js'), false);
+  assert.equal(collectionHasManifest('https://github.com/owner/repo/tree/master'), false);
 });
 
-// ---------- sourceBubbleKey ----------
+// ---------- collectionBubbleKey ----------
 
-test('sourceBubbleKey: appends -manifest only for manifest sources', () => {
-  assert.equal(sourceBubbleKey('/scripts/foo.user.js'), 'file');
-  assert.equal(sourceBubbleKey('/scripts/script_manifest.json'), 'file-manifest');
-  assert.equal(sourceBubbleKey('https://example.com/foo.user.js'), 'http');
+test('collectionBubbleKey: appends -manifest only for manifest collections', () => {
+  assert.equal(collectionBubbleKey('/scripts/foo.user.js'), 'file');
+  assert.equal(collectionBubbleKey('/scripts/script_manifest.json'), 'file-manifest');
+  assert.equal(collectionBubbleKey('https://example.com/foo.user.js'), 'http');
   assert.equal(
-    sourceBubbleKey('https://example.com/manifest-dir/script_manifest.json'),
+    collectionBubbleKey('https://example.com/manifest-dir/script_manifest.json'),
     'http-manifest',
   );
   assert.equal(
-    sourceBubbleKey('https://github.com/Mottie/GitHub-userscripts/tree/master'),
+    collectionBubbleKey('https://github.com/Mottie/GitHub-userscripts/tree/master'),
     'github',
   );
   assert.equal(
-    sourceBubbleKey('https://raw.githubusercontent.com/o/r/main/script_manifest.json'),
+    collectionBubbleKey('https://raw.githubusercontent.com/o/r/main/script_manifest.json'),
     'github-manifest',
   );
 });
@@ -181,57 +181,57 @@ test('inferDisplayName: tolerates a malformed percent sequence', () => {
 // ---------- effectiveDisplayName ----------
 
 test('effectiveDisplayName: prefers stored displayName when non-empty', () => {
-  const source = {
+  const collection = {
     id: 'x', path: 'https://example.com/foo.user.js',
     lastRefreshedAt: 0, scriptIds: [], enabled: true,
     displayName: 'My Favourite Script',
   };
-  assert.equal(effectiveDisplayName(source), 'My Favourite Script');
+  assert.equal(effectiveDisplayName(collection), 'My Favourite Script');
 });
 
 test('effectiveDisplayName: falls back to inferred name when stored is empty', () => {
-  const source = {
+  const collection = {
     id: 'x', path: 'https://example.com/foo.user.js',
     lastRefreshedAt: 0, scriptIds: [], enabled: true,
   };
-  assert.equal(effectiveDisplayName(source), 'example.com/foo.user.js');
+  assert.equal(effectiveDisplayName(collection), 'example.com/foo.user.js');
 });
 
 test('effectiveDisplayName: falls back to raw path when the inferred form would be empty', () => {
   // Bare manifest filename in the path: stripping the manifest suffix
   // leaves the empty string. The raw path is the safest last-resort
   // label for the UI.
-  const source = {
+  const collection = {
     id: 'x', path: 'script_manifest.json',
     lastRefreshedAt: 0, scriptIds: [], enabled: true,
   };
-  assert.equal(effectiveDisplayName(source), 'script_manifest.json');
+  assert.equal(effectiveDisplayName(collection), 'script_manifest.json');
 });
 
-// ---------- sourceClickUrl ----------
+// ---------- collectionClickUrl ----------
 
-test('sourceClickUrl: http(s) and file:// URLs pass through; raw paths become file:// URLs', () => {
-  assert.equal(sourceClickUrl('https://example.com/foo.user.js'), 'https://example.com/foo.user.js');
-  assert.equal(sourceClickUrl('file:///home/me/foo.user.js'), 'file:///home/me/foo.user.js');
-  assert.equal(sourceClickUrl('/home/me/foo.user.js'), 'file:///home/me/foo.user.js');
+test('collectionClickUrl: http(s) and file:// URLs pass through; raw paths become file:// URLs', () => {
+  assert.equal(collectionClickUrl('https://example.com/foo.user.js'), 'https://example.com/foo.user.js');
+  assert.equal(collectionClickUrl('file:///home/me/foo.user.js'), 'file:///home/me/foo.user.js');
+  assert.equal(collectionClickUrl('/home/me/foo.user.js'), 'file:///home/me/foo.user.js');
 });
 
-test('sourceClickUrl: github raw URLs convert to their github.com page URL', () => {
+test('collectionClickUrl: github raw URLs convert to their github.com page URL', () => {
   // The stored path is the raw URL (post `normalizeGithubInput`), but
   // the bubble exists for humans to click — link them to the github
   // page, not the raw bytes. Both raw hosts (raw.githubusercontent.com
   // and the github.com/<o>/<r>/raw/ form) convert.
   assert.equal(
-    sourceClickUrl('https://raw.githubusercontent.com/owner/repo/main/foo.user.js'),
+    collectionClickUrl('https://raw.githubusercontent.com/owner/repo/main/foo.user.js'),
     'https://github.com/owner/repo/blob/main/foo.user.js',
   );
   assert.equal(
-    sourceClickUrl('https://github.com/owner/repo/raw/refs/heads/main/script_manifest.json'),
+    collectionClickUrl('https://github.com/owner/repo/raw/refs/heads/main/script_manifest.json'),
     'https://github.com/owner/repo/blob/main/script_manifest.json',
   );
   // /tree/<ref> URLs are already github.com pages; pass through.
   assert.equal(
-    sourceClickUrl('https://github.com/owner/repo/tree/main'),
+    collectionClickUrl('https://github.com/owner/repo/tree/main'),
     'https://github.com/owner/repo/tree/main',
   );
 });

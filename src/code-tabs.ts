@@ -41,7 +41,7 @@ export type TabBody = string | (() => Promise<string>);
 // `fileUrl` is the tab body's canonical fetchable URL — main-script
 // tabs use `script.fileUrl`; require tabs use the require's resolved
 // URL so any relative ref inside the require resolves against the
-// require, not the host script (uncommon — require sources rarely have
+// require, not the host script (uncommon — require bodies rarely have
 // their own metadata block — but cheap to get right).
 //
 // `sourceUrl` is the `sourcemonkey://…` URL we expect stack frames for
@@ -51,8 +51,25 @@ export type TabBody = string | (() => Promise<string>);
 // script's own entry, so every frame carries the main URL. Require
 // tabs get routed frames again once the Log tab learns to apply the
 // entry's source map; see TODO.md).
+// `title` is the tab button's tooltip. The label is a bare basename, so
+// this is where a tab says which file it actually is — and, for a
+// `@require` served from a local stand-in, both the URL the script
+// declared and the file we read instead.
+//
+// `mark` is a short visible chip rendered after the label. Reserved for
+// facts a reader must not have to hover to discover; today the only one
+// is `local`, because running something other than what the `@require`
+// line names has to be visible on its face.
 export type CodeTab =
-  | { kind: 'code'; label: string; body: TabBody; fileUrl: string; sourceUrl: string }
+  | {
+      kind: 'code';
+      label: string;
+      body: TabBody;
+      fileUrl: string;
+      sourceUrl: string;
+      title?: string;
+      mark?: string;
+    }
   | { kind: 'log'; label: string };
 
 export interface CodeTabsElements {
@@ -222,6 +239,13 @@ export class CodeTabsView {
       btn.setAttribute('role', 'tab');
       btn.setAttribute('aria-selected', idx === this.activeIdx ? 'true' : 'false');
       btn.textContent = tab.label;
+      if (tab.kind === 'code' && tab.title) btn.title = tab.title;
+      if (tab.kind === 'code' && tab.mark) {
+        const mark = document.createElement('span');
+        mark.className = 'tab-mark';
+        mark.textContent = tab.mark;
+        btn.appendChild(mark);
+      }
       btn.addEventListener('click', () => {
         if (this.activeIdx === idx) return;
         this.activeIdx = idx;

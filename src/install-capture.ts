@@ -105,13 +105,54 @@ const CHROME_USERJS_FIX_VERSION = 152;
 // [docs/install-capture.md] "The cost, and what pays for it".
 //
 // Anything else (`chrome-extension:`, `ftp:`, `data:`, …) stays out:
-// those aren't source shapes `addSource` can register.
+// those aren't collection shapes `addCollection` can register.
 const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 
+// Code-hosting sites that serve an HTML *page* — a file browser with
+// syntax highlighting, line numbers, and navigation — at a URL whose
+// path still ends in `.user.js`. Those pages are something the user
+// asked to read, Chrome renders them correctly on its own, and there
+// is no download to rescue, so the capture stays out of the way.
+//
+// Only the page-view path is listed. Each of these hosts serves the
+// real bytes from a different path (noted per entry), and those stay
+// captured — the exclusion is about the rendering, not the host.
+//
+// Not a completeness claim, and it doesn't need to be: an unlisted
+// forge's blob view is still captured, but the preview then sees a
+// markup response and continues to the page by itself. This list only
+// saves the round trip for the hosts worth knowing in advance.
+//
+// Pasting any of these URLs into the collections page's Add field
+// still installs the script — that path rewrites a blob URL to its raw
+// form (`normalizeCollectionInput`).
+const CODE_HOST_PAGE_VIEWS: { host: string; path: RegExp }[] = [
+  // bytes at raw.githubusercontent.com, or /<o>/<r>/raw/…
+  { host: 'github.com', path: /^\/[^\/]+\/[^\/]+\/blob\// },
+  // bytes at /-/raw/…; the group segment count varies, so no anchor
+  { host: 'gitlab.com', path: /\/-\/blob\// },
+  // bytes at /<w>/<r>/raw/…
+  { host: 'bitbucket.org', path: /^\/[^\/]+\/[^\/]+\/src\// },
+  // Gitea: page at /src/branch/<b>/…, bytes at /raw/branch/<b>/…
+  { host: 'codeberg.org', path: /^\/[^\/]+\/[^\/]+\/src\// },
+];
+
+function isCodeHostPageView(u: URL): boolean {
+  // `?raw=true` on a blob URL is GitHub's own "give me the bytes"
+  // switch — it 302s to raw.githubusercontent.com. Excluding it would
+  // lose the capture entirely, since `onBeforeNavigate` does not fire
+  // again for a server redirect.
+  if (u.searchParams.get('raw') === 'true' || u.searchParams.get('raw') === '1') return false;
+  // `hostname` is already lowercased by the URL parser. `www.` is
+  // stripped so the same rule covers the redirecting alias.
+  const host = u.hostname.replace(/^www\./, '');
+  return CODE_HOST_PAGE_VIEWS.some((e) => e.host === host && e.path.test(u.pathname));
+}
+
 // True for URLs the capture should act on: an http(s) or file:// URL
-// whose path ends in `.user.js`. Query strings and fragments are
-// ignored (they live outside `pathname`), so `…/foo.user.js?v=3#top`
-// matches.
+// whose path ends in `.user.js`, excluding the forge page views above.
+// Query strings and fragments are ignored (they live outside
+// `pathname`), so `…/foo.user.js?v=3#top` matches.
 //
 // The suffix match is case-SENSITIVE, matching both the
 // `webNavigation` pre-filter below and `isSingleFileInput` in
@@ -119,7 +160,7 @@ const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 // single script or a directory to scan). Chrome's own legacy check is
 // case-insensitive, so the three ways SourceMonkey can see one URL
 // have to agree or a `FOO.USER.JS` ends up captured but registered as
-// a directory source. Lowercase is the universal convention; a
+// a directory collection. Lowercase is the universal convention; a
 // mixed-case suffix is simply not ours to handle.
 export function isUserJsUrl(url: string): boolean {
   let u: URL;
@@ -129,14 +170,30 @@ export function isUserJsUrl(url: string): boolean {
     return false;
   }
   if (!CAPTURED_PROTOCOLS.has(u.protocol)) return false;
-  return u.pathname.endsWith(USER_JS_SUFFIX);
+  if (!u.pathname.endsWith(USER_JS_SUFFIX)) return false;
+  return !isCodeHostPageView(u);
 }
+
+// Marks a preview the capture opened, as opposed to one the user asked
+// for from the collections page. Only the captured kind may bail out
+// on its own (see the viewer's markup handling): a capture is us
+// guessing that a URL was a script, so being wrong means getting out
+// of the way. A preview the user explicitly asked for is a request we
+// owe an answer to, and silently navigating them off SourceMonkey to
+// some web page would be the wrong one.
+//
+// Nothing on the web can set this, and it has to stay that way: a page
+// that could forge it could make the viewer navigate the tab and plant
+// a capture bypass. `deep-link.ts` strips it for that reason. The
+// whole flow — who adds it, who strips it, who reads it — is written
+// up in [docs/install-capture.md], "The `captured=1` marker".
+export const CAPTURED_PARAM = 'captured';
 
 // Build the preview URL for a captured script URL. The script URL is
 // carried as a normal query param — the viewer is the only consumer and
 // it validates the value before fetching anything.
 export function buildPreviewPageUrl(scriptUrl: string): string {
-  const qs = new URLSearchParams({ preview: scriptUrl });
+  const qs = new URLSearchParams({ preview: scriptUrl, [CAPTURED_PARAM]: '1' });
   return `${chrome.runtime.getURL(PREVIEW_PAGE)}?${qs.toString()}`;
 }
 
@@ -162,7 +219,7 @@ function bypassKey(url: string): string {
 }
 
 // Record a one-shot "don't capture this URL" marker. Called from the
-// preview page's View source action.
+// preview page's View collection action.
 export async function markInstallBypass(url: string): Promise<void> {
   await chrome.storage.session.set({ [bypassKey(url)]: Date.now() + BYPASS_TTL_MS });
 }
@@ -258,6 +315,10 @@ async function syncDownloadWorkaroundRule(): Promise<void> {
           // `…/view?f=a.user.js` would be rewritten despite the capture
           // deliberately ignoring that shape. No `#` alternative: the
           // fragment is never sent, so DNR never sees one.
+          //
+          // The forge page views `isUserJsUrl` excludes need no clause
+          // here: they answer `text/html`, which the content-type
+          // condition below already rules out.
           condition: {
             regexFilter: '^[^?]*\\.user\\.js(\\?.*)?$',
             isUrlFilterCaseSensitive: true,

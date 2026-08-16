@@ -1,6 +1,6 @@
 // The "Allow access to file URLs" probe and the banner that explains a
 // failed `file://` read, shared by every extension page that can hit
-// one (sources page, script viewer / install preview).
+// one (collections page, script viewer / install preview).
 //
 // The toggle lives on `chrome://extensions` and is invisible from a
 // fetch's point of view: with it off, reading a local file fails with
@@ -57,7 +57,7 @@ export function renderFileAccessBanner(retry = 'then reload this page'): HTMLEle
 // from extension pages. Rendered as an <a> so it looks/behaves like
 // any other link.
 //
-// Exported because the sources page's "Allow User Scripts" banner
+// Exported because the collections page's "Allow User Scripts" banner
 // points at the same details page.
 export function extensionDetailsLink(): HTMLElement {
   const url = `chrome://extensions/?id=${chrome.runtime.id}`;
@@ -67,7 +67,13 @@ export function extensionDetailsLink(): HTMLElement {
   a.className = 'chrome-link';
   a.addEventListener('click', (event) => {
     event.preventDefault();
-    void chrome.tabs.create({ url });
+    // Caught, not dropped: an unhandled rejection in an extension page
+    // is filed under chrome://extensions/?errors, which is the panel
+    // this banner is trying to send the user to — arriving there to
+    // find SourceMonkey's own error would be its own kind of confusing.
+    // A `chrome://` target has no realistic failure, so there is
+    // nothing to say beyond leaving the link inert.
+    chrome.tabs.create({ url }).catch(() => { /* nothing to fall back to */ });
   });
   return a;
 }

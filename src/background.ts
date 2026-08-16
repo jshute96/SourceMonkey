@@ -1,7 +1,7 @@
 // SourceMonkey MV3 service worker.
 //
 // Today the SW does these real jobs:
-//   - Opens the sources page on toolbar click (no popup configured).
+//   - Opens the collections page on toolbar click (no popup configured).
 //   - Watches every tab navigation, finds matching userscripts via the
 //     in-memory match index, listens to sm:start / sm:error reports
 //     from injected wrappers, and surfaces the combined state as a
@@ -11,7 +11,7 @@
 //   - Mirrors the badge's per-script status lines into the toolbar
 //     icon's right-click menu (chrome.contextMenus, action context),
 //     so users can jump to a script's viewer page without going
-//     through the sources page first.
+//     through the collections page first.
 //
 // The `self.SourceMonkey` surface exists so e2e tests can drive the
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
@@ -32,11 +32,24 @@ import {
 } from './debug-log.js';
 import {
   installGithubAuthListener,
-  loadGithubAuthToken,
+  ensureGithubAuthTokenLoaded,
 } from './github-auth.js';
+import {
+  LOCAL_ROOTS_KEY,
+  _setLocalRootsForTests,
+  installLocalRootsListener,
+  loadLocalRootsSetting,
+  rootsFromText,
+} from './local-file-overrides.js';
 import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
+import { readRefreshErrors, type RefreshErrorMap } from './refresh-error.js';
 import { installUserJsCapture } from './install-capture.js';
+import {
+  HTTP_READ_MESSAGE,
+  handleHttpReadRequest,
+  type HttpReadRequest,
+} from './http-read.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
 import { attachParseLocation } from './parse-location.js';
@@ -82,24 +95,28 @@ import {
 import {
   replayScriptLogsAtBoot,
   requestOpportunisticScriptChecks,
-  updateAllSources,
+  updateAllCollections,
   updateScript,
-  updateSource,
+  updateCollection,
 } from './script-updater.js';
 import type { ProbePolicy } from './version-probe.js';
 import {
-  addSource,
+  addCollection,
   getScript,
-  getSources,
-  getSourceWithScripts,
+  getCollections,
+  getCollectionWithScripts,
   isFirstRunComplete,
+  resetCollectionKeyMigrationForTests,
+  _setCollectionWriteFailureForTests,
   markFirstRunComplete,
-  removeSource,
+  removeCollection,
   setScriptEnabled,
-  setSourceEnabled,
-  type AddSourceResult,
+  setCollectionEnabled,
+  setCollectionLocalFiles,
+  describeError,
+  type AddCollectionResult,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
   setParseChecker,
 } from './script-store.js';
 import {
@@ -146,6 +163,14 @@ import {
   type GmNotificationShowPayload,
 } from './gm-notification.js';
 import {
+  abortGmDownload,
+  dropOriginator as dropOriginatorDownloads,
+  handleDownloadChanged,
+  startGmDownload,
+  type GmDownloadEvent,
+  type GmDownloadStartPayload,
+} from './gm-download.js';
+import {
   clearTab as clearMenuCommandsForTab,
   findMenuCommand,
   getMenuCommandsForTab,
@@ -173,22 +198,25 @@ interface SourceMonkeyApi {
   // These methods exist so Playwright tests can drive the extension via
   // `serviceWorker.evaluate(...)`. MV3 service workers can't be poked
   // from a Playwright UI action (no toolbar click); without these the
-  // tests would have to navigate to the sources page for every state
-  // transition, which is both slow and couples tests to the page's DOM.
-  // All of them delegate straight to the production functions — they
-  // are not test-only logic, just convenience accessors.
+  // tests would have to navigate to the collections page for every
+  // state transition, which is both slow and couples tests to the
+  // page's DOM. All of them delegate straight to the production
+  // functions — they are not test-only logic, just convenience
+  // accessors.
   //
   // Production exposure: the manifest has no `externally_connectable`
   // entry, so neither web pages nor other extensions can reach the SW
   // to call these. Practically callable only from DevTools on an
   // extension page or from Playwright's `serviceWorker.evaluate`.
-  addSource: (path: string) => Promise<AddSourceResult>;
-  removeSource: (id: string) => Promise<void>;
-  getSources: () => Promise<StoredSource[]>;
-  getSourceWithScripts: (id: string) => Promise<{ source: StoredSource; scripts: StoredScript[] } | null>;
-  setSourceEnabled: (id: string, enabled: boolean) => Promise<StoredSource | null>;
+  addCollection: (path: string) => Promise<AddCollectionResult>;
+  removeCollection: (id: string) => Promise<void>;
+  getCollections: () => Promise<StoredCollection[]>;
+  getCollectionWithScripts: (id: string) => Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null>;
+  setCollectionEnabled: (id: string, enabled: boolean) => Promise<StoredCollection | null>;
+  setCollectionLocalFiles: (id: string, localFiles: boolean) => Promise<StoredCollection | null>;
+  setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
-  updateSource: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
   // Refresh click passes, and several behaviors key off it (upstream
   // version probes, and retrying a refused registration immediately
@@ -199,7 +227,7 @@ interface SourceMonkeyApi {
     mode: 'manual' | 'opportunistic',
     probe?: ProbePolicy,
   ) => Promise<unknown>;
-  updateAllSources: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
+  updateAllCollections: (mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // Inspect the per-tab badge state Chrome would render. We pull
   // text/title back from chrome.action and the structured TabRecord
   // from session storage so a single round-trip gives a test
@@ -214,8 +242,8 @@ interface SourceMonkeyApi {
   // each test starts clean.
   resetAllState: () => Promise<void>;
   // Force an immediate chrome.userScripts re-sync, bypassing the 50ms
-  // debounce in scheduleSync(). Tests use this after addSource /
-  // updateScript / setSourceEnabled so the navigation that follows
+  // debounce in scheduleSync(). Tests use this after addCollection /
+  // updateScript / setCollectionEnabled so the navigation that follows
   // can't out-race the debounced registration.
   syncNow: () => Promise<{ registered: { id: string }[] }>;
   // Re-run the SW-boot startup-log replay. Tests use this after
@@ -238,6 +266,15 @@ interface SourceMonkeyApi {
   // script id — the state the UI renders as REJECTED. Empty unless
   // something is broken, which is what most tests assert.
   getRejections: () => Promise<RejectionMap>;
+  // Collections whose last refresh was read but could not be saved,
+  // keyed by collection id (src/refresh-error.ts). Empty unless a
+  // storage write failed, which is what most tests assert.
+  getRefreshErrors: () => Promise<RefreshErrorMap>;
+  // Make every collection-refresh write fail, so a test can drive the
+  // out-of-quota path without having to actually fill 10 MB. Stays armed
+  // until cleared with null, matching a real exhausted quota — which
+  // fails every collection, not just the next one.
+  failCollectionWrites: (message: string | null) => Promise<void>;
   // Compile-only parse check (src/parse-check.ts). Null means the
   // check could not run, which callers must not read as failure.
   checkParses: (sources: string[]) => Promise<ParseVerdict[] | null>;
@@ -299,15 +336,27 @@ const api: SourceMonkeyApi = {
     await ensureLoaded();
     return findMatchesForUrl(url);
   },
-  addSource,
-  removeSource,
-  getSources,
-  getSourceWithScripts,
-  setSourceEnabled,
+  addCollection,
+  removeCollection,
+  getCollections,
+  getCollectionWithScripts,
+  setCollectionEnabled,
+  setCollectionLocalFiles,
+  // Write the real setting so the production read path is what's under
+  // test, AND push it into the module cache directly: `storage.onChanged`
+  // delivery isn't ordered against the call that follows, and a test
+  // that adds a collection on the next line must not race it.
+  setLocalRoots: async (paths: string[]) => {
+    // Through the same text→array parse the options page's Save runs,
+    // so what's stored is exactly what a real save would store.
+    const roots = rootsFromText(paths.join('\n')) ?? [];
+    await chrome.storage.local.set({ [LOCAL_ROOTS_KEY]: roots });
+    _setLocalRootsForTests(roots);
+  },
   setScriptEnabled,
-  updateSource,
+  updateCollection,
   updateScript,
-  updateAllSources,
+  updateAllCollections,
   getTabState: async (tabId: number) => {
     const [badgeText, badgeColor, title, record] = await Promise.all([
       chrome.action.getBadgeText({ tabId }),
@@ -320,15 +369,19 @@ const api: SourceMonkeyApi = {
   // Drains this script's in-flight appends before reading. Production
   // log writes go through `logScriptEvent`, which is deliberately
   // fire-and-forget — a refresh must not wait on its own transcript —
-  // so `updateSource()` can resolve before the entry it just produced
-  // has landed. A test that reads straight after would be asserting on
-  // a log that is still being written.
+  // so `updateCollection()` can resolve before the entry it just
+  // produced has landed. A test that reads straight after would be
+  // asserting on a log that is still being written.
   getScriptLog: async (scriptId: string) => {
     await _flushScriptLogQueueForTests(scriptId);
     return getScriptLog(scriptId);
   },
   appendScriptLog,
   getRejections: readRejections,
+  getRefreshErrors: readRefreshErrors,
+  failCollectionWrites: async (message: string | null) => {
+    _setCollectionWriteFailureForTests(message);
+  },
   clearScriptLog,
   getGmValues: loadAllValues,
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
@@ -366,10 +419,10 @@ const api: SourceMonkeyApi = {
   setDebugForceSnapshotFailure,
   syncNow: async () => {
     // Cancel any pending debounced sync first — otherwise its work
-    // would fire just after we return, and a test that does addSource
-    // → syncNow → page.goto could see the registration briefly
-    // disappear mid-navigation. Tests rely on syncNow being the LAST
-    // sync until the next mutation.
+    // would fire just after we return, and a test that does
+    // addCollection → syncNow → page.goto could see the registration
+    // briefly disappear mid-navigation. Tests rely on syncNow being the
+    // LAST sync until the next mutation.
     if (syncTimer != null) {
       clearTimeout(syncTimer);
       syncTimer = null;
@@ -395,6 +448,11 @@ const api: SourceMonkeyApi = {
     // Same reason: a retry from the previous test would otherwise
     // rate-limit the next one's out of existence.
     resetRejectionRetryGate();
+    // Also a module variable in the worker, so a test that armed the
+    // write failure would otherwise break every refresh after it. (The
+    // recorded errors themselves live in the session storage cleared
+    // below, so they need no separate reset.)
+    _setCollectionWriteFailureForTests(null);
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -405,9 +463,18 @@ const api: SourceMonkeyApi = {
     }
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    // The legacy-key migration memo describes the profile we just
+    // wiped, so drop it — otherwise a test that seeds pre-rename rows
+    // would find nothing willing to move them.
+    resetCollectionKeyMigrationForTests();
+    // The clear above fires `storage.onChanged`, which would reset the
+    // cached roots — but not necessarily before the next test's first
+    // call. Drop them synchronously so a reset is a clean slate the
+    // moment it returns.
+    _setLocalRootsForTests([]);
     // Mark first-run seeding as already done so a later SW restart
     // doesn't repopulate the deliberately-emptied store with the default
-    // sources. A reset is meant to leave a clean slate, and re-seeding
+    // collections. A reset is meant to leave a clean slate, and re-seeding
     // would contradict that. (This stops future seed runs from starting;
     // a seed already in flight from the boot before this reset isn't
     // cancelled — the in-loop flag re-check narrows but can't fully
@@ -430,7 +497,7 @@ const api: SourceMonkeyApi = {
     }
     // Cancel the post-clear scheduled sync that the onChanged listener
     // just armed. Without this it would fire ~50 ms into the next
-    // test, potentially mid-addSource.
+    // test, potentially mid-addCollection.
     if (syncTimer != null) {
       clearTimeout(syncTimer);
       syncTimer = null;
@@ -440,7 +507,7 @@ const api: SourceMonkeyApi = {
 
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
 
-// Clicking the toolbar icon opens the sources page (the extension's
+// Clicking the toolbar icon opens the collections page (the extension's
 // declared `options_ui.page`). We have no popup configured, so
 // onClicked fires on every action click; openOptionsPage honors
 // `options_ui.open_in_tab` (true) and focuses an existing tab if one
@@ -449,15 +516,15 @@ chrome.action.onClicked.addListener(() => {
   chrome.runtime.openOptionsPage();
 });
 
-// First run: open the sources page so the user lands somewhere useful
-// instead of an empty toolbar, and so the page can seed the default
-// sources through the normal add → Refresh flow (see
-// `seedDefaultSourcesViaUi` in sources.ts). The `?first_run` param is
-// the seeding trigger — only this auto-opened page carries it, so an
-// ordinary sources-page visit never re-seeds. Gated by the persisted
-// flag (not just the install reason) because unpacked-extension reloads
-// re-fire onInstalled with reason 'install'; without the flag check
-// every dev reload would reopen the tab.
+// First run: open the collections page so the user lands somewhere
+// useful instead of an empty toolbar, and so the page can seed the
+// default collections through the normal add → Refresh flow (see
+// `seedDefaultCollectionsViaUi` in collections.ts). The `?first_run`
+// param is the seeding trigger — only this auto-opened page carries it,
+// so an ordinary collections-page visit never re-seeds. Gated by the
+// persisted flag (not just the install reason) because
+// unpacked-extension reloads re-fire onInstalled with reason 'install';
+// without the flag check every dev reload would reopen the tab.
 chrome.runtime.onInstalled.addListener((details) => {
   console.log(`[SourceMonkey] onInstalled (reason=${details.reason})`);
   if (details.reason !== 'install') return;
@@ -465,20 +532,20 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (await isFirstRunComplete()) {
       console.log(
         '[SourceMonkey] first run already complete (firstRunComplete=true); ' +
-        'not opening the sources page. Clear that storage key to re-seed.',
+        'not opening the collections page. Clear that storage key to re-seed.',
       );
       return;
     }
     console.log(
-      '[SourceMonkey] first run detected — opening sources.html?first_run=1 ' +
-      'so the page can seed the default sources',
+      '[SourceMonkey] first run detected — opening collections.html?first_run=1 ' +
+      'so the page can seed the default collections',
     );
     try {
       await chrome.tabs.create({
-        url: chrome.runtime.getURL('sources.html?first_run=1'),
+        url: chrome.runtime.getURL('collections.html?first_run=1'),
       });
     } catch (err) {
-      console.info('[SourceMonkey] failed to open first-run sources page:', err);
+      console.info('[SourceMonkey] failed to open first-run collections page:', err);
     }
   })();
 });
@@ -583,13 +650,39 @@ async function updateTabMatches(
   const restored = prev != null;
   const matches = restored ? mergeMatches(prev.matches, incoming) : incoming;
   const actual = restored ? prev.actual : {};
-  // Fresh document → the previous wrapper(s) and their menu-command
-  // callbacks are gone. Drop the SW-side mirror so the new document's
-  // wrapper starts from a clean menu. SPA pushState / bfcache restores
-  // (restored === true) keep the existing commands, matching the
-  // "callbacks survive" lifecycle on the page side.
-  if (!restored) {
-    clearMenuCommandsForTab(tabId);
+  // Menu-command mirror: the one invariant is that it holds commands
+  // for the document the tab is on NOW. The wrapper's callbacks live
+  // in that document, so a mirror pointing anywhere else renders rows
+  // that can never fire.
+  //
+  // One rule covers every case, keyed on the document being entered:
+  //   - fresh document → the old document's commands go, and the new
+  //     wrapper re-registers from scratch;
+  //   - bfcache restore back to an EARLIER document → the later
+  //     document's commands go too, which `restored` alone would have
+  //     kept (they'd render as dead rows);
+  //   - SPA pushState within the same document → mirror matches, kept,
+  //     which is the page-side "callbacks survive" lifecycle.
+  //
+  // Scoped to "anything that isn't this document" rather than an
+  // unconditional wipe because we got here after several awaits: a
+  // document-end wrapper in the new document can beat us to
+  // registering, and dropping those registrations would leave the tab
+  // with no menu commands until the next navigation — nothing resends
+  // them.
+  //
+  // Gated on `trigger`, not on whether we know the documentId — those
+  // are different questions:
+  //   - 'refresh' (`refreshAllOpenTabs` after a script-set change) is
+  //     not a navigation at all. The document didn't change, so the
+  //     mirror is still correct and must be left alone.
+  //   - 'navigation' with no documentId is the `chrome.tabs.onUpdated`
+  //     fallback for a Chrome without `webNavigation`. A navigation
+  //     DID happen and we can't say to what, so `''` falls through to
+  //     the unconditional clear — stale commands must not outlive the
+  //     document that registered them.
+  if (trigger === 'navigation') {
+    clearMenuCommandsForTab(tabId, documentId ?? '');
     // The new document's wrapper will resend sm:gm-menu-register from
     // scratch; until then the active tab's menu should reflect the
     // cleared mirror. renderBadge at the end of this function takes
@@ -848,7 +941,12 @@ function installActionContextMenu(): void {
       // Log tab so the user sees why; everything else opens on the
       // default (main script) view.
       const tab = erroredScriptRows.has(scriptId) ? 'log' : undefined;
-      void chrome.tabs.create({ url: viewerUrlForScript(scriptId, tab) });
+      // Caught rather than dropped: an unhandled rejection in the SW
+      // lands in chrome://extensions/?errors the same as one in a page.
+      // The target is our own viewer page, so a failure here is not
+      // something the user can act on — hence info, not a surface.
+      chrome.tabs.create({ url: viewerUrlForScript(scriptId, tab) })
+        .catch((err) => console.info('[SourceMonkey] could not open the viewer:', describeError(err)));
       return;
     }
   });
@@ -1002,6 +1100,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // notifications back to a tab that no longer exists.
   dropOriginatorTabs(tabId);
   dropOriginatorNotifications(tabId);
+  // GM_download: stop tracking this tab's transfers. They keep running
+  // (a download the user started is theirs to keep) — we just have
+  // nowhere left to route progress / completion events.
+  dropOriginatorDownloads(tabId);
   // GM_openInTab close-event routing: if this tabId was a tab we
   // opened on behalf of a userscript, dispatch sm:gm-tab-closed to
   // the originating tab so its onclose fires. Folded into this
@@ -1044,7 +1146,7 @@ onCacheChanged(() => {
 // REJECTED badge clears the moment a retry places the script (and
 // appears the moment one stops registering). Without this the badge
 // would keep its old label until the next navigation, contradicting the
-// sources page beside it.
+// collections page beside it.
 //
 // Session area only: this is the injector's rejection map, and script
 // content changes come through `onCacheChanged` above.
@@ -1616,6 +1718,83 @@ function installNotificationListeners(): void {
   });
 }
 
+// ---------- GM_download dispatch ----------
+
+// Ship one download event to the tab that asked for it, and mirror
+// failures onto the script's Log tab so a user who sees "nothing
+// downloaded" has somewhere to look. Successful downloads are NOT
+// logged: a batch downloader fires hundreds of them and would push
+// every other entry out of the capped log.
+function sendDownloadEvent(
+  tabId: number,
+  scriptId: string,
+  requestId: string,
+  url: string,
+  event: GmDownloadEvent,
+): void {
+  if (event.kind === 'error' || event.kind === 'timeout') {
+    const reason = event.kind === 'timeout'
+      ? 'timed out'
+      : `${event.error}${event.details.current ? ` (${event.details.current})` : ''}${event.details.message ? `: ${event.details.message}` : ''}`;
+    logScriptEvent(scriptId, {
+      // `warning`, not `error`: a refused or interrupted download is a
+      // script/page-level outcome the script can handle (and often
+      // retries), not a SourceMonkey malfunction. `error` would also
+      // be misleading — it doesn't drive the toolbar icon red, so it
+      // only raises the noise floor.
+      level: 'warning',
+      source: 'gm-download',
+      tabId,
+      message: `GM_download ${reason} — ${url}`,
+    });
+  }
+  void chrome.tabs.sendMessage(tabId, {
+    type: 'sm:gm-download-event',
+    requestId,
+    event,
+  }).catch(() => undefined);
+}
+
+async function handleDownloadStart(
+  sender: chrome.runtime.MessageSender,
+  payload: GmDownloadStartPayload,
+): Promise<void> {
+  const tabId = sender.tab?.id;
+  if (tabId == null) {
+    console.info('[SourceMonkey] gm-download-start without tab id; ignoring');
+    return;
+  }
+  const emit = (event: GmDownloadEvent): void => {
+    sendDownloadEvent(tabId, payload.scriptId, payload.requestId, payload.url, event);
+  };
+  const result = await startGmDownload(payload, tabId, emit);
+  if (result.ok) return;
+  // A download that never started still owes the script a terminal
+  // event. `download_canceled` here means the page aborted before the
+  // download manager had an id — the page already settled its own
+  // callbacks, so there's nothing to deliver.
+  if (result.error === 'download_canceled') return;
+  emit({
+    kind: 'error',
+    error: result.error ?? 'not_succeeded',
+    details: result.details ?? {},
+  });
+}
+
+function installDownloadListeners(): void {
+  if (!chrome.downloads) {
+    console.info('[SourceMonkey] chrome.downloads not available; GM_download will report not_permitted');
+    return;
+  }
+  // Note this listener sees EVERY download in the browser, not just
+  // ours — the API has no per-extension filter. `handleDownloadChanged`
+  // ignores ids it didn't start, and we never read or store anything
+  // about a download a userscript didn't ask for.
+  chrome.downloads.onChanged.addListener((delta) => {
+    handleDownloadChanged(delta);
+  });
+}
+
 // ---------- GM_* storage batched writes + cross-tab broadcast ----------
 
 interface BatchWriteEntry {
@@ -1929,6 +2108,23 @@ function installScriptMessageListener(): void {
       try { sendResponse({ ok: true }); } catch { /* gone */ }
       return false;
     }
+    if (type === 'sm:gm-download-start') {
+      // Ack immediately — the transfer can run for minutes and the
+      // message channel shouldn't stay pinned open for it. Terminal +
+      // progress events arrive later via chrome.tabs.sendMessage, the
+      // same shape as GM_xmlhttpRequest.
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      void handleDownloadStart(sender, msg as GmDownloadStartPayload).catch((err) => {
+        console.info('[SourceMonkey] gm-download-start handler threw:', err);
+      });
+      return false;
+    }
+    if (type === 'sm:gm-download-abort') {
+      const payload = msg as { requestId?: string };
+      if (typeof payload.requestId === 'string') void abortGmDownload(payload.requestId);
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      return false;
+    }
     if (type === 'sm:gm-notification-show') {
       return respondAsync(
         'gm-notification-show',
@@ -1943,6 +2139,9 @@ function installScriptMessageListener(): void {
       // surfacing.
       return respondAsync('gm-batch-write', handleBatchWrite(msg as BatchWritePayload, sender), sendResponse);
     }
+    // Which document the menu message came from. The registry is keyed
+    // by it, so both the register and unregister branches below need it.
+    const menuDocId = (sender as { documentId?: string }).documentId ?? '';
     if (type === 'sm:gm-menu-register') {
       // Page side has stashed the callback locally; we just track the
       // (commandId, name) so the action context menu can render it.
@@ -1953,13 +2152,18 @@ function installScriptMessageListener(): void {
       // never sees a clearTab event. Same shape as gm-tab/gm-notification
       // dropOriginator races — left as-is for symmetry. Worst case
       // is a small in-memory leak until the SW restarts.
+      //
+      // The same window against a *navigation* is not survivable that
+      // way (nothing would re-register the lost command), so the
+      // registry is keyed by document: we pass the sender's documentId
+      // and the navigation clear only drops another document's state.
       const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
       if (
         typeof payload.scriptId === 'string' &&
         typeof payload.commandId === 'string' &&
         typeof payload.name === 'string'
       ) {
-        const changed = registerMenuCommand(tabId, payload.scriptId, payload.commandId, payload.name);
+        const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
         if (changed && tabId === activeTabId) void refreshActiveTabMenu();
       }
       try { sendResponse({ ok: true }); } catch { /* gone */ }
@@ -1968,7 +2172,7 @@ function installScriptMessageListener(): void {
     if (type === 'sm:gm-menu-unregister') {
       const payload = msg as { scriptId?: unknown; commandId?: unknown };
       if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
-        const changed = unregisterMenuCommand(tabId, payload.scriptId, payload.commandId);
+        const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
         // Unknown ids (silent no-op contract) don't change visible
         // state; skip the rebuild so a noisy unregister loop doesn't
         // churn chrome.contextMenus.
@@ -2013,6 +2217,38 @@ function installScriptMessageListener(): void {
       reason?: string;
     };
     enqueueTabWork(tabId, () => recordScriptReport(tabId, sender, type, payload));
+  });
+}
+
+// Read an http(s) URL on behalf of an extension PAGE, because a page
+// that fetches for itself acts on the response's `Link: rel=preload`
+// headers and lands an uncatchable CSP refusal in the Errors panel.
+// The reasoning, and the reply shape, live in src/http-read.ts.
+//
+// Sender check, not decoration: the extension holds `<all_urls>`, so
+// answering anyone would make this an open fetch proxy. Userscript
+// worlds are on a different event (`onUserScriptMessage`) and could
+// never reach this listener, but the guard is what keeps that true
+// after some future context gains `chrome.runtime.sendMessage`.
+function installPageFetchListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as { type?: unknown } | null;
+    if (!msg || msg.type !== HTTP_READ_MESSAGE) return undefined;
+    if (sender.id !== chrome.runtime.id) return undefined;
+    const origin = `chrome-extension://${chrome.runtime.id}`;
+    if (!sender.url || !sender.url.startsWith(`${origin}/`)) return undefined;
+    void handleHttpReadRequest(msg as HttpReadRequest).then(
+      (reply) => { try { sendResponse(reply); } catch { /* page gone */ } },
+      (err) => {
+        // An unexpected throw is not a verdict about the URL, so don't
+        // dress it up as one: answering with nothing sends the page to
+        // its own fallback fetch, which at worst leaks one preload hint.
+        console.info('[SourceMonkey] page http-read handler threw:', describeError(err));
+        try { sendResponse(undefined); } catch { /* page gone */ }
+      },
+    );
+    // Keep the message channel open for the async reply.
+    return true;
   });
 }
 
@@ -2247,9 +2483,12 @@ installNavigationListeners();
 installDeepLinkRedirect();
 installUserJsCapture();
 installScriptMessageListener();
+installPageFetchListener();
 installDebugLoggingListener();
+installLocalRootsListener();
 installGithubAuthListener();
 installNotificationListeners();
+installDownloadListeners();
 installActionContextMenu();
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
@@ -2257,7 +2496,10 @@ installActionContextMenu();
 void ensureLoaded();
 void syncRegistrations();
 void loadDebugLoggingFlag();
-void loadGithubAuthToken();
+// Kicked off here so the read is already in flight by the time the
+// first refresh awaits `localRootsReady()`.
+void loadLocalRootsSetting();
+void ensureGithubAuthTokenLoaded();
 // Refill each script's Log tab from persisted state (current load
 // failures + parse-time diagnostics) the first time the SW boots in a
 // Chrome session — session storage, and so the log, was wiped on

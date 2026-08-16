@@ -1,13 +1,13 @@
 // End-to-end coverage of the unified change-detection pipeline:
 // every loaded script carries a `contentHash`, and an "unchanged
 // content → preserved loadedAt" outcome must hold across every
-// combination of source kind (directory, single-file, manifest) and
+// combination of collection kind (directory, single-file, manifest) and
 // scheme (file://, http(s)://) — using whichever cheap pre-fetch
 // skip path the combo supports, with the post-fetch content-hash
 // compare as the universal fallback.
 //
 // The local-directory + file:// case is already covered by
-// sources.spec.ts ("refresh skips unchanged files…" / "rewriting a
+// collections.spec.ts ("refresh skips unchanged files…" / "rewriting a
 // script body bumps loadedAt…"). This file fills in the others:
 //
 //   - HTTP single-file with no ETag/Last-Modified (content-hash path)
@@ -35,21 +35,21 @@ test.describe('change detection', () => {
     // post-fetch contentHash compare is what keeps loadedAt stable
     // when the bytes haven't changed.
     server.setRoute('/foo.user.js', userscriptText('Foo'));
-    const source = await sm.addSource(`${server.baseUrl}/foo.user.js`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/foo.user.js`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
     expect(before!.scripts[0].status).toBe('ok');
 
     // Same body — different physical fetch, identical bytes → loadedAt unchanged.
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
-    let after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    let after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
 
     // Now change the body. New bytes → loadedAt bumps.
     server.setRoute('/foo.user.js', userscriptText('Foo', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
-    after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).toContain('v2');
   });
@@ -59,8 +59,8 @@ test.describe('change detection', () => {
     // replays as If-None-Match next time. The cheap-skip HTTP 304 path
     // fires (no body crosses the wire); content-hash never needed.
     server.setRoute('/bar.user.js', userscriptText('Bar'), { etag: 'W/"v1"' });
-    const source = await sm.addSource(`${server.baseUrl}/bar.user.js`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/bar.user.js`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
 
     // Conditional GET → 304 → unchanged. loadedAt preserved. We assert
@@ -69,8 +69,8 @@ test.describe('change detection', () => {
     // loadedAt and the test would silently double-cover the wrong
     // path.
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
-    let after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    let after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
     expect(server.countResponses('/bar.user.js', 304)).toBe(1);
     const conditional = server.requestLog.find(
@@ -81,8 +81,8 @@ test.describe('change detection', () => {
     // Rotate the ETag AND change the body. Conditional GET → 200,
     // new body, fresh validators captured, loadedAt bumped.
     server.setRoute('/bar.user.js', userscriptText('Bar', ' /* v2 */'), { etag: 'W/"v2"' });
-    await sm.updateSource(source!.id, 'manual');
-    after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).toContain('v2');
     // The third refresh request must have come back 200 (server still
@@ -103,8 +103,8 @@ test.describe('change detection', () => {
     server.setRoute('/b.user.js', userscriptText('B'));
     server.setManifest('/script_manifest.json', ['a.user.js', 'b.user.js']);
 
-    const source = await sm.addSource(`${server.baseUrl}/script_manifest.json`);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/script_manifest.json`);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     expect(before!.scripts).toHaveLength(2);
     const priorByPath = Object.fromEntries(
       before!.scripts.map((s) => [s.relativePath, s]),
@@ -115,18 +115,18 @@ test.describe('change detection', () => {
     // Refresh with everything identical. Both entries hit the
     // content-hash path → both loadedAt values preserved.
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
-    let after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    let after = await sm.getCollectionWithScripts(collection!.id);
     let afterByPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(afterByPath['a.user.js'].loadedAt).toBe(priorByPath['a.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].loadedAt).toBe(priorByPath['b.user.js'].loadedAt);
 
     // Change only `b`. `a`'s loadedAt must remain pinned to its prior
     // value while `b` advances — proves the new-file / updated-file
-    // distinction the sources page relies on for its highlights.
+    // distinction the collections page relies on for its highlights.
     server.setRoute('/b.user.js', userscriptText('B', ' /* v2 */'));
-    await sm.updateSource(source!.id, 'manual');
-    after = await sm.getSourceWithScripts(source!.id);
+    await sm.updateCollection(collection!.id, 'manual');
+    after = await sm.getCollectionWithScripts(collection!.id);
     afterByPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(afterByPath['a.user.js'].loadedAt).toBe(priorByPath['a.user.js'].loadedAt);
     expect(afterByPath['b.user.js'].loadedAt).toBeGreaterThan(priorByPath['b.user.js'].loadedAt);
@@ -151,8 +151,8 @@ test.describe('change detection', () => {
       const manifestPath = path.join(scriptsDir.path, 'script_manifest.json');
       fs.writeFileSync(manifestPath, JSON.stringify(['a.user.js']));
 
-      const source = await sm.addSource(manifestPath);
-      const before = await sm.getSourceWithScripts(source!.id);
+      const collection = await sm.addCollection(manifestPath);
+      const before = await sm.getCollectionWithScripts(collection!.id);
       expect(before!.scripts).toHaveLength(1);
       expect(before!.scripts[0].status).toBe('ok');
       const priorLoadedAt = before!.scripts[0].loadedAt;
@@ -161,14 +161,14 @@ test.describe('change detection', () => {
       // fetches always physically re-read; content-hash keeps
       // loadedAt stable.
       await new Promise((r) => setTimeout(r, 10));
-      await sm.updateSource(source!.id, 'manual');
-      let after = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      let after = await sm.getCollectionWithScripts(collection!.id);
       expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
 
       // Mutate the body → fresh hash → loadedAt bumps.
       scriptsDir.rewriteBody('a.user.js', 'console.log("v2");');
-      await sm.updateSource(source!.id, 'manual');
-      after = await sm.getSourceWithScripts(source!.id);
+      await sm.updateCollection(collection!.id, 'manual');
+      after = await sm.getCollectionWithScripts(collection!.id);
       expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
       expect(after!.scripts[0].bodyText).toContain('v2');
     } finally {
@@ -182,9 +182,77 @@ test.describe('change detection', () => {
     // validators. Without this field the post-fetch compare wouldn't
     // work on subsequent refreshes.
     server.setRoute('/c.user.js', userscriptText('C'));
-    const source = await sm.addSource(`${server.baseUrl}/c.user.js`);
-    const result = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(`${server.baseUrl}/c.user.js`);
+    const result = await sm.getCollectionWithScripts(collection!.id);
     expect(result!.scripts[0].status).toBe('ok');
     expect(typeof (result!.scripts[0] as { contentHash?: string }).contentHash).toBe('string');
+  });
+  // The change-detection pipeline above decides whether a row's CONTENT
+  // moved. This is the storage consequence of that verdict: a row that
+  // didn't move isn't rewritten at all.
+  //
+  // Worth an explicit test because the regression is invisible twice
+  // over. Restoring the unconditional write breaks no behavior (Chrome
+  // drops a `set` whose value equals what's stored), and it costs only
+  // time — so nothing else in the suite would notice. What is asserted
+  // here is the `chrome.storage.local.set` call itself.
+  test('a refresh writes only the script rows that changed', async ({ sm, getServiceWorker }) => {
+    const dir = ScriptsDir.create();
+    try {
+      dir.write({ relativePath: 'one.user.js', meta: { name: 'One', match: ['https://e.com/*'] }, body: 'void 0;' });
+      dir.write({ relativePath: 'two.user.js', meta: { name: 'Two', match: ['https://e.com/*'] }, body: 'void 0;' });
+      const collection = await sm.addCollection(dir.path);
+      await sm.syncNow();
+
+      // Record the keys of every local write from here on. Installed
+      // after the add, so the row-creating writes aren't counted.
+      const sw = await getServiceWorker();
+      await sw.evaluate(() => {
+        const w = self as unknown as {
+          __setKeys: string[];
+          __origSet: typeof chrome.storage.local.set;
+        };
+        w.__setKeys = [];
+        const orig = chrome.storage.local.set.bind(chrome.storage.local);
+        w.__origSet = orig;
+        chrome.storage.local.set = ((items: Record<string, unknown>) => {
+          w.__setKeys.push(...Object.keys(items));
+          return orig(items);
+        }) as typeof chrome.storage.local.set;
+      });
+      const written = async (): Promise<string[]> => {
+        const keys = await sw.evaluate(
+          () => (self as unknown as { __setKeys: string[] }).__setKeys.splice(0),
+        );
+        return keys.filter((k) => k.startsWith('script:') || k.startsWith('collection:'));
+      };
+
+      // Nothing touched on disk: the collection row still goes (its
+      // lastRefreshedAt moved), no script row does.
+      await sm.updateCollection(collection!.id, 'manual');
+      const quiet = await written();
+      expect(quiet.filter((k) => k.startsWith('script:'))).toEqual([]);
+      expect(quiet).toContain(`collection:${collection!.id}`);
+
+      // Positive control — the filter has to be selective, not just
+      // silent. Edit one of the two and exactly its row is written.
+      const before = await sm.getCollectionWithScripts(collection!.id);
+      const changedId = before!.scripts.find((s) => s.relativePath === 'two.user.js')!.id;
+      // Longer than the original on purpose. `ScriptsDir` stamps mtime
+      // at an absolute `now + 1s`, so two writes inside the same second
+      // land the same mtime — a same-length edit would then match on
+      // both size and mtime and take the pre-fetch skip, which is the
+      // fixture's resolution rather than anything this test is about.
+      dir.rewriteBody('two.user.js', 'void 1; void 2; void 3;');
+      await sm.updateCollection(collection!.id, 'manual');
+      const afterEdit = await written();
+      expect(afterEdit.filter((k) => k.startsWith('script:'))).toEqual([`script:${changedId}`]);
+    } finally {
+      await (await getServiceWorker()).evaluate(() => {
+        const w = self as unknown as { __origSet: typeof chrome.storage.local.set };
+        if (w.__origSet) chrome.storage.local.set = w.__origSet;
+      });
+      dir.cleanup();
+    }
   });
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Sync every example userscript under tests/examples/ into the running
 // Tampermonkey instance. Connects via CDP to the browser opened by
-// scripts/open-test-browser-with-TamperMonkey.sh.
+// scripts/open-test-browser-with-Tampermonkey.sh.
 //
 // Usage:
 //   node scripts/sync-tm-scripts.mjs                  # default: tests/examples/
@@ -93,7 +93,7 @@ async function main() {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`).catch((err) => {
     console.error(
       `\nCould not connect: ${err?.message ?? err}\n` +
-      `Start the TM browser with: scripts/open-test-browser-with-TamperMonkey.sh`
+      `Start the TM browser with: scripts/open-test-browser-with-Tampermonkey.sh`
     );
     process.exit(1);
   });

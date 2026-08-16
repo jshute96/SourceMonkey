@@ -70,7 +70,7 @@ test('suffix matching is case-sensitive', () => {
   // The `webNavigation` pre-filter and `isSingleFileInput` (which
   // decides single-script vs directory at install time) are both
   // case-sensitive, so this has to be too — a URL that captured but
-  // then registered as a directory source would be silent corruption.
+  // then registered as a directory collection would be silent corruption.
   assert.equal(isUserJsUrl('https://example.com/Foo.User.JS'), false);
   assert.equal(isUserJsUrl('https://example.com/foo.USER.JS'), false);
 });
@@ -85,8 +85,39 @@ test('non-.user.js URLs are left alone', () => {
   assert.equal(isUserJsUrl('https://greasyfork.org/scripts/1-name'), false);
 });
 
+test('forge page views are not captured', () => {
+  // These serve an HTML file browser, not the script bytes: the user
+  // opened them to read, and Chrome renders them fine unaided.
+  assert.equal(isUserJsUrl('https://github.com/o/r/blob/main/a/b.user.js'), false);
+  assert.equal(isUserJsUrl('https://www.github.com/o/r/blob/main/b.user.js'), false);
+  assert.equal(isUserJsUrl('https://github.com/o/r/blob/main/b.user.js?plain=1#L3'), false);
+  assert.equal(isUserJsUrl('https://gitlab.com/grp/sub/r/-/blob/main/b.user.js'), false);
+  assert.equal(isUserJsUrl('https://bitbucket.org/w/r/src/main/b.user.js'), false);
+  assert.equal(isUserJsUrl('https://codeberg.org/o/r/src/branch/main/b.user.js'), false);
+});
+
+test('the raw counterpart of each forge page view is still captured', () => {
+  assert.equal(isUserJsUrl('https://raw.githubusercontent.com/o/r/main/b.user.js'), true);
+  assert.equal(isUserJsUrl('https://github.com/o/r/raw/main/b.user.js'), true);
+  assert.equal(isUserJsUrl('https://gitlab.com/grp/r/-/raw/main/b.user.js'), true);
+  assert.equal(isUserJsUrl('https://bitbucket.org/w/r/raw/main/b.user.js'), true);
+  assert.equal(isUserJsUrl('https://codeberg.org/o/r/raw/branch/main/b.user.js'), true);
+  // The exclusion is host-scoped: a lookalike path elsewhere still captures.
+  assert.equal(isUserJsUrl('https://example.com/o/r/blob/main/b.user.js'), true);
+});
+
+test('GitHub\'s ?raw=true switch keeps a blob URL captured', () => {
+  // It 302s to raw.githubusercontent.com, and `onBeforeNavigate` does
+  // not fire again for a server redirect — skipping it would lose the
+  // capture outright rather than defer it.
+  assert.equal(isUserJsUrl('https://github.com/o/r/blob/main/b.user.js?raw=true'), true);
+  assert.equal(isUserJsUrl('https://github.com/o/r/blob/main/b.user.js?raw=1'), true);
+  // Not the same switch: `?plain=1` is still the HTML view.
+  assert.equal(isUserJsUrl('https://github.com/o/r/blob/main/b.user.js?plain=1'), false);
+});
+
 test('schemes outside http(s) / file are never captured', () => {
-  // Not source shapes `addSource` can register, so a preview would have
+  // Not shapes `addCollection` can register, so a preview would have
   // nothing to offer.
   assert.equal(isUserJsUrl(`chrome-extension://${EXT_ID}/foo.user.js`), false);
   assert.equal(isUserJsUrl('ftp://example.com/foo.user.js'), false);
@@ -100,11 +131,14 @@ test('garbage input returns false rather than throwing', () => {
   assert.equal(isUserJsUrl('/foo.user.js'), false);
 });
 
-test('preview page URL carries the script URL encoded', () => {
+test('preview page URL carries the script URL encoded, marked as captured', () => {
   const src = 'https://example.com/a b.user.js?v=1&x=2';
   const out = buildPreviewPageUrl(src);
   assert.ok(out.startsWith(`chrome-extension://${EXT_ID}/userscript.html?`));
   assert.equal(new URL(out).searchParams.get('preview'), src);
+  // The viewer only lets a CAPTURED preview navigate away on its own
+  // when the location turns out to be a web page.
+  assert.equal(new URL(out).searchParams.get('captured'), '1');
 });
 
 test('parseChromeMajor reads the major version', () => {

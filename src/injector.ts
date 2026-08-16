@@ -56,19 +56,21 @@
 // Requirements: manifest must include the "userScripts" permission AND
 // the user must enable the "Allow User Scripts" toggle (Chrome ≥138) or
 // developer mode (Chrome 120–137) on chrome://extensions. If the toggle
-// is off, chrome.userScripts.register throws. The sources page prompts
-// for the toggle off its own probe (`probeUserScriptsApi` in
-// sources.ts) rather than anything this module records — it needs an
-// answer at render time, and an SW that has been evicted since the last
-// sync would have nothing to report.
+// is off, chrome.userScripts.register throws. The collections page
+// prompts for the toggle off its own probe (`probeUserScriptsApi` in
+// collections.ts) rather than anything this module records — it needs
+// an answer at render time, and an SW that has been evicted since the
+// last sync would have nothing to report.
 
 import {
   describeError,
+  ensureCollectionKeysMigrated,
   isScriptEnabled,
-  isSourceEnabled,
+  isCollectionEnabled,
+  verifyParseChecks,
   type StartupLog,
   type StoredScript,
-  type StoredSource,
+  type StoredCollection,
 } from './script-store.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import {
@@ -79,6 +81,7 @@ import {
 import { resolveGrants } from './gm-api-catalog.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
+import { startPhaseTimer } from './phase-timing.js';
 import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
 import {
   buildSourceMap,
@@ -111,7 +114,7 @@ import {
 } from './script-rejection.js';
 
 const SCRIPT_PREFIX = 'script:';
-const SOURCE_PREFIX = 'source:';
+const COLLECTION_PREFIX = 'collection:';
 
 // Match the runtime-message types we use between injected scripts and
 // the SW. Keep these in sync with the strings the prelude sends.
@@ -247,7 +250,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     // `location` the diagnostic is about, and that is for the Log tab
     // — the prelude just echoes these to the page console. Passing it
     // would put the script's path (an absolute local path, for a
-    // single-file source) into code the page can read.
+    // single-file install) into code the page can read.
     wire.startupLogs = cfg.startupLogs.map((l) => ({ level: l.level, message: l.message }));
   }
   const call =
@@ -826,17 +829,33 @@ export async function buildRegistrationSpec(
   return spec;
 }
 
-// Pure: pick the scripts that should be registered right now. Both the
-// script's own enabled flag and its parent source's flag must be true.
-// `ok` scripts are eligible; `missing` scripts are eligible too when the
+// Pure: would this script be registered right now? Both the script's
+// own enabled flag and its parent collection's flag must be true. `ok`
+// scripts are eligible; `missing` scripts are eligible too when the
 // user has explicitly re-enabled them (the cached body + header from
 // the last good load is what gets injected). `error` scripts never run.
-// Async because each spec build is async (storage pre-load). We
-// parallelize the per-script builds with Promise.all rather than
-// awaiting sequentially.
+//
+// Shared with `runSync`'s parse re-verification, which spends a compile
+// round trip per row and so must ask about exactly the rows that are
+// about to be registered — one predicate, so "eligible" can't come to
+// mean two different things.
+export function isRegistrationCandidate(
+  script: StoredScript,
+  collections: Map<string, StoredCollection>,
+): boolean {
+  if (script.status !== 'ok' && script.status !== 'missing') return false;
+  if (!isScriptEnabled(script)) return false;
+  const collection = collections.get(script.collectionId);
+  return !!collection && isCollectionEnabled(collection);
+}
+
+// Pick the scripts that should be registered right now and build a
+// spec for each. Async because each spec build is async (storage
+// pre-load). We parallelize the per-script builds with Promise.all
+// rather than awaiting sequentially.
 export async function collectActiveSpecs(
   scripts: StoredScript[],
-  sources: Map<string, StoredSource>,
+  collections: Map<string, StoredCollection>,
   scriptHandlerVersion: string = '0.0.0',
 ): Promise<RegistrationSpec[]> {
   // Dedup-aware log labels are computed against ALL stored scripts
@@ -848,10 +867,7 @@ export async function collectActiveSpecs(
   })));
   const promises: Array<Promise<RegistrationSpec | null>> = [];
   for (const s of scripts) {
-    if (s.status !== 'ok' && s.status !== 'missing') continue;
-    if (!isScriptEnabled(s)) continue;
-    const src = sources.get(s.sourceId);
-    if (!src || !isSourceEnabled(src)) continue;
+    if (!isRegistrationCandidate(s, collections)) continue;
     const label = logIds.get(s.id) ?? scriptBasename(s.relativePath);
     promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label));
   }
@@ -917,18 +933,21 @@ export function isUserScriptsAvailable(): boolean {
   return typeof chrome !== 'undefined' && (chrome as { userScripts?: unknown }).userScripts != null;
 }
 
-async function readAll(): Promise<{ scripts: StoredScript[]; sources: Map<string, StoredSource> }> {
+async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<string, StoredCollection> }> {
+  // See match-index's loadAll: the pre-rename key spelling has to be
+  // moved before anything reads the structural rows directly.
+  await ensureCollectionKeysMigrated();
   const all = await chrome.storage.local.get(null);
   const scripts: StoredScript[] = [];
-  const sources = new Map<string, StoredSource>();
+  const collections = new Map<string, StoredCollection>();
   for (const [k, v] of Object.entries(all)) {
     if (k.startsWith(SCRIPT_PREFIX)) scripts.push(v as StoredScript);
-    else if (k.startsWith(SOURCE_PREFIX)) {
-      const s = v as StoredSource;
-      sources.set(s.id, s);
+    else if (k.startsWith(COLLECTION_PREFIX)) {
+      const s = v as StoredCollection;
+      collections.set(s.id, s);
     }
   }
-  return { scripts, sources };
+  return { scripts, collections };
 }
 
 // ---------- Serializing registration work ----------
@@ -946,7 +965,7 @@ async function readAll(): Promise<{ scripts: StoredScript[]; sources: Map<string
 // then the first one offered the same id again. It shows up after a
 // restart or an extension update (the SW-startup sync overlapping the
 // one `onCacheChanged` schedules for whatever boot work writes to
-// storage) and after a refresh (the source refresh's targeted retry
+// storage) and after a refresh (the collection refresh's targeted retry
 // overlapping the sync its own storage writes triggered).
 //
 // So: one registration operation at a time per JS context. The queue is
@@ -1046,6 +1065,50 @@ export async function unregisterAllRegistrations(): Promise<void> {
   await withRegistrationLock(unregisterAll);
 }
 
+// Compile-check every candidate whose stored verdict is missing or
+// stale, and return the script set with any re-derived rows swapped in.
+//
+// What this is for: a row stored before the parse check existed — or
+// while it was failing open — carries `status: 'ok'` and no verdict,
+// and nothing in the load pipeline revisits it. Registering unparsable
+// source raises an uncaught `SyntaxError` that Chrome files under
+// `chrome://extensions/?errors`, where it is both uncatchable and
+// indistinguishable from SourceMonkey itself being broken. See
+// `verifyParseChecks` in script-store.ts.
+//
+// Cost: one compile per unchecked row per extension version. The
+// verdict is persisted, so the next sync finds nothing stale — but
+// `parseCheckKey` carries the version, so the first sync after an
+// update re-checks the whole library (capped fan-out; see
+// `PARSE_RECHECK_CONCURRENCY`). The write it makes fires
+// `storage.onChanged` and therefore one more sync, which then has
+// nothing to do.
+//
+// Never throws: the checker fails open on its own, and a failure of
+// this step must not take the whole registration set down with it.
+async function revalidateCandidates(
+  scripts: StoredScript[],
+  collections: Map<string, StoredCollection>,
+): Promise<StoredScript[]> {
+  let changed: Map<string, StoredScript>;
+  try {
+    changed = await verifyParseChecks(
+      scripts.filter((s) => isRegistrationCandidate(s, collections)),
+    );
+  } catch (err) {
+    console.info('[SourceMonkey] parse re-verification skipped:', describeError(err));
+    return scripts;
+  }
+  if (changed.size === 0) return scripts;
+  for (const row of changed.values()) {
+    if (row.status === 'ok') continue;   // re-checked and fine, nothing to say
+    console.info(
+      `[SourceMonkey] not registering ${row.relativePath}: ${row.errorMessage ?? 'it does not parse'}`,
+    );
+  }
+  return scripts.map((s) => changed.get(s.id) ?? s);
+}
+
 // Wipe Chrome's current registration set and replace it with `specs`.
 // Cheap full resync — simpler than a diff and fine at the script counts
 // we expect.
@@ -1068,8 +1131,8 @@ export function syncRegistrations(): Promise<void> {
 
 async function runSync(): Promise<void> {
   if (!isUserScriptsAvailable()) {
-    // Nothing to register into. Not stored anywhere — the sources page
-    // runs its own probe for the banner — but a sync that can't do
+    // Nothing to register into. Not stored anywhere — the collections
+    // page runs its own probe for the banner — but a sync that can't do
     // anything shouldn't be silent in the SW console either.
     //
     // Once per SW lifetime: `syncRegistrations` re-runs on every
@@ -1083,15 +1146,27 @@ async function runSync(): Promise<void> {
     // describes the current registration set, and "nothing is
     // registered" is a complete answer — leaving entries would strand
     // REJECTED badges blaming a `@match` pattern for a turned-off
-    // toggle, which the sources page's own banner already explains.
+    // toggle, which the collections page's own banner already explains.
     await writeRejections(await readRejections(), {});
     return;
   }
+  // The sweep nobody clicked: any single script row changing triggers a
+  // full unregister-all + register-all across EVERY script, each spec
+  // rebuilt from scratch. It runs on a debounce after the write, so it
+  // lands just after a Refresh button releases rather than inside it —
+  // which makes it easy to blame the refresh for time spent here.
+  const timer = startPhaseTimer('registration sync');
   try {
     await ensureWorldConfigured();
-    const { scripts, sources } = await readAll();
+    const { scripts, collections } = await readAll();
+    timer.mark('read');
     const handlerVersion = chrome.runtime.getManifest().version;
-    const userSpecs = await collectActiveSpecs(scripts, sources, handlerVersion);
+    const effective = await revalidateCandidates(scripts, collections);
+    const userSpecs = await collectActiveSpecs(effective, collections, handlerVersion);
+    // Covers the revalidation too — it is per-script work on the same
+    // critical path, and splitting it out would imply the two can be
+    // acted on separately when the sync always does both.
+    timer.mark('build-specs');
     const bridge = buildBridgeSpec(userSpecs);
     const gmRuntime = buildGmRuntimeSpec(userSpecs);
     // GM runtime first so it installs window.__SM_GM__ ahead of any
@@ -1117,7 +1192,11 @@ async function runSync(): Promise<void> {
     if (bridge) specs.push(bridge);
     specs.push(...userSpecs);
     await unregisterAll();
+    timer.mark('unregister');
     const registered = await registerWithFallback(specs);
+    timer.mark('register');
+    timer.note(`${specs.length} specs, ${scripts.length} stored scripts`);
+    timer.done();
     const failed = specs.length - registered;
     if (failed > 0) {
       console.info(
@@ -1182,12 +1261,14 @@ export function resetRejectionRetryGate(): void {
 //
 // Why the refresh paths need this at all: `syncRegistrations` is
 // normally driven by `onCacheChanged`, which rides on
-// `chrome.storage.onChanged` — and Chrome raises no change event when a
-// `set` writes a value identical to what's already stored. A Refresh
-// that finds nothing new therefore rewrites the same row, fires
-// nothing, and never re-offers the spec. For a healthy script that's
-// right (its registration already matches); for a rejected one it left
-// the row reading REJECTED with nothing retrying it.
+// `chrome.storage.onChanged` — and a Refresh that finds nothing new
+// raises no such event, so it never re-offers the spec. Nothing fires
+// by either of two routes: the refresh skips the write entirely for a
+// row that didn't change (see `changedScriptRows` in script-store.ts),
+// and Chrome raises no change event even when a `set` does write a
+// value identical to what's already stored. For a healthy script that
+// silence is right — its registration already matches. For a rejected
+// one it left the row reading REJECTED with nothing retrying it.
 //
 // Deliberately NOT `syncRegistrations()`. That wipes and re-registers
 // everything, which (a) is far too heavy to run per navigation and (b)
@@ -1246,7 +1327,7 @@ export async function retryRejectedRegistrations(
       // Contained like the version probe beside it in script-updater:
       // this is incidental work hanging off a refresh, and a failure
       // here must not fail the Refresh the user actually asked for (the
-      // source paths await us) or surface as an unhandled rejection
+      // collection paths await us) or surface as an unhandled rejection
       // (the per-script path does not).
       console.info('[SourceMonkey] registration retry failed:', describeError(err));
     } finally {
@@ -1263,7 +1344,7 @@ export async function retryRejectedRegistrations(
 // "Duplicate script ID '<id>'" rather than replacing it, and there are
 // two ordinary ways it already knows one of ours:
 //
-//   - **Another context placed it.** The sources page and the viewer
+//   - **Another context placed it.** The collections page and the viewer
 //     run `retryRejectedRegistrations` in their own JS context, so the
 //     lock in this module — which is per-context — cannot order a
 //     page-side retry against the SW's sync. A retry that lands between
@@ -1276,8 +1357,8 @@ export async function retryRejectedRegistrations(
 // the script: reporting it badged a running script REJECTED and wrote a
 // Log row blaming it for our sequencing. Which of the two specs is
 // newer we can't tell from here, and don't need to — every `script:*` /
-// `source:*` write schedules a sync of its own, so the set converges on
-// the last write either way.
+// `collection:*` write schedules a sync of its own, so the set
+// converges on the last write either way.
 //
 // Register first, and only on a refusal try to drop the id and place
 // it again. The obvious arrangement — unregister, then register —
@@ -1320,16 +1401,17 @@ async function registerReplacing(spec: RegistrationSpec): Promise<void> {
 async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // Same precondition as the sync: `configureWorld` must precede
   // `register`. Guarded and idempotent, and `worldConfigured` is
-  // per-JS-context — the sources page and the viewer reach this without
-  // ever running a sync — so the retry can't assume someone else did it.
+  // per-JS-context — the collections page and the viewer reach this
+  // without ever running a sync — so the retry can't assume someone
+  // else did it.
   await ensureWorldConfigured();
-  const { scripts, sources } = await readAll();
+  const { scripts, collections } = await readAll();
   const handlerVersion = chrome.runtime.getManifest().version;
   const wanted = new Set(ids);
   // Built through collectActiveSpecs rather than buildRegistrationSpec
   // directly so the retry can't drift from the sync on eligibility or
   // on dedup-aware log labels.
-  const specs = (await collectActiveSpecs(scripts, sources, handlerVersion))
+  const specs = (await collectActiveSpecs(scripts, collections, handlerVersion))
     .filter((s) => wanted.has(s.id));
   const placed: string[] = [];
   const refused = new Map<string, string>();

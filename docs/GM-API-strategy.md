@@ -9,7 +9,7 @@ recommends a path.
 > `GM_addStyle` / `GM_addElement`, `GM_setClipboard`,
 > `GM_xmlhttpRequest` text + binary, `@connect` URL gating). Post-
 > phase add-ons `GM_log`, `GM_openInTab`, `GM_notification`,
-> `GM_registerMenuCommand`, `window.onurlchange`, and
+> `GM_registerMenuCommand`, `GM_download`, `window.onurlchange`, and
 > `@resource`-backed
 > `GM_getResourceText` / `GM_getResourceURL` are also live. XHR
 > header surgery is still deferred. See
@@ -217,7 +217,7 @@ That means:
   B (and our GM_* shim) running in the same document will see the
   mutated version.
 - The mutator is the user's own code, run on the user's own
-  trusted sources. So it's a "didn't mean to break things"
+  trusted collections. So it's a "didn't mean to break things"
   scenario, not a "hostile actor" one.
 
 VM's vault does protect against this case (the snapshot is taken
@@ -327,7 +327,10 @@ What it looks like:
     / `chrome.tabs` wrappers.
   - `gm-xhr.ts` — the hairy one; see below.
 - Offscreen document (new `src/offscreen.html` + `src/offscreen.ts`)
-  for the binary-response XHR path, blobs/object URLs, downloads.
+  for the binary-response XHR path and blobs/object URLs. (Downloads
+  were on this list; they turned out not to need it — `GM_download`
+  drives `chrome.downloads`, which fetches the URL itself. See
+  [GM-APIs.md](GM-APIs.md#rejected-alternatives).)
 
 Realistic effort: **medium**. The per-API bodies are short; the
 hard pieces (XHR, values broadcast) need attention either way.
@@ -507,7 +510,7 @@ Our wrapper compiles GM_* bindings into the registered script source,
 so `@grant` is naturally a register-time decision: changing it
 requires a reload. The alternative — per-call permission checks
 backed by a cache and invalidation broadcasts — gives instantaneous
-sources-page edits but adds an IPC on every call. **Default to
+collections-page edits but adds an IPC on every call. **Default to
 bake-in for v1**; revisit if real users want live revocation.
 
 ## A loose phasing for Option B

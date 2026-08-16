@@ -170,7 +170,7 @@ test('attachFiles: recheck=preserve reuses prior @require entries without fetchi
   const priorEntry = {
     ref: url,
     url,
-    source: 'old source',
+    source: 'old collection',
     size: 10,
     contentHash: 'abc',
     loadedAt: 9999,
@@ -186,7 +186,7 @@ test('attachFiles: recheck=preserve reuses prior @require entries without fetchi
     now: 9999,
   });
   assert.equal(r.errorMessage, undefined);
-  assert.equal(r.requires[0].source, 'old source');
+  assert.equal(r.requires[0].source, 'old collection');
 });
 
 test('attachFiles: rejects @require non-.js suffix', async () => {
@@ -486,11 +486,11 @@ test('attachFiles: @require accepts application/octet-stream', async () => {
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
-    fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', 'application/octet-stream'))]]),
+    fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js collection', 'application/octet-stream'))]]),
     now: 2000,
   });
   assert.equal(r.errorMessage, undefined);
-  assert.equal(r.requires[0].source, '// js source');
+  assert.equal(r.requires[0].source, '// js collection');
 });
 
 test('attachFiles: @require rejects octet-stream that is actually binary', async () => {
@@ -521,7 +521,7 @@ test('attachFiles: @require accepts text/plain and rejects xhtml', async () => {
       priorRequires: new Map(),
       priorResources: new Map(),
       recheck: 'all',
-      fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js source', contentType))]]),
+      fetchCache: new Map([[url, Promise.resolve(fakeFetched('// js collection', contentType))]]),
       now: 2000,
     });
     return r.errorMessage;
@@ -532,6 +532,49 @@ test('attachFiles: @require accepts text/plain and rejects xhtml', async () => {
   // signature, so the gate has a second clause for it.
   assert.match(await check('application/xhtml+xml'), /returned an HTML page/);
   assert.match(await check('text/html-sandboxed'), /returned an HTML page/);
+});
+
+test('attachFiles: @require rejects an HTML body even when the type says otherwise', async () => {
+  // The half of the gate the Content-Type test can't cover: a server
+  // that mislabels its login page, or (the common one) a file:// read
+  // with no Content-Type at all — which is what a local *directory*
+  // matching the ref looks like, since Chrome answers it with a
+  // generated HTML listing.
+  const url = 'https://example.com/lib.js';
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['require', url]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(
+      fakeFetched('<!doctype html><title>Log in</title>', 'text/plain'),
+    )]]),
+    now: 2000,
+  });
+  assert.match(r.errorMessage, /returned an HTML page/);
+  // The body is the evidence here, so the message doesn't quote a
+  // Content-Type that says something else.
+  assert.ok(!r.errorMessage.includes('Content-Type'));
+});
+
+test('attachFiles: @require accepts JavaScript that merely contains markup', async () => {
+  // Position is what decides. A library that writes HTML is still a
+  // library.
+  const url = 'https://example.com/lib.js';
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['require', url]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(
+      fakeFetched('function widget() { return "<div>hi</div>"; }', 'text/javascript'),
+    )]]),
+    now: 2000,
+  });
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(r.requires.length, 1);
 });
 
 test('attachFiles: @require rejects a text/html Content-Type (soft-failure login page)', async () => {

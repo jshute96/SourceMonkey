@@ -14,6 +14,17 @@ export async function sha256Hex(data: string | ArrayBuffer): Promise<string> {
   return out;
 }
 
+// base64→binary. The inverse of `bytesToBase64`, used on the receiving
+// end of message hops that can't carry an ArrayBuffer, and to rebuild a
+// stored `@resource` body when a conditional GET answers 304 and the
+// server sends no bytes of its own.
+export function base64ToBytes(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
 // Chunked binary→base64. `String.fromCharCode(...hugeArray)` throws
 // "Maximum call stack size exceeded" past ~125k args in V8, so we walk
 // the buffer in 32 KiB slices and concatenate. Linear and bounded.

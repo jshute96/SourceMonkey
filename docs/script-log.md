@@ -21,7 +21,7 @@
   `clearScriptLog` alongside the entries. Lives next to the log
   (rather than on the `StoredScript` row) so its lifetime exactly
   matches the entries that back it — Chrome shutdown drops both
-  together. The sources page reads every script's row in one bulk
+  together. The collections page reads every script's row in one bulk
   `storage.session.get(null)` to drive the Status column without N
   per-script reads.
 
@@ -70,7 +70,7 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | --- | --- | --- |
 | `manual-refresh` | `emitScriptOutcomeLog` | The user clicked Refresh / Refresh All. |
 | `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
-| `add-source` | `emitInitialLoadLogIfBroken` | Failed on its first load, when the source was added. |
+| `add` | `emitInitialLoadLog` | Failed on its first load, when the script was added. |
 | `extension-startup` | `ensureLoadStateInLogTab` | Restated after a browser restart — see below. |
 | `parser` | `ensureStartupLogsInLogTab` | Parse-time diagnostics from `script.startupLogs`. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
@@ -87,6 +87,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | --- | --- | --- |
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
+| `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 
 Two naming notes worth keeping:
 
@@ -116,7 +117,7 @@ Two naming notes worth keeping:
 - `getMaxLogLevel(scriptId)` — async read of the persisted max
   level. Used by the userscript viewer to seed the Status row.
 - `getAllMaxLogLevels()` — bulk read returning a `Map<scriptId,
-  LogLevel>`. Used by the sources page to drive every row's Status
+  LogLevel>`. Used by the collections page to drive every row's Status
   column in one storage round trip.
 
 ## Status column promotion
@@ -128,7 +129,7 @@ Status column. Rules + priority order live in
 
 Plumbing notes specific to logging:
 
-- The sources page listens for `chrome.storage.session.onChanged` on
+- The collections page listens for `chrome.storage.session.onChanged` on
   `loglevel:` keys and repaints affected rows without a full re-render.
 
 ## Every surfaced failure lands in the Log
@@ -143,7 +144,7 @@ a row's persisted state to the entry it warrants:
 | Row state | Level | Message |
 | --- | --- | --- |
 | `status: 'invalid'` | error | the row's `errorMessage` |
-| `status: 'missing'` | error | `Source file is missing` |
+| `status: 'missing'` | error | `Script file is missing` |
 | `refreshError` (status still `ok`) | warning | `Refresh failed: <reason>` |
 | otherwise | — | nothing to say |
 
@@ -167,7 +168,7 @@ Every caller shares that mapping, so the same failure reads the same
 way whichever path reported it:
 
 - `emitScriptOutcomeLog` (`script-updater.ts`) — every refresh path.
-- `emitInitialLoadLogIfBroken` (`script-store.ts`) — the `addSource` /
+- `emitInitialLoadLog` (`script-store.ts`) — the `addCollection` /
   add-to-container path, which bypasses the updater.
 - `replayScriptLogsAtBoot` (`script-updater.ts`) — restates whatever
   is still broken after a Chrome restart wiped the log.
@@ -182,29 +183,40 @@ Beyond the load pipeline:
   permanent home. See
   [injection.md](injection.md#rejected-registrations).
 
-### Source-level failures
+### Collection-level failures
 
-`logSourceEventToScripts` fans these out to every script under the
-source. They are always **info**, never warning/error:
+`logCollectionEventToScripts` fans these out to every script under the
+collection. They are always **info**, never warning/error:
 
-- The badge for a source-level problem belongs on the source row,
+- The badge for a collection-level problem belongs on the collection row,
   which already renders `scanError`. These entries exist so a user
   reading one script's Log can see why it wasn't checked.
 - The `loglevel:` sentinel is monotonic within a session, so anything
-  higher would leave every script under the source badged WARNING for
+  higher would leave every script under the collection badged WARNING for
   the rest of the session after one transient listing failure.
 
 What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — `This source did not load: <reason> — still running the
-  cached copy`. `refreshSource` deliberately leaves every script row
+  URL) — `This collection did not load: <reason> — still running the
+  cached copy`. `refreshCollection` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
-- **A throw out of `refreshSource` / `refreshAllSources`** —
-  `Could not refresh this source: <reason>`. Both entry points use the same
-  helper so a Refresh All that dies on one source still explains
-  itself in every affected script's Log.
+- **A refresh that read fine but couldn't be saved** — the shared
+  `describeRefreshError` sentence (see
+  [diagnostics.md](diagnostics.md#refreshes-that-could-not-be-saved)).
+  Both entry points reach it through `collectionFailureMessage`, which
+  picks the wording from the recorded map rather than from the caught
+  error, so each collection names its own reason and the two paths
+  cannot word the same failure differently.
+- **A throw with nothing recorded** — `Could not refresh this
+  collection: <reason>`. `refreshCollection` records only when its write
+  fails, so an unrecorded throw came from earlier in the pipeline and
+  must not claim the read succeeded. Same fallback in both paths.
+- **A throw that takes down a whole pass** — the same generic sentence,
+  fanned out to every script in every collection. Only for a failure
+  outside the per-collection handling, where nothing was summarized and
+  there is one reason to give.
 
 ## When the log stays quiet
 
@@ -254,7 +266,7 @@ Everything else emits, including:
 - The startup replay's restatement of a failure a refresh may have
   already logged. Worst case is a duplicate pair of rows, once per
   script per Chrome session; the `source` column tells them apart.
-- A source that stays unreadable, once per pass. That path is only
+- A collection that stays unreadable, once per pass. That path is only
   reachable from a Refresh / Refresh All click, so each repeat is one
   the user asked for.
 
@@ -294,9 +306,9 @@ longer true. So the transition back to healthy gets an info entry
 naming what recovered:
 
 - `Loads cleanly again (was invalid)`
-- `Source file is back`
-- `Refresh succeeded again (source is reachable)`
-- `This source is readable again`
+- `Script file is back`
+- `Refresh succeeded again (collection is reachable)`
+- `This collection is readable again`
 - `Chrome accepted this script's registration — it runs again`
   (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
 
@@ -342,18 +354,19 @@ tracked in `TODO.md`.
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
     `@require` / `@resource` resolve or fetch failures.
-  - `Source file is missing` (error) — the file vanished from its
-    source's listing.
+  - `Script file is missing` (error) — the file vanished from its
+    collection's listing.
   - `Refresh failed: <reason>` (warning) — a script that's still
     running from its cached copy but whose latest refresh failed
     (`status: ok` + `refreshError`; see
     [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
-  - `This source did not load: <reason> — still running the cached
-    copy` (info) and `Could not refresh this source: <reason>` (info) — a
-    source-level failure, fanned out to every script under it. See
-    [Source-level failures](#source-level-failures) for why info.
+  - `This collection did not load: <reason> — still running the cached
+    copy` (info), the `describeRefreshError` sentence (info), and
+    `Could not refresh this collection: <reason>` (info) — collection-level
+    failures, fanned out to every script under the collection. See
+    [Collection-level failures](#collection-level-failures) for why info.
   - `Could not check for updates: <reason>` (error) — `refreshScript`
     itself threw (a storage failure, not a load failure).
   - Recovery entries (info) — see
@@ -364,7 +377,7 @@ tracked in `TODO.md`.
   - `This script was removed while it was being refreshed` (warning) —
     the script row was deleted while its refresh was in flight. Can
     only happen once per row.
-  - Source / refresh-all paths route per-script outcomes through the
+  - Collection / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source
   `chrome-injector`):
@@ -379,8 +392,8 @@ tracked in `TODO.md`.
     - Written on every refused attempt, not just when the state
       changes — see
       [injection.md](injection.md#rejected-registrations).
-- **Add source** (`emitInitialLoadLogIfBroken` in
-  `src/script-store.ts`, source `add-source`):
+- **Add** (`emitInitialLoadLog` in
+  `src/script-store.ts`, source `add`):
   - The same load-failure entry, for a script that lands broken on its
     very first load. The add path bypasses the updater, so without
     this a brand-new INVALID row would have an empty Log.
@@ -418,12 +431,24 @@ tracked in `TODO.md`.
   - `<rendered args>` (info, `source: 'gm-log'`, `tabId` attached) —
     one entry per `GM_log(...)` call. The script's own
     `console.log` line in the page DevTools still happens too; this
-    is just the SW-side mirror so users browsing the sources page
+    is just the SW-side mirror so users browsing the collections page
     see what their script said without opening DevTools. Args are
     rendered page-side (primitives via `String()`, objects via
     `JSON.stringify`, joined by spaces) because
     `chrome.runtime.sendMessage` can't carry non-cloneable values
     and the Log tab is text-only.
+- **GM_download failures** (`sendDownloadEvent` in
+  `src/background.ts`, source `gm-download`, `tabId` attached):
+  - `GM_download <reason> — <url>` (warning) — a download that was
+    refused (`not_permitted`), interrupted (`not_succeeded`, with
+    Chrome's interrupt reason), or timed out. A file that silently
+    never appears is otherwise invisible to the user, and the reason
+    lives in the SW where no page console can show it.
+  - Warning rather than error: a refused or interrupted download is a
+    script/page-level outcome the script can handle (many retry), not
+    a SourceMonkey malfunction.
+  - Successful downloads are **not** logged — a batch downloader fires
+    hundreds and would push everything else past `LOG_CAP`.
 - **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.
@@ -449,9 +474,9 @@ tracked in `TODO.md`.
   (manual-only, as above).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.
-- Anything for a source with **no scripts under it**. A source whose
+- Anything for a collection with **no scripts under it**. A collection whose
   very first scan fails has nothing to write to — the reason lives on
-  the source row's `scanError` and the sources page renders it there.
+  the collection row's `scanError` and the collections page renders it there.
 
 ## Viewer Log tab
 
@@ -599,7 +624,7 @@ Behavior:
 
 ### Why recompute rather than persist
 
-- The inputs (require sources, body text, log label) are already on
+- The inputs (require bodies, body text, log label) are already on
   the `StoredScript` row the viewer loaded.
 - Recomputing is memoised on the script's `loadedAt`, so an unrelated
   storage change doesn't re-concatenate megabytes of libraries.

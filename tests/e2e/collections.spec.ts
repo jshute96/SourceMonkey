@@ -1,4 +1,4 @@
-// Source lifecycle: add (real file:// scan), refresh (with file
+// Collection lifecycle: add (real file:// scan), refresh (with file
 // rewrite on disk), remove (rows vanish from storage and the page
 // stops being marked). Exercises the directories.ts pipeline end to
 // end, including the unchanged-skip optimisation.
@@ -6,12 +6,12 @@
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
-test.describe('sources', () => {
+test.describe('collections', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('addSource scans the dir and records every *.user.js', async ({ sm }) => {
+  test('addCollection scans the dir and records every *.user.js', async ({ sm }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
@@ -29,26 +29,26 @@ test.describe('sources', () => {
       body: '',
     });
 
-    const source = await sm.addSource(scriptsDir.path);
-    expect(source).not.toBeNull();
-    const result = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect(collection).not.toBeNull();
+    const result = await sm.getCollectionWithScripts(collection!.id);
     const paths = result!.scripts.map((s) => s.relativePath).sort();
     expect(paths).toEqual(['a.user.js', 'sub/b.user.js']);
     for (const s of result!.scripts) expect(s.status).toBe('ok');
   });
 
-  test('addSource refuses a duplicate path', async ({ sm }) => {
+  test('addCollection refuses a duplicate path', async ({ sm }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const first = await sm.addSource(scriptsDir.path);
+    const first = await sm.addCollection(scriptsDir.path);
     expect(first).not.toBeNull();
-    const second = await sm.addSource(scriptsDir.path);
+    const second = await sm.addCollection(scriptsDir.path);
     expect(second).toBeNull();
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(1);
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(1);
   });
 
   test('script with missing @name is recorded as error', async ({ sm }) => {
@@ -60,8 +60,8 @@ test.describe('sources', () => {
       meta: { name: '', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const result = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const result = await sm.getCollectionWithScripts(collection!.id);
     expect(result!.scripts).toHaveLength(1);
     expect(result!.scripts[0].status).toBe('invalid');
     expect(result!.scripts[0].errorMessage).toMatch(/@name/);
@@ -73,15 +73,15 @@ test.describe('sources', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: 'console.log("v1");',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
     const priorBody = before!.scripts[0].bodyText;
 
     scriptsDir.rewriteBody('a.user.js', 'console.log("v2");');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = await sm.getSourceWithScripts(source!.id);
+    const after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBeGreaterThan(priorLoadedAt);
     expect(after!.scripts[0].bodyText).not.toBe(priorBody);
     expect(after!.scripts[0].bodyText).toContain('v2');
@@ -93,32 +93,32 @@ test.describe('sources', () => {
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: 'console.log("hi");',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     const priorLoadedAt = before!.scripts[0].loadedAt;
 
     // No file changes — the size+mtime skip path in fetchOrSkipInParallel
     // should preserve loadedAt verbatim. Sleep briefly to ensure any
     // re-fetch would produce a different loadedAt (epoch ms).
     await new Promise((r) => setTimeout(r, 10));
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = await sm.getSourceWithScripts(source!.id);
+    const after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts[0].loadedAt).toBe(priorLoadedAt);
   });
 
-  test('removeSource drops the source row and its scripts', async ({ sm }) => {
+  test('removeCollection drops the collection row and its scripts', async ({ sm }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    expect(await sm.getSourceWithScripts(source!.id)).not.toBeNull();
-    await sm.removeSource(source!.id);
-    expect(await sm.getSourceWithScripts(source!.id)).toBeNull();
-    const sources = await sm.getSources();
-    expect(sources).toHaveLength(0);
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect(await sm.getCollectionWithScripts(collection!.id)).not.toBeNull();
+    await sm.removeCollection(collection!.id);
+    expect(await sm.getCollectionWithScripts(collection!.id)).toBeNull();
+    const collections = await sm.getCollections();
+    expect(collections).toHaveLength(0);
   });
 
   test('zero-byte file lands as size=0 status=error (no metadata block)', async ({ sm }) => {
@@ -130,8 +130,8 @@ test.describe('sources', () => {
     const path = await import('node:path');
     fs.writeFileSync(path.join(scriptsDir.path, 'empty.user.js'), '');
 
-    const source = await sm.addSource(scriptsDir.path);
-    const ws = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const ws = await sm.getCollectionWithScripts(collection!.id);
     expect(ws!.scripts).toHaveLength(1);
     expect(ws!.scripts[0].relativePath).toBe('empty.user.js');
     expect(ws!.scripts[0].status).toBe('invalid');
@@ -149,14 +149,14 @@ test.describe('sources', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     expect(before!.scripts).toHaveLength(2);
 
     scriptsDir.remove('a.user.js');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = await sm.getSourceWithScripts(source!.id);
+    const after = await sm.getCollectionWithScripts(collection!.id);
     const byPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
     expect(byPath['a.user.js'].status).toBe('missing');
     expect(byPath['b.user.js'].status).toBe('ok');
@@ -165,7 +165,7 @@ test.describe('sources', () => {
   test('unreadable top-level directory preserves scripts and their enabled state', async ({ sm }) => {
     // Models a remote mount whose credentials timed out: the directory
     // listing fails, but the user's scripts shouldn't get auto-disabled
-    // just because we can't enumerate the source right now.
+    // just because we can't enumerate the collection right now.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
@@ -176,8 +176,8 @@ test.describe('sources', () => {
       meta: { name: 'B', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const before = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const before = await sm.getCollectionWithScripts(collection!.id);
     expect(before!.scripts).toHaveLength(2);
     // Disable one of the two so we can later verify enabled state is
     // preserved exactly.
@@ -187,9 +187,9 @@ test.describe('sources', () => {
     // Blow the directory away so the listing fetch fails on the next
     // refresh (afterEach's cleanup tolerates the missing path).
     scriptsDir.cleanup();
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
 
-    const after = await sm.getSourceWithScripts(source!.id);
+    const after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts).toHaveLength(2);
     const afterByPath = Object.fromEntries(
       after!.scripts.map((s) => [s.relativePath, s]),
@@ -198,7 +198,7 @@ test.describe('sources', () => {
     expect(afterByPath['a.user.js'].enabled).toBe(false);
     expect(afterByPath['b.user.js'].status).toBe('ok');
     expect(afterByPath['b.user.js'].enabled).toBe(true);
-    expect(after!.source.scanError).toBeDefined();
+    expect(after!.collection.scanError).toBeDefined();
   });
 
   test('an on-disk name containing %20 is shown literally, not decoded', async ({
@@ -206,56 +206,61 @@ test.describe('sources', () => {
   }) => {
     // The mirror image of the URL case: names from a local directory
     // are literal, so the file really called `a%20b.user.js` must read
-    // that way in the viewer and on the sources page. Decoding it here
+    // that way in the viewer and on the collections page. Decoding it here
     // would show a name that matches nothing on disk. See
     // docs/names-and-paths.md.
+    // No `@name`, so the collections page falls back to the location —
+    // which is what this test wants to read.
     scriptsDir.write({
       relativePath: 'a%20b.user.js',
-      meta: { name: 'Literal Percent', match: ['https://example.com/*'] },
+      meta: { name: '', match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const got = await sm.getSourceWithScripts(source!.id);
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
     const script = got!.scripts[0];
     expect(script.relativePath).toBe('a%20b.user.js');
 
     const viewer = await extensionContext.newPage();
     await viewer.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
     await expect(viewer.locator('h1#filename')).toHaveText('a%20b.user.js');
-    await expect(viewer.locator('.log-id-cell')).toHaveText('a%20b.user.js');
     await viewer.close();
 
-    const sources = await extensionContext.newPage();
-    await sources.goto(`chrome-extension://${extensionId}/sources.html`);
+    const collections = await extensionContext.newPage();
+    await collections.goto(`chrome-extension://${extensionId}/collections.html`);
     // `.name-cell a` also matches the favicon slot's link, so target
-    // the filename anchor by its viewer href.
-    await expect(sources.locator(`tr[data-script-id="${script.id}"] .name-cell a[href*="userscript.html"]`))
-      .toHaveText('a%20b.user.js');
-    await sources.close();
+    // the name anchor by its viewer href.
+    const nameLink = collections.locator(
+      `tr[data-script-id="${script.id}"] .name-cell a[href*="userscript.html"]`,
+    );
+    await expect(nameLink).toHaveText('a%20b.user.js');
+    // …and the tooltip leads with the same literal location.
+    await expect(nameLink).toHaveAttribute('title', /^a%20b\.user\.js\n/);
+    await collections.close();
   });
 
   test('a very long script name wraps inside its card instead of widening the table', async ({
     extensionContext, extensionId, sm,
   }) => {
     // Web-installed scripts routinely carry a whole marketing title as
-    // their filename. A `nowrap` name cell made the table wider than
+    // their `@name`. A `nowrap` name cell made the table wider than
     // its `.directory` card, pushing Size / Status outside the border.
     // See docs/names-and-paths.md.
     const longName =
-      'YouTube Ultimate Downloader v132 - All-in-One Media Suite - Ad-Free + SponsorBlock.user.js';
+      'YouTube Ultimate Downloader v132 - All-in-One Media Suite - Ad-Free + SponsorBlock';
     scriptsDir.write({
-      relativePath: longName,
-      meta: { name: 'Long', match: ['https://example.com/*'] },
+      relativePath: `${longName}.user.js`,
+      meta: { name: longName, match: ['https://example.com/*'] },
       body: '',
     });
-    const source = await sm.addSource(scriptsDir.path);
-    const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
 
     const page = await extensionContext.newPage();
     await page.setViewportSize({ width: 900, height: 600 });
-    await page.goto(`chrome-extension://${extensionId}/sources.html`);
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
 
-    const card = page.locator(`section.directory[data-source-id="${source!.id}"]`);
+    const card = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     const row = card.locator(`tr[data-script-id="${script.id}"]`);
     const cardBox = (await card.boundingBox())!;
     const statusBox = (await row.locator('td.status-cell').boundingBox())!;
@@ -272,5 +277,67 @@ test.describe('sources', () => {
     expect(rects.length).toBeGreaterThan(1);
     for (const left of rects) expect(Math.abs(left - rects[0])).toBeLessThan(1);
     await page.close();
+  });
+});
+
+// Collections were called "sources" before the August 2026 rename, which
+// moved the index row, the per-collection rows, and each script's parent
+// pointer. A profile written before it has to survive the upgrade — see
+// `ensureCollectionKeysMigrated` in src/script-store.ts and the
+// removal note in TODO.md.
+test.describe('legacy source:* key migration', () => {
+  test('a pre-rename profile is rewritten on the first read', async ({
+    sm, getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    // Write the old spelling straight into storage, bypassing the store.
+    await sw.evaluate(async () => {
+      await chrome.storage.local.set({
+        sources: ['c1'],
+        'source:c1': {
+          id: 'c1',
+          path: '/legacy/dir',
+          lastRefreshedAt: 0,
+          scriptIds: ['s1'],
+          enabled: true,
+        },
+        'script:s1': {
+          id: 's1',
+          sourceId: 'c1',
+          relativePath: 'a.user.js',
+          fileUrl: 'file:///legacy/dir/a.user.js',
+          status: 'ok',
+          size: 1,
+          headerText: '',
+          bodyText: '',
+          header: null,
+          matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+          loadedAt: 1,
+          enabled: true,
+        },
+      });
+    });
+
+    // Any read through the store triggers the migration.
+    const collections = await sm.getCollections();
+    expect(collections.map((c) => c.id)).toEqual(['c1']);
+
+    const withScripts = await sm.getCollectionWithScripts('c1');
+    expect(withScripts!.scripts.map((s) => s.id)).toEqual(['s1']);
+    expect((withScripts!.scripts[0] as { collectionId?: string }).collectionId).toBe('c1');
+
+    // The old rows are gone, and the new ones carry the same values.
+    const raw = await sw.evaluate(async () => {
+      const all = await chrome.storage.local.get(null);
+      return {
+        keys: Object.keys(all).filter((k) => k === 'sources' || k.startsWith('source:')),
+        newIndex: all.collections,
+        script: all['script:s1'] as { sourceId?: string; collectionId?: string },
+      };
+    });
+    expect(raw.keys).toEqual([]);
+    expect(raw.newIndex).toEqual(['c1']);
+    expect(raw.script.sourceId).toBeUndefined();
+    expect(raw.script.collectionId).toBe('c1');
   });
 });

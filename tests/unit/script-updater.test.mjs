@@ -1,7 +1,7 @@
 // Tests for the rate-limit + concurrency gate in src/script-updater.ts.
 // We cover the gate() helper directly so we don't have to stub the
-// chrome.storage path the public updateScript / updateSource /
-// updateAllSources wrappers go through.
+// chrome.storage path the public updateScript / updateCollection /
+// updateAllCollections wrappers go through.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -185,7 +185,7 @@ globalThis.chrome = globalThis.chrome ?? {
 const {
   replayScriptLogsAtBoot,
   emitScriptOutcomeLog,
-  summarizeSourceOutcome,
+  summarizeCollectionOutcome,
 } = await import('../../dist/script-updater.js');
 const {
   appendScriptLog,
@@ -195,12 +195,12 @@ const {
   _flushScriptLogQueueForTests,
 } = await import('../../dist/script-log.js');
 
-function seedScript({ scriptId, sourceId = 'src-x', startupLogs, ...overrides }) {
+function seedScript({ scriptId, collectionId = 'src-x', startupLogs, ...overrides }) {
   // replayScriptLogsAtBoot reads via getAllScripts (one storage.local
   // .get(null) scan filtered to `script:` keys), so we only need the
-  // script row — no source row, no `sources` index.
+  // script row — no collection row, no `collections` index.
   const script = {
-    id: scriptId, sourceId, relativePath: 'a.user.js', fileUrl: 'file:///a.user.js',
+    id: scriptId, collectionId, relativePath: 'a.user.js', fileUrl: 'file:///a.user.js',
     status: 'ok', size: 10, headerText: '', bodyText: '',
     header: { tags: [{ tag: 'name', value: 'X' }] },
     matching: { matches: ['https://e/*'], excludes: [], includes: [] },
@@ -284,22 +284,22 @@ test('replayScriptLogsAtBoot: replays diagnostics even if a refresh got there fi
 test('replayScriptLogsAtBoot: scripts without startupLogs contribute nothing', async () => {
   localStore.clear();
   sessionStore.clear();
-  seedScript({ sourceId: 'src-2', scriptId: 'sc-2' /* no startupLogs */ });
+  seedScript({ collectionId: 'src-2', scriptId: 'sc-2' /* no startupLogs */ });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-2');
   const log = await getScriptLog('sc-2');
   assert.equal(log.length, 0);
 });
 
-test('replayScriptLogsAtBoot: walks across multiple sources', async () => {
+test('replayScriptLogsAtBoot: walks across multiple collections', async () => {
   localStore.clear();
   sessionStore.clear();
   seedScript({
-    sourceId: 'src-A', scriptId: 'sc-A',
+    collectionId: 'src-A', scriptId: 'sc-A',
     startupLogs: [{ level: 'warn', message: 'msg A' }],
   });
   seedScript({
-    sourceId: 'src-B', scriptId: 'sc-B',
+    collectionId: 'src-B', scriptId: 'sc-B',
     startupLogs: [{ level: 'error', message: 'msg B' }],
   });
   await replayScriptLogsAtBoot();
@@ -364,7 +364,7 @@ test('replayScriptLogsAtBoot: restates a load error even if a refresh already lo
 // itself in that row's Log.
 
 const OK_ROW = {
-  id: 'x', sourceId: 's', relativePath: 'a.user.js', fileUrl: 'file:///a.user.js',
+  id: 'x', collectionId: 's', relativePath: 'a.user.js', fileUrl: 'file:///a.user.js',
   status: 'ok', size: 10, headerText: '', bodyText: '', header: null,
   matching: { matches: [], excludes: [], includes: [] }, loadedAt: 100, enabled: true,
 };
@@ -453,7 +453,7 @@ test('framing: a recovery is announced, then reported', async () => {
   const stale = { ...OK_ROW, refreshError: 'HTTP 404' };
   assert.deepEqual(
     await framing(stale, OK_ROW),
-    ['Checking for updates', 'Refresh succeeded again (source is reachable)'],
+    ['Checking for updates', 'Refresh succeeded again (collection is reachable)'],
   );
 });
 
@@ -490,7 +490,7 @@ test('emitScriptOutcomeLog: a vanished file logs at error level, on every check'
   assert.equal(log.length, 2, 'the second check re-looked and it is still gone');
   for (const entry of log) {
     assert.equal(entry.level, 'error');
-    assert.equal(entry.message, 'Source file is missing');
+    assert.equal(entry.message, 'Script file is missing');
   }
 });
 
@@ -530,7 +530,7 @@ test('emitScriptOutcomeLog: recovery from invalid is logged even when the bytes 
 });
 
 test('emitScriptOutcomeLog: a broken row with no prior still logs', async () => {
-  // A file that first appears already broken during a source refresh
+  // A file that first appears already broken during a collection refresh
   // has no prior row to diff against.
   const bad = { ...OK_ROW, status: 'invalid', errorMessage: 'missing @name' };
   const log = await emitAll([[undefined, bad]]);
@@ -583,19 +583,19 @@ test('emitScriptOutcomeLog: opportunistic checks log failures but not "no change
   assert.equal(quiet.length, 0, 'background polling must not add a row per navigation');
 });
 
-// ---------- summarizeSourceOutcome: scan failures ----------
+// ---------- summarizeCollectionOutcome: scan failures ----------
 
-const SOURCE_OK = { id: 's', path: '/tmp/x', lastRefreshedAt: 0, scriptIds: ['a'], enabled: true };
+const COLLECTION_OK = { id: 's', path: '/tmp/x', lastRefreshedAt: 0, scriptIds: ['a'], enabled: true };
 
-async function summarize(priorSource, priorScripts, next, mode = 'manual') {
+async function summarize(priorCollection, priorScripts, next, mode = 'manual') {
   sessionStore.clear();
-  const prior = priorSource
-    ? { source: priorSource, scripts: new Map(priorScripts.map((s) => [s.id, s])) }
+  const prior = priorCollection
+    ? { collection: priorCollection, scripts: new Map(priorScripts.map((s) => [s.id, s])) }
     : undefined;
   const realLog = console.log;
   console.log = () => {};
   try {
-    summarizeSourceOutcome('label', prior, next, mode);
+    summarizeCollectionOutcome('label', prior, next, mode);
   } finally {
     console.log = realLog;
   }
@@ -603,62 +603,62 @@ async function summarize(priorSource, priorScripts, next, mode = 'manual') {
   return await Promise.all(next.scripts.map((s) => getScriptLog(s.id)));
 }
 
-test('summarizeSourceOutcome: a scan failure lands in every script log, not "no change"', async () => {
-  // refreshSource leaves every script row untouched when the listing
+test('summarizeCollectionOutcome: a scan failure lands in every script log, not "no change"', async () => {
+  // refreshCollection leaves every script row untouched when the listing
   // can't be read, so the per-script loop would otherwise report "no
   // change" for rows that were never actually checked.
   const script = { ...OK_ROW, id: 'sa' };
-  const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
-  const [log] = await summarize(SOURCE_OK, [script], failed);
+  const failed = { collection: { ...COLLECTION_OK, scanError: 'ENOENT' }, scripts: [script] };
+  const [log] = await summarize(COLLECTION_OK, [script], failed);
   assert.equal(log.length, 1);
-  assert.match(log[0].message, /This source did not load: ENOENT/);
+  assert.match(log[0].message, /This collection did not load: ENOENT/);
 });
 
-test('summarizeSourceOutcome: a scan failure stays at info so it cannot badge every script', async () => {
+test('summarizeCollectionOutcome: a scan failure stays at info so it cannot badge every script', async () => {
   // The `loglevel:` sentinel is monotonic within a session, so a
-  // warning here would leave every script under the source reading
+  // warning here would leave every script under the collection reading
   // WARNING for the rest of the session after one transient blip. The
-  // source row is where a source-level problem gets its badge.
+  // collection row is where a collection-level problem gets its badge.
   const script = { ...OK_ROW, id: 'sa-level' };
-  const failed = { source: { ...SOURCE_OK, scanError: 'ENOENT' }, scripts: [script] };
-  const [log] = await summarize(SOURCE_OK, [script], failed);
+  const failed = { collection: { ...COLLECTION_OK, scanError: 'ENOENT' }, scripts: [script] };
+  const [log] = await summarize(COLLECTION_OK, [script], failed);
   assert.equal(log[0].level, 'info');
   assert.equal(await getMaxLogLevel('sa-level'), 'info');
 });
 
-test('summarizeSourceOutcome: a source that stays unreadable re-logs per pass', async () => {
+test('summarizeCollectionOutcome: a collection that stays unreadable re-logs per pass', async () => {
   const script = { ...OK_ROW, id: 'sb' };
-  const brokenSource = { ...SOURCE_OK, scanError: 'ENOENT' };
-  const [first] = await summarize(SOURCE_OK, [script], { source: brokenSource, scripts: [script] });
+  const brokenCollection = { ...COLLECTION_OK, scanError: 'ENOENT' };
+  const [first] = await summarize(COLLECTION_OK, [script], { collection: brokenCollection, scripts: [script] });
   assert.equal(first.length, 1);
-  // Each pass really did try to read the source, and this path is only
+  // Each pass really did try to read the collection, and this path is only
   // reachable from a Refresh / Refresh All click, so every repeat is
   // one the user asked for.
-  summarizeSourceOutcome(
+  summarizeCollectionOutcome(
     'label',
-    { source: brokenSource, scripts: new Map([[script.id, script]]) },
-    { source: brokenSource, scripts: [script] },
+    { collection: brokenCollection, scripts: new Map([[script.id, script]]) },
+    { collection: brokenCollection, scripts: [script] },
     'manual',
   );
   await _flushScriptLogQueueForTests(script.id);
   assert.equal((await getScriptLog(script.id)).length, 2);
 });
 
-test('summarizeSourceOutcome: a readable-again source logs the recovery', async () => {
+test('summarizeCollectionOutcome: a readable-again collection logs the recovery', async () => {
   const script = { ...OK_ROW, id: 'sc' };
   const [log] = await summarize(
-    { ...SOURCE_OK, scanError: 'ENOENT' },
+    { ...COLLECTION_OK, scanError: 'ENOENT' },
     [script],
-    { source: SOURCE_OK, scripts: [script] },
+    { collection: COLLECTION_OK, scripts: [script] },
   );
   assert.deepEqual(log.map((e) => e.message), [
-    'This source is readable again',
+    'This collection is readable again',
     'Checked for updates — no change',
   ]);
   assert.equal(log[0].level, 'info');
 });
 
-test('summarizeSourceOutcome: a broad refresh frames each script for itself', async () => {
+test('summarizeCollectionOutcome: a broad refresh frames each script for itself', async () => {
   // One Refresh All, two scripts, two different framings — the routine
   // one costs a single row, the one with news gets its preamble.
   const healthy = { ...OK_ROW, id: 'sd-ok' };
@@ -666,9 +666,9 @@ test('summarizeSourceOutcome: a broad refresh frames each script for itself', as
     ...OK_ROW, id: 'sd-bad', status: 'invalid', errorMessage: 'no metadata block',
   };
   const [healthyLog, brokenLog] = await summarize(
-    SOURCE_OK,
+    COLLECTION_OK,
     [healthy, broken],
-    { source: SOURCE_OK, scripts: [healthy, broken] },
+    { collection: COLLECTION_OK, scripts: [healthy, broken] },
   );
   assert.deepEqual(healthyLog.map((e) => e.message), ['Checked for updates — no change']);
   assert.deepEqual(

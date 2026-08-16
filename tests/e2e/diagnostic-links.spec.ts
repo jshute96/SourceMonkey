@@ -33,17 +33,19 @@ test.describe('diagnostic location links', () => {
   async function installAndOpen(
     extensionContext: import('@playwright/test').BrowserContext,
     extensionId: string,
-    sm: { addSource: (p: string) => Promise<unknown>; getSources: () => Promise<{ id: string }[]>;
-          getSourceWithScripts: (id: string) => Promise<{ scripts: { id: string; relativePath: string }[] } | null> },
+    sm: { addCollection: (p: string) => Promise<unknown>; getCollections: () => Promise<{ id: string }[]>;
+          getCollectionWithScripts: (id: string) => Promise<{ scripts: { id: string; relativePath: string }[] } | null> },
     relativePath: string,
   ) {
-    await sm.addSource(scriptsDir.path);
-    const sources = await sm.getSources();
-    const withScripts = await sm.getSourceWithScripts(sources[0].id);
+    await sm.addCollection(scriptsDir.path);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     const script = withScripts!.scripts.find((s) => s.relativePath === relativePath)!;
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
-    await page.waitForFunction(() => document.title.includes('—'));
+    // The suffix render() writes, not just the dash — the page's static
+    // title already has one, so `includes('—')` waits for nothing.
+    await page.waitForFunction(() => document.title.endsWith('— SourceMonkey'));
     return { page, scriptId: script.id };
   }
 
@@ -102,7 +104,7 @@ test.describe('diagnostic location links', () => {
     extensionContext, extensionId, sm,
   }) => {
     // Nowhere in particular to point, so the location is the file
-    // alone. Clicking still gets the reader to the source — and must
+    // alone. Clicking still gets the reader to the collection — and must
     // NOT leave a highlight claiming a line we never chose.
     scriptsDir.writeRaw('plain.user.js', "console.log('no metadata block here');\n");
     const { page } = await installAndOpen(extensionContext, extensionId, sm, 'plain.user.js');
@@ -174,7 +176,7 @@ test.describe('diagnostic location links', () => {
     await expect(page.locator('#message')).toHaveText('');
 
     // `startupLogs` are persisted at build time and replayed into the
-    // Log once per Chrome session; adding a source doesn't replay them
+    // Log once per Chrome session; adding a collection doesn't replay them
     // (nothing has "started up" yet). This is the SW's own replay,
     // driven directly rather than by restarting the worker.
     await sm.replayScriptLogsAtBoot();
@@ -192,7 +194,7 @@ test.describe('diagnostic location links', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?script=${scriptId}#Log`,
     );
-    await page.waitForFunction(() => document.title.includes('—'));
+    await page.waitForFunction(() => document.title.endsWith('— SourceMonkey'));
 
     const row = page.locator('#log-pane tr', { hasText: 'Ignoring @grant' });
     await expect(row).toBeVisible();

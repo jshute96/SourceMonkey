@@ -27,7 +27,7 @@ this directory on purpose:
 - The TM cross-manager sync walks `tests/examples/` only, so the
   malformed files stay invisible to TM (which would refuse most of
   them anyway).
-- Add `tests/bad-examples/` as its own SourceMonkey source if you
+- Add `tests/bad-examples/` as its own SourceMonkey collection if you
   want to toggle the whole bad-script corpus on or off without
   touching the good examples.
 
@@ -110,7 +110,7 @@ events.
 
 ### Installing the userscripts
 
-- **SourceMonkey** — open the sources page, add a directory source
+- **SourceMonkey** — open the collections page, add a directory collection
   pointing at `tests/examples/`. The scanner picks up every nested
   `*.user.js` and the `@match` patterns route each one to its own
   page.
@@ -130,6 +130,7 @@ events.
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
+| `gm-download/`             | `GM_download`                                                     | button-driven |
 | `gm-urlchange/`            | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |

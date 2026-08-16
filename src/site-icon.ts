@@ -1,7 +1,8 @@
-import { fetchResourceBytes, resolveScriptResource } from './file-loader.js';
+import { fetchResourceBytes, isNotModified, resolveScriptResource } from './file-loader.js';
+import { localFileCandidates } from './local-file-overrides.js';
 import { representativeMatch } from './match-targets.js';
 
-// Site-icon (favicon) extraction + cache. Used by the sources page
+// Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon next to each script.
 //
 // Two-tier lookup, so deep-targeted scripts (e.g. one userscript per
@@ -373,7 +374,10 @@ async function fetchHtml(url: string): Promise<{ text: string; finalUrl: string 
     maxBytes: MAX_HTML_BYTES,
     acceptContentType: (ct) => ct.includes('html'),
   });
-  if ('failed' in res) return null;
+  // `isNotModified` can't fire — neither icon fetch passes `conditional`
+  // — but it is in the return type, and narrowing it here is cheaper
+  // than a cast that would go stale if one ever did.
+  if ('failed' in res || isNotModified(res)) return null;
   // Decode as UTF-8. Real-world HTML in non-UTF-8 charsets is rare
   // enough today that we accept the occasional mojibake — and even
   // then the icon link tags are ASCII attributes that decode fine.
@@ -392,7 +396,7 @@ async function fetchIconAt(url: string): Promise<string | null> {
   });
   // Icons fail quietly — a missing favicon is cosmetic, and there is
   // no surface that would show a reason.
-  if ('failed' in res) return null;
+  if ('failed' in res || isNotModified(res)) return null;
   // Strip any `; charset=…` parameter; default to image/x-icon when
   // the server omitted Content-Type so the data URL still renders.
   const mime = res.contentType.split(';')[0].trim() || 'image/x-icon';
@@ -423,7 +427,7 @@ function arrayBufferToDataUrl(buffer: ArrayBuffer, mime: string): string {
 // Promise. Cache rows that go stale and trigger a refetch land here
 // too — the second caller waits on the first. The map is keyed by the
 // full storage key (e.g. `siteIcon:<origin>` vs `iconUrl:<url>`) so the
-// two icon-source paths don't collide.
+// two icon-collection paths don't collide.
 const inflight = new Map<string, Promise<string | null>>();
 
 export async function ensureSiteIcon(
@@ -485,8 +489,48 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
 // http(s) and file:// URLs go through the same bounded fetch + storage
 // cache the origin-discovery path uses, keyed by the URL itself so
 // multiple scripts sharing a URL share one fetch.
-export async function ensureIconForUrl(url: string): Promise<string | null> {
+//
+// `localRoots` opts this into the same local-override rule `@require`
+// and `@resource` use — see docs/local-file-overrides.md. Without it
+// (the default) nothing changes and no local reads happen. A script
+// that declares its icon by absolute URL while developing locally would
+// otherwise be the one file reference that ignored the copy on disk,
+// which reads as a gap rather than a policy.
+export async function ensureIconForUrl(
+  url: string,
+  localRoots: readonly string[] = [],
+): Promise<string | null> {
   if (url.startsWith('data:')) return usableDataUrl(url);
+  for (const candidate of localFileCandidates(url, localRoots)) {
+    const local = await localIconCandidate(candidate);
+    if (local) return local;
+  }
+  return ensureIconAt(url);
+}
+
+// A local stand-in candidate, memoized for the life of the page rather
+// than written to the storage cache.
+//
+// Deliberately NOT the storage cache: a miss there is remembered for 24
+// hours, so an icon file created after the first paint wouldn't appear
+// until the next day — the same "why isn't my edit showing up" trap the
+// require path exists to avoid. A page-lifetime memo instead means the
+// cost is one local read per icon per page load (repaints are free) and
+// a reload always sees the current state of the disk.
+//
+// A candidate that isn't there, or isn't an image, just returns null and
+// the caller falls through to the declared URL.
+const localIconMemo = new Map<string, Promise<string | null>>();
+
+function localIconCandidate(url: string): Promise<string | null> {
+  const memo = localIconMemo.get(url);
+  if (memo) return memo;
+  const p = fetchIconAt(url);
+  localIconMemo.set(url, p);
+  return p;
+}
+
+async function ensureIconAt(url: string): Promise<string | null> {
   const key = urlIconKey(url);
   const pending = inflight.get(key);
   if (pending) return pending;
@@ -530,11 +574,20 @@ interface ScriptWithMatching {
 // `<all_urls>`, etc.). Either wrapper starts with a globe placeholder,
 // swapped for the real favicon once it loads.
 //
-// Icon source priority: a script-declared `@icon` (or its aliases)
+// Icon collection priority: a script-declared `@icon` (or its aliases)
 // wins outright over the origin-discovered favicon. The click-through
 // link is always the site's linkUrl regardless — the @icon header is
 // only a visual override.
-export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching): void {
+export function renderSiteIconInto(
+  slot: HTMLElement,
+  script: ScriptWithMatching,
+  // Local override roots for a script-declared `@icon`, from the
+  // caller's `StoredCollection`. Passed in rather than derived here
+  // because the per-collection opt-out lives on the collection row,
+  // which this module has no reason to load. Omitted → no overrides, no
+  // local reads.
+  localRoots: readonly string[] = [],
+): void {
   const target = representativeMatch(script.matching);
   // The header value is raw (URL, data:, or relative path). Resolve it
   // against the script's own URL so `@icon foo.png` reaches the
@@ -568,7 +621,7 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
       // Header-declared icon wins. Origin-based discovery only runs
       // when the script doesn't pin its own icon.
       dataUrl = resolvedIcon
-        ? await ensureIconForUrl(resolvedIcon.url)
+        ? await ensureIconForUrl(resolvedIcon.url, localRoots)
         : await ensureSiteIcon(target!.origin, target!.linkUrl);
     } catch {
       return;
@@ -588,7 +641,7 @@ export function renderSiteIconInto(slot: HTMLElement, script: ScriptWithMatching
 // dozens of scripts targeting the same site, every row otherwise
 // inlined its own copy of the favicon's base64 `data:` URL — a handful
 // of distinct icons re-inlined across ~every row, which ballooned the
-// sources page past half a megabyte. Pointing every row at a shared
+// collections page past half a megabyte. Pointing every row at a shared
 // ~55-char blob: handle instead drops all that duplication out of the
 // DOM; the bytes live once in the browser's blob table.
 //

@@ -1,11 +1,11 @@
-// Source I/O for userscript sources.
+// Collection I/O: fetch + scan for every collection kind.
 //
 // Owns: path → URL conversion, content fetch, listing parsers, and the
-// scanner that turns a source path/URL into a list of FoundScript
+// scanner that turns a collection path/URL into a list of FoundScript
 // entries. All persistence lives in `src/script-store.ts`; this module
 // is pure I/O.
 //
-// The following source kinds all flow through the same downstream
+// The following collection kinds all flow through the same downstream
 // pipeline:
 //   - local directory   (an absolute filesystem path; recursive scan)
 //   - local single file (an absolute path ending in .user.js)
@@ -34,7 +34,7 @@
 //
 // HTTP requirements:
 //   - manifest: "<all_urls>" (or a narrower http(s) pattern) in
-//     host_permissions so the SW/sources page can fetch arbitrary
+//     host_permissions so the SW/collections page can fetch arbitrary
 //     origins without CORS blocking the response body.
 //
 // File requirements:
@@ -43,39 +43,40 @@
 // The toggle is persistent across browser sessions, so unlike the File
 // System Access API there is no per-session re-grant.
 
-export type { FoundScript } from './source-scan.js';
-import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './source-scan.js';
-export { MAX_SCAN_DEPTH } from './source-scan.js';
+export type { FoundScript } from './collection-scan.js';
+import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './collection-scan.js';
+import { mapWithConcurrency, SCAN_DIRS_CONCURRENCY } from './concurrency.js';
+export { MAX_SCAN_DEPTH } from './collection-scan.js';
 
-// ---------- Source-kind detection ----------
+// ---------- Collection-kind detection ----------
 
-// All source-kind checks key off the raw source string the user typed.
-// `http://` / `https://` selects an HTTP source; everything else is
-// treated as an absolute filesystem path. Suffix tests look at the URL
-// pathname (sans query/fragment) so e.g. `…/foo.user.js?v=2` still
-// classifies as a single-file URL.
+// All collection-kind checks key off the raw input string the user
+// typed. `http://` / `https://` selects an HTTP collection; everything
+// else is treated as an absolute filesystem path. Suffix tests look at
+// the URL pathname (sans query/fragment) so e.g. `…/foo.user.js?v=2`
+// still classifies as a single-file URL.
 
 // The shapes a user may type as a location, as a sentence fragment.
-// Shared because two validators reject on it — the sources page's Add
-// field (`isValidSourceInput`) and the viewer's preview
+// Shared because two validators reject on it — the collections page's
+// Add field (`isValidCollectionInput`) and the viewer's preview
 // (`isPreviewableInput`) — and their messages had already drifted into
 // two different descriptions of one rule.
 export const LOCATION_SHAPES =
   'must be an http(s):// or file:// URL, or an absolute path starting with /';
 
-export function isHttpUrl(source: string): boolean {
-  return /^https?:\/\//i.test(source);
+export function isHttpUrl(input: string): boolean {
+  return /^https?:\/\//i.test(input);
 }
 
-export function isFileUrl(source: string): boolean {
-  return /^file:\/\//i.test(source);
+export function isFileUrl(input: string): boolean {
+  return /^file:\/\//i.test(input);
 }
 
-// Container sources aggregate individually-added scripts of one kind
-// (local files, web URLs, GitHub URLs). Their stored `path` is one of
-// the synthetic identifiers below — not a real URL — and per-script
+// Container collections aggregate individually-added scripts of one
+// kind (local files, web URLs, GitHub URLs). Their stored `path` is one
+// of the synthetic identifiers below — not a real URL — and per-script
 // `relativePath` carries the full URL/path the user added. There is no
-// scan step for a container source; refresh iterates the explicit
+// scan step for a container collection; refresh iterates the explicit
 // scriptIds list and refetches each entry.
 export type ContainerKind = 'file' | 'http' | 'github';
 
@@ -85,149 +86,158 @@ export function containerPath(kind: ContainerKind): string {
   return CONTAINER_PATH_PREFIX + kind;
 }
 
-export function isContainerSource(source: string): boolean {
-  return containerKind(source) !== null;
+export function isContainerCollection(input: string): boolean {
+  return containerKind(input) !== null;
 }
 
-export function containerKind(source: string): ContainerKind | null {
-  if (source === 'container:file') return 'file';
-  if (source === 'container:http') return 'http';
-  if (source === 'container:github') return 'github';
+export function containerKind(input: string): ContainerKind | null {
+  if (input === 'container:file') return 'file';
+  if (input === 'container:http') return 'http';
+  if (input === 'container:github') return 'github';
   return null;
 }
 
 // Pathname of an http(s) or file:// URL, sans query and fragment.
 // Returns '' if the string doesn't parse as a URL — callers gate on
 // isHttpUrl / isFileUrl first.
-function urlPathname(source: string): string {
+function urlPathname(input: string): string {
   try {
-    return new URL(source).pathname;
+    return new URL(input).pathname;
   } catch {
     return '';
   }
 }
 
-// Pathname for *any* source-input form (raw filesystem path, file://
-// URL, or http(s):// URL). Used by suffix tests that don't care about
-// scheme.
-function sourcePathname(source: string): string {
-  if (isHttpUrl(source) || isFileUrl(source)) return urlPathname(source);
-  return source;
+// Pathname for *any* collection-input form (raw filesystem path,
+// file:// URL, or http(s):// URL). Used by suffix tests that don't care
+// about scheme.
+function locationPathname(input: string): string {
+  if (isHttpUrl(input) || isFileUrl(input)) return urlPathname(input);
+  return input;
 }
 
-// Canonical URL form for a source input. Raw filesystem paths get
+// Canonical URL form for a collection input. Raw filesystem paths get
 // percent-encoded and wrapped as file://; URLs pass through. Used as
 // the base for URL.resolution of manifest entries so a local manifest
 // can list relative paths the same way an HTTP one can.
-export function sourceCanonicalUrl(source: string): string {
-  if (isHttpUrl(source) || isFileUrl(source)) return source;
-  return pathToFileUrl(source);
+export function collectionCanonicalUrl(input: string): string {
+  if (isHttpUrl(input) || isFileUrl(input)) return input;
+  return pathToFileUrl(input);
 }
 
-// Inverse of sourceCanonicalUrl for local inputs: a file:// URL turns
-// into the absolute filesystem path it points at; a raw path passes
-// through. Lets the local directory/single-file branches accept the
-// URL form the user typed without each branch having to special-case
-// the parse. Percent-encoded segments (e.g. `my%20scripts`) are
-// decoded so downstream path helpers see the on-disk name verbatim.
-export function sourceFsPath(source: string): string {
-  if (!isFileUrl(source)) return source;
+// Inverse of collectionCanonicalUrl for local inputs: a file:// URL
+// turns into the absolute filesystem path it points at; a raw path
+// passes through. Lets the local directory/single-file branches accept
+// the URL form the user typed without each branch having to
+// special-case the parse. Percent-encoded segments (e.g.
+// `my%20scripts`) are decoded so downstream path helpers see the
+// on-disk name verbatim.
+export function locationFsPath(input: string): string {
+  if (!isFileUrl(input)) return input;
   try {
-    return decodeURIComponent(new URL(source).pathname);
+    return decodeURIComponent(new URL(input).pathname);
   } catch {
-    return source;  // unparseable URL → let the caller's I/O fail with a clearer message
+    return input;  // unparseable URL → let the caller's I/O fail with a clearer message
   }
 }
 
 // Windows drive-letter (`file:///C:/…`) and UNC (`file://server/…`)
-// URLs. `sourceFsPath` mangles both — it strips only the leading POSIX
+// URLs. `locationFsPath` mangles both — it strips only the leading POSIX
 // slash and discards `host` — so the canonicalizer below leaves them
 // as URLs rather than producing a path that points somewhere else.
 // The rest of the module is POSIX-only by design (see `pathToFileUrl`,
 // `parentDir`), so this is containment, not Windows support.
-function isNonPosixFileUrl(source: string): boolean {
+function isNonPosixFileUrl(input: string): boolean {
   let u: URL;
   try {
-    u = new URL(source);
+    u = new URL(input);
   } catch {
     return false;
   }
   return u.host !== '' || /^\/[A-Za-z]:/.test(u.pathname);
 }
 
-// One canonical spelling for a source input, so every entry point
-// agrees on what a given file is called: the sources page's path
-// field, an `addSource` call, and a captured `file://` navigation all
-// have to produce the same `relativePath`, or one file on disk ends up
-// with two installed rows.
+// One canonical spelling for a collection input, so every entry point
+// agrees on what a given file is called: the collections page's path
+// field, an `addCollection` call, and a captured `file://` navigation
+// all have to produce the same `relativePath`, or one file on disk ends
+// up with two installed rows.
 //
 // The bare filesystem path is the winner because it is what the path
 // field (the oldest and most common route) has always stored. http(s)
 // inputs pass through untouched — there is only one spelling of those.
-export function canonicalSourceInput(source: string): string {
-  if (!isFileUrl(source) || isNonPosixFileUrl(source)) return source;
-  return sourceFsPath(source);
+export function canonicalCollectionInput(input: string): string {
+  if (!isFileUrl(input) || isNonPosixFileUrl(input)) return input;
+  return locationFsPath(input);
 }
 
 // True for any input pointing at an individual `.user.js` script —
 // http(s):// URL, file:// URL, or absolute local path — based on the
-// pathname suffix. Single-script inputs no longer get their own source
-// row; the add flow routes them into the matching container source
-// (see `containerKindForSingleFileInput`).
-export function isSingleFileInput(source: string): boolean {
-  return sourcePathname(source).endsWith('.user.js');
+// pathname suffix. Single-script inputs no longer get their own
+// collection row; the add flow routes them into the matching container
+// collection (see `containerKindForSingleFileInput`).
+export function isSingleFileInput(input: string): boolean {
+  return locationPathname(input).endsWith('.user.js');
 }
 
-// True for any manifest source — http(s):// URL, file:// URL, or an
+// True for any manifest collection — http(s):// URL, file:// URL, or an
 // absolute local path — whose pathname's basename is exactly
 // `MANIFEST_FILENAME`. The fixed-filename rule (rather than a generic
 // `.json` suffix) keeps unrelated JSON files from being mistaken for
 // script manifests and gives the convention a single, searchable name.
-export function isManifestSource(source: string): boolean {
-  const p = sourcePathname(source);
+export function isManifestCollection(input: string): boolean {
+  const p = locationPathname(input);
   return p === MANIFEST_FILENAME
     || p.endsWith('/' + MANIFEST_FILENAME);
 }
 
 // Classify a single-file input string by container kind. Callers that
 // have already verified the input passes `isSingleFileInput` use this
-// to pick which container source the script gets added to. github URLs
-// here mean both the human-facing `github.com/...` form and the
+// to pick which container collection the script gets added to. github
+// URLs here mean both the human-facing `github.com/...` form and the
 // already-normalized `raw.githubusercontent.com/...` form, since
-// `normalizeSourceInput` may have rewritten the input before this runs.
-export function containerKindForSingleFileInput(source: string): ContainerKind {
-  if (/^https?:\/\/(www\.)?github\.com\//i.test(source)) return 'github';
-  if (/^https?:\/\/raw\.githubusercontent\.com\//i.test(source)) return 'github';
-  if (isHttpUrl(source)) return 'http';
+// `normalizeCollectionInput` may have rewritten the input before this
+// runs.
+export function containerKindForSingleFileInput(input: string): ContainerKind {
+  if (/^https?:\/\/(www\.)?github\.com\//i.test(input)) return 'github';
+  if (/^https?:\/\/raw\.githubusercontent\.com\//i.test(input)) return 'github';
+  if (isHttpUrl(input)) return 'http';
   return 'file';
 }
 
-// GitHub-specific source handling lives in `github-source.ts`. We
+// GitHub-specific collection handling lives in `github-provider.ts`. We
 // re-export only the symbols `script-store.ts` and `options.ts` use
-// directly. Callers always go through `normalizeSourceInput`; today
+// directly. Callers always go through `normalizeCollectionInput`; today
 // that's just `normalizeGithubInput` under its public name, but
 // keeping the public name generic lets future providers slot in
 // without changing the callers.
-export { isGithubDirSource } from './github-source.js';
-export { normalizeGithubInput as normalizeSourceInput } from './github-source.js';
+export { isGithubDirCollection } from './github-provider.js';
+export { normalizeGithubInput as normalizeCollectionInput } from './github-provider.js';
 import {
   githubDirScriptFileUrl,
   githubDirScriptDisplayUrl,
   githubRawToBlobUrl,
-  isGithubDirSource,
+  isGithubDirCollection,
   scanGithubDir,
-} from './github-source.js';
-export { githubRawToBlobUrl } from './github-source.js';
+} from './github-provider.js';
+export { githubRawToBlobUrl } from './github-provider.js';
 import { githubAuthHeaders } from './github-auth.js';
 import { decodeForDisplay, leafName } from './script-display.js';
+import { mustHopToWorker, readHttpViaWorker } from './http-read.js';
+import {
+  MarkupResponseError,
+  isMarkupContentType,
+  looksLikeMarkup,
+  markupResponseMessage,
+} from './markup-response.js';
 
 // Leaf name (last path segment) of an http(s) URL, percent-decoded —
 // used as the FoundScript.name for HTTP manifest entries so the
-// sources page shows "foo.user.js" rather than the whole URL. Returns
-// '' for anything that doesn't parse as a URL, which callers use as
-// their "fall back to the raw entry" signal.
-export function urlBaseName(source: string): string {
-  return decodeForDisplay(leafName(urlPathname(source)));
+// collections page shows "foo.user.js" rather than the whole URL.
+// Returns '' for anything that doesn't parse as a URL, which callers
+// use as their "fall back to the raw entry" signal.
+export function urlBaseName(input: string): string {
+  return decodeForDisplay(leafName(urlPathname(input)));
 }
 
 // ---------- URL / path helpers ----------
@@ -318,6 +328,29 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   return await response.text();
 }
 
+// `fetchFileUrlText` for text that is about to be treated as a script.
+//
+// The markup guard can't live in `fetchFileUrlText` itself: among its
+// other callers is the one that reads Chrome's `file://` directory
+// listing, which is HTML *by design* (`parseListing`). So the two
+// script-body call sites — the refresh pipeline and the preview —
+// share this wrapper instead.
+//
+// What it catches locally: an `.user.js` path that is really a
+// directory (Chrome answers with a generated listing), and an HTML
+// file that got the suffix by mistake. The `file://` legs often report
+// no Content-Type at all, so the body test is the only one available.
+export async function fetchScriptFileUrlText(url: string): Promise<string> {
+  const text = await fetchFileUrlText(url);
+  if (looksLikeMarkup(text)) {
+    // No `Could not read ${url}: ` prefix, unlike its siblings here:
+    // the local wording already names the file, and the prefix would
+    // print the same URL twice in one sentence.
+    throw new MarkupResponseError(markupResponseMessage({ localUrl: url }));
+  }
+  return text;
+}
+
 // Best-effort "does the path point to a readable file" probe. Used to
 // turn the otherwise-cryptic "Could not read …/" message into a
 // clearer one when the user types a path to an existing non-userscript
@@ -337,11 +370,18 @@ async function isReadableFile(absolutePath: string): Promise<boolean> {
 export interface HttpFetchOptions {
   etag?: string;          // last-seen ETag — sent as If-None-Match
   lastModified?: string;  // last-seen Last-Modified — sent as If-Modified-Since
+  expects?: HttpFetchExpects;  // defaults to JavaScript — see the type
 }
 
 export type HttpFetchResult =
   | { kind: 'ok'; text: string; etag?: string; lastModified?: string }
   | { kind: 'unchanged' };  // 304
+
+// What the caller is going to do with the bytes, for the one message
+// that has to name it: this fetcher reads both script bodies and
+// collection manifests, and "not JavaScript" is the wrong complaint
+// about a manifest.
+export type HttpFetchExpects = 'JavaScript' | 'JSON';
 
 // Fetch an http(s) URL, optionally with conditional headers. A 304
 // response surfaces as `{kind: 'unchanged'}` so callers can preserve
@@ -356,12 +396,38 @@ export async function fetchHttpText(
   const headers: Record<string, string> = {};
   if (opts.etag) headers['If-None-Match'] = opts.etag;
   if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified;
+
+  // Page contexts hand the read to the service worker: a document that
+  // fetches for itself acts on the response's `Link: rel=preload`
+  // headers, and a login page — the case the markup check below exists
+  // for — is exactly the kind of response that sends them. See
+  // src/http-read.ts.
+  if (mustHopToWorker()) {
+    const reply = await readHttpViaWorker({ url, as: 'text', headers });
+    if (reply) {
+      if (reply.kind === 'error') {
+        throw new Error(`Could not read ${url}: ${reply.message ?? reply.reason}`);
+      }
+      return interpretHttpText(url, opts, {
+        status: reply.status,
+        contentType: reply.contentType,
+        etag: reply.etag,
+        lastModified: reply.lastModified,
+        text: reply.text ?? '',
+      });
+    }
+    // No answer at all (worker evicted mid-message, extension
+    // reloading). Falling through reads it here, which beats failing a
+    // read the user asked for.
+  }
+
   // Attach the configured GitHub token when the URL targets a GitHub
   // host. No-op for any other URL. Lets private-repo raw URLs and
   // private repo manifests fetch under auth without each call site
   // having to opt in. Header host-gating is enforced inside
   // githubAuthHeaders so a token can never be leaked to a non-GitHub
-  // host.
+  // host. (Over the hop the worker attaches the same headers from its
+  // own copy of the token, so it never rides on a message.)
   Object.assign(headers, githubAuthHeaders(url));
 
   let response: Response;
@@ -371,13 +437,58 @@ export async function fetchHttpText(
     throw new Error(`Could not read ${url}: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (response.status === 304) return { kind: 'unchanged' };
-  if (!response.ok) throw new Error(`Could not read ${url}: HTTP ${response.status}`);
-  const text = await response.text();
-  const result: HttpFetchResult = { kind: 'ok', text };
-  const etag = response.headers.get('ETag');
-  if (etag) result.etag = etag;
-  const lastModified = response.headers.get('Last-Modified');
-  if (lastModified) result.lastModified = lastModified;
+  return interpretHttpText(url, opts, {
+    status: response.status,
+    contentType: response.headers.get('content-type') ?? '',
+    etag: response.headers.get('ETag'),
+    lastModified: response.headers.get('Last-Modified'),
+    text: await response.text(),
+  });
+}
+
+// What the response MEANS, applied identically to a response we read
+// here and to one the worker read for us — so the two paths can't come
+// to disagree about which statuses fail or which bodies are markup.
+//
+// A 304 never reaches here from the local path (it has no body to
+// read); over the hop it arrives as an ordinary status and is answered
+// the same way.
+function interpretHttpText(
+  url: string,
+  opts: HttpFetchOptions,
+  res: {
+    status: number;
+    contentType: string;
+    etag: string | null;
+    lastModified: string | null;
+    text: string;
+  },
+): HttpFetchResult {
+  if (res.status === 304) return { kind: 'unchanged' };
+  if (res.status < 200 || res.status > 299) {
+    throw new Error(`Could not read ${url}: HTTP ${res.status}`);
+  }
+  // Every caller of this treats the result as JavaScript (a script
+  // body) or JSON (a manifest); neither can be markup. Rejecting here
+  // rather than letting it through is what keeps a refresh that lands
+  // on a login page from replacing a working script with a page of
+  // HTML — a fetch failure preserves the prior copy, a "successful"
+  // fetch of garbage does not.
+  //
+  // The header is quoted verbatim, not lowercased: it is evidence, and
+  // evidence should read as what the server actually sent.
+  const markupHeader = isMarkupContentType(res.contentType);
+  if (markupHeader || looksLikeMarkup(res.text)) {
+    throw new MarkupResponseError(
+      `Could not read ${url}: ${markupResponseMessage({
+        ...(markupHeader ? { contentType: res.contentType } : {}),
+        expected: opts.expects ?? 'JavaScript',
+      })}`,
+    );
+  }
+  const result: HttpFetchResult = { kind: 'ok', text: res.text };
+  if (res.etag) result.etag = res.etag;
+  if (res.lastModified) result.lastModified = res.lastModified;
   return result;
 }
 
@@ -449,10 +560,16 @@ export async function statFromListing(
 
 // ---------- Scanning ----------
 
-// Parse a manifest body. Accepts either a bare JSON array of strings
-// or `{scripts: [...]}`. Anything else is rejected with a message that
+// Parse a manifest body. Accepts either a bare JSON array or
+// `{scripts: [...]}`. Anything else is rejected with a message that
 // points at the supported shapes. Empty strings inside the list are
 // dropped so a trailing newline / typo doesn't fail the whole source.
+//
+// List elements are either a URL string or an object with a `path`
+// holding that string. The object form lets a manifest carry extra
+// per-script bookkeeping (author's notes, tags, …) alongside the URL;
+// every field other than `path` is ignored here, so unknown keys are
+// forward-compatible rather than an error.
 export function parseManifest(body: string): string[] {
   let parsed: unknown;
   try {
@@ -466,14 +583,25 @@ export function parseManifest(body: string): string[] {
   } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { scripts?: unknown }).scripts)) {
     arr = (parsed as { scripts: unknown[] }).scripts;
   } else {
-    throw new Error('Manifest must be a JSON array of URL strings, or `{"scripts": [...]}`');
+    throw new Error('Manifest must be a JSON array of entries, or `{"scripts": [...]}`');
   }
   const entries: string[] = [];
   for (const item of arr as unknown[]) {
-    if (typeof item !== 'string') {
-      throw new Error('Manifest entries must all be strings');
+    let value: string;
+    if (typeof item === 'string') {
+      value = item;
+    } else if (item && typeof item === 'object' && !Array.isArray(item)) {
+      // An array is also `typeof 'object'`, hence the isArray guard —
+      // otherwise `[["a.user.js"]]` would look for a `path` field on it.
+      const entryPath = (item as { path?: unknown }).path;
+      if (typeof entryPath !== 'string') {
+        throw new Error('Manifest entry objects must have a "path" string');
+      }
+      value = entryPath;
+    } else {
+      throw new Error('Manifest entries must all be URL strings or objects with a "path"');
     }
-    const trimmed = item.trim();
+    const trimmed = value.trim();
     if (trimmed) entries.push(trimmed);
   }
   return entries;
@@ -484,26 +612,26 @@ export async function scanForUserScripts(
   depth = 0,
   prefix = '',
 ): Promise<FoundScript[]> {
-  // Source-kind dispatch. Container sources don't have a scannable
-  // backing store — refreshSource builds a synthetic scan from the
-  // existing scriptIds and never calls this for them.
-  // The remaining branches are scheme-agnostic (raw path / file:// /
+  // Collection-kind dispatch. Container collections don't have a
+  // scannable backing store — refreshCollection builds a synthetic scan
+  // from the existing scriptIds and never calls this for them. The
+  // remaining branches are scheme-agnostic (raw path / file:// /
   // http(s):// handled uniformly); local directory is the only branch
   // that rejects HTTP, because there's no remote listing API.
   if (depth === 0) {
-    if (isContainerSource(absolutePath)) {
+    if (isContainerCollection(absolutePath)) {
       throw new Error(
-        'Internal error: this source kind is refreshed directly, not scanned',
+        'Internal error: this input kind is refreshed directly, not scanned',
       );
     }
-    if (isManifestSource(absolutePath)) {
-      return scanManifest(sourceCanonicalUrl(absolutePath));
+    if (isManifestCollection(absolutePath)) {
+      return scanManifest(collectionCanonicalUrl(absolutePath));
     }
-    if (isGithubDirSource(absolutePath)) {
+    if (isGithubDirCollection(absolutePath)) {
       return scanGithubDir(absolutePath);
     }
     if (isHttpUrl(absolutePath)) {
-      // No mention of "container sources": that's how we store a
+      // No mention of "container collections": that's how we store a
       // stand-alone script, and the reader adding a URL has no name for
       // it — from the page it just looks like adding the script itself.
       // Ends with what to do, per the "name the fix" rule; the reader
@@ -515,7 +643,7 @@ export async function scanForUserScripts(
     }
     // Local-directory only. Normalise file:// → raw path once so the
     // downstream listing + recursion all see a single form.
-    absolutePath = sourceFsPath(absolutePath);
+    absolutePath = locationFsPath(absolutePath);
   }
   let entries: ListingEntry[];
   try {
@@ -535,6 +663,7 @@ export async function scanForUserScripts(
     throw err;
   }
   const results: FoundScript[] = [];
+  const subdirs: ListingEntry[] = [];
   for (const entry of entries) {
     if (!entry.isDir && entry.name.endsWith('.user.js')) {
       const found: FoundScript = { name: entry.name, relativePath: prefix + entry.name };
@@ -542,19 +671,34 @@ export async function scanForUserScripts(
       if (entry.mtime !== undefined) found.mtime = entry.mtime;
       results.push(found);
     } else if (entry.isDir && depth < MAX_SCAN_DEPTH) {
-      const sub = await scanForUserScripts(
-        joinPath(absolutePath, entry.name),
-        depth + 1,
-        prefix + entry.name + '/',
-      );
-      results.push(...sub);
+      subdirs.push(entry);
     }
   }
+  // Sibling directories are independent, so they are listed together
+  // rather than one after another. This used to be an `await` inside the
+  // loop, which made the scan cost one round trip per directory however
+  // shallow the tree — the dominant phase of a refresh once the other
+  // fan-outs were fixed.
+  //
+  // Rejection still fails the whole scan, as it did: the caller turns
+  // that into the collection's `scanError`, and a listing we couldn't
+  // read means we don't know what's there.
+  const nested = await mapWithConcurrency(
+    subdirs, SCAN_DIRS_CONCURRENCY,
+    (entry) => scanForUserScripts(
+      joinPath(absolutePath, entry.name),
+      depth + 1,
+      prefix + entry.name + '/',
+    ),
+  );
+  for (const sub of nested) results.push(...sub);
+  // Sorted here, so the concurrent walk above can finish in any order
+  // without changing what the caller sees.
   results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   return results;
 }
 
-// ---------- Per-source-kind scanners ----------
+// ---------- Per-collection-kind scanners ----------
 
 // Scheme-aware text fetcher used for the manifest body. Per-entry
 // fetches (with their own per-scheme dispatch and conditional-GET
@@ -562,7 +706,7 @@ export async function scanForUserScripts(
 // a body, not negotiate freshness.
 async function fetchManifestText(canonicalUrl: string): Promise<string> {
   if (isHttpUrl(canonicalUrl)) {
-    const fetched = await fetchHttpText(canonicalUrl);
+    const fetched = await fetchHttpText(canonicalUrl, { expects: 'JSON' });
     if (fetched.kind !== 'ok') {
       // Unreachable in practice: this call sends no conditional-GET
       // headers, so `fetchHttpText` can only answer `ok` or throw.
@@ -588,16 +732,16 @@ async function fetchManifestText(canonicalUrl: string): Promise<string> {
 // we treat dupes as a harmless typo rather than an error.
 //
 // The manifest body itself is re-downloaded every refresh (no
-// If-None-Match round-trip on the manifest URL). The per-script
-// fetches still 304 individually, so the bandwidth cost is bounded.
-// See TODO.md "HTTP sources — follow-ups" for the planned fix.
-// Schemes a manifest entry's *resolved* URL is allowed to use. We
-// mirror the suffix-test policy on the source URL itself (which only
-// accepts http(s) / file: / raw path): a manifest the user added
-// shouldn't be able to escalate the SW's `<all_urls>` reach into
-// things like `data:` (arbitrary inline content), `chrome-extension:`
-// (cross-extension probing), or `blob:` (off-origin smuggling). The
-// user can always add such sources directly if they want them.
+// If-None-Match round-trip on the manifest URL). The per-script fetches
+// still 304 individually, so the bandwidth cost is bounded. See TODO.md
+// "HTTP collections — follow-ups" for the planned fix. Schemes a
+// manifest entry's *resolved* URL is allowed to use. We mirror the
+// suffix-test policy on the collection URL itself (which only accepts
+// http(s) / file: / raw path): a manifest the user added shouldn't be
+// able to escalate the SW's `<all_urls>` reach into things like `data:`
+// (arbitrary inline content), `chrome-extension:` (cross-extension
+// probing), or `blob:` (off-origin smuggling). The user can always add
+// such collections directly if they want them.
 const ALLOWED_ENTRY_SCHEMES = new Set(['http:', 'https:', 'file:']);
 
 // Resolve a manifest entry against the manifest's canonical URL.
@@ -634,9 +778,9 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
   for (const entry of rawEntries) {
     if (seen.has(entry)) continue;
     seen.add(entry);
-    // Resolve once: validates the URL, gates the scheme, and gives us
-    // a friendly display name. The actual fetch URL is rebuilt at
-    // refresh time via scriptFileUrl from sourceCanonicalUrl + entry.
+    // Resolve once: validates the URL, gates the scheme, and gives us a
+    // friendly display name. The actual fetch URL is rebuilt at refresh
+    // time via scriptFileUrl from collectionCanonicalUrl + entry.
     const resolved = resolveManifestEntryUrl(entry, canonicalUrl);
     if (!ALLOWED_ENTRY_SCHEMES.has(resolved.protocol)) {
       throw new Error(
@@ -651,10 +795,10 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
   return results;
 }
 
-// Build the fetchable URL for a specific scanned script. One branch
-// per source-kind (container, manifest, github-dir, directory); each
-// is scheme-agnostic and works for raw paths, file:// URLs, and
-// http(s) URLs uniformly via `sourceCanonicalUrl` / `sourceFsPath`.
+// Build the fetchable URL for a specific scanned script. One branch per
+// collection-kind (container, manifest, github-dir, directory); each is
+// scheme-agnostic and works for raw paths, file:// URLs, and http(s)
+// URLs uniformly via `collectionCanonicalUrl` / `locationFsPath`.
 //
 // Why directory uses path-joining rather than URL resolution: the
 // `relativePath` for a local directory comes from Chrome's listing
@@ -663,45 +807,46 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
 // segment, which survives those characters correctly. Manifest entries
 // are user-authored and expected to already be properly URL-encoded
 // when they contain special characters.
-export function scriptFileUrl(sourcePath: string, relativePath: string): string {
-  if (isContainerSource(sourcePath)) {
+export function scriptFileUrl(collectionPath: string, relativePath: string): string {
+  if (isContainerCollection(collectionPath)) {
     // Container scripts carry the full URL/path the user added in
     // their `relativePath`. Coerce raw fs paths to file:// URLs so the
     // downstream fetcher sees a uniform URL form.
     if (isHttpUrl(relativePath) || isFileUrl(relativePath)) return relativePath;
     return pathToFileUrl(relativePath);
   }
-  if (isManifestSource(sourcePath)) {
-    return resolveManifestEntryUrl(relativePath, sourceCanonicalUrl(sourcePath)).href;
+  if (isManifestCollection(collectionPath)) {
+    return resolveManifestEntryUrl(relativePath, collectionCanonicalUrl(collectionPath)).href;
   }
-  if (isGithubDirSource(sourcePath)) {
-    return githubDirScriptFileUrl(sourcePath, relativePath);
+  if (isGithubDirCollection(collectionPath)) {
+    return githubDirScriptFileUrl(collectionPath, relativePath);
   }
   // Local directory.
-  return pathToFileUrl(joinPath(sourceFsPath(sourcePath), relativePath));
+  return pathToFileUrl(joinPath(locationFsPath(collectionPath), relativePath));
 }
 
 // Human-displayable location for a specific scanned script. Three
 // distinct shapes:
 //   - file:// → bare fs path (more readable than the percent-encoded
 //     URL form).
-//   - github (github-dir source, github-manifest source, or any github
-//     URL added as a script inside the github container) →
+//   - github (github-dir collection, github-manifest collection, or
+//     any github URL added as a script inside the github container) →
 //     `github.com/<o>/<r>/blob/<ref>/<path>` page URL. The raw URL is
 //     what we fetch from; the blob URL is what a human would open in
 //     a browser.
 //   - non-github http(s):// → URL verbatim.
-// This is what the viewer's Location row shows for every source kind
-// without each source-kind needing its own special case.
-export function scriptAbsolutePath(sourcePath: string, relativePath: string): string {
-  if (isGithubDirSource(sourcePath)) {
-    return githubDirScriptDisplayUrl(sourcePath, relativePath);
+// This is what the viewer's Location row shows for every collection kind
+// without each collection-kind needing its own special case.
+export function scriptAbsolutePath(collectionPath: string, relativePath: string): string {
+  if (isGithubDirCollection(collectionPath)) {
+    return githubDirScriptDisplayUrl(collectionPath, relativePath);
   }
-  const url = scriptFileUrl(sourcePath, relativePath);
+  const url = scriptFileUrl(collectionPath, relativePath);
   // GitHub manifest entries and github-container scripts are stored as
   // raw URLs (after `normalizeGithubInput`). Convert back to the github
-  // page URL so the Location row matches a github-dir source's display.
+  // page URL so the Location row matches a github-dir collection's
+  // display.
   const blobUrl = githubRawToBlobUrl(url);
   if (blobUrl) return blobUrl;
-  return isFileUrl(url) ? sourceFsPath(url) : url;
+  return isFileUrl(url) ? locationFsPath(url) : url;
 }

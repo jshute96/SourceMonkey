@@ -1,5 +1,5 @@
 // Real end-to-end injection: write userscript files into a tmp dir,
-// register the dir as a source through the real addSource pipeline,
+// register the dir as a collection through the real addCollection pipeline,
 // open a fixture page in the browser, and assert the script's DOM
 // mutation actually lands.
 //
@@ -37,8 +37,8 @@ test.describe('injection', () => {
         if (el) el.textContent = 'injected by SourceMonkey';
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
-    expect(source).not.toBeNull();
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect(collection).not.toBeNull();
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -63,7 +63,7 @@ test.describe('injection', () => {
         document.getElementById('target').textContent = 'injected';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -101,12 +101,12 @@ test.describe('injection', () => {
           if (el) el.textContent = 'injected by SourceMonkey';
         `,
       });
-      const source = await sm.addSource(scriptsDir.path);
+      const collection = await sm.addCollection(scriptsDir.path);
       await sm.syncNow();
 
       // Loaded clean: no warning about a dropped pattern, and no
       // registration refusal from Chrome.
-      const script = (await sm.getSourceWithScripts(source!.id))!.scripts[0];
+      const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
       expect(script.status).toBe('ok');
       expect(script.startupLogs ?? []).toEqual([]);
       expect(await sm.getRejections()).toEqual({});
@@ -173,7 +173,7 @@ test.describe('injection', () => {
         el.dataset.b = 'yes';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -192,7 +192,7 @@ test.describe('injection', () => {
   // Covers two regression hazards beyond the basic happy path:
   //   1. The match-index should include the re-enabled missing script
   //      so the per-tab badge counts it — not just chrome.userScripts.
-  //   2. A subsequent source refresh while the file is still gone must
+  //   2. A subsequent collection refresh while the file is still gone must
   //      NOT silently clobber the user's enabled=true back to false.
   test('re-enabled missing script runs from cached body and survives a refresh', async ({
     extensionContext,
@@ -211,14 +211,14 @@ test.describe('injection', () => {
         if (el) el.textContent = 'injected from cache';
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     // Delete the file and refresh so the row flips to missing + disabled.
     scriptsDir.remove('mark.user.js');
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
-    const after = await sm.getSourceWithScripts(source!.id);
+    const after = await sm.getCollectionWithScripts(collection!.id);
     expect(after!.scripts).toHaveLength(1);
     expect(after!.scripts[0].status).toBe('missing');
     expect(after!.scripts[0].enabled).toBe(false);
@@ -245,9 +245,9 @@ test.describe('injection', () => {
     // A second refresh while the file is STILL missing must preserve
     // the user's enabled=true. Without the guard in applyMissing, this
     // would silently clobber it back to false.
-    await sm.updateSource(source!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'manual');
     await sm.syncNow();
-    const afterSecond = await sm.getSourceWithScripts(source!.id);
+    const afterSecond = await sm.getCollectionWithScripts(collection!.id);
     expect(afterSecond!.scripts[0].status).toBe('missing');
     expect(afterSecond!.scripts[0].enabled).toBe(true);
 
@@ -321,7 +321,7 @@ test.describe('injection', () => {
         body,
       });
     }
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();

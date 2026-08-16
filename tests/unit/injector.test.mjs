@@ -16,7 +16,7 @@ import { readFile } from 'node:fs/promises';
 const sessionStore = new Map();
 // Backing store for chrome.storage.local. Mostly unused (the pure
 // helpers read nothing), but `retryRejectedRegistrations` rebuilds
-// specs from the store, so its tests seed real script/source rows.
+// specs from the store, so its tests seed real script/collection rows.
 const localStore = new Map();
 // `register` / `unregister` are swapped per-test by the
 // registerWithFallback and retry blocks at the bottom; the defaults
@@ -197,7 +197,7 @@ const COMBINED_ARGS = {
   gmPrelude: '',
 };
 const scriptWith = (over) => ({
-  id: 'abc', sourceId: 's', relativePath: 'Foo.user.js',
+  id: 'abc', collectionId: 's', relativePath: 'Foo.user.js',
   fileUrl: 'file:///Foo.user.js', status: 'ok', size: 1,
   leadingText: '', headerText: '', bodyText: '',
   header: { tags: [{ tag: 'name', value: 'Foo' }] },
@@ -463,7 +463,7 @@ function resolveMap(map, code) {
 function makeScript(over = {}) {
   return {
     id: 'script-1',
-    sourceId: 'source-1',
+    collectionId: 'collection-1',
     relativePath: 'a.user.js',
     fileUrl: 'file:///a.user.js',
     status: 'ok',
@@ -1481,9 +1481,9 @@ test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () =>
 
 // ---------- collectActiveSpecs ----------
 
-function makeSource(over = {}) {
+function makeCollection(over = {}) {
   return {
-    id: 'source-1',
+    id: 'collection-1',
     path: '/p',
     lastRefreshedAt: 0,
     scriptIds: [],
@@ -1493,46 +1493,46 @@ function makeSource(over = {}) {
 }
 
 test('collectActiveSpecs: invalid scripts never run; missing scripts run only when explicitly enabled', async () => {
-  const sources = new Map([['source-1', makeSource()]]);
+  const collections = new Map([['collection-1', makeCollection()]]);
   const specs = await collectActiveSpecs([
     makeScript({ id: 's1', status: 'invalid', errorMessage: 'x' }),
     makeScript({ id: 's2', status: 'missing', enabled: false }),
     makeScript({ id: 's3', status: 'missing', enabled: true }),
     makeScript({ id: 's4' }),
-  ], sources);
+  ], collections);
   assert.deepEqual(specs.map((s) => s.id).sort(), ['s3', 's4']);
 });
 
 test('collectActiveSpecs: skips disabled scripts', async () => {
-  const sources = new Map([['source-1', makeSource()]]);
+  const collections = new Map([['collection-1', makeCollection()]]);
   const specs = await collectActiveSpecs([
     makeScript({ id: 's1', enabled: false }),
     makeScript({ id: 's2' }),
-  ], sources);
+  ], collections);
   assert.deepEqual(specs.map((s) => s.id), ['s2']);
 });
 
-test('collectActiveSpecs: skips every script under a disabled source', async () => {
-  const sources = new Map([['source-1', makeSource({ enabled: false })]]);
+test('collectActiveSpecs: skips every script under a disabled collection', async () => {
+  const collections = new Map([['collection-1', makeCollection({ enabled: false })]]);
   const specs = await collectActiveSpecs([
     makeScript({ id: 's1' }),
     makeScript({ id: 's2' }),
-  ], sources);
+  ], collections);
   assert.deepEqual(specs.map((s) => s.id), []);
 });
 
-test('collectActiveSpecs: skips scripts whose source is missing entirely', async () => {
-  const sources = new Map();
-  const specs = await collectActiveSpecs([makeScript()], sources);
+test('collectActiveSpecs: skips scripts whose collection is missing entirely', async () => {
+  const collections = new Map();
+  const specs = await collectActiveSpecs([makeScript()], collections);
   assert.deepEqual(specs, []);
 });
 
 test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', async () => {
   const script = makeScript();
   delete script.enabled;
-  const source = makeSource();
-  delete source.enabled;
-  const specs = await collectActiveSpecs([script], new Map([['source-1', source]]));
+  const collection = makeCollection();
+  delete collection.enabled;
+  const specs = await collectActiveSpecs([script], new Map([['collection-1', collection]]));
   assert.equal(specs.length, 1);
 });
 
@@ -1731,7 +1731,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
 
 // ---------- registerWithFallback: the REJECTED state the UI renders ----------
 //
-// The rejection map in session storage is what the sources page and the
+// The rejection map in session storage is what the collections page and the
 // viewer read to show REJECTED. It has to describe the CURRENT
 // registration set, not the history of everything ever refused.
 
@@ -1797,7 +1797,7 @@ const {
 function seedStore(scriptId) {
   const script = {
     id: scriptId,
-    sourceId: 'src-1',
+    collectionId: 'src-1',
     relativePath: `bad-${scriptId}.user.js`,
     status: 'ok',
     enabled: true,
@@ -1810,10 +1810,10 @@ function seedStore(scriptId) {
     header: { tags: [{ tag: 'name', value: 'Bad' }], startLine: 1 },
   };
   localStore.set(`script:${scriptId}`, script);
-  const source = localStore.get('source:src-1')
+  const collection = localStore.get('collection:src-1')
     ?? { id: 'src-1', path: '/tmp/x', enabled: true, scriptIds: [] };
-  if (!source.scriptIds.includes(scriptId)) source.scriptIds.push(scriptId);
-  localStore.set('source:src-1', source);
+  if (!collection.scriptIds.includes(scriptId)) collection.scriptIds.push(scriptId);
+  localStore.set('collection:src-1', collection);
 }
 
 test('retryRejectedRegistrations: rate-limits automatic retries, not clicks', async () => {
@@ -2012,7 +2012,7 @@ test('syncRegistrations: a batch unregister that fails drops the ids one at a ti
 test('registerWithFallback: an id Chrome already holds is replaced, not reported', async (t) => {
   t.after(resetUserScriptStubs);
   // The cross-context race the per-context lock cannot cover: the
-  // sources page and the viewer run the retry in their own JS context,
+  // collections page and the viewer run the retry in their own JS context,
   // so a page-side retry can place a script between the SW sync's
   // unregister-all and its register-all. Chrome then answers the
   // sync's batch with "Duplicate script ID", and re-offering the spec

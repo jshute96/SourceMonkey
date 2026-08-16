@@ -63,7 +63,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -101,7 +101,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -144,7 +144,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -182,7 +182,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -222,7 +222,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -263,7 +263,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         handle.abort();
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -303,7 +303,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -338,7 +338,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         document.body.dataset.smXhrType = typeof GM_xmlhttpRequest;
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
