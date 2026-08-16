@@ -44,6 +44,7 @@ import {
   refreshScript,
   refreshCollection,
   setVersionProbes,
+  type ParseCheckMode,
   type StartupLog,
   type StoredScript,
   type StoredCollection,
@@ -150,12 +151,38 @@ const ALL_COLLECTIONS_KEY = '*';
 // `manual` as "the user asked, check upstream now" would fire a
 // third-party request per script per reload. Only a genuine Refresh
 // click passes `'force'`.
+//
+// `parseCheck` follows one rule, and it is deliberately not the same
+// axis as `mode`: **a navigation-triggered check never waits for a
+// parse verdict; a user-initiated one does.** Both of this module's
+// navigation callers therefore pass 'defer' — the reload fast path,
+// which has a wrapper in the page blocked on the answer, and the
+// opportunistic sweep, which has nobody waiting at all.
+//
+// The rule has to be uniform because `gate()` coalesces regardless of
+// mode, and both of those callers are queued off the same
+// `onCommitted`. If one of them waited for the verdict, whichever
+// reached the gate first would decide for both — so the fast path
+// would silently pay the check on exactly the first reload after an
+// idle gap, which is the ordinary edit-save-reload loop.
+//
+// The same coalescing would let a user-initiated check inherit a
+// verdict-less row. What stops it today is context, not the gate:
+// every user-initiated single-script check runs in the page that
+// clicked (see docs/parse-check.md on where checkers are installed),
+// and that page has its own `scriptState` map. Add an SW-side Refresh
+// entry point and this stops being true — a caller that must have the
+// verdict would then need it enforced here rather than assumed.
 export function updateScript(
   scriptId: string,
   mode: UpdateMode,
   probe: ProbePolicy = 'if-stale',
+  parseCheck: ParseCheckMode = 'await',
 ): Promise<StoredScript | null> {
-  return gate(scriptState, scriptId, mode, () => runScriptCheck(scriptId, mode, probe), null);
+  return gate(
+    scriptState, scriptId, mode,
+    () => runScriptCheck(scriptId, mode, probe, parseCheck), null,
+  );
 }
 
 // Only ever reached from a Refresh button, so probes force by default.
@@ -208,6 +235,7 @@ async function runScriptCheck(
   scriptId: string,
   mode: UpdateMode,
   probe: ProbePolicy,
+  parseCheck: ParseCheckMode = 'await',
 ): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
   const label = getScriptLogLabel(scriptId);
@@ -225,7 +253,7 @@ async function runScriptCheck(
   // above still brackets the work for anyone watching it live.
   let next: StoredScript | null;
   try {
-    next = await refreshScript(scriptId, { recheckFiles: fileRecheckMode(mode) });
+    next = await refreshScript(scriptId, { recheckFiles: fileRecheckMode(mode), parseCheck });
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] update check failed: ${label}: ${msg}`);
@@ -937,7 +965,11 @@ export function requestOpportunisticScriptChecks(scriptIds: string[]): void {
   for (const id of scriptIds) {
     // Swallow rejections — opportunistic work shouldn't ever surface a
     // user-visible error; the failure was already logged by the fetch.
-    updateScript(id, 'opportunistic').catch(() => {});
+    //
+    // `'defer'`: navigation-triggered, so it doesn't wait for the parse
+    // verdict — and this call and the reload fast path's coalesce onto
+    // whichever of them reaches the gate first. See `updateScript`.
+    updateScript(id, 'opportunistic', 'if-stale', 'defer').catch(() => {});
   }
 }
 

@@ -160,6 +160,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
+| `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/collections.spec.ts` | Collection lifecycle (add/refresh/remove) via the real file:// scan pipeline |
 | `tests/e2e/live-updates.spec.ts` | Live watchers: collections page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
 | `tests/e2e/container-collections.spec.ts` | Container-collection lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |

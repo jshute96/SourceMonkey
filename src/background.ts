@@ -1406,7 +1406,13 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
         // proceeds fresh) or it's in-flight (and our manual call
         // coalesces onto the same promise). Either way our `entry`
         // observes the real refresh result; the ordering is benign.
-        entry.promise = updateScript(m.id, 'manual').then(
+        // `parseCheck: 'defer'` — the check is a diagnostic, and it was
+        // most of this path's measured cost (a compile in the offscreen
+        // document, plus opening that document on the first check of a
+        // session). It still runs, right after the refresh's own write;
+        // what changes is that the wrapper is answered without it. See
+        // docs/injection.md#reload-fast-path.
+        entry.promise = updateScript(m.id, 'manual', 'if-stale', 'defer').then(
           (r) => {
             entry.settled = true;
             entry.result = r;
@@ -1561,6 +1567,21 @@ async function handleCheckPending(
     refreshed = winner;
   }
   if (!refreshed) return { action: 'run' };
+  // `status` is the refresh's verdict on everything it waited for —
+  // the fetch, the header, the `@require`s. It does NOT include the
+  // parse check, which this path defers (see setupReloadFastPath), so
+  // an edit that just introduced a syntax error reads as `ok` here and
+  // IS swapped in. That is deliberate: the check has always been
+  // allowed to fail open, and a developer who just typed the error
+  // wants to see it rather than watch the previous version run.
+  //
+  // It is not silent either. The seal entry is NOT what reports it —
+  // the seal rides on the REGISTERED program, which here is the
+  // previous, parsing body — so what reports it is the try/catch around
+  // the swap eval in `userscript-prelude.js`, which sends `sm:error`
+  // and turns the badge red. The deferred verdict then lands and flips
+  // the row to `invalid`, so the script is unregistered for the next
+  // navigation.
   if (refreshed.status !== 'ok') return { action: 'run' };
   if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
   // A refresh can move a script between worlds in either direction:

@@ -223,6 +223,105 @@ whose content didn't move reuses the prior verdict.
   later refresh re-derives the verdict rather than inheriting a stale
   pass.
 
+## Deferring the check on the reload fast path
+
+The check is a **diagnostic**, and one caller cannot afford to wait for
+it: the reload fast path has a wrapper in the page blocking on its
+reply, with a 500 ms budget the check's round trip was consuming most
+of. See [injection.md](injection.md#parse-check-off-the-critical-path).
+
+`ParseCheckMode` is how that caller says so:
+
+- **`'await'`** — the default, and what every other caller uses. The
+  verdict is part of the row the pipeline returns.
+- **`'defer'`** — `applyParseCheck` returns the row with no
+  `parseCheckedHash`, which is the same state a row is in when the
+  check couldn't run at all. `refreshScript` then calls
+  `checkParsesInBackground` on the row it wrote, and does not await it.
+
+Who picks which is decided by the trigger, not the caller:
+
+- **Navigation-triggered checks defer; user-initiated ones wait.**
+- The opportunistic sweep therefore defers too — see
+  [injection.md](injection.md#parse-check-off-the-critical-path) for
+  why a split rule wouldn't hold.
+- The cached-verdict short-circuit still applies first, so a deferring
+  caller only leaves a row unchecked when the content actually changed.
+
+**Except where the verdict wouldn't land on the row anyway.**
+`keepsPriorOnInvalid` — an http(s) entry with a prior `ok` copy — is
+the one place a parse failure is recorded as a *refresh* failure
+instead:
+
+- That rule reads the status the pipeline returns, so a verdict
+  arriving after it has run would replace a working script with a login
+  page and flag it `invalid`.
+- `rebuildCollection` therefore decides `'defer'` **per entry**, off
+  that same predicate.
+- A `file://` edit is flagged immediately whichever mode ran, which is
+  what makes deferring outcome-preserving there.
+
+### How a late verdict is written
+
+`checkParsesInBackground` delegates to `verifyParseChecks`, rather than
+opening a second write path. That function already survives exactly
+this race, because the pass before registration has it too:
+
+- It **re-reads the row inside the write lock** and refuses the verdict
+  when `parseCheckKey` no longer matches — a newer refresh's content is
+  not what we judged.
+- It also refuses when the stored row is **no longer `ok`**. The
+  fingerprint doesn't catch that on its own: `applyMissing` preserves
+  the content it is made of, so a verdict landing after a vanished file
+  would otherwise resurrect the row as `ok`.
+- **A refused verdict still hands the caller the stored row**, rather
+  than nothing. A caller that gets nothing back keeps the copy it read
+  *before* the check — which is the row that still says `ok`, and
+  registering that is the exact failure this gate exists to prevent.
+- It merges only the verdict's own fields onto the row as it now
+  stands, so a concurrent `enabled` toggle or version probe isn't
+  rolled back.
+- A row it writes as no longer runnable gets a Log entry (`source:
+  parser`). Emitted here, by whichever pass won the write, because by
+  then the refresh that would normally have reported it has finished.
+
+Two things a user sees change when the verdict is deferred:
+
+- **The Log shows a pair, not a single line.**
+  `emitScriptOutcomeLog` runs against the verdict-less row, reads it as
+  healthy, and writes `Loaded new content (N bytes)`; the verdict then
+  appends the syntax error underneath. The awaited path wrote one
+  `invalid` entry and no "loaded" line.
+- **The `source` moved.** That error arrives as `parser` rather than
+  `manual-refresh` / `background-refresh`, so a Log tab filtered by
+  source shows it somewhere else — including in the ordinary
+  edit-save-reload loop, which is now a deferring path end to end.
+
+### One compile, not two
+
+Deferring leaves the row without a `parseCheckedHash`, so the
+registration gate finds it stale and would compile the same bytes a
+second time — concurrently, since the refresh's own write is what
+scheduled that sync.
+
+`verifyParseChecks` keys checks in flight by row id **plus**
+fingerprint, and a pass that finds one already running joins it and
+takes its result. Same row, moved again, is a different key and
+therefore different work.
+
+### If the worker dies first
+
+The row stays unchecked, and that is all: it carries no
+`parseCheckedHash`, so the gate below finds it stale on any later sync
+and derives the verdict before Chrome is offered the body. Timeliness
+is what's lost, not the check.
+
+Don't lean on "the refresh's write scheduled a sync" for this. A
+refresh that finds the content unchanged skips the write entirely
+(`sameStoredValue`) — which is exactly the state a defer leaves behind
+after an extension-version bump, since the version is part of
+`parseCheckKey`.
+
 ## The gate before registration
 
 The load pipeline only checks rows it is *building*. A row stored
@@ -434,6 +533,9 @@ See [offline-validation.md](offline-validation.md).
 - `tests/e2e/parse-check-install.spec.ts` — what a user sees.
 - `tests/e2e/parse-check-pages.spec.ts` — the page-driven paths, via
   the real Install / Refresh / Refresh All buttons.
+- `tests/e2e/reload-fast-path-parse-check.spec.ts` — the deferred mode:
+  a fresh body reaches the page on one reload with the verdict still
+  outstanding, and a broken edit is swapped in and then flips the row.
 - `sm.setParseCheckEnabled(false)` turns the check off so a test can
   drive an unparsable script all the way to injection and exercise the
   run-time backstop.

@@ -626,10 +626,11 @@ and debug logging adds a phase breakdown per script — see
 What the first measurements found, on a 3-script page with an edited
 local file:
 
-- **The parse check dominates a changed script** — 448 of a 450 ms
+- **The parse check dominated a changed script** — 448 of a 450 ms
   `rebuild`. It only runs for content that changed, and it pays to open
   an offscreen document; the run right after an extension update, which
-  invalidates every cached verdict, cost 2306 ms.
+  invalidates every cached verdict, cost 2306 ms. Taken off this path —
+  see [Parse check off the critical path](#parse-check-off-the-critical-path).
 - **The batch duplicates its own work.** Scripts matching the same page
   usually share a collection and a folder, and each check re-reads that
   row and re-lists that directory. On one thread the duplicates land in
@@ -641,6 +642,73 @@ local file:
 - The registration sync a refresh triggers is **not** awaited here (the
   swap hands the body over directly), but it reads every row in storage
   and competes for the same thread.
+
+### Parse check off the critical path
+
+`setupReloadFastPath` calls `updateScript(..., parseCheck: 'defer')`.
+The refresh reads, hashes and composes the fresh row as before, but
+hands it back **without** the compile-only verdict, so the reply can go
+out while the check is still to come.
+
+- The check still runs: `refreshScript` calls
+  `checkParsesInBackground` on the row it just wrote, and the verdict
+  is merged in when it lands. See
+  [parse-check.md](parse-check.md#deferring-the-check-on-the-reload-fast-path).
+- **Navigation-triggered checks defer; user-initiated ones wait.** The
+  opportunistic sweep passes `'defer'` too. It has to: it is queued off
+  the same `onCommitted`, and `gate()` coalesces the two calls
+  regardless of which arrives first, so a split rule would let the
+  opportunistic call decide for the fast path. Install, the Refresh
+  buttons, Refresh All and the offline CLI all wait for the verdict.
+- Content that didn't move still costs nothing either way — the
+  `parseCheckedHash` short-circuit is applied before the mode is
+  consulted.
+- **An http(s) entry with a prior good copy still waits**, whatever the
+  trigger. Deferring its verdict would defeat the "a 200 that doesn't
+  parse is a login page, keep the prior copy" rule — see
+  [parse-check.md](parse-check.md#deferring-the-check-on-the-reload-fast-path).
+
+#### What it costs
+
+- **One extra row write** per *changed* script, carrying the verdict,
+  plus the sync that write schedules. Both land after the reply.
+- **Not an extra compile.** The row is written without a
+  `parseCheckedHash`, so the registration gate would find it stale and
+  compile the same bytes again — `verifyParseChecks` therefore joins a
+  check already in flight for the same row and fingerprint instead of
+  starting a second one.
+- **The sync can wait where the reply no longer does.** That compile
+  has to finish before Chrome is offered the body (see
+  [parse-check.md](parse-check.md#the-gate-before-registration)), so
+  deferring moves it off the wrapper's critical path, not off the
+  navigation's entirely. What the user notices is the swap; the sync
+  only decides what the NEXT navigation gets.
+
+#### A broken edit gets swapped in
+
+`handleCheckPending` gates the swap on `status === 'ok'`, and with the
+verdict outstanding a body with a syntax error reads as `ok`. So the
+new body IS handed over, and it throws in the page instead of the
+previous version quietly continuing to run.
+
+- **That is the intended behaviour.** The check has always been allowed
+  to fail open (no offscreen document, sandbox unavailable → the row
+  stays `ok`), and this is the same state for a shorter time.
+- **It is reported, but not by the seal entry.** The seal rides on the
+  *registered* program, which on this path is the previous body — it
+  parses, so the seal never fires. The `try`/`catch` around the swap
+  eval in `userscript-prelude.js` is what catches the `SyntaxError`; it
+  sends `sm:error`, which turns the badge red and writes the Log entry.
+- A developer who just typed the error is better served seeing it than
+  watching the version before it run.
+- The window is one navigation wide: the deferred verdict flips the row
+  to `invalid`, which unregisters the script for the next one.
+- **An `invalid` row doesn't heal on its own.** It leaves the match
+  index (`toEntry` admits only `ok` / `missing`), so neither the reload
+  fast path nor the opportunistic check looks at that script again —
+  fixing the file on disk takes a Refresh, on the collections page or
+  in the viewer. Pre-existing, and more visible now that `invalid` is a
+  normal step in the edit loop.
 
 ### Snapshot piggyback for storage-granting scripts
 

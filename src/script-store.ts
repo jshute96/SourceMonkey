@@ -832,6 +832,10 @@ export async function applyFiles(
   // to false so the offline validator (and any other caller outside the
   // extension) keeps the plain declared-URL behavior.
   useLocalFiles = false,
+  // Whether to wait for the parse verdict before returning. Defaults to
+  // 'await' so every caller that hasn't thought about it keeps today's
+  // behavior; see `ParseCheckMode`.
+  parseCheck: ParseCheckMode = 'await',
 ): Promise<StoredScript> {
   const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
   const priorResources = new Map((prior?.resources ?? []).map((r) => [r.url, r]));
@@ -872,7 +876,7 @@ export async function applyFiles(
       // The check itself is usually free on this path: the deps are
       // the prior's by construction, so the fingerprint matches unless
       // the BODY changed — which is exactly when a re-check is right.
-      return timePhase('parse-check', () => applyParseCheck(built, prior));
+      return timePhase('parse-check', () => applyParseCheck(built, prior, parseCheck));
     }
   }
   const result = await timePhase('deps', () => attachFiles({
@@ -920,7 +924,7 @@ export async function applyFiles(
   else delete built.requires;
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
-  return timePhase('parse-check', () => applyParseCheck(built, prior));
+  return timePhase('parse-check', () => applyParseCheck(built, prior, parseCheck));
 }
 
 // ---------- Parse check hook ----------
@@ -943,6 +947,26 @@ export async function applyFiles(
 // never as a design — a row left unchecked carries no
 // `parseCheckedHash`, so the next refresh re-derives it.
 export type ParseChecker = (script: StoredScript) => Promise<ParseVerdict | null>;
+
+// Does the load pipeline wait for the verdict, or hand the row back
+// without one?
+//
+//   - 'await'  — the verdict is part of the row the caller receives.
+//                Everything a user is watching (Install, the Refresh
+//                buttons, Refresh All, the offline CLI) uses this.
+//   - 'defer'  — skip the round trip, return the row unchecked, and let
+//                the caller run the check afterwards
+//                (`checkParsesInBackground`). The row keeps no
+//                `parseCheckedHash`, so it reads as "never checked" to
+//                everything downstream — including the gate in
+//                `verifyParseChecks` that runs before registration.
+//
+// 'defer' exists for one caller: the reload fast path, where a wrapper
+// in the page is blocking on the reply and the check's round trip (a
+// compile in the offscreen document, plus opening that document the
+// first time) is most of the budget. See
+// [docs/injection.md](../docs/injection.md#reload-fast-path).
+export type ParseCheckMode = 'await' | 'defer';
 
 let parseChecker: ParseChecker | null = null;
 
@@ -1010,6 +1034,7 @@ function extensionVersion(): string {
 async function applyParseCheck(
   built: StoredScript,
   prior: StoredScript | undefined,
+  mode: ParseCheckMode = 'await',
 ): Promise<StoredScript> {
   // Nothing to check on a row that already failed for another reason
   // (missing file, bad header) — there may be no body at all.
@@ -1017,11 +1042,19 @@ async function applyParseCheck(
   const key = parseCheckKey(built);
   // Unchanged since the last check, so the previous verdict still
   // holds. This is what keeps opportunistic refreshes from paying a
-  // round trip per script for content that didn't move.
+  // round trip per script for content that didn't move. Applies in
+  // 'defer' mode too — reusing a cached verdict costs nothing, so a
+  // deferring caller only leaves the row unchecked when the content
+  // really moved.
   if (prior?.parseCheckedHash === key && prior.status === 'ok') {
     built.parseCheckedHash = key;
     return built;
   }
+  // Deferred: return the row with no `parseCheckedHash`, which is the
+  // same state a row is in when the check couldn't run. The caller runs
+  // `checkParsesInBackground` after its write, and `verifyParseChecks`
+  // catches the row before registration either way.
+  if (mode === 'defer') return built;
   if (!parseChecker) return built;
   let verdict: ParseVerdict | null;
   try {
@@ -1101,8 +1134,21 @@ function applyVerdictFields(current: StoredScript, checked: StoredScript): Store
 //
 // Caller passes the rows it is about to register — checking a
 // disabled script would spend a round trip on code nothing will run.
-// Returns the rows that CHANGED, keyed by id, so the caller can swap
-// them into the set it holds.
+//
+// Returns, keyed by id, the rows whose STORED state differs from the
+// copy the caller passed in — the ones this pass wrote, and the ones it
+// refused to write because someone else had already moved the row. The
+// caller's job is the same either way: swap ours in. Returning only the
+// rows we WROTE is what made the refusal branches below a bug —
+// `revalidateCandidates` falls back to the snapshot it read before the
+// check, which is the row that still says `ok`, and registers the very
+// body we just declined to write a verdict over.
+//
+// One case is deliberately not covered: a row DELETED while the check
+// was out is absent from the result, because there is no stored row to
+// hand back. The caller keeps its snapshot and registers a script that
+// no longer exists for one cycle, until the write that deleted it
+// schedules the sync that drops it.
 //
 // Fails open exactly like the pipeline check: no checker, an
 // inconclusive verdict, or a throw all leave the row alone.
@@ -1123,37 +1169,101 @@ export async function verifyParseChecks(
     (s) => s.status === 'ok' && s.parseCheckedHash !== parseCheckKey(s),
   );
   if (stale.length === 0) return changed;
+  // Rows another pass is already compiling are joined rather than
+  // compiled again. Both entry points reach the same bytes on the
+  // reload path — the deferred check the refresh started, and the sync
+  // that same refresh's write scheduled — and a compile is the
+  // expensive part of this whole feature. See `inFlightChecks`.
+  const own: StoredScript[] = [];
+  const joined: Promise<void>[] = [];
+  for (const s of stale) {
+    const running = inFlightChecks.get(inFlightCheckKey(s));
+    if (running) joined.push(running.then((row) => { if (row) changed.set(s.id, row); }));
+    else own.push(s);
+  }
+  // Declared out here and filled inside the `try` so a throw partway
+  // through the claim loop still reaches the `finally` that settles it.
+  // A claimed key with no resolver would wedge every later pass over
+  // that row on a promise that never settles. (`const settle =` inside
+  // the `try` cannot work — the `finally` would read it in its TDZ.)
+  const settle = new Map<string, InFlightCheck>();
+  try {
+    claimInFlightChecks(own, settle);
+    await Promise.all([runOwnParseChecks(own, changed), ...joined]);
+  } finally {
+    // Resolve with the row as it now stands so a joiner gets what a
+    // caller of its own would have got — including the refusal cases,
+    // where the row we hand back is someone else's write rather than
+    // ours. A throw resolves them with the input row, which is what
+    // "nothing was recorded" looks like to every reader.
+    for (const [key, entry] of settle) {
+      entry.resolve(changed.get(entry.id) ?? null);
+      inFlightChecks.delete(key);
+    }
+  }
+  return changed;
+}
+
+// The compile-and-store half of `verifyParseChecks`, for the rows this
+// call owns. Fills `changed` in place.
+async function runOwnParseChecks(
+  own: StoredScript[],
+  changed: Map<string, StoredScript>,
+): Promise<void> {
+  if (own.length === 0) return;
   // `prior` is deliberately undefined: the short-circuit it exists for
-  // is the one the filter above already applied.
+  // is the one the staleness filter already applied.
   //
-  // Capped rather than `Promise.all`: `stale` is normally empty or
-  // tiny, but the first sync after an extension update finds the whole
+  // Capped rather than `Promise.all`: `own` is normally empty or tiny,
+  // but the first sync after an extension update finds the whole
   // library stale at once (the version is part of the key), and each
   // compile composes a whole program in memory.
   const checked = await mapWithConcurrency(
-    stale,
+    own,
     PARSE_RECHECK_CONCURRENCY,
     (s) => applyParseCheck({ ...s }, undefined),
   );
+  const verdicts = new Map<string, StoredScript>();
   for (const next of checked) {
     // Nothing to record when the check couldn't decide — no verdict,
     // no fingerprint, and the row is untouched.
     if (next.status === 'ok' && !next.parseCheckedHash) continue;
-    changed.set(next.id, next);
+    verdicts.set(next.id, next);
   }
-  if (changed.size === 0) return changed;
+  if (verdicts.size === 0) return;
+  // Rows this pass wrote and that can no longer run. Collected inside
+  // the lock, reported outside it — a Log append is not storage-row
+  // work and has its own queue.
+  const flipped: StoredScript[] = [];
   await mutate(async () => {
-    const keys = [...changed.keys()].map(scriptKey);
+    const keys = [...verdicts.keys()].map(scriptKey);
     const got = await getMany(keys);
     const toSet: Record<string, unknown> = {};
-    for (const [id, next] of changed) {
+    for (const [id, next] of verdicts) {
       // Re-read rather than trusting the copy we checked: the check is
       // a round trip to another context, and a refresh could have
       // rewritten the row while it was out. A row whose fingerprint
       // inputs moved is one our verdict is no longer about.
       const current = got[scriptKey(id)] as StoredScript | undefined;
-      if (!current || parseCheckKey(current) !== parseCheckKey(next)) {
-        changed.delete(id);
+      // The row was deleted while the check was out. Nothing to write
+      // and nothing to hand back — a row that isn't stored is not a row
+      // the caller can be given a fresher copy of.
+      if (!current) continue;
+      if (parseCheckKey(current) !== parseCheckKey(next)) {
+        // Refused, not dropped: the caller is holding a copy from
+        // before this row moved, and letting it fall back to that is
+        // how an unchecked body gets registered.
+        changed.set(id, current);
+        continue;
+      }
+      // The verdict was formed against a row that was `ok`. A row that
+      // has since left that state left it for a reason this check knows
+      // nothing about — the file vanished, a `@require` stopped loading
+      // — and writing our `status` over it would resurrect a state that
+      // is no longer true. The fingerprint alone doesn't catch this:
+      // `applyMissing` preserves the content the fingerprint is made of.
+      if (current.status !== 'ok') {
+        changed.set(id, current);
         continue;
       }
       // Merge the verdict ONTO the row we just read, rather than
@@ -1164,16 +1274,122 @@ export async function verifyParseChecks(
       const merged = applyVerdictFields(current, next);
       changed.set(id, merged);
       toSet[scriptKey(id)] = merged;
+      if (merged.status !== 'ok') flipped.push(merged);
     }
     if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
   });
-  return changed;
+  // Say so in the Log. This lives here rather than at a caller because
+  // whichever pass wins the write is the one that knows — the deferred
+  // check, the sync's gate before registration, or a later sync after
+  // the worker was evicted mid-check. Keyed off what was WRITTEN, so a
+  // refused verdict stays quiet rather than announcing a state it
+  // didn't put there.
+  for (const row of flipped) {
+    const entry = loadStateLogEntry(row);
+    if (entry) void appendScriptLog(row.id, { ...entry, source: 'parser' });
+  }
+}
+
+// Parse checks in flight, keyed by row id + fingerprint, so two passes
+// over the same bytes compile once. The reload path produces exactly
+// that overlap by design: the refresh defers its check and starts one
+// here, and its storage write schedules a sync whose registration gate
+// finds the same row unchecked ~50 ms later.
+//
+// Keyed on the fingerprint as well as the id because a row that moved
+// again is different work, not the same work twice.
+//
+// Per JS context, like every other module-level table here: the viewer
+// and the collections page import this module into their own contexts
+// and get their own map. Nothing is wrong with that — each context has
+// its own checker and its own sandbox — it just means the dedupe is
+// within a context, not across the extension.
+interface InFlightCheck {
+  id: string;
+  resolve: (row: StoredScript | null) => void;
+}
+const inFlightChecks = new Map<string, Promise<StoredScript | null>>();
+const inFlightCheckKey = (s: StoredScript): string => `${s.id}|${parseCheckKey(s)}`;
+
+// Register `own` as in flight, recording into `settle` the resolvers the
+// caller must settle when it is done. Claimed synchronously, before the
+// first await, so a pass starting later in the same turn joins rather
+// than duplicating.
+//
+// Fills a caller-owned map rather than returning one so a throw
+// mid-loop still leaves the caller holding what was claimed so far —
+// see the `finally` in `verifyParseChecks`.
+function claimInFlightChecks(
+  own: StoredScript[],
+  settle: Map<string, InFlightCheck>,
+): void {
+  for (const s of own) {
+    const key = inFlightCheckKey(s);
+    if (inFlightChecks.has(key)) continue;   // same row twice in one call
+    let resolve!: (row: StoredScript | null) => void;
+    inFlightChecks.set(key, new Promise<StoredScript | null>((r) => { resolve = r; }));
+    settle.set(key, { id: s.id, resolve });
+  }
+}
+
+// No reset hook for `inFlightChecks`, unlike the other worker module
+// state `resetAllState` clears by name: an entry only exists while a
+// check is running and its `finally` removes it, so there is nothing
+// for a storage wipe to strand. A wipe landing mid-check leaves at most
+// one already-started compile whose write is refused when the row it
+// judged is gone.
+
+// Run the check a `ParseCheckMode: 'defer'` refresh skipped, after that
+// refresh has already stored its row. Not awaited by its caller — the
+// point of deferring is that nothing waits for the verdict.
+//
+// `verifyParseChecks` is the whole implementation: it re-reads the row
+// inside the write lock, refuses to apply a verdict the row has moved
+// out from under, and merges only the verdict's own fields. That is
+// exactly the race a late verdict has to survive, so this deliberately
+// does not open a second path to the same write.
+//
+// If the worker dies before the verdict lands, the row simply stays
+// unchecked: it carries no `parseCheckedHash`, so the gate every
+// registration sync runs (`revalidateCandidates` in injector.ts) finds
+// it stale and derives the verdict before Chrome is offered the body.
+// What is lost is timeliness, not the check.
+export function checkParsesInBackground(script: StoredScript): void {
+  if (script.status !== 'ok') return;
+  if (script.parseCheckedHash === parseCheckKey(script)) return;
+  void verifyParseChecks([script]).catch((err) => {
+    // Same failing-open contract as the pipeline check: the row stays
+    // unchecked, and the gate before registration asks again.
+    dlog(`[SourceMonkey] deferred parse check failed for ${script.relativePath}: ${describeError(err)}`);
+  });
 }
 
 interface ScanEntry {
   relativePath: string;
   size?: number;
   mtime?: number;
+}
+
+// Does an `invalid` parse of this entry keep the PRIOR copy running,
+// rather than becoming the row's new state?
+//
+// True for an http(s) entry with a prior `ok` copy: a 200 that doesn't
+// parse is usually a login or error page served in place of the script,
+// so it is a *refresh* failure (`refreshError`, still injecting the
+// cached body) and not a content replacement. A `file://` read returns
+// the file's real bytes, so an `invalid` parse there is a genuine local
+// edit the user wants flagged immediately.
+//
+// One predicate, two readers: the rule itself in `rebuildCollection`,
+// and the decision about whether that entry's parse check may be
+// deferred. Deferring is only safe where the verdict lands on the row
+// directly, so the two have to answer the same question — hence one
+// function rather than two spellings of it 60 lines apart.
+function keepsPriorOnInvalid(
+  fileUrl: string,
+  prior: StoredScript | undefined,
+): prior is StoredScript {
+  return isHttpUrl(fileUrl) && prior?.status === 'ok';
 }
 
 interface RebuildArgs {
@@ -1209,6 +1425,10 @@ interface RebuildArgs {
   // from each script's own `fileUrl`. Defaults to false so a caller that
   // hasn't thought about it gets the declared-URL-only behavior.
   useLocalFiles?: boolean;
+  // Whether the rows this returns carry a parse verdict. Defaults to
+  // 'await'; see `ParseCheckMode`. A 'defer' caller owes the rows a
+  // `checkParsesInBackground` after it has written them.
+  parseCheck?: ParseCheckMode;
 }
 
 // Pure orchestrator: given the prior state for a collection plus a
@@ -1229,6 +1449,17 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   const recheckFiles = args.recheckFiles ?? 'all';
   const fileFetchCache: FileFetchCache = args.fileFetchCache ?? new Map();
   const useLocalFiles = args.useLocalFiles ?? false;
+  const parseCheck = args.parseCheck ?? 'await';
+  // Deferring is only safe where the deferred verdict does exactly what
+  // an awaited one would have done — and where `keepsPriorOnInvalid`
+  // holds it would not, because that rule reads the status the pipeline
+  // hands back and a verdict arriving after it has run would replace a
+  // working script with the garbage instead of preserving it. Same
+  // predicate as the rule itself, so the two cannot drift apart.
+  const parseCheckFor = (
+    fileUrl: string, prior: StoredScript | undefined,
+  ): ParseCheckMode =>
+    parseCheck === 'defer' && !keepsPriorOnInvalid(fileUrl, prior) ? 'defer' : 'await';
   const existingByPath = new Map<string, StoredScript>();
   for (const e of args.existing) existingByPath.set(e.relativePath, e);
 
@@ -1273,20 +1504,13 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // Record the listing's mtime so the next refresh can decide to
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
-        const withFiles = await applyFiles(built, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles);
-        // Soft-failure preservation: an http(s) fetch that returned 200
-        // but parsed `invalid`, when we have a prior `ok` copy, is a
-        // refresh failure — a login / error page served in place of the
-        // script — not a real content replacement. Keep the prior good
-        // body running and annotate `refreshError` instead of clobbering
-        // it with the garbage. Scoped to http(s): a file:// read returns
-        // the file's real bytes, so an `invalid` parse there is a genuine
-        // local edit the user wants to see flagged immediately.
-        if (
-          withFiles.status === 'invalid' &&
-          prior && prior.status === 'ok' &&
-          isHttpUrl(fileUrl)
-        ) {
+        const withFiles = await applyFiles(
+          built, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles,
+          parseCheckFor(fileUrl, prior));
+        // Soft-failure preservation — see `keepsPriorOnInvalid`. Keep
+        // the prior good body running and annotate `refreshError`
+        // instead of clobbering it with what came back.
+        if (withFiles.status === 'invalid' && keepsPriorOnInvalid(fileUrl, prior)) {
           return {
             ...prior,
             // Described, not bare: `refreshError` is a plain string
@@ -1332,7 +1556,9 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // script). The opportunistic path passes 'preserve' which
         // short-circuits.
         entryTasks.push(
-          () => applyFiles(next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles),
+          () => applyFiles(
+            next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles,
+            parseCheckFor(fileUrl, prior)),
         );
       } else {
         entryTasks.push(() => Promise.resolve(buildInitialInvalidEntry({
@@ -2176,6 +2402,14 @@ export async function refreshCollection(
   }
 }
 
+// Only the single-script path can defer the parse check: it is the one
+// with a caller (the reload fast path) that a page is blocking on, and
+// deferring means one row to re-check afterwards rather than a
+// collection's worth.
+export interface ScriptRefreshOptions extends RefreshOptions {
+  parseCheck?: ParseCheckMode;
+}
+
 // Refetch a single script. Goes through the same per-file pipeline as
 // the directory-level Refresh (fetchOrSkipInParallel →
 // rebuildCollection) so the two paths can't drift — same skip rules,
@@ -2194,7 +2428,7 @@ export async function refreshCollection(
 // collection-refresh timer's so the two lines read the same way.
 export async function refreshScript(
   scriptId: string,
-  opts: RefreshOptions = {},
+  opts: ScriptRefreshOptions = {},
 ): Promise<StoredScript | null> {
   const timer = startPhaseTimer('script check');
   // Two point reads, necessarily in series: the collection key comes
@@ -2270,6 +2504,7 @@ export async function refreshScript(
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
     useLocalFiles: collectionUsesLocalFiles(collectionRow),
+    parseCheck: opts.parseCheck,
   });
   const next = result[0];
   if (!next) return null;
@@ -2295,6 +2530,18 @@ export async function refreshScript(
   });
   timer.mark('write');
   timer.done();
+  // Deferred check, started AFTER the write and deliberately not
+  // awaited: the caller that asked to defer is one a page is waiting
+  // on. Started from the row as written, so the verdict is judged
+  // against what is actually stored.
+  //
+  // Asks about the row rather than about the mode the ENTRY ran in, so
+  // an http(s) entry that `rebuildCollection` downgraded to `'await'`
+  // reaches here too. It is a no-op unless that awaited check failed
+  // open, in which case this retries it — one extra compile the pure-
+  // await path wouldn't have made, on a row that genuinely has no
+  // verdict. Not worth plumbing the per-entry decision back out for.
+  if (opts.parseCheck === 'defer') checkParsesInBackground(written);
   return written;
 }
 

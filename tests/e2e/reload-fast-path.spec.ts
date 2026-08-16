@@ -381,6 +381,14 @@ test.describe('reload fast-path', () => {
     });
     await page.reload();
     await expect(page).toHaveTitle('v2:no-grants');
+    // Let that reload's own storage write finish re-registering before
+    // the next one starts. `syncRegistrations` unregisters everything
+    // and then registers it back, so a document created inside that
+    // window gets no userscripts at all — which failed this test with
+    // the page's own title rather than any version of the script. The
+    // wait is about the PRECONDITION; what the third reload asserts is
+    // still that the fast path picks up an edit with no explicit sync.
+    await sm.syncNow();
 
     // ...then add the grants back. This reload's wrapper sends
     // needsValues:false; the swapped body needs a snapshot regardless.

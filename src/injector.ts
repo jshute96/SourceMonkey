@@ -1118,7 +1118,12 @@ async function revalidateCandidates(
   }
   if (changed.size === 0) return scripts;
   for (const row of changed.values()) {
-    if (row.status === 'ok') continue;   // re-checked and fine, nothing to say
+    // Says what we're about to DO, so it asks the same question
+    // `collectActiveSpecs` will. `status !== 'ok'` isn't that question:
+    // `verifyParseChecks` also hands back rows it refused to write, and
+    // a `missing` row the user re-enabled is registered from its cached
+    // body — which would print this line and then register it anyway.
+    if (isRegistrationCandidate(row, collections)) continue;
     console.info(
       `[SourceMonkey] not registering ${row.relativePath}: ${row.errorMessage ?? 'it does not parse'}`,
     );
