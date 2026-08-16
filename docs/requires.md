@@ -110,6 +110,10 @@ canonical URL in the same refresh pass share one fetch.
   call site does its own typed assembly.
 - The cache only lives for one top-level refresh; the next refresh
   starts fresh.
+- The [reload fast path](injection.md#shared-work-across-the-batch)
+  gets one too, as part of the `RefreshBatch` it hands its per-script
+  checks — so two scripts on the same page requiring one library fetch
+  it once between them.
 
 ## Failure handling
 

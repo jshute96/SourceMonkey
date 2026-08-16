@@ -116,6 +116,22 @@ export interface SmApi {
   // Sends the all-tabs "re-check your cache" nudge the SW fires when it
   // starts up.
   nudgeGmResync(): Promise<void>;
+  // How many `file://` directory listings the SERVICE WORKER has
+  // fetched successfully since the last reset — cache hits excluded,
+  // and listings done in an extension page not counted at all. A
+  // navigation's checks share one listing across the page's scripts
+  // (see `RefreshBatch` in src/script-store.ts), and this is what makes
+  // that visible.
+  //
+  // Counts collection scans too, so reset around the window under test
+  // rather than assuming a navigation is the only thing listing.
+  getDirectoryListingFetches(): Promise<number>;
+  resetDirectoryListingFetches(): Promise<void>;
+  // The other half of what a batch shares: collection rows
+  // `refreshScript` read from storage, batch hits excluded. Same
+  // scoping caveats as the listing counter.
+  getCollectionRowReads(): Promise<number>;
+  resetCollectionRowReads(): Promise<void>;
 }
 
 export interface ActionMenuPlanLike {

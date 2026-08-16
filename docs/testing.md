@@ -189,6 +189,13 @@ tests:
   every userscript.
 - Per-script log: `getScriptLog(id)`, `appendScriptLog(id, entry)`,
   `clearScriptLog(id)`, `getScriptLogLabel(id)`.
+- Work-sharing counters: `getDirectoryListingFetches()` and
+  `getCollectionRowReads()`, each with a `reset*` twin. They count what
+  a navigation's batched checks would otherwise duplicate (see
+  [injection.md](injection.md#shared-work-across-the-batch)) — the
+  sharing has no other observable signature. Both are per-JS-context and
+  count *all* such reads in the worker, so reset around the window under
+  test.
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
   `GM_setValue` batches its write 150ms after the last one, so a test

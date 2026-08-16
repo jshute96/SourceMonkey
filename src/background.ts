@@ -103,7 +103,15 @@ import {
 } from './script-updater.js';
 import type { ProbePolicy } from './version-probe.js';
 import {
+  getDirectoryListingFetches,
+  resetDirectoryListingFetches,
+} from './directories.js';
+import {
   addCollection,
+  createRefreshBatch,
+  getCollectionRowReads,
+  resetCollectionRowReads,
+  type RefreshBatch,
   getScript,
   getCollections,
   getCollectionWithScripts,
@@ -342,6 +350,23 @@ interface SourceMonkeyApi {
   // Fires the same all-tabs resync nudge the worker sends on startup.
   // Tests can't restart the worker without losing their handle on it.
   nudgeGmResync: () => Promise<void>;
+  // How many `file://` directory listings THIS WORKER has fetched
+  // successfully since the last reset. Cache hits don't count, so a test
+  // can assert that a page matching several scripts in one folder listed
+  // it once rather than once per script (see `RefreshBatch`).
+  //
+  // Counts every listing the worker does — recursive collection scans
+  // included, not just the batched per-script stats — so a test has to
+  // reset around the window it cares about. Listings done in an
+  // extension page (where user-initiated single-script checks run) never
+  // reach this number.
+  getDirectoryListingFetches: () => number;
+  resetDirectoryListingFetches: () => void;
+  // The other half of what a batch shares: collection rows
+  // `refreshScript` actually read from storage, batch hits excluded.
+  // Same scoping caveats as the listing counter above.
+  getCollectionRowReads: () => number;
+  resetCollectionRowReads: () => void;
 }
 
 const api: SourceMonkeyApi = {
@@ -438,6 +463,10 @@ const api: SourceMonkeyApi = {
   // once-a-minute rate limit on the startup path would just make the
   // call silently do nothing.
   nudgeGmResync,
+  getDirectoryListingFetches,
+  resetDirectoryListingFetches,
+  getCollectionRowReads,
+  resetCollectionRowReads,
   syncNow: async () => {
     // Cancel any pending debounced sync first — otherwise its work
     // would fire just after we return, and a test that does
@@ -477,6 +506,11 @@ const api: SourceMonkeyApi = {
     // Same: a test that suppressed cross-tab value broadcasts would
     // otherwise leave every later test's broadcast dropped.
     __debugSuppressGmBroadcast = false;
+    // Same again: a counter, so a test that reads it without resetting
+    // would otherwise inherit the previous test's listings and assert
+    // against the wrong baseline.
+    resetDirectoryListingFetches();
+    resetCollectionRowReads();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -652,6 +686,14 @@ async function updateTabMatches(
   url: string | undefined,
   documentId: string | null,
   trigger: 'navigation' | 'refresh',
+  // The commit's shared refresh batch, passed by the `onCommitted`
+  // listener. The SAME object the reload fast path got, when that
+  // commit was a reload: two batches for one commit would halve the
+  // duplication rather than remove it. Omitted by the other callers
+  // (`onHistoryStateUpdated`, the `chrome.tabs.onUpdated` fallback,
+  // `refreshAllOpenTabs`), in which case the opportunistic fan-out
+  // makes its own — so none of them runs unbatched.
+  batch?: RefreshBatch,
 ): Promise<void> {
   if (!url || !INJECTABLE_SCHEME.test(url)) {
     // Drop menu commands BEFORE renderBadge: the rebuild that
@@ -742,7 +784,7 @@ async function updateTabMatches(
     // rate-limited) whether their source files on disk have changed.
     // Skipped for the refresh trigger so a single user edit doesn't fan
     // out into a filesystem check on every other open tab's scripts.
-    requestOpportunisticScriptChecks(incoming.map((m) => m.id));
+    requestOpportunisticScriptChecks(incoming.map((m) => m.id), batch);
   }
   await renderBadge(tabId, state);
 }
@@ -1084,6 +1126,13 @@ function installNavigationListeners(): void {
   }
   wn.onCommitted.addListener((d) => {
     if (d.frameId !== 0) return;
+    // ONE batch for this commit, shared by both fan-outs it starts. The
+    // reload fast path and the opportunistic sweep check the same
+    // script set from the same navigation, so a batch each would leave
+    // the page listing its folder twice — better than once per script,
+    // but not the intent. Created here, referenced only by these two
+    // calls, so it dies with the navigation. See `RefreshBatch`.
+    const batch = createRefreshBatch();
     // Reload fast-path: when the user explicitly reloads (Ctrl-R, toolbar
     // reload, location.reload) Chrome sets
     // transitionType to "reload". We use that to opportunistically check
@@ -1092,9 +1141,12 @@ function installNavigationListeners(): void {
     // so the listener stays cheap; the wrapper's sm:check-pending
     // round-trip is what actually waits on the result.
     if (d.transitionType === 'reload' && d.documentId) {
-      setupReloadFastPath(d.tabId, d.documentId, d.url);
+      setupReloadFastPath(d.tabId, d.documentId, d.url, batch);
     }
-    enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
+    enqueueTabWork(
+      d.tabId,
+      () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation', batch),
+    );
   });
   wn.onHistoryStateUpdated.addListener((d) => {
     if (d.frameId !== 0) return;
@@ -1351,7 +1403,15 @@ interface FastPathEntry {
 const fastPathByDoc = new Map<string, FastPathEntry>();
 const fastPathKey = (tabId: number, documentId: string) => `${tabId}:${documentId}`;
 
-function setupReloadFastPath(tabId: number, documentId: string, url: string): void {
+function setupReloadFastPath(
+  tabId: number,
+  documentId: string,
+  url: string,
+  // This commit's shared batch — see the `onCommitted` listener. Passed
+  // in rather than created here so the opportunistic sweep queued off
+  // the same event shares it.
+  batch: RefreshBatch,
+): void {
   if (!INJECTABLE_SCHEME.test(url)) return;
   // Capture commit-time wall clock BEFORE awaiting anything; we want
   // the 500ms window to track real elapsed time since the user hit
@@ -1406,13 +1466,17 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
         // proceeds fresh) or it's in-flight (and our manual call
         // coalesces onto the same promise). Either way our `entry`
         // observes the real refresh result; the ordering is benign.
+        // It is benign for the shared work too, now that both calls
+        // carry the SAME `batch`: whichever of them wins the gate, the
+        // page's checks read the collection row once and list the
+        // folder once.
         // `parseCheck: 'defer'` — the check is a diagnostic, and it was
         // most of this path's measured cost (a compile in the offscreen
         // document, plus opening that document on the first check of a
         // session). It still runs, right after the refresh's own write;
         // what changes is that the wrapper is answered without it. See
         // docs/injection.md#reload-fast-path.
-        entry.promise = updateScript(m.id, 'manual', 'if-stale', 'defer').then(
+        entry.promise = updateScript(m.id, 'manual', 'if-stale', 'defer', batch).then(
           (r) => {
             entry.settled = true;
             entry.result = r;

@@ -631,17 +631,79 @@ local file:
   an offscreen document; the run right after an extension update, which
   invalidates every cached verdict, cost 2306 ms. Taken off this path —
   see [Parse check off the critical path](#parse-check-off-the-critical-path).
-- **The batch duplicates its own work.** Scripts matching the same page
-  usually share a collection and a folder, and each check re-reads that
-  row and re-lists that directory. On one thread the duplicates land in
-  each other's measured time — which is why the tiny collection row
-  reads slower than a 63 KB script row.
+- **The batch used to duplicate its own work.** Scripts matching the
+  same page usually share a collection and a folder, and each check
+  re-read that row and re-listed that directory. On one thread the
+  duplicates landed in each other's measured time — which is why the
+  tiny collection row read slower than a 63 KB script row. Fixed by
+  the shared batch below.
 - **Dependency rechecking is not the cost it looks like.** `manual` mode
   selects `recheckFiles: 'all'`, but measured `deps` was 0.3 ms — the
   risk is real only for a script with HTTP `@require`s.
 - The registration sync a refresh triggers is **not** awaited here (the
   swap hands the body over directly), but it reads every row in storage
   and competes for the same thread.
+
+### Shared work across the batch
+
+**The batch covers navigation-triggered checks generally, not just the
+reload fast path.** One `RefreshBatch` (`src/script-store.ts`) is
+created per `onCommitted` and handed to *both* fan-outs that commit
+starts — the fast path and the opportunistic sweep in
+`updateTabMatches`. A sweep reached any other way
+(`onHistoryStateUpdated`, the `chrome.tabs.onUpdated` fallback) makes
+its own, so no navigation-driven fan-out ever runs unbatched — though
+"its own" is per *call*, not per navigation: the `tabs.onUpdated`
+fallback fires `updateTabMatches` twice for one navigation and so makes
+two batches. Harmless, since the second sweep is rate-limited out.
+
+The batch caches what those checks would otherwise each do separately:
+
+- the **collection row**, read once per collection id;
+- the **`file://` directory listing**, fetched once per directory;
+- the **`@require` / `@resource` bodies**, via the same `fileFetchCache`
+  `refreshAllCollections` already threads across collections.
+
+Rules it lives by:
+
+- **Scoped to one commit, no TTL, never global.** That bound is the
+  whole safety argument, and it is *not* "the calls all start together"
+  — they don't. The fast path fans out after one `ensureLoaded()`; the
+  sweep runs inside `enqueueTabWork` and does `ensureLoaded()` plus two
+  session-storage round-trips first.
+  - So an entry can be written at T0 and read at T0+Δ, Δ being
+    page-load scale and widest on a cold worker or a backed-up tab
+    queue.
+  - The consequence is real but small: a script that joined the match
+    set inside Δ reads a listing captured before it started, so a save
+    landing in that window looks unchanged and waits for the next
+    check. One navigation late — the same lateness a non-reload
+    navigation has always had.
+  - A cache outliving the commit would make that window unbounded, and
+    would need invalidation to be safe at all.
+- **Single-script path only.** `refreshCollection` /
+  `refreshAllCollections` have their own sharing story (one scan per
+  collection, one `fileFetchCache` across them) and are not given one.
+- **A coalesced call inherits the running check's batch, and that is
+  safe.** `gate()` already hands the second caller the first call's
+  whole result, so which cache produced it changes nothing.
+- **One batch per commit, not one per fan-out.** A batch each would
+  leave the page listing its folder twice — better than once per
+  script, but not the intent. Sharing also makes the rule independent
+  of which call reaches `gate()` first, the same ordering trap
+  `parseCheck` had to be fixed out of.
+  - On a *reload* the sharing is belt-and-braces: for the scripts the
+    fast path has in flight, the sweep either coalesces onto them or is
+    rate-limited out, so it does no reads of its own either way. What
+    the shared batch actually buys is a script that joined the match set
+    between the two calls.
+  - The case that genuinely needed fixing is the **non-reload
+    navigation**, where the sweep is the only fan-out and used to run
+    one collection read and one listing per script.
+- **The phase timer still reports the phases**, annotated
+  `collection row shared with batch` / `listing shared with batch` — a
+  shared read reads as shared rather than as a phase that vanished. See
+  [diagnostics.md](diagnostics.md#measuring-a-missed-reload-swap).
 
 ### Parse check off the critical path
 

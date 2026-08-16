@@ -43,8 +43,10 @@ import {
   refreshAllCollections,
   refreshScript,
   refreshCollection,
+  createRefreshBatch,
   setVersionProbes,
   type ParseCheckMode,
+  type RefreshBatch,
   type StartupLog,
   type StoredScript,
   type StoredCollection,
@@ -173,15 +175,28 @@ const ALL_COLLECTIONS_KEY = '*';
 // and that page has its own `scriptState` map. Add an SW-side Refresh
 // entry point and this stops being true — a caller that must have the
 // verdict would then need it enforced here rather than assumed.
+// `batch` shares the reads a group of checks started together would
+// otherwise each do (see `RefreshBatch`). Every navigation-triggered
+// fan-out passes one — the reload fast path and the opportunistic
+// sweep share the batch their common `onCommitted` created. The
+// user-initiated single-script callers (the Refresh buttons) don't:
+// they check one script, so there is nothing to share.
+//
+// **A coalesced call inherits the running check's batch, and that is
+// safe.** `gate()` hands a second caller the FIRST call's promise, so it
+// has always received that call's whole result — rows, verdicts and all.
+// Which cache produced those rows changes nothing: the coalescing caller
+// never had a refresh of its own to be given stale data from.
 export function updateScript(
   scriptId: string,
   mode: UpdateMode,
   probe: ProbePolicy = 'if-stale',
   parseCheck: ParseCheckMode = 'await',
+  batch?: RefreshBatch,
 ): Promise<StoredScript | null> {
   return gate(
     scriptState, scriptId, mode,
-    () => runScriptCheck(scriptId, mode, probe, parseCheck), null,
+    () => runScriptCheck(scriptId, mode, probe, parseCheck, batch), null,
   );
 }
 
@@ -236,6 +251,7 @@ async function runScriptCheck(
   mode: UpdateMode,
   probe: ProbePolicy,
   parseCheck: ParseCheckMode = 'await',
+  batch?: RefreshBatch,
 ): Promise<StoredScript | null> {
   const prior = await getScript(scriptId);
   const label = getScriptLogLabel(scriptId);
@@ -253,7 +269,11 @@ async function runScriptCheck(
   // above still brackets the work for anyone watching it live.
   let next: StoredScript | null;
   try {
-    next = await refreshScript(scriptId, { recheckFiles: fileRecheckMode(mode), parseCheck });
+    next = await refreshScript(scriptId, {
+      recheckFiles: fileRecheckMode(mode),
+      parseCheck,
+      ...(batch ? { batch } : {}),
+    });
   } catch (err) {
     const msg = describe(err);
     console.info(`[SourceMonkey] update check failed: ${label}: ${msg}`);
@@ -961,7 +981,18 @@ function formatBytes(n: number): string {
 // without awaiting. Each id gates independently; ids whose check is
 // rate-limited or already in flight are dropped silently. Used by the
 // background SW when a navigation matches one or more scripts.
-export function requestOpportunisticScriptChecks(scriptIds: string[]): void {
+//
+// **This is a fan-out over one page's script set, so it always gets a
+// batch** — the caller's when they have one (the same navigation's
+// reload fast path, so the two halves of one commit share a single
+// collection read and a single listing rather than one each), otherwise
+// its own. The rule is uniform on purpose: making it depend on which
+// call reached `gate()` first is exactly the ordering-sensitive shape
+// `parseCheck` had to be fixed out of. See `updateScript`.
+export function requestOpportunisticScriptChecks(
+  scriptIds: string[],
+  batch: RefreshBatch = createRefreshBatch(),
+): void {
   for (const id of scriptIds) {
     // Swallow rejections — opportunistic work shouldn't ever surface a
     // user-visible error; the failure was already logged by the fetch.
@@ -969,7 +1000,7 @@ export function requestOpportunisticScriptChecks(scriptIds: string[]): void {
     // `'defer'`: navigation-triggered, so it doesn't wait for the parse
     // verdict — and this call and the reload fast path's coalesce onto
     // whichever of them reaches the gate first. See `updateScript`.
-    updateScript(id, 'opportunistic', 'if-stale', 'defer').catch(() => {});
+    updateScript(id, 'opportunistic', 'if-stale', 'defer', batch).catch(() => {});
   }
 }
 

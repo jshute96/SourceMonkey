@@ -515,13 +515,18 @@ timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps
 
 - **read-script / read-collection** — two point reads, in series because
   the collection key comes out of the script row. Marked separately
-  because the split is the diagnosis: the second is consistently 3×
-  the first *even though the collection row is tiny*, which rules
-  payload out and points at the other concurrent checks on the same
-  thread.
-- **stat** — one `file://` directory listing per script, uncached, so
-  three scripts in one folder pay for three listings of the same
-  directory.
+  because the split was the diagnosis: `read-collection` used to run
+  consistently 3× `read-script` *even though the collection row is
+  tiny*, which ruled payload out and pointed at the other concurrent
+  checks on the same thread.
+- **stat** — the `file://` directory listing that supplies the
+  size+mtime the skip check needs.
+- **`collection row shared with batch` / `listing shared with batch`** —
+  the navigation-triggered checks for one page share both (see
+  [injection.md](injection.md#shared-work-across-the-batch)), so only
+  the first of a batch pays. The phases are still marked on the
+  sharers: what they measure there is the wait for the batch's single
+  read, which on one thread still queues behind the siblings' own work.
 - **fetch** — `unchanged` means the size+mtime skip hit and no body was
   read; `refetched` means it missed.
 - **rebuild** — header parse, hashing, the parse check, and the
@@ -540,8 +545,9 @@ numbers anyway, both because the worker is single-threaded:
 
 - `registration sync` reads every row in storage (`get(null)`), on a
   50 ms debounce after the write the fast path just made.
-- The other checks in the same batch. A duplicate read or listing costs
-  its siblings' measured time as well as its own.
+- The other checks in the same batch. Every await one of them makes
+  costs its siblings' measured time as well as its own — which is why
+  no phase drops to zero even now that the duplicate work is shared.
 
 ## Testing
 

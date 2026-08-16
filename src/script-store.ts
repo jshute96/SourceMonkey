@@ -55,6 +55,8 @@ import {
   scriptFileUrl,
   locationFsPath,
   statFromListing,
+  hasCachedListing,
+  type DirectoryListingCache,
 } from './directories.js';
 import {
   getValue,
@@ -2402,12 +2404,115 @@ export async function refreshCollection(
   }
 }
 
+// ---------- Batched single-script refreshes ----------
+//
+// The `refreshScript` calls one navigation starts — the reload fast
+// path's one-per-matching-script fan-out and the opportunistic sweep
+// queued off the same commit (see
+// docs/injection.md#shared-work-across-the-batch). Scripts matching one
+// page usually live in one collection and one folder, so without
+// sharing each check re-reads the same collection row and re-lists the
+// same directory, and on the worker's single thread each duplicate
+// lands inside its siblings' measured time.
+//
+// **Scoped to one commit, never global, never with a TTL.** That bound
+// is the whole safety argument, so state it as what it actually is
+// rather than as "the calls all start together" — they don't:
+//
+//   - The fast path fans out after a single `ensureLoaded()`.
+//   - The sweep runs inside `enqueueTabWork` and does `ensureLoaded()`
+//     plus two session-storage round-trips first.
+//
+// So an entry can be written at T0 and read at T0+Δ, where Δ is
+// page-load scale and widest when the worker is cold or the tab's work
+// queue is backed up. Bounded by the commit, but not zero — and the
+// consequence is real: a script that joined the match set inside Δ sees
+// a listing captured before it started, so a save landing in that
+// window reads as "unchanged" and waits for the next check. One
+// navigation late, which is the same lateness a non-reload navigation
+// has always had.
+//
+// A cache that outlived the commit would turn that bounded window into
+// an unbounded one, and would need invalidation to be safe at all.
+export interface RefreshBatch {
+  // Collection rows by collection id. Promise-keyed so concurrent
+  // starters join one read.
+  collectionRows: Map<string, Promise<StoredCollection | undefined>>;
+  // `file://` directory listings by absolute directory path.
+  listings: DirectoryListingCache;
+  // `@require` / `@resource` bodies by URL — the same sharing
+  // `refreshAllCollections` already threads through its collections.
+  fileFetchCache: FileFetchCache;
+}
+
+export function createRefreshBatch(): RefreshBatch {
+  return {
+    collectionRows: new Map(),
+    listings: new Map(),
+    fileFetchCache: new Map(),
+  };
+}
+
+// How many collection rows `refreshScript` has actually read from
+// storage since the last reset — batch hits excluded. The other half of
+// what a `RefreshBatch` shares, and the phase (`read-collection`) that
+// motivated it, so it gets the same kind of counter the listings do:
+// without one, a change that stopped threading the batch into the row
+// read would leave every test green. Same scoping caveats as
+// `getDirectoryListingFetches` — per JS context, reset around the window
+// under test.
+let collectionRowReads = 0;
+export function getCollectionRowReads(): number {
+  return collectionRowReads;
+}
+export function resetCollectionRowReads(): void {
+  collectionRowReads = 0;
+}
+
+// The batch's copy of a collection row, or a fresh read when there is no
+// batch. Returns whether it was shared so the caller's phase timer can
+// say so rather than just reporting a suspiciously fast phase.
+async function batchCollectionRow(
+  batch: RefreshBatch | undefined,
+  collectionId: string,
+): Promise<{ row: StoredCollection | undefined; shared: boolean }> {
+  if (!batch) {
+    collectionRowReads += 1;
+    return { row: await getRaw<StoredCollection>(collectionKey(collectionId)), shared: false };
+  }
+  const hit = batch.collectionRows.get(collectionId);
+  if (hit) return { row: await hit, shared: true };
+  collectionRowReads += 1;
+  const pending = getRaw<StoredCollection>(collectionKey(collectionId));
+  batch.collectionRows.set(collectionId, pending);
+  // A failed read must not be remembered. A cached rejection is rethrown
+  // into every later sibling, so each one throws out of `refreshScript`
+  // and `runScriptCheck` writes it a `Could not check for updates` Log
+  // row — one transient storage failure reported once per script on the
+  // page, with nothing ever retrying it. Dropping the entry restores the
+  // pre-batch blast radius: the read that failed fails, its siblings try
+  // again. The identity check keeps a late rejection from evicting a
+  // newer entry that has already replaced it.
+  void pending.catch(() => {
+    if (batch.collectionRows.get(collectionId) === pending) {
+      batch.collectionRows.delete(collectionId);
+    }
+  });
+  return { row: await pending, shared: false };
+}
+
 // Only the single-script path can defer the parse check: it is the one
 // with a caller (the reload fast path) that a page is blocking on, and
 // deferring means one row to re-check afterwards rather than a
 // collection's worth.
 export interface ScriptRefreshOptions extends RefreshOptions {
   parseCheck?: ParseCheckMode;
+  // Work shared with the other `refreshScript` calls started alongside
+  // this one. Single-script only: `refreshCollection` /
+  // `refreshAllCollections` have their own sharing story (one scan, one
+  // `fileFetchCache` threaded across collections) and must not be given
+  // one of these.
+  batch?: RefreshBatch;
 }
 
 // Refetch a single script. Goes through the same per-file pipeline as
@@ -2435,16 +2540,22 @@ export async function refreshScript(
   // out of the script row. Measured at ~150-190ms combined on the
   // reload fast path — by far its largest fixed cost, and paid by
   // unchanged scripts too — so they are marked separately. The script
-  // row carries the whole source; the collection row is a few fields.
-  // If the cost tracks the big row it is payload, and the fix is where
-  // bodies live; if it is split evenly it is per-call overhead or
-  // contention with whatever else is reading storage.
+  // row carries the whole source; the collection row is a few fields,
+  // and it still read SLOWER, which ruled payload out and pointed at
+  // the batch's duplicate work plus contention on the one thread. The
+  // duplication is what `opts.batch` removes; the contention remains,
+  // so neither phase drops to zero.
   const prior = await getScript(scriptId);
   if (!prior) return null;
   timer.mark('read-script');
-  const collectionRow = await getRaw<StoredCollection>(collectionKey(prior.collectionId));
+  // Shared across the batch when there is one: the scripts a page
+  // matches are usually all in the same collection, so this row is read
+  // once for the group instead of once per script.
+  const collection = await batchCollectionRow(opts.batch, prior.collectionId);
+  const collectionRow = collection.row;
   if (!collectionRow) return null;
   timer.mark('read-collection');
+  if (collection.shared) timer.note('collection row shared with batch');
   timer.note(prior.relativePath);
   timer.note(() => `${Math.round((prior.size ?? 0) / 1024)} KB row`);
 
@@ -2470,8 +2581,10 @@ export async function refreshScript(
     // parentDir/joinPath behave correctly.
     const fsRoot = locationFsPath(collectionRow.path);
     const dirAbs = subDir ? joinPath(fsRoot, subDir) : fsRoot;
+    // Read BEFORE the call, which is what populates the cache.
+    const sharedListing = hasCachedListing(opts.batch?.listings, dirAbs);
     try {
-      const stat = await statFromListing(dirAbs, fileName);
+      const stat = await statFromListing(dirAbs, fileName, opts.batch?.listings);
       if (stat) {
         if (stat.size !== undefined) scan[0].size = stat.size;
         if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
@@ -2479,10 +2592,11 @@ export async function refreshScript(
     } catch {
       /* listing failed; scan stays bare → always-fetch */
     }
+    if (sharedListing) timer.note('listing shared with batch');
   }
-  // One directory listing per script, uncached — so N scripts in the
-  // same folder pay for N listings. Worth knowing before optimising:
-  // this is the phase the fast path can most plausibly share.
+  // One `file://` directory listing, shared across the batch when there
+  // is one — so N scripts in the same folder list it once between them
+  // rather than N times. Unbatched callers still list per script.
   timer.mark('stat');
 
   const fetchResults = await fetchOrSkipInParallel(collectionRow.path, scan, [prior]);
@@ -2502,7 +2616,11 @@ export async function refreshScript(
     fetchResults,
     now: Date.now(),
     recheckFiles: opts.recheckFiles,
-    fileFetchCache: opts.fileFetchCache,
+    // The batch's, when there is one — so two scripts on the same page
+    // `@require`ing one library fetch it once between them. The `??`
+    // only reflects that `fileFetchCache` is part of the inherited
+    // `RefreshOptions`; no caller of `refreshScript` sets it today.
+    fileFetchCache: opts.fileFetchCache ?? opts.batch?.fileFetchCache,
     useLocalFiles: collectionUsesLocalFiles(collectionRow),
     parseCheck: opts.parseCheck,
   });
@@ -2517,6 +2635,21 @@ export async function refreshScript(
   // reverted by values captured before them.
   const written = await mutate(async () => {
     const cur = await getRaw<StoredScript>(scriptKey(scriptId));
+    // The row is gone. We read it at the top of this function, so its
+    // absence now means something deleted it while we were fetching —
+    // `removeCollection` (which drops the collection row and every
+    // script under it) or a per-script removal. Writing would resurrect
+    // an orphan: a script row no collection's `scriptIds` references,
+    // invisible to the UI and never refreshed again.
+    //
+    // The window pre-dates the batch — the collection row was always
+    // read long before this write, with the fetch and rebuild in
+    // between — but a shared row widens it, because a sibling that
+    // starts after the removal now takes the cached collection row
+    // instead of reading `undefined` and bailing early. Checked here
+    // rather than by re-reading the collection row: this covers both
+    // removal paths, and costs nothing since we needed `cur` anyway.
+    if (!cur) return null;
     const merged = preserveConcurrentEdits(next, prior, cur);
     // Same rule as the collection path: a check that found nothing new
     // doesn't rewrite the row. This one matters most — it's the
@@ -2541,6 +2674,11 @@ export async function refreshScript(
   // open, in which case this retries it — one extra compile the pure-
   // await path wouldn't have made, on a row that genuinely has no
   // verdict. Not worth plumbing the per-entry decision back out for.
+  // `null` when the row was deleted mid-refresh (see the write above).
+  // Callers already have a story for it: `runScriptCheck` logs "row
+  // vanished" and the Log tab gets "This script was removed while it
+  // was being refreshed".
+  if (!written) return null;
   if (opts.parseCheck === 'defer') checkParsesInBackground(written);
   return written;
 }

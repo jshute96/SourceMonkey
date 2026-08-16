@@ -539,10 +539,87 @@ export function parseListing(html: string): ListingEntry[] {
   return entries;
 }
 
-async function listDirectory(absolutePath: string): Promise<ListingEntry[]> {
-  // Chrome only serves the directory listing for URLs ending with `/`.
-  const url = pathToFileUrl(absolutePath) + '/';
-  return parseListing(await fetchFileUrlText(url));
+// Listings shared by one batch of refreshes, keyed by absolute
+// directory path. Keyed on the promise rather than the result so
+// concurrent listers of the same directory join one fetch instead of
+// starting a second before the first resolves.
+//
+// `readonly` on the entries because the array is handed out by
+// reference to every sibling in the batch. Today's only consumer just
+// reads `size`/`mtime`, but nothing else would stop a future one from
+// sorting or splicing it out from under the others — this makes that a
+// type error rather than a silent corruption.
+//
+// **Batch-scoped, never global.** There is no invalidation here and no
+// TTL: a cache is created for one fan-out and dropped when it ends, so
+// every entry describes the directory as of that batch. A cache that
+// outlived its batch would hand a later refresh a stale size/mtime and
+// make it skip a file that had actually changed.
+export type DirectoryListingCache = Map<string, Promise<readonly ListingEntry[]>>;
+
+// How many directory listings this JS context has fetched SUCCESSFULLY
+// since the last reset. Scoped and counted narrowly on purpose:
+//
+//   - Per-context, not global. `directories.ts` is imported by the
+//     extension pages too, and a check that runs in the page that
+//     clicked never touches the worker's copy of this number.
+//   - Every listing the context does, not just batched ones — the
+//     recursive `scanForUserScripts` walk and collection refreshes land
+//     here too, so a test has to reset around the window it cares about.
+//   - Cache hits don't count, which is the point: it is the number a
+//     test asserts on to show a batch shared one listing rather than
+//     doing N.
+//
+// Exposed through the SW test surface (see src/background.ts).
+let listingFetches = 0;
+export function getDirectoryListingFetches(): number {
+  return listingFetches;
+}
+export function resetDirectoryListingFetches(): void {
+  listingFetches = 0;
+}
+
+async function listDirectory(
+  absolutePath: string,
+  cache?: DirectoryListingCache,
+): Promise<readonly ListingEntry[]> {
+  const hit = cache?.get(absolutePath);
+  if (hit) return hit;
+  const pending = (async () => {
+    // Chrome only serves the directory listing for URLs ending with `/`.
+    const url = pathToFileUrl(absolutePath) + '/';
+    const entries = parseListing(await fetchFileUrlText(url));
+    // Counted after the fetch resolves, so the number means what its
+    // name says. A throw leaves it alone.
+    listingFetches += 1;
+    return entries;
+  })();
+  if (cache) {
+    cache.set(absolutePath, pending);
+    // A failed listing must not be remembered. Otherwise one transient
+    // read error is inherited by every later sibling in the batch, none
+    // of which ever retries — turning a single script's bad luck into
+    // the whole page refetching bodies it didn't need to. (Safe either
+    // way: `refreshScript` catches, leaving the scan bare, which means
+    // always-fetch. The cost is wasted reads, never a missed change.)
+    // The identity check keeps a late rejection from evicting a newer
+    // entry that has already replaced it.
+    void pending.catch(() => {
+      if (cache.get(absolutePath) === pending) cache.delete(absolutePath);
+    });
+  }
+  return pending;
+}
+
+// Whether `cache` already holds a listing for this directory — i.e.
+// whether the next `statFromListing` will pay for a fetch. Read by the
+// refresh path's phase timer so a shared listing shows up as a shared
+// listing rather than as a phase that mysteriously got fast.
+export function hasCachedListing(
+  cache: DirectoryListingCache | undefined,
+  absoluteDir: string,
+): boolean {
+  return cache?.has(absoluteDir) ?? false;
 }
 
 // Targeted version of listDirectory: list a single directory and return
@@ -550,11 +627,15 @@ async function listDirectory(absolutePath: string): Promise<ListingEntry[]> {
 // single-file refresh path so it can capture the file's current
 // size/mtime without doing a full recursive scan — keeps the
 // unchanged-file skip honest for the next Refresh All.
+//
+// `cache` is optional and batch-scoped: a navigation's fan-out passes
+// one so N scripts in the same folder list it once between them.
 export async function statFromListing(
   absoluteDir: string,
   fileName: string,
+  cache?: DirectoryListingCache,
 ): Promise<ListingEntry | null> {
-  const entries = await listDirectory(absoluteDir);
+  const entries = await listDirectory(absoluteDir, cache);
   return entries.find((e) => e.name === fileName) ?? null;
 }
 
@@ -645,7 +726,9 @@ export async function scanForUserScripts(
     // downstream listing + recursion all see a single form.
     absolutePath = locationFsPath(absolutePath);
   }
-  let entries: ListingEntry[];
+  // `readonly` because a listing can be batch-shared — see
+  // `DirectoryListingCache`. The scan only reads it.
+  let entries: readonly ListingEntry[];
   try {
     entries = await listDirectory(absolutePath);
   } catch (err) {
