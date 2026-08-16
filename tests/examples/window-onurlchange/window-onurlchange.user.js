@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: window.onurlchange
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.1
 // @description Watch SPA navigations (pushState / replaceState / hash / back) through the urlchange event.
-// @match       *://*/gm-urlchange/gm-urlchange.html*
-// @match       file:///*/gm-urlchange/gm-urlchange.html*
+// @match       *://*/window-onurlchange/window-onurlchange.html*
+// @match       file:///*/window-onurlchange/window-onurlchange.html*
 // @run-at      document-end
 // @grant       window.onurlchange
 // ==/UserScript==

@@ -418,7 +418,7 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
   zip attached.
 - `tests/unit/` — Node `--test` unit tests.
 - `tests/e2e/` — Playwright tests that load the unpacked extension.
-- `tests/examples/` — interactive GM API example pages with paired
+- `tests/examples/` — interactive userscript example pages with paired
   userscripts; double as a cross-manager compliance reference. See
   [tests/examples/README.md](tests/examples/README.md).
 - `docs/` — design docs. Start with

@@ -1,4 +1,4 @@
-// E2E coverage for the gm-urlchange userscript example.
+// E2E coverage for the window-onurlchange userscript example.
 //
 // Manager-agnostic: drives the page's OWN buttons (so every history
 // call comes from the page, not from the test or the userscript) and
@@ -12,14 +12,14 @@ import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-test.describe('examples / gm-urlchange', () => {
+test.describe('examples / window-onurlchange', () => {
   test('pushState, replaceState, hash and back all report a new URL', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
-    await page.goto(`${fixtureServer.baseUrl}/gm-urlchange/gm-urlchange.html`);
+    await page.goto(`${fixtureServer.baseUrl}/window-onurlchange/window-onurlchange.html`);
     await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
     await expect(page.locator('#supported')).toContainText('urlchange events are available');
 
@@ -59,7 +59,7 @@ test.describe('examples / gm-urlchange', () => {
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
-    await page.goto(`${fixtureServer.baseUrl}/gm-urlchange/gm-urlchange.html`);
+    await page.goto(`${fixtureServer.baseUrl}/window-onurlchange/window-onurlchange.html`);
     await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
 
     await page.locator('#btn-push-alpha').click();
