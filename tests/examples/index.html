@@ -2,17 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>SourceMonkey GM API examples</title>
+  <title>SourceMonkey userscript examples</title>
   <link rel="stylesheet" href="examples.css" />
 </head>
 <body>
   <header>
-    <h1>GM API examples</h1>
+    <h1>Userscript examples</h1>
     <p class="hint">
       Interactive examples for SourceMonkey&rsquo;s <code>GM_*</code>
-      APIs. Each example pairs a static <code>page.html</code> with a
+      APIs, other granted APIs, and metadata headers. Each example
+      pairs a static <code>page.html</code> with a
       <code>script.user.js</code> that drives it. Load this directory
-      as a directory source in SourceMonkey, or install individual
+      as a directory collection in SourceMonkey, or install individual
       <code>*.user.js</code> files in another userscript manager to
       compare behavior side-by-side.
     </p>
@@ -74,6 +75,12 @@
         <a href="gm-resource/gm-resource.html">GM_getResourceText / GM_getResourceURL</a>
         &mdash; read prefetched <code>@resource</code> files as text
         or as a <code>blob:</code> URL.
+      </li>
+      <li>
+        <a href="window-onurlchange/window-onurlchange.html">window.onurlchange</a>
+        &mdash; watch SPA navigations (<code>pushState</code>,
+        <code>replaceState</code>, hash changes, back / forward) from
+        page-driven buttons.
       </li>
       <li>
         <a href="headers-run-at/headers-run-at.html">@run-at</a>

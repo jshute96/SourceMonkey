@@ -57,6 +57,77 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 
 ---
 
+## Non-GM grants
+
+<!-- Heading kept free of backticks and `_`: GitHub keeps the
+     underscore in the slug, so "Non-`GM_*` grants" would anchor as
+     `#non-gm_-grants` and every link below would 404. -->
+
+Tampermonkey's `@grant` accepts a handful of names outside the
+`GM_*` / `GM.*` pattern. This is the **complete** list — it's the same
+set TM's own bundled linter validates against, so anything else
+(`window.open`, `window.alert`, …) is invalid under TM too.
+
+| Grant | Status | TM | VM | GM | Notes |
+|-------|:------:|:--:|:--:|:--:|-------|
+| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script (matches TM/VM). `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
+| `unsafeWindow` | 🟡 | ✓ | ✓ |   | Emitted, but bound to the USER_SCRIPT world's own `window` — it does **not** reach the page's globals. See the row above. |
+| `window.onurlchange` | ✅ | ✓ |   |   | SPA navigation hook. `window.onurlchange === null` feature-detects; `window.addEventListener('urlchange', info => …)` and the `window.onurlchange = fn` slot both work. See below. VM has never implemented it (feature request closed unimplemented), so scripts already carry the `=== null` guard. |
+| `window.close` | ⚪ | ✓ | ✓ (2.6.2+) |   | Not in the catalog. TM/VM route `window.close()` through the extension so it can close a tab the script didn't open — something the plain page API refuses. Handing a script the ability to close the user's tab is a real capability, and nothing we run wants it. Deferred; tracked in [TODO.md](../TODO.md). |
+| `window.focus` | ⚪ | ✓ | ✓ (2.12.10+) |   | Not in the catalog. TM's version raises and un-minimizes the OS window via `chrome.windows.update`, which page JS can't do. Same reasoning as `window.close`. |
+
+Greasemonkey 4 has no `window.*` grant family at all — only `GM.*`
+and `none`.
+
+Both un-implemented names behave like every other unknown `@grant`:
+dropped from the binding set, reported in the "unknown @grant entries
+dropped" diagnostic, and a `ReferenceError`-equivalent at the call
+site (the plain `window.close` / `window.focus` the page already has
+remains, subject to the browser's normal restrictions).
+
+### `window.onurlchange`
+
+What a script gets:
+
+- `window.onurlchange === null` when the grant took effect, and
+  `undefined` when it didn't. That's TM's documented feature test.
+- `window.addEventListener('urlchange', handler)`. The handler
+  receives a bare `{ url }` object — a null-prototype object whose
+  only own property is the new absolute URL. Not a DOM `Event`; this
+  matches TM exactly.
+- `window.onurlchange = fn` as a handler slot. It takes a slot in the
+  same list as `addEventListener`, so dispatch follows registration
+  order across both forms; `= null` clears it without disturbing
+  anything registered via `addEventListener`.
+- `removeEventListener('urlchange', handler)` unregisters.
+
+What fires it — matched against Tampermonkey 5.5.0:
+
+| Event | Fires? |
+|-------|:------:|
+| `history.pushState` | ✅ |
+| `history.replaceState` | ✅ |
+| same-document back / forward | ✅ |
+| fragment change (`location.hash = …`) | ✅ |
+| `history.replaceState` to the *same* URL | ✅ (no de-duplication — TM doesn't suppress these either) |
+| initial document load | ❌ (handle the starting URL directly, then listen — matches TM's own examples) |
+| full cross-document navigation / reload | ❌ (a new document runs the script again) |
+| a *sub-frame's* navigation, seen from the top frame | ❌ (events are frame-scoped, as in TM — and SourceMonkey doesn't run scripts in sub-frames at all today) |
+
+Differences from TM, detailed in
+[GM-APIs.md](GM-APIs.md#windowonurlchange):
+
+- Grant enforcement is per-document, not per-script: once one script
+  on a page grants it, sibling SourceMonkey scripts in the same
+  isolated world can see it too. TM sandboxes each script's `window`
+  and gates exactly.
+- `@inject-into page` (MAIN world) is unsupported — as with every
+  other non-`GM_info` binding.
+- Delivery is asynchronous (a service-worker round-trip). So is TM's,
+  which routes through its own background page.
+
+---
+
 ## Logging
 
 | API | Status | TM | VM | GM | Notes |
@@ -489,8 +560,8 @@ is a catalog entry + a body — nothing structural.
 - `GM_cookie` (and `GM.cookie`) — TM's cross-origin cookie store.
 - `GM_audio`, `GM_webRequest`, `GM_getTab`, `GM_saveTab`,
   `GM_getTabs` — TM-specific surface.
-- `window.onurlchange` — SPA navigation hook. Worth prioritising
-  because SPA scripts work badly without it.
+- `window.close`, `window.focus` — TM-specific window control; see
+  [Non-`GM_*` grants](#non-gm-grants).
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.
 
 ---

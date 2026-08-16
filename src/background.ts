@@ -178,6 +178,7 @@ import {
   unregisterMenuCommand,
   type MenuCommandEntry,
 } from './gm-menu.js';
+import { installUrlChangeWatch } from './gm-url-change.js';
 import {
   ACTION_MENU_MORE_LABEL,
   planActionMenu,
@@ -1033,6 +1034,14 @@ async function dispatchActionMenuCommand(
 // We only care about the main frame (frameId === 0). Sub-frame events
 // would add noise we don't currently render.
 function installNavigationListeners(): void {
+  // `@grant window.onurlchange` feeds off the same-document navigation
+  // events too, but needs `onReferenceFragmentUpdated` as well and
+  // targets the exact frame that changed rather than filtering to the
+  // main one — so it owns its own subscriptions rather than sharing
+  // the tab-status listener below. Called before the no-webNavigation
+  // early return so it reports its own unavailability. See
+  // src/gm-url-change.ts.
+  installUrlChangeWatch();
   const wn = chrome.webNavigation;
   if (!wn) {
     console.info('[SourceMonkey] chrome.webNavigation not available; falling back to chrome.tabs.onUpdated');

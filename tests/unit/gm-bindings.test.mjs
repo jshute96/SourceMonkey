@@ -299,3 +299,54 @@ test('emitGmBindings: escapes </script> in scriptMetaStr to dodge inline-injecti
   assert.match(out.js, /<\\\/script>/);
   assert.doesNotMatch(out.js, /<\/script>/);
 });
+
+// ---- window.onurlchange --------------------------------------------
+
+test('emitGmBindings: window.onurlchange emits an eager enable call, not a const', () => {
+  const out = emitGmBindings(['window.onurlchange'], makeInfo({
+    grants: ['window.onurlchange'],
+  }));
+  // `window.onurlchange` isn't a legal binding name, so nothing is
+  // declared for it — the grant's whole effect is the enable call.
+  assert.match(out.js, /window\.__SM_GM__\.urlchange\.enable\("script-1"\);/);
+  assert.doesNotMatch(out.js, /const window/);
+  // It lives in `js` rather than `prelude` so the reload-fast-path
+  // swap-eval body (which only gets `js`) still installs the surface.
+  assert.equal(out.prelude, '');
+  assert.equal(out.needsValues, false);
+  assert.deepEqual(out.granted, ['window.onurlchange']);
+});
+
+test('emitGmBindings: the urlchange enable call comes after the GM_* declarations', () => {
+  const out = emitGmBindings(['GM_setValue', 'window.onurlchange'], makeInfo({
+    grants: ['GM_setValue', 'window.onurlchange'],
+  }));
+  const decl = out.js.indexOf('const GM_setValue');
+  const enable = out.js.indexOf('urlchange.enable');
+  assert.ok(decl !== -1 && enable !== -1);
+  assert.ok(decl < enable, 'declarations must be emitted before the eager call');
+});
+
+test('emitGmBindings: no urlchange enable call without the grant', () => {
+  const out = emitGmBindings(['GM_setValue'], makeInfo());
+  assert.doesNotMatch(out.js, /urlchange/);
+});
+
+test('emitGmBindings: window.onurlchange adds no GM. alias property', () => {
+  const out = emitGmBindings(['window.onurlchange'], makeInfo({
+    grants: ['window.onurlchange'],
+  }));
+  assert.doesNotMatch(out.js, /onurlchange:/);
+  // GM_info still lists it in script.grant — same as every other
+  // canonicalized grant.
+  assert.match(out.js, /"grant":\["window\.onurlchange"\]/);
+});
+
+test('emitGmBindings: the emitted js stays on one physical line', () => {
+  // wrapCombinedEntry splices `js` onto the entry's opening line and
+  // relies on the body still starting at physical line 1.
+  const out = emitGmBindings(['GM_setValue', 'window.onurlchange'], makeInfo({
+    grants: ['GM_setValue', 'window.onurlchange'],
+  }));
+  assert.equal(out.js.includes('\n'), false);
+});

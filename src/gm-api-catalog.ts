@@ -43,7 +43,8 @@ export type ApiSubsystem =
   | 'notification'
   | 'tab'
   | 'download'
-  | 'unsafe-window';
+  | 'unsafe-window'
+  | 'url-change';
 
 // Extra header tags an API depends on, beyond the bare `@grant` line.
 // The catalog declares these so the wrapper / SW can validate them once
@@ -60,9 +61,10 @@ export interface GmApiSpec {
   // `sync` resolves in USER_SCRIPT world without an SW round-trip
   // (storage reads, addStyle, etc.). `async` always goes to the SW.
   //
-  // Note: `kind` is informational for one entry only — `unsafeWindow`.
-  // That entry isn't callable; it's a passthrough binding. The
-  // emitter dispatches on `subsystem` for that special case.
+  // Note: `kind` is informational for the entries that aren't
+  // callables — `unsafeWindow` (a passthrough binding) and
+  // `window.onurlchange` (an event surface installed on the world's
+  // `window`). The emitter dispatches on `subsystem` for those.
   kind: ApiKind;
   // Used by the GM4 `GM.` alias: when truthy, the dot form returns a
   // Promise even if the legacy `GM_x` form returns synchronously. (GM4
@@ -84,6 +86,14 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // ----- Compile-time / in-page constants -----
   { name: 'GM_info', gmDotName: 'info', kind: 'sync', subsystem: 'info' },
   { name: 'unsafeWindow', kind: 'sync', subsystem: 'unsafe-window' },
+
+  // ----- Non-GM_* window features (TM's `@grant window.x` family) -----
+  // `window.onurlchange` is not a callable and not a valid JS
+  // identifier, so it emits no `const` binding at all. What the grant
+  // buys is an eager `__SM_GM__.urlchange.enable(scriptId)` call that
+  // installs the `urlchange` event surface on the world's `window`.
+  // See docs/GM-APIs.md#windowonurlchange.
+  { name: 'window.onurlchange', kind: 'sync', subsystem: 'url-change' },
 
   // ----- Logging -----
   { name: 'GM_log', gmDotName: 'log', kind: 'sync', subsystem: 'log' },

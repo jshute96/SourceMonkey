@@ -298,6 +298,15 @@ fetch via the SW). Highlights:
   traversing `name`) including the Log-tab entry, `abort()`, and
   the deliberate contrast that `@connect` gates `GM_xmlhttpRequest`
   but not `GM_download`.
+- `tests/e2e/window-onurlchange.spec.ts` — `@grant window.onurlchange`:
+  page-initiated `pushState` / `replaceState` / hash / back all
+  deliver a `urlchange`; the initial load doesn't, but a same-URL
+  `replaceState` does; an ungranted script sees `undefined` and no
+  events; the assignment form and `removeEventListener` work.
+  History is driven from `page.evaluate` (MAIN world) so the calls
+  really are the page's, not the isolated world's. Also pins the
+  handler-slot / `addEventListener` non-aliasing contract and the
+  known per-document (rather than per-script) grant leak.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

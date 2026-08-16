@@ -1,7 +1,8 @@
-# GM API examples
+# Userscript examples
 
-Interactive examples for SourceMonkey's `GM_*` APIs. Each example lives
-in its own subdirectory and pairs:
+Interactive examples for SourceMonkey's `GM_*` APIs, other granted
+APIs, and metadata headers. Each example lives in its own subdirectory
+and pairs:
 
 - `<api>.html` — a mostly-empty page with a heading, an APIs list,
   optional details, and placeholder outputs. The userscript fills in
@@ -33,6 +34,19 @@ this directory on purpose:
 
 `tests/e2e/bad-scripts.spec.ts` covers them end-to-end (expected
 status per file + byte-for-byte viewer round-trip).
+
+### Page-wired directories
+
+`window-onurlchange/` inverts the usual split: the page wires its own
+buttons in an inline `<script>` and the userscript only observes.
+
+- That's the whole point of the API under test — `urlchange` reports
+  navigations the **page** performs, which an isolated-world script
+  cannot cause or intercept on its own.
+- Its `@match` patterns carry a trailing `*`
+  (`.../window-onurlchange.html*`) because the demo changes the query
+  string and fragment; without it a reload at the pushed URL would no
+  longer match.
 
 ### Multi-script directories
 
@@ -118,6 +132,7 @@ events.
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
 | `gm-download/`             | `GM_download`                                                     | button-driven |
+| `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |

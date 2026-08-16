@@ -2,14 +2,16 @@
 //
 // The injector calls `emitGmBindings` once per script at wrapper-build
 // time. The result is `{ js, prelude, granted }`:
-//   - `js` is spliced at the IIFE top so the lazy `const GM_X = ...`
-//     declarations are visible to BOTH the baked-in body AND the
-//     run-new swap-eval branch via closure.
-//   - `prelude` is spliced into the main-body wrap function ahead
-//     of the body so the one eager call (`storage.init`) runs AFTER
-//     the GM runtime is installed (the wrap function only fires
-//     after the prelude's awaitDecision + waitForRunAt gates).
-//     See `GmBindingEmit` below.
+//   - `js` holds the `const GM_X = ...` declarations, and is used
+//     TWICE: `wrapCombinedEntry` splices it into the main-body wrap
+//     function ahead of the body, and `buildSwapEvalBody` prepends it
+//     to the run-new swap-eval body. Anything a hot-swapped script
+//     needs has to be in here.
+//   - `prelude` is spliced into the main-body wrap function only,
+//     ahead of the body, and holds eager calls (`storage.init`,
+//     `resource.init`). See `GmBindingEmit` below.
+//   - Both run after the prelude's awaitDecision + waitForRunAt
+//     gates, so the GM runtime is installed by the time either does.
 // When no APIs are granted (or the script is `@grant none`),
 // `emitGmBindings` returns `{ js: '', prelude: '', granted: [] }`.
 //
@@ -67,10 +69,15 @@ export interface GmInfoInput {
 // The compile-in result.
 //
 //   - `js`       — the lazy const declarations + GM4 alias object,
-//                  spliced at the IIFE top. Every dereference of
-//                  `window.__SM_GM__` here lives inside a function
-//                  body, so it doesn't fire until the script body
-//                  calls a GM_* API.
+//                  spliced ahead of the user body. Every dereference
+//                  of `window.__SM_GM__` in the declarations lives
+//                  inside a function body, so it doesn't fire until
+//                  the script body calls a GM_* API. The one
+//                  exception is the trailing
+//                  `urlchange.enable(scriptId)` for `@grant
+//                  window.onurlchange`, which has to run before the
+//                  body so the body's feature test
+//                  (`window.onurlchange === null`) succeeds.
 //   - `prelude`  — eager calls that have to run BEFORE the user body
 //                  but AFTER the GM runtime is installed (today: the
 //                  `storage.init` call that primes the per-script
@@ -154,6 +161,12 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // gets a usable object — but it does NOT reach the page's globals.
   if (spec.subsystem === 'unsafe-window') {
     return `const unsafeWindow = window;`;
+  }
+  // `window.onurlchange` isn't a callable and isn't a legal binding
+  // name — the grant's whole effect is the eager `urlchange.enable`
+  // call emitted at the end of `js` (see emitGmBindings).
+  if (spec.subsystem === 'url-change') {
+    return '';
   }
   if (spec.name === 'GM_info') {
     // GM_info is emitted separately by emitGmInfo. Skip here.
@@ -386,6 +399,38 @@ export function emitGmBindings(
   );
   const gmObject = emitGmObject(allSpecsIncludingInfo);
   if (gmObject) parts.push(gmObject);
+  // `@grant window.onurlchange` — the only entry whose effect is an
+  // eager call rather than a declaration. It has to run before the
+  // body so the body's `window.onurlchange === null` feature test
+  // succeeds. It lives at the END of `js` (not in `prelude`) on
+  // purpose:
+  //   - Ordering safety is identical. Both strings are spliced into
+  //     the SAME main-body wrap function (`wrapCombinedEntry`), which
+  //     only runs after the prelude's awaitDecision + waitForRunAt
+  //     gates — so `window.__SM_GM__` is installed either way.
+  //   - `js` is ALSO what `buildSwapEvalBody` prepends for the
+  //     reload-fast-path swap, and `prelude` is not. Emitting here is
+  //     what makes a hot-swapped script still get its `urlchange`
+  //     surface.
+  //
+  // Guarded on the runtime rather than dereferencing it bare: this is
+  // the only eager statement that sits in the same scope as the user
+  // body, so an unguarded TypeError here would abort the whole wrap
+  // function and the script would never run at all. Degrading to "no
+  // urlchange surface" is strictly better — the script's own
+  // `=== null` feature test then correctly reports "unsupported",
+  // which is exactly what a script running under a manager without
+  // the feature already handles. (`storage.init` in `prelude` aborts
+  // on purpose instead, because running with stale values would
+  // corrupt the user's data.)
+  if (specs.some((s) => s.subsystem === 'url-change')) {
+    parts.push(
+      // Both halves matter: a runtime registered before this feature
+      // shipped has `__SM_GM__` but no `urlchange`, and a page can hold
+      // a stale registration across an extension update.
+      `if (window.__SM_GM__ && window.__SM_GM__.urlchange) window.__SM_GM__.urlchange.enable(${jsLit(info.scriptId)});`,
+    );
+  }
   // Eager calls into __SM_GM__ at compile time go in the prelude.
   // Splicing them in the IIFE top would race with the runtime's own
   // document_start registration in some Chrome builds; the injector
