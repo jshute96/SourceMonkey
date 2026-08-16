@@ -71,7 +71,7 @@ test.describe('window.onurlchange', () => {
       },
       body: listenerBody,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -120,7 +120,7 @@ test.describe('window.onurlchange', () => {
       },
       body: listenerBody,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -155,7 +155,7 @@ test.describe('window.onurlchange', () => {
       },
       body: listenerBody,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -214,7 +214,7 @@ test.describe('window.onurlchange', () => {
         document.body.dataset.ready = 'yes';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -276,7 +276,7 @@ test.describe('window.onurlchange', () => {
         document.body.dataset.ready = 'yes';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -344,7 +344,7 @@ test.describe('window.onurlchange', () => {
         document.body.dataset.sibling = 'ran';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -395,7 +395,7 @@ test.describe('window.onurlchange', () => {
         document.body.dataset.ready = 'yes';
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
