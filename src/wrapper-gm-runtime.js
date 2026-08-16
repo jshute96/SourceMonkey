@@ -29,6 +29,8 @@
 
   var _Promise = Promise;
   var _Error = Error;
+  var _now = Date.now.bind(Date);
+  var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
   var _ObjectCreate = Object.create;
   /* Captured for the window.onurlchange surface, which defines an
@@ -114,6 +116,14 @@
       ready: false,
       listeners: null,        /* lazily { listenerId: {key, callback} } */
       nextListenerId: 1,
+      resyncInFlight: false,  /* one outstanding sm:gm-resync at a time */
+      lastResyncAt: 0,
+      /* Monotonic change counter + the counter value at each key's
+         last change, local write or applied broadcast alike. Lets a
+         resync reply tell "this key has moved since I asked" from
+         "this key is unchanged" — see applyResyncSnapshot. */
+      writeSeq: 0,
+      writeSeqByKey: _ObjectCreate(null),
     };
     stores[scriptId] = s;
     return s;
@@ -217,7 +227,12 @@
        precede tab close; flushing here gives one more shot at
        delivery before bfcache. */
     window.addEventListener("visibilitychange", function () {
-      if (document && document.visibilityState === "hidden") flushAll();
+      if (!document) return;
+      if (document.visibilityState === "hidden") flushAll();
+      /* Coming back into view is a free moment to re-check the cache
+         against the worker, in case a broadcast was lost while this
+         tab sat in the background. See resyncListeningStores. */
+      else resyncListeningStores();
     }, { capture: true });
   } catch (_evErr) {}
 
@@ -240,6 +255,9 @@
     for (var i = 0; i < writes.length; i++) {
       var w = writes[i];
       var oldValue = _hasOwn.call(s.cache, w.key) ? s.cache[w.key] : undefined;
+      /* Counted like a local write: a resync reply that predates
+         this broadcast must not roll it back. */
+      s.writeSeqByKey[w.key] = ++s.writeSeq;
       if (w.deleted) {
         delete s.cache[w.key];
         fireListeners(scriptId, w.key, oldValue, undefined, true);
@@ -249,6 +267,133 @@
       }
     }
   }
+  /* ---------- Resync: recovering from a lost broadcast ----------
+
+     A broadcast is the ONLY thing that refreshes a live document's
+     cache, and GM_getValue is a pure cache read — so a document that
+     misses one is stale for the rest of its life, with no way to
+     notice. (It happened: a service-worker restart between the tabs
+     loading and the write emptied the worker's openers table and the
+     receiving tab never heard. See issue #19.)
+
+     The way back is to ask the worker for the whole map and diff it
+     against the cache. Triggered by:
+       - the worker's `sm:gm-resync-hint` after it starts, which is
+         when its delivery state was just rebuilt from disk;
+       - this document becoming visible again.
+     Only scripts with a live value-change listener answer — for
+     everyone else the cache is only observable through their own
+     writes, and answering costs the worker a storage read. */
+  var RESYNC_MIN_INTERVAL_MS = 5000;
+
+  function hasValueListeners(s) {
+    return !!(s && s.listeners && _ObjectKeys(s.listeners).length > 0);
+  }
+
+  /* Structural compare, so a resync that returns the same object
+     value as the cache already holds doesn't fire listeners: the
+     snapshot arrives freshly deserialized, so `===` would report
+     every object-valued key as changed on every resync.
+
+     Key-order sensitive, because it compares serializations. A
+     value that round-trips through storage keeps its order, so
+     that only shows up for a script that mutates the object it
+     stored (rather than storing a new one) — such a script gets
+     one spurious remote=true fire on the next resync, and its
+     cache was already wrong for that key. */
+  function sameStoredValue(a, b) {
+    if (a === b) return true;
+    if (a === null || b === null) return false;
+    if (typeof a !== "object" || typeof b !== "object") return false;
+    try { return _JSONStringify(a) === _JSONStringify(b); } catch (_sE) { return false; }
+  }
+
+  /* Apply a snapshot the worker answered a `sm:gm-resync` with.
+     `writeSeqAt` is the store's change counter as of the moment we
+     SENT that request — a reply can only speak for writes the
+     worker had already seen by then. Ways a key can be newer than
+     the reply, all of which we leave alone:
+
+       - it is still in `s.pending` (never flushed, so the worker
+         has not seen it at all);
+       - it was written after the request went out, flushed while
+         the reply was in flight, and so has left `s.pending`
+         again;
+       - a broadcast for it landed while the reply was in flight.
+     The counter catches the last two.
+
+     A key written and flushed BEFORE the request needs nothing:
+     messages from one document reach the worker in order, and the
+     worker parks a write in its in-flight overlay before awaiting
+     storage, so the snapshot already includes it. */
+  function applyResyncSnapshot(scriptId, values, writeSeqAt) {
+    var s = stores[scriptId];
+    if (!s || !s.ready || !values) return;
+    var pendingKeys = _ObjectCreate(null);
+    for (var p = 0; p < s.pending.length; p++) pendingKeys[s.pending[p].key] = true;
+    var written = s.writeSeqByKey;
+    var stale = function (key) {
+      return !!pendingKeys[key] || (_hasOwn.call(written, key) && written[key] > writeSeqAt);
+    };
+    var inSnapshot = _ObjectCreate(null);
+    var keys = _ObjectKeys(values);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      inSnapshot[k] = true;
+      if (stale(k)) continue;
+      var had = _hasOwn.call(s.cache, k);
+      var oldValue = had ? s.cache[k] : undefined;
+      if (had && sameStoredValue(oldValue, values[k])) continue;
+      s.cache[k] = values[k];
+      fireListeners(scriptId, k, oldValue, values[k], true);
+    }
+    /* Anything the cache still holds that the worker doesn't was
+       deleted by another tab in a broadcast we didn't get. */
+    var cached = _ObjectKeys(s.cache);
+    for (var j = 0; j < cached.length; j++) {
+      var ck = cached[j];
+      if (inSnapshot[ck] || stale(ck)) continue;
+      var prev = s.cache[ck];
+      delete s.cache[ck];
+      fireListeners(scriptId, ck, prev, undefined, true);
+    }
+  }
+
+  function requestResync(scriptId) {
+    var s = stores[scriptId];
+    if (!s || !s.ready || s.resyncInFlight || !_sendMessage) return;
+    var now = _now();
+    /* Stamped on the attempt, not on success: a worker that is
+       failing to answer shouldn't get asked once per visibility
+       change. */
+    if (s.lastResyncAt && (now - s.lastResyncAt) < RESYNC_MIN_INTERVAL_MS) return;
+    s.lastResyncAt = now;
+    s.resyncInFlight = true;
+    /* Captured BEFORE the send — see applyResyncSnapshot. */
+    var writeSeqAt = s.writeSeq;
+    var done = function () { s.resyncInFlight = false; };
+    try {
+      var p = _sendMessage({ type: "sm:gm-resync", scriptId: scriptId });
+      if (p && typeof p.then === "function") {
+        p.then(function (reply) {
+          done();
+          if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, writeSeqAt);
+        }, done);
+      } else {
+        done();
+      }
+    } catch (_rE) {
+      done();
+    }
+  }
+
+  function resyncListeningStores() {
+    var ids = _ObjectKeys(stores);
+    for (var i = 0; i < ids.length; i++) {
+      if (hasValueListeners(stores[ids[i]])) requestResync(ids[i]);
+    }
+  }
+
   /* Sender filter. A naive listener would happily process a forged
      `sm:gm-value-update` from another userscript inside the same
      extension — chrome.runtime.sendMessage from one USER_SCRIPT
@@ -264,6 +409,7 @@
       chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
         if (!sender || sender.id !== _extensionId || sender.tab) return;
         if (!msg || typeof msg !== "object") return;
+        if (msg.type === "sm:gm-resync-hint") { resyncListeningStores(); return; }
         if (msg.type !== "sm:gm-value-update") return;
         if (typeof msg.scriptId !== "string") return;
         if (!msg.writes || typeof msg.writes.length !== "number") return;
@@ -308,6 +454,7 @@
       var s = ensureStore(scriptId);
       var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       s.cache[key] = value;
+      s.writeSeqByKey[key] = ++s.writeSeq;
       s.pending.push({ key: key, value: value });
       scheduleFlush(scriptId);
       fireListeners(scriptId, key, oldValue, value, false);
@@ -316,6 +463,7 @@
       var s = ensureStore(scriptId);
       var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       delete s.cache[key];
+      s.writeSeqByKey[key] = ++s.writeSeq;
       s.pending.push({ key: key, value: DELETED_SENTINEL });
       scheduleFlush(scriptId);
       fireListeners(scriptId, key, oldValue, undefined, false);

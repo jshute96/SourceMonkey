@@ -327,6 +327,19 @@ interface SourceMonkeyApi {
   // verify the wrapper hard-aborts cleanly rather than running with
   // empty storage. No production caller flips this.
   setDebugForceSnapshotFailure: (value: boolean) => void;
+  // Test-only: drop the in-memory GM_* openers table and un-latch its
+  // hydration, which is exactly the state a freshly-started service
+  // worker is in. Lets a test reproduce the "worker was evicted between
+  // the tabs loading and the write" case without killing the worker
+  // (which would also kill the test's handle on it).
+  dropGmOpenersForTests: () => Promise<void>;
+  // Test-only fault injection: when true, `broadcastValueUpdate` sends
+  // nothing, standing in for a broadcast that never reached the other
+  // tab. Drives the resync-recovery test. No production caller flips it.
+  setDebugSuppressGmBroadcast: (value: boolean) => void;
+  // Fires the same all-tabs resync nudge the worker sends on startup.
+  // Tests can't restart the worker without losing their handle on it.
+  nudgeGmResync: () => Promise<void>;
 }
 
 const api: SourceMonkeyApi = {
@@ -417,6 +430,12 @@ const api: SourceMonkeyApi = {
     };
   },
   setDebugForceSnapshotFailure,
+  dropGmOpenersForTests: resetGmOpenersState,
+  setDebugSuppressGmBroadcast: (value: boolean) => { __debugSuppressGmBroadcast = !!value; },
+  // The unthrottled sweep: a test drives it on demand, where the
+  // once-a-minute rate limit on the startup path would just make the
+  // call silently do nothing.
+  nudgeGmResync,
   syncNow: async () => {
     // Cancel any pending debounced sync first — otherwise its work
     // would fire just after we return, and a test that does
@@ -453,6 +472,9 @@ const api: SourceMonkeyApi = {
     // recorded errors themselves live in the session storage cleared
     // below, so they need no separate reset.)
     _setCollectionWriteFailureForTests(null);
+    // Same: a test that suppressed cross-tab value broadcasts would
+    // otherwise leave every later test's broadcast dropped.
+    __debugSuppressGmBroadcast = false;
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -461,6 +483,10 @@ const api: SourceMonkeyApi = {
       clearTimeout(syncTimer);
       syncTimer = null;
     }
+    // Before the clears below, so a mirror write that was still queued
+    // lands first and gets wiped with everything else rather than
+    // re-seeding `sm:gm-openers` just after.
+    await resetGmOpenersState();
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
     // The legacy-key migration memo describes the profile we just
@@ -1808,29 +1834,151 @@ interface BatchWritePayload {
   writes: BatchWriteEntry[];
 }
 
-// In-memory openers table: scriptId -> set of tabIds that currently
-// have a wrapper for this script running. Updated on sm:start
-// (recordScriptReport, below) and on tab close. We don't track per-
-// frame because chrome.tabs.sendMessage broadcasts to every frame in
-// a tab — frame-level filtering can land later if it's worth it.
+// Openers table: scriptId -> set of tabIds that currently have a
+// wrapper for this script running. Updated on sm:start / sm:swapped
+// (recordScriptReport, below), on a resync request, and on tab close.
+// We don't track per-frame because chrome.tabs.sendMessage broadcasts
+// to every frame in a tab — frame-level filtering can land later if
+// it's worth it.
 //
-// State is in-memory only. On SW restart the table starts empty;
-// the table re-fills as sm:start reports arrive from existing
-// documents (Chrome resumes userscripts on resumes). A short window
-// after a write-burst-then-SW-restart may miss broadcasts to other
-// tabs — acceptable; reads still see the value at next register.
+// Mirrored into chrome.storage.session so it survives a service-worker
+// restart. It has to: the table is only filled at document start, an
+// MV3 worker is evicted after ~30s idle, and a write that arrives on
+// the next wake would otherwise find an empty table and drop every
+// cross-tab broadcast silently — permanently desyncing the other tab,
+// because a page-side GM_getValue never round-trips to the SW. See
+// docs/GM-APIs-storage.md and issue #19.
+//
+// The mirror is dropped when Chrome shuts down, which is also when
+// every tab in it dies, so a stale row can only outlive its tab within
+// one Chrome session (tab closed while the worker was asleep and
+// onRemoved never ran). `hydrateGmOpeners` prunes those against the
+// live tab list on the first read after each worker start.
+const GM_OPENERS_KEY = 'sm:gm-openers';
 const gmOpeners = new Map<string, Set<number>>();
 
-function registerOpener(scriptId: string, tabId: number): void {
+// Latched on first use per worker lifetime. Everything that reads or
+// mutates the table goes through it, so no path can act on a table
+// that hasn't been restored yet.
+let gmOpenersHydration: Promise<void> | null = null;
+
+function hydrateGmOpeners(): Promise<void> {
+  if (gmOpenersHydration) return gmOpenersHydration;
+  // The body can't be allowed to reject: the latch is permanent, and
+  // everything downstream (including handleBatchWrite, via
+  // broadcastValueUpdate) awaits it. A restore failure has to degrade
+  // to "empty table", not to "every write from now on fails".
+  gmOpenersHydration = restoreGmOpeners().catch((err) => {
+    console.info('[SourceMonkey] could not restore the GM openers table:', err);
+  });
+  return gmOpenersHydration;
+}
+
+async function restoreGmOpeners(): Promise<void> {
+  const got = await chrome.storage.session.get(GM_OPENERS_KEY);
+  const raw = got[GM_OPENERS_KEY];
+  if (!raw || typeof raw !== 'object') return;
+  const restored = raw as Record<string, unknown>;
+  // A row whose tab is gone (closed while the worker was asleep, so
+  // onRemoved never ran) is dropped on the way in. Without a tab list
+  // we keep every row instead — a send to a dead tab just rejects,
+  // which is the cheaper mistake.
+  let liveTabIds: Set<number> | null = null;
+  try {
+    liveTabIds = new Set(
+      (await chrome.tabs.query({}))
+        .map((t) => t.id)
+        .filter((id): id is number => typeof id === 'number'),
+    );
+  } catch {
+    liveTabIds = null;
+  }
+  let pruned = false;
+  for (const [scriptId, ids] of Object.entries(restored)) {
+    if (!Array.isArray(ids)) continue;
+    for (const tabId of ids) {
+      if (typeof tabId !== 'number') continue;
+      if (liveTabIds && !liveTabIds.has(tabId)) { pruned = true; continue; }
+      // Merge, don't replace: a sm:start that landed while this read
+      // was in flight already added its pair to the in-memory map.
+      addOpenerToMap(scriptId, tabId);
+    }
+  }
+  if (pruned) await writeGmOpeners();
+}
+
+function addOpenerToMap(scriptId: string, tabId: number): boolean {
   let s = gmOpeners.get(scriptId);
   if (!s) { s = new Set(); gmOpeners.set(scriptId, s); }
+  if (s.has(tabId)) return false;
   s.add(tabId);
+  return true;
+}
+
+async function writeGmOpeners(): Promise<void> {
+  const row: Record<string, number[]> = {};
+  for (const [scriptId, set] of gmOpeners) row[scriptId] = [...set];
+  try {
+    await chrome.storage.session.set({ [GM_OPENERS_KEY]: row });
+  } catch (err) {
+    console.info('[SourceMonkey] could not persist the GM openers table:', err);
+  }
+}
+
+// Coalesce the mirror writes: a page load registers one opener per
+// granting script, and each would otherwise be its own session write.
+// The whole table goes out on every write, so a coalesced write says
+// the same thing the skipped ones would have.
+let gmOpenersPersist: Promise<void> | null = null;
+function persistGmOpeners(): void {
+  if (gmOpenersPersist) return;
+  // Wait for hydration first — writing the in-memory table before the
+  // stored one has been merged in would drop the rows we haven't read
+  // back yet.
+  const p = hydrateGmOpeners()
+    .then(writeGmOpeners)
+    .catch(() => undefined)
+    .finally(() => { if (gmOpenersPersist === p) gmOpenersPersist = null; });
+  gmOpenersPersist = p;
+}
+
+// Resolve once no mirror write is outstanding. Loops because settling
+// one can leave the next already queued.
+async function settleGmOpeners(): Promise<void> {
+  while (gmOpenersPersist) await gmOpenersPersist;
+}
+
+// Return the worker to the state it starts in: no table in memory, no
+// restore done yet, so the next read re-reads the mirror. Lets the
+// tests drive an idle eviction (`dropGmOpenersForTests`) and keeps
+// `resetAllState` from leaving the two halves disagreeing. Settles any
+// queued mirror write first — otherwise it would land after the clear
+// and write the emptied table over the rows we mean to keep.
+async function resetGmOpenersState(): Promise<void> {
+  await hydrateGmOpeners();
+  await settleGmOpeners();
+  gmOpeners.clear();
+  gmOpenersHydration = null;
+}
+
+function registerOpener(scriptId: string, tabId: number): void {
+  if (addOpenerToMap(scriptId, tabId)) persistGmOpeners();
 }
 
 function clearTabFromGmOpeners(tabId: number): void {
-  for (const [scriptId, set] of gmOpeners) {
-    if (set.delete(tabId) && set.size === 0) gmOpeners.delete(scriptId);
-  }
+  // Deferred behind hydration: the rows for this tab may still be in
+  // session storage rather than the map, and clearing before the merge
+  // would leave them to be restored right back.
+  void hydrateGmOpeners().then(() => {
+    let changed = false;
+    for (const [scriptId, set] of gmOpeners) {
+      if (set.delete(tabId)) {
+        changed = true;
+        if (set.size === 0) gmOpeners.delete(scriptId);
+      }
+    }
+    if (changed) return writeGmOpeners();
+  }).catch(() => undefined);
 }
 
 // ---------- In-flight value-write overlay ----------
@@ -1963,30 +2111,135 @@ async function handleBatchWrite(
   // page-side cache (it issued the writes); broadcasting back would
   // be redundant and could feed back through value-change listeners.
   const senderTabId = sender.tab?.id;
-  broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId);
+  await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId);
   return { ok: true };
 }
 
-function broadcastValueUpdate(
+// Test-only knob — see `setDebugSuppressGmBroadcast` on the test
+// surface. Models a broadcast that never arrives, which is what the
+// resync path exists to recover from.
+let __debugSuppressGmBroadcast = false;
+
+async function broadcastValueUpdate(
   scriptId: string,
   writes: readonly BatchWriteEntry[],
   excludeTabId: number | undefined,
-): void {
+): Promise<void> {
+  if (__debugSuppressGmBroadcast) return;
+  await hydrateGmOpeners();
   const targets = gmOpeners.get(scriptId);
-  if (!targets || targets.size === 0) return;
+  let sent = 0;
   // Fire-and-forget per tab. chrome.tabs.sendMessage delivers to
   // every frame on the tab and each frame's runtime listener
   // dispatches by scriptId locally. "Receiving end does not exist"
   // rejections are normal (tab closed mid-send, frame torn down)
   // and silently dropped.
-  for (const tabId of targets) {
-    if (tabId === excludeTabId) continue;
-    void chrome.tabs.sendMessage(tabId, {
-      type: 'sm:gm-value-update',
-      scriptId,
-      writes,
-    }).catch(() => undefined);
+  if (targets) {
+    for (const tabId of targets) {
+      if (tabId === excludeTabId) continue;
+      sent++;
+      void chrome.tabs.sendMessage(tabId, {
+        type: 'sm:gm-value-update',
+        scriptId,
+        writes,
+      }).catch(() => undefined);
+    }
   }
+  // A write with nowhere to go is the normal single-tab case, so this
+  // is debug-only — but it is the line that tells you whether a
+  // cross-tab listener never fired because the value never left the
+  // worker. Nothing else on either side reports it. Name WHY nothing
+  // was sent: "we only know about the tab that wrote" and "we know
+  // about no tabs at all" look identical in a bare count, and only the
+  // second one is a symptom.
+  const openers = targets ? targets.size : 0;
+  const why = sent > 0 ? '' : openers === 0
+    ? ' — no tabs registered for this script'
+    : ' — the only registered tab is the one that wrote';
+  dlog(
+    `[SourceMonkey] gm-value broadcast for ${scriptId}: ${writes.length} write(s) ` +
+    `to ${sent} of ${openers} registered tab(s)${why}`,
+  );
+}
+
+// Full-snapshot resync for one script in one document.
+//
+// The broadcast above is the only thing that keeps a live document's
+// cache fresh, and a lost broadcast is otherwise unrecoverable: the
+// page-side GM_getValue reads the cache and never asks the worker
+// again, so the document stays stale until it navigates. This gives
+// the runtime a way back — it asks for the authoritative map and
+// diffs it against its cache, firing value-change listeners for
+// whatever moved.
+//
+// Requests also re-register the sender as an opener, which repairs
+// the table for a document whose sm:start predates a worker restart.
+// That trusts the sender's `scriptId` the same way `sm:start` does —
+// a sibling userscript in the same world can subscribe its own tab to
+// another script's broadcasts. Same trust boundary, no new exposure.
+async function handleGmResync(
+  payload: { scriptId?: unknown; __viaBridge?: unknown },
+  sender: chrome.runtime.MessageSender,
+): Promise<{ ok: boolean; values?: Record<string, unknown> }> {
+  // Refuse a bridge-relayed request, exactly as the check-pending
+  // value read does: this hands back another script's whole value map,
+  // and a MAIN-world page can forge the scriptId on anything it gets
+  // the bridge to forward. The bridge's allowlist doesn't carry
+  // `sm:gm-resync` today — this keeps that from being the only thing
+  // standing between a page and the values. See wrapper-bridge.js.
+  if (payload.__viaBridge === true) return { ok: false };
+  const scriptId = payload.scriptId;
+  if (typeof scriptId !== 'string' || !scriptId) return { ok: false };
+  const tabId = sender.tab?.id;
+  if (tabId != null) registerOpener(scriptId, tabId);
+  const values = await loadSnapshotForCheckPending(scriptId);
+  return { ok: true, values };
+}
+
+// Nudge every open tab to resync.
+//
+// A worker start is the one moment where our delivery state can be
+// wrong (rows pruned for a tab that was reported dead, a document that
+// never re-reported), so it's also the right moment to let documents
+// re-check. It deliberately sweeps ALL tabs rather than the openers we
+// just restored — a tab missing from the table is exactly the case
+// worth repairing, and it can't ask on its own behalf.
+//
+// Only documents with a live value-change listener answer: the nudge
+// is a no-op message everywhere else, and answering costs a storage
+// snapshot read.
+async function nudgeGmResync(): Promise<void> {
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const t of tabs) {
+      if (t.id == null) continue;
+      void chrome.tabs.sendMessage(t.id, { type: 'sm:gm-resync-hint' }).catch(() => undefined);
+    }
+  } catch (err) {
+    dlog('[SourceMonkey] gm resync nudge failed:', err);
+  }
+}
+
+// A worker starts on every wake, which for an active user is many
+// times an hour, and the sweep above costs a message per open tab. Rate
+// limit it against a session-storage stamp so a burst of wakes nudges
+// once. Long enough to stay cheap, short enough that a tab desynced by
+// a lost broadcast heals in about a minute rather than never.
+const GM_NUDGE_STAMP_KEY = 'sm:gm-nudged-at';
+const GM_NUDGE_MIN_INTERVAL_MS = 60_000;
+
+async function nudgeGmResyncAfterWorkerStart(): Promise<void> {
+  try {
+    const got = await chrome.storage.session.get(GM_NUDGE_STAMP_KEY);
+    const last = got[GM_NUDGE_STAMP_KEY];
+    const now = Date.now();
+    if (typeof last === 'number' && now - last < GM_NUDGE_MIN_INTERVAL_MS) return;
+    await chrome.storage.session.set({ [GM_NUDGE_STAMP_KEY]: now });
+  } catch {
+    // No stamp means we can't rate limit; nudging is still the useful
+    // direction, so fall through rather than skipping the sweep.
+  }
+  await nudgeGmResync();
 }
 
 // Shared async-reply plumbing for the onUserScriptMessage handlers that
@@ -2138,6 +2391,15 @@ function installScriptMessageListener(): void {
       // returning a real {ok} keeps the channel honest for future error
       // surfacing.
       return respondAsync('gm-batch-write', handleBatchWrite(msg as BatchWritePayload, sender), sendResponse);
+    }
+    if (type === 'sm:gm-resync') {
+      // Recovery path for a document that missed a value broadcast.
+      // See handleGmResync.
+      return respondAsync(
+        'gm-resync',
+        handleGmResync(msg as { scriptId?: unknown }, sender),
+        sendResponse,
+      );
     }
     // Which document the menu message came from. The registry is keyed
     // by it, so both the register and unregister branches below need it.
@@ -2507,6 +2769,11 @@ void ensureGithubAuthTokenLoaded();
 // session-storage sentinel so SW restarts within the session bail out
 // immediately. See `replayScriptLogsAtBoot` in script-updater.ts.
 void replayScriptLogsAtBoot();
+// Restore the GM_* openers table (chrome.storage.session) so a write
+// arriving on this wake still reaches the other tabs, and let live
+// documents re-check their caches now that we know our delivery state
+// was just rebuilt from disk.
+void hydrateGmOpeners().then(nudgeGmResyncAfterWorkerStart);
 
 // background.ts is compiled as an ES module (declared via
 // `"type": "module"` in manifest.json's service_worker entry). The

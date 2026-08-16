@@ -105,6 +105,17 @@ export interface SmApi {
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.
   setDebugForceSnapshotFailure(value: boolean): Promise<void>;
+  // Drops the SW's in-memory GM_* openers table, leaving the worker in
+  // the state it wakes up in after an idle eviction. Lets a test drive
+  // the cross-tab broadcast across a simulated worker restart without
+  // killing the worker the test is talking to.
+  dropGmOpenersForTests(): Promise<void>;
+  // Makes the SW drop every cross-tab value broadcast, standing in for
+  // one that never arrives. Stays armed until cleared with false.
+  setDebugSuppressGmBroadcast(value: boolean): Promise<void>;
+  // Sends the all-tabs "re-check your cache" nudge the SW fires when it
+  // starts up.
+  nudgeGmResync(): Promise<void>;
 }
 
 export interface ActionMenuPlanLike {

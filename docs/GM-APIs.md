@@ -181,7 +181,10 @@ Scope notes:
   write hits the SW AFTER we've issued check-pending but BEFORE
   `ready` flips — the snapshot is older than the broadcast and we
   drop the broadcast. Rare in practice (cross-tab traffic during
-  page load is uncommon) but worth knowing.
+  page load is uncommon) but worth knowing. A script with a
+  value-change listener catches up on the next resync
+  ([GM-APIs-storage.md](GM-APIs-storage.md#resync-recovering-a-document-that-missed-one));
+  one without stays behind until its next document.
 - **`GM_info.script.grant` is the canonicalized set, not the raw
   `@grant` lines.** `@grant GM.setValue` shows up as `GM_setValue` in
   `GM_info.script.grant`. Matches VM; TM exposes the raw declared
@@ -405,8 +408,9 @@ its own dispatch doesn't corrupt iteration.
   already been received. The target tab's check-pending snapshot
   already incorporated whatever was in storage when the SW handled
   it; a write that lands after that but before sm:start arrives is
-  missed by this tab until the next document. The window closes
-  once sm:start lands; subsequent writes broadcast normally.
+  missed by this tab until the next document — or until its next
+  resync, for a script with a value-change listener. The window
+  closes once sm:start lands; subsequent writes broadcast normally.
 - **Iframe-of-same-tab broadcast skip.** The openers table dedupes
   by tabId, so a write in the main frame of tab T doesn't broadcast
   to other frames of T (the `tabId === excludeTabId` guard fires

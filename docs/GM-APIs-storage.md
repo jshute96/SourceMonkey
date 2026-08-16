@@ -134,9 +134,9 @@ caches directly via a broadcast:
   to the SW. `pagehide` / `visibilitychange → hidden` force-flush
   so bfcache eviction doesn't drop in-flight writes.
 - The SW persists the batch to `chrome.storage.local`, then
-  iterates the in-memory openers table (`scriptId → Set<tabId>`)
-  and broadcasts a `sm:gm-value-update` to every OTHER tab
-  running the script.
+  iterates the openers table (`scriptId → Set<tabId>`) and
+  broadcasts a `sm:gm-value-update` to every OTHER tab running
+  the script.
 - Each receiving runtime patches its cache and fires any
   `GM_addValueChangeListener` callbacks with `remote=true`.
 - The originating tab is excluded — it already applied the write
@@ -146,6 +146,70 @@ The broadcast only reaches realms that are still alive. As soon
 as the tab navigates, its in-memory cache is gone — the next
 document round-trips to the SW for a fresh seed, same as any
 other new document.
+
+### The openers table survives a worker restart
+
+Why an in-memory-only table doesn't work:
+
+- It is filled at document start, from the `sm:start` /
+  `sm:swapped` report.
+- An MV3 service worker is evicted after ~30 s idle.
+- Nothing re-reports for a document that is already running.
+- So the table is empty on the next wake, and every broadcast for
+  a tab that has been open a while is dropped.
+
+What we do instead:
+
+- Mirror the table into `chrome.storage.session` on every change,
+  and restore it on the first read after a worker start.
+- Prune rows for tabs that no longer exist while restoring (a tab
+  closed while the worker was asleep never fired `onRemoved`).
+- Nothing to migrate across a browser restart: session storage
+  dies with the Chrome session, which is also when its tabs die.
+
+Why it matters more than a normal dropped message:
+
+- A page-side `GM_getValue` is a pure cache read, so a document
+  that misses a broadcast has no way to notice or recover.
+- It bit a real userscript handing a file between two tabs
+  (issue #19).
+
+### Resync: recovering a document that missed one
+
+Delivery is best-effort, so the runtime also has a way back:
+
+- `sm:gm-resync` asks the worker for the script's whole value map
+  (the same snapshot a fresh document gets) and diffs it against
+  the cache, firing value-change listeners for what moved.
+- The request re-registers the sender as an opener, which also
+  repairs the table for a document the worker had lost.
+- Bridge-relayed requests are refused, same as the check-pending
+  value read — a MAIN-world page can forge the `scriptId`.
+
+A reply is only authoritative for keys that haven't moved since
+the request went out. Skipped:
+
+- keys with an unflushed local write (the worker hasn't seen
+  them);
+- keys changed — by a local write or an arriving broadcast —
+  after the request was sent. The runtime stamps each key with a
+  per-store change counter and compares against its value at
+  send time.
+
+Triggered by:
+
+- `sm:gm-resync-hint`, which the worker sends to every tab after
+  it starts — the one moment its delivery state was just rebuilt.
+  Rate limited to once a minute across worker restarts.
+- The document becoming visible again.
+
+Who answers, and why not everyone:
+
+- Only scripts with a live `GM_addValueChangeListener`, at most
+  once every 5 s per store.
+- Without listeners, the cache is only observable through the
+  script's own reads.
+- Answering costs the worker a storage scan.
 
 ## Closing the persist race: in-flight overlay
 

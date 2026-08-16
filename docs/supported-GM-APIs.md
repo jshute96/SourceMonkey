@@ -160,6 +160,11 @@ returns script B's keys. See
 - Writes are eventually-consistent across tabs. A live cross-tab
   broadcast covers already-running documents; new documents always
   fetch a fresh snapshot from the SW on `sm:check-pending`.
+- Delivery survives an SW restart (the broadcast target list is
+  mirrored to session storage), and a document running a
+  value-change listener re-syncs its cache from the SW after an SW
+  start or when the tab becomes visible — so a broadcast that does
+  get lost is a delay rather than a permanent desync.
 - A write made in the last ~150 ms before tab close may be lost if
   the SW is idle/suspended and the page goes into bfcache.
 - If the SW is unreachable past the wrapper's 2 s safety timeout,

@@ -270,7 +270,10 @@ fetch via the SW). Highlights:
   `deleteValue`/`listValues` round-trip, persistence across reloads,
   per-script namespace isolation, `GM.` promise forms.
 - `tests/e2e/gm-broadcast.spec.ts` — cross-tab `GM_setValue`
-  broadcast: a write in tab A is observable in tab B.
+  broadcast: a write in tab A is observable in tab B; delivery
+  survives the SW losing its in-memory openers table; a document
+  that missed a broadcast re-syncs on the SW's nudge, for both a
+  changed value and a deleted one.
 - `tests/e2e/gm-value-listeners.spec.ts` — value-change listeners
   fire with `remote=false` locally and `remote=true` on broadcasts.
 - `tests/e2e/gm-dom.spec.ts` — `GM_addStyle` / `GM_addElement`.

@@ -393,7 +393,10 @@ Adding any of these is a catalog entry + a body — nothing structural.
   isn't broadcast to that tab. The compile-in cache covers the
   state at register time; live broadcasts kick in once `sm:start`
   fires. Closing the window would require registering openers at
-  registration time, not on `sm:start`.
+  registration time, not on `sm:start`. Narrower than it was: a
+  script with a value-change listener recovers on the next resync
+  (docs/GM-APIs-storage.md), so this only strands a listener-less
+  script's cache.
 - **Iframe-of-same-tab broadcast skip.** The openers table dedupes
   by tabId, so a write in the main frame of tab T doesn't broadcast
   to other frames of T. Each frame stays consistent at register
@@ -452,15 +455,27 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `wrapper-gm-runtime.js#applyRemoteUpdate` short-circuits on
   `!s.ready`, which is only set by `storage.init`. A script that
   grants ONLY `GM_addValueChangeListener` (no read/write APIs) never
-  receives broadcasts. Fix: emit `storage.init` whenever any storage
-  subsystem (read/write OR listener) is granted, or dispatch
-  listeners independent of `s.ready`.
+  receives broadcasts. `requestResync` / `applyResyncSnapshot` gate on
+  the same flag, so the resync path doesn't rescue that script either.
+  Fix: emit `storage.init` whenever any storage subsystem (read/write
+  OR listener) is granted, or dispatch listeners independent of
+  `s.ready`.
 - **Cross-window incognito broadcast filtering.** `broadcastValueUpdate`
   doesn't filter targets by `tab.incognito`, so a write from an
   incognito tab can fan out to normal-window tabs running the same
   scriptId (and vice versa). Same caveat applies to value-change
-  listener dispatch. Should match Chrome's extension incognito
+  listener dispatch, to the resync snapshot (`handleGmResync` hands
+  back the one shared value map), and to the resync nudge (which
+  sweeps every tab). Should match Chrome's extension incognito
   isolation contract.
+- **Openers rows accumulate across a tab's navigations.** A row is
+  added per (scriptId, tabId) at document start and only removed when
+  the tab closes, so a long-lived tab keeps rows for every script it
+  has ever run — now for the whole Chrome session, since the table is
+  mirrored to session storage. Cost is a wasted `tabs.sendMessage` per
+  stale row per write; the receiving document just has no store for
+  that scriptId. Fix: drop a tab's rows on committed navigation and
+  let the new document's sm:start re-add them.
 - **`GM_xmlhttpRequest` binary request bodies.** FormData / Blob /
   ArrayBuffer request bodies aren't supported — non-string `data`
   stringifies to `[object …]` at the SW boundary. Wire format
