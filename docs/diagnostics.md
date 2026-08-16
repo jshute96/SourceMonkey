@@ -474,6 +474,75 @@ symptom that led to `onlyProbesChanged` (see
 row at a time, and each write used to schedule its own re-registration.
 If they come back, that suppression is the first place to look.
 
+## Measuring a missed reload swap
+
+The [reload fast-path](injection.md#reload-fast-path) races a refresh
+against a 500 ms window measured from reload commit. When it loses, the
+page keeps the old body and the badge goes purple — so the question is
+always *which* part of the budget ran out. Everything lands in the
+**service worker** console.
+
+### The outcome line (no debug logging needed)
+
+```
+reload fast-path: <name> update not detected within 500ms
+  (asked at 140ms, waited 360ms); running prior version
+reload swap: <name> loadedAt A -> B (asked at 120ms, decided at 260ms of 500)
+```
+
+- **asked at** — commit → the wrapper's `sm:check-pending`. Chrome's
+  injection plus our setup; nothing the refresh can do about it.
+- **waited / decided at** — how much of the rest the refresh used.
+
+Which number is large tells you where to look, and they have different
+fixes: a large *asked at* is worker wake-up and match-index load, a
+large *waited* is the per-script check below.
+
+### With debug logging on
+
+| Line | What it covers |
+|------|----------------|
+| `reload fast-path setup` | `ensure-loaded` (the match index — a full read on a cold worker) then `start-checks` |
+| `script check` | one per script, the same phase names as `collection refresh` |
+| `reload fast-path cumulative` | one for the batch, breaking `rebuild` into its concurrent stages |
+
+```
+timing — script check: total 731ms (read-script 38, read-collection 169,
+  stat 17, fetch 23, rebuild 450, write 34)
+  — garmin/upload.user.js, 46 KB row, refetched
+timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
+```
+
+- **read-script / read-collection** — two point reads, in series because
+  the collection key comes out of the script row. Marked separately
+  because the split is the diagnosis: the second is consistently 3×
+  the first *even though the collection row is tiny*, which rules
+  payload out and points at the other concurrent checks on the same
+  thread.
+- **stat** — one `file://` directory listing per script, uncached, so
+  three scripts in one folder pay for three listings of the same
+  directory.
+- **fetch** — `unchanged` means the size+mtime skip hit and no body was
+  read; `refetched` means it missed.
+- **rebuild** — header parse, hashing, the parse check, and the
+  `@require` / `@resource` pass. The cumulative line says which:
+  measured on a real 3-script page, `parse-check` was 448 of 450 ms and
+  `deps` was 0.3 ms.
+- The parse check runs only for content that changed, and compiles in a
+  sandboxed iframe inside an offscreen document. Creating that document
+  is the expensive part, so the first check after an extension update —
+  which invalidates every cached verdict, since `parseCheckKey` includes
+  the version — is the worst case by an order of magnitude. Observed:
+  2306 ms, then 336, then 48.
+
+Two things that are **not** on the critical path but land in these
+numbers anyway, both because the worker is single-threaded:
+
+- `registration sync` reads every row in storage (`get(null)`), on a
+  50 ms debounce after the write the fast path just made.
+- The other checks in the same batch. A duplicate read or listing costs
+  its siblings' measured time as well as its own.
+
 ## Testing
 
 - `tests/unit/diagnostic-location.test.mjs` — the label and the

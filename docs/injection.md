@@ -620,6 +620,28 @@ and file:// reads are fast enough that 500ms covers the common case.
 If we add HTTP-fetched scripts later, a second timeout for the body
 fetch belongs here.
 
+Every outcome names where the budget went (`asked at Nms, waited Mms`),
+and debug logging adds a phase breakdown per script — see
+[Measuring a missed reload swap](diagnostics.md#measuring-a-missed-reload-swap).
+What the first measurements found, on a 3-script page with an edited
+local file:
+
+- **The parse check dominates a changed script** — 448 of a 450 ms
+  `rebuild`. It only runs for content that changed, and it pays to open
+  an offscreen document; the run right after an extension update, which
+  invalidates every cached verdict, cost 2306 ms.
+- **The batch duplicates its own work.** Scripts matching the same page
+  usually share a collection and a folder, and each check re-reads that
+  row and re-lists that directory. On one thread the duplicates land in
+  each other's measured time — which is why the tiny collection row
+  reads slower than a 63 KB script row.
+- **Dependency rechecking is not the cost it looks like.** `manual` mode
+  selects `recheckFiles: 'all'`, but measured `deps` was 0.3 ms — the
+  risk is real only for a script with HTTP `@require`s.
+- The registration sync a refresh triggers is **not** awaited here (the
+  swap hands the body over directly), but it reads every row in storage
+  and competes for the same thread.
+
 ### Snapshot piggyback for storage-granting scripts
 
 The check-pending reply doubles as the channel that delivers the

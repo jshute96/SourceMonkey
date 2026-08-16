@@ -2187,14 +2187,32 @@ export async function refreshCollection(
 // can't promote a script to `missing` — that's the directory-level
 // Refresh's job. (If the file is gone, the fetch will fail and the
 // result is `status: 'invalid'`.)
+//
+// Timed, because this is what the reload fast-path races against a
+// 500 ms window (docs/injection.md#reload-fast-path) and "it didn't
+// make it" was previously unattributable. The phases mirror the
+// collection-refresh timer's so the two lines read the same way.
 export async function refreshScript(
   scriptId: string,
   opts: RefreshOptions = {},
 ): Promise<StoredScript | null> {
+  const timer = startPhaseTimer('script check');
+  // Two point reads, necessarily in series: the collection key comes
+  // out of the script row. Measured at ~150-190ms combined on the
+  // reload fast path — by far its largest fixed cost, and paid by
+  // unchanged scripts too — so they are marked separately. The script
+  // row carries the whole source; the collection row is a few fields.
+  // If the cost tracks the big row it is payload, and the fix is where
+  // bodies live; if it is split evenly it is per-call overhead or
+  // contention with whatever else is reading storage.
   const prior = await getScript(scriptId);
   if (!prior) return null;
+  timer.mark('read-script');
   const collectionRow = await getRaw<StoredCollection>(collectionKey(prior.collectionId));
   if (!collectionRow) return null;
+  timer.mark('read-collection');
+  timer.note(prior.relativePath);
+  timer.note(() => `${Math.round((prior.size ?? 0) / 1024)} KB row`);
 
   // Build a single-entry scan. Only local-directory collections support
   // the targeted size+mtime listing lookup; HTTP, manifest, and
@@ -2228,8 +2246,20 @@ export async function refreshScript(
       /* listing failed; scan stays bare → always-fetch */
     }
   }
+  // One directory listing per script, uncached — so N scripts in the
+  // same folder pay for N listings. Worth knowing before optimising:
+  // this is the phase the fast path can most plausibly share.
+  timer.mark('stat');
 
   const fetchResults = await fetchOrSkipInParallel(collectionRow.path, scan, [prior]);
+  // Cheap when size+mtime match the stored row (no body read at all),
+  // expensive when they don't. The `skipped` note is what separates
+  // "the file really changed" from "we re-read it for no reason".
+  timer.mark('fetch');
+  timer.note(() => {
+    const one = [...fetchResults.values()][0];
+    return one && 'unchanged' in one ? 'unchanged' : 'refetched';
+  });
   const result = await rebuildCollection({
     collectionId: prior.collectionId,
     collectionPath: collectionRow.path,
@@ -2243,10 +2273,14 @@ export async function refreshScript(
   });
   const next = result[0];
   if (!next) return null;
+  // Covers the header parse, the `@require`/`@resource` pass (which
+  // reaches the network in `recheckFiles: 'all'` mode), the source
+  // hash, and the parse check.
+  timer.mark('rebuild');
   // Re-read inside the lock and write atomically so edits that landed
   // during the fetch (an enable toggle, an update probe) aren't
   // reverted by values captured before them.
-  return await mutate(async () => {
+  const written = await mutate(async () => {
     const cur = await getRaw<StoredScript>(scriptKey(scriptId));
     const merged = preserveConcurrentEdits(next, prior, cur);
     // Same rule as the collection path: a check that found nothing new
@@ -2259,6 +2293,9 @@ export async function refreshScript(
     }
     return merged;
   });
+  timer.mark('write');
+  timer.done();
+  return written;
 }
 
 // Re-apply the parts of a script row that a refresh doesn't own, onto

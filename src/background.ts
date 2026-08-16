@@ -30,6 +30,7 @@ import {
   installDebugLoggingListener,
   loadDebugLoggingFlag,
 } from './debug-log.js';
+import { startPhaseTimer, resetPhaseTotals, reportPhaseTotals } from './phase-timing.js';
 import {
   installGithubAuthListener,
   ensureGithubAuthTokenLoaded,
@@ -1356,9 +1357,15 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
   // the 500ms window to track real elapsed time since the user hit
   // reload, not "time since ensureLoaded resolved."
   const startedAt = Date.now();
+  // Setup eats the front of the 500 ms window, and on a cold worker —
+  // which this very navigation may have woken — `ensureLoaded` is a
+  // full match-index read competing with the startup registration
+  // sync. That share of the budget is invisible without this.
+  const timer = startPhaseTimer('reload fast-path setup');
   void (async () => {
     try {
       await ensureLoaded();
+      timer.mark('ensure-loaded');
       const matches = findMatchesForUrl(url);
       if (matches.length === 0) return;
       const key = fastPathKey(tabId, documentId);
@@ -1369,6 +1376,14 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
       // the entry would lose those promises and reset the consumed
       // guard, causing inconsistent decisions across scripts.
       if (fastPathByDoc.has(key)) return;
+      // Cumulative buckets for the batch. `script check`'s `rebuild`
+      // phase is a fan-out — dependency fetches, hashing, the parse
+      // check — and on this path a single slow one decides whether the
+      // window is met, so "which of them was it" is the question. Reset
+      // once for the batch and report when the last check settles: the
+      // three scripts run concurrently, so a per-check reset would have
+      // them clobbering each other's bucket.
+      resetPhaseTotals();
       const scripts = new Map<string, FastPathScriptEntry>();
       for (const m of matches) {
         const entry: FastPathScriptEntry = {
@@ -1405,6 +1420,11 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
         );
         scripts.set(m.id, entry);
       }
+      // Reported off the end of the batch rather than at the decision:
+      // the check that misses the window keeps running, and its cost is
+      // exactly what we want in the line.
+      void Promise.allSettled([...scripts.values()].map((s) => s.promise))
+        .then(() => reportPhaseTotals('reload fast-path'));
       const cleanupTimer = setTimeout(() => {
         fastPathByDoc.delete(key);
       }, RELOAD_FAST_PATH_TTL_MS);
@@ -1414,6 +1434,9 @@ function setupReloadFastPath(tabId: number, documentId: string, url: string): vo
         consumed: new Set(),
         cleanupTimer,
       });
+      timer.mark('start-checks');
+      timer.note(`${matches.length} script(s), tab=${tabId}`);
+      timer.done();
       console.log(
         `[SourceMonkey] reload fast-path: checking ${matches.length} script(s) for tab=${tabId} doc=${documentId.slice(0, 8)}`,
       );
@@ -1497,17 +1520,22 @@ async function handleCheckPending(
     fastPathByDoc.delete(key);
   }
   const wrapperLoadedAt = typeof payload.loadedAt === 'number' ? payload.loadedAt : 0;
+  // Every outcome line carries this. It splits the budget into the two
+  // halves that have different fixes: time spent before the wrapper
+  // even asked (Chrome's injection + our setup) versus time the
+  // refresh itself took while the wrapper waited.
+  const askedAt = Date.now() - entry.startedAt;
+  const sinceCommit = (): number => Date.now() - entry.startedAt;
   let refreshed: StoredScript | null = null;
   if (scriptEntry.settled) {
     // updateScript already finished while we were waiting on Chrome to
     // inject the wrapper — no race needed.
     refreshed = scriptEntry.result;
   } else {
-    const elapsed = Date.now() - entry.startedAt;
-    const remaining = RELOAD_FAST_PATH_WINDOW_MS - elapsed;
+    const remaining = RELOAD_FAST_PATH_WINDOW_MS - askedAt;
     if (remaining <= 0) {
       console.log(
-        `[SourceMonkey] reload fast-path: ${payload.name ?? payload.id} window already elapsed (${elapsed}ms); running prior version`,
+        `[SourceMonkey] reload fast-path: ${payload.name ?? payload.id} window already elapsed (asked at ${askedAt}ms); running prior version`,
       );
       return { action: 'run' };
     }
@@ -1525,7 +1553,8 @@ async function handleCheckPending(
       // fires, so the NEXT reload will pick it up. We just give up
       // waiting on it for THIS navigation.
       console.log(
-        `[SourceMonkey] reload fast-path: ${payload.name ?? payload.id} update not detected within ${RELOAD_FAST_PATH_WINDOW_MS}ms; running prior version`,
+        `[SourceMonkey] reload fast-path: ${payload.name ?? payload.id} update not detected within ${RELOAD_FAST_PATH_WINDOW_MS}ms ` +
+        `(asked at ${askedAt}ms, waited ${remaining}ms); running prior version`,
       );
       return { action: 'run' };
     }
@@ -1629,7 +1658,8 @@ async function handleCheckPending(
     }
   }
   console.log(
-    `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
+    `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt} ` +
+    `(asked at ${askedAt}ms, decided at ${sinceCommit()}ms of ${RELOAD_FAST_PATH_WINDOW_MS})`,
   );
   return {
     action: 'run-new',
