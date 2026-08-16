@@ -1516,14 +1516,24 @@
      before us stays in the chain, instead of being silently bypassed.
      The other shim-cache entries capture early because their job is to
      resist tampering; this one's job is to be a well-behaved link in a
-     chain. Applied at most once per document — re-running it would
-     capture our own patch as the "original" and recurse forever. */
+     chain. Applied at most once per SUCCESSFUL run — re-running after
+     one would capture our own patch as the "original" and recurse
+     forever.
+
+     Returns whether the interception is in place. The flag is set only
+     after both assignments land, and a partial failure is rolled back,
+     so a throw leaves the world exactly as we found it and the next
+     enable() gets a clean retry. The caller uses the answer to decide
+     whether to expose the surface at all — an accessor without the
+     patch would report "supported" while addEventListener silently
+     registered a DOM type nothing dispatches. */
   function ensureUrlChangePatch() {
-    if (urlChangePatched) return;
-    urlChangePatched = true;
+    if (urlChangePatched) return true;
+    var origAdd = null;
+    var origRemove = null;
     try {
-      _origAddEventListener = window.addEventListener;
-      _origRemoveEventListener = window.removeEventListener;
+      origAdd = window.addEventListener;
+      origRemove = window.removeEventListener;
       window.addEventListener = function (type, listener) {
         if (isUrlChangeType(type)) {
           addUrlChangeHandler(listener);
@@ -1538,7 +1548,18 @@
         }
         return _origRemoveEventListener.apply(this == null ? window : this, arguments);
       };
-    } catch (_ae) {}
+      _origAddEventListener = origAdd;
+      _origRemoveEventListener = origRemove;
+      urlChangePatched = true;
+      return true;
+    } catch (_ae) {
+      /* Put back whatever we managed to overwrite, so the retry
+         captures the real originals rather than a half-installed
+         patch whose `_orig*` never got set. */
+      try { window.addEventListener = origAdd; } catch (_r1) {}
+      try { window.removeEventListener = origRemove; } catch (_r2) {}
+      return false;
+    }
   }
 
   /* Installed lazily, on the first granted script's enable() call.
@@ -1546,11 +1567,16 @@
      UNGRANTED scripts: `window.onurlchange` has to stay undefined on
      documents where nothing asked for it. Idempotent — a second script
      granting the API (or a re-registration inside the same document)
-     reuses the surface that's already there. */
+     reuses the surface that's already there.
+
+     Patch first, and expose nothing if it failed: a script that can't
+     receive events through either registration form is better off
+     seeing `window.onurlchange === undefined` — the documented
+     "unsupported" answer — than a feature test that lies. */
   function installUrlChange() {
+    if (!ensureUrlChangePatch()) return;
     urlChangeEnabled = true;
     ensureUrlChangeProperty();
-    ensureUrlChangePatch();
   }
 
   var urlchange = {

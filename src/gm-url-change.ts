@@ -33,7 +33,8 @@
 //
 // Wire protocol:
 //   SW → page: `{ type: 'sm:url-change', url }` via
-//   `chrome.tabs.sendMessage(tabId, msg, { frameId })`. The URL is
+//   `chrome.tabs.sendMessage(tabId, msg, { documentId })`, falling
+//   back to `{ frameId }` (see `urlChangeTarget`). The URL is
 //   replayed verbatim to the userscript, so a burst of history
 //   updates produces one event each rather than a coalesced one.
 //
@@ -54,6 +55,10 @@ export interface UrlChangeDetails {
   tabId: number;
   frameId: number;
   url: string;
+  // Chrome ≥ 106 stamps every webNavigation event with the document
+  // that changed. Optional so older builds (and the unit tests) can
+  // omit it and fall back to `frameId`.
+  documentId?: string;
 }
 
 // Pure: should this history update be forwarded to a frame?
@@ -63,8 +68,8 @@ export interface UrlChangeDetails {
 // URL-less event has nothing worth reporting. Everything else is
 // forwarded, including `file://` (SourceMonkey injects there too).
 //
-// Sub-frames pass the filter, but the `frameId` targeting below is
-// what actually matters for them: a sub-frame's navigation must never
+// Sub-frames pass the filter, but the targeting below is what
+// actually matters for them: a sub-frame's navigation must never
 // be delivered to the top frame's listeners as if the document had
 // moved. No userscript runs in a sub-frame today anyway — we never set
 // `allFrames` (see docs/injection.md "No frame control") — so the
@@ -75,7 +80,25 @@ export function shouldNotifyUrlChange(details: UrlChangeDetails): boolean {
   return typeof details.url === 'string' && details.url !== '';
 }
 
-// Fire-and-forget notification to the frame that changed. Rejections
+// Which receiver the message is addressed to.
+//
+// Prefer `documentId` over `frameId`: a frame ID names a *slot*, not a
+// document. The send is asynchronous relative to the navigation event,
+// so if that frame commits a cross-document navigation in between, a
+// frame-addressed message lands in a document that was never at this
+// URL and its listeners report a URL the page isn't on. A document ID
+// names the exact document, and the send simply finds no receiver once
+// that document is gone — which is the outcome we want.
+//
+// Only one of the two is passed: Chrome treats them as alternatives,
+// not as a pair to intersect.
+export function urlChangeTarget(details: UrlChangeDetails): { frameId: number } | { documentId: string } {
+  return typeof details.documentId === 'string' && details.documentId !== ''
+    ? { documentId: details.documentId }
+    : { frameId: details.frameId };
+}
+
+// Fire-and-forget notification to the document that changed. Rejections
 // are expected and swallowed: pages with no active SourceMonkey script
 // have no `__SM_GM__` runtime registered, so there is no receiving end.
 export function notifyUrlChange(details: UrlChangeDetails): void {
@@ -84,7 +107,7 @@ export function notifyUrlChange(details: UrlChangeDetails): void {
     .sendMessage(
       details.tabId,
       { type: SM_URL_CHANGE_MSG, url: details.url },
-      { frameId: details.frameId },
+      urlChangeTarget(details),
     )
     .catch(() => undefined);
 }

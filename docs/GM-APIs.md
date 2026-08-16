@@ -36,7 +36,7 @@ SourceMonkey actually does today.
   registration alongside `buildBridgeSpec`.
 - **`src/gm-url-change.ts`** — SW-side driver for
   `@grant window.onurlchange`. Forwards
-  `chrome.webNavigation.onHistoryStateUpdated` to the frame that
+  `chrome.webNavigation.onHistoryStateUpdated` to the document that
   changed as an `sm:url-change` message.
 
 ## Bindings layout in the wrapper
@@ -848,15 +848,20 @@ calling the real one. So the signal comes from the service worker:
 | same-document back / forward | `onHistoryStateUpdated` |
 | fragment change (`location.hash = …`) | `onReferenceFragmentUpdated` |
 
-Both are forwarded to the exact `(tabId, frameId)` that changed as an
+Both are forwarded to the exact document that changed as an
 `sm:url-change` message carrying the reported URL, which the page-side
 runtime replays verbatim to its listeners.
 
-The `frameId` targeting is load-bearing even though no userscript runs
-in a sub-frame today (we never set `allFrames` — see
+The targeting is load-bearing even though no userscript runs in a
+sub-frame today (we never set `allFrames` — see
 [injection.md](injection.md)): without it, an ad iframe's navigation
 would arrive at the top frame's listeners as if the document had
 moved.
+
+We address by `documentId`, falling back to `frameId` on builds that
+don't report one. A frame ID names a slot rather than a document, so
+a cross-document navigation landing between the event and the send
+would deliver the URL into a document that was never on it.
 
 **These are the same two events Tampermonkey uses.** Verified in TM
 5.5.0's `background.js`, which logs "webNavigation
@@ -937,7 +942,7 @@ one narrow way: `unsafeWindow` is a passthrough to the isolated
   `addEventListener` registration the script never touched, and
   `removeEventListener('urlchange', f)` would silence a slot handler
   the getter still reported. Covered by
-  `tests/e2e/gm-url-change.spec.ts`.
+  `tests/e2e/window-onurlchange.spec.ts`.
 - Assigning a non-function stores the value (so the getter
   round-trips) but registers nothing, and logs a `console.info`. TM
   warns in the same situation.
@@ -976,6 +981,13 @@ one narrow way: `unsafeWindow` is a passthrough to the isolated
 - A listener registered by script A is removable by script B if it
   holds the same function reference — a consequence of the shared
   table, and not reachable in practice.
+- **Navigations before the script runs are lost.** Events are
+  dropped until the first granting script calls `enable()`, so an
+  SPA that routes during page load can navigate several times before
+  a `@run-at document-idle` script ever sees one. Buffering them
+  would need a per-document queue with no idea how long to hold it.
+  Grant `@run-at document-start` if the first route matters; TM has
+  the same gap.
 - Every same-document navigation in every tab costs one
   `chrome.tabs.sendMessage`. It is deliberately **not** gated on
   "some script here granted the API": that state would have to

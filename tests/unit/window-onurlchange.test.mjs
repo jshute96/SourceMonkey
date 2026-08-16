@@ -26,8 +26,13 @@ globalThis.chrome = {
   },
 };
 
-const { SM_URL_CHANGE_MSG, shouldNotifyUrlChange, notifyUrlChange, installUrlChangeWatch } =
-  await import('../../dist/gm-url-change.js');
+const {
+  SM_URL_CHANGE_MSG,
+  shouldNotifyUrlChange,
+  notifyUrlChange,
+  installUrlChangeWatch,
+  urlChangeTarget,
+} = await import('../../dist/gm-url-change.js');
 
 test('shouldNotifyUrlChange accepts a normal main-frame history update', () => {
   assert.equal(
@@ -58,12 +63,28 @@ test('shouldNotifyUrlChange rejects untargetable tabs and empty URLs', () => {
   assert.equal(shouldNotifyUrlChange({ tabId: 7, frameId: 0, url: '' }), false);
 });
 
-test('notifyUrlChange sends sm:url-change to the exact frame that changed', () => {
+test('urlChangeTarget prefers documentId, which names the document a frameId cannot', () => {
+  // A frame ID names a slot: if the frame commits a cross-document
+  // navigation between the event and the send, a frame-addressed
+  // message lands in a document that was never at this URL.
+  assert.deepEqual(
+    urlChangeTarget({ tabId: 1, frameId: 0, url: 'https://x/', documentId: 'doc-a' }),
+    { documentId: 'doc-a' },
+  );
+  // Only one of the two is ever passed — Chrome treats them as
+  // alternatives, not as a pair to intersect.
+  assert.deepEqual(urlChangeTarget({ tabId: 1, frameId: 4, url: 'https://x/' }), { frameId: 4 });
+  assert.deepEqual(urlChangeTarget({ tabId: 1, frameId: 4, url: 'https://x/', documentId: '' }), {
+    frameId: 4,
+  });
+});
+
+test('notifyUrlChange sends sm:url-change to the exact document that changed', () => {
   sent.length = 0;
-  notifyUrlChange({ tabId: 42, frameId: 5, url: 'https://example.com/next' });
+  notifyUrlChange({ tabId: 42, frameId: 5, url: 'https://example.com/next', documentId: 'doc-b' });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].tabId, 42);
-  assert.deepEqual(sent[0].options, { frameId: 5 });
+  assert.deepEqual(sent[0].options, { documentId: 'doc-b' });
   assert.deepEqual(sent[0].message, {
     type: SM_URL_CHANGE_MSG,
     url: 'https://example.com/next',

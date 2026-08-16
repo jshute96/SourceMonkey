@@ -57,7 +57,11 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 
 ---
 
-## Non-`GM_*` grants
+## Non-GM grants
+
+<!-- Heading kept free of backticks and `_`: GitHub keeps the
+     underscore in the slug, so "Non-`GM_*` grants" would anchor as
+     `#non-gm_-grants` and every link below would 404. -->
 
 Tampermonkey's `@grant` accepts a handful of names outside the
 `GM_*` / `GM.*` pattern. This is the **complete** list — it's the same

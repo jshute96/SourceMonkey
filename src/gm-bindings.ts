@@ -425,7 +425,10 @@ export function emitGmBindings(
   // corrupt the user's data.)
   if (specs.some((s) => s.subsystem === 'url-change')) {
     parts.push(
-      `if (window.__SM_GM__) window.__SM_GM__.urlchange.enable(${jsLit(info.scriptId)});`,
+      // Both halves matter: a runtime registered before this feature
+      // shipped has `__SM_GM__` but no `urlchange`, and a page can hold
+      // a stale registration across an extension update.
+      `if (window.__SM_GM__ && window.__SM_GM__.urlchange) window.__SM_GM__.urlchange.enable(${jsLit(info.scriptId)});`,
     );
   }
   // Eager calls into __SM_GM__ at compile time go in the prelude.
