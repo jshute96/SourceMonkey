@@ -432,7 +432,7 @@ The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
 - Defer execution until the prelude's matcher + check-pending +
   `@run-at` gates resolve (via `self.__smRun(id, fn)`).
 - Splice the GM bindings (`const GM_info = ...`, `const GM_setValue
-  = ...`, etc.) and the GM prelude (`storage.init` etc.) into the
+  = ...`, etc.) and the GM prelude (`storage.init`) into the
   function so they're locals visible to the body — and, because the
   requires are concatenated into the same function, to library
   top-level code too. One copy serves both; see
@@ -639,6 +639,10 @@ script's initial GM_setValue cache contents:
   or `handleCheckPending` errored.
 - **Non-storage scripts.** Skip the snapshot read; the message
   handler short-circuits before `loadSnapshotForCheckPending`.
+- **Swap replies read the new row instead.** `handleCheckPending`
+  loads the snapshot itself when the body it's about to hand back
+  grants storage, whatever the wrapper asked for — see the storage
+  bullet under [Wrapper protocol](#wrapper-protocol).
 
 See [GM-APIs-storage.md](GM-APIs-storage.md) for the full storage
 model.
@@ -661,13 +665,33 @@ receives `{action}` and branches:
   devtools and the viewer's Log tab report original coordinates for a
   hot-swapped script too. That parity is load-bearing and easy to
   break — see `src/composed-source.ts`, which describes both layouts.
-  **Caveat:** the swap eval runs at the prelude's function
+  **Scope caveat:** the swap eval runs at the prelude's function
   scope, not inside the main-body wrap function's closure, so the
   GM_* bindings spliced into the wrap function are NOT visible to
-  the swap-evaluated body. A storage-granting script that takes
-  this branch will see `ReferenceError` for `GM_setValue` etc.
-  Storage scripts should generally not be served `run-new`. See
-  [injection-modes.md](injection-modes.md#cons--caveats).
+  the swap-evaluated body. `buildSwapEvalBody` compensates by
+  prepending the script's own binding block (including the eager
+  `resource.init` / `urlchange.enable` calls) to the body it hands
+  over. See [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper)
+  for how that block is split.
+- **Storage grants on a swap.** The one emitted call that can't be
+  prepended is `storage.init` — it reads the snapshot off
+  `__smDecision`, which an indirect eval's global scope doesn't
+  have. So:
+  - The SW sets `seedValues` on the `run-new` reply, computed from
+    the **new** script row, and makes sure a `gmValues` snapshot is
+    attached. It's an instruction ("seed the cache before you eval"),
+    unlike the payload's `needsValues`, which is the wrapper's own
+    request based on the registered grant set.
+  - The prelude runs `storage.init` itself, in its own scope, right
+    before the eval.
+  - Missing snapshot or missing runtime → no swap. The prelude logs
+    and falls through to the baked-in body, whose own snapshot
+    handling (including the hard abort) still applies. Reading an
+    empty cache would make a read-modify-write script overwrite the
+    user's real values.
+  - Computing `seedValues` from the new row is what makes a refresh
+    that **adds** a storage grant work: the registered wrapper never
+    asked for a snapshot, so the SW loads one itself.
 - `skip` — sends `sm:abandoned` and exits without running anything.
 
 Prelude-side safety timeout (2s) protects against the SW vanishing
@@ -692,6 +716,14 @@ still executes.
   USER_SCRIPT-world scripts that's ~1–5ms on the document-start
   critical path; for MAIN-world (which routes through `wrapper-bridge.js`
   via postMessage) it's roughly 2–3x that.
+- **World changes defer the swap.** Adding a script's first real
+  `@grant` moves it MAIN → USER_SCRIPT, but the running wrapper is
+  stuck in the world Chrome injected it into, and USER_SCRIPT
+  bindings dereference `window.__SM_GM__`, which MAIN doesn't have.
+  A request relayed over `wrapper-bridge.js` is by definition from a
+  MAIN wrapper, so that plus a USER_SCRIPT new row means "defer to
+  the next reload". The reverse direction is safe — a MAIN-only
+  build is just the `GM_info` literal.
 - **Race vs. setup.** If a wrapper fires before `setupReloadFastPath`
   finishes its `await ensureLoaded()` step, it gets `run` and the
   reload behaves like before. The opportunistic refresh kicked off by

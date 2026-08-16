@@ -317,7 +317,9 @@ Adding any of these is a catalog entry + a body — nothing structural.
   (rather than `prelude`) is that a hot-swapped body still needs the
   surface. Only the emitted string's position is asserted today; an
   e2e driving the run-new swap with this grant would make the
-  rationale load-bearing.
+  rationale load-bearing. `resource.init` sits in `js` for the same
+  reason and now has that e2e (`reload-fast-path.spec.ts`), so this
+  is the last eager call whose swap behaviour is unasserted.
 - **`window.onurlchange` in MAIN world.** `@inject-into page` +
   `@grant window.onurlchange` gets nothing, since MAIN-world scripts
   get no bindings at all. Folded into the general "GM_* in MAIN
@@ -402,6 +404,13 @@ Adding any of these is a catalog entry + a body — nothing structural.
   to other frames of T. Each frame stays consistent at register
   time and diverges on writes until next reload. Acceptable for
   v1.
+- **A refused reload swap is only visible in the page console.** When
+  the prelude can't seed the storage cache for a `run-new` body it
+  runs the prior version instead and logs there — no `sm:*` report, so
+  the Log tab and the badge show an ordinary run while the user is
+  looking at a stale script. `sm:error` would be wrong (the script did
+  run); a warning-level Log row would fit. Same gap for the SW-side
+  deferrals (world change, snapshot read failed).
 - **Storage quota error surfacing.** A `chrome.storage.local.set`
   rejection (quota exceeded) only `console.warn`s; the userscript
   sees no error. Surface on the per-script log.

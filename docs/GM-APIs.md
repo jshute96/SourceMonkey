@@ -51,8 +51,12 @@ function and visible to the user body via closure:
   from inside its own function body, so emitting them this early
   is safe even when the runtime spec hasn't run yet — the
   dereference doesn't fire until the user body actually calls a
-  `GM_*` API.
-- `prelude` — eager `__SM_GM__.*` calls — today just
+  `GM_*` API. Two eager calls ride along at the end —
+  `urlchange.enable` and `resource.init` — because they need
+  nothing but the runtime and baked literals, which makes them
+  safe in the swap eval that also gets this string.
+- `prelude` — eager `__SM_GM__.*` calls that need identifiers only
+  the wrap function has — today just
   `storage.init(scriptId, __smDecision.gmValues)` for scripts
   with a storage grant. The snapshot is attached to the
   `sm:check-pending` reply by the SW; if it's missing the prelude
@@ -90,8 +94,12 @@ Scope notes:
   same call hit an uninitialized cache.
 - The reload-fast-path's `eval` swap runs at the prelude's function
   scope, not inside the wrap function's closure, so the
-  swap-evaluated body doesn't see the bindings; the SW refuses
-  run-new when `needsValues: true` to avoid this trap.
+  swap-evaluated body doesn't see the spliced bindings —
+  `buildSwapEvalBody` prepends its own copy of the `js` block
+  instead. `storage.init` is the exception (it needs
+  `__smDecision`): the prelude runs that one itself before the eval,
+  from the `gmValues` the SW attaches to the `run-new` reply. See
+  [injection.md](injection.md#wrapper-protocol).
 
 ## World gating
 
@@ -144,8 +152,8 @@ Scope notes:
   needed.
 - **Runtime ordering safety rests on the wrap function, not on
   laziness.** Everything the emitter produces — the `const GM_X = ...`
-  declarations, the eager `urlchange.enable` at the end of `js`, and
-  the eager `prelude` calls (`storage.init`, `resource.init`) — is
+  declarations, the eager `urlchange.enable` / `resource.init` at the
+  end of `js`, and the eager `prelude` call (`storage.init`) — is
   spliced into the main-body wrap function, which the prelude invokes
   only after its `awaitDecision` + `waitForRunAt` gates resolve (both
   `sm:check-pending` and the declared `@run-at` event). So
@@ -858,7 +866,7 @@ user-facing contract.
   spliced into the same main-body wrap function (so the runtime is
   equally guaranteed to be installed), but only `js` is also
   prepended by `buildSwapEvalBody`, so a hot-swapped script keeps the
-  surface.
+  surface. `resource.init` sits there for the same reason.
 - Installation is **lazy per document**: the surface only appears once
   some script calls `enable`. An ungranted script must see
   `window.onurlchange === undefined` so its feature test correctly

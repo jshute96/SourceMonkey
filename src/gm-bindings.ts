@@ -2,14 +2,19 @@
 //
 // The injector calls `emitGmBindings` once per script at wrapper-build
 // time. The result is `{ js, prelude, granted }`:
-//   - `js` holds the `const GM_X = ...` declarations, and is used
+//   - `js` holds the `const GM_X = ...` declarations plus the eager
+//     calls that need nothing but `window.__SM_GM__` and baked
+//     literals (`urlchange.enable`, `resource.init`). It is used
 //     TWICE: `wrapCombinedEntry` splices it into the main-body wrap
 //     function ahead of the body, and `buildSwapEvalBody` prepends it
 //     to the run-new swap-eval body. Anything a hot-swapped script
 //     needs has to be in here.
 //   - `prelude` is spliced into the main-body wrap function only,
-//     ahead of the body, and holds eager calls (`storage.init`,
-//     `resource.init`). See `GmBindingEmit` below.
+//     ahead of the body, and holds the eager calls that reference
+//     identifiers only that function has (today: `storage.init`,
+//     which reads `__smDecision.gmValues`). The swap path runs its
+//     own equivalent from `userscript-prelude.js`. See
+//     `GmBindingEmit` below.
 //   - Both run after the prelude's awaitDecision + waitForRunAt
 //     gates, so the GM runtime is installed by the time either does.
 // When no APIs are granted (or the script is `@grant none`),
@@ -72,20 +77,23 @@ export interface GmInfoInput {
 //                  spliced ahead of the user body. Every dereference
 //                  of `window.__SM_GM__` in the declarations lives
 //                  inside a function body, so it doesn't fire until
-//                  the script body calls a GM_* API. The one
-//                  exception is the trailing
+//                  the script body calls a GM_* API. The exceptions
+//                  are the trailing eager calls —
 //                  `urlchange.enable(scriptId)` for `@grant
-//                  window.onurlchange`, which has to run before the
-//                  body so the body's feature test
-//                  (`window.onurlchange === null`) succeeds.
-//   - `prelude`  — eager calls that have to run BEFORE the user body
-//                  but AFTER the GM runtime is installed (today: the
-//                  `storage.init` call that primes the per-script
-//                  cache). The injector splices this into the
-//                  main-body wrap function ahead of the body — by
-//                  the time that function fires (after the prelude's
-//                  awaitDecision + waitForRunAt gates), the GM
-//                  runtime spec has had time to register and run.
+//                  window.onurlchange` (so the body's
+//                  `window.onurlchange === null` feature test
+//                  succeeds) and `resource.init` — both of which are
+//                  self-contained enough to run in the swap eval too.
+//   - `prelude`  — eager calls that have to run BEFORE the user body,
+//                  AFTER the GM runtime is installed, and that need
+//                  identifiers only the wrap function provides
+//                  (today: the `storage.init` call that primes the
+//                  per-script cache from `__smDecision.gmValues`).
+//                  The injector splices this into the main-body wrap
+//                  function ahead of the body — by the time that
+//                  function fires (after the prelude's awaitDecision
+//                  + waitForRunAt gates), the GM runtime spec has had
+//                  time to register and run.
 //   - `granted`  — the resolved set of GM_x names (for logging + the
 //                  e2e permission test surface).
 //
@@ -413,16 +421,16 @@ export function emitGmBindings(
   //     what makes a hot-swapped script still get its `urlchange`
   //     surface.
   //
-  // Guarded on the runtime rather than dereferencing it bare: this is
-  // the only eager statement that sits in the same scope as the user
-  // body, so an unguarded TypeError here would abort the whole wrap
-  // function and the script would never run at all. Degrading to "no
-  // urlchange surface" is strictly better — the script's own
-  // `=== null` feature test then correctly reports "unsupported",
-  // which is exactly what a script running under a manager without
-  // the feature already handles. (`storage.init` in `prelude` aborts
-  // on purpose instead, because running with stale values would
-  // corrupt the user's data.)
+  // Guarded on the runtime rather than dereferencing it bare — unlike
+  // the other two eager calls, which fail loudly on purpose. An
+  // unguarded TypeError in this scope aborts the whole wrap function
+  // and the script never runs at all, and degrading to "no urlchange
+  // surface" is strictly better: the script's own `=== null` feature
+  // test then correctly reports "unsupported", exactly as it would
+  // under a manager without the feature. `storage.init` (in
+  // `prelude`) and `resource.init` take the opposite trade — running
+  // a body against missing values or missing resource bytes is worse
+  // than not running it.
   if (specs.some((s) => s.subsystem === 'url-change')) {
     parts.push(
       // Both halves matter: a runtime registered before this feature
@@ -431,30 +439,55 @@ export function emitGmBindings(
       `if (window.__SM_GM__ && window.__SM_GM__.urlchange) window.__SM_GM__.urlchange.enable(${jsLit(info.scriptId)});`,
     );
   }
-  // Eager calls into __SM_GM__ at compile time go in the prelude.
-  // Splicing them in the IIFE top would race with the runtime's own
-  // document_start registration in some Chrome builds; the injector
-  // splices `prelude` inside the main-body wrap function passed to
-  // self.__smRun, which only fires after both the GM runtime spec has
-  // registered AND the @run-at lifecycle event resolves. See
-  // wrapCombinedEntry in src/injector.ts.
+  // `resource.init`: emitted whenever GM_getResource* is granted,
+  // even when `resources` is empty. Why "even when empty": the
+  // runtime's resource box persists across `chrome.userScripts`
+  // re-registrations within one document. If a script removed a
+  // `@resource` line, skipping init would leave the prior bytes
+  // resident in `byName`; the now-stale `GM_getResourceText("foo")`
+  // would still resolve. `resource.init` replaces the box, so always
+  // emitting it is what makes "removed resource → returns undefined"
+  // actually true on the next reload.
   //
-  // - storage.init: emitted whenever a storage grant is present;
-  //   the prelude reads the snapshot off `__smDecision.gmValues`
-  //   (attached by the SW to the sm:check-pending reply) and hard-
-  //   aborts the script if the snapshot is missing. See
-  //   docs/GM-APIs-storage.md.
-  // - resource.init: emitted whenever GM_getResource* is granted,
-  //   even when `resources` is empty. Why "even when empty": the
-  //   runtime's resource box persists across `chrome.userScripts`
-  //   re-registrations within one document. If a script removed a
-  //   `@resource` line, skipping init would leave the prior bytes
-  //   resident in `byName`; the now-stale `GM_getResourceText("foo")`
-  //   would still resolve. `resource.init` replaces the box, so
-  //   always emitting it is what makes "removed resource → returns
-  //   undefined" actually true on the next reload.
+  // It lives at the END of `js` rather than in `prelude` for the same
+  // reason `urlchange.enable` does: `js` is what `buildSwapEvalBody`
+  // prepends for the reload-fast-path swap, and `prelude` is not.
+  // The statement references only `window.__SM_GM__` and baked
+  // literals, so it works identically in the wrap function and in the
+  // swap eval's global scope.
+  //
+  // Installation ordering is unchanged for the registered path — both
+  // strings are spliced into the SAME wrap function, which only runs
+  // after the GM runtime has registered. What did change is the
+  // relative order: `js` precedes `prelude`, so this now runs BEFORE
+  // `storage.init` rather than after. The only case that can tell is
+  // `storage.init`'s hard abort, which now leaves a freshly-replaced
+  // resource box behind instead of the previous one — invisible,
+  // since the body doesn't run either way and the box is per-document.
   const hasStorageGrant = specs.some((s) => s.subsystem === 'storage');
   const hasResourceGrant = specs.some((s) => s.subsystem === 'resource');
+  if (hasResourceGrant) {
+    parts.push(
+      `window.__SM_GM__.resource.init(${jsLit(info.scriptId)}, ${jsLit(info.resources)});`,
+    );
+  }
+  // Eager calls into __SM_GM__ at compile time go in the prelude when
+  // they need identifiers only the wrap function has. Splicing them in
+  // the IIFE top would race with the runtime's own document_start
+  // registration in some Chrome builds; the injector splices `prelude`
+  // inside the main-body wrap function passed to self.__smRun, which
+  // only fires after both the GM runtime spec has registered AND the
+  // @run-at lifecycle event resolves. See wrapCombinedEntry in
+  // src/injector.ts.
+  //
+  // - storage.init: emitted whenever a storage grant is present; the
+  //   prelude reads the snapshot off `__smDecision.gmValues` (attached
+  //   by the SW to the sm:check-pending reply) and hard-aborts the
+  //   script if the snapshot is missing. That `__smDecision` reference
+  //   is why this one can't move into `js` — the swap eval's global
+  //   scope doesn't have it. The swap path runs the equivalent init
+  //   from `userscript-prelude.js` instead, where the decision object
+  //   is in scope. See docs/GM-APIs-storage.md.
   const preludeLines: string[] = [];
   if (hasStorageGrant) {
     // Single source of truth: the SW-attached snapshot. We do NOT
@@ -485,11 +518,6 @@ export function emitGmBindings(
       `  return;`,
       `}`,
       `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, __smGmSnap);`,
-    );
-  }
-  if (hasResourceGrant) {
-    preludeLines.push(
-      `window.__SM_GM__.resource.init(${jsLit(info.scriptId)}, ${jsLit(info.resources)});`,
     );
   }
   const prelude = preludeLines.join(' ');

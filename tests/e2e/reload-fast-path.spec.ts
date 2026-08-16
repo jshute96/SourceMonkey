@@ -286,23 +286,19 @@ test.describe('reload fast-path', () => {
     await page.close();
   });
 
-  test('storage-granting script does NOT take run-new (would ReferenceError on GM bindings)', async ({
+  test('storage-granting script swaps with its stored values intact', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
-    // The prelude's run-new swap eval runs at runMain's function
-    // scope, NOT inside the main-body wrap function's closure — so
-    // the GM_* bindings spliced into the wrap function are invisible
-    // to the swap-evaluated body. A storage-granting script that
-    // took the run-new branch would `ReferenceError: GM_setValue is
-    // not defined` on its first storage call.
+    // The swap eval runs at runMain's function scope, so the emitted
+    // gm prelude — which is spliced INSIDE the main-body wrap function
+    // and holds `storage.init` — never runs on this path. The prelude
+    // compensates by calling `storage.init` itself from the `gmValues`
+    // the SW attaches to the run-new reply.
     //
-    // The SW (handleCheckPending in background.ts) detects this via
-    // payload.needsValues and returns {action: 'run'} instead of
-    // {action: 'run-new'} for storage-granting scripts. The reload
-    // runs the BAKED-IN body (the prior version); the next reload
-    // picks up the new body via the ordinary syncRegistrations
-    // path. This test guards against someone removing the
-    // needsValues check in handleCheckPending.
+    // The assertion that matters is the value, not just the body: a
+    // swap that ran without the init would read the default ('init')
+    // instead of what the first load stored, and a read-modify-write
+    // script would then overwrite the user's real data.
     scriptsDir.write({
       relativePath: 'store.user.js',
       meta: {
@@ -323,9 +319,9 @@ test.describe('reload fast-path', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1:init');
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
 
-    // Edit body — would normally swap-eval. SW must refuse because
-    // the script grants storage.
     scriptsDir.rewriteBody('store.user.js', `
       const prev = GM_getValue('marker', 'init');
       document.title = 'v2:' + prev;
@@ -333,11 +329,188 @@ test.describe('reload fast-path', () => {
     `);
 
     await page.reload();
-    // OLD body runs again because SW refused run-new. If the SW had
-    // incorrectly taken the run-new branch, the title would be
-    // 'v2:v1' on success — or the page would show nothing (and a
-    // ReferenceError) on the actual failure mode.
-    await expect(page).toHaveTitle('v1:v1');
+    // 'v2' — the new body ran on THIS reload. ':v1' — it saw the value
+    // the previous load stored, so the cache was seeded. 'v1:v1' would
+    // mean no swap; 'v2:init' would mean a swap with an empty cache.
+    await expect(page).toHaveTitle('v2:v1');
+    await waitForTabState(
+      sm, tabId,
+      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      'green after storage swap',
+    );
+    await page.close();
+  });
+
+  test('a refresh that ADDS a storage grant still seeds the swapped body', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The wrapper's own `needsValues` request flag describes the
+    // REGISTERED grant set, so this script asks for no snapshot. The
+    // SW has to notice that the NEW row grants storage and load one
+    // anyway — otherwise the swapped body's GM_getValue reads an empty
+    // cache.
+    //
+    // `injectInto: 'content'` on both versions keeps the world fixed
+    // at USER_SCRIPT. Without it, adding the first real grant would
+    // also move the script MAIN → USER_SCRIPT, and the SW defers the
+    // swap for a world change (the running wrapper can't move).
+    const meta = {
+      name: 'GrantAdd',
+      match: [`${fixtureServer.baseUrl}/*`],
+      runAt: 'document-end' as const,
+      injectInto: 'content' as const,
+    };
+    scriptsDir.write({
+      relativePath: 'grantadd.user.js',
+      meta: { ...meta, grant: ['GM_setValue', 'GM_getValue'] },
+      body: `document.title = 'v1:' + GM_getValue('marker', 'init'); GM_setValue('marker', 'stored');`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1:init');
+
+    // Now drop the grants and reload, so the REGISTERED copy is a
+    // non-storage script...
+    scriptsDir.write({
+      relativePath: 'grantadd.user.js',
+      meta,
+      body: `document.title = 'v2:no-grants';`,
+    });
+    await page.reload();
+    await expect(page).toHaveTitle('v2:no-grants');
+
+    // ...then add the grants back. This reload's wrapper sends
+    // needsValues:false; the swapped body needs a snapshot regardless.
+    scriptsDir.write({
+      relativePath: 'grantadd.user.js',
+      meta: { ...meta, grant: ['GM_setValue', 'GM_getValue'] },
+      body: `document.title = 'v3:' + GM_getValue('marker', 'init');`,
+    });
+    await page.reload();
+    // 'v3:stored' — swapped AND seeded from what v1 wrote. 'v3:init'
+    // would mean the SW shipped the body without a snapshot.
+    await expect(page).toHaveTitle('v3:stored');
+    await page.close();
+  });
+
+  test('a refresh that REMOVES the storage grant still swaps', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Mirror of the case above: the wrapper asks for a snapshot (its
+    // registered copy grants storage) but the new body has no storage
+    // bindings to seed. Nothing to init, and the swap must not be
+    // blocked by the stale request flag.
+    const meta = {
+      name: 'GrantDrop',
+      match: [`${fixtureServer.baseUrl}/*`],
+      runAt: 'document-end' as const,
+      injectInto: 'content' as const,
+    };
+    scriptsDir.write({
+      relativePath: 'grantdrop.user.js',
+      meta: { ...meta, grant: ['GM_setValue', 'GM_getValue'] },
+      body: `document.title = 'v1:' + GM_getValue('marker', 'init');`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1:init');
+
+    scriptsDir.write({
+      relativePath: 'grantdrop.user.js',
+      meta,
+      body: `document.title = 'v2:no-storage';`,
+    });
+    await page.reload();
+    await expect(page).toHaveTitle('v2:no-storage');
+    await page.close();
+  });
+
+  test('a refresh that changes injection world defers to the next reload', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Adding a script's first real @grant moves it MAIN → USER_SCRIPT.
+    // The wrapper Chrome already injected can't move, and the new
+    // body's bindings dereference `window.__SM_GM__`, which MAIN
+    // doesn't have — so the SW defers the swap and the reload runs the
+    // baked-in body. The reload after that runs the re-registered
+    // script in its new world.
+    scriptsDir.write({
+      relativePath: 'worldflip.user.js',
+      meta: { name: 'WorldFlip', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `document.title = 'v1-main';`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1-main');
+
+    scriptsDir.write({
+      relativePath: 'worldflip.user.js',
+      meta: {
+        name: 'WorldFlip',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue', 'GM_getValue'],
+      },
+      body: `document.title = 'v2:' + GM_getValue('marker', 'init'); GM_setValue('marker', 'v2');`,
+    });
+    await page.reload();
+    // Deferred: the MAIN-world wrapper ran its own body again. A swap
+    // here would have thrown on `window.__SM_GM__` being undefined and
+    // left the page with no title change at all.
+    await expect(page).toHaveTitle('v1-main');
+
+    // The refresh that ran during that reload landed the new row.
+    // syncNow flushes the registration debounce it queued, which a
+    // fast-following reload would otherwise out-race.
+    await sm.syncNow();
+    await page.reload();
+    await expect(page).toHaveTitle('v2:init');
+    await page.close();
+  });
+
+  test('swapped body sees its own @resource bytes', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // `resource.init` used to live in the gm prelude, which the swap
+    // path never runs — so a hot-swapped script's GM_getResourceText
+    // read whatever box the registered version had left behind (or
+    // none at all). It's emitted in the binding block now, which
+    // `buildSwapEvalBody` prepends.
+    scriptsDir.writeRaw('res.txt', 'RESOURCE-BODY');
+    const meta = {
+      name: 'ResSwap',
+      match: [`${fixtureServer.baseUrl}/*`],
+      runAt: 'document-end' as const,
+      injectInto: 'content' as const,
+      grant: ['GM_getResourceText'],
+      extra: ['// @resource    payload res.txt'],
+    };
+    scriptsDir.write({
+      relativePath: 'resswap.user.js',
+      meta,
+      body: `document.title = 'v1:' + GM_getResourceText('payload');`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1:RESOURCE-BODY');
+
+    scriptsDir.rewriteBody('resswap.user.js', `document.title = 'v2:' + GM_getResourceText('payload');`);
+    await page.reload();
+    // 'v2:undefined' would mean the swapped body ran with an
+    // uninitialised resource box.
+    await expect(page).toHaveTitle('v2:RESOURCE-BODY');
     await page.close();
   });
 });

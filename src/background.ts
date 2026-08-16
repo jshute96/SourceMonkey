@@ -66,6 +66,7 @@ import {
 } from './script-log-id.js';
 import {
   buildSwapEvalBody,
+  resolveWorld,
   isUserScriptsAvailable,
   resetRejectionRetryGate,
   syncRegistrations,
@@ -1454,9 +1455,23 @@ interface CheckPendingPayload {
 // The wrapper's prelude uses this as the SOLE source for its
 // initial cache; if it's missing the prelude hard-aborts (sm:error
 // + return) and the user body doesn't run.
+//
+// `seedValues` on a `run-new` reply is an instruction, not a request
+// like the payload's `needsValues`: it says the SWAPPED body grants a
+// storage API, so the wrapper must seed the runtime's cache from
+// `gmValues` before evaluating it — the emitted `storage.init` lives
+// in the gm prelude, which the swap path doesn't run. It describes
+// the new row, so it can be true even when the wrapper asked for no
+// snapshot (the refresh added the grant).
 type CheckPendingReply =
   | { action: 'run'; gmValues?: Record<string, unknown> }
-  | { action: 'run-new'; body: string; loadedAt: number; gmValues?: Record<string, unknown> }
+  | {
+      action: 'run-new';
+      body: string;
+      loadedAt: number;
+      seedValues?: boolean;
+      gmValues?: Record<string, unknown>;
+    }
   | { action: 'skip'; reason: string };
 
 async function handleCheckPending(
@@ -1519,22 +1534,32 @@ async function handleCheckPending(
   if (!refreshed) return { action: 'run' };
   if (refreshed.status !== 'ok') return { action: 'run' };
   if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
-  // Storage-granting scripts still can't take the run-new swap. The
-  // gm `prelude` (storage.init etc.) reads `__smDecision.gmValues` /
-  // `__smE`, which aren't in scope at runMain's function-scope
-  // indirect eval. Prepending the bindings (below) is enough for the
-  // non-storage GM_* surface, but storage init needs more machinery
-  // we haven't wired up. Defer to the next reload, which picks the
-  // new body up via syncRegistrations like any non-fast-path edit.
-  if (payload.needsValues) {
+  // A refresh can move a script between worlds in either direction:
+  // adding its first real `@grant` takes it MAIN → USER_SCRIPT,
+  // dropping the last one (or adding `@inject-into page`) takes it
+  // back. The running wrapper is stuck in the world Chrome injected
+  // it into, so a swap across that line runs the new body in the
+  // wrong one — USER_SCRIPT bindings dereference `window.__SM_GM__`,
+  // which MAIN doesn't have, and a body that expects page context
+  // silently can't see the page's globals from the isolated world.
+  // Defer to the next reload, which re-registers into the right one.
+  //
+  // `__viaBridge` is what tells the two apart: MAIN wrappers have no
+  // `chrome.runtime`, so `wrapper-bridge.js` is their only route in,
+  // and a request without the flag came over a USER_SCRIPT world's
+  // own direct channel.
+  //
+  // Checked BEFORE building the swap body: the build composes the
+  // requires and generates a source map (see injection-modes.md on
+  // what that costs for a require-heavy script), and a page can forge
+  // bridge requests. Nothing here needs the built body.
+  const wrapperWorld = payload.__viaBridge === true ? 'MAIN' : 'USER_SCRIPT';
+  if (wrapperWorld !== resolveWorld(refreshed.header)) {
     console.log(
-      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} grants storage; run-new can't init the storage cache (next reload will pick it up)`,
+      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} changed injection world (next reload will pick it up)`,
     );
     return { action: 'run' };
   }
-  console.log(
-    `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
-  );
   // buildSwapEvalBody prepends the script's GM bindings to the
   // composed (requires + main) body so the indirect eval sees
   // `GM_info` and the rest. Without this, a script that references
@@ -1543,8 +1568,9 @@ async function handleCheckPending(
   // the registered main-body wrap function aren't visible at
   // runMain's scope.
   const handlerVersion = chrome.runtime.getManifest().version;
-  return {
-    action: 'run-new',
+  const swap = await buildSwapEvalBody(
+    refreshed,
+    handlerVersion,
     // Same dedup-aware label the registration path uses, so the
     // swapped body's source map names the same devtools files.
     // Awaited, not assumed: `getScriptLogLabel` falls back to a UUID
@@ -1553,8 +1579,67 @@ async function handleCheckPending(
     // swapped sources under a stray `SourceMonkey/<uuid8>/` folder.
     // The table is loaded once and memoised, so this resolves
     // immediately on every call but the first.
-    body: await buildSwapEvalBody(refreshed, handlerVersion, await scriptLogLabel(refreshed.id)),
+    await scriptLogLabel(refreshed.id),
+  );
+  // Storage-granting bodies need `__SM_GM__.storage.init` to have run
+  // before their first GM_getValue, and the emitted call for that is
+  // in the gm `prelude`, which the swap path never runs (it evals the
+  // body instead of calling the main-body wrap function). The wrapper
+  // runs the equivalent itself when we set `seedValues` — but it can
+  // only do that with a snapshot.
+  //
+  // `swap.needsValues` describes the NEW row, `payload.needsValues`
+  // the registered one. They differ exactly when the refresh changed
+  // the grant set:
+  //   - grant added   — the wrapper didn't request a snapshot, so the
+  //                     message handler isn't loading one. We do it
+  //                     here rather than ship a body whose
+  //                     GM_getValue would read an empty cache.
+  //   - grant removed — nothing to init; the new body has no storage
+  //                     bindings to mis-serve.
+  // When they agree the handler is already reading the same rows
+  // concurrently, and its copy wins the merge — so loading a second
+  // one here would be latency on the document-start critical path for
+  // a value that gets discarded.
+  //
+  // The `__viaBridge` refusal is the same read-leak guard the message
+  // handler applies: a swap reply carrying `gmValues` is a value read
+  // like any other, and a bridge-relayed request may be a page forging
+  // another script's id. It can't fire in practice — a storage grant
+  // resolves to USER_SCRIPT world, so the world check above turned
+  // every bridge request away already — but the guard belongs where
+  // the values are handed out, not two screens up in a check that
+  // exists for another reason.
+  const handlerWillAttach = payload.needsValues === true && payload.__viaBridge !== true;
+  let gmValues: Record<string, unknown> | undefined;
+  if (swap.needsValues && !handlerWillAttach && payload.__viaBridge !== true) {
+    try {
+      gmValues = await loadSnapshotForCheckPending(refreshed.id);
+    } catch (err) {
+      // Same reasoning as the hard-abort in the emitted prelude:
+      // running a storage script against values we couldn't read
+      // risks a read-modify-write clobbering the user's real data.
+      // Falling back to `run` keeps the registered body, which has
+      // its own snapshot path and its own abort.
+      console.info(
+        `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} storage snapshot unavailable:`,
+        err,
+      );
+      return { action: 'run' };
+    }
+  }
+  console.log(
+    `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt}`,
+  );
+  return {
+    action: 'run-new',
+    body: swap.body,
     loadedAt: refreshed.loadedAt,
+    seedValues: swap.needsValues,
+    // Only set on the grant-added path; otherwise the message
+    // handler's enrichment supplies the same field from its own
+    // concurrent read.
+    ...(gmValues !== undefined ? { gmValues } : {}),
   };
 }
 

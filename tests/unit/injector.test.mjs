@@ -543,7 +543,7 @@ test('buildSwapEvalBody: prepends GM bindings ahead of the composed body', async
     header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_setValue' }] },
     bodyText: 'GM_setValue("k","v");',
   });
-  const body = await buildSwapEvalBody(script, '0.0.0');
+  const { body } = await buildSwapEvalBody(script, '0.0.0');
   const gmPos = body.indexOf('const GM_setValue');
   const userPos = body.indexOf('GM_setValue("k","v")');
   assert.ok(gmPos >= 0, 'GM_setValue binding should be prepended');
@@ -551,6 +551,39 @@ test('buildSwapEvalBody: prepends GM bindings ahead of the composed body', async
   // GM_info is also prepended (implicit, TM/VM compat) so a swapped
   // body that touches GM_info doesn't ReferenceError.
   assert.match(body, /const GM_info = /);
+});
+
+test('buildSwapEvalBody: reports needsValues from the swapped body\'s own grants', async () => {
+  // The SW ships this flag on the run-new reply and the prelude uses
+  // it to seed the storage cache before the eval. It has to describe
+  // the NEW row — the registered wrapper's own request flag says
+  // nothing about a grant the refresh just added.
+  const storing = makeScript({
+    header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_getValue' }] },
+    bodyText: 'GM_getValue("k");',
+  });
+  assert.equal((await buildSwapEvalBody(storing, '0.0.0')).needsValues, true);
+
+  // Same script with the storage grant dropped: nothing to seed.
+  const plain = makeScript({
+    header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_addStyle' }] },
+    bodyText: 'GM_addStyle("body{}");',
+  });
+  assert.equal((await buildSwapEvalBody(plain, '0.0.0')).needsValues, false);
+});
+
+test('buildSwapEvalBody: prepends resource.init so a swapped body sees its @resources', async () => {
+  // resource.init lives in `js` precisely so the swap path gets it.
+  // Before that move it was prelude-only, and a hot-swapped script's
+  // GM_getResourceText read whatever box the prior version left.
+  const script = makeScript({
+    header: { tags: [{ tag: 'name', value: 'S' }, { tag: 'grant', value: 'GM_getResourceText' }] },
+    bodyText: 'GM_getResourceText("r");',
+    resources: [{ name: 'r', bytesBase64: 'YQ==', contentType: 'text/plain', url: 'https://cdn/r', ref: 'r', size: 1, contentHash: '', loadedAt: 0 }],
+  });
+  const { body } = await buildSwapEvalBody(script, '0.0.0');
+  assert.match(body, /__SM_GM__\.resource\.init\(/);
+  assert.match(body, /"r":\{"b64":"YQ=="/);
 });
 
 test('buildSwapEvalBody: a swapped body with @requires shares their scope', async () => {
@@ -564,7 +597,7 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
       ref: 'x', size: 0, contentHash: '', loadedAt: 0,
     }],
   });
-  const body = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
+  const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
   // The swap eval is a single (0,eval) of this string, so evaluating
   // it in one scope is exactly what the prelude does.
   assert.equal(new Function(`${body}`)(), 'from-require:ok');
@@ -605,7 +638,7 @@ test('buildSwapEvalBody: puts user code on the same generated line as the regist
     const spec = await buildRegistrationSpec(script, '0.0.0', 'a.user.js');
     const swap = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
     assert.equal(
-      generatedLineOf(swap, 'FIRST_BODY_LINE;'),
+      generatedLineOf(swap.body, 'FIRST_BODY_LINE;'),
       generatedLineOf(spec.js[2].code, 'FIRST_BODY_LINE;'),
       `${label}: swap and registered disagree on where user code lands`,
     );
@@ -621,7 +654,7 @@ test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async 
     header: { tags: [{ tag: 'name', value: 'MainSwap' }] },
     bodyText: 'document.title = GM_info.script.name;',
   });
-  const body = await buildSwapEvalBody(script, '0.0.0');
+  const { body } = await buildSwapEvalBody(script, '0.0.0');
   assert.match(body, /const GM_info = /);
   // No __SM_GM__ in MAIN, so non-info bindings aren't included.
   assert.doesNotMatch(body, /__SM_GM__/);
@@ -634,7 +667,7 @@ test('buildSwapEvalBody: passes through plain body when no header (defensive)', 
   // the body passes through untouched — same shape the registered
   // path emits after its wrap head.
   const script = { ...makeScript(), header: null };
-  const body = await buildSwapEvalBody(script, '0.0.0');
+  const { body } = await buildSwapEvalBody(script, '0.0.0');
   assert.equal(body, 'console.log("hi");');
 });
 
@@ -1615,7 +1648,7 @@ test('swap-eval body: generated lines map back the same way', async () => {
   // the viewer applies ONE layout and can't tell which path ran.
   const script = markerScript();
   const label = 'a.user.js';
-  assertRoundTrip(await buildSwapEvalBody(script, '0.0.0', label), script, label);
+  assertRoundTrip((await buildSwapEvalBody(script, '0.0.0', label)).body, script, label);
 });
 
 test('registered entry: the body marker maps to its real line in the stored file', async () => {

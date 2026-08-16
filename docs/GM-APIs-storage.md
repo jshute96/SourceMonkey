@@ -78,6 +78,28 @@ This is the **single source of truth**. There is no baked literal
 in the wrapper source — every fresh document round-trips to the
 SW to get its initial cache contents.
 
+### Seeding a hot-swapped body
+
+The [reload fast-path](injection.md#reload-fast-path) can answer
+check-pending with `run-new`, which evals the new body instead of
+calling the main-body wrap function — so the GM prelude's
+`storage.init` never runs. The swap path seeds the cache itself:
+
+- The SW computes "does this body grant storage" from the **new**
+  script row and returns it as `seedValues` on the `run-new` reply,
+  alongside the same `gmValues` snapshot.
+- `runMain` (in `userscript-prelude.js`) calls
+  `storage.init(scriptId, gmValues)` before the eval — the decision
+  object is in its scope, which is exactly what the eval'd body
+  lacks.
+- No snapshot, or an init that throws → **no swap**. The prelude
+  logs and runs the baked-in body, which keeps its own seeding path
+  and its own hard abort.
+- Because the flag comes from the new row, a refresh that **adds**
+  `@grant GM_getValue` is seeded correctly even though the
+  registered wrapper never requested a snapshot. A refresh that
+  **removes** it leaves nothing to seed.
+
 ## Hard abort when the SW snapshot is missing
 
 If `__smDecision.gmValues` is missing or falsy at prelude time,

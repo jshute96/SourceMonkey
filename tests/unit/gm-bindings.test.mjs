@@ -123,17 +123,20 @@ test('emitGmBindings: GM_getResourceURL routes to __SM_GM__.resource.getUrl', ()
   assert.doesNotMatch(out.js, /notImplemented\("GM_getResourceURL"\)/);
 });
 
-test('emitGmBindings: resource.init prelude emitted when resources are declared', () => {
+test('emitGmBindings: resource.init emitted in js when resources are declared', () => {
+  // In `js`, not `prelude`: `js` is what buildSwapEvalBody prepends,
+  // so a hot-swapped script gets its resource box initialised too.
   const out = emitGmBindings(['GM_getResourceText'], makeInfo({
     grants: ['GM_getResourceText'],
     resources: { myCss: { b64: 'YQ==', ct: 'text/css' } },
   }));
-  assert.match(out.prelude, /__SM_GM__\.resource\.init\("script-1"/);
-  assert.match(out.prelude, /"myCss"/);
-  assert.match(out.prelude, /"b64":"YQ=="/);
+  assert.match(out.js, /__SM_GM__\.resource\.init\("script-1"/);
+  assert.match(out.js, /"myCss"/);
+  assert.match(out.js, /"b64":"YQ=="/);
+  assert.doesNotMatch(out.prelude, /resource\.init/);
 });
 
-test('emitGmBindings: resource.init prelude emitted even when resources are empty', () => {
+test('emitGmBindings: resource.init emitted even when resources are empty', () => {
   // Empty-init is load-bearing: it resets the runtime's per-script box
   // so a prior reload's resources don't leak when the new declaration
   // set drops to zero. See gm-bindings.ts for the rationale.
@@ -141,7 +144,7 @@ test('emitGmBindings: resource.init prelude emitted even when resources are empt
     grants: ['GM_getResourceText'],
     resources: {},
   }));
-  assert.match(out.prelude, /__SM_GM__\.resource\.init\("script-1", \{\}\)/);
+  assert.match(out.js, /__SM_GM__\.resource\.init\("script-1", \{\}\)/);
 });
 
 test('emitGmBindings: GM_registerMenuCommand routes to __SM_GM__.menu.register with the scriptId', () => {

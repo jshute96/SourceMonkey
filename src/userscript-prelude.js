@@ -477,24 +477,65 @@
          here. To compensate, `buildSwapEvalBody` (in src/injector.ts)
          prepends the script's GM bindings to `decision.body`, and the
          single (0,eval) call runs the bindings + body in one
-         environment so the body's GM_* references resolve. Storage
-         bindings are NOT included; the SW refuses run-new for storage
-         scripts upstream. See docs/injection-modes.md. */
+         environment so the body's GM_* references resolve. See
+         docs/injection.md#wrapper-protocol.
+
+         What the prepended bindings can't carry is the gm prelude's
+         `storage.init` — it reads the snapshot off `__smDecision`,
+         which an indirect eval's global scope doesn't have. So we run
+         the equivalent right here, where the decision object IS in
+         scope, whenever the SW says the swapped body grants storage.
+         `decision.seedValues` describes the NEW script, so this covers
+         a refresh that ADDED the grant; `cfg.needsGmValues` (the
+         registered set) deliberately isn't consulted.
+
+         If the snapshot or the runtime is missing we do NOT swap: a
+         storage body reading an empty cache would report defaults and
+         a read-modify-write would then overwrite the user's real
+         values. We fall through to the baked-in body instead, which
+         handles its own seeding — for a missing snapshot that means
+         the curated hard-abort message; for an init that THREW it
+         means the same call throwing again inside the wrap function,
+         reported as an ordinary sm:error. Either way the user sees a
+         failure rather than a script running on wrong values. */
       var newLoadedAt = typeof decision.loadedAt === "number" ? decision.loadedAt : cfg.loadedAt;
       var evalRefused = false;
       var evalErr = null;
-      try {
-        (0, eval)(decision.body + "\n//# sourceURL=" + cfg.sourceUrl);
-      } catch (ex) {
-        evalErr = ex;
-        var exMsg = (ex && ex.message) ? String(ex.message) : String(ex);
-        if (exMsg.indexOf("unsafe-eval") !== -1 || exMsg.indexOf("Content Security Policy") !== -1) {
-          evalRefused = true;
+      var swapReady = true;
+      if (decision.seedValues) {
+        swapReady = false;
+        var swapSnap = decision.gmValues;
+        if (swapSnap && typeof swapSnap === "object") {
+          try {
+            window.__SM_GM__.storage.init(cfg.id, swapSnap);
+            swapReady = true;
+          } catch (_smSI) {}
+        }
+        if (!swapReady) {
+          try {
+            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran — reload the page to retry");
+          } catch (_smSI2) {}
         }
       }
-      if (evalRefused) {
-        try { console.info("[SourceMonkey] swap blocked by page CSP for", cfg.name, "— running prior version"); } catch (_e0) {}
-        /* fall through to default baked-body path */
+      if (swapReady) {
+        try {
+          (0, eval)(decision.body + "\n//# sourceURL=" + cfg.sourceUrl);
+        } catch (ex) {
+          evalErr = ex;
+          var exMsg = (ex && ex.message) ? String(ex.message) : String(ex);
+          if (exMsg.indexOf("unsafe-eval") !== -1 || exMsg.indexOf("Content Security Policy") !== -1) {
+            evalRefused = true;
+          }
+        }
+      }
+      if (evalRefused || !swapReady) {
+        if (evalRefused) {
+          try { console.info("[SourceMonkey] swap blocked by page CSP for", cfg.name, "— running prior version"); } catch (_e0) {}
+        }
+        /* Fall through to the default baked-body path. `entry.decision`
+           deliberately keeps the run-new object: the registered body's
+           gm prelude reads its `gmValues`, so replacing it with a bare
+           `{action:"run"}` would make a storage script hard-abort. */
       } else {
         entry.loadedAtRun = newLoadedAt;
         try { console.log("[SourceMonkey] script", cfg.name, "running on", location.href, "(swapped to newer version)"); } catch (_e) {}

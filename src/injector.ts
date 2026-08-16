@@ -555,6 +555,12 @@ function buildMainWorldGmInfoOnly(
 // valid, and on its own it leaves an unbalanced brace that
 // `new Function` would reject.
 //
+// Included by way of `js`, and worth knowing: the `@resource` literal
+// that `resource.init` carries. Every base64 blob is re-parsed on each
+// check. It lives in `js` so the reload swap gets it (see
+// gm-bindings.ts); if that cost ever shows up, hand the checker a
+// stripped `js` rather than moving the call back.
+//
 // That leaves a small gap, in the safe direction. `var x` beside
 // another `var x` is legal, but `var x` beside `let`/`const`/`class x`
 // is a SyntaxError — and so is redeclaring the `__smE` parameter. So a
@@ -637,11 +643,14 @@ export async function buildParseCheckSource(
 // single `(0,eval)(...)` call so `const`-declared bindings at the
 // top are in scope for the body that follows.
 //
-// What's NOT prepended: the gm `prelude` (storage.init etc.). It
-// references `__smE` / `__smDecision`, which the swap-eval scope
-// doesn't have. Storage-granting scripts (`needsValues: true`) are
-// excluded from run-new upstream in `handleCheckPending` for the
-// same reason.
+// What's NOT prepended: the gm `prelude` (`storage.init`). It
+// references `__smDecision`, which the swap-eval scope doesn't have.
+// `needsValues` in the return says whether THIS body needs that init,
+// so the SW can tell the wrapper to run the equivalent call from
+// `userscript-prelude.js` — where the decision object is in scope —
+// right before the eval. It is computed from the NEW script row on
+// purpose: a refresh that ADDS a storage grant needs the init even
+// though the registered wrapper never asked for a snapshot.
 //
 // Line layout matches `wrapCombinedEntry` exactly: preamble on
 // generated line 0, user source from `USER_SOURCE_START_LINE`. That
@@ -650,11 +659,16 @@ export async function buildParseCheckSource(
 // both run paths — the viewer's Log tab maps stack refs without
 // knowing whether the script was registered or hot-swapped. See
 // src/composed-source.ts.
+export interface SwapEval {
+  body: string;
+  needsValues: boolean;
+}
+
 export async function buildSwapEvalBody(
   script: StoredScript,
   scriptHandlerVersion: string,
   logLabel: string = scriptBasename(script.relativePath),
-): Promise<string> {
+): Promise<SwapEval> {
   const world = resolveWorld(script.header);
   const gmEmit = world === 'USER_SCRIPT'
     ? await buildGmBindingsForScript(script, scriptHandlerVersion)
@@ -673,7 +687,7 @@ export async function buildSwapEvalBody(
     // every logged stack line for the majority of scripts, which have
     // no `@require` — and with no segments to map by, the viewer
     // could not detect it, let alone correct it.
-    return head + composeRequiredBody(script);
+    return { body: head + composeRequiredBody(script), needsValues: gmEmit.needsValues };
   }
   const composed = composeSource(script, {
     requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),
@@ -690,7 +704,10 @@ export async function buildSwapEvalBody(
     segments: composed.segments,
     totalLines: 1 + composed.lineCount,
   });
-  return head + '\n' + composed.text + '\n' + inlineSourceMapComment(map);
+  return {
+    body: head + '\n' + composed.text + '\n' + inlineSourceMapComment(map),
+    needsValues: gmEmit.needsValues,
+  };
 }
 
 // Pure: build the spec we'll hand to chrome.userScripts.register for

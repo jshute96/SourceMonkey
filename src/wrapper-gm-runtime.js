@@ -424,9 +424,13 @@
        + waitForRunAt gates, by which point the GM runtime is
        guaranteed installed) with the scriptId and the SW-attached
        initial-value snapshot from the sm:check-pending reply. Populates the
-       per-script cache and flags it as ready. Calling init twice for
-       the same scriptId — shouldn't happen in normal flow — is
-       idempotent: the second call replaces the cache. */
+       per-script cache and flags it as ready. Also called by the
+       prelude itself ahead of a reload-fast-path swap eval, which
+       doesn't run the wrap function. Calling init twice for the same
+       scriptId is idempotent — the second call replaces the cache —
+       and one path reaches it in normal operation: a swap primed the
+       cache, page CSP then refused the eval, and the baked-in body
+       runs its own init. */
     init: function (scriptId, values) {
       var s = ensureStore(scriptId);
       /* Defensive copy so the userscript can't mutate the values
