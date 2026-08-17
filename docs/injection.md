@@ -501,6 +501,9 @@ The gating is implemented in `waitForRunAt` inside
 via the per-script config blob (`buildConfigBlob` in
 `src/injector.ts`) and stored on the prelude's per-script entry.
 
+This wait runs alongside the `sm:check-pending` round-trip rather than
+after it — see [Concurrent gates](#concurrent-gates).
+
 ### Execution world
 
 The `world` field decides whether the body runs in the page's own
@@ -1013,12 +1016,14 @@ model.
 
 The prelude initializes each script's entry, runs the matcher
 (which marks the entry inactive on a miss), installs async-error
-listeners, then calls `awaitDecision`. The decision callback
-receives `{action}` and branches:
+listeners, then arms **both** gates at once — see
+[Concurrent gates](#concurrent-gates). The decision callback receives
+`{action}` and branches:
 
-- `run` — gates body execution on the declared `@run-at`; when the
-  lifecycle event fires, sends `sm:start` and calls the main-body
-  wrap function. Sync throws are caught and reported as `sm:error`.
+- `run` — the body runs once the declared `@run-at` gate has also
+  fired; at that point the prelude sends `sm:start` and calls the
+  main-body wrap function. Sync throws are caught and reported as
+  `sm:error`.
 - `run-new` — calls indirect `eval` with the SW-supplied body
   string plus `//# sourceURL=`. Sends `sm:swapped` and records the
   new `loadedAt` so subsequent async errors attribute to the new
@@ -1059,6 +1064,34 @@ receives `{action}` and branches:
 Prelude-side safety timeout (2s) protects against the SW vanishing
 mid-handshake; on hit it defaults to `run` so the baked-in body
 still executes.
+
+### Concurrent gates
+
+The check-pending round-trip and the `@run-at` wait are armed together
+in `initScript`, not chained. `flushPending` is the join: it needs a
+settled decision **and** `runAtFired`, so the body starts at
+`max(decision, run-at)`.
+
+- Never earlier than the decision — a `run-new` swap can't be missed.
+- Never earlier than the declared `@run-at` — a `document-end` script
+  can't run at document-start.
+- `skip` wins whichever order it lands in: `flushPending` re-checks it,
+  so a body queued by an already-fired `@run-at` gate is still dropped.
+
+Why it matters:
+
+- For every `@run-at` but `document-start` the wrapper was going to
+  wait on a lifecycle event anyway. On a page slower to reach that
+  event than the SW is to answer, the decision wait is free.
+- That turns the reload fast-path's window from "a race the wrapper
+  can lose" into "a budget that only bites when the refresh is slower
+  than the page".
+- Arming the lifecycle listener up front also decouples it from the
+  decision callback running at all.
+
+`document-start` gets no free wait — `waitForRunAt` calls back
+synchronously — so the decision is its only gate, and the 2s safety
+timeout remains the hard ceiling for every `@run-at`.
 
 ### Caveats
 

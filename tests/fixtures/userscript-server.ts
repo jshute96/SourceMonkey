@@ -24,6 +24,10 @@ interface Route {
   // When set, the route answers with a 302 to this Location instead of
   // serving `body`. Used to exercise the @connect redirect re-check.
   redirectTo?: string;
+  // When set, the response is held for this many ms. Lets a test give
+  // the reload fast-path's refresh a known, non-trivial duration
+  // instead of the sub-millisecond one a local route normally has.
+  delayMs?: number;
 }
 
 // Per-route record of how each incoming GET was answered. Tests use
@@ -90,7 +94,7 @@ export class UserscriptServer {
   setRoute(
     path: string,
     body: string | Buffer,
-    opts: { etag?: string; lastModified?: string; contentType?: string } = {},
+    opts: { etag?: string; lastModified?: string; contentType?: string; delayMs?: number } = {},
   ): void {
     const route: Route = {
       body,
@@ -98,6 +102,7 @@ export class UserscriptServer {
     };
     if (opts.etag) route.etag = opts.etag;
     if (opts.lastModified) route.lastModified = opts.lastModified;
+    if (opts.delayMs) route.delayMs = opts.delayMs;
     this.routes.set(this.normalize(path), route);
   }
 
@@ -135,8 +140,20 @@ export class UserscriptServer {
     return p.startsWith('/') ? p : `/${p}`;
   }
 
+  // Split from `respond` only so a `delayMs` route can hold the
+  // response without the log entry (built in `respond`) recording the
+  // request before it was answered.
   private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const delayMs = this.routes.get(url.pathname)?.delayMs ?? 0;
+    if (delayMs > 0) {
+      setTimeout(() => this.respond(url, req, res), delayMs);
+      return;
+    }
+    this.respond(url, req, res);
+  }
+
+  private respond(url: URL, req: http.IncomingMessage, res: http.ServerResponse): void {
     const entry: RequestLogEntry = { path: url.pathname, status: 0 };
     const ifNoneMatch = req.headers['if-none-match'];
     if (typeof ifNoneMatch === 'string') entry.ifNoneMatch = ifNoneMatch;

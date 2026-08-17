@@ -156,6 +156,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
+| `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
@@ -179,6 +180,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, a web page reported rather than followed, `@require` tabs |
+| `tests/unit/prelude-gates.test.mjs` | Drives the minified prelude in a `node:vm` DOM stub to pin the decision / @run-at join at max(decision, run-at) |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/github-provider.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |

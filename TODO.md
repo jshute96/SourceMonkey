@@ -32,6 +32,22 @@ A backlog of **candidates**, not a list of obligations.
   giving up and running the prior version. See
   `docs/injection.md#smcheck-pending-handler` for the current
   single-phase semantics.
+- Reload fast-path: make `RELOAD_FAST_PATH_WINDOW_MS` depend on the
+  script's declared `@run-at` rather than raising it flat.
+  - The wrapper joins the decision and the `@run-at` gate at
+    `max(...)` (see `docs/injection.md#concurrent-gates`), so on a page
+    that reaches `document-end` / `document-idle` late the wait is free
+    — a measured swap on `slow-dcl.html` decided at 176ms against a
+    lifecycle event ~1s out.
+  - It is NOT free for `@run-at document-start`, which has nothing to
+    hide behind, nor for the other lifecycles on a fast page. A flat
+    raise buys the slow case by delaying every fast one.
+  - `runAt` is already on the wrapper's config blob, so adding it to
+    the `sm:check-pending` payload is the whole plumbing cost.
+  - Hard ceiling either way: the prelude's own 2s `awaitDecision`
+    timeout, measured from when the wrapper asked. A window that
+    outlives it gets a reply nobody is listening for, and the entry is
+    already marked consumed. Leave real margin.
 - Make an icon that works
 
 ## Source maps for stack traces

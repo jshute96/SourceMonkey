@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { UserscriptServer } from '../fixtures/userscript-server';
 import { waitForTabState, type TabStateSnapshot } from '../fixtures/sw-api';
 
 const GREEN = '#2e7d32';
@@ -520,5 +521,54 @@ test.describe('reload fast-path', () => {
     // uninitialised resource box.
     await expect(page).toHaveTitle('v2:RESOURCE-BODY');
     await page.close();
+  });
+
+  test('slow page: the decision wait hides behind the @run-at gate', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The gate-overlap contract, end to end. `slow-dcl.html` holds the
+    // parser at readyState=loading for ~1s, and the script is served
+    // over HTTP with a deliberate response delay, so the refresh takes
+    // real time while the page takes much more of it.
+    //
+    // Two things have to hold at once:
+    //   - the swap still happens (the refresh answered inside the
+    //     fast-path window),
+    //   - and the swapped body still ran at its declared @run-at, not
+    //     at document-start and not deferred past `load`.
+    // The body records `document.readyState` at the moment it runs, so
+    // 'interactive' is the assertion that pins both bounds.
+    const server = await UserscriptServer.start();
+    const source = (marker: string) => [
+      '// ==UserScript==',
+      '// @name        SlowPage',
+      `// @match       ${fixtureServer.baseUrl}/*`,
+      '// @run-at      document-end',
+      '// @inject-into content',
+      '// ==/UserScript==',
+      `document.title = '${marker}:' + document.readyState;`,
+      '',
+    ].join('\n');
+    // The delay applies to the initial install fetch too; that one is
+    // off the critical path.
+    server.setRoute('/slow.user.js', source('v1'), { delayMs: 150 });
+    try {
+      await sm.addCollection(`${server.baseUrl}/slow.user.js`);
+      await sm.syncNow();
+
+      const page = await extensionContext.newPage();
+      await page.goto(`${fixtureServer.baseUrl}/slow-dcl.html`);
+      await expect(page).toHaveTitle('v1:interactive');
+
+      server.setRoute('/slow.user.js', source('v2'), { delayMs: 150 });
+      await page.reload();
+      // 'v1:*' would mean the refresh lost the fast-path window;
+      // 'v2:loading' would mean the swap ignored @run-at; 'v2:complete'
+      // would mean it was deferred past the document-end window.
+      await expect(page).toHaveTitle('v2:interactive');
+      await page.close();
+    } finally {
+      await server.stop();
+    }
   });
 });

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>slow-dcl</title>
+    <!-- 1s synchronous-script delay, which holds the parser at
+         readyState=loading for far longer than the reload fast-path's
+         window. That gap is the point: a `@run-at document-end` script
+         on this page reaches its lifecycle event long after the
+         service worker has answered sm:check-pending, so the decision
+         wait overlaps the wait the wrapper was going to do anyway. See
+         docs/injection.md#concurrent-gates.
+
+         Served by the `/__slow/` route (tests/fixtures/slow-route.mjs). -->
+    <script src="/__slow/blocker.js?ms=1000"></script>
+  </head>
+  <body>
+    <div id="target"></div>
+  </body>
+</html>

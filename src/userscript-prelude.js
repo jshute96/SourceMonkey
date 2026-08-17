@@ -434,9 +434,37 @@
        still attributed correctly through the window error listener. */
     installAsyncListeners(entry);
     emitStartupLogs(cfg);
+    /* The two gates run CONCURRENTLY and the body starts at
+       max(decision, run-at) — `flushPending` is the join, and it needs
+       both `decision` and `runAtFired` regardless of which settled
+       first.
+
+       Why not chain them (the older shape awaited the decision and only
+       THEN armed the @run-at gate):
+       - For everything but `document-start` the wrapper was going to sit
+         on a lifecycle event anyway, so on a page that is slower to
+         reach that event than the service worker is to answer, the
+         decision wait costs the page nothing. That is what lets the
+         reload fast-path's window be a real budget instead of a race
+         against the wrapper.
+       - Arming the gate up front also means it no longer depends on the
+         decision callback running at all: a service worker that never
+         answers is bounded by `awaitDecision`'s own 2s safety timeout,
+         not by the lifecycle listener never getting installed.
+
+       `document-start` is unchanged either way: `waitForRunAt` calls
+       back synchronously for it, so the decision is the only gate left
+       and the body still runs as early as it safely can. */
+    waitForRunAt(cfg.runAt, function () {
+      entry.runAtFired = true;
+      flushPending(entry);
+    });
     awaitDecision(entry, function (decision) {
       entry.decision = decision || { action: "run" };
       if (entry.decision.action === "skip") {
+        /* The @run-at gate may already have fired; `flushPending`
+           re-checks `skip` so a queued body can't slip through, and
+           dropping `pendingRun` here releases the closure either way. */
         send({
           type: "sm:abandoned",
           id: cfg.id,
@@ -448,10 +476,7 @@
         entry.pendingRun = null;
         return;
       }
-      waitForRunAt(cfg.runAt, function () {
-        entry.runAtFired = true;
-        flushPending(entry);
-      });
+      flushPending(entry);
     });
     return entry;
   }
