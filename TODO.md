@@ -872,13 +872,42 @@ itself once a sync places it. What's missing:
   `src/injector.ts` serializes registration work within one JS context,
   but the collections page and the viewer call
   `retryRejectedRegistrations` in theirs, so a page-side registration
-  can still land in the middle of the SW's sync. `registerReplacing`
-  makes that survivable (the id is replaced, not reported as a
-  duplicate) and the end state converges, but the fix in principle is
-  for the SW to be the only context that touches `chrome.userScripts`
-  — which needs a page→SW message channel that doesn't exist yet
+  can still land in the middle of the SW's sync. `placeSpec` makes that
+  survivable (the id is placed either way, not reported as a duplicate)
+  and the end state converges, but the fix in principle is for the SW to
+  be the only context that touches `chrome.userScripts` — which needs a
+  page→SW message channel that doesn't exist yet
   (`chrome.runtime.onMessage` has no listener in `background.ts`;
   pages coordinate with the SW through storage today).
+  - It costs more than tidiness now that the sync is incremental: the
+    SW's record of the registration set can't see what a page placed,
+    so the sync pays a wrong-guess round trip per such id until it
+    re-places one itself. Removals already refuse to trust the record
+    for exactly this reason.
+- **The targeted retry skips the parse gate.**
+  `retryRejectedRegistrations` re-offers a spec without running
+  `revalidateCandidates`, so a row whose compile verdict is missing or
+  stale can reach `chrome.userScripts.register` through it. Narrow — it
+  only ever re-offers rows already stored `ok` and eligible, and the
+  next sync re-checks them — but it is the one registering path the
+  gate doesn't cover. Adding it there means running the parse check
+  from an extension PAGE, where `chrome.offscreen` isn't available and
+  the check fails open, so it needs the page→SW channel above rather
+  than a call in place.
+- **A glob-only `@include` script can't be registered at all.**
+  `buildRegistrationSpec` omits `matches` when the script has no
+  `@match` but does have glob `@include`s, and Chrome refuses a
+  `register` without it: *"must specify 'matches'"*. The `<all_urls>`
+  fallback beside it covers only the regex-`@include` case. Pre-existing
+  and unrelated to the incremental sync, but it means those scripts sit
+  REJECTED. The fix is presumably to extend the fallback — which first
+  needs the question below answered.
+- **`@match` + `@include` may be AND where userscripts mean OR.**
+  Chrome applies `includeGlobs` as a filter *within* `matches` (the
+  content-script rule), while `@match` and `@include` in a userscript
+  header are alternatives. A script declaring both would then run on
+  fewer pages than its header says, and fewer than our own matcher
+  (badge, tab status) predicts. Not measured — measure before acting.
 - **The message is Chrome's, so it speaks Chrome's coordinates.**
   `matches[1]: Invalid port` counts within the spec we built, not the
   lines of the file. Deliberate — the alternative is inventing a

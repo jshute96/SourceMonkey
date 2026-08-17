@@ -34,7 +34,10 @@ export interface SmApi {
   updateAllCollections(mode: Mode): Promise<unknown>;
   getTabState(tabId: number): Promise<TabStateSnapshot>;
   resetAllState(): Promise<void>;
-  syncNow(): Promise<{ registered: { id: string }[] }>;
+  // `kind` says which path the sync took — see
+  // docs/injection.md#the-sync-is-incremental. Both leave the same
+  // registration set behind, so it is the only way a test can pin one.
+  syncNow(): Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }>;
   replayScriptLogsAtBoot(): Promise<void>;
   getScriptLog(scriptId: string): Promise<{
     timestamp: number;

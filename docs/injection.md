@@ -52,44 +52,222 @@ fails.
 
 `src/injector.ts` owns Chrome's registration set.
 
-- **On SW startup** — `syncRegistrations()` runs in parallel with the
-  match-index load. Chrome retains registrations across SW restarts,
-  so we wipe-and-replace to guarantee the post-startup state matches
-  storage exactly.
+- **On SW startup** — `syncRegistrations()` runs with no scope, in
+  parallel with the match-index load. See
+  [Startup is a full reconcile](#startup-is-a-full-reconcile).
 - **On every cache change** — the match-index already fires
-  `onCacheChanged` for `script:*` / `collection:*` mutations. The SW
-  subscribes a second listener that re-runs `syncRegistrations()`,
+  `onCacheChanged` for `script:*` / `collection:*` mutations, naming
+  the rows that moved. The SW subscribes a second listener that
+  accumulates those ids and re-runs `syncRegistrations(scope)`,
   alongside the existing badge re-evaluation.
-  - **Except a probe-only write.** `versionProbes` is a display
-    annotation no spec reads, and a Refresh All writes one probe result
-    per script — so counting those as cache changes cost a full
-    re-registration per probed script. `onlyProbesChanged` in
-    `src/match-index.ts` suppresses exactly that case, and nothing
-    wider: the check diffs the whole stored row, because
-    `onCacheChanged` drives re-registration and a spec reads far more of
-    the row than matching does. See
-    [Measuring](diagnostics.md#measuring-where-a-refreshs-time-goes).
+  - **An empty scope is not the same request as no scope.** Nothing
+    accumulated means nothing has changed since the last sync, and the
+    answer is a sync with no rows to reconsider — which does nothing.
+    Only the *absence* of a scope asks for a full reconcile. Confusing
+    the two makes a second sync rebuild and re-offer every spec,
+    which for an already-refused script writes another identical row
+    into its Log; see
+    [Rejected registrations](#rejected-registrations).
+  - Not every write is reported — see
+    [What an incremental sync must not disturb](#what-an-incremental-sync-must-not-disturb).
 - **One-time world config** — `chrome.userScripts.configureWorld({
   messaging: true })` is called before the first `register()`. This is
   what lets the injected wrapper call `chrome.runtime.sendMessage`
   back to the SW.
 
-The sync strategy is **full wipe + re-register** every time:
+### The sync is incremental
 
-1. `getScripts()` — list everything Chrome currently has registered.
-2. `unregister({ ids: [...] })` — drop them all.
-3. `register([...])` — install the fresh spec list. If the batch
-   rejects (e.g. one script has a malformed pattern), we fall back to
-   per-script calls so a single bad script can't take down every other
-   script.
+Only the rows that moved are rebuilt, and a script that is staying
+registered is **updated in place**.
 
-This is dramatically simpler than diffing and is cheap at our scale
-(tens of scripts, not thousands).
+1. Expand the scope — a collection row that appeared, went away, or
+   flipped its enabled flag moves every script under it.
+2. `chrome.storage.local.get([...])` for just those rows. Not
+   `get(null)`, which pulls every script body and the favicon cache.
+3. Rebuild specs for those scripts only.
+4. `chrome.userScripts.update([...])` for ids Chrome already holds,
+   `register([...])` for genuinely new ones, and unregister+register for
+   the narrow case `update` cannot express (see
+   [What `update` cannot change](#what-update-cannot-change)). Chrome
+   applies a batch all-or-nothing, so a rejected batch falls back to
+   per-spec calls and one bad script can't take down every other one.
+5. `unregister([...])` for scripts that left the set.
+
+#### Why wipe-and-replace was wrong, not just slow
+
+- **It was a correctness bug.** `unregisterAll()` and the register that
+  followed are separate awaits, so between them Chrome held **no**
+  userscripts at all. Any document created in that window got nothing
+  injected — no error, no badge, no Log row, just a page where the
+  script didn't run. Measured `unregister 71–90 ms`.
+- **The window opened on every edit.** The sync runs on a 50 ms
+  debounce after any `script:*` write, i.e. after every save the user
+  reloads for — precisely when a reload is most likely to be in flight.
+- **The cost was real too.** On a 192-script profile one row changing
+  cost `total 339 ms (read 143, build-specs 18, unregister 71, register
+  106)`, all of it competing with the reload fast path for the same
+  thread.
+- **Nothing is dropped to replace it now.** `chrome.userScripts.update`
+  replaces a registration atomically; the `unregister` calls left are
+  for scripts that really are going away, plus the one case `update`
+  cannot express. See
+  [Update, never unregister-then-register](#update-never-unregister-then-register).
+
+#### Startup is a full reconcile
+
+Chrome retains registrations across service-worker restarts, and rows
+change while the worker is dead — so a fresh worker has nothing to diff
+against and a pure diff would strand stale registrations.
+
+- A sync is incremental only when this JS context holds a record of
+  what it last registered. `src/injector.ts` keeps one — ids, worlds
+  and pattern shapes, every script's basename, log label and
+  collection, and the collection rows. No script bodies, so it stays
+  small.
+  - The label is in there because a script *arriving* renumbers the
+    dupe group it joins (a lone `main.user.js` becomes
+    `main.user.js#1`), and the label is baked into the registered
+    `//# sourceURL=` directives. Every script whose label just moved is
+    rebuilt too, however untouched its own row is.
+- With no record, the sync reads everything, rebuilds every spec, and
+  reconciles against `chrome.userScripts.getScripts()`: everything
+  wanted is updated or registered, and only ids Chrome holds that
+  storage no longer wants are dropped. **Still not a wipe** — a script
+  that survives the restart is never unregistered.
+- The record is dropped whenever it stops being trustworthy: a sync
+  that throws part-way, and `unregisterAllRegistrations` (the test
+  surface's teardown). The next sync then reconciles fully, which also
+  covers whatever ids the failed sync consumed.
+- A full reconcile also re-places the bridge and GM-runtime
+  registrations, whose code ships with the extension and changes on
+  update.
+
+#### What an incremental sync must not disturb
+
+- **Probe-only writes.** `versionProbes` is a display annotation no
+  spec reads, and a Refresh All writes one probe result per script — so
+  counting those as cache changes cost a re-registration per probed
+  script. `onlyProbesChanged` in `src/match-index.ts` keeps them out of
+  `onCacheChanged` entirely, and suppresses nothing wider: the check
+  diffs the whole stored row, because a spec reads far more of it than
+  matching does. See
+  [Measuring](diagnostics.md#measuring-where-a-refreshs-time-goes).
+- **Ordinary collection-row writes.** A collection row is rewritten on
+  every scan; only the enabled flag and the row going away are
+  reported, or every refresh would re-register every script under it.
+  - Not its arrival either: a collection appears together with the
+    scripts under it, which are reported in their own right, and the
+    sync fetches a collection row it hasn't seen when a script names
+    one. Reporting it would buy nothing and cost a sync per collection
+    added.
+- **The parse gate.** `revalidateCandidates` / `verifyParseChecks` runs
+  over the scripts the sync is about to offer, on both the incremental
+  and the full path — see
+  [parse-check.md](parse-check.md#the-gate-before-registration).
+  - `retryRejectedRegistrations` does **not** run it, and never has. It
+    only ever re-offers rows that are already `ok` and eligible, so what
+    it can miss is a row whose *verdict* is absent or stale — which the
+    next sync catches. Tracked in [TODO.md](../TODO.md).
+- **Other scripts' REJECTED badges** — see
+  [Rejected registrations](#rejected-registrations).
+
+### What `update` cannot change
+
+`chrome.userScripts.update` **merges**. The documented contract is "a
+property is only updated for the existing script if it is specified" —
+and testing against real Chrome adds the part the contract doesn't say.
+
+- **An explicit empty array counts as unspecified.** `excludeGlobs: []`
+  leaves the old exclusions in place, exactly as omitting the key does.
+- **`matches: []` is refused outright** — *"must specify at least one
+  match"*. So there is no way at all to clear a pattern field through
+  `update`.
+- **An updated registration moves to the END** of Chrome's set, in
+  batch order. See [Ordering](#ordering).
+
+Why this bites: `buildRegistrationSpec` emits `matches` / `includeGlobs`
+/ `excludeGlobs` only when non-empty. Under wipe-and-replace every
+placement was a `register` onto an empty set, so an absent key meant
+"unset"; on the update path it means "keep".
+
+- A user deleting their last `@exclude` would get a registration still
+  carrying it. The script keeps not running on a site its header no
+  longer excludes, our own matcher (badge, tab status) says otherwise,
+  and nothing in the UI explains the difference.
+- So the injector records which pattern fields each registration
+  carries, and a spec that drops one is placed by `replaceRegistration`
+  — `unregister` then `register`.
+- **That is the one place the closed window reopens**, for one script,
+  for the length of one call pair. The trade is narrow and in the right
+  direction: a gap costs that script one navigation, and only a script
+  whose match set the user is actively rewriting. The alternative is
+  Chrome and our own matcher disagreeing indefinitely.
+
+### Ordering
+
+`orderWithOwnSpecs` emits GM runtime → bridge → user scripts, and
+because `update` moves a registration to the end of the set, *how* the
+calls are grouped decides the result.
+
+- **Our own two registrations are placed first and individually.**
+  Grouping the calls by kind (one `update` batch, one `register` batch)
+  would put a newly-registered bridge after already-updated user
+  scripts.
+- **User specs then go out as batches**, since the relative order of two
+  user scripts is not something we promise anyway — see
+  [`@run-at` gating](#run-at-gating).
+- Cross-registration ordering isn't guaranteed by the API; in practice
+  Chrome runs registrations in order. The bridge doesn't actually rest
+  on it (a MAIN wrapper's postMessage queues to the message task queue,
+  so the listener is installed before delivery), and neither does the GM
+  runtime (its bindings are spliced inside the wrap function the prelude
+  invokes only after its gates resolve). Keeping the order is
+  belt-and-braces — but cheap, so we keep it.
+
+### Update, never unregister-then-register
+
+A registration that is *staying* is replaced with
+`chrome.userScripts.update`, which swaps it atomically.
+
+- **Unregister-then-register has no safe ordering.** Drop first and a
+  document created before the register lands runs nothing; register
+  first and Chrome answers `Duplicate script ID`. `update` is the only
+  arrangement with no gap at all.
+- **`placeSpec` guesses which call to make**: `update` for an id we
+  believe Chrome holds, `register` for one we don't.
+- **On a refusal it asks Chrome, rather than trying the other call.**
+  `getScripts` for the one id says whether it exists.
+  - Trying the other call reads as symmetric and isn't. In the
+    `register` direction it works — a duplicate means the id is there.
+    In the `update` direction the other call is `register`, which is
+    *guaranteed* to answer `Duplicate script ID` when the id really is
+    there. It carries no information, and treating its failure as
+    confirmation let any transient `update` failure demote a
+    registration that was working — and filed our own sequencing
+    against the script as Chrome's reason.
+  - Asking also yields the registration's real *shape*, which is what
+    says whether an `update` would silently keep a pattern field.
+- **The reported reason is the real refusal**, never the second call's.
+- **A refused spec for an id Chrome already holds IS unregistered.**
+  Otherwise the previous version keeps injecting while the row reads
+  REJECTED — and REJECTED says the script will not run.
+- **The remaining `unregister` calls are all for scripts that are
+  genuinely going away**: disabled, deleted, newly INVALID, the one case
+  above, or a pattern field being cleared.
+- **Removals do not consult our record of the set.** Every affected
+  script that no longer wants a registration is dropped, whether or not
+  this context believes it has one — the collections page and the viewer
+  place registrations in *their* contexts, so a script the page-side
+  retry placed is one the worker's record has never heard of. Every
+  other wrong belief self-corrects because `placeSpec` has a second call
+  to disagree with it; removal has none, so it doesn't get to guess. An
+  unregister for an id nothing holds costs one refused call and is
+  swallowed.
 
 ### One registration operation at a time
 
-Those three steps are a read-modify-write, and Chrome makes no part of
-it atomic.
+Placing a spec is a read-modify-write against a single mutable set, and
+Chrome makes no part of it atomic.
 
 Two of them interleaving produces `Duplicate script ID '<id>'` against
 a script that is registered and *running*: one attempt listed the set,
@@ -102,25 +280,27 @@ a second placed the script, and the first then offered the id again.
   sync against the one `onCacheChanged` schedules for boot-time
   storage writes, or a collection refresh's retry against the sync its own
   writes triggered.
-- **Queued syncs collapse.** A sync waiting on the lock has not read
-  storage yet, so a later caller joins it instead of queueing a second
-  full wipe-and-replace. Callers arriving while one is *running* don't
-  join it — that one's read already happened — but they still share a
-  single new queued sync between them.
-- **Replace, don't re-offer.** `registerReplacing` registers, and only
-  on a refusal unregisters the id and tries once more. The lock is
+- **Queued syncs collapse, and their scopes merge.** A sync waiting on
+  the lock has not read storage yet, so a later caller joins it instead
+  of queueing a second one — but the joined sync's scope becomes the
+  *union* of what everyone asked for, or nobody's rows may be dropped.
+  A caller that wants a full reconcile makes the whole queued sync
+  full. Callers arriving while one is *running* don't join it — that
+  one's read already happened — but they still share a single new
+  queued sync between them.
+- **Cross-context placement is still possible.** The lock is
   per-JS-context and the collections page and viewer run the retry in
-  theirs, so a page-side registration can still land mid-sync. Which
-  spec is newer isn't knowable from there and doesn't need to be —
-  every `script:*` / `collection:*` write schedules its own sync, so the
-  set converges on the last write. What matters is that the duplicate
-  is our sequencing and not something to badge the script for.
-- **A failed unregister-all falls back to one id at a time.** Chrome
-  fails the whole `unregister` call if any id in the list is unknown,
-  which usually means another context already dropped that one. Giving
-  up would leave the set unregistered; ignoring it would leave scripts
-  that are *not* in the new spec list — disabled, deleted, newly
-  INVALID — still injecting, since nothing would replace them.
+  theirs, so a page-side registration can land mid-sync. Which spec is
+  newer isn't knowable from there and doesn't need to be — every
+  `script:*` / `collection:*` write schedules its own sync, so the set
+  converges on the last write. What matters is that the duplicate is
+  our sequencing and not something to badge the script for; `placeSpec`
+  is what absorbs it.
+- **A failed batch `unregister` falls back to one id at a time.**
+  Chrome fails the whole call if any id in the list is unknown, which
+  usually means another context already dropped that one. Giving up
+  would leave scripts that are *not* wanted — disabled, deleted, newly
+  INVALID — still injecting, since nothing replaces them any more.
 
 ### Rejected registrations
 
@@ -133,10 +313,19 @@ rules and why it carries no location.
   `{script id → reason}` in `chrome.storage.session`, written only by
   the injector and read by the collections page, the viewer, and the tab
   badge in `background.ts`.
-- **It describes the current registration set.** Every sync rewrites
-  the map wholesale, so a script that has since been disabled, deleted,
-  or flipped to INVALID stops being REJECTED instead of stranding a
-  badge nobody can clear.
+- **It describes the current registration set.** A script that has
+  since been disabled, deleted, or flipped to INVALID stops being
+  REJECTED instead of stranding a badge nobody can clear.
+- **Each writer owns exactly what it re-offered.** A full reconcile
+  rebuilt everything, so it rewrites the map wholesale. An incremental
+  sync and the targeted retry own only the ids they considered:
+  - Clearing an entry they never re-offered would drop a REJECTED
+    badge Chrome is still earning.
+  - Rewriting the map from their own slice would resurrect entries
+    another sync had just cleared.
+  - An id they considered that produced **no** spec (disabled, deleted,
+    newly ineligible) is dropped — being owned is what makes that
+    happen.
 - **A refresh has to force the retry.** `retryRejectedRegistrations`
   (called from every path in `script-updater.ts`) re-offers the specs
   for whichever of the scripts it just checked are rejected.
@@ -151,14 +340,16 @@ rules and why it carries no location.
   - So nothing fires and the spec is never re-offered. For a healthy
     script that's correct (its registration already matches); for a
     rejected one it stranded the row.
-  - **Targeted, not a full `syncRegistrations()`.** A re-sync wipes and
-    re-registers everything, which is far too heavy per navigation and
-    would briefly deregister *healthy* scripts while a page is
-    committing — an unrelated script could miss its injection. A
-    rejected script is by definition not registered, so re-offering
-    just its own spec is cheaper and safe for everything else. The
-    specs still come from `collectActiveSpecs`, so the retry can't
-    drift from the sync on eligibility or log labels.
+  - **Targeted, not a scopeless `syncRegistrations()`.** A retry knows
+    exactly which ids it is about, and a reconcile that rebuilt every
+    spec would be far too heavy to run per navigation. A rejected
+    script is by definition not registered, so re-offering just its own
+    spec is cheaper and touches nothing else. The specs still come from
+    `collectActiveSpecs`, so the retry can't drift from the sync on
+    eligibility or log labels.
+    - It also reaches Chrome through the same `placeSpec` /
+      rejection-map bookkeeping the sync uses, so the two can't drift
+      on how a duplicate id or a cleared badge is handled.
   - The per-script call is deliberately **not awaited** — it must not
     sit in the reload fast-path's 500 ms window. Same reasoning as the
     version probe beside it.
@@ -203,7 +394,14 @@ rules and why it carries no location.
   gets the same reason for the same content. The retry is what's being
   reported: a suppressed retry looks exactly like no retry, and a
   "Clear log" followed by a Refresh would otherwise leave a REJECTED
-  row with nothing explaining it. See
+  row with nothing explaining it.
+  - The corollary is that **one change must not produce two attempts**.
+    Duplicate rows are fixed by not offering the spec twice, never by
+    suppressing the second row — the rule above is what makes the Log
+    trustworthy. The case that bit: a debounced sync draining the
+    accumulated scope, and the `syncNow` behind it reading "nothing
+    pending" as "reconcile everything".
+  See
   [script-log.md](script-log.md#when-the-log-stays-quiet) for the cost
   (a persistently refused script fills its own log) and why it's
   accepted.

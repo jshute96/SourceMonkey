@@ -102,6 +102,31 @@ test.describe('rejected registrations', () => {
     expect(rows[0].message).toMatch(INVALID_PORT);
   });
 
+  test('a sync with nothing to do does not re-report the refusal', async ({ sm }) => {
+    // Every refused ATTEMPT gets a Log row, and that rule is right — a
+    // suppressed retry is indistinguishable from no retry. What must
+    // not happen is two attempts for one change.
+    //
+    // The pair that produced them: the debounced sync lands first and
+    // drains the accumulated scope, then `syncNow` finds nothing
+    // pending. Reading that as "reconcile everything" made it rebuild
+    // and re-offer a spec Chrome had just refused, for a script nothing
+    // had touched since. Nothing pending means nothing changed.
+    writeBad();
+    const collection = await sm.addCollection(dir.path);
+    // Longer than scheduleSync's 50 ms debounce, so the automatic sync
+    // has certainly landed before syncNow asks for another.
+    await new Promise((r) => setTimeout(r, 400));
+    const second = await sm.syncNow();
+    expect(second.kind).toBe('incremental');
+
+    const bad = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+    const rows = (await sm.getScriptLog(bad.id)).filter((e) => e.source === 'chrome-injector');
+    expect(rows).toHaveLength(1);
+    // And the state it describes is untouched.
+    expect(Object.keys(await sm.getRejections())).toEqual([bad.id]);
+  });
+
   type SmForLog = { getScriptLog(id: string): Promise<{ source: string }[]> };
 
   async function rejectionRows(sm: SmForLog, id: string) {

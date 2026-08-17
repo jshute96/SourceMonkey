@@ -3,8 +3,10 @@
 // Chrome owns the actual matching + injection at navigation time. Our
 // job is to keep its registration set in sync with our "effectively
 // enabled ok scripts" view of the world. Whenever the script-store
-// cache changes we re-sync (cheap full wipe + re-register at our
-// scale).
+// cache changes we re-sync just the rows that moved, updating their
+// registrations in place; a full rebuild happens only when this context
+// has no record of what it last registered (service-worker startup).
+// See docs/injection.md#lifecycle.
 //
 // ---------- Injection shape (concatenated user program) ----------
 //
@@ -870,18 +872,21 @@ export function isRegistrationCandidate(
 // spec for each. Async because each spec build is async (storage
 // pre-load). We parallelize the per-script builds with Promise.all
 // rather than awaiting sequentially.
+//
+// `logIds` is the dedup-aware {script id → label} map. It defaults to
+// one computed from `scripts`, which is right only when `scripts` is
+// every stored row. An incremental sync passes a subset, so it supplies
+// the map itself — computed from the whole library, because a `#N`
+// suffix that depends on which rows this sync happened to read would
+// disagree with every other surface that shows the label.
 export async function collectActiveSpecs(
   scripts: StoredScript[],
   collections: Map<string, StoredCollection>,
   scriptHandlerVersion: string = '0.0.0',
-): Promise<RegistrationSpec[]> {
-  // Dedup-aware log labels are computed against ALL stored scripts
-  // (not just the active subset) so two scripts sharing a basename
-  // get the same `#N` suffixes everywhere — the SW's getScriptLogLabel
-  // cache, the options UI, and these URLs all agree.
-  const logIds = computeLogIds(scripts.map((s): LogIdInput => ({
+  logIds: Map<string, string> = computeLogIds(scripts.map((s): LogIdInput => ({
     id: s.id, relativePath: s.relativePath,
-  })));
+  }))),
+): Promise<RegistrationSpec[]> {
   const promises: Array<Promise<RegistrationSpec | null>> = [];
   for (const s of scripts) {
     if (!isRegistrationCandidate(s, collections)) continue;
@@ -910,8 +915,26 @@ export async function collectActiveSpecs(
 // but complicates the spec (especially with regex includes) for a
 // negligible runtime cost.
 export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
-  const hasMainWorld = activeSpecs.some((s) => s.world === 'MAIN');
-  if (!hasMainWorld) return null;
+  return hasWorld(activeSpecs.map((s) => s.world), 'MAIN') ? bridgeSpec() : null;
+}
+
+// The one question both our own registrations turn on: is any script
+// running in this world? Shared by the exported helpers above and by
+// both sync paths, which ask it of different collections — a spec list
+// for a full sync, the projected registration set for an incremental
+// one — so the answer can't drift between them.
+function hasWorld(
+  worlds: Iterable<InjectionWorld | chrome.userScripts.ExecutionWorld | undefined>,
+  want: InjectionWorld,
+): boolean {
+  for (const w of worlds) if (w === want) return true;
+  return false;
+}
+
+// The spec itself, with no "is it wanted?" question attached — the
+// incremental sync answers that from the worlds of the whole
+// registration set rather than from one sync's spec list.
+function bridgeSpec(): RegistrationSpec {
   return {
     id: BRIDGE_SCRIPT_ID,
     matches: ['<all_urls>'],
@@ -927,8 +950,12 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
 // active. See the original module-level comment in src/wrapper-gm-runtime.js
 // for the runtime's design.
 export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
-  const hasUserScriptWorld = activeSpecs.some((s) => s.world === 'USER_SCRIPT');
-  if (!hasUserScriptWorld) return null;
+  return hasWorld(activeSpecs.map((s) => s.world), 'USER_SCRIPT') ? gmRuntimeSpec() : null;
+}
+
+// See `bridgeSpec` for why the spec and the "is it wanted?" question
+// are separate.
+function gmRuntimeSpec(): RegistrationSpec {
   return {
     id: GM_RUNTIME_SCRIPT_ID,
     matches: ['<all_urls>'],
@@ -967,12 +994,187 @@ async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<st
   return { scripts, collections };
 }
 
+// ---------- What the last sync left behind ----------
+//
+// An incremental sync rebuilds only the scripts that moved, and to do
+// that it has to answer some questions about the rest without
+// re-reading every row:
+//
+//   - **What does Chrome hold right now?** Needed to tell an update from
+//     a first registration, to spot what has to be dropped, and to know
+//     whether the bridge / GM-runtime registrations are still wanted.
+//   - **What is every script's basename, and what label did it get?**
+//     Log labels are dedup-aware across the whole library, so a subset
+//     can't compute them — and a script arriving can renumber a dupe
+//     group it isn't in, which re-registers scripts whose rows never
+//     moved.
+//   - **Which collection is each script in, and is it enabled?** A
+//     collection toggle moves every script under it, and eligibility
+//     needs the parent row.
+//
+// None of it includes a script body — the expensive part of a full read
+// — so this stays small next to the `get(null)` it replaces.
+//
+// Null until a full sync has run in THIS JS context, which is what
+// makes the state safe to trust: the service worker is evicted freely
+// and rows change while it's dead, so a fresh worker's first sync is
+// always a full reconcile against `chrome.userScripts.getScripts()`. A
+// sync that fails part-way drops the state for the same reason.
+// What we last placed under one registration id.
+interface Placement {
+  world: InjectionWorld;
+  // Which pattern fields it carries — see `PlacedPatterns` for why an
+  // update has to know.
+  patterns: PlacedPatterns;
+}
+
+interface RegistrationState {
+  // Every id we believe Chrome holds, including the two reserved ids.
+  registered: Map<string, Placement>;
+  // Every stored script — regardless of status, because log labels are
+  // assigned across all of them.
+  scriptIndex: Map<string, { relativePath: string; collectionId: string }>;
+  // The dedup-aware log label each script was last registered with. A
+  // script ARRIVING can change another script's label (a lone
+  // `main.user.js` becomes `main.user.js#1` once a second one shows
+  // up), and the label is baked into the registered `//# sourceURL=`
+  // directives — so the other script has to be re-registered even
+  // though its own row never moved.
+  labels: Map<string, string>;
+  collections: Map<string, StoredCollection>;
+}
+let syncState: RegistrationState | null = null;
+
+// Forget what we last registered, so the next sync is a full reconcile.
+// Unit tests use this between cases — the state is module-level and
+// outlives a storage wipe, which is exactly the cross-test bleed the
+// retry gate beside it also has to be reset for. Production reaches the
+// same effect through `unregisterAllRegistrations`.
+export function _resetRegistrationStateForTests(): void {
+  syncState = null;
+  lastSyncKind = null;
+}
+
+// Which path the last sync took. Test-only, and the only way to tell
+// from outside: an incremental sync and a full one leave the same
+// registration set behind, which is the point — so a test that means to
+// pin the incremental path has to be able to say it took it.
+let lastSyncKind: 'full' | 'incremental' | null = null;
+export function lastSyncKindForTests(): 'full' | 'incremental' | null {
+  return lastSyncKind;
+}
+
+// Forget ONE id from the record while leaving Chrome's set alone. Unit
+// tests use it to reproduce the divergence a page-side
+// `retryRejectedRegistrations` creates: it places a registration in its
+// own JS context, and the worker's record never hears about it.
+export function _forgetRegistrationForTests(id: string): void {
+  syncState?.registered.delete(id);
+}
+
+// Which rows a sync has to reconsider. Absent means "everything" — the
+// full reconcile.
+export interface SyncScope {
+  scriptIds: readonly string[];
+  collectionIds: readonly string[];
+}
+
+// ---------- What `update` can and cannot change ----------
+//
+// `chrome.userScripts.update` MERGES rather than replaces: "a property
+// is only updated for the existing script if it is specified". Verified
+// against real Chrome, including the part the contract doesn't say —
+// **an explicit empty array counts as unspecified**, so there is no way
+// at all to clear `matches` / `includeGlobs` / `excludeGlobs` through
+// it. (`matches: []` is refused outright: "must specify at least one
+// match".)
+//
+// That matters because `buildRegistrationSpec` emits these keys only
+// when non-empty. Under the old wipe-and-replace every placement was a
+// `register` onto an empty set, so an absent key meant "unset". On the
+// update path it means "keep". A user deleting their last `@exclude`
+// would get a registration that still carries it — the script keeps not
+// running on a site its header no longer excludes, our own matcher says
+// otherwise, and nothing in the UI explains the difference.
+//
+// So we track which pattern fields each registration currently carries,
+// and a spec that drops one is placed by `replaceRegistration` instead.
+interface PlacedPatterns {
+  matches: boolean;
+  includeGlobs: boolean;
+  excludeGlobs: boolean;
+}
+
+function patternsOf(spec: {
+  matches?: string[]; includeGlobs?: string[]; excludeGlobs?: string[];
+}): PlacedPatterns {
+  return {
+    matches: (spec.matches?.length ?? 0) > 0,
+    includeGlobs: (spec.includeGlobs?.length ?? 0) > 0,
+    excludeGlobs: (spec.excludeGlobs?.length ?? 0) > 0,
+  };
+}
+
+// Would placing `spec` over a registration shaped like `prior` leave a
+// pattern field behind that the spec no longer declares?
+function dropsPattern(prior: PlacedPatterns, spec: RegistrationSpec): boolean {
+  const next = patternsOf(spec);
+  return (prior.matches && !next.matches)
+    || (prior.includeGlobs && !next.includeGlobs)
+    || (prior.excludeGlobs && !next.excludeGlobs);
+}
+
+function dropsPatternFrom(
+  present: ReadonlyMap<string, PlacedPatterns>,
+  spec: RegistrationSpec,
+): boolean {
+  const prior = present.get(spec.id);
+  return prior !== undefined && dropsPattern(prior, spec);
+}
+
+// What Chrome actually holds for one id, or undefined if it holds
+// nothing. The authority both `placeSpec` branches fall back to when
+// our belief turns out to be wrong.
+async function placedPatterns(id: string): Promise<PlacedPatterns | undefined> {
+  try {
+    const got = await chrome.userScripts.getScripts({ ids: [id] });
+    return got.length > 0 ? patternsOf(got[0]) : undefined;
+  } catch {
+    // Can't tell. Treated as "nothing there", which routes to the
+    // register/replace branch — the safe direction, since those place
+    // the spec whatever the truth turns out to be.
+    return undefined;
+  }
+}
+
+// Read just the rows named, rather than the whole store.
+async function readRows(
+  scriptIds: Iterable<string>,
+  collectionIds: Iterable<string>,
+): Promise<Record<string, unknown>> {
+  await ensureCollectionKeysMigrated();
+  const keys = [
+    ...[...scriptIds].map((id) => SCRIPT_PREFIX + id),
+    ...[...collectionIds].map((id) => COLLECTION_PREFIX + id),
+  ];
+  if (keys.length === 0) return {};
+  return await chrome.storage.local.get(keys) as Record<string, unknown>;
+}
+
+// The worlds of the *user* scripts in a registration set. The two
+// reserved ids are excluded on purpose: the bridge itself runs in
+// USER_SCRIPT world, so counting it would keep the GM runtime
+// registered forever once a MAIN-world script had ever been active.
+function userWorlds(registered: Map<string, Placement>): InjectionWorld[] {
+  return [...registered].filter(([id]) => isUserScriptId(id)).map(([, p]) => p.world);
+}
+
 // ---------- Serializing registration work ----------
 //
 // `chrome.userScripts` is a single mutable set, and every path that
-// changes it does so with a read-modify-write — `getScripts()`, then
-// `unregister`, then `register` — that Chrome does not make atomic. Two
-// of those interleaving is what produces
+// changes it does so with a read-modify-write — decide what is there,
+// then place or drop — that Chrome does not make atomic. Two of those
+// interleaving is what produces
 //
 //   Chrome rejected this script's registration, so it will not run:
 //   Duplicate script ID '<uuid>'
@@ -1010,6 +1212,32 @@ function withRegistrationLock<T>(run: () => Promise<T>): Promise<T> {
 // storage read already happened.
 let pendingSync: Promise<void> | null = null;
 
+// The scope the queued sync will run with — the UNION of what everyone
+// who joined it asked for, since collapsing two syncs must not drop
+// either one's rows. A caller that asked for a full reconcile makes the
+// whole queued sync full.
+let queuedScriptIds = new Set<string>();
+let queuedCollectionIds = new Set<string>();
+let queuedFull = false;
+
+function queueScope(scope: SyncScope | undefined): void {
+  if (!scope) { queuedFull = true; return; }
+  for (const id of scope.scriptIds) queuedScriptIds.add(id);
+  for (const id of scope.collectionIds) queuedCollectionIds.add(id);
+}
+
+function takeQueuedScope(): SyncScope | undefined {
+  const full = queuedFull;
+  const scope: SyncScope = {
+    scriptIds: [...queuedScriptIds],
+    collectionIds: [...queuedCollectionIds],
+  };
+  queuedFull = false;
+  queuedScriptIds = new Set();
+  queuedCollectionIds = new Set();
+  return full ? undefined : scope;
+}
+
 let worldConfigured = false;
 async function ensureWorldConfigured(): Promise<void> {
   if (worldConfigured) return;
@@ -1029,42 +1257,49 @@ async function ensureWorldConfigured(): Promise<void> {
   worldConfigured = true;
 }
 
-// Drop every registration Chrome currently holds. Caller must already
-// hold the registration lock.
+// Drop the named registrations. Caller must already hold the
+// registration lock.
+//
+// Only ever called for a script that really is going away — disabled,
+// deleted, flipped to INVALID, or one whose fresh spec Chrome refused.
+// Nothing that is staying registered is dropped, so there is no window
+// in which a live script has no registration; see `placeSpecs`.
 //
 // Chrome fails the WHOLE `unregister` call when any single id in the
-// list is unknown, and an id can go missing between our `getScripts`
-// and this call — an extension page runs the retry path in its own
-// context, where our lock doesn't reach. So the batch failing is not
-// evidence that the other ids are gone; it usually means one of them
-// already was.
+// list is unknown, and an id can go missing before this call — an
+// extension page runs the retry path in its own context, where our lock
+// doesn't reach. So the batch failing is not evidence that the other
+// ids are gone; it usually means one of them already was.
 //
 // Neither of the obvious answers is safe on its own:
 //
-//   - Aborting the sync leaves the whole script set unregistered.
-//   - Swallowing the failure leaves every registration in place. The
-//     ones we're about to re-register are replaced anyway, but a script
-//     that was disabled, deleted, or flipped to INVALID is not in the
-//     new spec list — nothing would replace it, and it would keep
-//     injecting until some later sync's batch happened to succeed.
+//   - Aborting leaves ids registered that no longer should be.
+//   - Swallowing the failure does the same: a script that was disabled,
+//     deleted, or flipped to INVALID would keep injecting until some
+//     later sync's batch happened to succeed.
 //
 // So fall back to unregistering one id at a time, where an id that has
 // already gone takes only itself down.
-async function unregisterAll(): Promise<void> {
-  const existing = await chrome.userScripts.getScripts();
-  if (existing.length === 0) return;
-  const ids = existing.map((e) => e.id);
+async function unregisterIds(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
   try {
-    await chrome.userScripts.unregister({ ids });
+    await chrome.userScripts.unregister({ ids: [...ids] });
     return;
   } catch (err) {
-    // console.info, like the other contained failures in this module:
-    // rare, worth seeing in the SW console, and not something the user
-    // can act on or that any one script is to blame for.
-    console.info(
-      '[SourceMonkey] unregister-all failed as a batch; dropping ids one at a time:',
-      describeError(err),
-    );
+    // A one-id call has no batch/per-id distinction to report, and it
+    // fails routinely and harmlessly: a sync asks to drop every
+    // affected script that no longer wants a registration, which
+    // includes editing an already-disabled one. Saying so every time
+    // would be a console line per edit that means nothing.
+    if (ids.length > 1) {
+      // console.info, like the other contained failures in this module:
+      // rare, worth seeing in the SW console, and not something the user
+      // can act on or that any one script is to blame for.
+      console.info(
+        '[SourceMonkey] unregister failed as a batch; dropping ids one at a time:',
+        describeError(err),
+      );
+    }
   }
   for (const id of ids) {
     try {
@@ -1073,13 +1308,25 @@ async function unregisterAll(): Promise<void> {
   }
 }
 
+// Drop every registration Chrome currently holds.
+async function unregisterAll(): Promise<void> {
+  const existing = await chrome.userScripts.getScripts();
+  await unregisterIds(existing.map((e) => e.id));
+}
+
 // Same, for callers outside this module — today only the test surface's
 // `resetAllState`, which wants a deterministic teardown instead of
 // waiting for the storage-change sync. Exported so that teardown is
 // ordered against any sync already in flight rather than racing it.
 export async function unregisterAllRegistrations(): Promise<void> {
   if (!isUserScriptsAvailable()) return;
-  await withRegistrationLock(unregisterAll);
+  await withRegistrationLock(async () => {
+    await unregisterAll();
+    // Our record of Chrome's set is now a lie, and an incremental sync
+    // built on it would leave every script unregistered. Forget it, so
+    // the next sync is a full reconcile.
+    syncState = null;
+  });
 }
 
 // Compile-check every candidate whose stored verdict is missing or
@@ -1131,27 +1378,33 @@ async function revalidateCandidates(
   return scripts.map((s) => changed.get(s.id) ?? s);
 }
 
-// Wipe Chrome's current registration set and replace it with `specs`.
-// Cheap full resync — simpler than a diff and fine at the script counts
-// we expect.
+// Bring Chrome's registration set in line with storage.
+//
+// `scope` names the rows that moved; omit it for a full reconcile
+// (SW startup, and any sync this context can't safely make incremental).
+// A scoped sync rebuilds only those scripts' registrations and leaves
+// every other one exactly as it is — see `runIncrementalSync`.
 //
 // Serialized against every other registration operation in this
 // context, and collapsed with any sync that is queued but hasn't begun
 // — see the lock above for what the overlap used to cost.
-export function syncRegistrations(): Promise<void> {
+export function syncRegistrations(scope?: SyncScope): Promise<void> {
+  queueScope(scope);
   if (pendingSync) return pendingSync;
   const sync = withRegistrationLock(async () => {
     // We're starting: a caller arriving from here on needs its own sync,
     // because our storage read is about to happen without whatever they
-    // just wrote.
+    // just wrote. Their scope goes into a fresh queue for that sync,
+    // which is why the scope is taken at the same moment.
+    const scopeNow = takeQueuedScope();
     pendingSync = null;
-    await runSync();
+    await runSync(scopeNow);
   });
   pendingSync = sync;
   return sync;
 }
 
-async function runSync(): Promise<void> {
+async function runSync(scope: SyncScope | undefined): Promise<void> {
   if (!isUserScriptsAvailable()) {
     // Nothing to register into. Not stored anywhere — the collections
     // page runs its own probe for the banner — but a sync that can't do
@@ -1170,65 +1423,319 @@ async function runSync(): Promise<void> {
     // REJECTED badges blaming a `@match` pattern for a turned-off
     // toggle, which the collections page's own banner already explains.
     await writeRejections(await readRejections(), {});
+    // And forget any record of a registration set, for the same reason:
+    // if the API comes back, what Chrome holds is not something this
+    // context can still claim to know.
+    syncState = null;
     return;
   }
-  // The sweep nobody clicked: any single script row changing triggers a
-  // full unregister-all + register-all across EVERY script, each spec
-  // rebuilt from scratch. It runs on a debounce after the write, so it
-  // lands just after a Refresh button releases rather than inside it —
-  // which makes it easy to blame the refresh for time spent here.
-  const timer = startPhaseTimer('registration sync');
+  const state = syncState;
   try {
     await ensureWorldConfigured();
-    const { scripts, collections } = await readAll();
-    timer.mark('read');
-    const handlerVersion = chrome.runtime.getManifest().version;
-    const effective = await revalidateCandidates(scripts, collections);
-    const userSpecs = await collectActiveSpecs(effective, collections, handlerVersion);
-    // Covers the revalidation too — it is per-script work on the same
-    // critical path, and splitting it out would imply the two can be
-    // acted on separately when the sync always does both.
-    timer.mark('build-specs');
-    const bridge = buildBridgeSpec(userSpecs);
-    const gmRuntime = buildGmRuntimeSpec(userSpecs);
-    // GM runtime first so it installs window.__SM_GM__ ahead of any
-    // USER_SCRIPT-world wrapper that compiles in GM_* bindings.
-    // Bridge next so MAIN wrappers' postMessages have a listener.
-    // Then the user scripts. (Cross-registration ordering isn't
-    // guaranteed by the userScripts API, but in practice Chrome
-    // runs registrations in order. We rely on this for the bridge:
-    // a MAIN-world wrapper's postMessage queues to the message task
-    // queue, so the bridge's listener — installed during its IIFE
-    // at document_start — is in place by the time delivery
-    // happens. For GM_*: everything gm-bindings.ts emits — both the
-    // `const GM_x` declarations and the eager calls (`storage.init`,
-    // `urlchange.enable`) — is spliced INSIDE the main-body wrap
-    // function, which the prelude only invokes after its
-    // awaitDecision + run-at gates resolve. By then the runtime spec
-    // has had a microtask or more to install. The declarations are
-    // additionally lazy — they touch `window.__SM_GM__` only from
-    // inside their own bodies — but that's belt-and-braces, not what
-    // the ordering argument rests on.)
-    const specs: RegistrationSpec[] = [];
-    if (gmRuntime) specs.push(gmRuntime);
-    if (bridge) specs.push(bridge);
-    specs.push(...userSpecs);
-    await unregisterAll();
-    timer.mark('unregister');
-    const registered = await registerWithFallback(specs);
-    timer.mark('register');
-    timer.note(`${specs.length} specs, ${scripts.length} stored scripts`);
-    timer.done();
-    const failed = specs.length - registered;
-    if (failed > 0) {
-      console.info(
-        `[SourceMonkey] registered ${registered}/${specs.length} userscript(s); ${failed} rejected by chrome.userScripts (see per-script errors)`,
-      );
+    // A scope is only actionable against a record of what we last left
+    // registered. Without one — a fresh service worker, or a sync that
+    // failed part-way and dropped it — the only safe answer is to
+    // reconcile against Chrome's own list.
+    if (scope && state) {
+      await runIncrementalSync(scope, state);
+      lastSyncKind = 'incremental';
     } else {
-      console.log(`[SourceMonkey] registered ${registered} userscript(s) with chrome.userScripts`);
+      syncState = await runFullSync();
+      lastSyncKind = 'full';
     }
   } catch (err) {
     console.info('[SourceMonkey] userScripts sync failed:', describeError(err));
+    // We no longer know what Chrome holds, so the next sync starts over
+    // rather than diffing against a record that may be half-applied.
+    // This is also what keeps a scoped sync's ids from being lost: they
+    // were consumed by the attempt, and a full reconcile covers them.
+    syncState = null;
+  }
+}
+
+// Rebuild EVERY registration and reconcile the result against what
+// Chrome currently holds.
+//
+// Runs at service-worker startup and whenever this context has no
+// trustworthy record of the registration set. Chrome retains
+// registrations across SW restarts and rows change while the worker is
+// dead, so the post-startup set has to be proven equal to storage
+// rather than diffed against nothing.
+//
+// It is still not a wipe: everything that should stay registered is
+// updated in place, and the only unregisters are for ids Chrome holds
+// that storage no longer wants.
+async function runFullSync(): Promise<RegistrationState> {
+  const timer = startPhaseTimer('registration sync');
+  const { scripts, collections } = await readAll();
+  timer.mark('read');
+  const handlerVersion = chrome.runtime.getManifest().version;
+  const effective = await revalidateCandidates(scripts, collections);
+  const logIds = computeLogIds(scripts.map((s): LogIdInput => ({
+    id: s.id, relativePath: s.relativePath,
+  })));
+  const userSpecs = await collectActiveSpecs(effective, collections, handlerVersion, logIds);
+  // Covers the revalidation too — it is per-script work on the same
+  // critical path, and splitting it out would imply the two can be
+  // acted on separately when the sync always does both.
+  timer.mark('build-specs');
+  // Chrome's own list, patterns included — the authority on both what
+  // is there and what shape it is in.
+  const present = new Map(
+    (await chrome.userScripts.getScripts()).map((s) => [s.id, patternsOf(s)] as const),
+  );
+  timer.mark('list');
+  const specs = orderWithOwnSpecs(
+    userSpecs,
+    hasWorld(userSpecs.map((s) => s.world), 'MAIN'),
+    hasWorld(userSpecs.map((s) => s.world), 'USER_SCRIPT'),
+    // Empty rather than `present`: a full sync re-places the bridge and
+    // the GM runtime even when Chrome already holds them, because their
+    // code ships with the extension and an update changes it. Skipping
+    // them would also drop them — the removal list is everything Chrome
+    // holds that this spec list doesn't name.
+    new Set(),
+  );
+  const wanted = new Set(specs.map((s) => s.id));
+  const applied = await applyPlan({
+    specs,
+    removeIds: [...present.keys()].filter((id) => !wanted.has(id)),
+    present,
+    // The whole set was rebuilt, so the rejection map is rewritten
+    // wholesale — a script that has since been disabled, deleted or
+    // flipped to INVALID stops being REJECTED instead of stranding a
+    // badge nobody can clear.
+    owned: 'all',
+  });
+  timer.mark('register');
+  timer.note(`full; ${specs.length} specs, ${scripts.length} stored scripts`);
+  timer.done();
+  reportSyncResult(applied.placed.length, specs.length);
+  return {
+    registered: placementsOf(specs, applied),
+    scriptIndex: new Map(scripts.map((s) => [
+      s.id, { relativePath: s.relativePath, collectionId: s.collectionId },
+    ])),
+    labels: logIds,
+    collections,
+  };
+}
+
+// Rebuild only the registrations for the rows that moved.
+//
+// The rest of the set is not read, not rebuilt, and not touched — which
+// is the point: the old full wipe left EVERY script unregistered for the
+// length of a register-all, so a document created in that window ran
+// nothing at all.
+//
+// Mutates `state` in place as it goes; the caller drops the whole record
+// if this throws.
+async function runIncrementalSync(scope: SyncScope, state: RegistrationState): Promise<void> {
+  const timer = startPhaseTimer('registration sync');
+  // A collection row that appeared, went away, or flipped its enabled
+  // flag moves every script under it.
+  const affected = new Set(scope.scriptIds);
+  if (scope.collectionIds.length > 0) {
+    const moved = new Set(scope.collectionIds);
+    for (const [id, info] of state.scriptIndex) {
+      if (moved.has(info.collectionId)) affected.add(id);
+    }
+  }
+  const rows = await readRows(affected, scope.collectionIds);
+  timer.mark('read');
+  for (const id of scope.collectionIds) {
+    const row = rows[COLLECTION_PREFIX + id] as StoredCollection | undefined;
+    if (row) state.collections.set(id, row);
+    else state.collections.delete(id);
+  }
+  const scripts: StoredScript[] = [];
+  for (const id of affected) {
+    const row = rows[SCRIPT_PREFIX + id] as StoredScript | undefined;
+    if (!row) { state.scriptIndex.delete(id); continue; }
+    scripts.push(row);
+    state.scriptIndex.set(id, {
+      relativePath: row.relativePath, collectionId: row.collectionId,
+    });
+  }
+  // A script can name a collection this record has never seen: a
+  // collection row is reported only when its enabled flag moves or it
+  // goes away, so its arrival — which is what an added collection is —
+  // reaches us as the scripts under it. Fetch what's missing rather
+  // than calling those scripts ineligible.
+  const unseen = [...new Set(scripts.map((s) => s.collectionId))]
+    .filter((id) => !state.collections.has(id));
+  if (unseen.length > 0) {
+    const extra = await readRows([], unseen);
+    for (const id of unseen) {
+      const row = extra[COLLECTION_PREFIX + id] as StoredCollection | undefined;
+      if (row) state.collections.set(id, row);
+    }
+  }
+  // Labels are dedup-aware across the whole library, so they come from
+  // the index rather than from the handful of rows this sync read —
+  // otherwise a script's devtools folder would gain or lose its `#N`
+  // depending on which sync last rebuilt it.
+  const logIds = computeLogIds([...state.scriptIndex].map(([id, info]): LogIdInput => ({
+    id, relativePath: info.relativePath,
+  })));
+  // A script arriving or leaving can renumber a dupe group it isn't
+  // in — and the label is baked into the registered `//# sourceURL=`
+  // directives, so every script whose label just moved has to be
+  // rebuilt too, however untouched its own row is.
+  const renamed = [...state.registered.keys()].filter(
+    (id) => !affected.has(id) && state.labels.get(id) !== logIds.get(id),
+  );
+  // Only the labels we actually place are recorded as placed. A
+  // renamed script whose row we cannot re-read keeps its OLD label in
+  // the record, so the next sync sees the mismatch again and retries —
+  // rather than recording a label the registration never got and never
+  // looking at it again.
+  const nextLabels = new Map(logIds);
+  if (renamed.length > 0) {
+    const extra = await readRows(renamed, []);
+    for (const id of renamed) {
+      const row = extra[SCRIPT_PREFIX + id] as StoredScript | undefined;
+      if (!row) {
+        const stale = state.labels.get(id);
+        if (stale !== undefined) nextLabels.set(id, stale);
+        continue;
+      }
+      scripts.push(row);
+      affected.add(id);
+    }
+  }
+  const handlerVersion = chrome.runtime.getManifest().version;
+  const effective = await revalidateCandidates(scripts, state.collections);
+  const userSpecs = await collectActiveSpecs(
+    effective, state.collections, handlerVersion, logIds,
+  );
+  timer.mark('build-specs');
+
+  const wanted = new Set(userSpecs.map((s) => s.id));
+  // Every affected script that no longer wants a registration, whether
+  // or not WE believe it has one. The belief is this context's, and the
+  // collections page and the viewer place registrations in theirs — so
+  // a script the page-side retry placed is one this record has never
+  // heard of, and guarding on the record would leave it injecting after
+  // the user disabled or deleted it.
+  //
+  // Every other place a wrong belief could do harm self-corrects,
+  // because `placeSpec` has a second call that disagrees with it.
+  // Removal has no such fallback, so it does not get to guess: an
+  // unregister for an id nothing holds costs one refused call and is
+  // swallowed (see `unregisterIds`).
+  const removeIds = [...affected].filter((id) => !wanted.has(id));
+  // Project the post-sync world set, so the bridge / GM-runtime
+  // registrations follow the WHOLE registration set rather than the
+  // slice this sync happens to be holding.
+  const projected = new Map(state.registered);
+  for (const id of removeIds) projected.delete(id);
+  for (const spec of userSpecs) {
+    projected.set(spec.id, { world: (spec.world ?? 'MAIN') as InjectionWorld, patterns: patternsOf(spec) });
+  }
+  const needBridge = hasWorld(userWorlds(projected), 'MAIN');
+  const needGmRuntime = hasWorld(userWorlds(projected), 'USER_SCRIPT');
+  if (!needBridge && state.registered.has(BRIDGE_SCRIPT_ID)) removeIds.push(BRIDGE_SCRIPT_ID);
+  if (!needGmRuntime && state.registered.has(GM_RUNTIME_SCRIPT_ID)) {
+    removeIds.push(GM_RUNTIME_SCRIPT_ID);
+  }
+
+  const present = new Map([...state.registered].map(([id, p]) => [id, p.patterns] as const));
+  const specs = orderWithOwnSpecs(userSpecs, needBridge, needGmRuntime, present);
+  const applied = await applyPlan({
+    specs,
+    removeIds,
+    present,
+    // Only the rows this sync considered. An id it never looked at
+    // keeps whatever the map already says: dropping those would clear a
+    // REJECTED badge for a script Chrome is still refusing, and
+    // rewriting them wholesale would resurrect ones already cleared.
+    owned: affected,
+  });
+  timer.mark('register');
+  timer.note(`incremental; ${specs.length} specs, ${removeIds.length} dropped`);
+  timer.done();
+  for (const id of removeIds) state.registered.delete(id);
+  for (const [id, placement] of placementsOf(specs, applied)) state.registered.set(id, placement);
+  for (const id of applied.refused) state.registered.delete(id);
+  state.labels = nextLabels;
+  reportSyncResult(applied.placed.length, specs.length);
+}
+
+// Prepend our own bridge / GM-runtime specs to the user specs, when
+// they're wanted and not already in place.
+//
+// GM runtime first so it installs window.__SM_GM__ ahead of any
+// USER_SCRIPT-world wrapper that compiles in GM_* bindings. Bridge next
+// so MAIN wrappers' postMessages have a listener. Then the user
+// scripts. (Cross-registration ordering isn't guaranteed by the
+// userScripts API, but in practice Chrome runs registrations in order.
+// We rely on this for the bridge: a MAIN-world wrapper's postMessage
+// queues to the message task queue, so the bridge's listener —
+// installed during its IIFE at document_start — is in place by the time
+// delivery happens. For GM_*: everything gm-bindings.ts emits — both
+// the `const GM_x` declarations and the eager calls (`storage.init`,
+// `urlchange.enable`) — is spliced INSIDE the main-body wrap function,
+// which the prelude only invokes after its awaitDecision + run-at gates
+// resolve. By then the runtime spec has had a microtask or more to
+// install. The declarations are additionally lazy — they touch
+// `window.__SM_GM__` only from inside their own bodies — but that's
+// belt-and-braces, not what the ordering argument rests on.)
+//
+// The order is honoured. Chrome moves an UPDATED registration to the
+// end of its set (verified), so grouping the placement calls by kind
+// would silently invert this — `placeSpecs` therefore places these two
+// first and individually, before any user spec.
+//
+// An incremental sync can't put a NEW user script ahead of a bridge
+// that was already registered, but it doesn't need to: the only way the
+// bridge is already there is that a MAIN-world script was already
+// active, so the ordering it exists to guarantee is already established.
+//
+// `alreadyPlaced` names ids not worth re-offering — an incremental sync
+// passes what it believes is registered, so an ordinary script edit
+// doesn't churn our own two registrations. A full sync passes nothing.
+function orderWithOwnSpecs(
+  userSpecs: RegistrationSpec[],
+  needBridge: boolean,
+  needGmRuntime: boolean,
+  alreadyPlaced: { has(id: string): boolean },
+): RegistrationSpec[] {
+  const specs: RegistrationSpec[] = [];
+  if (needGmRuntime && !alreadyPlaced.has(GM_RUNTIME_SCRIPT_ID)) specs.push(gmRuntimeSpec());
+  if (needBridge && !alreadyPlaced.has(BRIDGE_SCRIPT_ID)) specs.push(bridgeSpec());
+  specs.push(...userSpecs);
+  return specs;
+}
+
+// What Chrome now holds, for the specs that actually went in.
+function placementsOf(
+  specs: readonly RegistrationSpec[],
+  applied: AppliedPlan,
+): Map<string, Placement> {
+  const out = new Map<string, Placement>();
+  for (const spec of specs) {
+    if (applied.refused.has(spec.id)) continue;
+    out.set(spec.id, {
+      world: (spec.world ?? 'MAIN') as InjectionWorld,
+      patterns: patternsOf(spec),
+    });
+  }
+  return out;
+}
+
+function reportSyncResult(registered: number, offered: number): void {
+  // A sync whose scope turned out to hold nothing offered nothing, and
+  // "registered 0 userscript(s)" would read as though it had emptied
+  // the set. Say nothing instead.
+  if (offered === 0) return;
+  const failed = offered - registered;
+  if (failed > 0) {
+    console.info(
+      `[SourceMonkey] registered ${registered}/${offered} userscript(s); ${failed} rejected by chrome.userScripts (see per-script errors)`,
+    );
+  } else {
+    console.log(`[SourceMonkey] registered ${registered} userscript(s) with chrome.userScripts`);
   }
 }
 
@@ -1292,12 +1799,11 @@ export function resetRejectionRetryGate(): void {
 // silence is right — its registration already matches. For a rejected
 // one it left the row reading REJECTED with nothing retrying it.
 //
-// Deliberately NOT `syncRegistrations()`. That wipes and re-registers
-// everything, which (a) is far too heavy to run per navigation and (b)
-// would briefly deregister healthy scripts while a page is committing,
-// so an unrelated script could miss its injection. A rejected script is
-// by definition not registered, so re-offering just its own spec is
-// both cheaper and safe for everything else.
+// Deliberately NOT a scopeless `syncRegistrations()`. That rebuilds
+// every spec and lists Chrome's whole set, which is far too heavy to
+// run per navigation. A rejected script is by definition not
+// registered, so re-offering just its own spec is both cheaper and
+// touches nothing else.
 export async function retryRejectedRegistrations(
   scriptIds: readonly string[],
   opts: { userInitiated?: boolean } = {},
@@ -1359,8 +1865,13 @@ export async function retryRejectedRegistrations(
   return retryInFlight;
 }
 
-// Register one spec, replacing whatever registration is already
-// holding its id.
+// Put one spec in place, whether or not Chrome already holds its id.
+//
+// `believedPresent` says which of `update` and `register` to try first;
+// the other one is the fallback. Both calls place the spec, so getting
+// the guess wrong costs a round trip and nothing else — and neither
+// call ever leaves the id unregistered, which is the property the whole
+// sync now rests on.
 //
 // Chrome answers a `register` for an id it already knows with
 // "Duplicate script ID '<id>'" rather than replacing it, and there are
@@ -1369,9 +1880,7 @@ export async function retryRejectedRegistrations(
 //   - **Another context placed it.** The collections page and the viewer
 //     run `retryRejectedRegistrations` in their own JS context, so the
 //     lock in this module — which is per-context — cannot order a
-//     page-side retry against the SW's sync. A retry that lands between
-//     the sync's unregister-all and its register-all leaves the sync
-//     offering an id that now exists.
+//     page-side retry against the SW's sync.
 //   - **A stale rejection record.** We believe the id is unplaced, so
 //     we rebuild and re-offer it; Chrome disagrees.
 //
@@ -1382,25 +1891,59 @@ export async function retryRejectedRegistrations(
 // `collection:*` write schedules a sync of its own, so the set
 // converges on the last write either way.
 //
-// Register first, and only on a refusal try to drop the id and place
-// it again. The obvious arrangement — unregister, then register —
-// costs a guaranteed-to-fail unregister on every spec (by the time a
-// sync reaches its per-spec fallback the set is already empty), and
-// turns any register failure into a script that WAS running and now
-// isn't.
+// **Never unregister-then-register.** That arrangement turns any
+// register failure into a script that WAS running and now isn't, and
+// leaves a window — however short — in which a document created right
+// then gets nothing injected. `chrome.userScripts.update` replaces a
+// registration in place with no such window, so the pair here is
+// update/register rather than unregister/register.
 //
 // A refusal isn't necessarily a duplicate: a spec Chrome rejects
 // outright (a malformed `@match` port, say) lands in the same place.
-// Which one it is gets answered by trying the unregister rather than by
-// reading Chrome's wording for the refusal — a string match there would
-// break the moment Chrome rephrases, and Chrome's own error is the one
-// thing here we pass through to the user verbatim. Nothing to drop
-// means nothing was holding the id, so the spec itself is the problem
-// and its original reason is what the caller should report.
+// Which one it is gets answered by ASKING Chrome (`getScripts` for the
+// one id) rather than by reading its wording for the refusal — a string
+// match there would break the moment Chrome rephrases, and Chrome's own
+// error is the one thing here we pass through to the user verbatim.
+//
+// Why ask rather than just try the other call: in the
+// `believedPresent` direction the other call is `register`, which is
+// *guaranteed* to answer `Duplicate script ID` when the id really is
+// there. It would carry no information, and treating its failure as
+// confirmation would let any transient `update` failure demote a
+// registration that was working.
 //
 // Shared by the retry path and the sync's per-spec fallback so the two
 // can't drift on this.
-async function registerReplacing(spec: RegistrationSpec): Promise<void> {
+async function placeSpec(
+  spec: RegistrationSpec,
+  believed: PlacedPatterns | undefined,
+): Promise<void> {
+  if (believed) {
+    // A spec that drops a pattern field can't go through `update` at
+    // all — see `dropsPattern`.
+    if (dropsPattern(believed, spec)) return await replaceRegistration(spec);
+    let refusal: unknown;
+    try {
+      await chrome.userScripts.update([spec]);
+      return;
+    } catch (err) {
+      refusal = err;
+    }
+    const actual = await placedPatterns(spec.id);
+    // It IS registered, so the refusal is about the spec. Report it.
+    if (actual) throw refusal;
+    dlog(`[SourceMonkey] script ${spec.id} was not registered after all; registering it`);
+    try {
+      await chrome.userScripts.register([spec]);
+      return;
+    } catch {
+      // Our belief was wrong AND the register failed — or we couldn't
+      // ask at all (`placedPatterns` answers "nothing there" when the
+      // list call itself fails). Either way the update's reason is the
+      // one that describes this spec.
+      throw refusal;
+    }
+  }
   let refusal: unknown;
   try {
     await chrome.userScripts.register([spec]);
@@ -1408,13 +1951,146 @@ async function registerReplacing(spec: RegistrationSpec): Promise<void> {
   } catch (err) {
     refusal = err;
   }
+  const actual = await placedPatterns(spec.id);
+  // Nothing is holding the id, so the spec itself is the problem and
+  // its original reason is what the caller should report.
+  if (!actual) throw refusal;
+  dlog(`[SourceMonkey] script ${spec.id} was already registered; replacing it`);
+  // Now we know the registration's real shape, which is what says
+  // whether an update would silently keep a pattern field.
+  if (dropsPattern(actual, spec)) return await replaceRegistration(spec);
+  await chrome.userScripts.update([spec]);
+}
+
+// The one place a live registration is deliberately dropped and put
+// back, and the one place the closed window reopens — for one script,
+// for the length of one call pair.
+//
+// Unavoidable: Chrome's `update` merges, and there is no way to clear a
+// pattern field through it (verified — an omitted field keeps its old
+// value, and an explicit `[]` is treated as omitted). A script that
+// just lost its last `@exclude` would otherwise keep an exclusion its
+// header no longer declares, with nothing in the UI to explain why it
+// doesn't run.
+//
+// The trade is narrow and in the right direction: the gap costs one
+// script one navigation, and only a script whose match set the user is
+// actively rewriting; the alternative is Chrome and our own matcher
+// disagreeing indefinitely.
+async function replaceRegistration(spec: RegistrationSpec): Promise<void> {
+  dlog(`[SourceMonkey] script ${spec.id} dropped a pattern field; re-registering it outright`);
   try {
     await chrome.userScripts.unregister({ ids: [spec.id] });
-  } catch {
-    throw refusal;
-  }
-  dlog(`[SourceMonkey] script ${spec.id} was already registered; replacing it`);
+  } catch { /* already gone; the register below is then the whole job */ }
   await chrome.userScripts.register([spec]);
+}
+
+// Put every spec in place, batching when we can and falling back to one
+// at a time when Chrome refuses the batch — so one malformed pattern
+// can't stop every other script from being registered. (Chrome applies
+// a batch all-or-nothing: one bad spec and none of them land.)
+//
+// Ordering. Chrome moves an UPDATED registration to the END of its set,
+// in batch order (verified), so grouping the calls by kind reorders the
+// result. Our own two registrations have to precede every user script,
+// so they are placed first and individually; the user specs then go out
+// as batches, because the relative order of two user scripts is not
+// something we promise anyway (see docs/injection.md#run-at-gating).
+async function placeSpecs(
+  specs: readonly RegistrationSpec[],
+  present: ReadonlyMap<string, PlacedPatterns>,
+): Promise<{ placed: string[]; refused: Map<string, string> }> {
+  const placed: string[] = [];
+  const refused = new Map<string, string>();
+  const placeOne = async (spec: RegistrationSpec): Promise<void> => {
+    try {
+      await placeSpec(spec, present.get(spec.id));
+      placed.push(spec.id);
+    } catch (err) {
+      refused.set(spec.id, describeError(err));
+    }
+  };
+  for (const spec of specs.filter((s) => !isUserScriptId(s.id))) await placeOne(spec);
+
+  const users = specs.filter((s) => isUserScriptId(s.id));
+  // A one-spec batch IS the per-spec pass, so trying it first would
+  // just offer the same spec to Chrome twice. Matters beyond the wasted
+  // round trip: the targeted retry offers exactly one spec, and its
+  // whole rate-limiting story is about how many attempts we make.
+  if (users.length > 1) {
+    const replace = users.filter((s) => dropsPatternFrom(present, s));
+    const existing = users.filter((s) => present.has(s.id) && !dropsPatternFrom(present, s));
+    const fresh = users.filter((s) => !present.has(s.id));
+    try {
+      if (existing.length > 0) await chrome.userScripts.update(existing);
+      if (fresh.length > 0) await chrome.userScripts.register(fresh);
+      for (const spec of replace) await replaceRegistration(spec);
+      return { placed: [...placed, ...users.map((s) => s.id)], refused };
+    } catch {
+      // Either a spec is bad or our belief about who holds an id is
+      // stale. Which, and whose, is what the per-spec pass answers.
+      // Re-placing the ones that already went in is harmless.
+    }
+  }
+  for (const spec of users) await placeOne(spec);
+  return { placed, refused };
+}
+
+// One sync's worth of changes to Chrome's registration set, plus the
+// rejection-map bookkeeping that has to move with it.
+interface RegistrationPlan {
+  // Specs to put in place, in the order Chrome should receive them.
+  specs: RegistrationSpec[];
+  // Ids to drop, because storage no longer wants them registered.
+  removeIds: string[];
+  // Ids we believe Chrome currently holds. Only a hint — see
+  // `placeSpec` — but a good one saves a round trip per spec.
+  present: ReadonlyMap<string, PlacedPatterns>;
+  // Whose rejection-map entries this plan is allowed to clear. `'all'`
+  // for a full sync, which rebuilt everything and therefore owns the
+  // whole map; a set of ids for an incremental one, which must leave
+  // every other entry exactly as it found it.
+  owned: 'all' | ReadonlySet<string>;
+}
+
+interface AppliedPlan {
+  placed: string[];
+  refused: Set<string>;
+}
+
+async function applyPlan(plan: RegistrationPlan): Promise<AppliedPlan> {
+  const prior = await readRejections();
+  const { placed, refused } = await placeSpecs(plan.specs, plan.present);
+  // A spec Chrome refuses for an id it already holds leaves the
+  // PREVIOUS registration in place, so the script would keep injecting
+  // stale code while its row read REJECTED — and REJECTED says the
+  // script will not run. Drop it, so the badge stays true.
+  const drop = [...plan.removeIds];
+  for (const id of refused.keys()) if (plan.present.has(id)) drop.push(id);
+  await unregisterIds(drop);
+
+  const next: RejectionMap = plan.owned === 'all' ? {} : { ...prior };
+  if (plan.owned !== 'all') for (const id of plan.owned) delete next[id];
+  for (const [id, msg] of refused) {
+    console.info(`[SourceMonkey] script ${id} rejected: ${msg}`);
+    // Our own bridge / GM-runtime specs get the console line above and
+    // nothing else. They are not scripts: no row can render REJECTED
+    // for them, no Log tab exists to read the entry, and
+    // `retryRejectedRegistrations` could never clear the map entry
+    // because `collectActiveSpecs` never produces their ids. A failure
+    // here is ours to fix, not something to file against a script.
+    if (!isUserScriptId(id)) continue;
+    next[id] = msg;
+    // A rejected registration means the script silently never runs.
+    // Its status cell says so for as long as the rejection stands
+    // (REJECTED, from the map we're building here); the Log is where
+    // the reason gets a timestamp and a permanent home. See
+    // `logRejection` for why every attempt gets a row.
+    logRejection(id, msg);
+  }
+  await writeRejections(prior, next);
+  logRecoveries(placed.filter((id) => prior[id] !== undefined));
+  return { placed, refused: new Set(refused.keys()) };
 }
 
 // Rebuild and re-offer the specs for `ids`, updating the rejection map
@@ -1435,33 +2111,29 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // on dedup-aware log labels.
   const specs = (await collectActiveSpecs(scripts, collections, handlerVersion))
     .filter((s) => wanted.has(s.id));
-  const placed: string[] = [];
-  const refused = new Map<string, string>();
-  for (const spec of specs) {
-    try {
-      await registerReplacing(spec);
-      placed.push(spec.id);
-      dlog(`[SourceMonkey] script ${spec.id} registered on retry`);
-    } catch (err) {
-      const msg = describeError(err);
-      refused.set(spec.id, msg);
-      logRejection(spec.id, msg);
+  // `owned: wanted` is what makes this targeted: the rejection map is
+  // re-read inside `applyPlan` and only these ids are touched, so a full
+  // sync that landed while we were registering keeps every other entry.
+  // It also covers a script that is rejected but no longer eligible
+  // (disabled or gone since the map was written) — it produces no spec,
+  // and being owned is what drops it so its row stops reading REJECTED.
+  //
+  // `present` is empty because a rejected script is by definition not
+  // registered. When that's wrong, `placeSpec`'s fallback covers it.
+  const applied = await applyPlan({
+    specs, removeIds: [], present: new Map(), owned: wanted,
+  });
+  for (const id of applied.placed) {
+    dlog(`[SourceMonkey] script ${id} registered on retry`);
+    // Keep this context's record of the registration set honest, so a
+    // later incremental sync knows to update rather than register.
+    const spec = specs.find((s) => s.id === id);
+    if (syncState && spec) {
+      syncState.registered.set(id, {
+        world: (spec.world ?? 'MAIN') as InjectionWorld, patterns: patternsOf(spec),
+      });
     }
   }
-  // Re-read rather than mutating the snapshot this attempt started
-  // from, and touch only the ids we handled. A full syncRegistrations
-  // that landed while we were registering owns every other entry; a
-  // whole-snapshot write-back would resurrect the ones it just cleared.
-  const prior = await readRejections();
-  const next = { ...prior };
-  for (const id of placed) delete next[id];
-  for (const [id, msg] of refused) next[id] = msg;
-  // A script that is rejected but no longer eligible (disabled or gone
-  // since the map was written) produces no spec here; drop it so its
-  // row stops reading REJECTED.
-  for (const id of ids) if (!specs.some((s) => s.id === id)) delete next[id];
-  await writeRejections(prior, next);
-  logRecoveries(placed.filter((id) => prior[id] !== undefined));
 }
 
 // The one place the rejection row is worded. Shared by the sync and the
@@ -1505,74 +2177,21 @@ function logRecoveries(scriptIds: readonly string[]): void {
   }
 }
 
-// Register a list of specs, falling back from batch to per-script on a
-// batch failure so one malformed pattern doesn't take everything down.
-// Returns the count of specs that actually registered. Per-spec failure
-// reasons go into the session-storage rejection map, which is what the
-// UI renders as REJECTED — see script-rejection.ts.
+// Place a complete registration set, none of whose ids Chrome is
+// believed to hold, and rewrite the rejection map wholesale from the
+// result. Returns the count of specs that actually went in.
 //
-// `specs` is the complete set the current sync wants registered, so the
-// rejection map is rewritten wholesale: a script that has since been
-// disabled, deleted, or flipped to INVALID drops out of the map instead
-// of leaving a stale REJECTED badge on a row nobody tried to register.
+// Thin wrapper over `applyPlan` — kept because it is the shape the unit
+// tests exercise, and because "these specs are the whole set" is worth
+// naming. A sync reaches `applyPlan` directly; it also has removals and
+// a `present` set to pass, neither of which this shape can express.
 //
-// Caller must hold the registration lock (`syncRegistrations` does).
-//
-// Exported for unit tests — reaching it through `syncRegistrations`
-// would mean stubbing the whole store + userScripts surface.
+// Caller must hold the registration lock.
 export async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> {
-  const prior = await readRejections();
-  if (specs.length === 0) {
-    await writeRejections(prior, {});
-    return 0;
-  }
-  try {
-    await chrome.userScripts.register(specs);
-    // The whole batch registered, so nothing here is rejected any more.
-    // This is the path a previously-broken script recovers through —
-    // the usual one, in fact: fixing the file changes its content, which
-    // triggers a sync. Without it, a script that breaks, is fixed, and
-    // breaks again the same way would never log the second failure.
-    await writeRejections(prior, {});
-    logRecoveries(specs.filter((s) => prior[s.id] !== undefined).map((s) => s.id));
-    return specs.length;
-  } catch {
-    // Batch rejected — at least one spec is bad. Find the good ones.
-  }
-  const next: RejectionMap = {};
-  const placed: string[] = [];
-  let ok = 0;
-  for (const spec of specs) {
-    try {
-      // Replacing, not plain register: the batch may have failed
-      // because some id is already placed, and re-offering it as-is
-      // would report a script that runs fine as REJECTED. See
-      // `registerReplacing`.
-      await registerReplacing(spec);
-      ok++;
-      placed.push(spec.id);
-    } catch (err) {
-      const msg = describeError(err);
-      console.info(`[SourceMonkey] script ${spec.id} rejected: ${msg}`);
-      // Our own bridge / GM-runtime specs get the console line above and
-      // nothing else. They are not scripts: no row can render REJECTED
-      // for them, no Log tab exists to read the entry, and
-      // `retryRejectedRegistrations` could never clear the map entry
-      // because `collectActiveSpecs` never produces their ids. A failure
-      // here is ours to fix, not something to file against a script.
-      if (!isUserScriptId(spec.id)) continue;
-      next[spec.id] = msg;
-      // A rejected registration means the script silently never runs.
-      // Its status cell says so for as long as the rejection stands
-      // (REJECTED, from the map we're building here); the Log is where
-      // the reason gets a timestamp and a permanent home. See
-      // `logRejection` for why every attempt gets a row.
-      logRejection(spec.id, msg);
-    }
-  }
-  await writeRejections(prior, next);
-  logRecoveries(placed.filter((id) => prior[id] !== undefined));
-  return ok;
+  const applied = await applyPlan({
+    specs, removeIds: [], present: new Map(), owned: 'all',
+  });
+  return applied.placed.length;
 }
 
 // True for a stored script's registration id, false for the two

@@ -99,8 +99,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
-| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local`; skips re-notifying on probe-only writes |
-| `src/injector.ts` | Syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
+| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
+| `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
@@ -158,6 +158,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
+| `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
@@ -224,7 +225,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from; clicks and the CSV export follow that mapping |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
-| `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization |
+| `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |

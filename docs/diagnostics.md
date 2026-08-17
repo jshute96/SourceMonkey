@@ -432,10 +432,13 @@ The other two lines cover work the refresh triggers rather than does:
   from "the annotation pass is slow". Its `N of M scripts have a probe
   target` matters — a `0ms` probe leg means nothing to check, not
   everything already fresh.
-- `registration sync` is the sweep no one clicked: any single row
-  changing re-registers **every** script. It runs on a debounce *after*
-  the write, so it lands just past the button release and is easy to
-  mistake for refresh time.
+- `registration sync` is work no one clicked: it runs on a debounce
+  *after* the write, so it lands just past the button release and is
+  easy to mistake for refresh time. The note says which kind it was —
+  `incremental` (only the rows that moved) or `full` (every spec
+  rebuilt and reconciled against Chrome's list, which is the startup
+  case). A `full` line for anything other than a worker start means
+  something dropped the injector's record of the registration set.
 - `all-collections check` is the Refresh All wrapper — the prior
   snapshot, plus the probe and rejected-registration passes that run
   once over every script rather than per collection.
@@ -543,8 +546,9 @@ timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps
 Two things that are **not** on the critical path but land in these
 numbers anyway, both because the worker is single-threaded:
 
-- `registration sync` reads every row in storage (`get(null)`), on a
-  50 ms debounce after the write the fast path just made.
+- `registration sync`, on a 50 ms debounce after the write the fast
+  path just made. It reads only the rows that moved, so this is far
+  smaller than it was — a `full` line here means it read everything.
 - The other checks in the same batch. Every await one of them makes
   costs its siblings' measured time as well as its own — which is why
   no phase drops to zero even now that the duplicate work is shared.

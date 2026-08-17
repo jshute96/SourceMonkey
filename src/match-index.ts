@@ -132,7 +132,11 @@ export function installStorageListener(): void {
 // Apply one storage.onChanged delta to the in-memory cache. Shared by
 // the live listener and loadAll()'s post-snapshot replay.
 function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageChange }): void {
-  let touched = false;
+  // Which rows moved, not just "something moved". The injector syncs
+  // incrementally off this, so a listener that only said "changed"
+  // would force it back to rebuilding every registration.
+  const scriptIds: string[] = [];
+  const collectionIds: string[] = [];
   for (const [key, change] of Object.entries(changes)) {
     if (key.startsWith(SCRIPT_PREFIX)) {
       // A write that only moved `versionProbes` is not a change to
@@ -158,8 +162,8 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
       )) {
         continue;
       }
-      touched = true;
       const id = key.slice(SCRIPT_PREFIX.length);
+      scriptIds.push(id);
       if (change.newValue === undefined) {
         cache.delete(id);
         continue;
@@ -170,18 +174,35 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
     } else if (key.startsWith(COLLECTION_PREFIX)) {
       const id = key.slice(COLLECTION_PREFIX.length);
       const next = change.newValue as StoredCollection | undefined;
+      // A collection row is rewritten on every scan (`lastScannedAt`
+      // and friends), so reporting every write would re-register every
+      // script under it on every refresh. Only what moves anything
+      // downstream is reported: the enabled flag, and the row going
+      // away.
+      //
+      // Deliberately NOT its arrival. A collection appears together
+      // with the scripts under it, which are reported in their own
+      // right, and the injector fetches a collection row it hasn't seen
+      // when a script names one — so saying so here would buy nothing
+      // and cost an extra sync per collection added.
+      const wasDisabled = disabledCollections.has(id);
       if (next === undefined) {
         // Collection was removed entirely — its scripts will be deleted
         // via separate script:* changes; just drop our tracking row.
-        if (disabledCollections.delete(id)) touched = true;
+        disabledCollections.delete(id);
+        collectionIds.push(id);
       } else if (!isCollectionEnabled(next)) {
-        if (!disabledCollections.has(id)) { disabledCollections.add(id); touched = true; }
+        disabledCollections.add(id);
+        if (!wasDisabled) collectionIds.push(id);
       } else {
-        if (disabledCollections.delete(id)) touched = true;
+        disabledCollections.delete(id);
+        if (wasDisabled) collectionIds.push(id);
       }
     }
   }
-  if (touched) notifyChange();
+  if (scriptIds.length > 0 || collectionIds.length > 0) {
+    notifyChange({ scriptIds, collectionIds });
+  }
 }
 
 // Whether a `script:*` write moved nothing but `versionProbes`.
@@ -213,14 +234,28 @@ export function onlyProbesChanged(
 // Allow the background SW to refresh open-tab badges when the script
 // set changes (e.g. after a directory Refresh on the collections page,
 // or a per-collection / per-script enabled toggle).
-type ChangeListener = () => void;
+//
+// The callback is handed the rows that moved. Listeners that only care
+// that *something* moved can ignore it; the injector uses it to
+// re-register just those scripts instead of the whole set.
+export interface CacheChange {
+  // Ids of `script:*` rows written, rewritten, or deleted. A row
+  // whose write moved nothing but `versionProbes` is not reported —
+  // see `onlyProbesChanged`.
+  scriptIds: string[];
+  // Ids of `collection:*` rows that went away or flipped their enabled
+  // flag. Other collection-row writes — including a collection being
+  // added — are not reported; see `applyStorageChanges`.
+  collectionIds: string[];
+}
+type ChangeListener = (change: CacheChange) => void;
 const changeListeners: ChangeListener[] = [];
 export function onCacheChanged(fn: ChangeListener): void {
   changeListeners.push(fn);
 }
-function notifyChange(): void {
+function notifyChange(change: CacheChange): void {
   for (const fn of changeListeners) {
-    try { fn(); } catch { /* swallow listener errors */ }
+    try { fn(change); } catch { /* swallow listener errors */ }
   }
 }
 

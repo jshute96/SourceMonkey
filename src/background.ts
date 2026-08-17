@@ -69,6 +69,7 @@ import {
   buildSwapEvalBody,
   resolveWorld,
   isUserScriptsAvailable,
+  lastSyncKindForTests,
   resetRejectionRetryGate,
   syncRegistrations,
   unregisterAllRegistrations,
@@ -78,6 +79,7 @@ import {
   SM_GM_LOG_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
+  type SyncScope,
 } from './injector.js';
 import {
   applyScriptReport,
@@ -255,7 +257,7 @@ interface SourceMonkeyApi {
   // debounce in scheduleSync(). Tests use this after addCollection /
   // updateScript / setCollectionEnabled so the navigation that follows
   // can't out-race the debounced registration.
-  syncNow: () => Promise<{ registered: { id: string }[] }>;
+  syncNow: () => Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }>;
   // Re-run the SW-boot startup-log replay. Tests use this after
   // seeding a script with diagnostics to verify the Log-tab population
   // path without having to actually restart the SW.
@@ -479,11 +481,18 @@ const api: SourceMonkeyApi = {
     }
     // Mirror scheduleSync's full work — both the chrome.userScripts
     // re-registration AND the open-tab badge recompute — so callers
-    // don't need to know which side effect they care about.
-    await Promise.all([syncRegistrations(), refreshAllOpenTabs()]);
-    if (!isUserScriptsAvailable()) return { registered: [] };
+    // don't need to know which side effect they care about. Including
+    // its scope: this flushes the debounced sync rather than replacing
+    // it with a different one, so tests exercise the same incremental
+    // path production takes.
+    await Promise.all([syncRegistrations(takePendingScope()), refreshAllOpenTabs()]);
+    // `kind` says which path that sync took. The two leave the same
+    // registration set behind — which is the point — so a test meaning
+    // to pin the incremental path has no other way to say it took it.
+    const kind = lastSyncKindForTests();
+    if (!isUserScriptsAvailable()) return { registered: [], kind };
     const list = await chrome.userScripts.getScripts();
-    return { registered: list.map((s) => ({ id: s.id })) };
+    return { registered: list.map((s) => ({ id: s.id })), kind };
   },
   replayScriptLogsAtBoot,
   resetAllState: async () => {
@@ -564,6 +573,11 @@ const api: SourceMonkeyApi = {
       clearTimeout(syncTimer);
       syncTimer = null;
     }
+    // And drop the ids the clear just queued: the injector has
+    // forgotten what it registered, so the next sync is a full
+    // reconcile and a scope naming the wiped rows would only confuse
+    // the next test's.
+    takePendingScope();
   },
 };
 
@@ -1215,10 +1229,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // Coalesce bursts of changes so that flipping N rows in quick
 // succession (e.g. a chrome.storage.local.set that updates N script:*
 // keys → one onChanged event, OR several writes from independent
-// callers) collapses into a single sync. syncRegistrations is O(total
-// scripts) on the SW side AND issues an unregister-all/register-all
-// against chrome.userScripts, so coalescing is a meaningful win.
-onCacheChanged(() => {
+// callers) collapses into a single sync — and, since the sync is
+// scoped to the rows that moved, into a single scope covering all of
+// them.
+onCacheChanged((change) => {
+  for (const id of change.scriptIds) pendingScriptIds.add(id);
+  for (const id of change.collectionIds) pendingCollectionIds.add(id);
   scheduleSync();
 });
 
@@ -1237,12 +1253,45 @@ if (chrome.storage.session.onChanged) {
 }
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
+// Rows that have moved since the last sync ran. Handed to
+// `syncRegistrations` so it re-registers only those scripts; anything
+// still registered and unmentioned is left strictly alone.
+const pendingScriptIds = new Set<string>();
+const pendingCollectionIds = new Set<string>();
+
+// Drain the accumulated scope.
+//
+// An EMPTY scope when nothing is pending, never `undefined`. Those are
+// not the same request: `undefined` asks for a full reconcile, which
+// rebuilds and re-offers every spec — and re-offering a spec Chrome
+// already refused writes another identical row into that script's Log,
+// because every refused attempt is reported (see `logRejection`).
+//
+// Nothing pending means nothing has changed since the last sync, so the
+// honest answer is "no rows to reconsider", which does no work and
+// touches nothing. `syncNow` reaches here after the debounced sync has
+// already drained the scope, and that is exactly when the duplicate
+// used to appear.
+//
+// An empty scope is still a full reconcile when the injector has no
+// record of what it last registered — that decision lives there, and
+// depends on knowledge this side doesn't have.
+function takePendingScope(): SyncScope {
+  const scope = {
+    scriptIds: [...pendingScriptIds],
+    collectionIds: [...pendingCollectionIds],
+  };
+  pendingScriptIds.clear();
+  pendingCollectionIds.clear();
+  return scope;
+}
+
 function scheduleSync(): void {
   if (syncTimer != null) return;
   syncTimer = setTimeout(() => {
     syncTimer = null;
     void refreshAllOpenTabs();
-    void syncRegistrations();
+    void syncRegistrations(takePendingScope());
   }, 50);
 }
 

@@ -434,17 +434,23 @@ test.describe('update probes', () => {
     const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
 
     // Count what actually reaches Chrome, rather than trusting a log
-    // line: `register` is the expensive half of a sync and the half a
-    // regression here would restore.
+    // line. Both calls that place a spec: an incremental sync UPDATES a
+    // script Chrome already holds rather than registering it, so
+    // counting `register` alone would read a real edit as no work.
     const sw = await getServiceWorker();
     await sw.evaluate(() => {
       const w = self as unknown as { __regCalls: number };
       w.__regCalls = 0;
-      const orig = chrome.userScripts.register.bind(chrome.userScripts);
+      const origRegister = chrome.userScripts.register.bind(chrome.userScripts);
       chrome.userScripts.register = ((specs: unknown[]) => {
         w.__regCalls++;
-        return orig(specs as Parameters<typeof orig>[0]);
+        return origRegister(specs as Parameters<typeof origRegister>[0]);
       }) as typeof chrome.userScripts.register;
+      const origUpdate = chrome.userScripts.update.bind(chrome.userScripts);
+      chrome.userScripts.update = ((specs: unknown[]) => {
+        w.__regCalls++;
+        return origUpdate(specs as Parameters<typeof origUpdate>[0]);
+      }) as typeof chrome.userScripts.update;
     });
     const regCalls = () => sw.evaluate(() => (self as unknown as { __regCalls: number }).__regCalls);
     // Longer than scheduleSync's 50ms debounce, so a sync that WAS

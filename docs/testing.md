@@ -185,7 +185,11 @@ tests:
   last attempt — what the UI renders as REJECTED.
 - Lifecycle: `syncNow()` cancels the debounced sync timer and runs
   `syncRegistrations` synchronously, returning the post-sync
-  registration list. `resetAllState()` clears storage and unregisters
+  registration list and which path it took (`kind`). It *flushes* the
+  pending sync rather than replacing it — same accumulated scope, so
+  tests exercise the same incremental path production takes, and a
+  scope the debounce already drained stays empty rather than becoming
+  a full reconcile. `resetAllState()` clears storage and unregisters
   every userscript.
 - Per-script log: `getScriptLog(id)`, `appendScriptLog(id, entry)`,
   `clearScriptLog(id)`, `getScriptLogLabel(id)`.

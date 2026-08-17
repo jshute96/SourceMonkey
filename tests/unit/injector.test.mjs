@@ -23,12 +23,17 @@ const localStore = new Map();
 // are loud so an unconfigured caller can't pass by accident.
 const userScripts = {
   register: async () => { throw new Error('userScripts.register not stubbed'); },
-  // Faithful to Chrome: unregistering an id nothing holds is an error,
-  // and `registerReplacing` uses exactly that to tell "another context
-  // already placed this id" from "Chrome refuses this spec". A stub
-  // that resolved for unknown ids would hide the difference.
+  // Faithful to Chrome: unregistering an id nothing holds is an error.
+  // A stub that resolved for unknown ids would hide the difference
+  // between "already gone" and "dropped it".
   unregister: async ({ ids }) => {
     throw new Error(`No user script with ID '${(ids ?? [])[0]}' is registered`);
+  },
+  // Faithful too: `update` is how a registration that is STAYING
+  // registered is replaced, and Chrome refuses it for an id nothing
+  // holds. `placeSpec` uses exactly that to fall back to `register`.
+  update: async (batch) => {
+    throw new Error(`No user script with ID '${(batch ?? [])[0]?.id}' is registered`);
   },
   // Must precede register(); the retry path calls it via
   // ensureWorldConfigured. Without it here the retry's error
@@ -70,8 +75,10 @@ globalThis.chrome = globalThis.chrome ?? {
 
 import {
   BRIDGE_SCRIPT_ID,
+  GM_RUNTIME_SCRIPT_ID,
   registerWithFallback,
   buildBridgeSpec,
+  buildGmRuntimeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
   buildSwapEvalBody,
@@ -1406,6 +1413,25 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-worl
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
 });
 
+// ---------- buildGmRuntimeSpec ----------
+
+test('buildGmRuntimeSpec: emitted only when a USER_SCRIPT-world script is active', () => {
+  const main = { id: 'a', world: 'MAIN', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' };
+  const isolated = { ...main, id: 'b', world: 'USER_SCRIPT' };
+  assert.equal(buildGmRuntimeSpec([]), null);
+  assert.equal(buildGmRuntimeSpec([main]), null, 'MAIN world has no window.__SM_GM__ to install');
+
+  const runtime = buildGmRuntimeSpec([main, isolated]);
+  assert.ok(runtime, 'expected a GM-runtime spec');
+  assert.equal(runtime.id, GM_RUNTIME_SCRIPT_ID);
+  assert.equal(runtime.world, 'USER_SCRIPT');
+  assert.deepEqual(runtime.matches, ['<all_urls>']);
+  // document_start, so the global is in place before any wrapper that
+  // compiled GM_* bindings against it runs.
+  assert.equal(runtime.runAt, 'document_start');
+  assert.match(runtime.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__gm-runtime\.js/);
+});
+
 // ---------- wrapPreludeEntry ----------
 
 test('wrapPreludeEntry: appends the page-wide prelude sourceURL', () => {
@@ -1945,7 +1971,11 @@ test('retryRejectedRegistrations: a caller is never dropped for arriving late', 
 // what produced "Duplicate script ID '<uuid>'" against a script that
 // was in fact registered and running.
 
-const { syncRegistrations } = await import('../../dist/injector.js');
+const {
+  syncRegistrations,
+  _resetRegistrationStateForTests,
+  _forgetRegistrationForTests,
+} = await import('../../dist/injector.js');
 
 // Restore the module-wide stubs to the state the rest of the file
 // expects — including `register`'s loud default, so a later test that
@@ -1958,6 +1988,9 @@ function resetUserScriptStubs() {
   userScripts.unregister = async ({ ids }) => {
     throw new Error(`No user script with ID '${(ids ?? [])[0]}' is registered`);
   };
+  userScripts.update = async (batch) => {
+    throw new Error(`No user script with ID '${(batch ?? [])[0]?.id}' is registered`);
+  };
   delete userScripts.getScripts;
 }
 
@@ -1965,6 +1998,7 @@ test('syncRegistrations: two overlapping syncs never interleave', async (t) => {
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
+  _resetRegistrationStateForTests();
   seedStore('a');
   const events = [];
   // Every stub yields to the event loop, so an unserialized pair of
@@ -1973,6 +2007,7 @@ test('syncRegistrations: two overlapping syncs never interleave', async (t) => {
   userScripts.getScripts = async () => { events.push('list'); await yieldOnce(); return [{ id: 'a' }]; };
   userScripts.unregister = async () => { events.push('unregister'); await yieldOnce(); };
   userScripts.register = async () => { events.push('register'); await yieldOnce(); };
+  userScripts.update = async () => { events.push('update'); await yieldOnce(); };
 
   const first = syncRegistrations();
   // Let the first one get past the collapse gate, so the second call is
@@ -1981,9 +2016,14 @@ test('syncRegistrations: two overlapping syncs never interleave', async (t) => {
   const second = syncRegistrations();
   await Promise.all([first, second]);
 
+  // Both are full reconciles (no scope), and Chrome already holds `a`,
+  // so each one lists the set, registers the MAIN-world bridge the list
+  // didn't have, and UPDATES the script in place. Nothing is
+  // unregistered: `a` is staying registered, and dropping it first is
+  // the window this whole design exists to close.
   assert.deepEqual(events, [
-    'list', 'unregister', 'register',
-    'list', 'unregister', 'register',
+    'list', 'register', 'update',
+    'list', 'register', 'update',
   ], 'one sync must finish before the next one lists the registration set');
 });
 
@@ -1999,6 +2039,7 @@ test('syncRegistrations: a sync that has not started yet absorbs later callers',
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
+  _resetRegistrationStateForTests();
   seedStore('a');
   const yieldOnce = () => new Promise((r) => setTimeout(r, 0));
   let lists = 0;
@@ -2027,6 +2068,7 @@ test('syncRegistrations: a batch unregister that fails drops the ids one at a ti
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
+  _resetRegistrationStateForTests();
   const registered = new Set(['stale-1', 'stale-2']);
   const dropped = [];
   userScripts.getScripts = async () => [...registered].map((id) => ({ id }));
@@ -2042,32 +2084,399 @@ test('syncRegistrations: a batch unregister that fails drops the ids one at a ti
   assert.deepEqual(dropped.sort(), ['stale-1', 'stale-2'], 'every id must still be dropped');
 });
 
-test('registerWithFallback: an id Chrome already holds is replaced, not reported', async (t) => {
-  t.after(resetUserScriptStubs);
-  // The cross-context race the per-context lock cannot cover: the
-  // collections page and the viewer run the retry in their own JS context,
-  // so a page-side retry can place a script between the SW sync's
-  // unregister-all and its register-all. Chrome then answers the
-  // sync's batch with "Duplicate script ID", and re-offering the spec
-  // unchanged badged a running script REJECTED.
-  sessionStore.clear();
-  const held = new Set(['b']);
-  userScripts.unregister = async ({ ids }) => {
-    for (const id of ids) {
-      if (!held.delete(id)) throw new Error(`No script with ID '${id}' is registered`);
+// ---------- Incremental sync ----------
+//
+// A sync used to unregister EVERYTHING and register it back, on every
+// script-row write. Between those two awaits Chrome held no userscripts
+// at all, so a document created right then ran nothing — silently, with
+// no error and no badge. The tests below pin the two properties that
+// replaced it: only the rows that moved are touched, and nothing that
+// is staying registered is ever dropped.
+
+// A stand-in for Chrome's registration set that records every call, so
+// a test can assert on the ORDER of operations — which is where the
+// unregistered window lived.
+//
+// Faithful to the two behaviours of the real API that the sync design
+// turns on, both verified against Chrome:
+//
+//   - **`update` MERGES.** A pattern field the new spec omits keeps its
+//     previous value, and an explicit `[]` counts as omitted. Modelling
+//     `update` as "replace" would make the fake agree with the
+//     assumption the production code must NOT make.
+//   - **`update` moves a registration to the END of the set**, in batch
+//     order. That is what makes placement order observable here.
+const PATTERN_FIELDS = ['matches', 'includeGlobs', 'excludeGlobs'];
+
+function fakeRegistrationSet(initial = []) {
+  const seed = { matches: ['https://seed/*'] };
+  const held = new Map(initial.map((id) => [id, { id, ...seed }]));
+  const calls = [];
+  const merge = (prior, spec) => {
+    const next = { ...prior, ...spec };
+    for (const f of PATTERN_FIELDS) {
+      // An empty array is "unspecified" to Chrome, so the old value
+      // survives it.
+      if (!spec[f] || spec[f].length === 0) next[f] = prior[f];
     }
+    return next;
+  };
+  userScripts.getScripts = async (filter) => {
+    const all = [...held.values()];
+    return filter?.ids ? all.filter((s) => filter.ids.includes(s.id)) : all;
   };
   userScripts.register = async (batch) => {
     for (const s of batch) {
       if (held.has(s.id)) throw new Error(`Duplicate script ID '${s.id}'`);
+      if (!s.matches || s.matches.length === 0) {
+        throw new Error(`User script with ID '${s.id}' must specify 'matches'.`);
+      }
     }
-    for (const s of batch) held.add(s.id);
+    for (const s of batch) { held.set(s.id, { ...s }); calls.push(`register:${s.id}`); }
   };
+  userScripts.update = async (batch) => {
+    for (const s of batch) {
+      if (!held.has(s.id)) throw new Error(`No script with ID '${s.id}' is registered`);
+    }
+    for (const s of batch) {
+      const merged = merge(held.get(s.id), s);
+      // Delete then set: a Map preserves insertion order, so this is
+      // how the fake reproduces "an updated script moves to the end".
+      held.delete(s.id);
+      held.set(s.id, merged);
+      calls.push(`update:${s.id}`);
+    }
+  };
+  userScripts.unregister = async ({ ids }) => {
+    for (const id of ids) {
+      if (!held.has(id)) throw new Error(`No script with ID '${id}' is registered`);
+    }
+    for (const id of ids) { held.delete(id); calls.push(`unregister:${id}`); }
+  };
+  return {
+    calls,
+    // Insertion order, NOT sorted — placement order is the thing some
+    // of these tests are about.
+    order: () => [...held.keys()],
+    ids: () => [...held.keys()].sort(),
+    spec: (id) => held.get(id),
+    reset: () => { calls.length = 0; },
+  };
+}
+
+// Count `chrome.storage.local.get(null)` calls — the read that pulled
+// every script body and the favicon cache into memory on every sync.
+function countFullReads() {
+  const inner = chrome.storage.local.get;
+  const seen = { full: 0, keyed: 0 };
+  chrome.storage.local.get = async (key) => {
+    if (key === null || key === undefined) seen.full++;
+    else seen.keyed++;
+    return inner(key);
+  };
+  seen.restore = () => { chrome.storage.local.get = inner; };
+  return seen;
+}
+
+test('syncRegistrations: a scoped sync re-registers only the scripts that moved', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort());
+
+  chrome_.reset();
+  const reads = countFullReads();
+  t.after(reads.restore);
+  // Only `b` was edited.
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+
+  assert.deepEqual(chrome_.calls, ['update:b'], 'only the edited script is re-offered');
+  assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
+  assert.equal(reads.full, 0, 'a scoped sync must not read every row');
+});
+
+test('syncRegistrations: a scoped sync unregisters only what left the set', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  // `b` is disabled — it IS going away, which is the one case an
+  // unregister is right for.
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+
+  assert.deepEqual(chrome_.calls, ['unregister:b']);
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort());
+});
+
+test('syncRegistrations: a collection toggle moves every script under it', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  // The scripts' own rows didn't move; the collection's did.
+  localStore.set('collection:src-1', { ...localStore.get('collection:src-1'), enabled: false });
+  await syncRegistrations({ scriptIds: [], collectionIds: ['src-1'] });
+  // No MAIN-world script is left, so the bridge goes with them.
+  assert.deepEqual(
+    chrome_.calls.sort(),
+    ['unregister:a', 'unregister:b', `unregister:${BRIDGE_SCRIPT_ID}`].sort(),
+  );
+  assert.deepEqual(chrome_.ids(), []);
+
+  chrome_.reset();
+  localStore.set('collection:src-1', { ...localStore.get('collection:src-1'), enabled: true });
+  await syncRegistrations({ scriptIds: [], collectionIds: ['src-1'] });
+  assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort(), 'and back again');
+});
+
+test('syncRegistrations: a scoped sync leaves another script\'s REJECTED alone', async (t) => {
+  // The rejection map describes the current registration set, and a
+  // full sync rewrites it wholesale. A scoped sync must not: clearing
+  // an entry it never re-offered would drop a REJECTED badge Chrome is
+  // still earning, and rewriting the map from its own slice would
+  // resurrect ones an earlier sync cleared.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  const register = userScripts.register;
+  // Chrome refuses `a` forever; `b` is fine.
+  userScripts.register = async (batch) => {
+    if (batch.some((s) => s.id === 'a')) throw new Error('bad spec: a');
+    return register(batch);
+  };
+  await syncRegistrations();
+  assert.deepEqual(Object.keys(await readRejections()), ['a']);
+
+  chrome_.reset();
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+  assert.deepEqual(
+    Object.keys(await readRejections()), ['a'],
+    'a script this sync never looked at keeps its REJECTED',
+  );
+
+  // And a script that leaves the set while still rejected loses it,
+  // because a scoped sync owns exactly the ids it considered.
+  localStore.delete('script:a');
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(await readRejections(), {});
+});
+
+test('syncRegistrations: a scoped sync rebuilds scripts a new dupe renamed', async (t) => {
+  // Log labels are dedup-aware across the whole library, so a script
+  // ARRIVING renumbers the group it joins: a lone `dupe.user.js`
+  // becomes `dupe.user.js#1`. The label is baked into the registered
+  // `//# sourceURL=` directives, so the script whose row never moved
+  // still has to be re-registered — a full wipe used to do that by
+  // accident.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  localStore.set('script:a', { ...localStore.get('script:a'), relativePath: 'dupe.user.js' });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  seedStore('b');
+  localStore.set('script:b', { ...localStore.get('script:b'), relativePath: 'dupe.user.js' });
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+
+  assert.deepEqual(
+    chrome_.calls.sort(), ['register:b', 'update:a'],
+    'the script that was renumbered is re-registered too',
+  );
+});
+
+test('syncRegistrations: dropping the last @exclude really drops it', async (t) => {
+  // `chrome.userScripts.update` MERGES — a pattern field the new spec
+  // omits keeps its old value, and an explicit `[]` counts as omitted
+  // (both verified against Chrome). `buildRegistrationSpec` emits these
+  // keys only when non-empty, so a plain `update` would leave a user
+  // who deleted their last `@exclude` with an exclusion their header no
+  // longer declares: the script keeps not running on that site, our own
+  // matcher disagrees, and nothing in the UI explains it.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  localStore.set('script:a', {
+    ...localStore.get('script:a'),
+    matching: { matches: ['https://e/*'], includes: [], excludes: ['https://e/no/*'] },
+  });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(chrome_.spec('a').excludeGlobs, ['https://e/no/*']);
+  chrome_.reset();
+
+  // The user deletes the `@exclude` line.
+  localStore.set('script:a', {
+    ...localStore.get('script:a'),
+    matching: { matches: ['https://e/*'], includes: [], excludes: [] },
+  });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+
+  assert.ok(
+    !chrome_.spec('a').excludeGlobs?.length,
+    'the exclusion the header no longer declares must be gone from the registration',
+  );
+  // The one place the closed window reopens, and only for the script
+  // being re-scoped: there is no way to clear the field through update.
+  assert.deepEqual(chrome_.calls, ['unregister:a', 'register:a']);
+});
+
+test('syncRegistrations: a registration another context placed can still be dropped', async (t) => {
+  // `state.registered` is this context's belief, and the collections
+  // page and the viewer place registrations in theirs. A removal that
+  // consulted the belief would leave a script the page-side retry
+  // placed injecting after the user disabled it — and unlike a wrong
+  // belief about presence, that one never self-corrects, because
+  // removal has no second call to disagree with it.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+
+  // Simulate the other context: drop `b` from OUR record while leaving
+  // it registered, exactly as a page-side `retryRejectedRegistrations`
+  // that the worker never heard about would.
+  _forgetRegistrationForTests('b');
+  chrome_.reset();
+
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+
+  assert.deepEqual(chrome_.calls, ['unregister:b']);
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort());
+});
+
+test('syncRegistrations: a refused update does not report a duplicate id', async (t) => {
+  // For an id Chrome really holds, `register` is guaranteed to answer
+  // "Duplicate script ID" — so using it as the second opinion after a
+  // failed `update` would turn every update failure into that message,
+  // and file it against the script as Chrome's reason. Ask Chrome
+  // whether the id exists instead.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  userScripts.update = async () => { throw new Error('bad spec: a'); };
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'edited' });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+
+  assert.deepEqual(
+    Object.values(await readRejections()), ['bad spec: a'],
+    'the reported reason is the real refusal, not our own sequencing',
+  );
+  // And the stale registration goes, because REJECTED says the script
+  // will not run.
+  assert.ok(!chrome_.ids().includes('a'));
+});
+
+test('syncRegistrations: a scoped sync with no record of the set reconciles fully', async (t) => {
+  // The service worker is evicted freely and rows change while it is
+  // dead, so a fresh worker cannot diff against a record it doesn't
+  // have. Chrome's own list is the only truth available.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  // What a previous worker left behind: `a`, plus one for a script the
+  // store no longer has.
+  const chrome_ = fakeRegistrationSet(['a', 'gone']);
+  const reads = countFullReads();
+  t.after(reads.restore);
+
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+
+  assert.equal(reads.full, 1, 'with nothing to diff against, read everything');
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort(), 'the stray is dropped');
+  assert.deepEqual(
+    chrome_.calls, [`register:${BRIDGE_SCRIPT_ID}`, 'update:a', 'unregister:gone'],
+    'our own registration goes first, a staying script is updated in place, removals last',
+  );
+});
+
+test('syncRegistrations: a failed sync gives up its record rather than half-diffing', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  _resetRegistrationStateForTests();
+  seedStore('a');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+
+  // A storage failure mid-sync. What must NOT happen is the next sync
+  // trusting a record this one may have half-applied.
+  const inner = chrome.storage.local.get;
+  chrome.storage.local.get = async () => { throw new Error('storage is unavailable'); };
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  chrome.storage.local.get = inner;
+
+  const reads = countFullReads();
+  t.after(reads.restore);
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.equal(reads.full, 1, 'the next sync starts over from a full read');
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort());
+});
+
+test('registerWithFallback: an id Chrome already holds is replaced, not reported', async (t) => {
+  t.after(resetUserScriptStubs);
+  // The cross-context race the per-context lock cannot cover: the
+  // collections page and the viewer run the retry in their own JS
+  // context, so a page-side retry can place a script the SW sync
+  // believes is unplaced. Chrome then answers the sync's batch with
+  // "Duplicate script ID", and re-offering the spec unchanged badged a
+  // running script REJECTED.
+  sessionStore.clear();
+  // `b` is already placed and `registerWithFallback` does not know it.
+  const chrome_ = fakeRegistrationSet(['b']);
 
   const ok = await registerWithFallback([SPEC_A, SPEC_B]);
   assert.equal(ok, 2, 'both specs must end up registered');
   assert.deepEqual(await readRejections(), {}, 'our own ordering is not the script\'s fault');
-  assert.deepEqual([...held].sort(), ['a', 'b']);
+  assert.deepEqual(chrome_.ids(), ['a', 'b']);
+  // The recovery is an `update`, never an unregister: `b` is running,
+  // and dropping it to place it again is the gap that made a page
+  // loading right then run nothing. (`b`'s spec keeps a `matches`, so
+  // nothing forces the replace path — see the pattern-drop test.)
+  assert.ok(
+    !chrome_.calls.some((c) => c.startsWith('unregister:')),
+    'a live registration is never dropped to replace it',
+  );
 });
 
 test('registerWithFallback: a spec Chrome genuinely refuses is offered once', async (t) => {

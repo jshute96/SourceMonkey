@@ -976,12 +976,17 @@ itself mid-flight.
 ### Background-SW sync coalescing
 
 `onCacheChanged` (in `match-index.ts`) fires for every
-`storage.onChanged` batch that touches a `collection:*` or `script:*` row.
-The background SW's handler debounces by 50 ms before calling
-`syncRegistrations` + `refreshAllOpenTabs`, so several rapid changes
-collapse into one re-sync. `syncRegistrations` is O(total scripts) and
-issues an `unregister`-all/`register`-all against `chrome.userScripts`,
-so coalescing matters.
+`storage.onChanged` batch that touches a `collection:*` or `script:*`
+row, naming the rows that moved.
+
+- The background SW's handler accumulates those ids and debounces by
+  50 ms before calling `syncRegistrations(scope)` +
+  `refreshAllOpenTabs`, so several rapid changes collapse into one
+  re-sync over the union of their rows.
+- The sync is scoped to those rows, so coalescing now saves a rebuild
+  per row rather than a whole-library re-registration per row — still
+  worth having, and no longer the difference it was. See
+  [injection.md](injection.md#the-sync-is-incremental).
 
 The debounce is about *cost*, not correctness — it can't stop the
 startup sync, a refresh's targeted retry, or an extension page from
