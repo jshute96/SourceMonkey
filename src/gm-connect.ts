@@ -169,6 +169,18 @@ export function gmXhrError(problem: string): string {
   return `[SourceMonkey] GM_xmlhttpRequest: ${problem}`;
 }
 
+// The one phrasing for "we could not set the headers you asked for".
+// Says the request was not sent, because the alternative a reader would
+// assume — sent without them — is exactly what we refuse to do: the
+// headers here are the ones the browser won't let a script set, and
+// dropping a `Cookie` override would send the user's own session
+// instead.
+export function headerRuleFailedMessage(): string {
+  return gmXhrError(
+    'The headers this request asked for could not be applied, so it was not sent',
+  );
+}
+
 // The one phrasing for a request the script's own header forbids: it
 // names whose rules blocked the call rather than a "policy" object the
 // reader can't see.

@@ -126,6 +126,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/wrapper-gm-runtime.js` | USER_SCRIPT-world shared runtime — installs `window.__SM_GM__` (shim cache, async sendMessage helper, storage cache + batched writes) |
 | `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
 | `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, cookies, timeout |
+| `src/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, compile to a DNR session rule, sweep stale rules |
 | `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL, phrase the denial |
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
@@ -245,10 +246,12 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/e2e/gm-xhr.spec.ts` | E2E tests for `GM_xmlhttpRequest` text path — GET text, JSON, POST body, HTTP errors firing onload, network failure → onerror, abort, permission gating |
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
+| `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — Sec-Fetch-*/Referer/User-Agent/Cookie overrides reach the wire, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
 | `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching exact allowed, `*` wildcard, subdomain match, mismatched host blocked |
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
 | `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
+| `tests/unit/gm-xhr-headers.test.mjs` | Unit tests for XHR header classification and DNR rule building — forbidden names, Sec-/Proxy- prefixes, rule targeting |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
 | `tests/unit/gm-menu.test.mjs` | Unit tests for the `GM_registerMenuCommand` registry (declaration order, in-place update, per-document scoping of clear/unregister) |
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
@@ -275,7 +278,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/gm-value-listeners/` | `GM_addValueChangeListener` / `GM_removeValueChangeListener` examples |
 | `tests/examples/gm-dom/` | `GM_addStyle` and `GM_addElement` DOM-injection examples |
 | `tests/examples/gm-clipboard/` | `GM_setClipboard` round-trip example |
-| `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, anonymous, abort) |
+| `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, anonymous, headers, abort) plus a cross-manager wire-header report |
 | `tests/examples/gm-open-in-tab/` | `GM_openInTab` call-shape examples (active, background, positional, onclose) |
 | `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
 | `tests/examples/gm-download/` | `GM_download` call-shape examples (relative + absolute http(s), `data:`, `blob:`, abort, 404, refused cases) |
@@ -336,6 +339,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
 | `docs/GM-API-strategy.md` | Decision doc comparing VM-embed vs own-impl for `GM_*` APIs; recommends own-impl with VM as reference |
 | `docs/GM-APIs.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |
+| `docs/xhr-header-surgery.md` | How `GM_xmlhttpRequest` sets forbidden request headers via short-lived DNR rules — targeting, defaults, blind spots |
 | `docs/GM-APIs-storage.md` | Storage subsystem in depth: why values live in-document, how the cache is seeded, freshness mechanisms after `GM_setValue`, wire format |
 | `docs/supported-GM-APIs.md` | User-facing per-API inventory: which `GM_*` names work, which are stubbed, and how they map to TM / VM / GM4 |
 | `docs/offline-validation.md` | The install-time checks as a CLI: what it shares with production, the two pieces it can't, offline dependency roots |

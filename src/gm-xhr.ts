@@ -4,9 +4,9 @@
 // (text/json/blob/arraybuffer/document) and `@connect` URL gating.
 // Requests are credentialed (the user's cookies go out) unless the
 // caller passes `anonymous: true` — see `runXhr`.
-// Header surgery (setting forbidden request headers like Origin /
-// Cookie / Referer) is not yet wired — see TODO.md "XHR header
-// surgery".
+// Headers `fetch` refuses to send (Origin / Cookie / Referer /
+// Sec-Fetch-*) travel as a declarativeNetRequest rule instead — see
+// `gm-xhr-headers.ts`.
 //
 // Wire protocol:
 //
@@ -44,7 +44,13 @@
 // aborted request can be cancelled mid-fetch.
 
 import { bytesToBase64 } from './bytes.js';
-import { connectBlockedMessage } from './gm-connect.js';
+import { connectBlockedMessage, headerRuleFailedMessage } from './gm-connect.js';
+import {
+  buildHeaderRule,
+  splitHeaders,
+  whenStaleRulesCleared,
+  type HeaderRuleSpec,
+} from './gm-xhr-headers.js';
 
 export interface GmXhrRequestPayload {
   // HTTP method. Default GET. Uppercased before sending.
@@ -201,10 +207,32 @@ export async function runXhr(
       controller.abort();
     }, request.timeout);
   }
+  // Headers `fetch` would drop travel as a DNR rule instead; the rest
+  // ride along on the request. `installedRuleId` is held so the rule
+  // comes off however the request ends.
+  const { passthrough, surgical } = splitHeaders(request.headers);
+  let installedRuleId: number | null = null;
   try {
+    const method = (request.method ?? 'GET').toUpperCase();
+    // Built once: `buildHeaderRule` allocates an id, so asking it twice
+    // would burn one and answer a different question the second time.
+    const spec = buildHeaderRule(request.url, surgical, method);
+    if (spec) {
+      installedRuleId = await installHeaderRule(spec);
+      // Refuse rather than send something the script didn't ask for.
+      // The headers it wanted are the ones the browser won't let it
+      // set, so a silent fallback isn't "the request minus a header": a
+      // `Cookie` override that doesn't apply sends the user's real
+      // session instead of the script's — the opposite of the ask.
+      // A rule that exists only to strip our own `Origin` is not the
+      // script's request, so that one falls back quietly.
+      if (installedRuleId == null && Object.keys(surgical).length > 0) {
+        return { kind: 'error', message: headerRuleFailedMessage() };
+      }
+    }
     const init: RequestInit = {
-      method: (request.method ?? 'GET').toUpperCase(),
-      headers: request.headers ?? undefined,
+      method,
+      headers: Object.keys(passthrough).length > 0 ? passthrough : undefined,
       // Credentialed by default, matching Tampermonkey/Violentmonkey —
       // the point of GM_xmlhttpRequest is usually to read another site
       // *as the signed-in user*, and `anonymous: true` opts out.
@@ -228,6 +256,16 @@ export async function runXhr(
       init.body = typeof request.data === 'string' ? request.data : String(request.data);
     }
     const res = await fetch(request.url, init);
+    // The rule has done its job the moment the request is on the wire,
+    // and `fetch` resolving means the response headers are already
+    // back. Dropping it here rather than in `finally` keeps a slow
+    // download from holding a rule live — the window in which another
+    // tab-less request to the same URL would pick up these headers.
+    if (installedRuleId != null) {
+      const ruleId = installedRuleId;
+      installedRuleId = null;
+      await removeHeaderRule(ruleId);
+    }
     // @connect redirect re-validation: if fetch followed a redirect to
     // a host the policy doesn't allow, refuse to read or return the
     // body. (See the file header for why the outbound hop can't be
@@ -309,6 +347,42 @@ export async function runXhr(
   } finally {
     if (timeoutTimer != null) clearTimeout(timeoutTimer);
     activeXhrs.delete(id);
+    if (installedRuleId != null) await removeHeaderRule(installedRuleId);
+  }
+}
+
+// Install one request's header rule. Returns the id to remove
+// afterwards, or null if it couldn't be installed — the caller decides
+// whether that is fatal (it is, when the script asked for the headers).
+async function installHeaderRule(spec: HeaderRuleSpec): Promise<number | null> {
+  const dnr = chrome.declarativeNetRequest;
+  if (!dnr) return null;
+  // The startup sweep reads every session rule and deletes the ones in
+  // our band. A rule added while that read is in flight is in its
+  // snapshot, so installing first would let the sweep delete a live
+  // rule. Wait it out — it runs once per worker life.
+  await whenStaleRulesCleared();
+  try {
+    // Clear the id first: `addRules` rejects a duplicate id outright,
+    // and an id can still be occupied if a rule ever escaped its
+    // `finally` (the counter wraps). Dropping a stale rule of ours is
+    // right anyway — its request is long gone.
+    await dnr.updateSessionRules({ removeRuleIds: [spec.id], addRules: [spec.rule] });
+    return spec.id;
+  } catch (err) {
+    console.info('[SourceMonkey] could not apply GM_xmlhttpRequest header rule', err);
+    return null;
+  }
+}
+
+async function removeHeaderRule(ruleId: number): Promise<void> {
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] });
+  } catch (err) {
+    // A rule left behind would keep rewriting later same-URL requests,
+    // so this is worth a log — but there is nothing to retry against
+    // and the request itself already succeeded.
+    console.info('[SourceMonkey] could not remove a GM_xmlhttpRequest header rule', err);
   }
 }
 

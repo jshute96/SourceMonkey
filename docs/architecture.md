@@ -8,12 +8,13 @@ details live in the topic-specific docs linked below.
 > pipeline prefetches and prepends required bodies; the `GM_*` /
 > `GM.*` API surface covers storage (with cross-tab broadcast +
 > value-change listeners), DOM injection (`GM_addStyle` /
-> `GM_addElement`), clipboard, `GM_xmlhttpRequest` (text + binary)
-> with `@connect` URL gating, `GM_download`, `GM_notification`,
-> `GM_openInTab`, `GM_log`, and `GM_registerMenuCommand` /
-> `GM_unregisterMenuCommand` (rendered as indented entries under
-> each script in the toolbar action's right-click menu). Deferred:
-> XHR header surgery, `GM_cookie` (bindings stubbed). See
+> `GM_addElement`), clipboard, `GM_xmlhttpRequest` (text + binary,
+> with `@connect` URL gating and the surgery that lets a script set
+> forbidden request headers like `Sec-Fetch-*`), `GM_download`,
+> `GM_notification`, `GM_openInTab`, `GM_log`, and
+> `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (rendered as
+> indented entries under each script in the toolbar action's
+> right-click menu). Deferred: `GM_cookie` (bindings stubbed). See
 > [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 
 ## Components
@@ -173,6 +174,10 @@ details live in the topic-specific docs linked below.
   `AbortController` + timeout, text / JSON / binary response shapes
   (binary serialized to base64 for the page-side wire). See the
   XHR section of [GM-APIs.md](GM-APIs.md).
+- **XHR header surgery** (`src/gm-xhr-headers.ts`) — lets a script set
+  request headers the browser forbids, by compiling them into a
+  short-lived `declarativeNetRequest` session rule around the fetch.
+  See [xhr-header-surgery.md](xhr-header-surgery.md).
 - **@connect URL gating** (`src/gm-connect.ts`) — parses `@connect`
   lines into rules (`*`, `self`, exact, subdomain), resolves `self`
   against the script's `@match`/`@include` hosts, and gates

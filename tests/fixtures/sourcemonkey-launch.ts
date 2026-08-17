@@ -183,6 +183,19 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
       // `/__slow/` is shared with the standalone serve CLI — see
       // tests/fixtures/slow-route.mjs.
       if (handleSlowRoute(url, res)) return;
+      // `/__echo` reflects the request's own headers back as JSON. It is
+      // how a test learns what a manager actually put on the wire —
+      // forbidden headers (Origin, Referer, Sec-Fetch-*) are invisible
+      // from inside the page that asked for the request.
+      if (url.pathname === '/__echo') {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        // Answer any origin: the caller is an extension request whose
+        // Origin we don't control, and a CORS rejection would hide the
+        // very headers the route exists to report.
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.end(JSON.stringify({ method: req.method, headers: req.headers }, null, 2));
+        return;
+      }
       const name = url.pathname.replace(/^\//, '') || 'index.html';
       if (serveFile(res, pagesDir, name)) return;
       if (serveFile(res, examplesDir, name)) return;

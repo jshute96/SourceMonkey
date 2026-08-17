@@ -36,6 +36,12 @@
       <li>Requests carry your cookies for the target host by
         default, so a script can read a site as the signed-in you.
         Tick <code>anonymous</code> to send one without them.</li>
+      <li>Headers the browser forbids a script to set &mdash;
+        <code>Origin</code>, <code>Referer</code>,
+        <code>Cookie</code>, <code>User-Agent</code>, anything
+        <code>Sec-*</code> &mdash; can be set here too. Point the URL
+        at an echo service to see which ones a manager actually puts
+        on the wire.</li>
       <li>HTTP errors (4xx, 5xx) still fire <code>onload</code>
         with the status code &mdash; not <code>onerror</code>. Only
         network-level failures (DNS, refused connections) reach
@@ -68,6 +74,11 @@
           <option value="arraybuffer">arraybuffer</option>
           <option value="document">document</option>
         </select>
+      </label>
+      <label>
+        headers (JSON object, blank for none)
+        <input id="headers" type="text" name="headers"
+               placeholder='{"Sec-Fetch-Site": "same-origin"}' />
       </label>
       <label class="checkbox">
         <input id="anonymous" type="checkbox" name="anonymous" />

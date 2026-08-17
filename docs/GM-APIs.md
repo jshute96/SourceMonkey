@@ -279,6 +279,24 @@ Credentials:
   "Known limitations" is credentialed too — unreadable by the script,
   but a real side effect on a host the header never named.
 
+Forbidden request headers:
+
+- `fetch()` silently drops the headers the Fetch Standard (the web
+  standard behind `fetch`) reserves for the browser to set
+  (`Origin`, `Referer`, `Cookie`, `User-Agent`, `Sec-*`, …), in the
+  service worker exactly as on a page. `src/gm-xhr-headers.ts` puts
+  them back: they're compiled into a short-lived
+  `declarativeNetRequest` session rule instead of being handed to
+  `fetch`, because MV3 has no blocking `webRequest`.
+- The rule is keyed on the canonicalized URL, `tabIds: [-1]`, and our
+  own extension id as the initiator; it comes off as soon as `fetch`
+  resolves.
+- `Origin` is the one header changed unasked (removed, on methods that
+  send one). `Sec-Fetch-Site` — the header the feature exists for — is
+  never defaulted.
+- Full treatment, including targeting, failure handling and the blind
+  spots: [xhr-header-surgery.md](xhr-header-surgery.md).
+
 HTTP error statuses (404, 500, …) fire **`onload`** with the error
 status — matches XHR semantics; non-network errors are still
 "loads". Only network-level failures (DNS, ECONNREFUSED, etc.) and
@@ -354,14 +372,11 @@ if real reports come in.
 
 Known limitations (post-Phase 10):
 
-- **No header surgery yet.** `Origin` is the SW's origin
-  (`chrome-extension://<id>`), and forbidden headers (Host, Origin,
-  an explicit `Cookie` overriding the browser's own jar, etc.)
-  silently get stripped by `fetch()`. A future phase will
-  add `webRequest.onBeforeSendHeaders` (or DNR session rules) to
-  let scripts override these — VM's `requests-core.js` is the
-  reference shape. Tagging via a custom request header that the
-  listener strips will be the wiring.
+- **Header surgery has blind spots** — same-URL overlap (which
+  crosses scripts, and leaves a shared header's winner undefined),
+  redirects, and SourceMonkey's own non-XHR fetches sharing the
+  initiator the rule matches on. Each is described in
+  [xhr-header-surgery.md](xhr-header-surgery.md#blind-spots).
 - **Redirect re-check blocks reads, not the outbound hop.** The
   post-redirect host check refuses to hand a script the response from
   a non-allowlisted host, but `fetch` has already performed the

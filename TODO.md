@@ -255,22 +255,38 @@ question. See [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md)
 for the current state of the per-API matrix and
 [docs/GM-APIs.md](docs/GM-APIs.md) for implementation details.
 
-### XHR header surgery (originally planned with Phase 10)
+### XHR header surgery — leftovers
 
-The Phase 10 promise was "@connect gating AND header surgery." Only
-the gating piece shipped. Surgery is needed so userscripts can set
-forbidden headers (Origin, Cookie when overriding the SW default,
-Host, Referer, User-Agent). Today `fetch()` silently strips them.
+The surgery itself shipped (`src/gm-xhr-headers.ts`): forbidden
+request headers, `Sec-Fetch-*` included, travel as a per-request
+declarativeNetRequest session rule, and our extension `Origin` is
+removed by default. What's still open:
 
-- Add `webRequest` permission to `src/manifest.json`.
-- Install `webRequest.onBeforeSendHeaders` listener (or
-  `declarativeNetRequest` session rules — TM's MV3 path).
-- Tag SW-issued `GM_xmlhttpRequest`s with a `VM-Verify`-style header
-  (VM's approach in `requests-core.js`) so the listener can
-  distinguish them from page traffic.
-- Strip our `Origin` header by default; apply caller-supplied
-  overrides for forbidden headers; capture redirected URLs in
-  `finalUrl` accurately.
+- **Defaults are unmeasured.** Only `Origin` removal is defaulted;
+  `Sec-Fetch-*` is left alone unless a script asks. Whether to match
+  Tampermonkey's defaults instead needs TM's actual wire headers,
+  which `tests/examples/gm-xmlhttp/gm-xmlhttp-wire-headers.spec.ts`
+  will report once a TM profile exists on the machine
+  (`docs/cross-manager-testing.md`).
+- **Same-URL concurrency.** Two overlapping tab-less requests to one
+  URL each pick up the other's headers — across scripts, so one
+  script's `Cookie` can ride another's request. A header both rules
+  set goes to one of them, undefined which. The rule now comes
+  off as soon as `fetch` resolves, which is as small as the window
+  gets; closing it needs a discriminator DNR can match on, which for
+  request headers it has none of. Serializing same-URL surgical
+  requests is the fallback if this ever bites.
+- **Redirects skip the surgery.** The rule matches the original URL,
+  so a 30x hop goes out without the overrides and without the `Origin`
+  removal. Fixing it means predicting the target (can't) or rewriting
+  on `onBeforeRedirect`, which MV3 doesn't offer for this.
+- **Our own non-XHR fetches share the rule's initiator.** The
+  condition is `tabIds: [-1]` plus this extension's id, which excludes
+  a site's own service worker but not SourceMonkey's collection and
+  API fetches. A script racing one at the same URL can attach headers
+  to it; it can't read the response.
+- **`finalUrl` across redirects** is still `res.url`, which is right
+  for what fetch reports but doesn't expose the intermediate hops.
 
 ### GM_* APIs not yet in the catalog
 

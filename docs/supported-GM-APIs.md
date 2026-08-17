@@ -213,7 +213,7 @@ strict `Content-Security-Policy: script-src 'self'`.
 |-------|-------|
 | `method` | Default `GET`. Uppercased before send. |
 | `url` | Required. |
-| `headers` | Plain object. Passed verbatim to `fetch()` — forbidden headers (Origin, Cookie when overriding, etc.) are silently stripped by the browser. **Header surgery to override forbidden headers is not yet implemented.** |
+| `headers` | Plain object. Any header, including ones the browser normally forbids a script to set — see [Forbidden headers](#forbidden-headers). |
 | `data` | Body. String only today; non-string falls through `String(...)`. |
 | `timeout` | Milliseconds. Aborts the request and fires `ontimeout`. |
 | `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document`. |
@@ -283,6 +283,40 @@ Why the request is written the way it is — and the rest of the
 cookie-handling detail — is in
 [`GM-APIs.md`](GM-APIs.md#gm_xmlhttprequest).
 
+### Forbidden headers
+
+- The browser reserves some request headers for itself and refuses to
+  let *any* script set them: `Origin`, `Referer`, `Cookie`, `Host`,
+  `User-Agent`, the transport ones (`Connection`, `Content-Length`,
+  `Transfer-Encoding`, `Accept-Encoding`, …), and everything beginning
+  `Sec-` or `Proxy-`. (The
+  [Fetch Standard](https://fetch.spec.whatwg.org/) — the web standard
+  behind `fetch` — calls them *forbidden request headers*.)
+  `GM_xmlhttpRequest` sets them anyway: pass them in `headers` like
+  any other header.
+- That includes headers that can break a request rather than shape it
+  — a wrong `Content-Length` desyncs it. `fetch` used to swallow those
+  harmlessly; now the script gets what it asked for.
+- `Sec-Fetch-Site` is the one worth knowing about. It tells a server
+  whether a request came from its own pages, and a request issued by
+  an extension always says `none` — a value no page can produce.
+  Sites that gate an API on same-origin requests refuse everything
+  `GM_xmlhttpRequest` sends until the script sets
+  `'Sec-Fetch-Site': 'same-origin'`.
+- Setting it defeats a defense the site put there on purpose, so it is
+  never done for the script. `@connect` is the gate that makes it the
+  user's decision.
+- `Origin` is *removed* by default on the methods that send one (a GET
+  or HEAD never carries it). Left alone it would say
+  `chrome-extension://<id>`, which tells the target nothing useful and
+  advertises that the user runs SourceMonkey. A script that wants one
+  can set it.
+- A `Cookie` the script sets replaces the browser's own for that
+  request — a way to send a different session, or none.
+
+How this is done, and what it can't cover:
+[xhr-header-surgery.md](xhr-header-surgery.md).
+
 ### What `@connect` grants
 
 - `@connect <host>` lets the script *act as the user* on that host,
@@ -299,10 +333,19 @@ cookie-handling detail — is in
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
 - No `onprogress` events — only the final terminal event lands.
-- No header surgery: `Origin` is the extension's origin, and
-  forbidden headers (including an explicit `Cookie`) can't be
-  overridden — the browser attaches its own stored cookies instead.
-  (Future phase.)
+- Two requests to the same URL, overlapping, both setting forbidden
+  headers: each picks up the other's. Where both set the same header,
+  which value wins is not defined. This crosses scripts —
+  one script's hand-built `Cookie` can end up on another script's
+  request — so it is a credential leak, not just a wrong `Referer`.
+  Both scripts need `@connect` for the host and the requests have to
+  overlap in flight.
+- A redirect goes out without the overrides: the rule matches the
+  original URL only. A `Cookie` override doesn't follow, so the user's
+  own cookies reach the redirect target instead.
+- If the headers can't be applied at all, the request fails with
+  `The headers this request asked for could not be applied, so it was
+  not sent` rather than going out without them.
 - A narrow abort-after-response race can fire `onabort` instead of
   `onload` if the page calls `abort()` while the load event is in
   the in-flight message queue.

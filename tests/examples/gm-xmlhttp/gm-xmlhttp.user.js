@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_xmlhttpRequest
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.3
+// @version     1.0.4
 // @description Issue cross-origin HTTP requests via GM_xmlhttpRequest.
 // @match       *://*/gm-xmlhttp/gm-xmlhttp.html
 // @match       file:///*/gm-xmlhttp/gm-xmlhttp.html
@@ -20,7 +20,8 @@
   const responseTypeEl = document.getElementById('responseType');
   const dataEl = document.getElementById('data');
   const anonymousEl = document.getElementById('anonymous');
-  if (!status || !log || !urlEl || !methodEl || !responseTypeEl || !dataEl || !anonymousEl) return;
+  const headersEl = document.getElementById('headers');
+  if (!status || !log || !urlEl || !methodEl || !responseTypeEl || !dataEl || !anonymousEl || !headersEl) return;
 
   let inflight = null;
 
@@ -56,12 +57,26 @@
     const responseType = responseTypeEl.value;
     const data = dataEl.value || undefined;
     const anonymous = anonymousEl.checked;
+    let headers;
+    if (headersEl.value.trim()) {
+      try {
+        headers = JSON.parse(headersEl.value);
+      } catch (e) {
+        describe('error', { message: `headers is not valid JSON: ${e.message}` });
+        return;
+      }
+    }
 
-    describe('-> sending', { method, url, responseType, anonymous, data: data ?? '(none)' });
+    describe('-> sending', {
+      method, url, responseType, anonymous,
+      headers: headers ?? '(none)',
+      data: data ?? '(none)',
+    });
 
     const details = {
       method, url, responseType,
       anonymous,
+      headers,
       data,
       onload(res) {
         // Every field the managers hand back, so the panel is enough

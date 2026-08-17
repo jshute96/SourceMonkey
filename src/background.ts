@@ -153,6 +153,7 @@ import {
   runXhr,
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
+import { clearStaleHeaderRules } from './gm-xhr-headers.js';
 import {
   connectBlockedMessage,
   extractSelfHosts,
@@ -3001,6 +3002,10 @@ installStaleScriptListener();
 installNavigationListeners();
 installDeepLinkRedirect();
 installUserJsCapture();
+// Sweep header rules stranded by a worker that died mid-request. The
+// event that woke this worker may itself be an XHR, so the sweep isn't
+// alone here — `installHeaderRule` waits on it rather than racing it.
+void clearStaleHeaderRules();
 installScriptMessageListener();
 installPageFetchListener();
 installDebugLoggingListener();
