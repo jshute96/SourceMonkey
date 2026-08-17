@@ -22,8 +22,8 @@ import { defineConfig } from '@playwright/test';
 //
 // `metadata.manager` is the source of truth for which backend
 // tests/fixtures/manager.ts uses. Pick the project explicitly with
-// `--project=sourcemonkey` or `--project=tampermonkey`; the npm
-// `test:e2e` script wires the SM project so `npm test` doesn't try to
+// `--project=sourcemonkey` or `--project=tampermonkey`; the
+// `test:e2e` script wires the SM project so `pnpm test` doesn't try to
 // reach a TM browser. See docs/cross-manager-testing.md.
 export default defineConfig({
   testDir: './tests',
@@ -32,7 +32,7 @@ export default defineConfig({
   // headroom keeps the box usable while a run is going.
   //
   // The tampermonkey project must NOT run this way — it drives one real
-  // browser over CDP with no per-test reset — so `npm run test:e2e:tm`
+  // browser over CDP with no per-test reset — so `pnpm run test:e2e:tm`
   // passes `--workers=1`.
   fullyParallel: true,
   workers: '50%',

@@ -191,13 +191,13 @@ async function main() {
     await focusExistingBrowser();
     console.error(
       `\nThe Tampermonkey test browser is currently OPEN on CDP port ${PORT}.\n` +
-      `Headless cross-manager tests (\`npm run test:e2e:tm\`) need it CLOSED:\n` +
+      `Headless cross-manager tests (\`pnpm run test:e2e:tm\`) need it CLOSED:\n` +
       `Chromium can't share a profile directory between two processes.\n\n` +
       `→ Close the Tampermonkey test browser (I've tried to bring it\n` +
       `   forward; on Linux you may need to find it in your window list)\n` +
       `   and then re-run.\n\n` +
       `If you wanted to run against the already-open browser, use\n` +
-      `\`npm run test:e2e:tm:headed\` instead.\n`
+      `\`pnpm run test:e2e:tm:headed\` instead.\n`
     );
     process.exit(1);
   }

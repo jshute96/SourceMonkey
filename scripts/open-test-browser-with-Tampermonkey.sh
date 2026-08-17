@@ -29,7 +29,7 @@ URL="${1:-about:blank}"
 CHROME=$(find ~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | sort -V | tail -1)
 if [[ -z "$CHROME" ]]; then
   echo "Error: Playwright's bundled Chromium not found." >&2
-  echo "Install it with: npx playwright install chromium" >&2
+  echo "Install it with: pnpm exec playwright install chromium" >&2
   exit 1
 fi
 

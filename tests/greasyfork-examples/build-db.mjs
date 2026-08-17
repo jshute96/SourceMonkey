@@ -13,7 +13,7 @@
 // The database is rebuilt from scratch each run — it's derived data, and both
 // inputs (the CSV and the file tree) are cheap to re-read.
 //
-// Requires a build (`npm run build`): the header parsing reuses the extension's
+// Requires a build (`pnpm run build`): the header parsing reuses the extension's
 // own metadata-block parser from `dist/userscript-header.js`, so the database
 // sees headers exactly the way SourceMonkey does.
 

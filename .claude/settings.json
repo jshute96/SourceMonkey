@@ -1,9 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)",
-      "Bash(npm run test:*)",
-      "Bash(npm run test:e2e:*)"
+      "Bash(pnpm run build:*)",
+      "Bash(pnpm run test:*)",
+      "Bash(pnpm run test:e2e:*)"
     ]
   }
 }

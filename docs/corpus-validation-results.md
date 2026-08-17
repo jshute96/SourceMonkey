@@ -14,7 +14,7 @@ Run these first — they're fast, they need no downloaded corpus, and
 they're the check that the CLI still agrees with the browser:
 
 ```sh
-npm run validate -- tests/examples tests/bad-examples
+pnpm run validate tests/examples tests/bad-examples
 ```
 
 | Suite | Result |
@@ -40,8 +40,8 @@ Command, Node 22.22 (V8's verdict is the tool's verdict, so the version
 is part of the result):
 
 ```sh
-npm run validate -- --offline-root tests/greasyfork-examples/files \
-                    tests/greasyfork-examples/files
+pnpm run validate --offline-root tests/greasyfork-examples/files \
+                  tests/greasyfork-examples/files
 ```
 
 | | Scripts | |

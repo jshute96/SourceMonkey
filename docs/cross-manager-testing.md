@@ -11,29 +11,29 @@ compliance reference and surface divergences between managers.
 
 ## Running the suite
 
-- `npm run test:e2e` — SM project only (default for `npm test` too).
-- `npm run test:e2e:tm` — TM project, **headless**.
+- `pnpm run test:e2e` — SM project only (default for `pnpm test` too).
+- `pnpm run test:e2e:tm` — TM project, **headless**.
   - Launches its own Chromium against the persistent TM profile.
   - The headed browser (`open-test-browser-with-Tampermonkey.sh`) must
     **not** be open at the same time — Chromium can't share a profile
     between two processes.
-  - Preflight (`pretest:e2e:tm` → `scripts/e2e-tm-preflight.mjs
+  - Preflight (`test:e2e:tm` runs `scripts/e2e-tm-preflight.mjs
     --need-closed`): if a CDP-attached browser is already up, calls
     `page.bringToFront()` to surface the offending tab (best-effort —
     on Linux/X11 this activates the tab but may not raise the window
     above other apps), prints a "close it" message, and exits 1
     before Playwright runs.
-- `npm run test:e2e:tm:headed` — TM project, **headed**.
+- `pnpm run test:e2e:tm:headed` — TM project, **headed**.
   - Sets `TM_HEADED=1` and connects via CDP to the browser opened by
     `scripts/open-test-browser-with-Tampermonkey.sh`.
   - Use this when you want to watch the run or debug interactively.
-  - Preflight (`pretest:e2e:tm:headed` → `scripts/e2e-tm-preflight.mjs
+  - Preflight (`test:e2e:tm:headed` runs `scripts/e2e-tm-preflight.mjs
     --need-open`): if CDP 9223 isn't answering, spawns the opener
     script (detached) and waits up to 15s for the port to come up, so
     the command "just works" from a cold start.
-- `npx playwright test --project=<name>` works directly too, but
+- `pnpm exec playwright test --project=<name>` works directly too, but
   skips the preflight — make sure the browser state is right yourself.
-  - It also skips the `--workers=1` the npm scripts pass. The
+  - It also skips the `--workers=1` the package scripts pass. The
     tampermonkey project drives one real browser with no per-test
     reset, so it refuses to start with more than one worker
     (`tests/fixtures/manager.ts`) rather than corrupt that session.
@@ -50,7 +50,7 @@ Env vars used by the TM path:
 - `TM_CDP_PORT` — override the default CDP port (9223) for headed
   mode.
 - `SM_MANAGER` — fallback for direct
-  `npx playwright test path/to/spec.ts` runs that bypass `--project`.
+  `pnpm exec playwright test path/to/spec.ts` runs that bypass `--project`.
   If `SM_MANAGER` and project metadata are set and disagree, the
   fixture throws.
 

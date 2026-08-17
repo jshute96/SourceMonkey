@@ -228,8 +228,8 @@ Each `<api>/<api>.spec.ts` is auto-discovered by Playwright
 all examples specs with:
 
 ```sh
-npx playwright test examples
+pnpm exec playwright test examples
 ```
 
 or run an individual one with its path, e.g.
-`npx playwright test tests/examples/gm-info/gm-info.spec.ts`.
+`pnpm exec playwright test tests/examples/gm-info/gm-info.spec.ts`.

@@ -211,7 +211,7 @@ The compile-only check is in (see
 ## GreasyFork corpus findings
 
 Running the install-time checks over the top-2000 GreasyFork scripts
-(`npm run validate`, see
+(`pnpm run validate`, see
 [docs/offline-validation.md](docs/offline-validation.md)) turns
 "scripts SourceMonkey would refuse" into a measured list. Full results,
 with the evidence behind each item, are in
@@ -921,7 +921,7 @@ itself once a sync places it. What's missing:
       has no Chrome spelling at all. Registering `<all_urls>` and
       deciding in the prelude is the only route, and it means giving
       the script every page in exchange.
-  `npm run test:e2e:tm` drives a real TM, which is where "what does TM
+  `pnpm run test:e2e:tm` drives a real TM, which is where "what does TM
   run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**
   `checkPreviewSource` builds the row and reports header errors and

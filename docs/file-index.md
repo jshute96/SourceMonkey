@@ -11,8 +11,9 @@ One-line descriptions of every source file, grouped by directory.
 | `TODO.md` | Backlog of candidate follow-ups and enhancements, with the trade-off behind each — not a list of obligations |
 | `LICENSE` | MIT license text |
 | `package.json` | Node project manifest, scripts, devDependencies |
+| `pnpm-lock.yaml` | pnpm dependency lockfile |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
-| `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`npm run typecheck`) |
+| `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`pnpm run typecheck`) |
 | `playwright.config.ts` | Playwright test runner config (e2e suite) |
 | `.gitignore` | Git ignore rules |
 
@@ -20,7 +21,7 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `.claude/settings.json` | Local dev settings — Bash permissions for `npm` commands |
+| `.claude/settings.json` | Local dev settings — Bash permissions for `pnpm` commands |
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
 
@@ -36,8 +37,8 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/open-test-browser-with-SourceMonkey.sh` | Launch Chromium with the unpacked SM extension + CDP port 9222 for cross-manager Playwright runs |
 | `scripts/open-test-browser-with-Tampermonkey.sh` | Launch Chromium with a persistent profile (TM installed manually) + CDP port 9223 for the TM Playwright project |
 | `scripts/sync-tm-scripts.mjs` | Standalone CLI that connects to the running TM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
-| `scripts/clean-stale-test-profiles.mjs` | Pretest sweep of `/tmp/sourcemonkey-test-*` profiles left by e2e runs that died before teardown |
-| `scripts/e2e-tm-preflight.mjs` | Pretest gate for `test:e2e:tm` / `:headed` — checks CDP 9223, pre-grants TM's `downloads` permission, launches or asks to close the browser |
+| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of `/tmp/sourcemonkey-test-*` profiles left by e2e runs that died before teardown |
+| `scripts/e2e-tm-preflight.mjs` | Gate run before `test:e2e:tm` / `:headed` — checks CDP 9223, pre-grants TM's `downloads` permission, launches or asks to close the browser |
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
 | `scripts/validate-userscripts.mjs` | CLI that runs the install-time checks (header, `@require`/`@resource`, parse) over files on disk, with an offline dependency root |

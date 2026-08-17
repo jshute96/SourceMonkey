@@ -11,10 +11,10 @@
 //   5. Runs the TypeScript compiler (tsc) to compile src/*.ts -> dist/*.js.
 //      With --watch, tsc keeps running and rebuilds on change.
 //
-// Run with `npm run build`. Pass --watch to keep tsc running.
+// Run with `pnpm run build`. Pass --watch to keep tsc running.
 //
 // Note on watch mode: only TypeScript is watched. If you edit
-// src/manifest.json or any HTML/CSS asset, re-run `npm run build`.
+// src/manifest.json or any HTML/CSS asset, re-run `pnpm run build`.
 
 import { rm, mkdir, cp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
@@ -132,13 +132,13 @@ function minifyForInjection(source) {
 //    failure surfaces as a non-zero exit instead of being silently
 //    swallowed. Non-watch mode just runs once and propagates the exit code.
 if (watch) {
-  const child = spawn('npx', ['tsc', '--watch'], { stdio: 'inherit', cwd: root });
+  const child = spawn('pnpm', ['exec', 'tsc', '--watch'], { stdio: 'inherit', cwd: root });
   const code = await new Promise((res, rej) => {
     child.on('exit', (c) => res(c ?? 0));
     child.on('error', rej);
   });
   process.exit(code);
 } else {
-  const r = spawnSync('npx', ['tsc'], { stdio: 'inherit', cwd: root });
+  const r = spawnSync('pnpm', ['exec', 'tsc'], { stdio: 'inherit', cwd: root });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }

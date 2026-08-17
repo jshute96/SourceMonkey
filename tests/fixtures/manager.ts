@@ -8,7 +8,7 @@
 //     TM must be installed in that profile interactively beforehand.
 //
 // The project's `metadata.manager` field is what we read. The
-// SM_MANAGER env var is a fallback for direct `npx playwright test
+// SM_MANAGER env var is a fallback for direct `pnpm exec playwright test
 // <file>` runs that don't pass --project; if both are set and
 // disagree, we throw.
 //
@@ -41,7 +41,7 @@ export type ManagerName = 'sourcemonkey' | 'tampermonkey';
  *
  * Precedence: project metadata (set by playwright.config.ts) wins; the
  * `SM_MANAGER` env var is honoured as a fallback (and convenience for
- * single-file `npx playwright test path/to/x.spec.ts` runs that bypass
+ * single-file `pnpm exec playwright test path/to/x.spec.ts` runs that bypass
  * project filtering). If both are set and disagree, throw — that's
  * always a configuration bug.
  */
@@ -129,7 +129,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // way in that single browser, and nothing would put it back.
       //
       // `workers` is a global Playwright option — it cannot be set per
-      // project — so the npm scripts pass `--workers=1` and this catches
+      // project — so the package scripts pass `--workers=1` and this catches
       // an invocation that bypassed them. Failing here, before the CDP
       // attach, beats discovering it halfway through a run against a
       // browser that is now in an unknown state.
@@ -139,7 +139,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       if (name === 'tampermonkey' && workerInfo.config.workers > 1) {
         throw new Error(
           'The tampermonkey project must run with --workers=1 (it shares one real '
-          + 'browser and does not reset state between tests). Use `npm run test:e2e:tm`, '
+          + 'browser and does not reset state between tests). Use `pnpm run test:e2e:tm`, '
           + 'or pass --workers=1 explicitly.',
         );
       }

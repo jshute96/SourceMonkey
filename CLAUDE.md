@@ -88,10 +88,12 @@ user before elaborating further. Default to action over planning.
 - See `docs/testing.md` for the full layout and harness details.
 - To run a single test file:
   - Unit: `node --test tests/unit/<file>.test.mjs`
-  - E2E: `npx playwright test tests/e2e/<file>.spec.ts`
-- To narrow an npm script to one file, pass the path after `--`:
-  - `npm run test:e2e -- tests/e2e/injection.spec.ts`
-  - `npm run test:e2e:tm -- tests/examples/headers-run-at/headers-run-at.spec.ts`
+  - E2E: `pnpm exec playwright test tests/e2e/<file>.spec.ts`
+- To narrow a package script to one file, append the path (pnpm forwards
+  trailing args to the script; don't use `--`, pnpm passes it through
+  literally):
+  - `pnpm run test:e2e tests/e2e/injection.spec.ts`
+  - `pnpm run test:e2e:tm tests/examples/headers-run-at/headers-run-at.spec.ts`
   - Playwright treats the trailing arg as a path filter; useful when
     you want the script's env/config (e.g. `--project=tampermonkey`)
     without retyping it.
@@ -132,7 +134,7 @@ user before elaborating further. Default to action over planning.
   its `@version` header. `scripts/sync-tm-scripts.mjs` (and the TM
   cross-manager spec) compares local `@version` against the TM-installed
   copy with dotted-numeric ordering — without a bump TM keeps the old
-  body cached and `npm run test:e2e:tm` exercises stale code. Same goes
+  body cached and `pnpm run test:e2e:tm` exercises stale code. Same goes
   for any other manager whose update story depends on `@version`.
 - A patch-level bump (e.g. `1.1.0` → `1.1.1`) is enough; just make sure
   the new value compares strictly greater than the installed one.

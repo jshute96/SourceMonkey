@@ -1,7 +1,7 @@
 // Local HTTP server for interactive exploration of the userscript
 // examples in tests/examples/.
 //
-// Why we need our own script instead of `npx http-server`: the
+// Why we need our own script instead of `pnpm dlx http-server`: the
 // `headers-run-at` example deliberately pulls in a sync script from
 // `/__slow/blocker.js?ms=400`, a route that holds the response for
 // 400ms before answering. The parser blocks at `readyState=loading`

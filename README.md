@@ -302,18 +302,20 @@ Details: [docs/injection.md](docs/injection.md),
 
 ### Setup
 
-Requires Node.js 22 or newer.
+Requires Node.js 22 or newer and [pnpm](https://pnpm.io) (the package
+manager this repo uses; `corepack enable pnpm` installs it from a Node
+checkout).
 
 ```sh
-npm install
-npx playwright install chromium
+pnpm install
+pnpm exec playwright install chromium
 ```
 
 ### Build
 
 ```sh
-npm run build       # one-shot build into dist/
-npm run watch       # rebuild on TS changes
+pnpm run build       # one-shot build into dist/
+pnpm run watch       # rebuild on TS changes
 ```
 
 The built extension is written to `dist/`. Load it into Chrome via
@@ -324,17 +326,17 @@ started](#getting-started).
 ### Test
 
 ```sh
-npm test            # unit + e2e
-npm run test:unit   # node --test, fast
-npm run test:e2e    # Playwright with the extension loaded
-npm run test:headed # e2e with a visible browser
+pnpm test            # unit + e2e
+pnpm run test:unit   # node --test, fast
+pnpm run test:e2e    # Playwright with the extension loaded
+pnpm run test:headed # e2e with a visible browser
 ```
 
 To narrow a run to one file:
 
 ```sh
 node --test tests/unit/header-parser.test.mjs    # For one unit test
-npm run test:e2e -- tests/e2e/injection.spec.ts  # For one e2e test
+pnpm run test:e2e tests/e2e/injection.spec.ts    # For one e2e test
 ```
 
 The examples suite (`tests/examples/`) can also run against
@@ -345,11 +347,11 @@ Tampermonkey for cross-manager compliance checks:
 node scripts/sync-tm-scripts.mjs
 
 # Run the examples suite against TM, headless. Headed browser must be closed.
-npm run test:e2e:tm
+pnpm run test:e2e:tm
 
-# Or, headed: connects via CDP to the TM browser — pretest hook
-# launches it if it isn't already running.
-npm run test:e2e:tm:headed
+# Or, headed: connects via CDP to the TM browser — the script's
+# preflight step launches it if it isn't already running.
+pnpm run test:e2e:tm:headed
 ```
 
 The headed variant connects over CDP to the browser opened by
@@ -371,9 +373,9 @@ loading, and the compile-only syntax check — also run as a CLI, over
 files on disk and with no browser involved:
 
 ```sh
-npm run validate -- path/to/scripts/          # a directory, or single files
-npm run validate -- --offline-root DIR PATH   # dependencies from a local tree
-npm run validate -- --json out.json PATH      # per-script results
+pnpm run validate path/to/scripts/          # a directory, or single files
+pnpm run validate --offline-root DIR PATH   # dependencies from a local tree
+pnpm run validate --json out.json PATH      # per-script results
 ```
 
 It reports each script as `ok` or `invalid` with the same message the

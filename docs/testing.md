@@ -7,8 +7,8 @@ real-browser end-to-end suite for everything that touches the
 ## Layout
 
 - `tests/unit/*.test.mjs` — Node `--test` files. Import from
-  `dist/*.js`, so `npm run build` is a prerequisite (the
-  `pretest:unit` script handles it).
+  `dist/*.js`, so `pnpm run build` is a prerequisite (the
+  `test:unit` script runs it first).
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
@@ -17,7 +17,7 @@ real-browser end-to-end suite for everything that touches the
   (see its own `README.md`). Playwright's `testMatch` covers only
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
-`npm run validate` is a fourth thing again — not a test runner, but it
+`pnpm run validate` is a fourth thing again — not a test runner, but it
 does check scripts. It runs the install-time pipeline over files on
 disk with no browser, across `tests/examples/`, `tests/bad-examples/`,
 or the GreasyFork corpus. See
@@ -33,20 +33,20 @@ or the GreasyFork corpus. See
 
 ## Running
 
-- All tests: `npm test`
-- Unit only: `npm run test:unit`
-- E2E only: `npm run test:e2e`
+- All tests: `pnpm test`
+- Unit only: `pnpm run test:unit`
+- E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
-- One e2e file: `npx playwright test tests/e2e/<name>.spec.ts`
+- One e2e file: `pnpm exec playwright test tests/e2e/<name>.spec.ts`
 - The `sourcemonkey` project runs **in parallel** (`workers: '50%'`,
   `fullyParallel: true`). Each worker launches its own Chromium with its
   own `mkdtemp` profile, and the fixture HTTP server binds to port 0, so
   workers share nothing.
   - **The `tampermonkey` project must stay serial.** It attaches over
-    CDP to one real browser with no per-test state reset, so the npm
-    scripts pass `--workers=1`. Invoking `playwright test
+    CDP to one real browser with no per-test state reset, so the
+    package scripts pass `--workers=1`. Invoking `playwright test
     --project=tampermonkey` directly skips that — pass it yourself.
-- Typecheck: `npm run typecheck` — `tsconfig.json` builds the extension
+- Typecheck: `pnpm run typecheck` — `tsconfig.json` builds the extension
   and covers `src/` only, so this runs `tsconfig.tests.json` over the
   tests as well. Playwright transpiles specs without checking types, so
   nothing else catches a type error in a test.

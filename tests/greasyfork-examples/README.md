@@ -20,7 +20,7 @@ re-saving them is a manual browser step either way (see below).
 Rebuilding from a fresh checkout:
 
 ```sh
-npm run build                                        # tools import dist/userscript-header.js
+pnpm run build                                       # tools import dist/userscript-header.js
 node tests/greasyfork-examples/download-scripts.mjs  # CSV → files/ (~20 min, 270 MB)
 node tests/greasyfork-examples/build-db.mjs          # → corpus.db
 node tests/greasyfork-examples/report.mjs            # → analysis.html
@@ -97,10 +97,10 @@ Options: `--csv`, `--root`, `--count`, `--delay MS` (default 200),
 `--concurrency N` (default 1), `--force`, `--scripts-only`, `--requires-only`,
 `--resources-only`, `--max-broken-hosts N` (default 5).
 
-Requires a build (`npm run build`) — the `@require` scan reuses the extension's
+Requires a build (`pnpm run build`) — the `@require` scan reuses the extension's
 own metadata-block parser from `dist/userscript-header.js`.
 
-**Re-run `npm run build` after any change to `src/userscript-header.ts`.** The
+**Re-run `pnpm run build` after any change to `src/userscript-header.ts`.** The
 tools import the compiled copy, and a stale `dist/` mis-parses silently: it once
 cost 26 scripts whose metadata blocks start with a UTF-8 BOM, which showed up
 only as an oddly long "no metadata block" list.
@@ -165,8 +165,8 @@ Once the scripts are downloaded, SourceMonkey's install-time checks
 run over all of them without a browser:
 
 ```sh
-npm run validate -- --offline-root tests/greasyfork-examples/files \
-                    tests/greasyfork-examples/files
+pnpm run validate --offline-root tests/greasyfork-examples/files \
+                  tests/greasyfork-examples/files
 ```
 
 `--offline-root` serves every dependency URL out of `files/` instead of
@@ -185,7 +185,7 @@ node tests/greasyfork-examples/report.mjs     # analysis.sql → analysis.html
 `build-db.mjs` rebuilds `corpus.db` from scratch each run — it is derived data,
 and both inputs are cheap to re-read. Header parsing reuses the extension's own
 `dist/userscript-header.js`, so the database sees metadata blocks exactly the
-way SourceMonkey does (`npm run build` first).
+way SourceMonkey does (`pnpm run build` first).
 
 ### Tables
 

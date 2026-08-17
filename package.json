@@ -7,22 +7,19 @@
   "engines": {
     "node": ">=22"
   },
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
+    "preinstall": "npx only-allow pnpm",
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "watch": "node scripts/build.mjs --watch",
-    "test": "npm run test:unit && npm run test:e2e",
-    "pretest:e2e": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs",
-    "test:e2e": "playwright test --project=sourcemonkey",
-    "pretest:e2e:tm": "node scripts/build.mjs && node scripts/e2e-tm-preflight.mjs --need-closed",
-    "test:e2e:tm": "playwright test --project=tampermonkey --workers=1",
-    "pretest:e2e:tm:headed": "node scripts/build.mjs && node scripts/e2e-tm-preflight.mjs --need-open",
-    "test:e2e:tm:headed": "TM_HEADED=1 playwright test --project=tampermonkey --workers=1",
+    "test": "pnpm run test:unit && pnpm run test:e2e",
+    "test:e2e": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=sourcemonkey",
+    "test:e2e:tm": "node scripts/build.mjs && node scripts/e2e-tm-preflight.mjs --need-closed && playwright test --project=tampermonkey --workers=1",
+    "test:e2e:tm:headed": "node scripts/build.mjs && node scripts/e2e-tm-preflight.mjs --need-open && TM_HEADED=1 playwright test --project=tampermonkey --workers=1",
     "test:headed": "playwright test --project=sourcemonkey --headed --workers=1",
-    "pretest:unit": "node scripts/build.mjs",
-    "test:unit": "node --test 'tests/unit/*.test.mjs'",
-    "prevalidate": "node scripts/build.mjs",
-    "validate": "node scripts/validate-userscripts.mjs",
+    "test:unit": "node scripts/build.mjs && node --test 'tests/unit/*.test.mjs'",
+    "validate": "node scripts/build.mjs && node scripts/validate-userscripts.mjs",
     "clean": "rm -rf dist test-results playwright-report"
   },
   "devDependencies": {

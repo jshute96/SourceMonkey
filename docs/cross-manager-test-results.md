@@ -9,9 +9,9 @@ and which surface real SM-vs-TM divergences.
 Re-run the suite with:
 
 ```sh
-npm run test:e2e:tm
+pnpm run test:e2e:tm
 # or directly:
-npx playwright test --project=tampermonkey
+pnpm exec playwright test --project=tampermonkey
 ```
 
 Update this doc when a result changes.
@@ -43,7 +43,7 @@ Specs that opt out under TM via
     e2e coverage. See the "Cross-manager coverage" entry in
     [TODO.md](../TODO.md) for the two ways to close it.
   - `test:e2e:tm` is unaffected — the skip fires before the install
-    step, and that npm script never invokes
+    step, and that package script never invokes
     `scripts/sync-tm-scripts.mjs`. A manual `sync-tm-scripts.mjs` run
     *will* try to install both variants; TM prefetches `@require`
     URLs at the install prompt, so expect that install to error or
@@ -185,5 +185,5 @@ When triaging a new TM divergence, the options are:
 Failing traces land in `test-results/` after each run. The
 `--project=tampermonkey` invocation prints the failure list at the
 end; open the trace zip via
-`npx playwright show-trace test-results/<dir>/trace.zip` to step
+`pnpm exec playwright show-trace test-results/<dir>/trace.zip` to step
 through what the page actually saw.

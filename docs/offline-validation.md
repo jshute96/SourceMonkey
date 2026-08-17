@@ -4,7 +4,7 @@
 checks over `*.user.js` files on disk, with no browser involved.
 
 ```sh
-npm run validate -- [options] <path>...
+pnpm run validate [options] <path>...
 ```
 
 Each `<path>` is a `*.user.js` file, or a directory scanned recursively
@@ -194,15 +194,15 @@ paired Playwright spec (`tests/e2e/bad-scripts.spec.ts`) that pins the
 same verdicts from inside Chromium:
 
 ```sh
-npm run validate -- tests/examples tests/bad-examples
+pnpm run validate tests/examples tests/bad-examples
 ```
 
 The GreasyFork corpus is the broad pass — ~2000 real scripts in well
 under a minute, once they're downloaded:
 
 ```sh
-npm run validate -- --offline-root tests/greasyfork-examples/files \
-                    tests/greasyfork-examples/files
+pnpm run validate --offline-root tests/greasyfork-examples/files \
+                  tests/greasyfork-examples/files
 ```
 
 See [tests/greasyfork-examples/README.md](../tests/greasyfork-examples/README.md)
