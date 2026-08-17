@@ -818,7 +818,10 @@ When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
    follow-up wrapper from a different document isn't blocked by the
    consumed-set.
 4. Races the script's `updateScript` promise against
-   `RELOAD_FAST_PATH_WINDOW_MS` (500ms) from setup start.
+   `RELOAD_FAST_PATH_WINDOW_MS` (500ms) measured from **reload commit**,
+   not from when setup finished — a slow `ensureLoaded()` eats the
+   budget rather than extending it. See `startedAt` in
+   `setupReloadFastPath`.
    - Timer wins → reply `run`. The refresh keeps running in the
      background; storage.onChanged → `scheduleSync()` will land the
      new body for the NEXT reload.
