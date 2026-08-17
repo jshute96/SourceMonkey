@@ -920,14 +920,19 @@ itself once a sync places it. What's missing:
   from an extension PAGE, where `chrome.offscreen` isn't available and
   the check fails open, so it needs the page→SW channel above rather
   than a call in place.
-- **A glob-only `@include` script can't be registered at all.**
+- **A glob-only `@include` script can't be registered at all** —
+  [#22](https://github.com/jshute96/SourceMonkey/issues/22).
   `buildRegistrationSpec` omits `matches` when the script has no
   `@match` but does have glob `@include`s, and Chrome refuses a
   `register` without it: *"must specify 'matches'"*. The `<all_urls>`
   fallback beside it covers only the regex-`@include` case. Pre-existing
   and unrelated to the incremental sync, but it means those scripts sit
-  REJECTED. The fix is presumably to extend the fallback — which first
-  needs the question below answered.
+  REJECTED.
+  - Not blocked by the OR question below, contrary to what this entry
+    first said. With `<all_urls>` as the only match pattern, filtering
+    it by `includeGlobs` yields exactly the glob set — Chrome's AND is
+    the right answer here, and only bites when a script declares both
+    `@match` and `@include`.
 - **`@match` + `@include` may be AND where userscripts mean OR.**
   Chrome applies `includeGlobs` as a filter *within* `matches` (the
   content-script rule), while `@match` and `@include` in a userscript
