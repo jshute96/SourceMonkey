@@ -112,11 +112,13 @@ It runs against real headless Chromium with `chrome.userScripts`,
     a fallback root so example pages are reachable at
     `${baseUrl}/<api>/page.html`. Two routes are not files:
     - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
-    - `/__echo?delay=N` — reflects the request's method and headers
-      back as JSON, so a test can see what actually went on the wire
-      (forbidden headers are invisible from the page that asked for
-      the request). `delay` holds the whole response, which is how the
-      header-surgery tests keep two same-URL requests overlapping.
+    - `/__echo?delay=N` — reflects the request's method, target and
+      headers back as JSON, so a test can see what actually went on the
+      wire (forbidden headers are invisible from the page that asked
+      for the request, and the target shows whether the per-request URL
+      tag stayed inside the browser). `delay` holds the whole response,
+      which is how the header-surgery tests keep two same-URL requests
+      overlapping.
   - `getServiceWorker` — re-resolves a live SW handle each call (MV3
     workers idle out).
   - `extensionId` — the deterministic ID of the unpacked extension.
@@ -372,7 +374,9 @@ files into TM/VM, hit the same URLs, compare outcomes).
   tests for the helpers, plus incidental click-through in
   `install-capture.spec.ts`; its preview mode has its own spec in
   `script-preview.spec.ts`).
-- XHR header surgery — deferred along with the implementation.
+- The XHR header-stall backstop firing (`XHR_HEADER_STALL_MS` is a
+  module-private 2 minutes and no test waits that long). The surgery
+  itself is covered by `gm-xhr-headers.spec.ts`.
 - **Chrome's own enforcement of "Allow access to file URLs" OFF.**
   Chrome grants file access unconditionally to `--load-extension`
   builds, and writing `allow_file_access: false` into the pre-seeded

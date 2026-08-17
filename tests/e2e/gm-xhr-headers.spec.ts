@@ -25,6 +25,19 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     await extensionContext.clearCookies();
   });
 
+  // How many XHR header rules are live right now. Rules at or above
+  // this id are the XHR band (`XHR_RULE_ID_MIN` in `gm-xhr-headers.ts`,
+  // duplicated here because the SW-side constant isn't exported).
+  const countXhrRules = async (
+    getServiceWorker: () => Promise<import('@playwright/test').Worker>,
+  ): Promise<number> => {
+    const sw = await getServiceWorker();
+    return sw.evaluate(async () => {
+      const rules = await chrome.declarativeNetRequest.getSessionRules();
+      return rules.filter((r) => r.id >= 1000).length;
+    });
+  };
+
   // Run one request with `headers` and hand back what the server saw.
   async function echoHeaders(
     opts: {
@@ -133,33 +146,47 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     expect(headers['cookie']).toBe('script_cookie=hand-built');
   });
 
-  // The rule is per-request and has to come off when the request ends.
-  // A stranded one would keep rewriting every later request to the same
-  // URL — including other scripts' — for the rest of the session.
+  // Rules are per-request and have to come off when the request ends.
+  // A stranded one rewrites nothing this worker will request, but the
+  // id counter restarts each worker life and hands its tag out again —
+  // so teardown is checked directly rather than through a later
+  // request's headers.
   test('the rule does not outlive its request', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const headers = await echoHeaders({
+      extensionContext,
+      fixtureServerUrl: fixtureServer.baseUrl,
+      sm,
+      headers: { 'Sec-Fetch-Site': 'same-origin' },
+    });
+    expect(headers['sec-fetch-site']).toBe('same-origin');
+    expect(await countXhrRules(getServiceWorker)).toBe(0);
+  });
+
+  // The request goes out as `<url>#sm-xhr-<id>`, which is what makes the
+  // rule match one request rather than every request to that URL. Two
+  // things have to hold for that to be free: the tag must not reach the
+  // server, and a script's own fragment must survive being replaced.
+  test('the URL tag stays inside the browser', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
-        name: 'TwoRequests',
+        name: 'Fragment',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['GM_xmlhttpRequest'],
         connect: ['127.0.0.1'],
       },
       body: `
-        // Second request deliberately sets no forbidden header, so it
-        // installs no rule of its own and would show the first one's
-        // value if that rule were still live.
         GM_xmlhttpRequest({
-          url: '${fixtureServer.baseUrl}/__echo',
+          url: '${fixtureServer.baseUrl}/__echo?q=1#script-fragment',
           headers: { 'Sec-Fetch-Site': 'same-origin' },
-          onload: () => {
-            GM_xmlhttpRequest({
-              url: '${fixtureServer.baseUrl}/__echo',
-              onload: (res) => { document.body.dataset.smEcho = res.responseText; },
-            });
+          onload: (res) => {
+            document.body.dataset.smFinal = res.finalUrl;
+            document.body.dataset.smEcho = res.responseText;
           },
         });
       `,
@@ -170,10 +197,20 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-echo', /sec-fetch-site/);
-    const body = await page.locator('body').getAttribute('data-sm-echo');
+    const echoed = JSON.parse(
+      (await page.locator('body').getAttribute('data-sm-echo')) ?? '{}',
+    ) as { url: string; headers: Record<string, string> };
+    const finalUrl = await page.locator('body').getAttribute('data-sm-final');
     await page.close();
-    const headers = (JSON.parse(body ?? '{}') as { headers: Record<string, string> }).headers;
-    expect(headers['sec-fetch-site']).toBe('none');
+    // The surgery happened even though the script supplied a fragment
+    // of its own — it is replaced by the tag, not appended to.
+    expect(echoed.headers['sec-fetch-site']).toBe('same-origin');
+    // The request target the server received: query intact, no fragment
+    // of either kind. (A fragment is never transmitted, so this is what
+    // makes the tag safe to add to any URL.)
+    expect(echoed.url).toBe('/__echo?q=1');
+    // And nothing the script reads back carries the tag.
+    expect(finalUrl).toBe(`${fixtureServer.baseUrl}/__echo?q=1`);
   });
 
   // The canonicalization bug this covers: DNR matches the URL the
@@ -234,11 +271,11 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     expect(headers['sec-fetch-site']).toBe('none');
   });
 
-  // Same-URL overlap. A live rule matches every same-URL request of
-  // ours, so without the gate an overlapping request would carry the
-  // other's headers. `?delay=` keeps the first request in flight while
-  // the second is issued; the param is part of the URL, so both really
-  // do hit the same gate and the same rule condition.
+  // Same-URL overlap — the case the per-request URL tag exists for.
+  // Without it a live rule would match every same-URL request of ours,
+  // and an overlapping one would carry the other's headers. `?delay=`
+  // keeps the first request in flight while the second is issued; the
+  // param is part of the URL, so both really do differ only by tag.
   test('an overlapping rule-less request does not pick up the rule', async ({
     extensionContext, fixtureServer, sm,
   }) => {
@@ -253,20 +290,16 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
       },
       body: `
         const url = '${fixtureServer.baseUrl}/__echo?delay=500';
-        const started = Date.now();
         GM_xmlhttpRequest({
           url,
           headers: { 'Sec-Fetch-Site': 'same-origin' },
           onload: (res) => { document.body.dataset.smSurgical = res.responseText; },
         });
-        // Issued while the first is in flight; without the gate its
-        // request would go out under the first one's live rule.
+        // Issued while the first is in flight, so it really does go out
+        // under the first one's live rule — and must not match it.
         GM_xmlhttpRequest({
           url,
-          onload: (res) => {
-            document.body.dataset.smPlainMs = String(Date.now() - started);
-            document.body.dataset.smPlain = res.responseText;
-          },
+          onload: (res) => { document.body.dataset.smPlain = res.responseText; },
         });
       `,
     });
@@ -283,77 +316,20 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     const plain = JSON.parse(
       (await page.locator('body').getAttribute('data-sm-plain')) ?? '{}',
     ) as { headers: Record<string, string> };
-    const plainMs = Number(await page.locator('body').getAttribute('data-sm-plain-ms'));
     await page.close();
     expect(surgical.headers['sec-fetch-site']).toBe('same-origin');
     expect(plain.headers['sec-fetch-site']).toBe('none');
-    // Proves the two really were serialized rather than merely
-    // happening to disagree: the plain request can only land after the
-    // first request's 500ms hold, so it cannot finish before then.
-    expect(plainMs).toBeGreaterThan(450);
+    // No timing assertion here on purpose: Chrome's HTTP cache holds a
+    // single-writer lock per cache key, so two identical GETs are
+    // serialized by the browser whatever we do (measured: 800ms and
+    // 1600ms for a pair of 800ms requests). The genuinely simultaneous
+    // case is the POST pair below — POSTs aren't cached, so they aren't
+    // locked either.
   });
 
-  // A queued request's own `timeout` has to bound its wait, or the
-  // request ahead of it decides when the script hears back. `ontimeout`
-  // is the honest thing to assert on: unlike `onabort`, the page-side
-  // runtime has no local shortcut for it, so the event can only come
-  // from the worker actually giving up.
-  test('a queued request times out on its own clock, not the holder ahead of it', async ({
-    extensionContext, fixtureServer, sm,
-  }) => {
-    scriptsDir.write({
-      relativePath: 'a.user.js',
-      meta: {
-        name: 'TimeoutWhileQueued',
-        match: [`${fixtureServer.baseUrl}/*`],
-        runAt: 'document-end',
-        grant: ['GM_xmlhttpRequest'],
-        connect: ['127.0.0.1'],
-      },
-      body: `
-        // The holder sits on the URL for 2s.
-        const url = '${fixtureServer.baseUrl}/__echo?delay=2000';
-        const started = Date.now();
-        GM_xmlhttpRequest({
-          url,
-          headers: { 'Sec-Fetch-Site': 'same-origin' },
-          onload: () => { document.body.dataset.smHolder = 'done'; },
-        });
-        // Queued behind it, and asks to give up long before the holder
-        // finishes. Its own overrides make it exclusive, so it really
-        // does have to wait for a turn it will never take.
-        GM_xmlhttpRequest({
-          url,
-          headers: { Referer: 'https://b.test/' },
-          timeout: 250,
-          onload: () => { document.body.dataset.smQueued = 'load'; },
-          onerror: () => { document.body.dataset.smQueued = 'error'; },
-          ontimeout: () => {
-            document.body.dataset.smQueuedMs = String(Date.now() - started);
-            document.body.dataset.smQueued = 'timeout';
-          },
-        });
-      `,
-    });
-    await sm.addCollection(scriptsDir.path);
-    await sm.syncNow();
-
-    const page = await extensionContext.newPage();
-    await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-queued', 'timeout');
-    const elapsed = Number(await page.locator('body').getAttribute('data-sm-queued-ms'));
-    // The holder needs 2s. Waiting out its turn would put this well
-    // past that; giving up on its own clock lands near 250ms.
-    expect(elapsed).toBeLessThan(1500);
-    // The holder is unharmed by the request behind it giving up.
-    await expect(page.locator('body')).toHaveAttribute('data-sm-holder', 'done');
-    await page.close();
-  });
-
-  // Every POST gets an `Origin`-removal rule whether or not the script
-  // asked for anything, so gating on "has a rule" would serialize
-  // ordinary POSTs to an endpoint. Those rules are interchangeable, so
-  // they share the gate instead.
+  // Every POST installs an `Origin`-removal rule whether or not the
+  // script asked for anything, so this is the shape most likely to be
+  // serialized by accident if rules ever stopped being per-request.
   test('plain POSTs to one URL still run concurrently', async ({
     extensionContext, fixtureServer, sm,
   }) => {
@@ -397,19 +373,11 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
   });
 
   // A closed tab can't receive a response, but its request used to run
-  // to completion in the worker — holding its rule live and its URL's
-  // gate shut against every other script that whole time.
+  // to completion in the worker, holding its rule live that whole time.
   test('closing a tab tears down the rule its requests were holding', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
-    // Rules at or above this id are the XHR band (XHR_RULE_ID_MIN).
-    const countXhrRules = async (): Promise<number> => {
-      const sw = await getServiceWorker();
-      return sw.evaluate(async () => {
-        const rules = await chrome.declarativeNetRequest.getSessionRules();
-        return rules.filter((r) => r.id >= 1000).length;
-      });
-    };
+    const countRules = (): Promise<number> => countXhrRules(getServiceWorker);
 
     scriptsDir.write({
       relativePath: 'a.user.js',
@@ -437,15 +405,18 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     const holder = await extensionContext.newPage();
     await holder.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(holder.locator('body')).toHaveAttribute('data-sm-sent', 'yes');
-    await expect.poll(countXhrRules, { timeout: 5000 }).toBe(1);
+    await expect.poll(countRules, { timeout: 5000 }).toBe(1);
 
     await holder.close();
     // The request had ~10s left to run. Without the tab-close cancel the
     // rule stays live for all of it; with it, the rule comes off as the
     // fetch aborts.
-    await expect.poll(countXhrRules, { timeout: 2000 }).toBe(0);
+    await expect.poll(countRules, { timeout: 2000 }).toBe(0);
   });
 
+  // The cross-contamination case, on POSTs so the browser's own cache
+  // lock isn't what keeps them apart: two requests to one URL, both with
+  // a rule live at the same time, each carrying only its own headers.
   test('overlapping requests with different overrides each carry only their own', async ({
     extensionContext, fixtureServer, sm,
   }) => {
@@ -459,14 +430,18 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
         connect: ['127.0.0.1'],
       },
       body: `
-        const url = '${fixtureServer.baseUrl}/__echo?delay=400';
+        const url = '${fixtureServer.baseUrl}/__echo?delay=800';
         const started = Date.now();
         GM_xmlhttpRequest({
+          method: 'POST',
+          data: 'x=1',
           url,
           headers: { 'Sec-Fetch-Site': 'same-origin' },
           onload: (res) => { document.body.dataset.smFirst = res.responseText; },
         });
         GM_xmlhttpRequest({
+          method: 'POST',
+          data: 'x=2',
           url,
           headers: { Referer: 'https://b.test/' },
           onload: (res) => {
@@ -492,14 +467,18 @@ test.describe('GM_xmlhttpRequest header surgery', () => {
     const secondMs = Number(await page.locator('body').getAttribute('data-sm-second-ms'));
     await page.close();
     // Each request carries exactly its own overrides — no union in
-    // either direction, whatever order the gate granted them in.
+    // either direction, even though both rules were live at once.
     expect(first.headers['sec-fetch-site']).toBe('same-origin');
     expect(first.headers['referer']).not.toBe('https://b.test/');
     expect(second.headers['referer']).toBe('https://b.test/');
     expect(second.headers['sec-fetch-site']).toBe('none');
-    // Whichever went first held the URL for its 400ms, so the other
-    // cannot have finished before that — the headers being right isn't
-    // enough on its own to show they didn't overlap.
-    expect(secondMs).toBeGreaterThan(350);
+    // Both really were in flight together: concurrent they finish in
+    // roughly one 800ms hold, serialized in two — so the midpoint is a
+    // wide margin either way.
+    expect(secondMs).toBeLessThan(1200);
+    // Neither picked up the other's `Origin` removal either — both
+    // POSTs drop ours, so this is only a check that the rules applied.
+    expect(first.headers['origin']).toBeUndefined();
+    expect(second.headers['origin']).toBeUndefined();
   });
 });

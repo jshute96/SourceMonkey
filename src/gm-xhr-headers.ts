@@ -20,28 +20,36 @@
 //     them on the way out, and the rule is torn down when the request
 //     settles.
 //   - DNR cannot match on a request header, so the rule can't be
-//     targeted by a tag we invent. It's targeted by what is actually
-//     distinctive about our request instead: the exact URL, plus
-//     `tabIds: [-1]` — "no tab", which is every extension-initiated
-//     request and no page request. `tabIds` is only allowed on session
-//     rules, which is what we use.
+//     targeted by a header tag. It's targeted by a tag in the URL's
+//     *fragment* instead: the request goes out as `<url>#sm-xhr-<id>`
+//     and the rule matches that exact string. A fragment is never
+//     transmitted, so the server still sees the URL the script asked
+//     for, byte for byte — and `Response.url` drops it again, so
+//     `finalUrl` is unaffected.
+//   - Measured, not assumed: for a service-worker `fetch`, DNR matches
+//     the fragment literally. A fragment'd rule does not match a
+//     fragment-less request, a fragment-less rule does not match a
+//     fragment'd one, and two different fragments never match each
+//     other. The full table is in docs/xhr-header-surgery.md.
+//   - So the tag is a genuine per-request discriminator, which is what
+//     makes the rule apply to exactly the request that installed it.
+//     Two same-URL requests in flight at once — the case that would
+//     otherwise have one picking up the other's `Cookie` — differ in
+//     their tag and so in their rule.
+//   - `tabIds: [-1]` ("no tab", true of every extension request and no
+//     page load) and `initiatorDomains: [<our id>]` stay on as defence
+//     in depth. Violentmonkey's MV3 path uses the same fragment trick
+//     with `tabIds` alone.
 //
-// What that targeting can't separate: two of our own requests to the
-// same URL, in flight at once. Every rule matching a request applies,
-// so an overlapping request would pick up headers meant for the other
-// one — across scripts, not just within one, and a hand-built `Cookie`
-// riding another script's request is a credential leak. DNR offers no
-// discriminator two same-URL extension requests differ by, so instead
-// of narrowing the rule the overlap itself is prevented:
-// `acquireHeaderGate` (bottom of this file) serializes rule-holding
-// requests per URL, and rule-less requests to that URL wait for the
-// rule to come off. The rule is still removed as soon as `fetch`
-// resolves — the headers are on the wire by then — so the gate holds
-// for response-header latency, not body-download time.
-//
-// What the gate cannot cover is a same-URL, same-initiator fetch that
-// never takes it — SourceMonkey's own collection and API fetches. See
-// "Blind spots" in docs/xhr-header-surgery.md.
+// Tags are *not* globally unique: `nextRuleId` restarts at
+// XHR_RULE_ID_MIN in every worker life, so a rule stranded by a killed
+// worker holds a tag the next worker will hand out again. What keeps
+// that harmless is the install path, and both halves of it matter:
+// `installHeaderRule` waits for `clearStaleHeaderRules` (so the
+// stranded rule is normally gone before any tagged request exists) and
+// then adds its rule in the same `updateSessionRules` call that clears
+// its own id (so a sweep that failed can't leave a colliding rule
+// live). Don't drop either as redundant.
 
 // Headers `fetch()` refuses to send. Close to the Fetch Standard's
 // forbidden-request-header list, but the authority here is what Chrome
@@ -173,6 +181,13 @@ function escapeForRegexFilter(url: string): string {
   return url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Fragment tag that makes a request identifiable to its own rule. The
+// rule id doubles as the tag: it is already unique among live rules,
+// and tying the two together means a request and its rule can't
+// disagree about which one it is. Prefixed so a tagged URL is
+// recognizable in DevTools.
+const XHR_URL_TAG_PREFIX = 'sm-xhr-';
+
 // The URL as the browser will actually request it, which is what DNR
 // matches against — not the string the script passed. `fetch`
 // canonicalizes first: a space becomes `%20`, a bare origin gains its
@@ -182,15 +197,20 @@ function escapeForRegexFilter(url: string): string {
 // an error — the user's real session goes out in place of the one the
 // script asked for.
 //
-// The fragment is dropped: it never leaves the browser, so a rule
-// carrying one could never match.
+// The fragment carries this request's tag, which is what makes the rule
+// match one request rather than every request to that URL. Whatever the
+// script put there is replaced: a fragment is never sent, and
+// `Response.url` strips it again, so nothing the script can observe
+// depends on it.
 //
-// A URL `new URL()` can't parse is handed back unchanged; `fetch` is
-// about to reject it anyway, and the request never reaches the wire.
-export function canonicalizeUrlForRule(url: string): string {
+// A URL `new URL()` can't parse is handed back unchanged, untagged.
+// Unreachable in practice — the `@connect` check rejects such a URL
+// before `runXhr` is entered — and harmless if it were reached: the
+// rule and the fetch still name the same string.
+export function taggedRequestUrl(url: string, ruleId: number): string {
   try {
     const parsed = new URL(url);
-    parsed.hash = '';
+    parsed.hash = `${XHR_URL_TAG_PREFIX}${ruleId}`;
     return parsed.href;
   } catch {
     return url;
@@ -209,9 +229,11 @@ function selfInitiatorDomain(): string | undefined {
 // the rule can be removed once the request settles.
 export interface HeaderRuleSpec {
   id: number;
-  // The canonical URL the rule matches on. Handed back so the caller's
-  // same-URL gate can key on the identical string rather than
-  // recomputing it and trusting the two to agree.
+  // The tagged, canonical URL the rule matches on — and the URL the
+  // caller must actually fetch. Handed back rather than recomputed so
+  // the two can't drift: fetching an untagged URL while the rule waits
+  // on a tagged one means the overrides silently don't apply, and for a
+  // `Cookie` override that sends the user's real session instead.
   target: string;
   rule: chrome.declarativeNetRequest.Rule;
 }
@@ -298,18 +320,21 @@ export function buildHeaderRule(
     });
   }
   if (requestHeaders.length === 0) return null;
-  const target = canonicalizeUrlForRule(url);
   const initiator = selfInitiatorDomain();
   const id = allocateRuleId();
+  // The id is also the URL tag, so the rule and the request it belongs
+  // to name each other. Everything else about the URL is canonicalized
+  // by `new URL()` on the way through, which is what `fetch` will do to
+  // it as well — a rule built from the raw string would match nothing.
+  const target = taggedRequestUrl(url, id);
   return {
     id,
     target,
     rule: {
       id,
-      // Constant, and it does not arbitrate between our own rules:
-      // where two live rules match one request, Chrome applies both,
-      // and for a header they both set it picks one unspecified
-      // winner. See the same-URL hazard in the file header.
+      // Constant. Priority never has to arbitrate between our own
+      // rules: the URL tag means at most one of them matches any given
+      // request.
       priority: 1,
       action: {
         type: 'modifyHeaders' as chrome.declarativeNetRequest.RuleActionType,
@@ -322,174 +347,22 @@ export function buildHeaderRule(
           ? { regexFilter: `^${escapeForRegexFilter(target)}$` }
           : { urlFilter: `|${target}|` }),
         isUrlFilterCaseSensitive: true,
-        // Two narrowings, both needed. `tabIds: [-1]` is "not
-        // associated with a tab", which every extension request is and
-        // no page load is; `initiatorDomains` then pins it to requests
-        // this extension started, so a site's own service worker
-        // fetching the same URL can't pick the headers up.
+        // The tag alone already picks out one request, since nothing
+        // else asks for that URL. These narrow it anyway, so a rule
+        // can't reach beyond this extension even if a tag ever escaped:
+        // `tabIds: [-1]` is "not associated with a tab", which every
+        // extension request is and no page load is, and
+        // `initiatorDomains` pins it to requests this extension
+        // started. `tabIds` is allowed only on session rules, which is
+        // what these are.
         //
         // Verified rather than assumed: with a bogus initiator the
         // header e2e tests fail, so the condition really is evaluated
         // and really does match us.
-        //
-        // What neither separates is SourceMonkey's own other fetches —
-        // collections, the GitHub API — which share this initiator.
         tabIds: [-1],
         ...(initiator ? { initiatorDomains: [initiator] } : {}),
         resourceTypes: ['xmlhttprequest' as chrome.declarativeNetRequest.ResourceType],
       },
     },
   };
-}
-
-// ---------------------------------------------------------------------------
-// Same-URL gate.
-//
-// A live header rule rewrites *every* matching same-URL request of
-// ours, not just the one that installed it — and a request with no rule
-// of its own is just as exposed as one with a different rule. So every
-// XHR takes a per-URL gate before it fetches:
-//
-//   - A request carrying script-supplied forbidden headers holds the
-//     URL *exclusively*: nothing else to that URL runs while its rule
-//     is live, because its rule would rewrite whatever did.
-//   - Everything else holds it *shared*: any number run together.
-//
-// Shared covers two kinds of request, and the second is the subtle one:
-//
-//   - No rule at all (a plain GET or HEAD).
-//   - A rule that only removes our own `Origin` — every POST/PUT/… with
-//     no headers of its own gets one. Those rules are *interchangeable*:
-//     each says nothing but "remove origin", so one applying to another
-//     such request does exactly what that request's own rule does. They
-//     are harmless to a rule-less request too, since the only rule-less
-//     methods are GET and HEAD, which carry no `Origin` to remove.
-//
-// Classifying those as shared is what keeps ordinary POSTs concurrent —
-// gating on "has a rule" instead would serialize every POST to a URL to
-// strip a header nobody asked about.
-//
-// Grants are strictly FIFO — a shared request arriving behind a queued
-// exclusive one waits — so a stream of plain requests can't starve an
-// override, and (more important) can't slip in under a rule that was
-// already waiting to exist when they arrived.
-//
-// A hold ends when the request's headers are known to be on the wire
-// and its rule (if any) is off — `fetch` resolving — so a same-URL
-// wait costs response-header latency, not body-download time. The
-// `finally` in `runXhr` releases on the abort/timeout/error paths. A
-// worker killed mid-request takes the whole gate map with it, so
-// unlike the DNR rules there is nothing to sweep.
-
-interface GateWaiter {
-  exclusive: boolean;
-  grant: () => void;
-  // Drops this waiter if it is still queued. Used when its request is
-  // aborted, so a dead request neither delays the queue behind it nor
-  // takes a turn it can't use.
-  cancel: () => void;
-}
-
-interface UrlGate {
-  sharedHolders: number;
-  exclusiveHeld: boolean;
-  waiters: GateWaiter[];
-}
-
-const urlGates = new Map<string, UrlGate>();
-
-// Acquire the gate for `url` — the *canonical* URL
-// (`canonicalizeUrlForRule`), the same string the rule matches on, so
-// two spellings of one URL can't land on different gates.
-//
-// Resolves to a release function; releasing twice is a no-op. Resolves
-// to `null` instead if `signal` aborts before the turn comes: a queued
-// request whose caller gave up has no reason to wait out the queue, and
-// waiting would hold its `ontimeout` until the holder ahead finished —
-// a wait its own `timeout` is supposed to bound.
-export function acquireHeaderGate(
-  url: string,
-  exclusive: boolean,
-  signal?: AbortSignal,
-): Promise<(() => void) | null> {
-  if (signal?.aborted) return Promise.resolve(null);
-  let gate = urlGates.get(url);
-  if (!gate) {
-    gate = { sharedHolders: 0, exclusiveHeld: false, waiters: [] };
-    urlGates.set(url, gate);
-  }
-  const g = gate;
-  const admit = (): (() => void) => {
-    if (exclusive) g.exclusiveHeld = true;
-    else g.sharedHolders += 1;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      if (exclusive) g.exclusiveHeld = false;
-      else g.sharedHolders -= 1;
-      pumpGate(url, g);
-    };
-  };
-  // Jumping the queue would let a shared request run under a rule that
-  // was already waiting to install, so the gate must be free AND nobody
-  // may be ahead of us.
-  const free = exclusive
-    ? !g.exclusiveHeld && g.sharedHolders === 0
-    : !g.exclusiveHeld;
-  if (free && g.waiters.length === 0) return Promise.resolve(admit());
-  return new Promise((resolve) => {
-    let settled = false;
-    const waiter: GateWaiter = {
-      exclusive,
-      grant: () => {
-        if (settled) return;
-        settled = true;
-        signal?.removeEventListener('abort', onAbort);
-        resolve(admit());
-      },
-      cancel: () => {
-        if (settled) return;
-        settled = true;
-        signal?.removeEventListener('abort', onAbort);
-        resolve(null);
-      },
-    };
-    function onAbort(): void {
-      const at = g.waiters.indexOf(waiter);
-      if (at >= 0) g.waiters.splice(at, 1);
-      waiter.cancel();
-      // Dropping a waiter can unblock the ones behind it — an exclusive
-      // waiter leaving lets queued shared requests through.
-      pumpGate(url, g);
-    }
-    g.waiters.push(waiter);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-// Admit whoever the head of the queue allows: one exclusive waiter
-// alone, or every consecutive shared waiter up to the next exclusive
-// one. Runs after each release; deletes the map entry once the gate is
-// idle so the map only ever holds in-flight URLs.
-function pumpGate(url: string, gate: UrlGate): void {
-  while (gate.waiters.length > 0) {
-    const head = gate.waiters[0];
-    if (head.exclusive) {
-      if (gate.exclusiveHeld || gate.sharedHolders > 0) break;
-      gate.waiters.shift();
-      head.grant();
-      break;
-    }
-    if (gate.exclusiveHeld) break;
-    gate.waiters.shift();
-    head.grant();
-  }
-  if (!gate.exclusiveHeld && gate.sharedHolders === 0 && gate.waiters.length === 0) {
-    // By key *and* identity: deleting by key alone would be correct
-    // only as long as every acquire leaves a holder or a waiter behind,
-    // and a stale gate object silently sharing a URL is the exact leak
-    // this whole mechanism exists to prevent.
-    if (urlGates.get(url) === gate) urlGates.delete(url);
-  }
 }

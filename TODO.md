@@ -282,8 +282,8 @@ for the current state of the per-API matrix and
 
 The surgery itself shipped (`src/gm-xhr-headers.ts`): forbidden
 request headers, `Sec-Fetch-*` included, travel as a per-request
-declarativeNetRequest session rule, and our extension `Origin` is
-removed by default. What's still open:
+declarativeNetRequest session rule keyed on a URL-fragment tag, and our
+extension `Origin` is removed by default. What's still open:
 
 - **Defaults are unmeasured.** Only `Origin` removal is defaulted;
   `Sec-Fetch-*` is left alone unless a script asks. Whether to match
@@ -295,13 +295,6 @@ removed by default. What's still open:
   so a 30x hop goes out without the overrides and without the `Origin`
   removal. Fixing it means predicting the target (can't) or rewriting
   on `onBeforeRedirect`, which MV3 doesn't offer for this.
-- **Our own non-XHR fetches share the rule's initiator.** The
-  condition is `tabIds: [-1]` plus this extension's id, which excludes
-  a site's own service worker but not SourceMonkey's collection and
-  API fetches. Those don't take the same-URL gate that serializes
-  XHRs, so a script racing one at the same URL can attach headers to
-  it; it can't read the response. Fixable by routing our own fetches
-  through a shared hold on the gate if it ever matters.
 - **`finalUrl` across redirects** is still `res.url`, which is right
   for what fetch reports but doesn't expose the intermediate hops.
 - **The header-stall backstop has no test.** `XHR_HEADER_STALL_MS` is a

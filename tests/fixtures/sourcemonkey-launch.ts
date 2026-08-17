@@ -198,7 +198,10 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
           // Origin we don't control, and a CORS rejection would hide the
           // very headers the route exists to report.
           res.setHeader('Access-Control-Allow-Origin', '*');
-          res.end(JSON.stringify({ method: req.method, headers: req.headers }, null, 2));
+          // `url` is the request target as the server received it —
+          // what the header tests use to check that the per-request URL
+          // tag (a fragment) really stayed inside the browser.
+          res.end(JSON.stringify({ method: req.method, url: req.url, headers: req.headers }, null, 2));
         };
         // `?delay=N` holds the whole response — headers included — so a
         // test can keep one request in flight while another runs. The

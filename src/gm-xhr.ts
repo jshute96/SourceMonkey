@@ -50,9 +50,7 @@ import {
   headerStallMessage,
 } from './gm-connect.js';
 import {
-  acquireHeaderGate,
   buildHeaderRule,
-  canonicalizeUrlForRule,
   splitHeaders,
   whenStaleRulesCleared,
   type HeaderRuleSpec,
@@ -137,9 +135,10 @@ const activeXhrs = new Map<string, ActiveXhr>();
 //     adding one would kill slow but healthy transfers — a 50 MB body
 //     on a bad connection can legitimately run for minutes.
 //   - What has to be bounded is the *header* phase, because that is
-//     exactly what the same-URL gate and the request's header rule wait
-//     on. A slow body holds neither: both are released the moment
-//     `fetch` resolves.
+//     exactly what the request's header rule waits on: the rule is
+//     removed the moment `fetch` resolves, so a slow body holds
+//     nothing, while a server that accepts the connection and never
+//     answers would keep a rule (and its id) alive indefinitely.
 //   - So the timer covers time-to-first-byte only, and is cleared as
 //     soon as headers arrive. A download that takes an hour after that
 //     is left alone.
@@ -242,8 +241,7 @@ export async function runXhr(
   // Every path out of an aborted controller decides the terminal event
   // here. The script's `timeout`, the header-stall backstop and a plain
   // `abort()` all abort the *same* controller, so the shadow flags are
-  // the only thing separating them — and the two callers (the gate
-  // bail-out and the fetch `catch`) must not answer differently.
+  // the only thing separating them.
   //
   // The script's own timeout outranks the backstop: if both fired, the
   // one it asked for is the one it should hear about.
@@ -266,10 +264,10 @@ export async function runXhr(
       headerStallTimer = null;
     }
   };
-  // Header-phase backstop, armed further down once the URL's gate is
-  // held. Deliberately not started here: time spent queued behind
-  // another request is not the server being slow, and a message naming
-  // the server for it would blame the wrong party.
+  // Header-phase backstop. Armed just before the rule install rather
+  // than just before the fetch: the install is the only other await
+  // that could wedge, and covering it costs nothing since it normally
+  // takes a millisecond.
   const startHeaderStall = (): void => {
     headerStallTimer = setTimeout(() => {
       headerStallFired = true;
@@ -281,46 +279,14 @@ export async function runXhr(
   // comes off however the request ends.
   const { passthrough, surgical } = splitHeaders(request.headers);
   let installedRuleId: number | null = null;
-  let releaseGate: (() => void) | null = null;
   try {
-    // Before anything goes out, not just before a rule goes in. A rule
-    // stranded by a worker that died mid-request is still live until the
-    // startup sweep finishes, and it matches by URL — so a request that
-    // installs no rule of its own is exactly as exposed to it. Awaiting
-    // unconditionally closes that: after the first sweep this is an
-    // already-resolved promise, so it costs a microtask.
-    await whenStaleRulesCleared();
     const method = (request.method ?? 'GET').toUpperCase();
     // Built once: `buildHeaderRule` allocates an id, so asking it twice
     // would burn one and answer a different question the second time.
+    // Where there is a rule, `spec.target` is the URL to fetch — the
+    // same tagged string the rule matches on, which is what makes the
+    // rule apply to this request and no other.
     const spec = buildHeaderRule(request.url, surgical, method);
-    // Same-URL serialization: a live rule rewrites every same-URL
-    // request of ours, so a request whose rule carries *script-supplied*
-    // headers takes the URL exclusively. Everything else shares —
-    // including the `Origin`-removal-only rule every POST gets, which is
-    // interchangeable with every other such rule, so ordinary POSTs stay
-    // concurrent. The compatibility argument is in gm-xhr-headers.ts.
-    //
-    // Acquired before the install, released once the rule is off (or,
-    // for a shared holder, once the request is on the wire).
-    //
-    // The key comes from the spec where there is one, so the string the
-    // gate serializes on and the string the rule matches on are the same
-    // by construction rather than by both calling the same helper.
-    releaseGate = await acquireHeaderGate(
-      spec?.target ?? canonicalizeUrlForRule(request.url),
-      Object.keys(surgical).length > 0,
-      controller.signal,
-    );
-    // Waiting for the gate is the one place this function sits still
-    // long enough for an abort or timeout to land before the request
-    // exists — `null` means one did. Answering here rather than after
-    // the queue keeps a waiter's own `timeout` from being bounded by
-    // the holder ahead of it, and skips installing a rule for a fetch
-    // that is only going to reject.
-    if (releaseGate == null) return terminalAbortEvent();
-    // The wait is over, so the clock that bounds a silent server can
-    // start. From here to `fetch` resolving is the header phase.
     startHeaderStall();
     if (spec) {
       installedRuleId = await installHeaderRule(spec);
@@ -360,26 +326,21 @@ export async function runXhr(
     if (request.data != null && init.method !== 'GET' && init.method !== 'HEAD') {
       init.body = typeof request.data === 'string' ? request.data : String(request.data);
     }
-    const res = await fetch(request.url, init);
+    // The tagged URL where there's a rule: the tag is what the rule
+    // matches on, and it never leaves the browser (a fragment isn't
+    // transmitted, and `res.url` comes back without it).
+    const res = await fetch(spec?.target ?? request.url, init);
     // Headers are in, so the stall backstop has nothing left to guard —
     // whatever the body does from here is the download's business.
     clearHeaderStall();
     // The rule has done its job the moment the request is on the wire,
     // and `fetch` resolving means the response headers are already
     // back. Dropping it here rather than in `finally` keeps a slow
-    // download from holding a rule live — the window in which another
-    // tab-less request to the same URL would pick up these headers.
+    // download from holding a rule (and its id) for the whole transfer.
     if (installedRuleId != null) {
       const ruleId = installedRuleId;
       installedRuleId = null;
       await removeHeaderRule(ruleId);
-    }
-    // The gate opens only after the rule is off — releasing first
-    // would let the next same-URL request run under this one's rule.
-    if (releaseGate != null) {
-      const release = releaseGate;
-      releaseGate = null;
-      release();
     }
     // @connect redirect re-validation: if fetch followed a redirect to
     // a host the policy doesn't allow, refuse to read or return the
@@ -466,12 +427,10 @@ export async function runXhr(
     if (timeoutTimer != null) clearTimeout(timeoutTimer);
     clearHeaderStall();
     activeXhrs.delete(id);
-    // Rule off before the gate opens, same as the success path. Safe to
-    // await first: `removeHeaderRule` swallows its own failures, so it
-    // can't reject and strand the gate for every later request to this
-    // URL.
+    // Backstop for the abort, timeout and error paths — the success
+    // path already dropped it. `removeHeaderRule` swallows its own
+    // failures, so this can't reject out of the `finally`.
     if (installedRuleId != null) await removeHeaderRule(installedRuleId);
-    releaseGate?.();
   }
 }
 
@@ -499,11 +458,12 @@ async function installHeaderRule(spec: HeaderRuleSpec): Promise<number | null> {
   }
 }
 
-// Take one request's rule back off. Failing here is the one way the
-// gate's guarantee can still break: the URL reopens while the rule is
-// live, so the next same-URL request runs under another script's
-// headers. Nothing can force the removal, so the best available is to
-// try twice before giving up and saying so.
+// Take one request's rule back off. A rule that survives its request
+// matches nothing *this* worker will request — the counter has moved
+// past its tag — but the tag comes back when the next worker restarts
+// the counter, so it is worth a second attempt before giving up and
+// saying so. What catches the leftover is the startup sweep and the
+// id pre-clear in `installHeaderRule`.
 async function removeHeaderRule(ruleId: number): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -532,8 +492,8 @@ export function abortXhr(id: string): boolean {
 // Cancel everything a closed tab left running. Its page is gone, so no
 // terminal event can be delivered and nobody is waiting for the body —
 // but without this the fetch runs to completion in the worker, holding
-// its header rule live and its URL's gate shut against other scripts
-// for as long as the server keeps the connection open.
+// its header rule live for as long as the server keeps the connection
+// open.
 //
 // Safe to iterate while aborting: the entry is removed in `runXhr`'s
 // `finally`, which runs in a later microtask, and a Map iterator

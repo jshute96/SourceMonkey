@@ -258,9 +258,8 @@ Architecture:
   user-initiated abort so the right callback fires.
 - There is no default `timeout`, so a second SW-side timer
   (`XHR_HEADER_STALL_MS`) bounds the wait for *response headers* only —
-  the phase the header rule and the same-URL gate depend on. A slow
-  body is untouched. See
-  [xhr-header-surgery.md](xhr-header-surgery.md#what-ends-a-hold).
+  the phase the header rule is live for. A slow body is untouched. See
+  [xhr-header-surgery.md](xhr-header-surgery.md#what-ends-a-rule).
 - Closing a tab aborts its in-flight requests (`abortXhrsForTab`, from
   the `chrome.tabs.onRemoved` listener) — the response has nowhere to
   go, and leaving it running would hold a header rule live.
@@ -296,14 +295,12 @@ Forbidden request headers:
   them back: they're compiled into a short-lived
   `declarativeNetRequest` session rule instead of being handed to
   `fetch`, because MV3 has no blocking `webRequest`.
-- The rule is keyed on the canonicalized URL, `tabIds: [-1]`, and our
-  own extension id as the initiator; it comes off as soon as `fetch`
-  resolves.
-- A rule matches every same-URL request of ours, so a per-URL gate
-  gives a request with script-supplied overrides exclusive use of that
-  URL — no request carries another's headers. Rules that only strip
-  our own `Origin` are interchangeable and share, keeping ordinary
-  POSTs concurrent.
+- The request goes out as `<url>#sm-xhr-<rule id>`, and the rule is
+  keyed on that exact string plus `tabIds: [-1]` and our own extension
+  id as the initiator. It comes off as soon as `fetch` resolves.
+- The fragment is a per-request discriminator that never reaches the
+  server, so a rule applies to the one request that installed it and
+  overlapping same-URL requests can't contaminate each other.
 - `Origin` is the one header changed unasked (removed, on methods that
   send one). `Sec-Fetch-Site` — the header the feature exists for — is
   never defaulted.
@@ -385,10 +382,8 @@ if real reports come in.
 
 Known limitations (post-Phase 10):
 
-- **Header surgery has blind spots** — redirects, and SourceMonkey's
-  own non-XHR fetches sharing the initiator the rule matches on.
-  (Same-URL overlap between XHRs is closed by the per-URL gate.) Each
-  is described in
+- **Header surgery has blind spots** — redirects lose the overrides.
+  (Same-URL overlap is closed by the per-request URL tag.) Described in
   [xhr-header-surgery.md](xhr-header-surgery.md#blind-spots).
 - **Redirect re-check blocks reads, not the outbound hop.** The
   post-redirect host check refuses to hand a script the response from

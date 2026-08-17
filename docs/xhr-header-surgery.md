@@ -49,24 +49,20 @@ surface see
 2. **Compile.** The dropped ones become a `declarativeNetRequest` (DNR
    — Chrome's rule-based request-rewriting API) session rule: a `set`
    entry per header, plus a `remove` for our own `Origin` where the
-   method carries one.
-3. **Gate.** Every request takes the per-URL gate — exclusively when
-   it compiled a rule, shared otherwise — so no two rules for one URL
-   are ever live together and no rule-less request runs under one.
-   See [Same-URL serialization](#same-url-serialization).
-4. **Install.** The rule is added before the fetch starts. If it can't
+   method carries one. The rule is keyed on the request's *tagged*
+   URL — see [Targeting](#targeting).
+3. **Install.** The rule is added before the fetch starts. If it can't
    be added and the script asked for headers, the request fails
    instead of going out (see [Failure](#failure)).
-5. **Fetch.** `fetch` gets only the passthrough headers. The browser
-   applies the rule as the request leaves.
-6. **Tear down.** The rule is removed as soon as `fetch` resolves —
-   the headers are on the wire by then — and only then does the gate
-   open. `runXhr`'s `finally` is the backstop for the abort, timeout,
-   and error paths.
+4. **Fetch.** `fetch` gets the tagged URL and only the passthrough
+   headers. The browser applies the rule as the request leaves.
+5. **Tear down.** The rule is removed as soon as `fetch` resolves —
+   the headers are on the wire by then. `runXhr`'s `finally` is the
+   backstop for the abort, timeout, and error paths.
 
 A request that needs no overrides and no `Origin` removal — a plain
-GET — installs no rule at all and goes out exactly as it did before
-this existed.
+GET — installs no rule at all, keeps its URL untagged, and goes out
+exactly as it did before this existed.
 
 ## Why DNR and not webRequest
 
@@ -78,24 +74,54 @@ this existed.
 
 ## Targeting
 
-The hard part. DNR must be told which requests a rule applies to, and
-it cannot match on a request header — so the tag-your-own-traffic
-approach that `webRequest` implementations use (Violentmonkey's
-`VM-Verify` header) has nothing to key off.
+A rule has to name the requests it applies to, and it must name
+*exactly one* — the request that installed it. DNR cannot match on a
+request header, so the tag-your-own-traffic approach a `webRequest`
+implementation uses has nothing to key off.
 
-What the rule matches instead:
+The discriminator is a tag in the URL's **fragment**:
 
-- **The exact URL**, canonicalized the way `fetch` will canonicalize
-  it. DNR matches the URL the browser requests, not the string the
-  script wrote — see [Canonicalization](#canonicalization).
+- The request goes out as `<canonical url>#sm-xhr-<rule id>`, and the
+  rule matches that whole string.
+- A fragment is never transmitted, so the server receives the URL the
+  script asked for, byte for byte. `Response.url` drops it too, so
+  `finalUrl` and the `@connect` redirect re-check are unaffected.
+- The rule id doubles as the tag, so a request and its rule can't
+  disagree about which one it is.
+- Whatever fragment the script put on its own URL is replaced — for
+  the same reasons, nothing observable depended on it.
+
+Two conditions narrow it further. Neither is needed, since nothing
+else asks for that tag, but they bound the damage if one ever escaped:
+
 - **`tabIds: [-1]`** — "not associated with a tab", true of every
   extension-initiated request and of none of the user's page loads.
   Only session rules may use it, which is what these are.
-- **`initiatorDomains: [<our extension id>]`** — narrows it further to
-  requests this extension started, so a site's own service worker
-  fetching the same URL doesn't pick the headers up. Verified with a
-  negative control: a bogus initiator makes the header tests fail, so
-  the condition is really evaluated and really does match us.
+- **`initiatorDomains: [<our extension id>]`** — requests this
+  extension started. Verified with a negative control: a bogus
+  initiator makes the header tests fail, so the condition really is
+  evaluated and really does match us.
+
+### That DNR matches fragments at all was measured
+
+Chrome's documentation doesn't settle it, so a probe did, for a
+service-worker `fetch` specifically:
+
+| rule URL | request URL | rule applies |
+|---|---|---|
+| `/x` | `/x` | yes |
+| `/x#a` | `/x#a` | yes |
+| `/x#a` | `/x` | no |
+| `/x` | `/x#a` | no |
+| `/x#a` | `/x#b` | no |
+
+The fragment is matched literally, in both directions — which is what
+makes it a discriminator rather than a decoration. The server saw `/x`
+in every case.
+
+Prior art: Violentmonkey's MV3 path keys its XHR rule the same way
+(`<url>#<request id>`, with `tabIds` alone), and its Firefox path
+correlates `webRequest` callbacks by the same fragment.
 
 ### Canonicalization
 
@@ -105,16 +131,38 @@ What the rule matches instead:
 - A rule built from the raw string then matches nothing, and the
   surgery silently doesn't happen — the failure mode a `Cookie`
   override can least afford.
-- `canonicalizeUrlForRule` runs the URL through `new URL()` first and
-  drops the fragment, which never leaves the browser.
+- `taggedRequestUrl` runs the URL through `new URL()` and stamps the
+  tag on the result, and `runXhr` fetches *that* string. The URL the
+  request uses and the URL the rule matches are one value, not two
+  computations that have to agree.
 
 ### Literal matching
 
 - `urlFilter` is a pattern language: `*` matches any run of
   characters, `^` any URL separator. Both are legal in a query string.
-- A URL carrying either would widen the rule onto URLs the request
-  never named, so those go through `regexFilter` with every
-  metacharacter escaped. Ordinary URLs keep the cheaper `urlFilter`.
+- A URL carrying either would widen the rule past the one request that
+  named it, so those go through `regexFilter` with every metacharacter
+  escaped. Ordinary URLs keep the cheaper `urlFilter`.
+
+### Why the fragment and not a query nonce
+
+`…?__sm=<nonce>` would discriminate just as well, but the nonce
+reaches the server — breaking signed URLs, exact-match routes, and
+cache keys. Stripping it again doesn't work:
+
+- **Stripping means redirecting, and a redirect drops the headers.**
+  One rule has one action, so the strip has to be a second `redirect`
+  rule. Measured with a two-rule probe: the redirect fires and the
+  nonce never reaches the server, but the header arrives **absent**. A
+  redirected request is a new request, evaluated afresh, and
+  modifications matched against the old URL don't come with it — the
+  same mechanism as the [redirect blind spot](#blind-spots).
+- **The discriminator vanishes exactly where it's needed.** Even had
+  the headers survived, the post-redirect request is on the *clean*
+  URL, so its rule would have to be keyed on the clean URL — the
+  non-unique key the nonce was invented to replace.
+
+A fragment needs no stripping at all, which is what makes it work.
 
 ## Defaults
 
@@ -142,12 +190,31 @@ that the user's decision rather than ours.
 - A rule that exists only to strip our own `Origin` falls back quietly
   — that one isn't the script's request.
 
-## What ends a hold
+## Same-URL overlap
 
-Both the rule and the URL's gate come off in `runXhr`'s `finally`, so
-every ordinary ending — success, error, `abort()`, `timeout` — releases
-them. The cases worth naming are the ones where nothing ordinary
-happens.
+- A rule keyed on the URL alone would rewrite *every* same-URL request
+  of ours, not only the one that installed it.
+- Two overlapping requests would each pick up the other's headers,
+  across scripts rather than within one — and a hand-built `Cookie`
+  riding another script's request is a credential leak, not a cosmetic
+  wrong-`Referer` bug.
+- The URL tag closes that: each rule names one request. Nothing waits
+  on anything; overlapping requests to one URL run concurrently, each
+  carrying only its own headers.
+- The e2e coverage is two overlapping POSTs. Confirmed to be a real
+  test rather than a passing one: with the tag removed, the first
+  request picks up the second's `Referer`.
+- Easy to mistake for our doing, and isn't: Chrome's HTTP cache takes a
+  single-writer lock per cache key, so two identical concurrent **GET**s
+  are serialized by the browser regardless (measured 800ms / 1600ms for
+  a pair of 800ms requests). POSTs aren't cached and aren't affected.
+
+## What ends a rule
+
+The rule comes off when `fetch` resolves, with `runXhr`'s `finally` as
+the backstop, so every ordinary ending — success, error, `abort()`,
+`timeout` — releases it. The cases worth naming are the ones where
+nothing ordinary happens.
 
 ### The script sets no timeout
 
@@ -159,24 +226,14 @@ happens.
   healthy transfers, and the response-size cap allows bodies large
   enough to legitimately take minutes.
 - What actually needs bounding is the **header phase**, since that is
-  all the rule and the gate ever wait on — both are released the moment
-  `fetch` resolves, so a slow body holds neither.
+  all the rule ever waits on — it comes off the moment `fetch`
+  resolves, so a slow body holds nothing.
 - So `XHR_HEADER_STALL_MS` (2 minutes) covers time-to-first-byte only
   and is cleared as soon as headers arrive. It reports an error rather
   than a timeout, because the script never asked for one.
-- It is armed **after** the URL's gate is held, not when the request is
-  created. Time spent queued behind another request is not the server
-  being slow, and a message naming the server for it would blame the
-  wrong party.
-- It sits below the page-side `XHR_PAGE_SIDE_TTL_MS` (5 minutes) so
-  that when both could report, the worker's more specific message wins.
-  Keep that ordering if either changes.
-- **Best-effort, not guaranteed.** An MV3 worker is torn down after
-  roughly 30s idle, and a pending `fetch` does not by itself keep it
-  alive — a wedged request with no other extension activity is exactly
-  the shape that gets the worker killed first. Then the timer dies with
-  it and the page's own TTL reports instead. The backstop earns its
-  keep when other activity holds the worker up; it is not the only net.
+- It sits below the page-side `XHR_PAGE_SIDE_TTL_MS` (5 minutes) on
+  purpose, so the worker reports a wedged request instead of racing the
+  page's own giving-up. Keep that ordering if either changes.
 
 ### The tab closes
 
@@ -184,146 +241,56 @@ happens.
   (`abortXhrsForTab`). Nothing else can: the page is gone, so no
   terminal event can be delivered and no one is waiting for the body.
 - Without it the fetch runs to completion in the worker, holding its
-  rule live and its URL's gate shut against other scripts for as long
-  as the server keeps the connection open.
+  rule live for as long as the server keeps the connection open.
 - This is unlike `GM_download`, where a transfer the user started is
   deliberately left running.
 
 ### The worker dies
 
-- The gate is worker memory, so it goes with the worker — nothing to
-  clean up.
 - The rule outlives it, and `clearStaleHeaderRules` sweeps the band at
   the next startup.
-- A stranded rule is inert in the meantime: it requires `tabIds: [-1]`
-  plus our own initiator, and a dead worker issues no such requests
-  (extension pages have real tab ids).
-- **Every** request waits for that sweep, not just the ones installing
-  a rule. A stale rule matches by URL, so a request with no rule of its
-  own is exactly as exposed to it; after the first sweep the wait is an
-  already-resolved promise.
+- The tag does **not** make it inert on its own: the id counter
+  restarts at `XHR_RULE_ID_MIN` in each worker life, so the next worker
+  hands out that tag again.
+- What keeps it harmless is the install path. `installHeaderRule` waits
+  for the sweep, and then adds its rule in the same `updateSessionRules`
+  call that clears its own id — so even a sweep that failed can't leave
+  a colliding rule live.
+- Rule-*less* requests (plain GET/HEAD) don't need the wait: they go
+  out untagged, and a stranded rule always carries a tag.
+- The wait is also why the sweep can't delete a live rule: a rule added
+  during its read of the rule list would be in its snapshot.
+
+### The removal itself fails
+
+- `removeHeaderRule` retries once and then logs and gives up; nothing
+  can force a removal.
+- The consequence is now small: the stranded rule matches a tag no
+  request will use again, so it rewrites nothing. It holds an id until
+  the next startup sweep, and the counter's band is wide enough that
+  this doesn't matter.
 
 ## Rule lifetime
 
 - Ids come from a counter in a reserved band (`XHR_RULE_ID_MIN` and
   up) that `clearStaleHeaderRules` sweeps at startup, so a worker
-  killed mid-request can't leave a rule rewriting that URL for the
-  rest of the browser session.
-- `installHeaderRule` awaits that sweep. The sweep reads the rule list
-  first, and a rule added during the read would be in its snapshot and
-  get deleted while live.
-- Installing also clears its own id first: `addRules` rejects a
-  duplicate, and the counter wraps.
-
-## Same-URL serialization
-
-### The hazard
-
-- A rule matches by URL, so it rewrites *every* same-URL request of
-  ours — not only the one that installed it.
-- Two overlapping requests to one URL would each pick up the other's
-  headers, across scripts rather than just within one.
-- A script's hand-built `Cookie` riding another script's request is a
-  credential leak, not a cosmetic wrong-`Referer` bug.
-
-### Why a gate instead of a narrower rule
-
-- DNR cannot match a request header, and two same-URL requests from
-  this extension are identical in every field a condition can test.
-- With no discriminator to add, the remaining move is to prevent the
-  overlap rather than describe our way out of it.
-
-#### Why not put a unique id in the URL
-
-The tempting version: fetch `…?__sm=<nonce>`, key the rule on that —
-a perfect per-request discriminator — and have DNR strip the nonce
-again so the server never sees it. It doesn't survive contact with how
-DNR applies actions.
-
-- **Stripping means redirecting, and a redirect drops the headers.**
-  One rule has one action, so the strip has to be a second `redirect`
-  rule. Measured with a two-rule probe (redirect the nonce'd URL to
-  the clean one, `modifyHeaders` on the nonce'd URL): the redirect
-  fires and the nonce never reaches the server, but the header arrives
-  **absent**. A redirected request is a new request, evaluated afresh,
-  and the modifications matched against the old URL don't come with
-  it. This is the same mechanism as the [redirect blind
-  spot](#blind-spots).
-- **The discriminator vanishes exactly where it's needed.** Even had
-  the headers survived, the post-redirect request is on the *clean*
-  URL, so its rule would have to be keyed on the clean URL — the
-  non-unique key the nonce was invented to replace.
-- **Not stripping is worse.** Leave the nonce in and the headers do
-  apply, but the script no longer gets the request it asked for: the
-  nonce reaches the server, breaking signed URLs, exact-match routes,
-  and cache keys.
-
-### How it works
-
-- `acquireHeaderGate` in `gm-xhr-headers.ts` is a per-URL gate, keyed
-  on the same canonical URL the rule matches.
-- A request carrying **script-supplied** forbidden headers holds it
-  **exclusively**. Everything else holds it **shared** — any number
-  together — so no rule can appear under them either.
-- Shared covers the rule-less requests *and* the ones whose only rule
-  is our own `Origin` removal. Those rules are interchangeable (each
-  says nothing but "remove origin"), and the only rule-less methods are
-  GET and HEAD, which carry no `Origin` for one to strip. So ordinary
-  POSTs to one endpoint still run concurrently; gating on "has a rule"
-  would have serialized them to remove a header nobody asked about.
-- Grants are strictly FIFO, so plain requests can't starve a surgical
-  one or slip in front of a rule that was already waiting to exist.
-- The gate is keyed on the **whole URL**, not the host. Requests to
-  different paths or query strings on one site never wait for each
-  other; a site's requests are as parallel as they ever were.
-- A hold ends when `fetch` resolves — when the server's response
-  *headers* arrive, not when the body finishes — so what a same-URL
-  queue costs is one time-to-first-byte per request ahead of it. The
-  body streams after the gate has already reopened.
-- The gate is worker memory, so a killed worker can't strand it; the
-  stranded *rules* are what the startup sweep handles.
-- An abort or timeout that lands while a request is still queued drops
-  it out of the queue and answers it immediately. Without that, a
-  waiter's own `timeout` would be bounded by whatever the request ahead
-  of it was waiting on — the holder, not the script, would decide when
-  `ontimeout` fired.
-
-What a script sees: overlapping same-URL requests where one sets
-forbidden headers go out one at a time, each carrying exactly its own —
-with one residual, below.
-
-### When the guarantee can still break
-
-- The gate opens after the rule is removed, but `removeHeaderRule`
-  cannot force the removal: if `updateSessionRules` fails twice it logs
-  and gives up, and the URL reopens with the rule still live.
-- The next same-URL request would then run under it — the leak the gate
-  exists to close, now quiet. Nothing can retry it back into existence,
-  and holding the URL shut forever would be worse.
-- It needs `declarativeNetRequest` itself to be failing, so in practice
-  the extension is already broken; the stranded rule is cleared by the
-  next startup sweep.
-
-### The cost
-
-- A request that hangs holds its URL's gate until it settles, so other
-  same-URL requests wait behind it — the *holder's* own `timeout` is
-  what bounds that, and it may not have one.
-- A waiter is never at the holder's mercy for its own terminal event,
-  though: its `timeout` (or an `abort()`) takes it out of the queue on
-  its own clock.
-- The same hang used to leave a live rule contaminating those requests
-  instead, so this trades a wrong-headers bug for a delay.
+  killed mid-request can't leave rules accumulating for the rest of the
+  browser session.
+- The id is also the URL tag, so "unique among live rules" and "unique
+  among live requests" are one property rather than two — within a
+  worker life. Across worker lives the counter restarts; see
+  [The worker dies](#the-worker-dies).
+- Installing clears its own id first: `addRules` rejects a duplicate,
+  and the counter wraps.
 
 ## Blind spots
 
 - **Redirects.** The rule matches the original URL, so a 30x hop goes
   out without the overrides and without the `Origin` removal. A
   `Cookie` override doesn't follow; the user's own cookies do.
-- **SourceMonkey's own other fetches share the initiator.** The
-  condition pins the rule to this extension, but collection and
-  GitHub-API fetches are also this extension — and they don't take the
-  gate — so a script that races one at the same URL can attach headers
-  to it. It can't read the response.
+  - The tag *does* follow — a redirect target with no fragment of its
+    own inherits the request's — so a hop that lands back on the
+    original URL re-matches the still-live rule and does get the
+    overrides. Still invisible to servers either way.
 
 Tracked in [TODO.md](../TODO.md).
