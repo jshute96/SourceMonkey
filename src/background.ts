@@ -68,6 +68,7 @@ import {
 import {
   buildSwapEvalBody,
   resolveWorld,
+  forgetRegistrationState,
   isUserScriptsAvailable,
   lastSyncKindForTests,
   resetRejectionRetryGate,
@@ -430,7 +431,14 @@ const api: SourceMonkeyApi = {
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
   checkParses,
-  setParseCheckEnabled: (enabled: boolean) => setParseCheckDisabled(!enabled),
+  setParseCheckEnabled: async (enabled: boolean) => {
+    await setParseCheckDisabled(!enabled);
+    // Anything registered while the checker was off was never gated by
+    // it, and an incremental sync only revisits the rows that moved —
+    // so drop the record and let the next sync reconcile fully. See
+    // `forgetRegistrationState`.
+    forgetRegistrationState();
+  },
   getParseCheckRuns: () => parseCheckRuns,
   getActionContextMenu: async (tabId: number) => {
     const cmdsByScript = getMenuCommandsForTab(tabId);

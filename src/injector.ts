@@ -1046,11 +1046,17 @@ interface RegistrationState {
 let syncState: RegistrationState | null = null;
 
 // Forget what we last registered, so the next sync is a full reconcile.
-// Unit tests use this between cases — the state is module-level and
+//
+// Callers are anything that falsifies what the record encodes — not
+// just "these ids are registered" but "everything in here was built
+// from current rows and passed the parse gate". Turning the parse
+// checker back on is one: rows registered while it was off were never
+// gated, and only a full reconcile revisits them.
+//
+// Unit tests use it between cases too — the state is module-level and
 // outlives a storage wipe, which is exactly the cross-test bleed the
-// retry gate beside it also has to be reset for. Production reaches the
-// same effect through `unregisterAllRegistrations`.
-export function _resetRegistrationStateForTests(): void {
+// retry gate beside it also has to be reset for.
+export function forgetRegistrationState(): void {
   syncState = null;
   lastSyncKind = null;
 }

@@ -1973,7 +1973,7 @@ test('retryRejectedRegistrations: a caller is never dropped for arriving late', 
 
 const {
   syncRegistrations,
-  _resetRegistrationStateForTests,
+  forgetRegistrationState,
   _forgetRegistrationForTests,
 } = await import('../../dist/injector.js');
 
@@ -1998,7 +1998,7 @@ test('syncRegistrations: two overlapping syncs never interleave', async (t) => {
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   const events = [];
   // Every stub yields to the event loop, so an unserialized pair of
@@ -2039,7 +2039,7 @@ test('syncRegistrations: a sync that has not started yet absorbs later callers',
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   const yieldOnce = () => new Promise((r) => setTimeout(r, 0));
   let lists = 0;
@@ -2068,7 +2068,7 @@ test('syncRegistrations: a batch unregister that fails drops the ids one at a ti
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   const registered = new Set(['stale-1', 'stale-2']);
   const dropped = [];
   userScripts.getScripts = async () => [...registered].map((id) => ({ id }));
@@ -2182,7 +2182,7 @@ test('syncRegistrations: a scoped sync re-registers only the scripts that moved'
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   seedStore('b');
   const chrome_ = fakeRegistrationSet();
@@ -2204,7 +2204,7 @@ test('syncRegistrations: a scoped sync unregisters only what left the set', asyn
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   seedStore('b');
   const chrome_ = fakeRegistrationSet();
@@ -2224,7 +2224,7 @@ test('syncRegistrations: a collection toggle moves every script under it', async
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   seedStore('b');
   const chrome_ = fakeRegistrationSet();
@@ -2256,7 +2256,7 @@ test('syncRegistrations: a scoped sync leaves another script\'s REJECTED alone',
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   seedStore('b');
   const chrome_ = fakeRegistrationSet();
@@ -2293,7 +2293,7 @@ test('syncRegistrations: a scoped sync rebuilds scripts a new dupe renamed', asy
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   localStore.set('script:a', { ...localStore.get('script:a'), relativePath: 'dupe.user.js' });
   const chrome_ = fakeRegistrationSet();
@@ -2321,7 +2321,7 @@ test('syncRegistrations: dropping the last @exclude really drops it', async (t) 
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   localStore.set('script:a', {
     ...localStore.get('script:a'),
@@ -2358,7 +2358,7 @@ test('syncRegistrations: a registration another context placed can still be drop
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   seedStore('b');
   const chrome_ = fakeRegistrationSet();
@@ -2386,7 +2386,7 @@ test('syncRegistrations: a refused update does not report a duplicate id', async
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
@@ -2412,7 +2412,7 @@ test('syncRegistrations: a scoped sync with no record of the set reconciles full
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   // What a previous worker left behind: `a`, plus one for a script the
   // store no longer has.
@@ -2434,7 +2434,7 @@ test('syncRegistrations: a failed sync gives up its record rather than half-diff
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
-  _resetRegistrationStateForTests();
+  forgetRegistrationState();
   seedStore('a');
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();

@@ -164,10 +164,22 @@ against and a pure diff would strand stale registrations.
   over the scripts the sync is about to offer, on both the incremental
   and the full path — see
   [parse-check.md](parse-check.md#the-gate-before-registration).
+  - **An incremental sync gates only the rows in its scope**, where the
+    old full rebuild re-checked the whole library every time. A row that
+    dodged the check — stored before it existed, or while it was failing
+    open — is therefore caught by the next write to it or the next full
+    reconcile, not by the next sync of any kind.
+    - The exposure is bounded by the worker's life: the checker's
+      circuit breaker never re-arms within one worker, so "the check
+      started working again" always means a new worker, and that starts
+      with a full reconcile.
+    - Anything that falsifies the record's claim that its registrations
+      were gated must call `forgetRegistrationState` — the test
+      surface's parse-check toggle does.
   - `retryRejectedRegistrations` does **not** run it, and never has. It
     only ever re-offers rows that are already `ok` and eligible, so what
     it can miss is a row whose *verdict* is absent or stale — which the
-    next sync catches. Tracked in [TODO.md](../TODO.md).
+    next sync covering it catches. Tracked in [TODO.md](../TODO.md).
 - **Other scripts' REJECTED badges** — see
   [Rejected registrations](#rejected-registrations).
 

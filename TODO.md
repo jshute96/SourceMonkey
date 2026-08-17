@@ -884,6 +884,16 @@ itself once a sync places it. What's missing:
     so the sync pays a wrong-guess round trip per such id until it
     re-places one itself. Removals already refuse to trust the record
     for exactly this reason.
+- **A row that dodged the parse check waits for a full reconcile.**
+  An incremental sync runs `revalidateCandidates` over the rows in its
+  scope; the old full rebuild re-checked the whole library on every
+  sync. So a row stored `ok` with no verdict — written before the check
+  existed, or while it was failing open — keeps its registration until
+  something writes it or the worker restarts. Bounded, because the
+  checker's circuit breaker never re-arms within a worker's life, so a
+  recovered check always means a new worker and therefore a full
+  reconcile. Closing it properly means a cheap way to ask "are there
+  any ungated rows?" without reading them all.
 - **The targeted retry skips the parse gate.**
   `retryRejectedRegistrations` re-offers a spec without running
   `revalidateCandidates`, so a row whose compile verdict is missing or
