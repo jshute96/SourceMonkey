@@ -256,6 +256,14 @@ Architecture:
 - Timeout: SW-side `setTimeout` that calls
   `controller.abort()`. A shadow flag distinguishes timeout from
   user-initiated abort so the right callback fires.
+- There is no default `timeout`, so a second SW-side timer
+  (`XHR_HEADER_STALL_MS`) bounds the wait for *response headers* only —
+  the phase the header rule and the same-URL gate depend on. A slow
+  body is untouched. See
+  [xhr-header-surgery.md](xhr-header-surgery.md#what-ends-a-hold).
+- Closing a tab aborts its in-flight requests (`abortXhrsForTab`, from
+  the `chrome.tabs.onRemoved` listener) — the response has nowhere to
+  go, and leaving it running would hold a header rule live.
 
 Credentials:
 
@@ -291,6 +299,11 @@ Forbidden request headers:
 - The rule is keyed on the canonicalized URL, `tabIds: [-1]`, and our
   own extension id as the initiator; it comes off as soon as `fetch`
   resolves.
+- A rule matches every same-URL request of ours, so a per-URL gate
+  gives a request with script-supplied overrides exclusive use of that
+  URL — no request carries another's headers. Rules that only strip
+  our own `Origin` are interchangeable and share, keeping ordinary
+  POSTs concurrent.
 - `Origin` is the one header changed unasked (removed, on methods that
   send one). `Sec-Fetch-Site` — the header the feature exists for — is
   never defaulted.
@@ -372,10 +385,10 @@ if real reports come in.
 
 Known limitations (post-Phase 10):
 
-- **Header surgery has blind spots** — same-URL overlap (which
-  crosses scripts, and leaves a shared header's winner undefined),
-  redirects, and SourceMonkey's own non-XHR fetches sharing the
-  initiator the rule matches on. Each is described in
+- **Header surgery has blind spots** — redirects, and SourceMonkey's
+  own non-XHR fetches sharing the initiator the rule matches on.
+  (Same-URL overlap between XHRs is closed by the per-URL gate.) Each
+  is described in
   [xhr-header-surgery.md](xhr-header-surgery.md#blind-spots).
 - **Redirect re-check blocks reads, not the outbound hop.** The
   post-redirect host check refuses to hand a script the response from

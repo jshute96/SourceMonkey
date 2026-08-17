@@ -150,6 +150,7 @@ import {
 } from './gm-values.js';
 import {
   abortXhr,
+  abortXhrsForTab,
   runXhr,
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
@@ -1207,6 +1208,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // (a download the user started is theirs to keep) — we just have
   // nowhere left to route progress / completion events.
   dropOriginatorDownloads(tabId);
+  // GM_xmlhttpRequest: cancel this tab's in-flight requests. Unlike a
+  // download, nobody benefits from one finishing — the page that asked
+  // is gone, so the response has nowhere to go — and letting it run on
+  // would hold its request-header rule live and its URL's gate shut
+  // against other scripts until the server answered.
+  abortXhrsForTab(tabId);
   // GM_openInTab close-event routing: if this tabId was a tab we
   // opened on behalf of a userscript, dispatch sm:gm-tab-closed to
   // the originating tab so its onclose fires. Folded into this
@@ -1874,6 +1881,7 @@ async function handleXhrStart(
     payload.id,
     payload.request,
     (finalUrl) => policy.check(finalUrl).allowed,
+    tabId,
   );
   try {
     await chrome.tabs.sendMessage(tabId, {

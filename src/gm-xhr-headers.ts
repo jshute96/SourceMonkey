@@ -26,20 +26,22 @@
 //     request and no page request. `tabIds` is only allowed on session
 //     rules, which is what we use.
 //
-// What that targeting can't separate: two tab-less requests to the same
-// URL, in flight at once. Every rule matching a request applies, so a
-// request picks up headers meant for the other one — and that is
-// across scripts, not just within one. (A header both rules set is
-// written once, by whichever DNR picks between equal priorities.) A script's hand-built `Cookie` can end
-// up on another script's overlapping request to the same URL. Both
-// scripts need `@connect` for the host and the requests have to
-// overlap, but it is a credential leak, not a cosmetic one.
+// What that targeting can't separate: two of our own requests to the
+// same URL, in flight at once. Every rule matching a request applies,
+// so an overlapping request would pick up headers meant for the other
+// one — across scripts, not just within one, and a hand-built `Cookie`
+// riding another script's request is a credential leak. DNR offers no
+// discriminator two same-URL extension requests differ by, so instead
+// of narrowing the rule the overlap itself is prevented:
+// `acquireHeaderGate` (bottom of this file) serializes rule-holding
+// requests per URL, and rule-less requests to that URL wait for the
+// rule to come off. The rule is still removed as soon as `fetch`
+// resolves — the headers are on the wire by then — so the gate holds
+// for response-header latency, not body-download time.
 //
-// The window is held to the minimum available: the rule comes off as
-// soon as `fetch` resolves — the headers are on the wire by then —
-// rather than after the body has been read, so a slow download no
-// longer keeps a rule live. Closing it properly needs a discriminator
-// DNR can match on, which for request headers it does not have.
+// What the gate cannot cover is a same-URL, same-initiator fetch that
+// never takes it — SourceMonkey's own collection and API fetches. See
+// "Blind spots" in docs/xhr-header-surgery.md.
 
 // Headers `fetch()` refuses to send. Close to the Fetch Standard's
 // forbidden-request-header list, but the authority here is what Chrome
@@ -207,6 +209,10 @@ function selfInitiatorDomain(): string | undefined {
 // the rule can be removed once the request settles.
 export interface HeaderRuleSpec {
   id: number;
+  // The canonical URL the rule matches on. Handed back so the caller's
+  // same-URL gate can key on the identical string rather than
+  // recomputing it and trusting the two to agree.
+  target: string;
   rule: chrome.declarativeNetRequest.Rule;
 }
 
@@ -221,7 +227,10 @@ export interface HeaderRuleSpec {
 // when its request settles, so the counter wraps. A collision needs
 // ~999,000 requests in flight at once, or a stranded rule the sweep
 // never reached; `installHeaderRule` clears the id before reusing it so
-// neither turns into a failed install.
+// neither turns into a failed install. That clear is not free of
+// consequence, though: if the id really were still live, its request
+// loses its overrides silently — so the band is sized to keep the wrap
+// unreachable rather than to make the collision survivable.
 const XHR_RULE_ID_MIN = 1000;
 const XHR_RULE_ID_MAX = 1_000_000;
 let nextRuleId = XHR_RULE_ID_MIN;
@@ -294,6 +303,7 @@ export function buildHeaderRule(
   const id = allocateRuleId();
   return {
     id,
+    target,
     rule: {
       id,
       // Constant, and it does not arbitrate between our own rules:
@@ -330,4 +340,156 @@ export function buildHeaderRule(
       },
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Same-URL gate.
+//
+// A live header rule rewrites *every* matching same-URL request of
+// ours, not just the one that installed it — and a request with no rule
+// of its own is just as exposed as one with a different rule. So every
+// XHR takes a per-URL gate before it fetches:
+//
+//   - A request carrying script-supplied forbidden headers holds the
+//     URL *exclusively*: nothing else to that URL runs while its rule
+//     is live, because its rule would rewrite whatever did.
+//   - Everything else holds it *shared*: any number run together.
+//
+// Shared covers two kinds of request, and the second is the subtle one:
+//
+//   - No rule at all (a plain GET or HEAD).
+//   - A rule that only removes our own `Origin` — every POST/PUT/… with
+//     no headers of its own gets one. Those rules are *interchangeable*:
+//     each says nothing but "remove origin", so one applying to another
+//     such request does exactly what that request's own rule does. They
+//     are harmless to a rule-less request too, since the only rule-less
+//     methods are GET and HEAD, which carry no `Origin` to remove.
+//
+// Classifying those as shared is what keeps ordinary POSTs concurrent —
+// gating on "has a rule" instead would serialize every POST to a URL to
+// strip a header nobody asked about.
+//
+// Grants are strictly FIFO — a shared request arriving behind a queued
+// exclusive one waits — so a stream of plain requests can't starve an
+// override, and (more important) can't slip in under a rule that was
+// already waiting to exist when they arrived.
+//
+// A hold ends when the request's headers are known to be on the wire
+// and its rule (if any) is off — `fetch` resolving — so a same-URL
+// wait costs response-header latency, not body-download time. The
+// `finally` in `runXhr` releases on the abort/timeout/error paths. A
+// worker killed mid-request takes the whole gate map with it, so
+// unlike the DNR rules there is nothing to sweep.
+
+interface GateWaiter {
+  exclusive: boolean;
+  grant: () => void;
+  // Drops this waiter if it is still queued. Used when its request is
+  // aborted, so a dead request neither delays the queue behind it nor
+  // takes a turn it can't use.
+  cancel: () => void;
+}
+
+interface UrlGate {
+  sharedHolders: number;
+  exclusiveHeld: boolean;
+  waiters: GateWaiter[];
+}
+
+const urlGates = new Map<string, UrlGate>();
+
+// Acquire the gate for `url` — the *canonical* URL
+// (`canonicalizeUrlForRule`), the same string the rule matches on, so
+// two spellings of one URL can't land on different gates.
+//
+// Resolves to a release function; releasing twice is a no-op. Resolves
+// to `null` instead if `signal` aborts before the turn comes: a queued
+// request whose caller gave up has no reason to wait out the queue, and
+// waiting would hold its `ontimeout` until the holder ahead finished —
+// a wait its own `timeout` is supposed to bound.
+export function acquireHeaderGate(
+  url: string,
+  exclusive: boolean,
+  signal?: AbortSignal,
+): Promise<(() => void) | null> {
+  if (signal?.aborted) return Promise.resolve(null);
+  let gate = urlGates.get(url);
+  if (!gate) {
+    gate = { sharedHolders: 0, exclusiveHeld: false, waiters: [] };
+    urlGates.set(url, gate);
+  }
+  const g = gate;
+  const admit = (): (() => void) => {
+    if (exclusive) g.exclusiveHeld = true;
+    else g.sharedHolders += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (exclusive) g.exclusiveHeld = false;
+      else g.sharedHolders -= 1;
+      pumpGate(url, g);
+    };
+  };
+  // Jumping the queue would let a shared request run under a rule that
+  // was already waiting to install, so the gate must be free AND nobody
+  // may be ahead of us.
+  const free = exclusive
+    ? !g.exclusiveHeld && g.sharedHolders === 0
+    : !g.exclusiveHeld;
+  if (free && g.waiters.length === 0) return Promise.resolve(admit());
+  return new Promise((resolve) => {
+    let settled = false;
+    const waiter: GateWaiter = {
+      exclusive,
+      grant: () => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        resolve(admit());
+      },
+      cancel: () => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        resolve(null);
+      },
+    };
+    function onAbort(): void {
+      const at = g.waiters.indexOf(waiter);
+      if (at >= 0) g.waiters.splice(at, 1);
+      waiter.cancel();
+      // Dropping a waiter can unblock the ones behind it — an exclusive
+      // waiter leaving lets queued shared requests through.
+      pumpGate(url, g);
+    }
+    g.waiters.push(waiter);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+// Admit whoever the head of the queue allows: one exclusive waiter
+// alone, or every consecutive shared waiter up to the next exclusive
+// one. Runs after each release; deletes the map entry once the gate is
+// idle so the map only ever holds in-flight URLs.
+function pumpGate(url: string, gate: UrlGate): void {
+  while (gate.waiters.length > 0) {
+    const head = gate.waiters[0];
+    if (head.exclusive) {
+      if (gate.exclusiveHeld || gate.sharedHolders > 0) break;
+      gate.waiters.shift();
+      head.grant();
+      break;
+    }
+    if (gate.exclusiveHeld) break;
+    gate.waiters.shift();
+    head.grant();
+  }
+  if (!gate.exclusiveHeld && gate.sharedHolders === 0 && gate.waiters.length === 0) {
+    // By key *and* identity: deleting by key alone would be correct
+    // only as long as every acquire leaves a holder or a waiter behind,
+    // and a stale gate object silently sharing a URL is the exact leak
+    // this whole mechanism exists to prevent.
+    if (urlGates.get(url) === gate) urlGates.delete(url);
+  }
 }

@@ -268,14 +268,6 @@ removed by default. What's still open:
   which `tests/examples/gm-xmlhttp/gm-xmlhttp-wire-headers.spec.ts`
   will report once a TM profile exists on the machine
   (`docs/cross-manager-testing.md`).
-- **Same-URL concurrency.** Two overlapping tab-less requests to one
-  URL each pick up the other's headers — across scripts, so one
-  script's `Cookie` can ride another's request. A header both rules
-  set goes to one of them, undefined which. The rule now comes
-  off as soon as `fetch` resolves, which is as small as the window
-  gets; closing it needs a discriminator DNR can match on, which for
-  request headers it has none of. Serializing same-URL surgical
-  requests is the fallback if this ever bites.
 - **Redirects skip the surgery.** The rule matches the original URL,
   so a 30x hop goes out without the overrides and without the `Origin`
   removal. Fixing it means predicting the target (can't) or rewriting
@@ -283,10 +275,22 @@ removed by default. What's still open:
 - **Our own non-XHR fetches share the rule's initiator.** The
   condition is `tabIds: [-1]` plus this extension's id, which excludes
   a site's own service worker but not SourceMonkey's collection and
-  API fetches. A script racing one at the same URL can attach headers
-  to it; it can't read the response.
+  API fetches. Those don't take the same-URL gate that serializes
+  XHRs, so a script racing one at the same URL can attach headers to
+  it; it can't read the response. Fixable by routing our own fetches
+  through a shared hold on the gate if it ever matters.
 - **`finalUrl` across redirects** is still `res.url`, which is right
   for what fetch reports but doesn't expose the intermediate hops.
+- **The header-stall backstop has no test.** `XHR_HEADER_STALL_MS` is a
+  module-private 2 minutes, so exercising it needs a seam (export it,
+  or let `runXhr` take an override) — no test waits two minutes. The
+  paths around it are covered; the firing itself is not.
+- **A `timeout` over 5 minutes can't be honored.** The page-side
+  `XHR_PAGE_SIDE_TTL_MS` abandons any request without a terminal event
+  at 5 minutes and synthesizes an error, so a script asking for longer
+  gets that instead of its own `ontimeout`. Predates the header work
+  and is unrelated to it; fixing it means letting the TTL follow the
+  request's own timeout rather than being a flat constant.
 
 ### GM_* APIs not yet in the catalog
 

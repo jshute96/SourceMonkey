@@ -333,13 +333,26 @@ How this is done, and what it can't cover:
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
 - No `onprogress` events — only the final terminal event lands.
-- Two requests to the same URL, overlapping, both setting forbidden
-  headers: each picks up the other's. Where both set the same header,
-  which value wins is not defined. This crosses scripts —
-  one script's hand-built `Cookie` can end up on another script's
-  request — so it is a credential leak, not just a wrong `Referer`.
-  Both scripts need `@connect` for the host and the requests have to
-  overlap in flight.
+- A request that sets forbidden headers takes its URL exclusively:
+  other requests to that exact URL — across scripts — wait until its
+  response headers arrive, then go out with only their own headers. No
+  request ever carries another's overrides.
+  - Only the identical URL waits; different paths or queries on the
+    same site are unaffected, as are plain POSTs to the same URL.
+  - A waiting request's own `timeout` still applies while it waits, so
+    it can't be held past its deadline by the request ahead of it.
+- There is no default `timeout` (matching Tampermonkey/Violentmonkey),
+  but a server that never sends response headers is usually given up on
+  after 2 minutes with `The server sent no response headers within 2
+  minutes, so this request was given up on`. Only the wait for headers
+  is capped — a slow download that has started is left alone, and time
+  spent queued behind another same-URL request doesn't count toward it.
+  - "Usually" because the extension's worker can be shut down while a
+    wedged request waits; the script then gets the 5-minute
+    no-response error instead.
+- Closing the tab cancels its in-flight requests. A `GM_download`
+  started from that tab keeps going; a `GM_xmlhttpRequest` does not,
+  since its response has nowhere left to go.
 - A redirect goes out without the overrides: the rule matches the
   original URL only. A `Cookie` override doesn't follow, so the user's
   own cookies reach the redirect target instead.

@@ -181,6 +181,19 @@ export function headerRuleFailedMessage(): string {
   );
 }
 
+// The one phrasing for a request the server never started answering.
+// Says "no response headers" rather than "timed out" because the script
+// may have set no timeout at all — this is the worker's own backstop,
+// and a request left waiting forever would hold its header rule and
+// block later requests to the same URL.
+export function headerStallMessage(stallMs: number): string {
+  const minutes = Math.round(stallMs / 60000);
+  const howLong = minutes === 1 ? '1 minute' : `${minutes} minutes`;
+  return gmXhrError(
+    `The server sent no response headers within ${howLong}, so this request was given up on`,
+  );
+}
+
 // The one phrasing for a request the script's own header forbids: it
 // names whose rules blocked the call rather than a "policy" object the
 // reader can't see.

@@ -110,7 +110,13 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at
-    `${baseUrl}/<api>/page.html`.
+    `${baseUrl}/<api>/page.html`. Two routes are not files:
+    - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
+    - `/__echo?delay=N` — reflects the request's method and headers
+      back as JSON, so a test can see what actually went on the wire
+      (forbidden headers are invisible from the page that asked for
+      the request). `delay` holds the whole response, which is how the
+      header-surgery tests keep two same-URL requests overlapping.
   - `getServiceWorker` — re-resolves a live SW handle each call (MV3
     workers idle out).
   - `extensionId` — the deterministic ID of the unpacked extension.

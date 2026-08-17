@@ -50,14 +50,19 @@ surface see
    — Chrome's rule-based request-rewriting API) session rule: a `set`
    entry per header, plus a `remove` for our own `Origin` where the
    method carries one.
-3. **Install.** The rule is added before the fetch starts. If it can't
+3. **Gate.** Every request takes the per-URL gate — exclusively when
+   it compiled a rule, shared otherwise — so no two rules for one URL
+   are ever live together and no rule-less request runs under one.
+   See [Same-URL serialization](#same-url-serialization).
+4. **Install.** The rule is added before the fetch starts. If it can't
    be added and the script asked for headers, the request fails
    instead of going out (see [Failure](#failure)).
-4. **Fetch.** `fetch` gets only the passthrough headers. The browser
+5. **Fetch.** `fetch` gets only the passthrough headers. The browser
    applies the rule as the request leaves.
-5. **Tear down.** The rule is removed as soon as `fetch` resolves —
-   the headers are on the wire by then. `runXhr`'s `finally` is the
-   backstop for the abort, timeout, and error paths.
+6. **Tear down.** The rule is removed as soon as `fetch` resolves —
+   the headers are on the wire by then — and only then does the gate
+   open. `runXhr`'s `finally` is the backstop for the abort, timeout,
+   and error paths.
 
 A request that needs no overrides and no `Origin` removal — a plain
 GET — installs no rule at all and goes out exactly as it did before
@@ -137,6 +142,67 @@ that the user's decision rather than ours.
 - A rule that exists only to strip our own `Origin` falls back quietly
   — that one isn't the script's request.
 
+## What ends a hold
+
+Both the rule and the URL's gate come off in `runXhr`'s `finally`, so
+every ordinary ending — success, error, `abort()`, `timeout` — releases
+them. The cases worth naming are the ones where nothing ordinary
+happens.
+
+### The script sets no timeout
+
+- `GM_xmlhttpRequest` has **no default `timeout`**, matching
+  Tampermonkey and Violentmonkey. A script that omits it gets no timer,
+  so nothing bounds a server that accepts the connection and never
+  answers.
+- A blanket default would be the wrong fix: it would also kill slow but
+  healthy transfers, and the response-size cap allows bodies large
+  enough to legitimately take minutes.
+- What actually needs bounding is the **header phase**, since that is
+  all the rule and the gate ever wait on — both are released the moment
+  `fetch` resolves, so a slow body holds neither.
+- So `XHR_HEADER_STALL_MS` (2 minutes) covers time-to-first-byte only
+  and is cleared as soon as headers arrive. It reports an error rather
+  than a timeout, because the script never asked for one.
+- It is armed **after** the URL's gate is held, not when the request is
+  created. Time spent queued behind another request is not the server
+  being slow, and a message naming the server for it would blame the
+  wrong party.
+- It sits below the page-side `XHR_PAGE_SIDE_TTL_MS` (5 minutes) so
+  that when both could report, the worker's more specific message wins.
+  Keep that ordering if either changes.
+- **Best-effort, not guaranteed.** An MV3 worker is torn down after
+  roughly 30s idle, and a pending `fetch` does not by itself keep it
+  alive — a wedged request with no other extension activity is exactly
+  the shape that gets the worker killed first. Then the timer dies with
+  it and the page's own TTL reports instead. The backstop earns its
+  keep when other activity holds the worker up; it is not the only net.
+
+### The tab closes
+
+- `chrome.tabs.onRemoved` cancels that tab's in-flight requests
+  (`abortXhrsForTab`). Nothing else can: the page is gone, so no
+  terminal event can be delivered and no one is waiting for the body.
+- Without it the fetch runs to completion in the worker, holding its
+  rule live and its URL's gate shut against other scripts for as long
+  as the server keeps the connection open.
+- This is unlike `GM_download`, where a transfer the user started is
+  deliberately left running.
+
+### The worker dies
+
+- The gate is worker memory, so it goes with the worker — nothing to
+  clean up.
+- The rule outlives it, and `clearStaleHeaderRules` sweeps the band at
+  the next startup.
+- A stranded rule is inert in the meantime: it requires `tabIds: [-1]`
+  plus our own initiator, and a dead worker issues no such requests
+  (extension pages have real tab ids).
+- **Every** request waits for that sweep, not just the ones installing
+  a rule. A stale rule matches by URL, so a request with no rule of its
+  own is exactly as exposed to it; after the first sweep the wait is an
+  already-resolved promise.
+
 ## Rule lifetime
 
 - Ids come from a counter in a reserved band (`XHR_RULE_ID_MIN` and
@@ -149,27 +215,115 @@ that the user's decision rather than ours.
 - Installing also clears its own id first: `addRules` rejects a
   duplicate, and the counter wraps.
 
+## Same-URL serialization
+
+### The hazard
+
+- A rule matches by URL, so it rewrites *every* same-URL request of
+  ours — not only the one that installed it.
+- Two overlapping requests to one URL would each pick up the other's
+  headers, across scripts rather than just within one.
+- A script's hand-built `Cookie` riding another script's request is a
+  credential leak, not a cosmetic wrong-`Referer` bug.
+
+### Why a gate instead of a narrower rule
+
+- DNR cannot match a request header, and two same-URL requests from
+  this extension are identical in every field a condition can test.
+- With no discriminator to add, the remaining move is to prevent the
+  overlap rather than describe our way out of it.
+
+#### Why not put a unique id in the URL
+
+The tempting version: fetch `…?__sm=<nonce>`, key the rule on that —
+a perfect per-request discriminator — and have DNR strip the nonce
+again so the server never sees it. It doesn't survive contact with how
+DNR applies actions.
+
+- **Stripping means redirecting, and a redirect drops the headers.**
+  One rule has one action, so the strip has to be a second `redirect`
+  rule. Measured with a two-rule probe (redirect the nonce'd URL to
+  the clean one, `modifyHeaders` on the nonce'd URL): the redirect
+  fires and the nonce never reaches the server, but the header arrives
+  **absent**. A redirected request is a new request, evaluated afresh,
+  and the modifications matched against the old URL don't come with
+  it. This is the same mechanism as the [redirect blind
+  spot](#blind-spots).
+- **The discriminator vanishes exactly where it's needed.** Even had
+  the headers survived, the post-redirect request is on the *clean*
+  URL, so its rule would have to be keyed on the clean URL — the
+  non-unique key the nonce was invented to replace.
+- **Not stripping is worse.** Leave the nonce in and the headers do
+  apply, but the script no longer gets the request it asked for: the
+  nonce reaches the server, breaking signed URLs, exact-match routes,
+  and cache keys.
+
+### How it works
+
+- `acquireHeaderGate` in `gm-xhr-headers.ts` is a per-URL gate, keyed
+  on the same canonical URL the rule matches.
+- A request carrying **script-supplied** forbidden headers holds it
+  **exclusively**. Everything else holds it **shared** — any number
+  together — so no rule can appear under them either.
+- Shared covers the rule-less requests *and* the ones whose only rule
+  is our own `Origin` removal. Those rules are interchangeable (each
+  says nothing but "remove origin"), and the only rule-less methods are
+  GET and HEAD, which carry no `Origin` for one to strip. So ordinary
+  POSTs to one endpoint still run concurrently; gating on "has a rule"
+  would have serialized them to remove a header nobody asked about.
+- Grants are strictly FIFO, so plain requests can't starve a surgical
+  one or slip in front of a rule that was already waiting to exist.
+- The gate is keyed on the **whole URL**, not the host. Requests to
+  different paths or query strings on one site never wait for each
+  other; a site's requests are as parallel as they ever were.
+- A hold ends when `fetch` resolves — when the server's response
+  *headers* arrive, not when the body finishes — so what a same-URL
+  queue costs is one time-to-first-byte per request ahead of it. The
+  body streams after the gate has already reopened.
+- The gate is worker memory, so a killed worker can't strand it; the
+  stranded *rules* are what the startup sweep handles.
+- An abort or timeout that lands while a request is still queued drops
+  it out of the queue and answers it immediately. Without that, a
+  waiter's own `timeout` would be bounded by whatever the request ahead
+  of it was waiting on — the holder, not the script, would decide when
+  `ontimeout` fired.
+
+What a script sees: overlapping same-URL requests where one sets
+forbidden headers go out one at a time, each carrying exactly its own —
+with one residual, below.
+
+### When the guarantee can still break
+
+- The gate opens after the rule is removed, but `removeHeaderRule`
+  cannot force the removal: if `updateSessionRules` fails twice it logs
+  and gives up, and the URL reopens with the rule still live.
+- The next same-URL request would then run under it — the leak the gate
+  exists to close, now quiet. Nothing can retry it back into existence,
+  and holding the URL shut forever would be worse.
+- It needs `declarativeNetRequest` itself to be failing, so in practice
+  the extension is already broken; the stranded rule is cleared by the
+  next startup sweep.
+
+### The cost
+
+- A request that hangs holds its URL's gate until it settles, so other
+  same-URL requests wait behind it — the *holder's* own `timeout` is
+  what bounds that, and it may not have one.
+- A waiter is never at the holder's mercy for its own terminal event,
+  though: its `timeout` (or an `abort()`) takes it out of the queue on
+  its own clock.
+- The same hang used to leave a live rule contaminating those requests
+  instead, so this trades a wrong-headers bug for a delay.
+
 ## Blind spots
 
-- **Same-URL overlap.** Every matching rule applies, so two
-  overlapping tab-less requests to one URL each pick up the other's
-  headers — across scripts, not just within one. A script's hand-built
-  `Cookie` can ride another script's request.
-  - Headers the two rules don't share combine, so each request carries
-    more than it asked for.
-  - A header *both* set is written once by one of them; DNR doesn't
-    say which wins between equal-priority rules, so it's a
-    nondeterministic replacement rather than a merge.
-  - Removing the rule at `fetch` resolution rather than after the body
-    keeps the window as small as it can be without a discriminator DNR
-    doesn't offer.
 - **Redirects.** The rule matches the original URL, so a 30x hop goes
   out without the overrides and without the `Origin` removal. A
   `Cookie` override doesn't follow; the user's own cookies do.
 - **SourceMonkey's own other fetches share the initiator.** The
   condition pins the rule to this extension, but collection and
-  GitHub-API fetches are also this extension, so a script that races
-  one at the same URL can attach headers to it. It can't read the
-  response.
+  GitHub-API fetches are also this extension — and they don't take the
+  gate — so a script that races one at the same URL can attach headers
+  to it. It can't read the response.
 
 Tracked in [TODO.md](../TODO.md).

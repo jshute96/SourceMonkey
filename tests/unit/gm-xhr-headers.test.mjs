@@ -16,7 +16,15 @@ import {
   splitHeaders,
   buildHeaderRule,
   canonicalizeUrlForRule,
+  acquireHeaderGate,
 } from '../../dist/gm-xhr-headers.js';
+
+// Let every grant scheduled so far land. Grants resolve promises, so a
+// couple of microtask turns is all "so far" ever needs.
+async function settle() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 test('isForbiddenHeader: named forbidden headers', () => {
   for (const name of ['Origin', 'referer', 'HOST', 'User-Agent', 'Cookie', 'Connection']) {
@@ -155,7 +163,160 @@ test('canonicalizeUrlForRule: an unparseable URL is handed back unchanged', () =
   assert.equal(canonicalizeUrlForRule('not a url'), 'not a url');
 });
 
+test('buildHeaderRule: hands back the target it matched on', () => {
+  // `runXhr` keys the same-URL gate on `spec.target`, so the string the
+  // gate serializes on and the string the rule matches on are the same
+  // object rather than two calls that have to agree.
+  const spec = buildHeaderRule('https://example.com/a?q=a b', { referer: 'https://a.test/' });
+  assert.equal(spec.target, 'https://example.com/a?q=a%20b');
+  assert.equal(spec.rule.condition.urlFilter, `|${spec.target}|`);
+});
+
 test('buildHeaderRule: the condition uses the canonical URL', () => {
   const spec = buildHeaderRule('https://example.com/a?q=a b', { referer: 'https://a.test/' });
   assert.equal(spec.rule.condition.urlFilter, '|https://example.com/a?q=a%20b|');
+});
+
+// --- Same-URL gate. Exclusive = a request whose header rule is live;
+// shared = a rule-less request that must not run under anyone's rule.
+
+test('gate: rule-less requests to one URL run together', { timeout: 2000 }, async () => {
+  const a = await acquireHeaderGate('https://example.com/gate1', false);
+  const b = await acquireHeaderGate('https://example.com/gate1', false);
+  // Both resolved without either releasing — no serialization between
+  // plain requests.
+  a();
+  b();
+});
+
+test('gate: a rule holder excludes everyone until its rule is off', { timeout: 2000 }, async () => {
+  const order = [];
+  const release = await acquireHeaderGate('https://example.com/gate2', true);
+  const laterExclusive = acquireHeaderGate('https://example.com/gate2', true)
+    .then((r) => { order.push('exclusive'); return r; });
+  const laterShared = acquireHeaderGate('https://example.com/gate2', false)
+    .then((r) => { order.push('shared'); return r; });
+  await settle();
+  assert.deepEqual(order, [], 'nothing may run while a rule is live');
+  release();
+  // FIFO: the exclusive waiter queued first, so it alone goes next.
+  await settle();
+  assert.deepEqual(order, ['exclusive']);
+  (await laterExclusive)();
+  await settle();
+  assert.deepEqual(order, ['exclusive', 'shared']);
+  (await laterShared)();
+});
+
+test('gate: a rule waits for every in-flight rule-less request', { timeout: 2000 }, async () => {
+  const a = await acquireHeaderGate('https://example.com/gate3', false);
+  const b = await acquireHeaderGate('https://example.com/gate3', false);
+  let granted = false;
+  const pending = acquireHeaderGate('https://example.com/gate3', true)
+    .then((r) => { granted = true; return r; });
+  await settle();
+  assert.equal(granted, false);
+  a();
+  await settle();
+  assert.equal(granted, false, 'one shared holder still in flight');
+  b();
+  await settle();
+  assert.equal(granted, true);
+  (await pending)();
+});
+
+test('gate: a rule-less request queued behind a waiting rule cannot jump it', { timeout: 2000 }, async () => {
+  // The hazard this guards: the rule is *about* to exist, and a plain
+  // request slipping in front would be in flight when it lands.
+  const order = [];
+  const shared0 = await acquireHeaderGate('https://example.com/gate4', false);
+  const pendingExclusive = acquireHeaderGate('https://example.com/gate4', true)
+    .then((r) => { order.push('exclusive'); return r; });
+  const pendingShared = acquireHeaderGate('https://example.com/gate4', false)
+    .then((r) => { order.push('late shared'); return r; });
+  await settle();
+  assert.deepEqual(order, [], 'the late shared request must queue, not overlap shared0');
+  shared0();
+  await settle();
+  assert.deepEqual(order, ['exclusive']);
+  (await pendingExclusive)();
+  await settle();
+  assert.deepEqual(order, ['exclusive', 'late shared']);
+  (await pendingShared)();
+});
+
+test('gate: different URLs do not contend', { timeout: 2000 }, async () => {
+  const releaseX = await acquireHeaderGate('https://example.com/gate5', true);
+  // Resolves immediately despite the live rule on /x.
+  const releaseY = await acquireHeaderGate('https://example.com/y', true);
+  releaseX();
+  releaseY();
+});
+
+test('gate: releasing twice is a no-op', { timeout: 2000 }, async () => {
+  const release = await acquireHeaderGate('https://example.com/gate6', false);
+  release();
+  release();
+  // A double release that corrupted the holder count (-1 never gets
+  // back to 0) would leave the next exclusive acquire queued forever —
+  // race it against a timer so that shows up as a failure, not a hang.
+  const winner = await Promise.race([
+    acquireHeaderGate('https://example.com/gate6', true).then((r) => { r(); return 'acquired'; }),
+    new Promise((resolve) => setTimeout(() => resolve('hung'), 200)),
+  ]);
+  assert.equal(winner, 'acquired');
+});
+
+test('gate: one release admits every shared waiter, not just the first', { timeout: 2000 }, async () => {
+  // The pump loops on purpose: plain requests behind an override should
+  // all resume together. Granting one per release would still pass the
+  // exclusion tests while quietly serializing them.
+  const release = await acquireHeaderGate('https://example.com/gate7', true);
+  const granted = [];
+  const a = acquireHeaderGate('https://example.com/gate7', false).then((r) => { granted.push('a'); return r; });
+  const b = acquireHeaderGate('https://example.com/gate7', false).then((r) => { granted.push('b'); return r; });
+  const c = acquireHeaderGate('https://example.com/gate7', false).then((r) => { granted.push('c'); return r; });
+  await settle();
+  assert.deepEqual(granted, []);
+  release();
+  await settle();
+  assert.deepEqual(granted.sort(), ['a', 'b', 'c'], 'all three shared waiters resume on one release');
+  (await a)();
+  (await b)();
+  (await c)();
+});
+
+test('gate: the key is the whole URL, so different paths never contend', { timeout: 2000 }, async () => {
+  // Same host, different path — the gate must not degrade into a
+  // per-host lock, which would serialize a site's whole API surface.
+  const releaseA = await acquireHeaderGate('https://example.com/a', true);
+  const releaseB = await acquireHeaderGate('https://example.com/b', true);
+  releaseA();
+  releaseB();
+});
+
+test('gate: an aborted waiter gives up its turn instead of queueing', { timeout: 2000 }, async () => {
+  // Without this, a queued request's own `timeout` would be bounded by
+  // whatever the holder ahead of it is waiting on.
+  const release = await acquireHeaderGate('https://example.com/gate9', true);
+  const controller = new AbortController();
+  const pending = acquireHeaderGate('https://example.com/gate9', true, controller.signal);
+  const behind = acquireHeaderGate('https://example.com/gate9', false);
+  controller.abort();
+  assert.equal(await pending, null, 'the aborted waiter resolves null rather than waiting');
+  // And it is really out of the queue: the shared request behind it
+  // goes as soon as the holder releases, not after a dead turn.
+  release();
+  const releaseBehind = await behind;
+  assert.notEqual(releaseBehind, null);
+  releaseBehind();
+});
+
+test('gate: acquiring with an already-aborted signal never takes the gate', { timeout: 2000 }, async () => {
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal(await acquireHeaderGate('https://example.com/gate10', true, controller.signal), null);
+  // The gate was never held, so an ordinary acquire still works.
+  const release = await acquireHeaderGate('https://example.com/gate10', true);
+  release();
 });

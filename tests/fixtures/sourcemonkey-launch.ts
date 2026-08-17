@@ -188,12 +188,27 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
       // forbidden headers (Origin, Referer, Sec-Fetch-*) are invisible
       // from inside the page that asked for the request.
       if (url.pathname === '/__echo') {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        // Answer any origin: the caller is an extension request whose
-        // Origin we don't control, and a CORS rejection would hide the
-        // very headers the route exists to report.
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.end(JSON.stringify({ method: req.method, headers: req.headers }, null, 2));
+        const send = () => {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          // The route's whole job is reporting *this* request's
+          // headers, and the tests deliberately fire identical URLs at
+          // it — exactly what the HTTP cache would collapse.
+          res.setHeader('Cache-Control', 'no-store');
+          // Answer any origin: the caller is an extension request whose
+          // Origin we don't control, and a CORS rejection would hide the
+          // very headers the route exists to report.
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.end(JSON.stringify({ method: req.method, headers: req.headers }, null, 2));
+        };
+        // `?delay=N` holds the whole response — headers included — so a
+        // test can keep one request in flight while another runs. The
+        // param rides in the URL on purpose: same-URL overlap tests
+        // need two requests to the *identical* URL. Clamped like
+        // `/__slow/`'s ms.
+        const rawDelay = Number(url.searchParams.get('delay') ?? '0');
+        const delay = Number.isFinite(rawDelay) ? Math.max(0, Math.min(5000, rawDelay)) : 0;
+        if (delay > 0) setTimeout(send, delay);
+        else send();
         return;
       }
       const name = url.pathname.replace(/^\//, '') || 'index.html';
