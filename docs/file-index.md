@@ -105,6 +105,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration paths: per-sequence phases plus cumulative fan-out totals |
+| `src/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
 | `src/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) plus chunked `bytesToBase64` / `base64ToBytes` for message-hop and `@resource` transport |
 | `src/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |

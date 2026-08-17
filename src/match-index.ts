@@ -17,6 +17,7 @@
 // storage.
 
 import { scriptDisplayName } from './script-display.js';
+import { scanAllStorage } from './storage-scan.js';
 import {
   ensureCollectionKeysMigrated,
   isScriptEnabled,
@@ -67,7 +68,7 @@ async function loadAll(): Promise<void> {
   // Before the read, not after: a profile still on the pre-rename key
   // spelling would otherwise load an empty cache and inject nothing.
   await ensureCollectionKeysMigrated();
-  const all = await chrome.storage.local.get(null);
+  const all = await scanAllStorage('match index');
   const nextCache = new Map<string, CacheEntry>();
   const nextDisabled = new Set<string>();
   for (const [key, value] of Object.entries(all)) {

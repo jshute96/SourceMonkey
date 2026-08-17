@@ -2334,8 +2334,11 @@ function setDebugForceSnapshotFailure(value: boolean): void {
 //
 // Caller is responsible for only invoking this when the script
 // actually grants a storage API (via the `needsValues` flag the
-// wrapper passes on sm:check-pending) — the snapshot read scans
-// chrome.storage.local and isn't free.
+// wrapper passes on sm:check-pending). The read lists this script's
+// `gmval:` keys and reads those rows — narrow, but not free, and it
+// happens inside the reload fast path's window. It used to scan the
+// whole namespace, which cost 155 ms of that window; see
+// docs/GM-APIs-storage.md#why-the-read-must-stay-narrow.
 async function loadSnapshotForCheckPending(scriptId: string): Promise<Record<string, unknown>> {
   if (__debugForceSnapshotFailure) {
     throw new Error('[SourceMonkey] debug: forced snapshot failure');

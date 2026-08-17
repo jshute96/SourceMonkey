@@ -920,6 +920,14 @@ Rules it lives by:
   `collection row shared with batch` / `listing shared with batch` — a
   shared read reads as shared rather than as a phase that vanished. See
   [diagnostics.md](diagnostics.md#measuring-a-missed-reload-swap).
+- **Its benefit was invisible until a bigger cost was removed.** On a
+  real 192-script profile the annotations confirmed one read and one
+  listing, yet `read-collection` didn't move — because a
+  full-namespace storage scan was holding the worker thread across the
+  whole window. With that gone, joiners cost 12–14ms against the
+  owner's 44ms. See
+  [diagnostics.md](diagnostics.md#read-collection-is-still-slow) — the
+  false starts are recorded there on purpose.
 
 ### Parse check off the critical path
 

@@ -81,6 +81,7 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { resolveGrants } from './gm-api-catalog.js';
+import { scanAllStorage } from './storage-scan.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
 import { startPhaseTimer } from './phase-timing.js';
@@ -981,7 +982,7 @@ async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<st
   // See match-index's loadAll: the pre-rename key spelling has to be
   // moved before anything reads the structural rows directly.
   await ensureCollectionKeysMigrated();
-  const all = await chrome.storage.local.get(null);
+  const all = await scanAllStorage('registration sync');
   const scripts: StoredScript[] = [];
   const collections = new Map<string, StoredCollection>();
   for (const [k, v] of Object.entries(all)) {

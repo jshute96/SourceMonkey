@@ -120,6 +120,29 @@ What is still unmapped:
     polyfill, and a script shipping its own `function GM_addStyle`).
     See [docs/corpus-validation-results.md](docs/corpus-validation-results.md).
 
+## Reload fast-path — remaining cost
+
+The window is measured (see
+[docs/diagnostics.md](docs/diagnostics.md#measuring-a-missed-reload-swap)),
+and the dominant costs are gone: the slowest per-script check is 181 ms
+of a 500 ms budget, the decision lands at ~243 ms. What remains:
+
+- **`getKeys()` itself costs ~40 ms** on a 266-row namespace, paid
+  inside the window by every storage-granting script. A per-script
+  in-memory value cache in the SW (invalidated by `gmval:` writes)
+  would remove it — see the GM storage note below.
+- **The remaining `get(null)` scans are still full-namespace** —
+  `match index`, `registration sync`, `all scripts`, `log id table`.
+  They measured 129–193 ms each on a 266-row profile. Unlike the GM
+  snapshot they genuinely want script rows, so narrowing them means a
+  storage-layout change (bodies in their own rows), not a `getKeys()`
+  swap.
+- **`build-specs` costs ~320 ms on the sync right after a swap**, 2 ms
+  on the next. That is the deferred parse check landing in
+  `revalidateCandidates` — expected, and off the user-visible path, but
+  it means the fresh body is re-registered a beat later than the log
+  suggests.
+
 ## Parse check — follow-ups
 
 The compile-only check is in (see

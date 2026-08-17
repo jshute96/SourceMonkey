@@ -23,9 +23,13 @@
 // types (e.g. dates) — we don't, for simplicity. Userscripts that
 // need date round-tripping should JSON.stringify themselves.
 //
-// `Object.keys` over a paginated `chrome.storage.local.get(null)`
-// would be O(everything). For listValues we do a prefix-scan instead,
-// reading only `gmval:<scriptId>:*` keys.
+// Reading one script's values. chrome.storage has no prefix query, so
+// the shape is `getKeys()` → filter → `get(thoseKeys)`. That matters
+// more than it looks: the alternative, `get(null)`, returns every row
+// the extension owns and is paid for on the reload fast path. See
+// `loadAllValues`.
+
+import { scanAllStorage, timeStorageRead } from './storage-scan.js';
 
 const VALUE_PREFIX = 'gmval:';
 
@@ -51,22 +55,56 @@ export function parseValueKey(rowKey: string, scriptId: string): string | null {
 
 // Load every stored value for a script as a plain object. Used by the
 // injector to bake the initial cache into the wrapper at registration
-// time.
+// time, and by the check-pending handler to seed a reload swap.
+//
+// There is no prefix query, so the shape has to be "narrow the key set,
+// then read only those rows". `getKeys()` (Chrome 130+) returns names
+// without values, which is the cheap half; the fallback reads
+// everything the way this always did.
+//
+// Why it matters that this is narrow: the caller on the reload fast
+// path runs it INSIDE the 500 ms swap window, and a full-namespace
+// read is not merely bigger — deserializing it occupies the worker's
+// single thread, so it delays the swap decision and every unrelated
+// callback waiting alongside it. Measured on a 266-row profile: ~155 ms
+// for the whole namespace versus a handful of `gmval:` rows.
+// See docs/diagnostics.md#storage-scans.
 export async function loadAllValues(scriptId: string): Promise<Record<string, unknown>> {
   const prefix = valueKeyPrefix(scriptId);
-  // chrome.storage.local.get(null) returns the whole namespace. We
-  // can't ask for a prefix directly, so we filter client-side.
-  // Acceptable: the rest of the storage layout is small (scripts +
-  // collections), and per-script-row queries would be a different
-  // shape.
-  const all = await chrome.storage.local.get(null);
   const out: Record<string, unknown> = {};
+  // Timed around BOTH legs — the key listing is part of what the narrow
+  // path costs, and the line exists to be compared against the full
+  // scan it replaced.
+  const narrow = await timeStorageRead('gm snapshot (narrow)', async () => {
+    const keys = await listValueKeys(prefix);
+    if (!keys) return null;
+    return keys.length === 0 ? {} : await chrome.storage.local.get(keys);
+  });
+  if (narrow) {
+    for (const [k, v] of Object.entries(narrow)) out[k.slice(prefix.length)] = v;
+    return out;
+  }
+  const all = await scanAllStorage('gm snapshot');
   for (const [k, v] of Object.entries(all)) {
-    if (k.startsWith(prefix)) {
-      out[k.slice(prefix.length)] = v;
-    }
+    if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
   }
   return out;
+}
+
+// Every stored key starting with `prefix`, or null when the browser has
+// no `getKeys` — in which case the caller falls back to a full scan.
+// A throw is treated the same as absence: this is an optimisation, and
+// nothing about it should be able to fail a value read.
+async function listValueKeys(prefix: string): Promise<string[] | null> {
+  const area = chrome.storage.local as typeof chrome.storage.local & {
+    getKeys?: () => Promise<string[]>;
+  };
+  if (typeof area.getKeys !== 'function') return null;
+  try {
+    return (await area.getKeys()).filter((k) => k.startsWith(prefix));
+  } catch {
+    return null;
+  }
 }
 
 // One key/value pair in a batch write.
@@ -144,8 +182,8 @@ export async function applyBatchValues(
 // document with bogus pre-wipe state.
 export async function wipeScriptValues(scriptId: string): Promise<number> {
   const prefix = valueKeyPrefix(scriptId);
-  const all = await chrome.storage.local.get(null);
-  const keys = Object.keys(all).filter((k) => k.startsWith(prefix));
+  const keys = await listValueKeys(prefix)
+    ?? Object.keys(await scanAllStorage('gm value wipe')).filter((k) => k.startsWith(prefix));
   if (keys.length === 0) return 0;
   await chrome.storage.local.remove(keys);
   return keys.length;

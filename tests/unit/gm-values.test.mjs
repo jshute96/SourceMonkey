@@ -3,9 +3,9 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-// chrome.storage.local stub. Backs a Map; supports get(null), set,
-// remove. Mirrors enough of the API to drive applyBatchValues,
-// loadAllValues, and wipeScriptValues.
+// chrome.storage.local stub. Backs a Map; supports get(null), get(key),
+// get([keys]), set and remove. `getKeys` is installed per-test by
+// `setGetKeysSupport` rather than here — see READ_MODES.
 function installChromeStub() {
   const store = new Map();
   globalThis.chrome = {
@@ -42,6 +42,21 @@ function installChromeStub() {
 
 const store = installChromeStub();
 
+// `loadAllValues` / `wipeScriptValues` prefer `chrome.storage.local
+// .getKeys()` (Chrome 130+) — list names, filter, read only the
+// matching rows — and fall back to a full `get(null)` scan when it is
+// missing or throws. The narrow path is the one on the reload fast
+// path, so both have to produce identical results and both are tested.
+const READ_MODES = ['getKeys', 'no-getKeys', 'getKeys throws'];
+
+function setGetKeysSupport(mode) {
+  const local = globalThis.chrome.storage.local;
+  if (mode === 'no-getKeys') delete local.getKeys;
+  else if (mode === 'getKeys throws') {
+    local.getKeys = async () => { throw new Error('getKeys unavailable'); };
+  } else local.getKeys = async () => [...store.keys()];
+}
+
 const {
   valueKey,
   valueKeyPrefix,
@@ -70,22 +85,47 @@ test('parseValueKey strips the prefix and returns the user key', () => {
   assert.equal(parseValueKey('gmval:abc:foo', 'xyz'), null);
 });
 
-test('loadAllValues returns only the script\'s values, stripping the prefix', async () => {
-  store.clear();
-  store.set('gmval:scriptA:foo', 'bar');
-  store.set('gmval:scriptA:count', 7);
-  store.set('gmval:scriptB:other', 'other-value');
-  store.set('script:not-a-value', { unrelated: true });
-  const got = await loadAllValues('scriptA');
-  assert.deepEqual(got, { foo: 'bar', count: 7 });
-});
+for (const mode of READ_MODES) {
+  test(`[${mode}] loadAllValues returns only the script's values, stripping the prefix`, async () => {
+    setGetKeysSupport(mode);
+    store.clear();
+    store.set('gmval:scriptA:foo', 'bar');
+    store.set('gmval:scriptA:count', 7);
+    store.set('gmval:scriptB:other', 'other-value');
+    store.set('script:not-a-value', { unrelated: true });
+    const got = await loadAllValues('scriptA');
+    assert.deepEqual(got, { foo: 'bar', count: 7 });
+  });
 
-test('loadAllValues returns empty object when the script has no values', async () => {
-  store.clear();
-  store.set('gmval:other:foo', 'bar');
-  const got = await loadAllValues('scriptA');
-  assert.deepEqual(got, {});
-});
+  test(`[${mode}] loadAllValues returns empty object when the script has no values`, async () => {
+    setGetKeysSupport(mode);
+    store.clear();
+    store.set('gmval:other:foo', 'bar');
+    const got = await loadAllValues('scriptA');
+    assert.deepEqual(got, {});
+  });
+
+  // The prefix is `gmval:<id>:`, and a user key may contain `:` — so a
+  // narrow read has to strip exactly the prefix, not split on colons.
+  test(`[${mode}] loadAllValues keeps colons in the user key`, async () => {
+    setGetKeysSupport(mode);
+    store.clear();
+    store.set('gmval:scriptA:a:b:c', 'deep');
+    const got = await loadAllValues('scriptA');
+    assert.deepEqual(got, { 'a:b:c': 'deep' });
+  });
+
+  // `gmval:scriptAA:` must not be picked up by a `gmval:scriptA:`
+  // read — the prefix includes the trailing colon precisely for this.
+  test(`[${mode}] loadAllValues does not match a script whose id is a prefix of another`, async () => {
+    setGetKeysSupport(mode);
+    store.clear();
+    store.set('gmval:scriptA:mine', 1);
+    store.set('gmval:scriptAA:theirs', 2);
+    const got = await loadAllValues('scriptA');
+    assert.deepEqual(got, { mine: 1 });
+  });
+}
 
 test('applyBatchValues writes sets and removes deletes', async () => {
   store.clear();
@@ -149,22 +189,26 @@ test('applyBatchValues: stores objects and arrays without flattening', async () 
   assert.deepEqual(store.get('gmval:s1:arr'), [1, 2, 3]);
 });
 
-test('wipeScriptValues removes only the script\'s rows', async () => {
-  store.clear();
-  store.set('gmval:s1:a', 1);
-  store.set('gmval:s1:b', 2);
-  store.set('gmval:s2:c', 3);
-  store.set('script:other', 'unrelated');
-  const removed = await wipeScriptValues('s1');
-  assert.equal(removed, 2);
-  assert.equal(store.has('gmval:s1:a'), false);
-  assert.equal(store.has('gmval:s1:b'), false);
-  assert.equal(store.get('gmval:s2:c'), 3);
-  assert.equal(store.get('script:other'), 'unrelated');
-});
+for (const mode of READ_MODES) {
+  test(`[${mode}] wipeScriptValues removes only the script's rows`, async () => {
+    setGetKeysSupport(mode);
+    store.clear();
+    store.set('gmval:s1:a', 1);
+    store.set('gmval:s1:b', 2);
+    store.set('gmval:s2:c', 3);
+    store.set('script:other', 'unrelated');
+    const removed = await wipeScriptValues('s1');
+    assert.equal(removed, 2);
+    assert.equal(store.has('gmval:s1:a'), false);
+    assert.equal(store.has('gmval:s1:b'), false);
+    assert.equal(store.get('gmval:s2:c'), 3);
+    assert.equal(store.get('script:other'), 'unrelated');
+  });
 
-test('wipeScriptValues: no rows → returns 0', async () => {
-  store.clear();
-  const removed = await wipeScriptValues('s1');
-  assert.equal(removed, 0);
-});
+  test(`[${mode}] wipeScriptValues: no rows → returns 0`, async () => {
+    setGetKeysSupport(mode);
+    store.clear();
+    const removed = await wipeScriptValues('s1');
+    assert.equal(removed, 0);
+  });
+}

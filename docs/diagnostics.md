@@ -518,10 +518,19 @@ timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps
 
 - **read-script / read-collection** — two point reads, in series because
   the collection key comes out of the script row. Marked separately
-  because the split was the diagnosis: `read-collection` used to run
-  consistently 3× `read-script` *even though the collection row is
-  tiny*, which ruled payload out and pointed at the other concurrent
-  checks on the same thread.
+  because the split was the diagnosis: `read-collection` *used to* run
+  3–4× `read-script` despite reading a far smaller row. The cause was
+  an unrelated full-namespace scan on the same thread — see
+  [the case study](#read-collection-is-still-slow).
+  - **`gets: script Xms, collection Yms`** is what settled that, and
+    what to check first if either phase looks wrong again. Printed by
+    whichever check performed the read; sharers print `collection row
+    shared with batch` instead.
+  - The phase spans from the caller's own script read to the row
+    arriving, so it includes time the worker spent elsewhere;
+    `gets` is the read alone.
+  - **A small `gets` under a large phase means the row is fine and
+    something else held the thread.** Look for a storage scan next.
 - **stat** — the `file://` directory listing that supplies the
   size+mtime the skip check needs.
 - **`collection row shared with batch` / `listing shared with batch`** —
@@ -552,6 +561,80 @@ numbers anyway, both because the worker is single-threaded:
 - The other checks in the same batch. Every await one of them makes
   costs its siblings' measured time as well as its own — which is why
   no phase drops to zero even now that the duplicate work is shared.
+- Any **storage scan** that overlaps the window (below).
+
+### Storage scans
+
+```
+timing — storage scan (registration sync): 183ms, 266 row(s)
+```
+
+- A `chrome.storage.local.get(null)` returns **every row the extension
+  owns** — script bodies, `@require` / `@resource` payloads, favicons,
+  `gmval:` rows — however narrow the caller's interest is.
+- The read is one cost; deserializing the result into JS objects is the
+  other, and that runs on the *calling context's* single thread. While
+  it does, unrelated pending callbacks in that context wait. So a scan
+  inflates phases that have nothing to do with it.
+- The line names the caller, because that is the part a reader needs:
+  `match index`, `registration sync`, `all scripts`, `log id table`,
+  `key migration`, `gm value wipe`.
+- Measured on a 266-row profile, a scan costs **129–193 ms** whoever
+  asks. That is the unit to price any new one against.
+
+#### `gm snapshot (narrow)`
+
+The same line for a read that is deliberately *not* a scan.
+
+- The check-pending handler starts a GM value read in parallel with the
+  swap decision whenever the wrapper set `needsValues` — i.e. for any
+  storage-granting script on the page — so it lands **inside** the
+  500 ms window.
+- It used to scan the whole namespace for one script's `gmval:` rows,
+  at a measured 155 ms of that budget. It now lists keys and reads only
+  the matching rows: 36–41 ms on the same profile.
+- A plain **`gm snapshot`** line means the browser had no `getKeys()`
+  and it fell back to the scan.
+
+### Case study: what made `read-collection` slow {#read-collection-is-still-slow}
+
+Worth reading before optimising anything else here, because the first
+two diagnoses were both wrong and the log said so each time. Measured on
+one 192-script profile, same page, three scripts:
+
+| | `read-script` | `read-collection` |
+|---|---|---|
+| One read + one listing per script | 28–53ms | 103–169ms |
+| Shared across the batch | 30–33ms | 129–149ms |
+| Shared, and the `gm snapshot` scan narrowed | 39–44ms | 12–44ms |
+
+- **First guess: payload.** Wrong — the collection row is a few fields
+  and the script row carries 63 KB of source, yet the small one read
+  4× slower.
+- **Second guess: duplicate work.** Also wrong on its own. Sharing the
+  row and the listing across the batch is real (the annotations prove
+  one read and one listing happened) and it did **not** move the
+  number.
+- **Actual cause: something else owned the thread.** The check-pending
+  handler's GM snapshot was a full-namespace scan, running from
+  `asked at 72ms` for 155 ms — straight across the collection reads.
+  Deserializing it blocked the worker, so the read's callback simply
+  could not run. Narrowing that read (see above) took ~100 ms off a
+  phase that never had anything to do with collections.
+- **Both effects were real; the big one hid the small one.** With the
+  thread free, the batch's sharing is finally visible in the numbers:
+  joiners pay 12–14 ms against the owner's 44 ms.
+- `gets: collection 43ms` under `read-collection 44` is what "no hidden
+  wait remains" looks like. That agreement is the check to repeat
+  before believing any future number from this phase.
+
+The lesson worth keeping:
+
+- **A phase in a single-threaded context measures its own work plus
+  whoever else is holding the thread.** Nothing in its name says which
+  you are looking at.
+- So pair a phase with a measurement of the operation *inside* it
+  before concluding anything about that operation.
 
 ## Testing
 

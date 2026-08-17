@@ -22,6 +22,7 @@
 // correlate.
 
 import { scriptBasename } from './script-display.js';
+import { scanAllStorage } from './storage-scan.js';
 import type { StoredScript } from './script-store.js';
 
 export interface LogIdInput {
@@ -73,7 +74,7 @@ export function ensureLogIdsLoaded(): Promise<void> {
 }
 
 async function loadAll(): Promise<void> {
-  const all = await chrome.storage.local.get(null);
+  const all = await scanAllStorage('log id table');
   const next = new Map<string, LogIdInput>();
   for (const [key, value] of Object.entries(all)) {
     if (!key.startsWith(SCRIPT_PREFIX)) continue;

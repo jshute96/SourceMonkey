@@ -75,6 +75,7 @@ import {
   type StoredResource,
 } from './external-files.js';
 import { localSearchRoots, localRootsReady } from './local-file-overrides.js';
+import { scanAllStorage } from './storage-scan.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import {
   ignoredMatchMessage,
@@ -100,7 +101,7 @@ import {
   PARSE_RECHECK_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from './debug-log.js';
-import { startPhaseTimer, timePhase } from './phase-timing.js';
+import { startPhaseTimer, timePhase, formatMs, timingNow } from './phase-timing.js';
 
 // `invalid` is the umbrella for "we couldn't load/use this script":
 // metadata-block parse failure, header validation failure, fetch
@@ -1736,7 +1737,7 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
   const probe = await chrome.storage.local.get(LEGACY_INDEX_KEY);
   if (!(LEGACY_INDEX_KEY in probe)) return;
 
-  const all = await chrome.storage.local.get(null);
+  const all = await scanAllStorage('key migration');
   const toSet: Record<string, unknown> = {};
   const toRemove: string[] = [LEGACY_INDEX_KEY];
   // Seed the index ONLY when the new spelling isn't there yet. This runs
@@ -1880,7 +1881,7 @@ export async function getScript(scriptId: string): Promise<StoredScript | undefi
 // one pass.
 export async function getAllScripts(): Promise<StoredScript[]> {
   await ensureCollectionKeysMigrated();
-  const all = await chrome.storage.local.get(null);
+  const all = await scanAllStorage('all scripts');
   const out: StoredScript[] = [];
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith('script:')) out.push(value as StoredScript);
@@ -2475,14 +2476,14 @@ export function resetCollectionRowReads(): void {
 async function batchCollectionRow(
   batch: RefreshBatch | undefined,
   collectionId: string,
-): Promise<{ row: StoredCollection | undefined; shared: boolean }> {
-  if (!batch) {
-    collectionRowReads += 1;
-    return { row: await getRaw<StoredCollection>(collectionKey(collectionId)), shared: false };
-  }
-  const hit = batch.collectionRows.get(collectionId);
-  if (hit) return { row: await hit, shared: true };
+): Promise<CollectionRowRead> {
+  const hit = batch?.collectionRows.get(collectionId);
+  if (hit) return { row: await hit, shared: true, ownReadMs: 0 };
   collectionRowReads += 1;
+  const started = timingNow();
+  const finish = async (p: Promise<StoredCollection | undefined>): Promise<CollectionRowRead> =>
+    ({ row: await p, shared: false, ownReadMs: timingNow() - started });
+  if (!batch) return finish(getRaw<StoredCollection>(collectionKey(collectionId)));
   const pending = getRaw<StoredCollection>(collectionKey(collectionId));
   batch.collectionRows.set(collectionId, pending);
   // A failed read must not be remembered. A cached rejection is rethrown
@@ -2498,7 +2499,24 @@ async function batchCollectionRow(
       batch.collectionRows.delete(collectionId);
     }
   });
-  return { row: await pending, shared: false };
+  return finish(pending);
+}
+
+interface CollectionRowRead {
+  row: StoredCollection | undefined;
+  shared: boolean;
+  // How long THIS call's own storage read took. Zero for a sharer,
+  // which performed none, and zero whenever debug logging is off.
+  //
+  // Separate from the `read-collection` phase on purpose. That phase
+  // spans from the caller's own script-row read to this promise
+  // settling, so a sharer's copy measures waiting, and even the
+  // reader's includes any time the worker's single thread spent on
+  // unrelated work before the read's callback could run. When the two
+  // disagree the phase is not describing this code — which is exactly
+  // what a full-namespace `scanAllStorage` elsewhere in the worker did
+  // to it once already.
+  ownReadMs: number;
 }
 
 // Only the single-script path can defer the parse check: it is the one
@@ -2541,11 +2559,26 @@ export async function refreshScript(
   // reload fast path — by far its largest fixed cost, and paid by
   // unchanged scripts too — so they are marked separately. The script
   // row carries the whole source; the collection row is a few fields,
-  // and it still read SLOWER, which ruled payload out and pointed at
-  // the batch's duplicate work plus contention on the one thread. The
-  // duplication is what `opts.batch` removes; the contention remains,
-  // so neither phase drops to zero.
+  // and it used to read SLOWER — which was never about either row. A
+  // full-namespace storage scan elsewhere in the worker was holding
+  // the only thread, so the read's callback couldn't run. Neither
+  // payload nor the batch's duplicate reads explained it; both were
+  // guessed first and both were wrong.
+  //
+  // The `gets:` note is what settled it, and is why it stays: it
+  // measures the read itself, next to a phase that measures the read
+  // PLUS whoever else owns the thread. When those two disagree, the
+  // phase is not describing this code. See
+  // docs/diagnostics.md#read-collection-is-still-slow.
+  //
+  // "The read itself" is really `getRaw`, which gates on
+  // `ensureCollectionKeysMigrated`. Memoised, so free after the first
+  // call in a worker generation — but the first check after a wake
+  // attributes the migration probe to `gets: script`, and on an
+  // unmigrated profile the whole migration scan with it.
+  const scriptReadStarted = timingNow();
   const prior = await getScript(scriptId);
+  const scriptReadMs = timingNow() - scriptReadStarted;
   if (!prior) return null;
   timer.mark('read-script');
   // Shared across the batch when there is one: the scripts a page
@@ -2556,6 +2589,7 @@ export async function refreshScript(
   if (!collectionRow) return null;
   timer.mark('read-collection');
   if (collection.shared) timer.note('collection row shared with batch');
+  else timer.note(() => `gets: script ${formatMs(scriptReadMs)}, collection ${formatMs(collection.ownReadMs)}`);
   timer.note(prior.relativePath);
   timer.note(() => `${Math.round((prior.size ?? 0) / 1024)} KB row`);
 

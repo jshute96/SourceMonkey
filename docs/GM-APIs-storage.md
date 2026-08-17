@@ -264,9 +264,8 @@ scheme would need revisiting.
 
 Every storage-granting script's `sm:check-pending` blocks its
 body on an SW round-trip that includes a snapshot read. The SW
-does a `chrome.storage.local.get(null)` scan, filters to this
-script's `gmval:*` rows, merges the overlay, and JSON-serializes
-the result onto the reply.
+lists this script's `gmval:*` keys, reads those rows, merges the
+overlay, and JSON-serializes the result onto the reply.
 
 What softens it:
 
@@ -275,15 +274,33 @@ What softens it:
 - The per-script row set is small in practice — most userscripts
   store a config object plus a few flags, so the JSON payload
   is small.
-- The full-namespace `get(null)` is the most expensive piece. A
-  prefix-scoped read (or a cached in-SW snapshot keyed by
-  `scriptId`) would cut it further.
+- **The read is narrow.** `loadAllValues` uses
+  `chrome.storage.local.getKeys()` (Chrome 130+) and then reads
+  only the matching rows.
 
-This sits on the document-start critical path and is paid by
-every storage-granting script on every navigation. If a profile
-shows it dominating page-init latency, a per-script in-memory
-cache in the SW (invalidated by gmval writes) would skip the
-storage read entirely on cache hit. Tracked in TODO.md.
+### Why the read must stay narrow
+
+It did not start narrow, and the difference is the whole point:
+
+- The old shape was `get(null)`, which returns every row the
+  extension owns.
+- The read is only half the cost. **Deserializing** the result
+  occupies the worker's single thread, so it delayed not just this
+  reply but every callback waiting alongside it.
+- Measured at **155 ms** on a 266-row profile, spent inside the
+  reload fast path's 500 ms window.
+- [diagnostics.md](diagnostics.md#storage-scans) has the log line
+  that would catch a regression here.
+
+### Still on the critical path
+
+The narrow read is smaller, not free — `getKeys()` alone measured
+~40 ms on that profile, paid by every storage-granting script on
+every navigation.
+
+A per-script in-memory cache in the SW, invalidated by `gmval:`
+writes, would skip the storage read entirely on a hit. Tracked in
+TODO.md.
 
 ## Backing store and write batching
 

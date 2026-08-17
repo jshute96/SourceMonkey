@@ -82,6 +82,27 @@ function round(ms: number): number {
   return ms >= 10 ? Math.round(ms) : Math.round(ms * 10) / 10;
 }
 
+// Same rounding for a duration a caller measured itself and wants to
+// put in a `note`, so the two halves of one line read alike.
+export function formatMs(ms: number): string {
+  return `${round(ms)}ms`;
+}
+
+// The clock, for a caller timing something finer-grained than a phase —
+// one operation inside a phase that also contains waiting, say. Reads
+// zero when logging is off, which keeps the same promise the no-op
+// timer makes: nothing measured costs anything when nobody is looking.
+// With the flag steady, a disabled duration comes out as 0 and the
+// `note` that would print it is never called.
+//
+// Toggling the flag mid-operation gives that duration a meaningless
+// value (one end measured against a zero origin). Deliberately not
+// guarded: it needs a human flipping the setting inside a single
+// refresh, and the cost is one wrong debug number.
+export function timingNow(): number {
+  return isDebugLoggingEnabled() ? performance.now() : 0;
+}
+
 export function startPhaseTimer(label: string): PhaseTimer {
   return isDebugLoggingEnabled() ? new ActiveTimer(label) : NOOP;
 }
