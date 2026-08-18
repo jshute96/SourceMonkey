@@ -567,6 +567,59 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ## `@connect` follow-ups
 
+- **Per-host user consent, like TM.** TM asks about the specific host
+  ("allow once / always for this domain / always for all domains /
+  deny") and remembers the answer in a per-script allowlist. We ship
+  no escape hatch at all: the strict default stands, and the fix is to
+  add the `@connect` line the denial names. What a real version needs:
+  - A prompt surface. The SW can't show one; candidates are an
+    in-page overlay injected into the requesting tab, a small
+    `chrome.windows.create` popup, or a `chrome.notifications` entry
+    with buttons. TM's own in-page dialog is widely disliked, so this
+    wants design attention rather than a straight copy.
+  - A decision store: `(scriptId, host) → allow | deny`, persisted in
+    `chrome.storage.local`, plus a way to review and revoke — the
+    script viewer's details panel already lists "Network access".
+  - A hold on the in-flight request while the user decides, with a
+    timeout that denies. `GM_xmlhttpRequest` is async, so waiting is
+    legal; a prompt the user never answers must not hang forever.
+- **Per-script escape hatch, for scripts the user can't edit.** Editing
+  the header is the narrow fix and needs no UI, but it doesn't stick
+  for a script synced from a collection — a refresh re-fetches the body
+  and clobbers the edit (see `docs/updates.md`). A per-script "let this
+  script connect anywhere" toggle in the viewer is the smallest thing
+  that covers that case. Deliberately not a *global* switch: that would
+  pre-authorize every no-`@connect` script the user ever installs,
+  which is the widest possible form of a grant whose whole point is
+  narrowness. A version of this shipped in the same branch as the
+  same-origin allowance and was cut for exactly that reason.
+- **Same-origin allowance is `http(s)`-only.** A `file://` page shares
+  one origin with every other file on disk, so origin equality there
+  would grant disk-wide reads; sandboxed frames report an opaque
+  origin. Both fall back to the declared rules. Decide whether a
+  `file://` document should instead resolve `self` against its own
+  directory, or stay strict.
+- **Bare `@connect` host doesn't cover subdomains.** TM's docs define
+  `@connect example.com` as "domain names *including subdomains*", so
+  a script declaring `example.com` and calling `api.example.com` works
+  under TM and fails here (we treat a bare host as exact). Same family
+  as the `self` item below, and the likelier one to bite a real
+  script. Fix: make `exact` match `host` or `*.host`, and decide
+  whether the strict form should still be reachable.
+- **Relative `GM_xmlhttpRequest` URLs ignore `<base href>`.**
+  `resolveXhrUrl` resolves against the sender's document URL, which the
+  SW can see; the document's `<base>` element it cannot. A page that
+  sets `<base>` and a script that passes a relative URL would disagree
+  with TM. Fix if a real report shows up: resolve page-side in
+  `wrapper-gm-runtime.js` (where `new URL(u, document.baseURI)` is
+  free) and send an absolute URL over the wire.
+  - That fix would also merge two parallel paths: `GM_download`
+    already resolves relative URLs page-side in
+    `resolveDownloadUrl` (`wrapper-gm-runtime.js`), so the two GM
+    APIs currently resolve by different mechanisms with different
+    `<base>` semantics. Keep the SW-side `resolveXhrUrl` as the
+    backstop if this lands — the policy check needs an absolute URL
+    whatever the page sent.
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
   exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
@@ -594,9 +647,11 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Same root cause as the bare-host port issue above.
 - **`@connect *` install-time warning.** A wildcard `@connect`
   effectively asks for cross-origin fetch reach against any host.
-  TM prompts, VM logs a warning. Surface a "this script wants to
-  talk to any host" signal in the collections-page row at install /
-  refresh time.
+  TM prompts for it. Surface a "this script wants to talk to any
+  host" signal in the collections-page row at install / refresh time —
+  the same signal fits a script that grants `GM_xmlhttpRequest` and
+  declares no `@connect` at all, which is where the strict default
+  will bite.
 
 ## Test coverage gaps
 

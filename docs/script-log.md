@@ -89,6 +89,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
+| `gm-xhr` | `logConnectVerdict` in `background.ts` | A `GM_xmlhttpRequest` the `@connect` policy refused. Allowed requests are not logged — they are what the script asked for. |
 
 Two naming notes worth keeping:
 
@@ -226,7 +227,8 @@ dropped for repeating an earlier message — the Log tab is a transcript,
 and a line that vanishes because the same sentence appeared before
 stops being one.
 
-One thing stays quiet, and it is about **whether anything happened**:
+A short list stays quiet. Most of it is about **whether anything
+happened**:
 
 - **A no-op refresh on a valid script.** `Checked for updates — no
   change` is manual-only, so background polling doesn't announce that a
@@ -256,6 +258,26 @@ reason for the same content:
   rows in its own log, and `LOG_CAP` rotation will eventually evict that
   script's other entries. Only that script's log is affected, and every
   row in it says the same actionable thing.
+
+The other one is about **volume**:
+
+- **A repeat of the same `@connect` denial.** `logConnectVerdict`
+  writes one entry per (script, target origin, reason, hop) per SW
+  lifetime.
+  - A blocked request usually comes from a poller that re-issues it
+    every few seconds, often walking a whole URL space on one host;
+    the log's cap is 500 entries, and the second copy of a denial
+    says nothing the first didn't. Keying on the origin rather than
+    the path is what holds `/api/item/1`, `/api/item/2`, … to one
+    entry — the message still names the first path seen.
+  - `tabId` is not in the key either: the same script blocked on the
+    same host in a second tab is the same fact.
+  - The dedupe is only about the Log. The script's `onerror` fires
+    for every denied request, every time.
+  - In-memory (module scope), so an SW restart re-logs each denial
+    once. Unlike the injector's rejection guard there is nothing to
+    re-derive at wake-up — the entry describes a request the script
+    will make again if it still cares.
 
 Everything else emits, including:
 
@@ -462,6 +484,23 @@ tracked in `TODO.md`.
     a SourceMonkey malfunction.
   - Successful downloads are **not** logged — a batch downloader fires
     hundreds and would push everything else past `LOG_CAP`.
+- **`@connect` verdicts** (`logConnectVerdict` in
+  `src/background.ts`, source `gm-xhr`, `tabId` attached):
+  - `GM_xmlhttpRequest to <origin+path> blocked by this script's
+    @connect rules: <reason>` (warning) — the policy refused the
+    request. A script that declared **no** `@connect` gets
+    `blocked because this script declares no @connect: <reason>`
+    instead, and its reason spells out the `// @connect <host>` line
+    that would fix it — naming rules it never wrote would be a false
+    accusation. A refusal that isn't the header's doing (a URL that
+    never parsed) says `failed: <reason>`. The script's `onerror`
+    hears the same reason, but the person who *installed* the script
+    is only reading the Log.
+  - Query strings are stripped — they carry API keys and session
+    tokens.
+  - Deduped per (script, target origin, reason, hop) per SW
+    lifetime; see
+    [When the log stays quiet](#when-the-log-stays-quiet).
 - **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.
@@ -485,6 +524,9 @@ tracked in `TODO.md`.
 - Per-tab badge transitions. Those are noisy and already visible.
 - `Checked for updates — no change` on opportunistic checks
   (manual-only, as above).
+- A re-sync that gets the same registration rejection, and a repeat of
+  a `@connect` verdict already recorded this SW lifetime — see
+  [When the log stays quiet](#when-the-log-stays-quiet).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.
 - Anything for a collection with **no scripts under it**. A collection whose

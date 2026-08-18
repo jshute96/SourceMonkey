@@ -252,6 +252,12 @@ Architecture:
   request id (callbacks aren't serializable across postMessage), and
   ships a `sm:gm-xhr-start` envelope to the SW with the serializable
   request fields.
+- A **relative `url`** (`/api/x`, `./data.json`) is resolved against
+  the sender's document URL (`resolveXhrUrl`) before anything else
+  looks at it. The SW has no page to be relative to, so without this
+  `new URL(url)` throws and the request dies as "invalid URL" — a
+  call shape that works in TM/VM. The `<base href>` of the document is
+  not consulted; the SW can't see it (`TODO.md`).
 - SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The
@@ -352,25 +358,109 @@ overhead vs raw bytes but is robust across the SW/page boundary.
 
 ## `@connect` URL gating (Phase 10)
 
-VM-style strict-by-default: a script with no `@connect` lines
-in its header is **blocked** from every `GM_xmlhttpRequest`. Scripts
-must declare the hosts they intend to reach.
+### The policy
+
+Decided by `decideConnect` in `src/gm-connect.ts`:
+
+| Request | Verdict |
+| --- | --- |
+| To the requesting document's own `http(s)` origin | **allow** (`via: 'same-origin'`) |
+| Host matches a `@connect` rule | **allow** (`via: 'rule'`) |
+| Rules declared, none match | **deny** |
+| No `@connect` declared at all | **deny** |
 
 Grammar (lower-case before matching):
 
 - `*` — wildcard, allow any host.
-- `self` — allow the script's own `@match`/`@include` hosts (and
-  `*.host` subdomains in those globs contribute `host`).
-- `example.com` — exact host match.
+- `self` — the script's own hosts: the requesting page's host, plus
+  the hosts its `@match`/`@include` globs name (`*.host` contributes
+  `host`).
+- `example.com` — exact host match. TM counts subdomains under a bare
+  domain too; we don't yet (`TODO.md`).
 - `*.example.com` — `example.com` itself **and** any subdomain.
 - A scheme-prefixed URL like `https://example.com` is accepted and
   normalized to its host.
 
-The check runs in `handleXhrStart` before `fetch`: the SW looks up
-the script's stored header, calls `parseConnectRules` +
-`extractSelfHosts`, and `isUrlConnectAllowed`. A denied request
-ships an `error` event back to the page with the policy reason as
-the message, so the userscript's `onerror` catches it.
+### Why same-origin is always allowed
+
+- The page can already reach that URL itself, with plain `fetch` /
+  `XMLHttpRequest`. Routing it through `GM_xmlhttpRequest` reaches no
+  origin the page couldn't, so refusing it buys no security and breaks
+  ordinary scripts. (The two requests aren't identical — ours is
+  SW-issued, so cookies are SW-managed and the page's CSP `connect-src`
+  doesn't apply; see the header-surgery limitation below.)
+- It holds **regardless of what the script declared**. Declaring the
+  one API host a script calls must not silently cost it the origin it
+  runs on — the trap TM closed in 4.0 by making `self` implicit
+  ([Tampermonkey/tampermonkey#283](https://github.com/Tampermonkey/tampermonkey/issues/283)).
+- Matching is exact **origin** equality (scheme + host + port), not
+  host: a different port or an `https` → `http` downgrade is
+  cross-origin to the page and needs a rule like anything else.
+- The origin comes from `sender.origin` (falling back to
+  `sender.url`). An opaque origin arrives as the string `null` — a
+  sandboxed frame — and never matches.
+- **`http(s)` targets only.** The whole argument is "the page could
+  fetch this itself", and that fails for `file://`, whose origin
+  Chrome serializes as a bare `file://` shared by every local file:
+  one no-`@connect` script on one local page would otherwise inherit
+  read access to the disk. Non-web targets go through the declared
+  rules like any other host.
+
+### Why undeclared scripts are still blocked by default
+
+- **137 of the 346 scripts** that grant `GM_xmlhttpRequest` (either
+  spelling) in the GreasyFork top-2000 corpus declare no `@connect` at
+  all. Under the old policy every request they made failed, including
+  the ones that only ever called their own page.
+- **TM** prompts the user per host and remembers the answer in a
+  per-script allowlist. **VM** doesn't implement `@connect` at all
+  ([violentmonkey/violentmonkey#947](https://github.com/violentmonkey/violentmonkey/issues/947)
+  is still open), so every host is silently reachable there.
+- Matching TM properly needs a consent UI SourceMonkey doesn't have
+  yet (tracked in `TODO.md`), so the strict default stands.
+- There is deliberately **no global "allow everything" switch**. A
+  script here is a file the user edits, and the denial names the exact
+  `// @connect <host>` line to add — narrower than any blanket
+  override, and it travels with the script.
+- The gap that leaves: a script synced from a collection, where a
+  refresh re-fetches the body and clobbers a local header edit (see
+  [updates.md](updates.md)). The escape hatch for that is per-script,
+  not global, and is still to be built — `TODO.md`.
+
+### Surfacing a denial
+
+- The page's `onerror` gets `[SourceMonkey] GM_xmlhttpRequest: blocked
+  by this script's @connect rules: <reason>` (`connectBlockedMessage`
+  over `connectDenialClause`, shared by the initial check, the
+  redirect re-check, and the Log row).
+- A script that declared **no** `@connect` is told
+  `blocked because this script declares no @connect: <reason>`
+  instead. It wrote no rules, so naming its rules as the blocker would
+  be a false accusation — that's what the verdict's `undeclared` flag
+  selects. Its reason names the fix verbatim: `add "// @connect
+  <host>" to the script header`. A host-less target (`data:`, `blob:`)
+  says so instead — there is no host to put in a rule, and only
+  `@connect *` covers it.
+- A failure that is *not* the rules refusing — a URL that wouldn't
+  parse — goes through `gmXhrError` and neither clause. See
+  [diagnostics.md](diagnostics.md#blame-the-right-thing).
+- The script's **Log tab** gets a `gm-xhr` warning for every denial we
+  can attribute to a tab. That's the surface for a user who installed
+  the script rather than wrote it. Deduped per (script, target
+  **origin**, reason, hop) per SW lifetime — the path is in
+  the message but not the key, so a poller walking `/api/item/1`,
+  `/api/item/2`, … writes one entry. See
+  [script-log.md](script-log.md).
+- Log messages carry origin + path only. Query strings hold API keys
+  and session tokens often enough that copying them into a text log
+  isn't worth it.
+
+### Where it runs
+
+The check runs in `handleXhrStart` before `fetch`: the SW looks up the
+script's stored header, calls `parseConnectRules` + `extractSelfHosts`,
+and hands the lot to `decideConnect`. A denied request never leaves the
+browser.
 
 The policy is resolved once into a reusable predicate
 (`loadConnectPolicy`) that is applied to **both** the initial URL and
@@ -389,6 +479,16 @@ if real reports come in.
 
 Known limitations (post-Phase 10):
 
+- **No consent prompt, and no escape hatch at all.** TM asks the user
+  about the specific host and remembers the answer per script. We have
+  neither, so a script that declares no `@connect` and whose header the
+  user can't edit — one synced from a collection — cannot make a
+  cross-origin request. Tracked in `TODO.md`.
+- **No same-origin allowance off the web.** A `file://` page, a
+  sandboxed frame, or a sender with no origin at all falls back to the
+  declared rules, so a script running off disk still needs an explicit
+  `@connect` to fetch anything — deliberately, but arguably the wrong
+  answer for a `@connect self`-style local script.
 - **Header surgery has blind spots** — redirects lose the overrides.
   (Same-URL overlap is closed by the per-request URL tag.) Described in
   [xhr-header-surgery.md](xhr-header-surgery.md#blind-spots).

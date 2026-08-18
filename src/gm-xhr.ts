@@ -480,6 +480,41 @@ async function removeHeaderRule(ruleId: number): Promise<void> {
   }
 }
 
+// Resolve a request URL the way TM/VM do: a relative `url` (`/api/x`,
+// `./data.json`) is relative to the **page**, not to the service
+// worker. Without this the SW's `new URL(url)` throws and the request
+// dies as "invalid URL" — a script doing `GM_xmlhttpRequest({url:
+// '/api/x'})` works in every other manager.
+//
+// `pageUrl` is the sender's document URL, `pageOrigin` its origin.
+// The origin is the second try, for a frame whose document URL is no
+// base at all (`about:blank`, `srcdoc`) but which inherited a real
+// origin. Only a **root**-relative URL (`/api/x`, `//host/x`) falls
+// back to it: those mean the same thing against an origin as against
+// a full URL, while a document-relative `data.json` would silently
+// become `/data.json` — a different request from the one the script
+// asked for, which is worse than reporting a URL we can't resolve.
+// When neither base works the original string is returned unchanged,
+// so the caller's own error handling still applies.
+//
+// Deliberately NOT resolved against the document's `<base href>`: the
+// SW can't see it. A page that sets `<base>` and a script that uses a
+// relative GM_xmlhttpRequest URL is rare enough to leave for a real
+// report — see `TODO.md`.
+export function resolveXhrUrl(
+  url: string,
+  pageUrl: string | undefined,
+  pageOrigin?: string,
+): string {
+  for (const base of [pageUrl, url.startsWith('/') ? pageOrigin : undefined]) {
+    if (!base) continue;
+    try {
+      return new URL(url, base).href;
+    } catch { /* this base is unusable — try the next */ }
+  }
+  return url;
+}
+
 // Cancel an in-flight request by id. Idempotent — calling abort on a
 // completed request is a no-op (the entry is gone).
 export function abortXhr(id: string): boolean {

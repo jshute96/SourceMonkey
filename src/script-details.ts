@@ -24,10 +24,10 @@
 // to what our GM surface can actually do:
 //   - `GM_xmlhttpRequest` is the API that reaches other origins, and
 //     it is useless without `@connect` — a script with no `@connect`
-//     lines is blocked from every cross-origin request
-//     (`gm-connect.ts`), leaving it no further than the page's own
-//     `fetch`. So the Network access row already tells that story,
-//     and tells it more precisely than a grant name would.
+//     lines is blocked from every cross-origin request (`gm-connect.ts`),
+//     leaving it no further than the page's own `fetch`. So the
+//     Network access row already tells that story, and tells it more
+//     precisely than a grant name would.
 //   - Most of the rest act within reach the page already has: styles,
 //     elements, menu commands, resources, per-script storage.
 //   - `GM_download` and `GM_openInTab` genuinely do reach outside the

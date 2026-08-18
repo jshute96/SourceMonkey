@@ -303,8 +303,11 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-xhr.spec.ts` + `tests/e2e/gm-xhr-binary.spec.ts` —
   `GM_xmlhttpRequest` text + JSON, POST body, network failure,
   abort, timeout, binary types.
-- `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating, including
-  the strict-by-default "no @connect → blocked" case.
+- `tests/e2e/gm-connect.spec.ts` — `@connect` rule matching (exact,
+  wildcard, subdomain, mismatch) and the post-redirect re-check.
+- `tests/e2e/gm-connect-default.spec.ts` — the default policy for a
+  script with no `@connect`: same-origin allowed, cross-origin denied
+  with a Log entry, and the post-redirect hop.
 - `tests/e2e/gm-log.spec.ts` — `GM_log` prefixes log lines with the
   per-script id and forwards the rest verbatim; ungranted access is
   gated.

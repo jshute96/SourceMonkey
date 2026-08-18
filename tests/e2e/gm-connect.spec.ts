@@ -1,10 +1,13 @@
 // End-to-end tests for `@connect` URL gating on GM_xmlhttpRequest
-// (Phase 10).
+// (Phase 10) — the rule grammar and the redirect re-check.
 //
-// VM-style strict-by-default: a script with no @connect lines
-// is blocked from every cross-origin request. Scripts declare hosts
-// they intend to reach via `// @connect <host>` (with `*`,
-// `*.subdomain`, `self` shortcuts).
+// Scripts declare the hosts they intend to reach via
+// `// @connect <host>` (with `*`, `*.subdomain`, `self` shortcuts);
+// a cross-origin host that no rule covers is blocked.
+//
+// The *default* policy for a script that declares no `@connect` at
+// all — including the same-origin allowance —
+// lives in `gm-connect-default.spec.ts`.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -23,7 +26,7 @@ test.describe('GM_xmlhttpRequest @connect gating (Phase 10)', () => {
     await dataServer.stop();
   });
 
-  test('no @connect declared → request blocked, onerror with policy reason', async ({
+  test('no @connect declared → cross-origin request blocked, onerror with policy reason', async ({
     extensionContext,
     fixtureServer,
     sm,

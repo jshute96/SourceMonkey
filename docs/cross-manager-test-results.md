@@ -16,13 +16,26 @@ pnpm exec playwright test --project=tampermonkey
 
 Update this doc when a result changes.
 
+## Awaiting a TM run
+
+- **`xmlhttp-same-origin/`** — added with the `@connect` default-policy
+  change and written to run under both managers: a
+  `GM_xmlhttpRequest` back to the page's own origin must load, with no
+  `@connect` header and with an unrelated one. TM is expected to agree
+  (`self` became implicit in TM 4.0,
+  [Tampermonkey/tampermonkey#283](https://github.com/Tampermonkey/tampermonkey/issues/283))
+  — a TM consent prompt would surface as a timeout. Not yet exercised
+  against a real TM browser; record the outcome here when it is.
+
 ## Intentional skips
 
 Specs that opt out under TM via
 `test.skip(setup.manager === 'tampermonkey', '<reason>')`:
 
-- **`xmlhttp-denied/`** — asserts SM's exact
-  `"blocked by this script's @connect rules"` message. TM has its own
+- **`xmlhttp-denied/`** — asserts SM's exact denial messages
+  (`"blocked by this script's @connect rules"`, and
+  `"blocked because this script declares no @connect"` for a script
+  that declared none). TM has its own
   `@connect` UX (potentially prompting the user) and its own denial
   message. Out of scope for cross-manager comparison.
 - **`gm-resource/`** — the example uses relative `@resource` refs

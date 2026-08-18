@@ -276,21 +276,44 @@ the page-side runtime decodes and rebuilds.
 
 ### `@connect` gating
 
-Strict-by-default. A script with **no** `@connect` lines is blocked
-from every `GM_xmlhttpRequest` call. Grammar:
+The verdict, in order:
+
+| Request | Result |
+|---------|--------|
+| To the page's own `http(s)` origin | Allowed, declared or not. |
+| Host matches a `@connect` rule | Allowed. |
+| Rules declared, none match | Denied. |
+| No `@connect` at all | Denied. |
+
+Grammar:
 
 | Form | Meaning |
 |------|---------|
 | `@connect *` | Allow any host. |
-| `@connect self` | Allow the script's own `@match` / `@include` hosts. |
+| `@connect self` | Allow the page's host plus the script's `@match` / `@include` hosts. |
 | `@connect example.com` | Allow this exact host. |
 | `@connect *.example.com` | Allow `example.com` itself AND any subdomain. |
 | `@connect https://example.com` | Same as `@connect example.com` (scheme stripped). |
 
+Notes:
+
+- A relative `url` is resolved against the requesting page before the
+  check, so `GM_xmlhttpRequest({url: '/api/x'})` is judged (and
+  fetched) as the same-origin call the script meant.
+- There is no global override for the last row: the denial names the
+  `// @connect <host>` line to add, which is narrower than any blanket
+  switch. A per-script hatch (for a synced script whose header edits a
+  refresh would clobber) is in `TODO.md`.
+- Every denial we can attribute to a tab also lands in the script's
+  Log tab, which is the surface for a user who installed the script
+  rather than wrote it.
+
 A denied request fires `onerror` with
 `"[SourceMonkey] GM_xmlhttpRequest: blocked by this script's @connect
-rules: …"` — built by `connectBlockedMessage` in `gm-connect.ts`, so
-the pre-flight check and the post-redirect re-check say the same thing.
+rules: …"`, or, for a script that declared none,
+`"… blocked because this script declares no @connect: …"` — both built
+by `connectBlockedMessage` in `gm-connect.ts`, so the pre-flight check,
+the post-redirect re-check, and the Log row say the same thing.
 
 Two near neighbours deliberately do *not* use that wording, because
 the script's header isn't what refused the call:

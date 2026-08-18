@@ -153,16 +153,20 @@ import {
 import {
   abortXhr,
   abortXhrsForTab,
+  resolveXhrUrl,
   runXhr,
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
 import { clearStaleHeaderRules } from './gm-xhr-headers.js';
 import {
   connectBlockedMessage,
+  connectDenialClause,
+  decideConnect,
   extractSelfHosts,
   gmXhrError,
-  isUrlConnectAllowed,
   parseConnectRules,
+  policyFailureVerdict,
+  type ConnectVerdict,
 } from './gm-connect.js';
 import {
   closeGmTab,
@@ -539,6 +543,11 @@ const api: SourceMonkeyApi = {
     // against the wrong baseline.
     resetDirectoryListingFetches();
     resetCollectionRowReads();
+    // Same reasoning as the parse-check breaker: the @connect log
+    // dedupe is a module variable, so without this a test that
+    // asserts on a denial entry would find nothing once an earlier
+    // test in the same worker had already logged that (script, host).
+    loggedConnectVerdicts.clear();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -2030,26 +2039,49 @@ async function handleXhrStart(
     return;
   }
   // @connect URL gating. Pull the script's stored header so we know
-  // which hosts it's allowed to talk to. A script that hasn't
-  // declared @connect is blocked from every cross-origin host —
-  // matches VM policy. The error event we ship back is the
-  // same shape as a network failure, so the userscript's onerror
-  // catches it.
-  const policy = await loadConnectPolicy(payload.scriptId);
+  // which hosts it's allowed to talk to. Requests to the page's own
+  // origin always pass; anything else needs a matching @connect line.
+  // The error event we ship back is the same shape as a network failure,
+  // so the userscript's onerror catches it — and every denial also
+  // lands in the script's Log tab, which is the only surface a user
+  // who didn't write the script would look at.
+  //
+  // Resolve the URL against the sender's document first, so a
+  // relative `url` is judged (and fetched) as the page-relative
+  // request the script meant — the SW has no page to be relative to.
+  //
+  // The origin is the fallback base, for the frames where `sender.url`
+  // is no base at all: an `about:blank` / `srcdoc` frame that
+  // inherited a real origin reports that URL verbatim, and
+  // `new URL('/x', 'about:blank')` throws. A root-relative URL still
+  // resolves there; a document-relative one can't, and falls through
+  // unchanged to be reported as unusable.
+  const pageOrigin = requestingOrigin(sender);
+  const request = {
+    ...payload.request,
+    url: resolveXhrUrl(payload.request.url, sender.url, pageOrigin),
+  };
+  const policy = await loadConnectPolicy(payload.scriptId, pageOrigin);
   if ('reason' in policy) {
+    logConnectVerdict(
+      payload.scriptId, tabId, request.url, policyFailureVerdict(policy.reason), 'request',
+    );
     // Not `connectBlockedMessage`: we never got as far as reading the
     // script's rules, so blaming them would be wrong.
     await sendXhrError(tabId, payload.id, gmXhrError(policy.reason));
     return;
   }
-  const initial = policy.check(payload.request.url);
+  const initial = policy.check(request.url);
+  logConnectVerdict(payload.scriptId, tabId, request.url, initial, 'request');
   if (!initial.allowed) {
     // `denied` separates "the header forbids this host" from "that URL
     // never parsed" — only the first is the script's rules refusing.
     await sendXhrError(
       tabId,
       payload.id,
-      initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
+      initial.denied
+        ? connectBlockedMessage(initial.reason, initial.undeclared)
+        : gmXhrError(initial.reason),
     );
     return;
   }
@@ -2058,8 +2090,12 @@ async function handleXhrStart(
   // policy predicate re-checks the post-redirect URL inside runXhr.
   const event = await runXhr(
     payload.id,
-    payload.request,
-    (finalUrl) => policy.check(finalUrl).allowed,
+    request,
+    (finalUrl) => {
+      const verdict = policy.check(finalUrl);
+      logConnectVerdict(payload.scriptId, tabId, finalUrl, verdict, 'redirect');
+      return verdict.allowed;
+    },
     tabId,
   );
   try {
@@ -2092,9 +2128,9 @@ async function sendXhrError(tabId: number, id: string, message: string): Promise
 // and (inside runXhr) the post-redirect URL, so a single header read
 // covers every hop. Returns `{reason}` when the policy can't be
 // resolved (script gone, no header, parse error) — that's a hard deny.
-async function loadConnectPolicy(scriptId: string): Promise<
+async function loadConnectPolicy(scriptId: string, pageOrigin: string | undefined): Promise<
   | { reason: string }
-  | { check: (url: string) => { allowed: true } | { allowed: false; denied: boolean; reason: string } }
+  | { check: (url: string) => ConnectVerdict }
 > {
   try {
     const script = await getScript(scriptId);
@@ -2110,7 +2146,9 @@ async function loadConnectPolicy(scriptId: string): Promise<
     }
     const rules = parseConnectRules(script.header);
     const selfHosts = extractSelfHosts(script.header);
-    return { check: (url: string) => isUrlConnectAllowed(url, rules, selfHosts) };
+    return {
+      check: (url: string) => decideConnect(url, { rules, selfHosts, pageOrigin }),
+    };
   } catch (err) {
     return {
       reason: `internal error: could not check this script's @connect rules: ${
@@ -2129,6 +2167,89 @@ async function loadConnectPolicy(scriptId: string): Promise<
 // author, so it describes the situation rather than naming our field.
 const NO_ORIGINATOR_TAB =
   'internal error: could not identify the tab this call came from';
+
+// Origin of the document that issued the request, for the policy's
+// same-origin allowance. `sender.origin` is the frame's own origin,
+// which Chrome supplies — the page can't forge it. An opaque origin
+// (sandboxed frame) arrives as the string 'null' and `decideConnect`
+// refuses to match it. `sender.url` is only a fallback: it's the
+// frame's document URL, which for an `about:blank` / `srcdoc` frame
+// says nothing about the origin the frame actually inherited — hence
+// preferring `origin` when Chrome supplies it.
+function requestingOrigin(sender: chrome.runtime.MessageSender): string | undefined {
+  if (sender.origin) return sender.origin;
+  if (sender.url) {
+    try { return new URL(sender.url).origin; } catch { /* not a parseable URL */ }
+  }
+  return undefined;
+}
+
+// One Log entry per (script, target origin, outcome, hop) per
+// service-worker lifetime. A denied request usually comes from a
+// poller that will re-issue it — often walking a whole URL space on
+// the same host — and the log has a fixed cap. Keying on the origin
+// rather than the full path is what keeps `/api/item/1`,
+// `/api/item/2`, … to one entry; the message still names the first
+// path we saw, so the entry stays concrete. See docs/script-log.md.
+//
+// `tabId` is deliberately NOT in the key: the same script blocked on
+// the same host in a second tab is the same fact, and the entry the
+// user already has explains it.
+const loggedConnectVerdicts = new Set<string>();
+
+// Bound on that set, so a script spraying many distinct origins can't
+// grow it for the whole SW lifetime. Wholesale clear rather than LRU
+// eviction: the only cost of forgetting is that a denial gets logged
+// once more.
+const LOGGED_CONNECT_VERDICT_CAP = 500;
+
+// Report a refused request to the script's Log tab. An allow is not
+// an event — it's what the script asked for — so only denials land
+// here. The script's own `onerror` hears the same reason, but the
+// person who *installed* the script is only reading the Log.
+function logConnectVerdict(
+  scriptId: string,
+  tabId: number,
+  url: string,
+  verdict: ConnectVerdict,
+  stage: 'request' | 'redirect',
+): void {
+  if (verdict.allowed) return;
+  // Identify the request by origin + path only. The Log is a plain
+  // text record the user reads; query strings carry API keys and
+  // session tokens often enough that copying them there is a leak we
+  // don't need to take.
+  let where = url;
+  let origin = url;
+  try {
+    const u = new URL(url);
+    where = `${u.origin}${u.pathname}`;
+    origin = u.origin;
+  } catch {
+    // Unparseable, so there's no origin to key on — but the promise
+    // that a Log entry carries no query string has to hold for the
+    // string we couldn't read too, which is exactly the case where we
+    // don't know what's in it.
+    where = url.split('?')[0];
+    origin = where;
+  }
+  const key = `${scriptId}|${origin}|${verdict.reason}|${stage}`;
+  if (loggedConnectVerdicts.has(key)) return;
+  if (loggedConnectVerdicts.size >= LOGGED_CONNECT_VERDICT_CAP) loggedConnectVerdicts.clear();
+  loggedConnectVerdicts.add(key);
+  const target = stage === 'redirect' ? `${where} (after redirect)` : where;
+  logScriptEvent(scriptId, {
+    level: 'warning',
+    source: 'gm-xhr',
+    tabId,
+    // Same split as the page-facing error, through the same helper:
+    // only a real denial gets blamed on the header, and only a script
+    // that wrote @connect lines gets them named.
+    message: verdict.denied
+      ? `GM_xmlhttpRequest to ${target} ${connectDenialClause(verdict.reason, verdict.undeclared)}`
+      : `GM_xmlhttpRequest to ${target} failed: ${verdict.reason}`,
+  });
+}
 
 // ---------- GM_openInTab dispatch ----------
 

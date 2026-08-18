@@ -369,11 +369,14 @@ part the reader could act on.
 Sharper wording makes a wrong attribution worse, so a message that
 names a culprit has to be reachable only when that culprit is real:
 
-- `isUrlConnectAllowed` returns `denied` alongside `reason`. A URL that
+- `decideConnect` returns `denied` alongside `reason`. A URL that
   wouldn't parse fails the check without the header having refused
   anything, so only `denied: true` goes through
   `connectBlockedMessage` — otherwise a script with `@connect *` would
-  be told its own rules blocked a relative URL.
+  be told its own rules blocked a URL that never parsed.
+  - The same split decides what the script's Log tab says: a real
+    denial names the script's `@connect` rules, anything else just
+    reports the failure.
 - `loadConnectPolicy` splits "this script is gone" (a race the user
   fixes by reloading) from "its header is missing" (ours). The first
   must not carry the `internal error:` prefix.

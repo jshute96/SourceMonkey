@@ -141,10 +141,10 @@ One page, one set of panels, two query strings:
    - **`@grant` gets no row**, which is a judgement about our GM
      surface rather than a general one:
      - `GM_xmlhttpRequest` is the API that reaches other origins, and it
-       does nothing without `@connect`.
-       - A script declaring no `@connect` is blocked from every
-         cross-origin request (see [GM-APIs.md](GM-APIs.md)), leaving it
-         no further than the page's own `fetch`.
+       does nothing cross-origin without `@connect`.
+       - A script declaring no `@connect` is blocked cross-origin (see
+         [GM-APIs.md](GM-APIs.md)), leaving it no further than the
+         page's own `fetch`.
        - So `Network access` already carries that story, and carries it
          more precisely than a grant name would.
      - Most other grants act within reach the page already has:

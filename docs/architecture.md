@@ -179,9 +179,11 @@ details live in the topic-specific docs linked below.
   short-lived `declarativeNetRequest` session rule around the fetch.
   See [xhr-header-surgery.md](xhr-header-surgery.md).
 - **@connect URL gating** (`src/gm-connect.ts`) — parses `@connect`
-  lines into rules (`*`, `self`, exact, subdomain), resolves `self`
-  against the script's `@match`/`@include` hosts, and gates
-  `GM_xmlhttpRequest` URLs before fetch.
+  lines into rules (`*`, `self`, exact, subdomain) and returns the
+  allow/deny verdict for a `GM_xmlhttpRequest` URL before fetch. The
+  page's own origin always passes; a script that declared no
+  `@connect` is blocked cross-origin. See the `@connect` section of
+  [GM-APIs.md](GM-APIs.md).
 - **GM_openInTab dispatcher** (`src/gm-tab.ts`) — opens new tabs via
   `chrome.tabs.create` on behalf of userscripts; tracks the per-request
   (page-generated id ↔ assigned chrome tab id ↔ originator tab) mapping

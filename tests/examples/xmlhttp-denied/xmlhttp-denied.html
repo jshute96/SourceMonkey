@@ -43,6 +43,13 @@
       <li>The denial happens in the service worker before any
         <code>fetch</code> is issued, so a blocked request never
         leaves the browser.</li>
+      <li>Every denial also lands in the script&rsquo;s Log tab, naming
+        the host and the <code>@connect</code> line that would allow
+        it.</li>
+      <li>Requests to the page&rsquo;s <em>own</em> origin are the
+        exception: they need no <code>@connect</code> at all. See the
+        <a href="../xmlhttp-same-origin/xmlhttp-same-origin.html">same-origin
+        example</a>.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscripts&hellip;</p>

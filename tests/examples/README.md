@@ -51,8 +51,8 @@ buttons in an inline `<script>` and the userscript only observes.
 ### Multi-script directories
 
 Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
-and negative-case pages (`xmlhttp-denied/`) follow a small variant
-of the layout above:
+and the `@connect`-policy pages (`xmlhttp-denied/`,
+`xmlhttp-same-origin/`) follow a small variant of the layout above:
 
 - Still **one** `<dir>.html` and **one** `<dir>.spec.ts`.
 - **Multiple** sibling `*.user.js` files, one per variant being
@@ -138,6 +138,7 @@ events.
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
+| `xmlhttp-same-origin/`     | `GM_xmlhttpRequest` back to the page's own origin, `@connect` or not | multi-script  |
 
 ## Page conventions
 

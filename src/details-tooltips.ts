@@ -44,7 +44,9 @@ const FIXED: Readonly<Record<string, string>> = {
   'Network access':
     'Hosts the script may contact with GM_xmlhttpRequest, from its @connect rules.\n'
     + 'Those requests carry your cookies, so the script can read these '
-    + 'sites while signed in as you.',
+    + 'sites while signed in as you.\n'
+    + "The page's own origin is always reachable, listed or not — the "
+    + 'page can fetch itself anyway.',
 
   'Local overrides':
     '@require / @resource files being read from your disk '

@@ -38,9 +38,12 @@ test.describe('examples / xmlhttp-denied', () => {
 
     // The two denied scripts should fire onerror with the policy
     // block message.
+    // The no-@connect script is told its own way: it wrote no rules,
+    // so the message names the missing header rather than blaming
+    // rules it never declared.
     const noConnect = page.locator('#log li[data-script="no-connect"]');
     await expect(noConnect).toHaveAttribute('data-outcome', 'onerror');
-    await expect(noConnect).toContainText("blocked by this script's @connect rules");
+    await expect(noConnect).toContainText('blocked because this script declares no @connect');
 
     const mismatch = page.locator('#log li[data-script="connect-mismatch"]');
     await expect(mismatch).toHaveAttribute('data-outcome', 'onerror');
@@ -50,7 +53,7 @@ test.describe('examples / xmlhttp-denied', () => {
     // (network reachable) or onerror with a non-policy error
     // (network unreachable in CI), but the substring must not appear.
     const allowed = page.locator('#log li[data-script="connect-allowed"]');
-    await expect(allowed).not.toContainText("blocked by this script's @connect rules");
+    await expect(allowed).not.toContainText('blocked b');
 
     await page.close();
   });

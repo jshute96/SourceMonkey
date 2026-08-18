@@ -14,6 +14,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { UserscriptServer } from '../fixtures/userscript-server';
 
 // Report every callback the script sees as `data-sm-download`, so each
 // test can assert on one attribute. Shared by most cases below.
@@ -583,6 +584,14 @@ test.describe('GM_download', () => {
     // Deliberate cross-API contrast: the same script, with no @connect
     // line at all, is blocked from GM_xmlhttpRequest but allowed to
     // download. See docs/GM-APIs.md for why.
+    //
+    // Both URLs have to be CROSS-origin to the page for the contrast to
+    // mean anything: a same-origin GM_xmlhttpRequest is allowed with no
+    // @connect at all, so pointing it at the fixture server would test
+    // the same-origin allowance instead of the gate. The data server is
+    // a second port on 127.0.0.1 — cross-origin, still reachable in CI.
+    const dataServer = await UserscriptServer.start();
+    dataServer.setRoute('/x', 'payload', { contentType: 'text/plain' });
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
@@ -593,12 +602,12 @@ test.describe('GM_download', () => {
       },
       body: `${REPORTER}
         GM_xmlhttpRequest({
-          url: '${fixtureServer.baseUrl}/target.html',
+          url: '${dataServer.baseUrl}/x',
           onload: () => { document.body.dataset.smXhr = 'load'; },
           onerror: (e) => { document.body.dataset.smXhr = 'error'; },
         });
         GM_download({
-          url: '${fixtureServer.baseUrl}/target.html',
+          url: '${dataServer.baseUrl}/x',
           name: 'sm-no-connect.html',
           onload: () => report('load'),
           onerror: (e) => report('error:' + (e && e.error)),
@@ -615,5 +624,6 @@ test.describe('GM_download', () => {
       timeout: 15000,
     });
     await page.close();
+    await dataServer.stop();
   });
 });
