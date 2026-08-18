@@ -429,6 +429,10 @@ How it works:
   may land the new body on THIS navigation via `sm:swapped`;
   `clearScriptStale` removes the id from `staleScriptIds` so the badge
   doesn't keep nagging.
+- That same reload paints purple *briefly* while the swap lands, so a
+  successful update is visible rather than silent — see
+  [Purple flash while a swap lands](injection.md#purple-flash-while-a-swap-lands).
+  Persistent purple keeps its meaning here: reload to update.
 
 ### Closing the report-after-change race
 

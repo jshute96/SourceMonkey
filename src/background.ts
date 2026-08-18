@@ -84,6 +84,8 @@ import {
 } from './injector.js';
 import {
   applyScriptReport,
+  BADGE_PURPLE,
+  BADGE_RED,
   clearScriptStale,
   computeBadge,
   formatRowLabel,
@@ -719,6 +721,11 @@ async function updateTabMatches(
   // makes its own — so none of them runs unbatched.
   batch?: RefreshBatch,
 ): Promise<void> {
+  // Above the non-injectable early return: leaving the flashing
+  // document for a `chrome://` page is still leaving it. No repaint of
+  // its own — both paths below end in renderBadge, which paints
+  // whatever the flash state is by then.
+  clearReloadFlashForOtherDoc(tabId, documentId ?? '');
   if (!url || !INJECTABLE_SCHEME.test(url)) {
     // Drop menu commands BEFORE renderBadge: the rebuild that
     // renderBadge schedules reads getMenuCommandsForTab() at flush
@@ -829,8 +836,15 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
       await chrome.action.setTitle({ tabId, title: 'SourceMonkey' });
     } else {
       const view = computeBadge(state, await rejectedScriptIds());
+      // The reload flash is a paint-time override, not part of the
+      // computed view: it says "an update is landing right now", which
+      // is a property of the swap in flight rather than of the tab's
+      // expected/actual sets. RED still wins — an error the user has
+      // to act on outranks a transient progress signal.
+      const color = view.color !== BADGE_RED && isReloadFlashing(tabId)
+        ? BADGE_PURPLE : view.color;
       await chrome.action.setBadgeText({ tabId, text: String(view.count) });
-      await chrome.action.setBadgeBackgroundColor({ tabId, color: view.color });
+      await chrome.action.setBadgeBackgroundColor({ tabId, color });
       await chrome.action.setTitle({ tabId, title: view.title });
     }
   } catch {
@@ -1226,6 +1240,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       requestId: taken.requestId,
     }).catch(() => undefined);
   }
+  // Drop the reload flash: there's no badge left to repaint, and its
+  // backstop timer would keep the SW alive for nothing.
+  dropReloadFlash(tabId);
   // Drop any reload-fast-path entries for this tab so a slow refresh
   // doesn't hold a stale closure indefinitely. Keys are `${tabId}:`
   // prefixed, so a string prefix match is enough.
@@ -1811,6 +1828,10 @@ async function handleCheckPending(
     `[SourceMonkey] reload swap: ${payload.name ?? payload.id} loadedAt ${wrapperLoadedAt} -> ${refreshed.loadedAt} ` +
     `(asked at ${askedAt}ms, decided at ${sinceCommit()}ms of ${RELOAD_FAST_PATH_WINDOW_MS})`,
   );
+  // Purple goes up here, at the decision — the wrapper hasn't run the
+  // new body yet, but from now until it reports back there IS an
+  // update landing on this page, which is what the flash announces.
+  startReloadFlash(tabId, documentId, payload.id);
   return {
     action: 'run-new',
     body: swap.body,
@@ -1831,6 +1852,157 @@ async function handleCheckPending(
 async function scriptLogLabel(id: string): Promise<string> {
   await ensureLogIdsLoaded();
   return getScriptLogLabel(id);
+}
+
+// ---------- Reload flash ----------
+//
+// A fast-path swap that WORKS is invisible: the new body runs at
+// document-start and the badge goes straight to green, so the user
+// can't tell whether their edit landed on this reload or is still
+// waiting for the next one. The only purple they ever see is the
+// failure case — the swap missed its window, the old body ran, and
+// the RELOAD badge asks for a second reload.
+//
+// So we flash purple on the way through. Purple goes up the moment a
+// swap is decided and comes down once every swapped wrapper has
+// reported back, which makes the two outcomes read differently:
+//
+//   - a brief purple blink → an update just landed on this page
+//   - purple that stays up → reload again to pick the update up
+//
+// State is in-memory only. It describes a swap in flight, and an SW
+// restart means no wrapper is waiting on us any more.
+
+// Floor on how long purple stays up. The swap → sm:swapped round trip
+// is a few milliseconds, which would paint and unpaint inside a single
+// frame; this makes the blink something a user actually sees.
+const RELOAD_FLASH_MIN_MS = 1200;
+// Backstop for a wrapper that never reports (page torn down mid-swap,
+// tab navigated away). Purple must not stick around looking like the
+// RELOAD state it deliberately mimics.
+const RELOAD_FLASH_MAX_MS = 5_000;
+
+interface ReloadFlash {
+  // The document being swapped into. A commit for a DIFFERENT document
+  // in this tab ends the flash: it belongs to the page that was
+  // reloading, and carrying it onto the next page would paint purple
+  // over something it says nothing about.
+  documentId: string;
+  // Scripts we told to swap and haven't heard back from yet.
+  pending: Set<string>;
+  // Earliest wall-clock time the flash may come down.
+  until: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const reloadFlashByTab = new Map<number, ReloadFlash>();
+
+function isReloadFlashing(tabId: number): boolean {
+  return reloadFlashByTab.has(tabId);
+}
+
+// Called from handleCheckPending as it hands back a `run-new` body.
+// Doesn't await the repaint: the wrapper is blocked on that reply, so
+// nothing on this path may add storage reads to the critical section.
+function startReloadFlash(tabId: number, documentId: string, scriptId: string): void {
+  const existing = reloadFlashByTab.get(tabId);
+  // A flash still up from the PREVIOUS document doesn't get joined —
+  // it gets replaced. `handleCheckPending` answers straight off the
+  // message listener while the new commit's `updateTabMatches` is
+  // still queued, so on a fast second reload this can run before the
+  // navigation handler has dropped the old flash. Joining it would
+  // file this swap under the old documentId, where its own report
+  // can't drain it and the queued commit deletes it outright.
+  if (existing && existing.documentId !== documentId) dropReloadFlash(tabId);
+  const flash = reloadFlashByTab.get(tabId);
+  if (flash) {
+    // Second (or third) script swapping on the same reload joins the
+    // flash already up rather than restarting it — the signal is
+    // "this page is updating", not "this script is".
+    //
+    // Unless the set had already drained: a document-end wrapper asks
+    // later than a document-start one, so by now the earlier swaps may
+    // have reported and left a timer aimed at the old floor. Re-arm
+    // both, or this swap's blink gets whatever is left of someone
+    // else's.
+    if (flash.pending.size === 0) {
+      flash.until = Date.now() + RELOAD_FLASH_MIN_MS;
+      clearTimeout(flash.timer);
+      flash.timer = setTimeout(() => endReloadFlash(tabId), RELOAD_FLASH_MAX_MS);
+    }
+    flash.pending.add(scriptId);
+    return;
+  }
+  reloadFlashByTab.set(tabId, {
+    documentId,
+    pending: new Set([scriptId]),
+    until: Date.now() + RELOAD_FLASH_MIN_MS,
+    timer: setTimeout(() => endReloadFlash(tabId), RELOAD_FLASH_MAX_MS),
+  });
+  repaintTabBadge(tabId);
+}
+
+// Called for every sm:* report. A swapped wrapper sends sm:swapped,
+// one that fell back to its baked-in body (CSP refused the eval, no
+// GM values) sends sm:start, and either can be followed by sm:error —
+// so keying off the id alone, not the message type, is what guarantees
+// the pending set drains.
+//
+// The document is checked, though: a late report from the document we
+// just navigated away from can carry the same script id, and letting
+// it drain the pending set would end the flash for a swap that hasn't
+// landed yet.
+function noteReloadFlashReport(tabId: number, documentId: string, scriptId: string): void {
+  const flash = reloadFlashByTab.get(tabId);
+  if (!flash || flash.documentId !== documentId) return;
+  if (!flash.pending.delete(scriptId)) return;
+  if (flash.pending.size > 0) return;
+  const remaining = flash.until - Date.now();
+  if (remaining <= 0) {
+    endReloadFlash(tabId);
+    return;
+  }
+  clearTimeout(flash.timer);
+  flash.timer = setTimeout(() => endReloadFlash(tabId), remaining);
+}
+
+function endReloadFlash(tabId: number): void {
+  if (!dropReloadFlash(tabId)) return;
+  repaintTabBadge(tabId);
+}
+
+// Forget the flash without repainting. Separate from endReloadFlash
+// for tab removal, where there's no badge left to paint. Returns
+// whether there was anything to drop.
+function dropReloadFlash(tabId: number): boolean {
+  const flash = reloadFlashByTab.get(tabId);
+  if (!flash) return false;
+  clearTimeout(flash.timer);
+  reloadFlashByTab.delete(tabId);
+  return true;
+}
+
+// End a flash left over from a previous document. Keyed on the
+// document rather than on "any navigation" because the flash starts
+// AFTER the commit it belongs to — the wrapper asks at document-start,
+// which is a moment later — so this tab's own commit handler can run
+// with the flash already up for the document it is handling.
+function clearReloadFlashForOtherDoc(tabId: number, documentId: string): void {
+  if (!documentId) return;
+  const flash = reloadFlashByTab.get(tabId);
+  if (!flash || flash.documentId === documentId) return;
+  dropReloadFlash(tabId);
+}
+
+// Repaint from whatever the tab's current state is. Queued through
+// enqueueTabWork so it orders behind the navigation update that wrote
+// this document's state — a repaint that overtook it would read the
+// previous document's record (or none at all, clearing the badge).
+function repaintTabBadge(tabId: number): void {
+  enqueueTabWork(tabId, async () => {
+    const record = await getTabRecord(tabId);
+    await renderBadge(tabId, getCurrentState(record));
+  });
 }
 
 // ---------- GM_xmlhttpRequest dispatch ----------
@@ -2907,6 +3079,12 @@ async function recordScriptReport(
       message: composeWrapperErrorMessage(payload.message, payload.stack),
     });
   }
+
+  // Any report from a script we're flashing for means its swap has
+  // resolved, one way or another. sm:abandoned counts too — that
+  // wrapper is done and nothing further is coming from it — so this
+  // sits above the early return below.
+  noteReloadFlashReport(tabId, senderDocId, id);
 
   // sm:abandoned is logging-only — there's no "actual" report to merge
   // and no badge change. Returning here keeps the rest of the function

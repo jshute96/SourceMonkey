@@ -12,6 +12,7 @@ import { UserscriptServer } from '../fixtures/userscript-server';
 import { waitForTabState, type TabStateSnapshot } from '../fixtures/sw-api';
 
 const GREEN = '#2e7d32';
+const PURPLE = '#d500f9';
 
 function hasColor(snapshot: TabStateSnapshot, hex: string): boolean {
   if (!Array.isArray(snapshot.badgeColor)) return false;
@@ -80,6 +81,52 @@ test.describe('reload fast-path', () => {
       sm, tabId,
       (s) => s.badgeText === '1' && hasColor(s, GREEN),
       'green after reload swap',
+    );
+    await page.close();
+  });
+
+  test('a successful swap flashes the badge purple, then returns to green', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // The swap itself is invisible — the page just works — so the badge
+    // blinks purple while it lands. Purple that STAYS up keeps its old
+    // meaning ("reload again"); this test pins the transient one.
+    scriptsDir.write({
+      relativePath: 'flash.user.js',
+      meta: { name: 'Flash', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', injectInto: 'content' },
+      body: `document.title = 'v1';`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1');
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
+
+    scriptsDir.rewriteBody('flash.user.js', `document.title = 'v2';`);
+
+    // Not awaited before the poll: the flash is time-boxed from the
+    // swap decision, and waiting for the load event first would spend
+    // part of that window.
+    const navigated = page.reload();
+    // The tooltip separates the two purples: a swap that MISSED its
+    // window also paints purple, but as a stale `Reload to update`
+    // row. Asserting its absence keeps a missed window failing here
+    // rather than passing this wait and failing the title check.
+    await waitForTabState(
+      sm, tabId,
+      (s) => hasColor(s, PURPLE) && !s.title.includes('Reload to update'),
+      'purple while the swap lands',
+    );
+    await navigated;
+    await expect(page).toHaveTitle('v2');
+    // Comes back down on its own — nothing here reloads again.
+    await waitForTabState(
+      sm, tabId,
+      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      'green once the flash ends',
     );
     await page.close();
   });

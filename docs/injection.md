@@ -860,6 +860,68 @@ local file:
   swap hands the body over directly), but it reads every row in storage
   and competes for the same thread.
 
+### Purple flash while a swap lands
+
+A swap that works leaves nothing on screen: the new body runs at
+document-start and the badge goes straight to green, so it reads the
+same as a reload that changed nothing.
+
+The only purple the user ever saw was the *failure* — swap missed its
+window, old body ran, [RELOAD badge](matching.md#stale-tab-notification)
+asking for a second reload.
+
+So the badge blinks purple on the way through, and the two outcomes
+read differently:
+
+- **brief purple, then back** — an update landed on this page;
+- **purple that stays up** — reload again to pick the update up.
+
+Mechanics (`reloadFlashByTab` in `background.ts`, in-memory only —
+an SW restart means no wrapper is waiting on us):
+
+- Purple goes up when `handleCheckPending` decides `run-new`, and the
+  script id joins the tab's pending set. A second script swapping on
+  the same reload joins the flash rather than restarting it.
+- It comes down when every pending script has sent any `sm:*` report —
+  keyed on the id, not the message type, because a wrapper that fell
+  back to its baked-in body (page CSP refused the eval) reports
+  `sm:start`, not `sm:swapped`. Reports from a *different* document
+  don't count: a late one from the page we navigated away from carries
+  the same ids.
+- `RELOAD_FLASH_MIN_MS` (1.2 s) is a floor: the decision → `sm:swapped`
+  round trip is a few milliseconds, which would paint and unpaint
+  inside one frame.
+- `RELOAD_FLASH_MAX_MS` (5 s) is the backstop for a wrapper that never
+  reports, so purple can't stick around looking like the RELOAD state
+  it deliberately mimics.
+- It's a paint-time override in `renderBadge`, not part of
+  `computeBadge`: it describes a swap in flight rather than the tab's
+  expected/actual sets. RED still wins — an error the user must act on
+  outranks a progress signal.
+- The flash records its `documentId`, and a commit for a different
+  document in the same tab drops it — including a commit to a
+  non-injectable URL, which is a departure like any other. Keyed on the
+  document because the flash starts *after* the commit it belongs to
+  (the wrapper asks at document-start), so "any navigation clears it"
+  would race the swap it is announcing.
+- For the same reason a swap for a different document *replaces* the
+  flash rather than joining it: on a fast second reload,
+  `handleCheckPending` (answered off the message listener) can beat the
+  new commit's queued `updateTabMatches` to it.
+- A swap that joins a drained flash re-arms the floor and the backstop,
+  so a `document-end` wrapper asking later than a `document-start` one
+  gets a blink of its own rather than the tail of someone else's.
+
+Two things it deliberately doesn't do:
+
+- **The tooltip is unchanged.** It describes the tab's scripts, and the
+  hover it would serve can't happen inside 1.2 s.
+- **A terminated worker leaves the paint behind.** Chrome keeps the
+  badge color it was last given, and the flash state doesn't survive
+  the worker — so an extension reload mid-flash leaves purple up until
+  the next navigation or `sm:*` report repaints. Rare (the backstop is
+  well inside the keep-alive) and self-healing.
+
 ### Shared work across the batch
 
 **The batch covers navigation-triggered checks generally, not just the
