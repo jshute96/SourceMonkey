@@ -201,6 +201,12 @@ the *other* rows.
   different upstream — a reasonable thing to want, but not "bring this
   up to date with what you are looking at", and offering it here would
   read as though it were.
+- **No refetch on a pinned row** — one imported from another manager's
+  backup with no upstream at all (see
+  [import-export-tampermonkey.md](import-export-tampermonkey.md)).
+  `refreshScript` returns such a row untouched, so the button would do
+  nothing. Same conclusion as the rule above, reached the other way:
+  there is no upstream rather than the wrong one.
 - **Install**, only on the `installTarget` row — and only when the
   caller passes an `install` action. Two callers decline:
   - the **installed page**, where an Install would add a second row for

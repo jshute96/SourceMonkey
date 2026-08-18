@@ -13,6 +13,7 @@ import {
   collectionBubbleKey,
   collectionClickUrl,
   collectionHasManifest,
+  isSyntheticCollection,
 } from '../../dist/collection-display.js';
 
 // ---------- inferCollectionType ----------
@@ -234,4 +235,32 @@ test('collectionClickUrl: github raw URLs convert to their github.com page URL',
     collectionClickUrl('https://github.com/owner/repo/tree/main'),
     'https://github.com/owner/repo/tree/main',
   );
+});
+
+// ---------- Import collections ----------
+
+test('inferCollectionType: an import path is its own type, not a file path', () => {
+  assert.equal(inferCollectionType('import:abc-123'), 'imported');
+});
+
+test('collectionBubbleKey: imported never carries the manifest suffix', () => {
+  assert.equal(collectionBubbleKey('import:abc-123'), 'imported');
+});
+
+test('collectionClickUrl: an import collection has nothing to link to', () => {
+  assert.equal(collectionClickUrl('import:abc-123'), null);
+});
+
+test('inferDisplayName: falls back to a readable name, never the raw path', () => {
+  const name = inferDisplayName('import:abc-123');
+  assert.doesNotMatch(name, /import:/);
+  assert.equal(name, 'Imported scripts');
+});
+
+test('isSyntheticCollection: true for both pathless kinds, false for real locations', () => {
+  assert.equal(isSyntheticCollection('import:abc-123'), true);
+  assert.equal(isSyntheticCollection('container:file'), true);
+  assert.equal(isSyntheticCollection('container:http'), true);
+  assert.equal(isSyntheticCollection('/home/me/scripts'), false);
+  assert.equal(isSyntheticCollection('https://example.com/script_manifest.json'), false);
 });

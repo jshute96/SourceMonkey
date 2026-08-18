@@ -65,8 +65,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the viewer's preview to its raw-source tab |
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
-| `src/collections.html` | Collections page markup: Options button, path-entry form, file-access banner slot, collection list |
-| `src/collections.ts` | Collections page controller — render, in-place updates, repaint-from-storage on change, `?refresh`/`?add`/`?first_run` triggers |
+| `src/collections.html` | Collections page markup: Options button, path-entry form, Import dialog, file-access banner slot, collection list |
+| `src/collections.ts` | Collections page controller — render, in-place updates, repaint-from-storage on change, Import dialog, `?refresh`/`?add`/`?first_run` triggers |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, GitHub auth token, collections link |
 | `src/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), GitHub-token controls |
 | `src/userscript.html` | Userscript viewer markup: controls row, banner slot + preview actions, details panel, tab strip, code box, log pane |
@@ -79,19 +79,20 @@ One-line descriptions of every source file, grouped by directory.
 | `src/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
-| `src/directories.ts` | Collection I/O + classifiers (single-file / manifest / github-dir / container), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
+| `src/directories.ts` | Collection I/O + classifiers (single-file / manifest / github-dir / container / import), pinned-URL helpers, input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
 | `src/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/markup-response.ts` | Detects an HTML page served where JavaScript was expected (Content-Type + leading `<`), and words the failure |
+| `src/tampermonkey-import.ts` | Parser for Tampermonkey's backup `.txt`: base64 sources, per-script location / enabled / GM storage, synthesized filenames |
 | `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-collection dispatch in addCollection, parse-time diagnostics, refreshAllCollections, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
-| `src/script-display.ts` | Pure display helpers: size/status formatting, decode-for-display name/path helpers, SRI-fragment strip, the shared enable-toggle tooltip |
+| `src/script-display.ts` | Pure display helpers: size/status formatting, decode-for-display name/path helpers, SRI-fragment strip, the shared enable-toggle tooltip, the pinned-location wording |
 | `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same verdict |
 | `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
 | `src/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
-| `src/collection-display.ts` | Collection-display helpers: type classification (incl. container kinds), display-name inference, manifest flag, anchor id, disabled-collection tooltip, plus the colored type-bubble builder |
+| `src/collection-display.ts` | Collection-display helpers: type classification (incl. container + imported kinds), display-name inference, manifest flag, anchor id, disabled-collection tooltip, plus the colored type-bubble builder |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page; today carries the collection-type bubble, display-name, and warning-banner rules |
 | `src/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
@@ -196,6 +197,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/version-compare.test.mjs` | Unit tests for `@version` ordering: numeric segments, missing tails, prereleases, empty input |
 | `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |
 | `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
+| `tests/unit/tampermonkey-import.test.mjs` | Unit tests for the Tampermonkey backup parser: decoding, ordering, location rules, partial failure, filename dedup |
 | `tests/unit/collection-display.test.mjs` | Unit tests for collection-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-sites.test.mjs` | Unit tests for the hosting-site page rewrites, the cross-spelling identity key, and the row's suppression rules |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
@@ -297,6 +299,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
+| `tests/e2e/import-tampermonkey.spec.ts` | E2E for the Import dialog: collection creation, ordering, enable mirroring, pinned vs located rows, GM storage, Refresh All safety |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
@@ -357,3 +360,4 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
 | `docs/install-capture.md` | How `.user.js` link clicks become installs: Chrome's version-dependent handling, the capture, the prompt, the bypass |
 | `docs/script-identity.md` | How two rows are recognised as the same script, and the "Other versions" panel built on it |
+| `docs/import-export-tampermonkey.md` | Moving scripts to/from Tampermonkey: why it's file-based, its import/export formats, and its Utilities page |

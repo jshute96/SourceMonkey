@@ -40,7 +40,7 @@ import { rowTooltip, type DetailsMode } from './details-tooltips.js';
 import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
-import { isContainerCollection, locationFsPath } from './directories.js';
+import { locationFsPath } from './directories.js';
 import { displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {
@@ -48,6 +48,7 @@ import {
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
+  isSyntheticCollection,
 } from './collection-display.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import { versionRelation, type VersionRelation } from './version-compare.js';
@@ -57,9 +58,15 @@ export interface LocationRow {
   // What the row reads as — the decoded URL, or the bare fs path for
   // file:// scripts.
   text: string;
-  // What the anchor points at (and what the tooltip surfaces): always
-  // the real, encoded URL.
-  href: string;
+  // What the anchor points at (and what the tooltip surfaces): the
+  // real, encoded URL.
+  //
+  // Absent for a pinned script — one imported from another manager's
+  // backup with no upstream (see docs/import-export-tampermonkey.md).
+  // There the row states that fact instead of naming a place, so it
+  // renders as plain text: an anchor with nothing behind it invites a
+  // click that can only disappoint, and there is nothing worth copying.
+  href?: string;
   // Optional trailing control, e.g. the viewer's copy-to-clipboard
   // button. Moved into the cell on every render.
   trailing?: HTMLElement;
@@ -147,7 +154,11 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
-    addSitePage(dl, model.location.href, h);
+    // The hosting-site row is derived from where the script lives, so a
+    // pinned script (no `href`) has nothing to derive it from. Skipped
+    // rather than passed an empty URL, which `sitePageRow` would have
+    // to grow a case for.
+    if (model.location.href !== undefined) addSitePage(dl, model.location.href, h);
   }
   // Straight after the hosting-site row: both name a page about this
   // script, one derived from where it lives and one claimed by the file
@@ -524,9 +535,10 @@ function collectionCell(collection: StoredCollection): Node {
   // doesn't carry the `chrome-extension://<id>/` prefix.
   nameLink.href = `collections.html#${collectionAnchorId(collection.id)}`;
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
-  // the section on the collections page. Container collections have a
-  // synthetic `container:<kind>` path which would leak — skip then.
-  if (!isContainerCollection(collection.path)) nameLink.title = collection.path;
+  // the section on the collections page. Container and import
+  // collections have a synthetic path (`container:<kind>` /
+  // `import:<uuid>`) which would leak — skip for those.
+  if (!isSyntheticCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
 
   return cell;
@@ -535,6 +547,17 @@ function collectionCell(collection: StoredCollection): Node {
 function locationCell(row: LocationRow): Node {
   const cell = document.createElement('span');
   cell.className = 'filename-cell';
+
+  // No href: the row is stating that there is no location rather than
+  // showing one. Plain text, and none of the affordances below — the
+  // caller doesn't pass a copy button either.
+  if (row.href === undefined) {
+    const noteEl = document.createElement('span');
+    noteEl.className = 'filename-text location-none';
+    noteEl.textContent = row.text;
+    cell.appendChild(noteEl);
+    return cell;
+  }
 
   // Wrap the path in an anchor so it doubles as an open-in-new-tab
   // link. http(s) URLs navigate normally; file:// links are accepted

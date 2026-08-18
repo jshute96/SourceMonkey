@@ -33,6 +33,7 @@
 // (this module, external tools poking storage, future paths we haven't
 // imagined) triggers the same propagation.
 
+import { isPinnedScriptUrl } from './directories.js';
 import {
   getAllScripts,
   getScript,
@@ -521,6 +522,17 @@ async function probeOneScript(
   // INVALID both outrank OUTDATED so nothing stale is on screen, and a
   // row that recovers gets its annotation back without a refetch.
   if (script.status !== 'ok') return;
+  // A pinned row — imported with no upstream — is left alone for a
+  // different reason: the probe would work fine, and that is the
+  // problem. OUTDATED means "somewhere else is ahead of you", and every
+  // control that would let the user act on it is correctly withheld
+  // from a pinned script (see docs/import-export-tampermonkey.md). A
+  // badge that reports a gap nothing can close is not information, it
+  // is a permanent complaint.
+  if (isPinnedScriptUrl(script.fileUrl)) {
+    if (script.versionProbes) await setVersionProbes(script.id, []);
+    return;
+  }
   const targets = probeTargets(script.header, script.fileUrl);
   if (targets.length === 0) {
     // The script no longer names an upstream we don't already fetch

@@ -80,6 +80,12 @@ keys would look like a wiped profile.
     "Scripts from local disk / web / GitHub" collections that aggregate
     individually added `.user.js` URLs and paths. Container collections
     have no scan step; their `scriptIds` list is the source of truth.
+  - `import:<uuid>` for an **import** collection — scripts handed to us
+    in another manager's backup file rather than fetched. Like a
+    container it has no scan step; unlike one it has no upstream at all,
+    so the collection never refreshes. A fresh id per import run, so
+    repeat imports each get their own section. See
+    [import-export-tampermonkey.md](import-export-tampermonkey.md).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
@@ -109,6 +115,12 @@ keys would look like a wiped profile.
     the user added, in its canonical spelling (`canonicalCollectionInput`:
     a `file://` URL collapses to its bare path, so one file on disk
     can't land as two rows); `fileUrl` is its URL form.
+  - Import collection: `relativePath` is a filename synthesized from the
+    script's `@name`, deduped within the import. `fileUrl` is the URL the
+    backup named, or a synthetic `sourcemonkey://imported/…` stand-in
+    when it named none — the row's own value either way, since the
+    collection path can't derive it. See
+    [import-export-tampermonkey.md](import-export-tampermonkey.md#per-script-location).
 - `status` — `'ok' | 'invalid' | 'missing'`.
 - `errorMessage?` — set when `status === 'invalid'`. Cleared on the
   transition to `missing` (the row's body is preserved, but the prior
@@ -165,6 +177,10 @@ keys would look like a wiped profile.
   loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
   deduped by canonical URL. Absent when the script declares no
   `@require`. See [requires.md](requires.md).
+- `importedFrom?` — `{manager, uuid, importedAt}` for a row that came
+  from another manager's backup. Absent on every row fetched from a
+  real location. Nothing reads the foreign `uuid` today; it is what a
+  future "re-import updates instead of duplicating" pass matches on.
 - `versionProbes?` — what the script's `@updateURL` / `@downloadURL`
   last claimed, as `{kinds, url, version?, error?, checkedAt}` rows.
   Written only by `setVersionProbes`, never by the load pipeline —
@@ -585,8 +601,17 @@ The write in step 5 is the last thing that can fail, and the one failure
     create an empty collection row, then run `refreshCollection`. Returns
     `{kind: 'newCollection', collection}`. Returns `null` if the collection path
     is already registered.
+- `importCollection(scripts, displayName)` — create one collection from
+  a parsed backup. Nothing is fetched: the bodies came in the file. Each
+  row still goes through the same `buildScriptFromText` + `applyFiles`
+  pair the scan pipeline uses, so header validation, matching, content
+  hash, dependency prefetch, and the parse check all apply as usual.
+  Also mirrors each script's `enabled` state and seeds its `gmval:` rows.
 - `refreshCollection(id)` — full rescan + reload of one collection
-  (with the unchanged-file skip described above).
+  (with the unchanged-file skip described above). Returns the stored
+  state untouched for an import collection: there is no upstream to
+  rescan, so Refresh All walks past it rather than marking every row
+  `missing`.
 - `refreshAllCollections()` — runs `refreshCollection` for every registered
   collection, a bounded few at a time. Used by the collections page's "Refresh All"
   button and by the `?refresh` URL trigger.
@@ -600,6 +625,10 @@ The write in step 5 is the last thing that can fail, and the one failure
   trash-can button on `'missing'` rows and (in container collections) on
   every row.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
+  Returns a **pinned** row (an imported script whose backup named no
+  location) unchanged rather than trying its stand-in URL — otherwise
+  the opportunistic check on every matching navigation would leave a
+  permanent `refreshError` on a script that is working fine.
   Goes through the same `fetchOrSkipInParallel` + `rebuildCollection`
   pipeline as the collection-level Refresh (so the two paths can't
   drift on skip rules, fsMtime handling, enabled preservation, error
@@ -781,6 +810,13 @@ collection**:
     label. It calls `removeScript` to drop the row from storage (and
     from the parent collection's `scriptIds`) — useful because a refresh
     won't re-add a row whose file the scan no longer reports.
+
+An **Import** button sits beside Add. It opens a dialog explaining how
+to export from Tampermonkey, takes the resulting file, and creates one
+import collection from it — see
+[import-export-tampermonkey.md](import-export-tampermonkey.md#importing-into-sourcemonkey).
+Per-script problems in a partly-readable backup are listed on the page
+after the dialog closes, since the import itself succeeded.
 
 Adding a directory triggers a full load immediately — no need to
 click Refresh after adding. The input is validated client-side:

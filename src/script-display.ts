@@ -255,3 +255,28 @@ export function stripSriFragment(urlOrRef: string): string {
   if (!fragment.split(',').every((part) => SRI_PART_RE.test(part))) return urlOrRef;
   return urlOrRef.slice(0, hash);
 }
+
+// What the viewer's Location row reads for a pinned script — one
+// imported from another manager's backup with no upstream to name (see
+// docs/import-export-tampermonkey.md). Naming the manager matters: the
+// user knows they imported from Tampermonkey, so "no external
+// location" reads as a fact about that script rather than as something
+// SourceMonkey failed to work out.
+const IMPORT_MANAGER_NAMES: Record<string, string> = {
+  tampermonkey: 'Tampermonkey',
+};
+
+export function pinnedLocationText(manager?: string): string {
+  const name = manager ? IMPORT_MANAGER_NAMES[manager] : undefined;
+  return name
+    ? `Imported from ${name} — no external location`
+    : 'Imported — no external location';
+}
+
+// Why Refresh is unavailable on a pinned script. Shared because two
+// surfaces offer that action — the viewer's controls row and the
+// "Other versions" panel — and a refresh there would be a no-op:
+// `refreshScript` returns a pinned row untouched, so the button would
+// spin and change nothing.
+export const PINNED_NO_REFRESH_TITLE =
+  'This script was imported and has no location to refresh from';

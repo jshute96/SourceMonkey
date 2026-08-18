@@ -1077,6 +1077,7 @@ they follow are in
   is `@connect`-gated. A `@grant` row for those two names alone would
   be noise-free, but it needs a wording that reads as a capability
   rather than a tag dump.
+<<<<<<< HEAD
 - large collections still blow past `chrome.storage.local` (and RAM). The
   refresh fan-out is bounded now (`src/concurrency.ts`), but the whole
   result set — every script body, plus prefetched `@require` /
@@ -1099,3 +1100,47 @@ they follow are in
     `emitInitialLoadLog` over a freshly added collection
     (`src/script-store.ts`), and the boot log replay in
     `src/script-updater.ts`. Both want `mapWithConcurrency`.
+=======
+- Tampermonkey import follow-ups (see
+  [docs/import-export-tampermonkey.md](docs/import-export-tampermonkey.md)):
+  - **Re-import merges instead of duplicating.** Every import creates a
+    fresh collection, so importing twice gives you the same scripts
+    twice. `StoredScript.importedFrom.uuid` already records the foreign
+    identity a merge would match on. The open question is what merge
+    means when the user has since toggled or edited a row here — the
+    duplicate is at least honest, which is why it ships that way.
+  - **Accept the zip export too.** Only the `.txt` (File → Export) is
+    read today, and the dialog steers users to it. Zip needs a
+    hand-written reader — the project has no runtime dependencies —
+    which is feasible with `DecompressionStream('deflate-raw')` but is
+    only worth it for users who click the wrong Export button.
+  - **Export a backup Tampermonkey can read.** Writing the same JSON
+    shape would make the migration two-way. Nobody has asked, and the
+    `@updateURL`-at-a-local-server route already covers keeping a
+    Tampermonkey install in step during development.
+- `GM_setValue` rows outlive the script that owned them. `removeScript`
+  and `removeCollection` drop the structural rows but never call
+  `wipeScriptValues`, which exists and is unit-tested but has no
+  production caller — so `gmval:<scriptId>:*` keys accumulate under ids
+  nothing refers to any more. Pre-existing, and harmless in the sense
+  that nothing reads them; it is storage that only grows. Newly easier
+  to notice now that importing a backup seeds those rows up front, so a
+  40-script import that gets removed leaves 40 scripts' worth behind.
+  The reason to think before wiring it up: a remove-then-re-add of the
+  same script currently keeps its settings, and only sometimes is that
+  the wrong answer.
+- An import can arrive less functional than the backup it came from.
+  Tampermonkey's export carries `@require` / `@resource` bodies; we drop
+  them and refetch from the declared URLs, so the result matches every
+  other collection. If a dependency URL has since died, `applyFiles`
+  flips the script to `invalid` — a script that worked in Tampermonkey
+  arrives broken, and nothing ties the failure back to the import.
+  Seeding from the backup would fix that at the cost of a second path
+  into the requires/resources store that the normal pipeline never uses.
+- `isSingleFileInput` answers true for a pinned `sourcemonkey://imported/…`
+  URL, and `containerKindForSingleFileInput` then calls it `file`. Inert
+  today: the only caller that could act on it is the preview page's
+  install offer, and a preview never has a pinned location. Worth an
+  explicit guard before anything else starts passing `install` from the
+  installed viewer.
+>>>>>>> d596c5f (Import userscripts from a Tampermonkey backup)

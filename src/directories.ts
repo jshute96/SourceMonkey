@@ -97,6 +97,50 @@ export function containerKind(input: string): ContainerKind | null {
   return null;
 }
 
+// Import collections hold scripts handed to us in a backup file rather
+// than fetched from anywhere. Their stored `path` is `import:<uuid>` —
+// a fresh id per import run, so two imports never collide on the
+// duplicate-path check and each stands as its own section. Like
+// containers they have no scan step; unlike containers their bodies
+// have no collection-level upstream, so the collection never refreshes.
+// See docs/import-export-tampermonkey.md.
+const IMPORT_PATH_PREFIX = 'import:';
+
+export function importCollectionPath(importId: string): string {
+  return IMPORT_PATH_PREFIX + importId;
+}
+
+export function isImportCollection(input: string): boolean {
+  return input.startsWith(IMPORT_PATH_PREFIX) && input.length > IMPORT_PATH_PREFIX.length;
+}
+
+// Stand-in `fileUrl` for an imported script with no upstream — one
+// that was written or edited inside the other manager and exists
+// nowhere else.
+//
+// Why a synthetic URL rather than an empty string: `fileUrl` is the
+// base every `@require` / `@resource` / `@icon` ref resolves against,
+// and `new URL(ref, '')` throws even when `ref` is absolute — which
+// would take out the ordinary absolute-URL requires these scripts do
+// have. A parseable base keeps absolute refs working and makes a
+// relative one fail as `unsupported-scheme`, which is the truth: there
+// is no directory to resolve it against.
+//
+// The `imported` host keeps these clear of the `sourcemonkey://
+// SourceMonkey/…` URLs the injector emits for devtools (see
+// `script-source-url.ts`). Nothing fetches this URL; `isHttpUrl` and
+// `isFileUrl` are both false for it, so local-file overrides and
+// update probes skip such scripts without needing to know why.
+const PINNED_URL_PREFIX = 'sourcemonkey://imported/';
+
+export function pinnedScriptUrl(scriptId: string, filename: string): string {
+  return `${PINNED_URL_PREFIX}${encodeURIComponent(scriptId)}/${encodeURIComponent(filename)}`;
+}
+
+export function isPinnedScriptUrl(fileUrl: string): boolean {
+  return fileUrl.startsWith(PINNED_URL_PREFIX);
+}
+
 // Pathname of an http(s) or file:// URL, sans query and fragment.
 // Returns '' if the string doesn't parse as a URL — callers gate on
 // isHttpUrl / isFileUrl first.

@@ -73,6 +73,12 @@ details live in the topic-specific docs linked below.
   lives in its own module and is dispatched to from `directories.ts`.
   See [file-access.md](file-access.md) and
   [http-collections.md](http-collections.md).
+- **Backup import** (`src/tampermonkey-import.ts`) — parser for
+  Tampermonkey's exported backup, the one channel by which another
+  manager's scripts can reach us. Chrome gives an extension no way to
+  read another extension's state, so migration is a file the user
+  carries across. See
+  [import-export-tampermonkey.md](import-export-tampermonkey.md).
 - **File-access permission UI** (`src/file-access.ts`) — the
   "Allow access to file URLs" probe plus the shared banner every page
   raises when the toggle is what blocked a local read. See
@@ -222,6 +228,9 @@ details live in the topic-specific docs linked below.
 - [updates.md](updates.md) — how a script updates from its install
   source, `@updateURL` / `@downloadURL` probing, `@version` ordering,
   the OUTDATED status.
+- [import-export-tampermonkey.md](import-export-tampermonkey.md) —
+  moving scripts to and from Tampermonkey: why it has to be file-based,
+  its backup format, and what an import carries across.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
 - [matching.md](matching.md) — `@match`/`@include`/`@exclude`

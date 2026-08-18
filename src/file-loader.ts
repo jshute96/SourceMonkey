@@ -135,9 +135,12 @@ export function resolveScriptResourceDetailed(
   if (resolved.protocol === 'file:') {
     return { kind: 'file', url: resolvedStr };
   }
-  // A relative ref that lands on some other scheme — only reachable
-  // when the script's own URL has one, which the collection pipeline
-  // doesn't produce today.
+  // A relative ref that lands on some other scheme — reachable when the
+  // script's own URL has one. That is a pinned imported script, whose
+  // `fileUrl` is the synthetic `sourcemonkey://imported/…` stand-in
+  // (see docs/import-export-tampermonkey.md). Failing here is the right
+  // answer for it: there is no directory such a script's relative refs
+  // could be resolved against.
   return { failed: true, reason: 'unsupported-scheme', scheme: resolved.protocol };
 }
 

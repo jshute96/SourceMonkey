@@ -98,6 +98,8 @@ import {
   formatScriptSize,
   formatScriptStatusLabel,
   leafName,
+  PINNED_NO_REFRESH_TITLE,
+  pinnedLocationText,
   scriptBasename,
   scriptOutdatedProbe,
   stripSriFragment,
@@ -116,6 +118,8 @@ import {
   fetchHttpText,
   isFileUrl,
   isHttpUrl,
+  isImportCollection,
+  isPinnedScriptUrl,
   LOCATION_SHAPES,
   normalizeCollectionInput,
   scriptAbsolutePath,
@@ -644,9 +648,26 @@ function render(script: StoredScript): void {
   // the resolved URL for non-github HTTP collections. Skip the row
   // entirely if the collection row is gone — a bare relative path under
   // a "Location" label would be misleading.
-  currentFilenamePath = collectionPath
-    ? scriptAbsolutePath(collectionPath, script.relativePath)
-    : '';
+  //
+  // Imported rows are resolved differently, because a synthetic
+  // `import:<uuid>` collection path can't produce a location: a located
+  // one carries its own URL on the row, and a pinned one has none at
+  // all (see docs/import-export-tampermonkey.md).
+  const pinnedLocation = isPinnedScriptUrl(script.fileUrl);
+  // A pinned script has nowhere to refresh from, and `refreshScript`
+  // returns it untouched — so the button would spin and change nothing.
+  // Disabled with the reason rather than hidden: a missing control on
+  // one script and not another is a puzzle, and the tooltip is the
+  // answer.
+  refreshBtn.disabled = pinnedLocation;
+  refreshBtn.title = pinnedLocation ? PINNED_NO_REFRESH_TITLE : '';
+  currentFilenamePath = pinnedLocation
+    ? ''
+    : isImportCollection(collectionPath)
+      ? script.fileUrl
+      : collectionPath
+        ? scriptAbsolutePath(collectionPath, script.relativePath)
+        : '';
 
   // Anchor href: for file:// collections we use the file:// URL (the
   // display string is the bare fs path, not navigable). For everything
@@ -659,7 +680,9 @@ function render(script: StoredScript): void {
     scriptUrl: script.fileUrl,
     logId: currentLogId,
     collection: collectionRow,
-    location: currentFilenamePath
+    location: pinnedLocation
+      ? { text: pinnedLocationText(script.importedFrom?.manager) }
+      : currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
           href: locationHref,

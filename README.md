@@ -133,6 +133,24 @@ on demand — `Scripts from local disk`, `Scripts from web`,
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
 
+### Importing from Tampermonkey
+
+Click **Import**, beside Add, to bring your scripts over from
+Tampermonkey. The dialog links to Tampermonkey's Utilities page, where
+**File → Export** saves a backup file; hand that file back to the
+dialog and its scripts arrive as a new collection.
+
+What comes across: each script's source, whether it was enabled, its
+dashboard order, and its stored `GM_setValue` data. Scripts installed
+from the web keep their address and update from it as usual; ones you
+wrote or edited inside Tampermonkey have nowhere to update from, and
+say so.
+
+Each import makes its own collection, so importing twice gives you two.
+
+Details:
+[docs/import-export-tampermonkey.md](docs/import-export-tampermonkey.md).
+
 ### Installing scripts from a `.user.js` link
 
 Click a `.user.js` raw file link anywhere — Greasy Fork, GitHub, a file on your

@@ -30,7 +30,9 @@ import {
   describeError,
   getAllScripts,
   getCollectionWithScripts,
+  describeError,
   getCollections,
+  importCollection,
   isFirstRunComplete,
   isScriptEnabled,
   isCollectionEnabled,
@@ -50,6 +52,12 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import {
+  ImportFormatError,
+  importCollectionName,
+  parseTampermonkeyBackup,
+  TAMPERMONKEY_UTILITIES_URL,
+} from './tampermonkey-import.js';
+import {
   installLocalRootsListener,
   localRootsReady,
   localSearchRoots,
@@ -61,6 +69,7 @@ import {
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
+  isSyntheticCollection,
 } from './collection-display.js';
 import { getValue } from './userscript-header.js';
 import { describeDiagnostic } from './diagnostic-location.js';
@@ -148,11 +157,44 @@ const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonEl
 const refreshAllBtn = document.getElementById('refresh-all') as HTMLButtonElement;
 const openOptionsBtn = document.getElementById('open-options') as HTMLButtonElement;
 const addErrorEl = document.getElementById('add-error') as HTMLParagraphElement;
+const openImportBtn = document.getElementById('open-import') as HTMLButtonElement;
+const importDialog = document.getElementById('import-dialog') as HTMLDialogElement;
+const importTmLink = document.getElementById('import-tm-link') as HTMLAnchorElement;
+const importFileInput = document.getElementById('import-file') as HTMLInputElement;
+const importErrorEl = document.getElementById('import-error') as HTMLParagraphElement;
+const importWarningsEl = document.getElementById('import-warnings') as HTMLDivElement;
+const importCancelBtn = document.getElementById('import-cancel') as HTMLButtonElement;
+const importRunBtn = document.getElementById('import-run') as HTMLButtonElement;
 
 addForm.addEventListener('submit', (event) => {
   event.preventDefault();
   void onAddCollection(addInput.value);
 });
+
+// Set here rather than in the markup so the one place that knows
+// Tampermonkey's URL is the module about Tampermonkey.
+importTmLink.href = TAMPERMONKEY_UTILITIES_URL;
+
+openImportBtn.addEventListener('click', () => {
+  resetImportDialog();
+  importDialog.showModal();
+});
+importCancelBtn.addEventListener('click', () => importDialog.close());
+// Escape closes a <dialog> regardless of which of its controls are
+// disabled, and the in-flight import would keep running — leaving the
+// user free to reopen and start a second one over the same file, which
+// lands as two collections. Refuse the dismissal while busy instead.
+importDialog.addEventListener('cancel', (event) => {
+  if (importBusy) event.preventDefault();
+});
+// A file chosen is the only thing that makes Import meaningful, and a
+// re-pick after a rejected file should clear the complaint about the
+// previous one.
+importFileInput.addEventListener('change', () => {
+  showImportError(null);
+  importRunBtn.disabled = !importFileInput.files?.length;
+});
+importRunBtn.addEventListener('click', () => void onImport());
 
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 
@@ -647,7 +689,7 @@ async function syncScriptRowsFromStorage(
   collectionOn: boolean,
   scripts: readonly StoredScript[],
 ): Promise<void> {
-  const inContainer = isContainerCollection(collection.path);
+  const inContainer = isSyntheticCollection(collection.path);
   const useLocalFiles = collectionUsesLocalFiles(collection);
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
@@ -1049,9 +1091,10 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   appendWithSlashBreaks(nameEl, effectiveDisplayName(collection));
   // Tooltip surfaces the raw stored path so the user can still see the
   // canonical URL / fs path behind a shortened display name. Container
-  // collections have a synthetic identifier as their path, which would
-  // leak `container:file` etc. — skip the tooltip in that case.
-  if (!isContainerCollection(collection.path)) nameEl.title = collection.path;
+  // and import collections have a synthetic identifier as their path,
+  // which would leak `container:file` / `import:<uuid>` — skip the
+  // tooltip for those.
+  if (!isSyntheticCollection(collection.path)) nameEl.title = collection.path;
   heading.appendChild(nameEl);
   header.appendChild(heading);
 
@@ -1129,7 +1172,7 @@ async function renderScriptBlock(
 async function renderScriptTable(collection: StoredCollection, collectionOn: boolean): Promise<HTMLElement> {
   const data = await getCollectionWithScripts(collection.id);
   const scripts = data?.scripts ?? [];
-  const inContainer = isContainerCollection(collection.path);
+  const inContainer = isSyntheticCollection(collection.path);
   const useLocalFiles = collectionUsesLocalFiles(collection);
 
   if (scripts.length === 0) {
@@ -1462,6 +1505,105 @@ async function onAddCollection(
   } finally {
     setAddFormBusy(false);
   }
+}
+
+// Read the chosen backup and turn it into a collection.
+//
+// Everything the user can get wrong here produces a message in the
+// dialog and leaves it open with their file still selected — a closed
+// dialog and an unchanged page would leave them guessing whether
+// anything happened.
+async function onImport(): Promise<void> {
+  const file = importFileInput.files?.[0];
+  if (!file) return;
+
+  setImportBusy(true);
+  try {
+    // One catch around the whole thing, not just the parse. Reading the
+    // file can fail too (it may have moved or been deleted since the
+    // picker recorded it), and so can the store write. Any of those
+    // escaping would leave the dialog open with a re-enabled button and
+    // nothing said — the one outcome worse than an error message.
+    let result;
+    let collection;
+    try {
+      result = parseTampermonkeyBackup(await file.text());
+      collection = (
+        await importCollection(result.scripts, importCollectionName(new Date()))
+      ).collection;
+    } catch (err) {
+      // A format complaint already says what the user should do about
+      // it. Anything else got here from the file read or the store, so
+      // it needs the prefix to make clear the backup was not the
+      // problem.
+      showImportError(
+        err instanceof ImportFormatError
+          ? err.message
+          : `This backup could not be imported: ${describeError(err)}`,
+      );
+      return;
+    }
+    // Same sequence as the add flow: the write is the source of truth,
+    // the repaint builds the section from it, then we land on it.
+    await repaintPage();
+    importDialog.close();
+    jumpToCollection(collection.id);
+
+    // Warnings survive the dialog closing, because the import DID
+    // happen — a scrolled-to new section that is quietly short a few
+    // scripts is worse than being told which ones didn't make it.
+    showImportWarnings(result.warnings);
+  } finally {
+    setImportBusy(false);
+  }
+}
+
+function resetImportDialog(): void {
+  importFileInput.value = '';
+  importRunBtn.disabled = true;
+  showImportError(null);
+  showImportWarnings([]);
+}
+
+function showImportError(message: string | null): void {
+  importErrorEl.textContent = message ?? '';
+  importErrorEl.hidden = message === null;
+}
+
+// Rendered onto the page, not into the dialog — the import succeeded,
+// so these have to still be readable once the dialog is gone and the
+// user is looking at the section that appeared.
+function showImportWarnings(warnings: readonly string[]): void {
+  importWarningsEl.replaceChildren();
+  importWarningsEl.hidden = warnings.length === 0;
+  if (warnings.length === 0) return;
+
+  const intro = document.createElement('div');
+  intro.textContent =
+    warnings.length === 1
+      ? 'One script in this backup could not be imported:'
+      : `${warnings.length} scripts in this backup could not be imported:`;
+  importWarningsEl.appendChild(intro);
+
+  const list = document.createElement('ul');
+  for (const w of warnings) {
+    const li = document.createElement('li');
+    li.textContent = w;
+    list.appendChild(li);
+  }
+  importWarningsEl.appendChild(list);
+}
+
+// Whether an import is in flight. Read by the dialog's `cancel`
+// handler, which has to refuse an Escape that would otherwise leave the
+// work running behind a closed dialog.
+let importBusy = false;
+
+function setImportBusy(busy: boolean): void {
+  importBusy = busy;
+  importRunBtn.disabled = busy || !importFileInput.files?.length;
+  importCancelBtn.disabled = busy;
+  importFileInput.disabled = busy;
 }
 
 // For a duplicate add, find the section that already owns this

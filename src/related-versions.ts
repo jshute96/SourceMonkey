@@ -19,7 +19,7 @@
 //
 // See [docs/script-identity.md].
 
-import { isContainerCollection } from './directories.js';
+import { isPinnedScriptUrl } from './directories.js';
 import { displayLocation, ENABLE_TITLE } from './script-display.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
 import {
@@ -30,6 +30,7 @@ import {
   makeCollectionTypeBubble,
   collectionAnchorId,
   collectionHasManifest,
+  isSyntheticCollection,
 } from './collection-display.js';
 import { getValue } from './userscript-header.js';
 import {
@@ -522,7 +523,11 @@ function actionsCell(
   // it here would read as though it were.
   //
   // The current script's own row is NOT excluded: see the call site.
-  if (rel.sameLocation && actions.update) {
+  //
+  // A pinned row is excluded for the same reason by a different route:
+  // it was imported with no upstream, so there is no "where that row
+  // loads from" to pull from at all.
+  if (rel.sameLocation && actions.update && !isPinnedScriptUrl(rel.script.fileUrl)) {
     const title = isCurrent
       ? `${verb} this script from its collection`
       : `${verb} this copy from its collection`;
@@ -566,7 +571,7 @@ function removeCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTa
   // would most want to clear out, and nothing will scan it back in — so
   // it gets the live button rather than a tooltip about a collection
   // that isn't there.
-  const removable = rel.collection ? isContainerCollection(rel.collection.path) : true;
+  const removable = rel.collection ? isSyntheticCollection(rel.collection.path) : true;
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';

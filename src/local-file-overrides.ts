@@ -67,7 +67,13 @@
 // ref) are a separate, later mechanism: those are allowed for any host
 // script, because naming the file IS the authorization. See TODO.md.
 
-import { isHttpUrl, isFileUrl, containerKind, pathToFileUrl } from './directories.js';
+import {
+  containerKind,
+  isFileUrl,
+  isHttpUrl,
+  isImportCollection,
+  pathToFileUrl,
+} from './directories.js';
 
 // An encoded path separator. The URL parser resolves `..` and `%2e%2e`
 // but deliberately leaves these alone inside a segment, while Chrome's
@@ -294,6 +300,11 @@ export function localSearchRoots(
 // be a control that does nothing.
 export function collectionSupportsLocalFiles(collectionPath: string): boolean {
   if (isHttpUrl(collectionPath)) return false;
+  // Imported scripts are excluded for the same reason: a located one
+  // loads over the network, and a pinned one loads from nowhere. Either
+  // way no row under an import collection ever has a `file://` URL for
+  // `localSearchRoots` to resolve stand-ins against.
+  if (isImportCollection(collectionPath)) return false;
   const container = containerKind(collectionPath);
   return container !== 'http' && container !== 'github';
 }

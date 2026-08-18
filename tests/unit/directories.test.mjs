@@ -31,6 +31,10 @@ import {
   locationFsPath,
   parentDir,
   baseName,
+  importCollectionPath,
+  isImportCollection,
+  isPinnedScriptUrl,
+  pinnedScriptUrl,
 } from '../../dist/directories.js';
 
 test('parseListing extracts files and directories, skipping ..', () => {
@@ -758,3 +762,53 @@ test('scriptAbsolutePath returns the github.com blob URL for a github-dir entry'
   );
 });
 
+
+// ---------- Import collections and pinned script URLs ----------
+//
+// See docs/import-export-tampermonkey.md. `import:<uuid>` is the one
+// collection path with no location behind it, and a pinned `fileUrl` is
+// the one script URL that names no place.
+
+test('isImportCollection: only the import: prefix, and only with an id', () => {
+  assert.equal(isImportCollection('import:abc-123'), true);
+  assert.equal(isImportCollection(importCollectionPath('abc-123')), true);
+  // A bare prefix is not a collection — it carries no id to tell two
+  // imports apart, which is the whole point of the shape.
+  assert.equal(isImportCollection('import:'), false);
+  assert.equal(isImportCollection('container:file'), false);
+  assert.equal(isImportCollection('/home/me/scripts'), false);
+  assert.equal(isImportCollection('https://example.com/import:abc'), false);
+});
+
+test('pinnedScriptUrl: parses as a URL so it can be a resolution base', () => {
+  const url = pinnedScriptUrl('id-1', 'My Script.user.js');
+  assert.doesNotThrow(() => new URL(url));
+  // An absolute ref resolves against it, which is why an empty string
+  // could not be used here — `new URL(abs, '')` throws.
+  assert.equal(
+    new URL('https://cdn.example.com/lib.js', url).href,
+    'https://cdn.example.com/lib.js',
+  );
+  // A relative ref lands on the synthetic scheme, which the file loader
+  // then rejects — the truthful outcome for a script with no folder.
+  assert.equal(new URL('./lib.js', url).protocol, 'sourcemonkey:');
+});
+
+test('pinnedScriptUrl: is unique per script, so two pinned rows never collide', () => {
+  assert.notEqual(pinnedScriptUrl('a', 'Same.user.js'), pinnedScriptUrl('b', 'Same.user.js'));
+});
+
+test('pinnedScriptUrl: escapes a name that would otherwise break the path', () => {
+  const url = pinnedScriptUrl('id-1', 'a/b?c#d.user.js');
+  assert.equal(new URL(url).hash, '');
+  assert.equal(new URL(url).search, '');
+});
+
+test('isPinnedScriptUrl: recognises our own stand-ins and nothing else', () => {
+  assert.equal(isPinnedScriptUrl(pinnedScriptUrl('id-1', 'x.user.js')), true);
+  assert.equal(isPinnedScriptUrl('https://example.com/x.user.js'), false);
+  assert.equal(isPinnedScriptUrl('file:///home/me/x.user.js'), false);
+  // The injector's devtools URLs share the scheme but not the host, and
+  // must not read as a location-less script.
+  assert.equal(isPinnedScriptUrl('sourcemonkey://SourceMonkey/x/x.user.js'), false);
+});
