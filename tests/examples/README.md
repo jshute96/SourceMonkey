@@ -222,7 +222,7 @@ instead of a blind spot. Its costs, using `require-scope/` as the
 worked example:
 
 - **Network dependency.** The absolute URL must be publicly fetchable.
-  `npm run test:e2e` reaches the internet for it, and fails offline.
+  `pnpm run test:e2e` reaches the internet for it, and fails offline.
 - **`main`, not the working tree.** A foreign manager fetches whatever
   the URL serves, so behavioral edits to the shared library aren't
   visible to it until they merge. Put anything that must change in
