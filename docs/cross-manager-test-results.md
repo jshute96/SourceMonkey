@@ -31,6 +31,15 @@ Specs that opt out under TM via
   URLs only, so it can't install the example cleanly. Skipped under
   TM until we ship an absolute-URL variant. SM coverage:
   `tests/examples/gm-resource/gm-resource.spec.ts`.
+- **`gm-storage/` and `gm-download/`** — same shape again: both now
+  drive their API through the shared explorer library, pulled in with
+  a relative `@require ./api-explorer.js`. SM coverage:
+  `tests/examples/gm-storage/gm-storage.spec.ts` and
+  `tests/examples/gm-download/gm-download.spec.ts`.
+  - Every example converted to the explorer joins this list. See
+    "The API explorer" in
+    [tests/examples/README.md](../tests/examples/README.md) for the
+    symlink layout and why the ref has to be relative.
 - **`require-scope/`** — same shape, for `@require ./lib.js`. TM
   installs these examples from a local file, so it has no base URL to
   resolve a relative ref against even in principle, and the fixture
