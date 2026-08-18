@@ -943,7 +943,9 @@ export async function collectActiveSpecs(
 // sub-frame postMessages into THAT frame's window, so the relay has to
 // be in the same frame or every report from it is lost.
 export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
-  return hasWorld(activeSpecs.map((s) => s.world), 'MAIN') ? bridgeSpec() : null;
+  return hasWorld(activeSpecs.map((s) => s.world), 'MAIN')
+    ? bridgeSpec(helperAllFrames(activeSpecs))
+    : null;
 }
 
 // The one question both our own registrations turn on: is any script
@@ -961,15 +963,16 @@ function hasWorld(
 
 // The spec itself, with no "is it wanted?" question attached — the
 // incremental sync answers that from the worlds of the whole
-// registration set rather than from one sync's spec list.
-function bridgeSpec(): RegistrationSpec {
+// registration set rather than from one sync's spec list. `allFrames`
+// arrives the same way, for the same reason.
+function bridgeSpec(allFrames: boolean): RegistrationSpec {
   return {
     id: BRIDGE_SCRIPT_ID,
     matches: ['<all_urls>'],
     js: [{ code: WRAPPER_BRIDGE + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
-    allFrames: helperAllFrames(activeSpecs),
+    allFrames,
   };
 }
 
@@ -985,8 +988,13 @@ function bridgeSpec(): RegistrationSpec {
 // Gated on the active set rather than hardcoded to `true` so a user
 // whose scripts are all `@noframes` doesn't pay helper injection in
 // every ad iframe on every page (they register at `<all_urls>`).
-function helperAllFrames(activeSpecs: RegistrationSpec[]): boolean {
-  return activeSpecs.some((s) => s.allFrames === true);
+// Takes the `allFrames` flags rather than the specs so both sync paths
+// can ask it of what they have — a spec list for a full sync, the
+// projected registration set for an incremental one — exactly as they
+// already do with `hasWorld`.
+function helperAllFrames(active: Iterable<{ allFrames?: boolean }>): boolean {
+  for (const s of active) if (s.allFrames === true) return true;
+  return false;
 }
 
 
@@ -995,19 +1003,21 @@ function helperAllFrames(activeSpecs: RegistrationSpec[]): boolean {
 // active. See the original module-level comment in src/wrapper-gm-runtime.js
 // for the runtime's design.
 export function buildGmRuntimeSpec(activeSpecs: RegistrationSpec[]): RegistrationSpec | null {
-  return hasWorld(activeSpecs.map((s) => s.world), 'USER_SCRIPT') ? gmRuntimeSpec() : null;
+  return hasWorld(activeSpecs.map((s) => s.world), 'USER_SCRIPT')
+    ? gmRuntimeSpec(helperAllFrames(activeSpecs))
+    : null;
 }
 
 // See `bridgeSpec` for why the spec and the "is it wanted?" question
 // are separate.
-function gmRuntimeSpec(): RegistrationSpec {
+function gmRuntimeSpec(allFrames: boolean): RegistrationSpec {
   return {
     id: GM_RUNTIME_SCRIPT_ID,
     matches: ['<all_urls>'],
     js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
-    allFrames: helperAllFrames(activeSpecs),
+    allFrames,
   };
 }
 
@@ -1072,6 +1082,11 @@ interface Placement {
   // Which pattern fields it carries — see `PlacedPatterns` for why an
   // update has to know.
   patterns: PlacedPatterns;
+  // Whether this registration runs in sub-frames. Tracked because the
+  // bridge / GM-runtime registrations follow the whole set's frame
+  // scope, so an incremental sync has to know the scope of the scripts
+  // it isn't rebuilding — see `helperAllFrames`.
+  allFrames: boolean;
 }
 
 interface RegistrationState {
@@ -1218,7 +1233,13 @@ async function readRows(
 // USER_SCRIPT world, so counting it would keep the GM runtime
 // registered forever once a MAIN-world script had ever been active.
 function userWorlds(registered: Map<string, Placement>): InjectionWorld[] {
-  return [...registered].filter(([id]) => isUserScriptId(id)).map(([, p]) => p.world);
+  return userPlacements(registered).map((p) => p.world);
+}
+
+// The placements for user scripts only — our own two registrations are
+// the thing being decided, so they can't be part of the input.
+function userPlacements(registered: Map<string, Placement>): Placement[] {
+  return [...registered].filter(([id]) => isUserScriptId(id)).map(([, p]) => p);
 }
 
 // ---------- Serializing registration work ----------
@@ -1541,6 +1562,7 @@ async function runFullSync(): Promise<RegistrationState> {
     userSpecs,
     hasWorld(userSpecs.map((s) => s.world), 'MAIN'),
     hasWorld(userSpecs.map((s) => s.world), 'USER_SCRIPT'),
+    helperAllFrames(userSpecs),
     // Empty rather than `present`: a full sync re-places the bridge and
     // the GM runtime even when Chrome already holds them, because their
     // code ships with the extension and an update changes it. Skipping
@@ -1683,7 +1705,11 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   const projected = new Map(state.registered);
   for (const id of removeIds) projected.delete(id);
   for (const spec of userSpecs) {
-    projected.set(spec.id, { world: (spec.world ?? 'MAIN') as InjectionWorld, patterns: patternsOf(spec) });
+    projected.set(spec.id, {
+      world: (spec.world ?? 'MAIN') as InjectionWorld,
+      patterns: patternsOf(spec),
+      allFrames: spec.allFrames === true,
+    });
   }
   const needBridge = hasWorld(userWorlds(projected), 'MAIN');
   const needGmRuntime = hasWorld(userWorlds(projected), 'USER_SCRIPT');
@@ -1693,7 +1719,20 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   }
 
   const present = new Map([...state.registered].map(([id, p]) => [id, p.patterns] as const));
-  const specs = orderWithOwnSpecs(userSpecs, needBridge, needGmRuntime, present);
+  // Same projection as the worlds above: the helpers' frame scope
+  // follows the WHOLE registration set, not this sync's slice.
+  const helperFrames = helperAllFrames(userPlacements(projected));
+  // A helper Chrome already holds at the wrong frame scope has to be
+  // re-offered rather than skipped — otherwise the first frame-running
+  // script to arrive after a top-frame-only set gets its bridge / GM
+  // runtime in the top frame only, and everything it reports or calls
+  // from a sub-frame is lost.
+  const helperStale = (id: string) => {
+    const p = state.registered.get(id);
+    return p !== undefined && p.allFrames !== helperFrames;
+  };
+  const alreadyPlaced = { has: (id: string) => present.has(id) && !helperStale(id) };
+  const specs = orderWithOwnSpecs(userSpecs, needBridge, needGmRuntime, helperFrames, alreadyPlaced);
   const applied = await applyPlan({
     specs,
     removeIds,
@@ -1751,11 +1790,14 @@ function orderWithOwnSpecs(
   userSpecs: RegistrationSpec[],
   needBridge: boolean,
   needGmRuntime: boolean,
+  helperFrames: boolean,
   alreadyPlaced: { has(id: string): boolean },
 ): RegistrationSpec[] {
   const specs: RegistrationSpec[] = [];
-  if (needGmRuntime && !alreadyPlaced.has(GM_RUNTIME_SCRIPT_ID)) specs.push(gmRuntimeSpec());
-  if (needBridge && !alreadyPlaced.has(BRIDGE_SCRIPT_ID)) specs.push(bridgeSpec());
+  if (needGmRuntime && !alreadyPlaced.has(GM_RUNTIME_SCRIPT_ID)) {
+    specs.push(gmRuntimeSpec(helperFrames));
+  }
+  if (needBridge && !alreadyPlaced.has(BRIDGE_SCRIPT_ID)) specs.push(bridgeSpec(helperFrames));
   specs.push(...userSpecs);
   return specs;
 }
@@ -1771,6 +1813,7 @@ function placementsOf(
     out.set(spec.id, {
       world: (spec.world ?? 'MAIN') as InjectionWorld,
       patterns: patternsOf(spec),
+      allFrames: spec.allFrames === true,
     });
   }
   return out;
@@ -2182,7 +2225,9 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
     const spec = specs.find((s) => s.id === id);
     if (syncState && spec) {
       syncState.registered.set(id, {
-        world: (spec.world ?? 'MAIN') as InjectionWorld, patterns: patternsOf(spec),
+        world: (spec.world ?? 'MAIN') as InjectionWorld,
+        patterns: patternsOf(spec),
+        allFrames: spec.allFrames === true,
       });
     }
   }

@@ -551,6 +551,12 @@ explicitly — an omitted one would silently mean top-frame-only.
 - Gated on the active set rather than hardcoded, because the helpers
   register at `<all_urls>`: a user whose scripts are all `@noframes`
   shouldn't pay helper injection in every ad iframe on the web.
+- An **incremental** sync asks the same question of the projected
+  registration set, not of the slice it is rebuilding — the same
+  treatment `world` already gets. A helper Chrome already holds at the
+  wrong frame scope is re-offered rather than skipped, so the first
+  frame-running script to arrive after an all-`@noframes` set still
+  gets its helper in the frames.
 
 #### What runs once per frame, and what doesn't
 

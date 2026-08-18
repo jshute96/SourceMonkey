@@ -47,7 +47,7 @@ const header = (...tags) => ({ tags: [{ tag: 'name', value: 'Hello' }, ...tags] 
 function makeScript(over = {}) {
   return {
     id: 'script-1',
-    sourceId: 'source-1',
+    collectionId: 'collection-1',
     relativePath: 'a.user.js',
     fileUrl: 'file:///a.user.js',
     status: 'ok',
@@ -131,11 +131,11 @@ test('buildRegistrationSpec: frame targeting is independent of world and run-at'
 });
 
 test('collectActiveSpecs: per-script frame targeting survives the batch build', async () => {
-  const sources = new Map([['source-1', { id: 'source-1', enabled: true }]]);
+  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
   const specs = await collectActiveSpecs([
     makeScript({ id: 'frames' }),
     makeScript({ id: 'noframes', header: header({ tag: 'noframes', value: '' }) }),
-  ], sources);
+  ], collections);
   const byId = new Map(specs.map((s) => [s.id, s]));
   assert.equal(byId.get('frames').allFrames, true);
   assert.equal(byId.get('noframes').allFrames, false);

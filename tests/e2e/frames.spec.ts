@@ -32,7 +32,7 @@ test.describe('frames', () => {
         if (el) el.textContent = ${JSON.stringify(MARK)};
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -72,9 +72,9 @@ test.describe('frames', () => {
         if (el) el.textContent = ${JSON.stringify(MARK)};
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -122,7 +122,7 @@ test.describe('frames', () => {
         if (el) el.textContent = ${JSON.stringify(MARK)};
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -161,7 +161,7 @@ test.describe('frames', () => {
         document.documentElement.setAttribute('data-sm-ran', '1');
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -196,7 +196,7 @@ test.describe('frames', () => {
         if (el) el.textContent = ${JSON.stringify(MARK)};
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -240,7 +240,7 @@ test.describe('frames', () => {
       },
       body: 'void 0;',
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const sw = await getServiceWorker();
@@ -261,6 +261,56 @@ test.describe('frames', () => {
     expect(byId.get('sourcemonkey-gm-runtime')).toBe(true);
   });
 
+  // The incremental sync only rebuilds the rows that moved, so the
+  // helpers' frame scope has to be read off the whole registration set
+  // — and a helper already registered at the wrong scope has to be
+  // re-offered rather than skipped.
+  test('adding a frame-running script pulls already-registered helpers into frames', async ({
+    fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'top.user.js',
+      meta: {
+        name: 'Top Only', match: [`${fixtureServer.baseUrl}/*`],
+        grant: ['GM_addStyle'], extra: ['// @noframes'],
+      },
+      body: 'void 0;',
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const sw = await getServiceWorker();
+    const helperFrames = async () => {
+      const list = await sw.evaluate(async () => {
+        const scripts = await chrome.userScripts.getScripts();
+        return scripts.map((s) => ({ id: s.id, allFrames: s.allFrames }));
+      });
+      return new Map(list.map((r) => [r.id, r.allFrames]));
+    };
+    expect((await helperFrames()).get('sourcemonkey-gm-runtime')).toBe(false);
+
+    // A second collection, so the sync that follows is incremental
+    // rather than a rebuild of everything.
+    const second = ScriptsDir.create();
+    try {
+      second.write({
+        relativePath: 'frames.user.js',
+        meta: {
+          name: 'Runs In Frames', match: [`${fixtureServer.baseUrl}/*`],
+          grant: ['GM_addStyle'],
+        },
+        body: 'void 0;',
+      });
+      await sm.addCollection(second.path);
+      // The point of the test is the incremental path — a full sync
+      // rebuilds the helpers anyway and would prove nothing.
+      expect((await sm.syncNow()).kind).toBe('incremental');
+      expect((await helperFrames()).get('sourcemonkey-gm-runtime')).toBe(true);
+    } finally {
+      second.cleanup();
+    }
+  });
+
   test('many frames do not multiply the badge count or the script Log', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
@@ -272,9 +322,9 @@ test.describe('frames', () => {
         if (el) el.textContent = ${JSON.stringify(MARK)};
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const withScripts = await sm.getSourceWithScripts(source!.id);
+    const withScripts = await sm.getCollectionWithScripts(collection!.id);
     const scriptId = withScripts!.scripts[0].id;
 
     const page = await extensionContext.newPage();
@@ -344,7 +394,7 @@ test.describe('frames', () => {
         if (el) el.textContent = ${JSON.stringify(MARK)};
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -388,9 +438,9 @@ test.describe('frames', () => {
         }
       `,
     });
-    const source = await sm.addSource(scriptsDir.path);
+    const collection = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
-    const scriptId = (await sm.getSourceWithScripts(source!.id))!.scripts[0].id;
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/frames.html`);
@@ -442,7 +492,7 @@ test.describe('frames', () => {
         );
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
