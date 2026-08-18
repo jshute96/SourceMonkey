@@ -30,7 +30,6 @@ import {
   describeError,
   getAllScripts,
   getCollectionWithScripts,
-  describeError,
   getCollections,
   importCollection,
   isFirstRunComplete,

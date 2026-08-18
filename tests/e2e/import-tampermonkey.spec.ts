@@ -98,11 +98,11 @@ test.describe('import from Tampermonkey', () => {
     await expect(section.locator('h2 .collection-type-bubble')).toHaveText('imported');
     await expect(section.locator('tbody tr')).toHaveCount(2);
 
-    // Filenames are synthesized from @name, in the backup's own order.
-    await expect(section.locator('tbody tr td.name-cell')).toHaveText([
-      /Alpha\.user\.js/,
-      /Beta\.user\.js/,
-    ]);
+    // The row shows the script's `@name`; the synthesized filename is
+    // what the store holds, in the backup's own order.
+    await expect(section.locator('tbody tr td.name-cell')).toHaveText(['Alpha', 'Beta']);
+    expect((await allScripts(sm)).map((s) => s.relativePath))
+      .toEqual(['Alpha.user.js', 'Beta.user.js']);
     for (const s of await allScripts(sm)) expect(s.status).toBe('ok');
     await page.close();
   });
@@ -118,10 +118,8 @@ test.describe('import from Tampermonkey', () => {
       { name: 'First', position: 1 },
     ]));
 
-    await expect(page.locator('section.collection tbody tr td.name-cell')).toHaveText([
-      /First\.user\.js/,
-      /Last\.user\.js/,
-    ]);
+    await expect(page.locator('section.collection tbody tr td.name-cell'))
+      .toHaveText(['First', 'Last']);
     // The stored order is what matters beyond the render — `scriptIds`
     // is the collection's own sequence, not something the page derives.
     expect((await allScripts(sm)).map((s) => s.relativePath))
