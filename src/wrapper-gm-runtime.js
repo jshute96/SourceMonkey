@@ -1752,6 +1752,93 @@
     },
   };
 
+  /* ---------- window.close / window.focus ----------
+
+     Tampermonkey's contract for `@grant window.close` / `@grant
+     window.focus`: the script calls the ordinary `window.close()` /
+     `window.focus()` and it actually works, where the page's own call
+     is a no-op. Chrome refuses `window.close()` for a tab the script
+     didn't open with `window.open`, and it ignores `window.focus()`
+     for a background tab. The extension is not bound by either rule,
+     so the grant REPLACES the method on this world's `window` with one
+     that asks the SW to do it (`chrome.tabs.remove` /
+     `chrome.windows.update`).
+
+     Notes:
+       - The replacement lives on the USER_SCRIPT world's `window`, so
+         the page's own `window.close` is untouched. Sibling scripts in
+         this world do see it — the same per-document grant caveat as
+         window.onurlchange; see docs/GM-APIs.md.
+       - The call returns `undefined` synchronously, as TM's does. The
+         SW round-trip is fire-and-forget: nothing useful can be
+         reported to a caller whose tab is about to disappear, and a
+         failure is logged (page console + the script's Log tab, from
+         the SW side).
+       - Arguments are ignored — neither method takes any. */
+  var windowControlInstalled = _ObjectCreate(null);
+
+  /* Replace one method. Idempotent per name: a second granting script
+     (or a re-registration inside the same document) reuses the
+     override that's already there.
+
+     A failure to install is swallowed — the script keeps the page's
+     native method, which is the same thing it would have without the
+     grant. There is no feature test to keep honest here (unlike
+     window.onurlchange, `window.close` exists either way), so
+     degrading quietly is the whole story. */
+  function installWindowControl(scriptId, method) {
+    if (windowControlInstalled[method]) return;
+    var msgType = (method === "close") ? "sm:gm-window-close" : "sm:gm-window-focus";
+    var replacement = function () {
+      try {
+        var p = api.sendAsync({ type: msgType, scriptId: scriptId });
+        if (p && typeof p.then === "function") {
+          p.then(function (reply) {
+            if (reply && reply.ok) return;
+            var why = (reply && reply.error) ? reply.error : "SourceMonkey sent no reply";
+            try { console.info("[SourceMonkey] window." + method + " —", why); } catch (_le) {}
+          }, function (err) {
+            try { console.info("[SourceMonkey] window." + method + " send failed:", (err && err.message) || err); } catch (_le2) {}
+          });
+        }
+      } catch (e) {
+        try { console.info("[SourceMonkey] window." + method + " failed:", e); } catch (_le3) {}
+      }
+      return undefined;
+    };
+    try {
+      _ObjectDefineProperty(window, method, {
+        value: replacement,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+      windowControlInstalled[method] = true;
+    } catch (_de) {
+      /* Some engines report the Window method as non-configurable.
+         A plain assignment still lands when it's merely writable. */
+      try {
+        window[method] = replacement;
+        windowControlInstalled[method] = true;
+      } catch (_ae2) {}
+    }
+  }
+
+  var windowControl = {
+    /* Called from the compile-in bindings of every script that granted
+       `window.close` / `window.focus`, ahead of the script body.
+       `method` is the bare name ("close" / "focus"). The scriptId is
+       used only to attribute SW-side failures to a script in its Log
+       tab — the override itself is world-wide, not per-script, so the
+       FIRST granting script's id is the one every later failure is
+       filed under. Same per-document grant scope as window.onurlchange
+       (docs/GM-APIs.md); exact attribution needs per-script worlds. */
+    enable: function (scriptId, method) {
+      if (method !== "close" && method !== "focus") return;
+      installWindowControl(scriptId, method);
+    },
+  };
+
   /* Wire the SW-originated tab-close, notification-event, menu-fire,
      download-event, and url-change messages into the same dispatcher we
      already use for value-update and xhr. Sender filter logic identical
@@ -1806,6 +1893,7 @@
     download: download,
     menu: menu,
     urlchange: urlchange,
+    windowControl: windowControl,
     clipboard: {
       /* GM_setClipboard(text, type?). Returns the Promise from
          navigator.clipboard.writeText so callers can `await` it. TM's

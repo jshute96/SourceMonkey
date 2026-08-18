@@ -4,7 +4,8 @@
 // time. The result is `{ js, prelude, granted }`:
 //   - `js` holds the `const GM_X = ...` declarations plus the eager
 //     calls that need nothing but `window.__SM_GM__` and baked
-//     literals (`urlchange.enable`, `resource.init`). It is used
+//     literals (`urlchange.enable`, `windowControl.enable`,
+//     `resource.init`). It is used
 //     TWICE: `wrapCombinedEntry` splices it into the main-body wrap
 //     function ahead of the body, and `buildSwapEvalBody` prepends it
 //     to the run-new swap-eval body. Anything a hot-swapped script
@@ -82,7 +83,10 @@ export interface GmInfoInput {
 //                  `urlchange.enable(scriptId)` for `@grant
 //                  window.onurlchange` (so the body's
 //                  `window.onurlchange === null` feature test
-//                  succeeds) and `resource.init` — both of which are
+//                  succeeds), `windowControl.enable(scriptId, …)` for
+//                  `@grant window.close` / `window.focus` (so the
+//                  overrides are in place before the body calls
+//                  them), and `resource.init` — all of which are
 //                  self-contained enough to run in the swap eval too.
 //   - `prelude`  — eager calls that have to run BEFORE the user body,
 //                  AFTER the GM runtime is installed, and that need
@@ -174,6 +178,12 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // name — the grant's whole effect is the eager `urlchange.enable`
   // call emitted at the end of `js` (see emitGmBindings).
   if (spec.subsystem === 'url-change') {
+    return '';
+  }
+  // `window.close` / `window.focus` are methods we replace on the
+  // world's `window`, not new names — same deal: the grant's effect is
+  // the eager `windowControl.enable` call emitted at the end of `js`.
+  if (spec.subsystem === 'window-control') {
     return '';
   }
   if (spec.name === 'GM_info') {
@@ -437,6 +447,23 @@ export function emitGmBindings(
       // shipped has `__SM_GM__` but no `urlchange`, and a page can hold
       // a stale registration across an extension update.
       `if (window.__SM_GM__ && window.__SM_GM__.urlchange) window.__SM_GM__.urlchange.enable(${jsLit(info.scriptId)});`,
+    );
+  }
+  // `@grant window.close` / `@grant window.focus` — same eager-call
+  // shape as `urlchange.enable` above, and in `js` for the same
+  // reasons (a hot-swapped script has to get its overrides back, and
+  // both strings are spliced into the same wrap function).
+  //
+  // Guarded on the runtime for the same reason too: degrading to the
+  // page's own `window.close()` / `.focus()` — which the browser
+  // mostly ignores — is better than a TypeError that stops the script
+  // from running at all.
+  for (const spec of specs) {
+    if (spec.subsystem !== 'window-control') continue;
+    // `window.close` -> "close", `window.focus` -> "focus".
+    const method = spec.name.slice('window.'.length);
+    parts.push(
+      `if (window.__SM_GM__ && window.__SM_GM__.windowControl) window.__SM_GM__.windowControl.enable(${jsLit(info.scriptId)}, ${jsLit(method)});`,
     );
   }
   // `resource.init`: emitted whenever GM_getResource* is granted,

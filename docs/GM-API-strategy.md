@@ -9,8 +9,8 @@ recommends a path.
 > `GM_addStyle` / `GM_addElement`, `GM_setClipboard`,
 > `GM_xmlhttpRequest` text + binary, `@connect` URL gating). Post-
 > phase add-ons `GM_log`, `GM_openInTab`, `GM_notification`,
-> `GM_registerMenuCommand`, `GM_download`, `window.onurlchange`, and
-> `@resource`-backed
+> `GM_registerMenuCommand`, `GM_download`, `window.onurlchange`,
+> `window.close` / `window.focus`, and `@resource`-backed
 > `GM_getResourceText` / `GM_getResourceURL` are also live, as is XHR
 > header surgery. See
 > [GM-APIs.md](GM-APIs.md) for the implementation status and known
@@ -31,10 +31,13 @@ recommends a path.
     `GM_registerMenuCommand`, `GM_getResourceText` / `URL`.
   - `window.onurlchange` — promoted out of the long tail and
     shipped; SPA scripts work badly without it.
+  - `window.close` / `window.focus` — likewise promoted and shipped;
+    both are small, and the browser makes the page's own versions
+    useless.
 - **Not** a goal: the long tail of TM-specific surface
   (`GM_webRequest`, `GM_audio`, `GM_getTab` / `saveTab` / `getTabs`,
-  `window.close`, `window.focus`, `GM.backgroundControl`). These can
-  come later if real users need them.
+  `GM.backgroundControl`). These can come later if real users need
+  them.
 - Compatibility with userscripts already written against
   Tampermonkey or Violentmonkey on the supported surface is a
   significant secondary goal.
@@ -566,8 +569,7 @@ spec that drives the API from a userscript on the fixture server.
 
 ## Things to revisit later
 
-- TM-only surface (`GM_webRequest`, `GM_audio`, `GM_getTab`,
-  `window.close`, `window.focus`).
+- TM-only surface (`GM_webRequest`, `GM_audio`, `GM_getTab`).
 - Whether to add a `@inject-into` option (currently we infer from
   `@grant`). Some scripts assume the VM keyword.
 - Per-script `@match` validation gate that's stricter than VM's —

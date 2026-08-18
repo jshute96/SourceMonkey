@@ -133,6 +133,7 @@ events.
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
 | `gm-download/`             | `GM_download`                                                     | button-driven |
 | `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
+| `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |

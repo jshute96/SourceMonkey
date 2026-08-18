@@ -202,6 +202,12 @@ details live in the topic-specific docs linked below.
   frame that changed, which is the only way an isolated-world script
   can observe the page's own `pushState`. See the
   `window.onurlchange` section of [GM-APIs.md](GM-APIs.md).
+- **window.close / window.focus driver** (`src/gm-window-control.ts`)
+  — re-issues a granted `window.close()` / `window.focus()` as
+  `chrome.tabs.remove` / `chrome.tabs.update` + `chrome.windows.update`
+  on the calling tab,
+  which is what makes them work where the page's own calls are
+  refused.
 
 ## Cross-cutting docs
 

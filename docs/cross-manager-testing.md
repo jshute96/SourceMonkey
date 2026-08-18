@@ -74,6 +74,16 @@ Steps:
 
 The profile persists across runs, so steps 2–4 only happen once.
 
+**Per checkout, not per machine.** The profile lives inside the
+working tree, so a second clone starts with no Tampermonkey and every
+TM spec fails against a browser that has no manager in it. Either
+redo the steps above there, or, with every test browser closed, copy
+the directory over from the checkout that has it:
+
+```sh
+cp -a ../other-checkout/.chrome-tampermonkey-profile .
+```
+
 Nothing else is manual. What TM would otherwise ask a human for is
 handled by the harness:
 

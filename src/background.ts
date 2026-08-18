@@ -197,6 +197,13 @@ import {
 } from './gm-menu.js';
 import { installUrlChangeWatch } from './gm-url-change.js';
 import {
+  closeGmWindow,
+  focusGmWindow,
+  SM_WINDOW_CLOSE_MSG,
+  SM_WINDOW_FOCUS_MSG,
+  type WindowControlResult,
+} from './gm-window-control.js';
+import {
   ACTION_MENU_MORE_LABEL,
   planActionMenu,
   type ActionMenuPlan,
@@ -2113,9 +2120,8 @@ async function loadConnectPolicy(scriptId: string): Promise<
 }
 
 // Shared by the GM handlers that reply with an error when the calling
-// tab can't be identified (`handleTabOpen`, `handleNotificationShow`).
-// `handleXhrStart` has the same guard but returns silently — see the
-// TODO.md note.
+// tab can't be identified. `handleXhrStart` has the same guard but
+// returns silently — see the TODO.md note.
 //
 // "could not identify", not "no longer known": the guard is
 // `sender.tab?.id == null`, so we never had an id — claiming we lost
@@ -2180,6 +2186,53 @@ function installNotificationListeners(): void {
       event: 'closed',
     }).catch(() => undefined);
   });
+}
+
+// ---------- window.close / window.focus dispatch ----------
+
+// Both grants act on the sender's own tab, so the payload names no
+// target and there is nothing to validate beyond "do we know which tab
+// asked". Failures are mirrored onto the script's Log tab: the page
+// console gets the same line from the runtime, but a `window.close()`
+// that worked takes the console with it, and the one that didn't is
+// exactly the case someone goes looking for later.
+async function handleWindowControl(
+  msg: { scriptId?: unknown; __viaBridge?: unknown },
+  sender: chrome.runtime.MessageSender,
+  which: 'close' | 'focus',
+): Promise<WindowControlResult> {
+  // Refuse a bridge-relayed request, as `handleGmResync` does: closing
+  // the user's tab is the most destructive thing a GM handler can be
+  // asked to do, and the bridge's allowlist not carrying these types
+  // today shouldn't be the only thing standing in front of it. See
+  // wrapper-bridge.js.
+  if (msg.__viaBridge === true) return { ok: false, error: NO_ORIGINATOR_TAB };
+  const scriptId = msg.scriptId;
+  const tabId = sender.tab?.id;
+  if (tabId == null) {
+    return { ok: false, error: NO_ORIGINATOR_TAB };
+  }
+  // Only the focus path needs the window; a close with a tab id but no
+  // window id would otherwise be refused for no reason.
+  const windowId = sender.tab?.windowId;
+  if (which === 'focus' && windowId == null) {
+    return { ok: false, error: NO_ORIGINATOR_TAB };
+  }
+  const result = which === 'close'
+    ? await closeGmWindow(tabId)
+    : await focusGmWindow(tabId, windowId as number);
+  if (!result.ok && typeof scriptId === 'string') {
+    logScriptEvent(scriptId, {
+      // `warning`, not `error`, for the same reason GM_download uses
+      // it: a refused close/focus is an outcome of the browser's own
+      // rules, not a SourceMonkey malfunction.
+      level: 'warning',
+      source: 'gm-window',
+      tabId,
+      message: `window.${which} — ${result.error}`,
+    });
+  }
+  return result;
 }
 
 // ---------- GM_download dispatch ----------
@@ -2801,6 +2854,16 @@ function installScriptMessageListener(): void {
       }
       try { sendResponse({ ok: true }); } catch { /* gone */ }
       return false;
+    }
+    if (type === SM_WINDOW_CLOSE_MSG || type === SM_WINDOW_FOCUS_MSG) {
+      // Async dispatch — the page side doesn't block on the reply, but
+      // it does log a failure, so the channel stays open for one.
+      const which = type === SM_WINDOW_CLOSE_MSG ? 'close' : 'focus';
+      return respondAsync(
+        `gm-window-${which}`,
+        handleWindowControl(msg as { scriptId?: unknown; __viaBridge?: unknown }, sender, which),
+        sendResponse,
+      );
     }
     if (type === 'sm:gm-download-start') {
       // Ack immediately — the transfer can run for minutes and the

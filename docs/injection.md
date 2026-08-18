@@ -1110,7 +1110,8 @@ listeners, then arms **both** gates at once — see
   GM_* bindings spliced into the wrap function are NOT visible to
   the swap-evaluated body. `buildSwapEvalBody` compensates by
   prepending the script's own binding block (including the eager
-  `resource.init` / `urlchange.enable` calls) to the body it hands
+  `resource.init` / `urlchange.enable` / `windowControl.enable`
+  calls) to the body it hands
   over. See [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper)
   for how that block is split.
 - **Storage grants on a swap.** The one emitted call that can't be

@@ -315,12 +315,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
   with per-script `@match` validation. VM's `checkCookieOpts` is
   the reference shape.
-- `window.close` / `window.focus` — TM-only surface. TM's versions
-  bypass the browser restrictions that make the page's own
-  `window.close()` / `.focus()` no-ops. Both are surprising
-  capabilities to hand a script; deferred until something real wants
-  them. See
-  [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md#non-gm-grants).
 
 ### GM_* implementation follow-ups
 
@@ -357,21 +351,29 @@ Adding any of these is a catalog entry + a body — nothing structural.
   would need a MAIN-world helper + postMessage protocol, or a
   per-call DOM-event ferry à la VM's `MouseEvent.relatedTarget`
   trick.
-- **`window.onurlchange` grant scope is per-document.** Once any
-  script on a page grants it, the `urlchange` surface exists on the
-  shared USER_SCRIPT-world `window`, so a sibling script that did
-  NOT grant it can also feature-detect and subscribe. TM sandboxes
-  each script's `window` and gets exact per-script gating. Same
+- **`window.close` / `window.focus` failures are filed under the
+  first granting script.** The override closes over the scriptId of
+  whichever script installed it, so a sibling script's refused close
+  lands on the wrong Log tab. Cosmetic, and it disappears with
+  per-script worlds (below).
+- **`window.*` grant scope is per-document.** Once any script on a
+  page grants `window.onurlchange`, the `urlchange` surface exists on
+  the shared USER_SCRIPT-world `window`, so a sibling script that did
+  NOT grant it can also feature-detect and subscribe. `@grant
+  window.close` / `window.focus` leak the same way — their overrides
+  replace the methods on that same shared `window`. TM sandboxes each
+  script's `window` and gets exact per-script gating. Same
   shared-realm root cause as the storage-spoofing entry below; a
   real fix needs per-script worlds.
-- **`window.onurlchange` reload-fast-path coverage.** The stated
-  reason the `urlchange.enable` call lives in the emitter's `js`
-  (rather than `prelude`) is that a hot-swapped body still needs the
-  surface. Only the emitted string's position is asserted today; an
-  e2e driving the run-new swap with this grant would make the
-  rationale load-bearing. `resource.init` sits in `js` for the same
-  reason and now has that e2e (`reload-fast-path.spec.ts`), so this
-  is the last eager call whose swap behaviour is unasserted.
+- **`window.*` reload-fast-path coverage.** The stated reason the
+  `urlchange.enable` and `windowControl.enable` calls live in the
+  emitter's `js` (rather than `prelude`) is that a hot-swapped body
+  still needs the surface. Only the emitted string's position is
+  asserted today; an e2e driving the run-new swap with these grants
+  would make the rationale load-bearing. `resource.init` sits in `js`
+  for the same reason and now has that e2e
+  (`reload-fast-path.spec.ts`), so these are the eager calls whose
+  swap behaviour is unasserted.
 - **`window.onurlchange` in MAIN world.** `@inject-into page` +
   `@grant window.onurlchange` gets nothing, since MAIN-world scripts
   get no bindings at all. Folded into the general "GM_* in MAIN
@@ -838,8 +840,9 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 ## Missing script functionality
 
-- (nothing outstanding — `@grant window.onurlchange` shipped; see the
-  `GM_*` deferred-surface section above for what's left)
+- (nothing outstanding — `@grant window.onurlchange`, `window.close`,
+  and `window.focus` shipped; see the `GM_*` deferred-surface section
+  above for what's left)
 
 ## Per-script log follow-ups
 

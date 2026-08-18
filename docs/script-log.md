@@ -88,6 +88,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
+| `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 
 Two naming notes worth keeping:
 
@@ -437,6 +438,18 @@ tracked in `TODO.md`.
     `JSON.stringify`, joined by spaces) because
     `chrome.runtime.sendMessage` can't carry non-cloneable values
     and the Log tab is text-only.
+- **window.close / window.focus failures** (`handleWindowControl` in
+  `src/background.ts`, source `gm-window`, `tabId` attached):
+  - `window.close — <reason>` / `window.focus — <reason>` (warning) —
+    the tab was already gone, or `chrome.windows` was unavailable. A
+    window manager that declines to raise the window is NOT a failure
+    Chrome reports, so it doesn't appear here either.
+  - Warning rather than error, for the same reason as `gm-download`
+    below: the browser's own rules said no, SourceMonkey didn't fail.
+  - Successes are **not** logged: the page console gets the same
+    failure line from the runtime, but a close that worked takes that
+    console with it — the Log tab is the only place a user can look
+    afterwards.
 - **GM_download failures** (`sendDownloadEvent` in
   `src/background.ts`, source `gm-download`, `tabId` attached):
   - `GM_download <reason> — <url>` (warning) — a download that was

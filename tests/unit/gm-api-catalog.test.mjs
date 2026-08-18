@@ -178,14 +178,33 @@ test('window.onurlchange is dropped by @grant none like every other grant', () =
   assert.equal(r.granted.size, 0);
 });
 
-test('the other TM window.* grants are deliberately NOT in the catalog', () => {
-  // See docs/supported-GM-APIs.md — `window.close` / `window.focus`
-  // are TM-only surface we haven't implemented, so they land in
-  // `unknown` and the script gets no binding for them.
+test('window.close / window.focus are catalog entries with no GM. alias', () => {
   for (const n of ['window.close', 'window.focus']) {
-    assert.equal(findApi(n), undefined, `${n} should not be in the catalog`);
+    const spec = findApi(n);
+    assert.ok(spec, `${n} should be in the catalog`);
+    assert.equal(spec.name, n);
+    assert.equal(spec.subsystem, 'window-control');
+    // SW round-trip (chrome.tabs.remove / chrome.windows.update).
+    assert.equal(spec.kind, 'async');
+    assert.equal(spec.gmDotName, undefined);
+    assert.equal(canonicalizeGrant(`  ${n}  `), n);
+    assert.equal(isSupportedApi(n), true);
   }
   const r = resolveGrants(['window.close', 'window.focus', 'window.onurlchange']);
-  assert.deepEqual([...r.granted], ['window.onurlchange']);
-  assert.deepEqual(r.unknown.sort(), ['window.close', 'window.focus']);
+  assert.deepEqual(r.unknown, []);
+  assert.deepEqual([...r.granted].sort(), ['window.close', 'window.focus', 'window.onurlchange']);
+});
+
+test('window.close / window.focus are dropped by @grant none too', () => {
+  const r = resolveGrants(['window.close', 'window.focus', 'none']);
+  assert.equal(r.hasNone, true);
+  assert.equal(r.granted.size, 0);
+});
+
+test('an unknown window.* grant is still dropped', () => {
+  // TM's own linter rejects these too — the `@grant window.x` family is
+  // a closed set. See docs/supported-GM-APIs.md#non-gm-grants.
+  const r = resolveGrants(['window.open', 'window.alert']);
+  assert.equal(r.granted.size, 0);
+  assert.deepEqual(r.unknown.sort(), ['window.alert', 'window.open']);
 });

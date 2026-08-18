@@ -73,17 +73,52 @@ set TM's own bundled linter validates against, so anything else
 | `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script (matches TM/VM). `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
 | `unsafeWindow` | 🟡 | ✓ | ✓ |   | Emitted, but bound to the USER_SCRIPT world's own `window` — it does **not** reach the page's globals. See the row above. |
 | `window.onurlchange` | ✅ | ✓ |   |   | SPA navigation hook. `window.onurlchange === null` feature-detects; `window.addEventListener('urlchange', info => …)` and the `window.onurlchange = fn` slot both work. See below. VM has never implemented it (feature request closed unimplemented), so scripts already carry the `=== null` guard. |
-| `window.close` | ⚪ | ✓ | ✓ (2.6.2+) |   | Not in the catalog. TM/VM route `window.close()` through the extension so it can close a tab the script didn't open — something the plain page API refuses. Handing a script the ability to close the user's tab is a real capability, and nothing we run wants it. Deferred; tracked in [TODO.md](../TODO.md). |
-| `window.focus` | ⚪ | ✓ | ✓ (2.12.10+) |   | Not in the catalog. TM's version raises and un-minimizes the OS window via `chrome.windows.update`, which page JS can't do. Same reasoning as `window.close`. |
+| `window.close` | ✅ | ✓ | ✓ (2.6.2+) |   | Closes the tab the script runs in, via the extension — the plain page API refuses to close a tab the script didn't open. See below. |
+| `window.focus` | ✅ | ✓ | ✓ (2.12.10+) |   | Selects this tab and raises (un-minimizing) its browser window, neither of which page JS can do. See below. |
 
 Greasemonkey 4 has no `window.*` grant family at all — only `GM.*`
 and `none`.
 
-Both un-implemented names behave like every other unknown `@grant`:
+Anything outside this table behaves like every other unknown `@grant`:
 dropped from the binding set, reported in the "unknown @grant entries
-dropped" diagnostic, and a `ReferenceError`-equivalent at the call
-site (the plain `window.close` / `window.focus` the page already has
-remains, subject to the browser's normal restrictions).
+dropped" diagnostic, and no binding at the call site.
+
+### `window.close` / `window.focus`
+
+Both replace a method the page already has with one the extension
+performs, because the browser hobbles the page's own version.
+
+- `window.close()` closes **this** tab. The page's own call is refused
+  for any tab the script didn't open with `window.open`.
+  - The **last** open tab is not closable — that would quit the
+    browser. Same refusal TM gives.
+- `window.focus()` brings **this** tab to the front: it selects the tab
+  in its window and raises the window, restoring it first if it was
+  minimized. The page's own call does nothing for a background tab.
+  - Whether the window comes forward is up to the OS window manager —
+    several Linux desktops flash the taskbar entry instead. Selecting
+    the tab works regardless.
+- Both take no arguments and return `undefined` immediately. The work
+  itself happens in the background, so a `window.close()` isn't
+  guaranteed to have happened by the next statement.
+- The override lives only inside the userscript's world. The page's
+  own `window.close` / `window.focus` are unchanged, so a site can't
+  detect the grant.
+- **Any script on the page gets the override once one script grants
+  it.** All SourceMonkey scripts on a page share one isolated world,
+  and the override replaces the method on that world's shared
+  `window`. So a script that never asked for `window.close` can still
+  close your tab if a sibling script on the same page did ask. TM
+  gates this exactly; we can't without per-script worlds.
+- A refused close or focus is logged to the page console and to the
+  script's Log tab. A successful close takes the page with it, so
+  there's nothing to report.
+
+Differences from TM, detailed in
+[GM-APIs.md](GM-APIs.md#windowclose--windowfocus): grant enforcement is
+per-document rather than per-script (the bullet above), and
+`@inject-into page` (MAIN world) is unsupported. What each call does is
+matched to TM 5.5.0's own implementation.
 
 ### `window.onurlchange`
 
@@ -647,8 +682,6 @@ is a catalog entry + a body — nothing structural.
 - `GM_cookie` (and `GM.cookie`) — TM's cross-origin cookie store.
 - `GM_audio`, `GM_webRequest`, `GM_getTab`, `GM_saveTab`,
   `GM_getTabs` — TM-specific surface.
-- `window.close`, `window.focus` — TM-specific window control; see
-  [Non-`GM_*` grants](#non-gm-grants).
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.
 
 ---

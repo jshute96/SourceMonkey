@@ -38,6 +38,10 @@ SourceMonkey actually does today.
   `@grant window.onurlchange`. Forwards
   `chrome.webNavigation.onHistoryStateUpdated` to the document that
   changed as an `sm:url-change` message.
+- **`src/gm-window-control.ts`** — SW-side driver for
+  `@grant window.close` / `@grant window.focus`. Re-issues the call as
+  `chrome.tabs.remove` / `chrome.windows.update` on the sender's own
+  tab.
 
 ## Bindings layout in the wrapper
 
@@ -51,10 +55,10 @@ function and visible to the user body via closure:
   from inside its own function body, so emitting them this early
   is safe even when the runtime spec hasn't run yet — the
   dereference doesn't fire until the user body actually calls a
-  `GM_*` API. Two eager calls ride along at the end —
-  `urlchange.enable` and `resource.init` — because they need
-  nothing but the runtime and baked literals, which makes them
-  safe in the swap eval that also gets this string.
+  `GM_*` API. The eager calls ride along at the end —
+  `urlchange.enable`, `windowControl.enable`, and `resource.init` —
+  because they need nothing but the runtime and baked literals, which
+  makes them safe in the swap eval that also gets this string.
 - `prelude` — eager `__SM_GM__.*` calls that need identifiers only
   the wrap function has — today just
   `storage.init(scriptId, __smDecision.gmValues)` for scripts
@@ -108,7 +112,8 @@ Scope notes:
   no runtime dependency, so it works in MAIN with no `__SM_GM__`
   needed. Matches TM/VM (both expose GM_info implicitly).
 - The rest of the GM_* surface — including the `window.onurlchange`
-  event surface — is emitted ONLY in `USER_SCRIPT` world.
+  event surface and the `window.close` / `window.focus` overrides — is
+  emitted ONLY in `USER_SCRIPT` world.
   Scripts with an explicit `@inject-into page` or otherwise running
   in MAIN don't get the non-info bindings — they'd be unable to reach
   `__SM_GM__` (different world) or `chrome.runtime` (undefined in
@@ -152,8 +157,9 @@ Scope notes:
   needed.
 - **Runtime ordering safety rests on the wrap function, not on
   laziness.** Everything the emitter produces — the `const GM_X = ...`
-  declarations, the eager `urlchange.enable` / `resource.init` at the
-  end of `js`, and the eager `prelude` call (`storage.init`) — is
+  declarations, the eager `urlchange.enable` /
+  `windowControl.enable` / `resource.init` at the end of `js`, and the
+  eager `prelude` call (`storage.init`) — is
   spliced into the main-body wrap function, which the prelude invokes
   only after its `awaitDecision` + `waitForRunAt` gates resolve (both
   `sm:check-pending` and the declared `@run-at` event). So
@@ -162,10 +168,11 @@ Scope notes:
   - The declarations are additionally lazy (they read
     `window.__SM_GM__` only from inside their own bodies), which is
     belt-and-braces rather than the load-bearing argument.
-  - The two eager forms differ deliberately on failure: a missing
-    runtime makes `urlchange.enable` a no-op (the script runs without
-    the feature), while a missing storage snapshot aborts the body
-    (running with stale values would corrupt the user's data).
+  - The eager forms differ deliberately on failure: a missing runtime
+    makes `urlchange.enable` / `windowControl.enable` a no-op (the
+    script runs without the feature), while a missing storage snapshot
+    aborts the body (running with stale values would corrupt the
+    user's data).
 
 - **Prelude throws bypass the body's try/catch.** The GM prelude
   is spliced into the same main-body wrap function as the body,
@@ -1058,6 +1065,107 @@ one narrow way: `unsafeWindow` is a passthrough to the isolated
   the feature is inert and the SW logs one `console.info` at startup
   (TM logs the same).
 
+## `window.close` / `window.focus`
+
+`@grant window.close` and `@grant window.focus` replace methods that
+already exist rather than adding new names. See
+[supported-GM-APIs.md](supported-GM-APIs.md#non-gm-grants) for the
+user-facing contract.
+
+### Why the grant exists at all
+
+Both methods are present on every page and both are hobbled there:
+
+- `window.close()` is refused for any tab the script didn't itself
+  open with `window.open` — Chrome logs "Scripts may close only the
+  windows that were opened by them".
+- `window.focus()` does nothing for a background tab; no page code can
+  select another tab or raise the OS window.
+
+An extension is not bound by either rule, so the granted call is
+routed to the service worker and re-issued as `chrome.tabs.remove` /
+`chrome.tabs.update` + `chrome.windows.update`. That is what TM does
+too.
+
+### What the grant emits
+
+- No `const` binding — `window.close` isn't a legal identifier either.
+- One eager statement appended to `js` per granted name:
+  `window.__SM_GM__.windowControl.enable(scriptId, "close" | "focus")`.
+- In `js` rather than `prelude` for the same reasons as
+  `urlchange.enable`: same ordering guarantees, and only `js` is
+  prepended by `buildSwapEvalBody`, so a hot-swapped script gets its
+  overrides back.
+- The runtime replaces the method on the USER_SCRIPT world's `window`.
+  The page's own `window.close` / `window.focus` are untouched — the
+  two worlds have separate global objects — so a site cannot detect
+  the grant, and its own close/focus behavior is unchanged.
+
+### Call semantics
+
+- Both take no arguments and return `undefined` synchronously, like
+  TM's. The SW round-trip is fire-and-forget.
+- `window.close()` closes the tab the script runs in. The payload
+  names no target: the SW acts on `sender.tab`, so there is nothing a
+  script could point elsewhere.
+  - **The last remaining tab is refused.** Chrome would allow it and
+    quit the browser; letting a userscript do that is a different
+    order of capability from closing a tab. The count is read across
+    every normal window (`tabs.query({windowType: 'normal'})`), so
+    emptying one window while another is open still works. TM 5.5.0
+    refuses the same case ("refused to close last tab!").
+- `window.focus()` brings the calling tab to the front: it selects the
+  tab within its window (`chrome.tabs.update`, `active: true`) **and**
+  raises the window, restoring it first when it is minimized
+  (`focused: true` alone leaves a minimized window minimized, and
+  Chrome rejects it combined with `state: 'minimized'`).
+  - Both halves are needed for the call to do anything visible.
+    Raising alone is a no-op in the common single-window case — the
+    window is already frontmost and the user is simply on another tab.
+    Selecting alone leaves the tab hidden behind another window.
+  - Whether the window really comes forward is the **OS window
+    manager's** call. Several Linux desktops answer a programmatic
+    raise by flashing the taskbar entry instead. Chrome reports no
+    error for that, so neither can we; the tab selection still lands.
+  - A window restored from minimized comes back `normal`, even if the
+    user had it maximized. Chrome's API has no "restore to previous
+    state".
+- A failure (a tab that has since gone, `chrome.windows`
+  unavailable) is reported both to the page console and, from the SW
+  side, to the script's Log tab at `warning` level. There is nothing
+  to report on success: a successful close takes the document with it.
+- **The target is the sender's whole tab, frames included.** A
+  granting script inside a sub-frame would close the tab, where the
+  frame's own `window.close()` is a no-op. Not reachable today —
+  SourceMonkey never sets `allFrames` (see
+  [injection.md](injection.md)) — but worth knowing if frame injection
+  ever lands.
+- **The `@grant` line is the whole gate** — no confirmation prompt at
+  call time, same as TM. Closing the user's tab out from under them is
+  a real capability, and the only thing standing in front of it is
+  that the user installed a script that declares it.
+
+### Observable differences from Tampermonkey
+
+- **Grant enforcement is per-document, not per-script** — the same
+  shared-realm caveat as `window.onurlchange` above. Once one script
+  on the page grants `window.close`, a sibling SourceMonkey script in
+  the same isolated world calls the override too.
+  - Worse here than there: the onurlchange leak hands a non-granting
+    script an observation channel, this one hands it the user's tab.
+    The fix is the same (per-script worlds) and equally out of reach
+    today, so it's pinned by a test rather than closed — see
+    `tests/e2e/window-close-focus.spec.ts`.
+- **Sub-frames.** TM only overrides `window.close` in the **top**
+  frame (`page.js` hands a sub-frame the page's own `close`); its
+  `window.focus` has no such guard. We override in every frame we
+  inject into, which is only ever the top frame today — so the two
+  agree in practice, and TM's guard is the thing to copy if frame
+  injection ever lands.
+- **MAIN world is unsupported**, as with every other non-`GM_info`
+  binding. `@grant window.close` on its own puts the script in
+  USER_SCRIPT world, so only the explicit `@inject-into page`
+  combination is affected.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
@@ -1093,4 +1201,4 @@ into pages that ship strict `Content-Security-Policy: script-src
 - ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
 - ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
 - ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
-- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `GM_download` (SW-side `chrome.downloads` for http(s), in-page anchor for `blob:` / `data:`), `window.onurlchange` (SPA `urlchange` event fed by `chrome.webNavigation`'s same-document events, matching TM's own source)
+- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `GM_download` (SW-side `chrome.downloads` for http(s), in-page anchor for `blob:` / `data:`), `window.onurlchange` (SPA `urlchange` event fed by `chrome.webNavigation`'s same-document events, matching TM's own source), `window.close` / `window.focus` (SW-side `chrome.tabs.remove` / `chrome.windows.update`, replacing the methods the browser hobbles in the page)

@@ -345,6 +345,38 @@ test('emitGmBindings: window.onurlchange adds no GM. alias property', () => {
   assert.match(out.js, /"grant":\["window\.onurlchange"\]/);
 });
 
+// ---- window.close / window.focus ------------------------------------
+
+test('emitGmBindings: window.close / window.focus emit eager enable calls, not consts', () => {
+  const out = emitGmBindings(['window.close', 'window.focus'], makeInfo({
+    grants: ['window.close', 'window.focus'],
+  }));
+  assert.match(out.js, /window\.__SM_GM__\.windowControl\.enable\("script-1", "close"\);/);
+  assert.match(out.js, /window\.__SM_GM__\.windowControl\.enable\("script-1", "focus"\);/);
+  // Neither name is a legal binding, so nothing is declared for them —
+  // and no async `sm:gm-call` stub is emitted either.
+  assert.doesNotMatch(out.js, /const window/);
+  assert.doesNotMatch(out.js, /"api": ?"window\./);
+  // In `js`, not `prelude`, so the reload-fast-path swap eval installs
+  // the overrides too.
+  assert.equal(out.prelude, '');
+  assert.deepEqual(out.granted.sort(), ['window.close', 'window.focus']);
+});
+
+test('emitGmBindings: each window control grant is emitted on its own', () => {
+  const closeOnly = emitGmBindings(['window.close'], makeInfo({ grants: ['window.close'] }));
+  assert.match(closeOnly.js, /windowControl\.enable\("script-1", "close"\)/);
+  assert.doesNotMatch(closeOnly.js, /"focus"/);
+  const none = emitGmBindings(['GM_setValue'], makeInfo());
+  assert.doesNotMatch(none.js, /windowControl/);
+});
+
+test('emitGmBindings: window.close / window.focus add no GM. alias properties', () => {
+  const out = emitGmBindings(['window.close'], makeInfo({ grants: ['window.close'] }));
+  assert.doesNotMatch(out.js, /close:/);
+  assert.match(out.js, /"grant":\["window\.close"\]/);
+});
+
 test('emitGmBindings: the emitted js stays on one physical line', () => {
   // wrapCombinedEntry splices `js` onto the entry's opening line and
   // relies on the body still starting at physical line 1.

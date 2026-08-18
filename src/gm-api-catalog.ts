@@ -44,7 +44,8 @@ export type ApiSubsystem =
   | 'tab'
   | 'download'
   | 'unsafe-window'
-  | 'url-change';
+  | 'url-change'
+  | 'window-control';
 
 // Extra header tags an API depends on, beyond the bare `@grant` line.
 // The catalog declares these so the wrapper / SW can validate them once
@@ -61,10 +62,12 @@ export interface GmApiSpec {
   // `sync` resolves in USER_SCRIPT world without an SW round-trip
   // (storage reads, addStyle, etc.). `async` always goes to the SW.
   //
-  // Note: `kind` is informational for the entries that aren't
-  // callables — `unsafeWindow` (a passthrough binding) and
-  // `window.onurlchange` (an event surface installed on the world's
-  // `window`). The emitter dispatches on `subsystem` for those.
+  // Note: `kind` is informational for the entries that aren't emitted
+  // as plain `const` bindings — `unsafeWindow` (a passthrough
+  // binding), `window.onurlchange` (an event surface installed on the
+  // world's `window`), and `window.close` / `window.focus` (methods
+  // replaced on the world's `window`). The emitter dispatches on
+  // `subsystem` for those.
   kind: ApiKind;
   // Used by the GM4 `GM.` alias: when truthy, the dot form returns a
   // Promise even if the legacy `GM_x` form returns synchronously. (GM4
@@ -94,6 +97,17 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // installs the `urlchange` event surface on the world's `window`.
   // See docs/GM-APIs.md#windowonurlchange.
   { name: 'window.onurlchange', kind: 'sync', subsystem: 'url-change' },
+  // `window.close` / `window.focus` are callables, but `window.close`
+  // is not a legal binding name either — so, like the grant above,
+  // they emit no `const`. The grant's effect is an eager
+  // `__SM_GM__.windowControl.enable(scriptId, "close" | "focus")` that
+  // REPLACES the method on the world's `window` with one that routes
+  // through the SW (`chrome.tabs.remove` / `chrome.windows.update`),
+  // which is what lets it work where the page's own call is a no-op.
+  // `async` for that SW round-trip; the script still sees the void,
+  // synchronous return TM gives it. See docs/GM-APIs.md#windowclose--windowfocus.
+  { name: 'window.close', kind: 'async', subsystem: 'window-control' },
+  { name: 'window.focus', kind: 'async', subsystem: 'window-control' },
 
   // ----- Logging -----
   { name: 'GM_log', gmDotName: 'log', kind: 'sync', subsystem: 'log' },

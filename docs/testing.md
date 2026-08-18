@@ -329,6 +329,18 @@ fetch via the SW). Highlights:
   really are the page's, not the isolated world's. Also pins the
   handler-slot / `addEventListener` non-aliasing contract and the
   known per-document (rather than per-script) grant leak.
+- `tests/e2e/window-close-focus.spec.ts` — `@grant window.close` /
+  `@grant window.focus`: a granted `window.close()` really removes the
+  tab, an ungranted one hits Chrome's refusal and leaves it open, each
+  grant installs only its own override, and the page's MAIN-world
+  `window.close` / `.focus` stay native. `window.focus` is asserted by
+  its tab-selection half (a second tab is opened, then the script is
+  cued through the DOM to call `focus()`, and the active tab flips
+  back) — the window-raising half isn't observable headlessly, since a
+  headless browser reports every window as focused. Unit tests cover
+  the SW driver's `chrome.tabs` / `chrome.windows` calls. Also pins the
+  known per-document (rather than per-script) grant leak: an ungranted
+  sibling script in the same document gets the working override.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints
