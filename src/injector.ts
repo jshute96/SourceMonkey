@@ -174,6 +174,9 @@ export interface ActiveSpecs {
   // world, and the patterns each is registered on. See
   // `collectActiveSpecs`.
   gmRuntime: Map<string, GmRuntimePatterns>;
+  // The same answer pre-unioned per world — what `buildGmRuntimeSpecs`
+  // takes. Derived from `gmRuntime`, so the two can't disagree.
+  gmRuntimeScope: Map<InjectionWorld, GmRuntimeScope>;
 }
 
 // Normalize the script's declared `@run-at` header to one of the four
@@ -989,7 +992,7 @@ export async function collectActiveSpecs(
       includeGlobs: [...(r.includeGlobs ?? [])],
     });
   }
-  return { specs, gmRuntime };
+  return { specs, gmRuntime, gmRuntimeScope: gmRuntimeScopeOfSpecs(specs, gmRuntime) };
 }
 
 // Pure: build the registration spec for the MAIN-world bridge, or
@@ -1094,7 +1097,6 @@ const GM_RUNTIME_WORLDS: readonly InjectionWorld[] = ['USER_SCRIPT', 'MAIN'];
 // registrations can't share one.
 function gmRuntimeIdFor(world: InjectionWorld): string {
   return world === 'MAIN' ? GM_RUNTIME_MAIN_SCRIPT_ID : GM_RUNTIME_SCRIPT_ID;
-}
 }
 
 // ---------- Runtime sync (uses chrome.userScripts) ----------
@@ -1347,11 +1349,14 @@ function gmRuntimeScopeOf(placements: Iterable<Placement>): Map<InjectionWorld, 
 
 // Same question against a freshly built spec list, where the answer
 // lives beside the specs rather than on them.
-function gmRuntimeScopeOfSpecs(active: ActiveSpecs): Map<InjectionWorld, GmRuntimeScope> {
-  return gmRuntimeScopeOf(active.specs.map((spec) => ({
+function gmRuntimeScopeOfSpecs(
+  specs: readonly RegistrationSpec[],
+  gmRuntime: ReadonlyMap<string, GmRuntimePatterns>,
+): Map<InjectionWorld, GmRuntimeScope> {
+  return gmRuntimeScopeOf(specs.map((spec) => ({
     world: (spec.world ?? 'MAIN') as InjectionWorld,
     patterns: patternsOf(spec),
-    gmRuntime: active.gmRuntime.get(spec.id) ?? null,
+    gmRuntime: gmRuntime.get(spec.id) ?? null,
   })));
 }
 
@@ -1685,7 +1690,7 @@ async function runFullSync(): Promise<RegistrationState> {
   const specs = orderWithOwnSpecs(
     userSpecs,
     hasWorld(userSpecs.map((s) => s.world), 'MAIN'),
-    gmRuntimeScopeOfSpecs(active),
+    active.gmRuntimeScope,
     // Empty rather than `present`: a full sync re-places the bridge and
     // the GM runtime even when Chrome already holds them, because their
     // code ships with the extension and an update changes it. Skipping

@@ -351,15 +351,23 @@ Adding any of these is a catalog entry + a body — nothing structural.
   whichever script installed it, so a sibling script's refused close
   lands on the wrong Log tab. Cosmetic, and it disappears with
   per-script worlds (below).
-- **`window.*` grant scope is per-document.** Once any script on a
-  page grants `window.onurlchange`, the `urlchange` surface exists on
-  the shared USER_SCRIPT-world `window`, so a sibling script that did
-  NOT grant it can also feature-detect and subscribe. `@grant
-  window.close` / `window.focus` leak the same way — their overrides
-  replace the methods on that same shared `window`. TM sandboxes each
-  script's `window` and gets exact per-script gating. Same
-  shared-realm root cause as the storage-spoofing entry below; a
-  real fix needs per-script worlds.
+- **`window.*` grant scope is per-document-and-world.** Once any
+  script on a page grants `window.onurlchange`, the `urlchange`
+  surface exists on that world's shared `window`, so a sibling script
+  in the same world that did NOT grant it can also feature-detect and
+  subscribe. `@grant window.close` / `window.focus` leak the same way
+  — their overrides replace the methods on that same shared `window`.
+  TM sandboxes each script's `window` and gets exact per-script
+  gating. Same shared-realm root cause as the storage-spoofing entry
+  below; a real fix needs per-script worlds.
+  - In MAIN world the shared `window` is the **page's**, so the page
+    sees these too: it can subscribe to `urlchange`, and its own
+    `window.close()` reaches our override. The override is
+    scriptId-scoped SW-side (`bridgeMayActAs`), so the page gets no
+    more than the MAIN-world script it shares a realm with already
+    had — but "the page can close its own tab" is a behavior change
+    worth knowing about. TM has the same exposure in its page-context
+    mode.
 - **`window.*` reload-fast-path coverage.** The stated reason the
   `urlchange.enable` and `windowControl.enable` calls live in the
   emitter's `js` (rather than `prelude`) is that a hot-swapped body

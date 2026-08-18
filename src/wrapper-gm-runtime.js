@@ -1997,8 +1997,6 @@
       noteUrlChanged(msg.url);
     }
   });
-    }
-  });
 
   var api = {
     /* Placeholder for sync APIs still not wired. */

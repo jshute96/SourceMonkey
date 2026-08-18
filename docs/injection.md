@@ -616,14 +616,28 @@ whole `GM_*` surface works there too.
   `scriptWorld` in the match index) and the bridge relays only
   `smWorld === "MAIN"`. Unknown ids stamp as USER_SCRIPT, so it fails
   closed.
+- Two pushes carry nothing script-scoped and are relayed regardless:
+  `sm:gm-resync-hint` (a bare "ask again" nudge) and `sm:url-change`
+  (the URL of the very document being posted into). Neither hands the
+  page anything it doesn't already have.
 - Consequences: a page still cannot touch a USER_SCRIPT-world script's
   GM values (the pre-existing read-leak fix still holds — see
   `tests/e2e/gm-storage-read-leak.spec.ts`), cannot read its broadcasts
   or XHR responses just by running a MAIN-world script alongside it,
   and cannot drive a MAIN-world script scoped to some other site.
-- `sm:gm-xhr-abort` and `sm:gm-tab-close` are deliberately ungated:
-  they name a per-call random request id, not a script, and cancelling
-  a request the page can already observe gains it nothing.
+- `sm:gm-xhr-abort`, `sm:gm-tab-close` and `sm:gm-download-abort` are
+  deliberately ungated: they name a per-call random request id, not a
+  script, and cancelling a request the page can already observe gains
+  it nothing.
+- Everything script-scoped goes through the gate, including the
+  handlers that used to refuse a bridge-relayed request outright —
+  `sm:gm-window-close` / `sm:gm-window-focus`, `sm:gm-resync`, and
+  `sm:gm-download-start`. Refusing outright was right while no
+  MAIN-world script could need them; now one can, and the gate is a
+  tighter statement of the same rule. `window.close` is the sharpest
+  case: in MAIN the override sits on the page's own `window`, so the
+  page can reach it — bounded to closing its own tab, and noted in
+  [TODO.md](../TODO.md).
 - **Failing closed has a cost.** The gate decides "does this script
   match this URL?" with our own matcher (`url-match.ts`), while Chrome
   decided whether to inject with its. Where the two disagree, a
@@ -1324,12 +1338,20 @@ timeout remains the hard ceiling for every `@run-at`.
   via postMessage) it's roughly 2–3x that.
 - **World changes defer the swap.** Adding a script's first real
   `@grant` moves it MAIN → USER_SCRIPT, but the running wrapper is
-  stuck in the world Chrome injected it into, and USER_SCRIPT
-  bindings dereference `window.__SM_GM__`, which MAIN doesn't have.
+  stuck in the world Chrome injected it into — a body that expects
+  page context can't see the page's globals from the isolated world,
+  and one that expects isolation gets a `window` the page can reach.
   A request relayed over `wrapper-bridge.js` is by definition from a
   MAIN wrapper, so that plus a USER_SCRIPT new row means "defer to
-  the next reload". The reverse direction is safe — a MAIN-only
-  build is just the `GM_info` literal.
+  the next reload", and vice versa.
+- **A newly-needed GM runtime defers the swap.** The shared
+  `__SM_GM__` runtime is registered only in worlds that have a script
+  granting a runtime-backed API (see [`GM_*` in MAIN world](#gm_-in-main-world)), so a page whose scripts grant nothing
+  carries none. A refresh that adds the first such grant would ship a
+  body whose GM_* bindings resolve to nothing. The wrapper reports
+  `hasGmRuntime` — what its own world actually has, rather than what
+  storage now describes — and the SW defers when the new row needs a
+  runtime the document hasn't got.
 - **Race vs. setup.** If a wrapper fires before `setupReloadFastPath`
   finishes its `await ensureLoaded()` step, it gets `run` and the
   reload behaves like before. The opportunistic refresh kicked off by

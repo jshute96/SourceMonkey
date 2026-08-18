@@ -135,6 +135,19 @@
     } catch (_e2) {}
   }
 
+  /* Is the shared GM runtime installed in THIS world on THIS document?
+     The SW needs the answer before it ships a hot-swap body: the
+     runtime is registered only where some active script grants a
+     runtime-backed API, so a refresh that ADDS the first such grant
+     produces a body whose GM_* bindings have no `window.__SM_GM__` to
+     dereference until the next reload re-registers it. Reported rather
+     than inferred SW-side because this is the exact question — the
+     registration set the page actually got, not the one storage now
+     describes. See handleCheckPending in background.ts. */
+  function hasGmRuntime() {
+    try { return !!window.__SM_GM__; } catch (_e) { return false; }
+  }
+
   /* Round-trip sm:check-pending and hand the SW's decision (or a 2s
      safety-timeout fallback) to cb. Same dual transport as `send`. */
   function awaitDecision(entry, cb) {
@@ -160,7 +173,8 @@
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          needsValues: !!cfg.needsGmValues
+          needsValues: !!cfg.needsGmValues,
+          hasGmRuntime: hasGmRuntime()
         });
         if (p && typeof p.then === "function") {
           p.then(
@@ -195,7 +209,8 @@
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          needsValues: !!cfg.needsGmValues
+          needsValues: !!cfg.needsGmValues,
+          hasGmRuntime: hasGmRuntime()
         }
       }, "*");
     } catch (_e3) { seal({ action: "run" }); }

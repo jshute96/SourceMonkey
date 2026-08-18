@@ -104,6 +104,9 @@
     "sm:gm-tab-open", "sm:gm-tab-close",
     "sm:gm-notification-show",
     "sm:gm-menu-register", "sm:gm-menu-unregister",
+    "sm:gm-download-start", "sm:gm-download-abort",
+    "sm:gm-window-close", "sm:gm-window-focus",
+    "sm:gm-resync",
     "sm:gm-log",
     /* Generic envelope for async APIs that have no dedicated body yet
        (the fall-through in gm-bindings.ts). Unreachable today — every
@@ -116,8 +119,15 @@
      chrome.runtime to receive them on. */
   var PUSHED = [
     "sm:gm-value-update", "sm:gm-xhr-event", "sm:gm-tab-closed",
-    "sm:gm-notification-event", "sm:gm-menu-fire"
+    "sm:gm-notification-event", "sm:gm-menu-fire",
+    "sm:gm-download-event"
   ];
+  /* Pushes that carry nothing script-scoped, so there is no reply to
+     address and no `smWorld` to gate on. `sm:gm-resync-hint` is a bare
+     "ask again" nudge; `sm:url-change` carries only the URL of the very
+     document we would be posting into. Relaying these unconditionally
+     leaks nothing the page doesn't already have. */
+  var PUSHED_ANY_WORLD = ["sm:gm-resync-hint", "sm:url-change"];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
   /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
      the page can't pre-set it false. The SW treats __viaBridge as
@@ -202,8 +212,10 @@
         try {
           if (!sender || sender.id !== _extensionId || sender.tab) return;
           if (!msg || typeof msg !== "object") return;
-          if (PUSHED.indexOf(msg.type) === -1) return;
-          if (msg.smWorld !== "MAIN") return;
+          if (PUSHED_ANY_WORLD.indexOf(msg.type) === -1) {
+            if (PUSHED.indexOf(msg.type) === -1) return;
+            if (msg.smWorld !== "MAIN") return;
+          }
           window.postMessage({ __sm: PUSH_MARKER, payload: msg }, "*");
         } catch (_e3) {}
       });

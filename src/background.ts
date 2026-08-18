@@ -68,6 +68,7 @@ import {
 } from './script-log-id.js';
 import {
   buildSwapEvalBody,
+  needsGmRuntime,
   resolveWorld,
   forgetRegistrationState,
   isUserScriptsAvailable,
@@ -1619,6 +1620,12 @@ interface CheckPendingPayload {
   // read for scripts that don't use GM_setValue, keeping check-pending
   // fast on multi-script pages. See `needsGmValues` in injector.ts.
   needsValues?: boolean;
+  // Whether `window.__SM_GM__` is installed in this wrapper's world on
+  // this document. The shared runtime is registered only where some
+  // active script grants a runtime-backed API, so a refresh that adds
+  // the first such grant would otherwise hot-swap in a body whose GM_*
+  // bindings have nothing to dereference. See `handleCheckPending`.
+  hasGmRuntime?: boolean;
   // Set by wrapper-bridge.js (USER_SCRIPT world) on every message it
   // relays for a MAIN-world wrapper's window.postMessage. A hostile
   // page can post a forged sm:check-pending into the bridge, so a
@@ -1744,9 +1751,11 @@ async function handleCheckPending(
   // dropping the last one (or adding `@inject-into page`) takes it
   // back. The running wrapper is stuck in the world Chrome injected
   // it into, so a swap across that line runs the new body in the
-  // wrong one — USER_SCRIPT bindings dereference `window.__SM_GM__`,
-  // which MAIN doesn't have, and a body that expects page context
-  // silently can't see the page's globals from the isolated world.
+  // wrong one — a body that expects page context silently can't see
+  // the page's globals from the isolated world, and one that expects
+  // isolation gets a `window` the page can reach. The shared
+  // `__SM_GM__` runtime is registered per world too, so the new body's
+  // GM_* calls may also land in a world that doesn't have it.
   // Defer to the next reload, which re-registers into the right one.
   //
   // `__viaBridge` is what tells the two apart: MAIN wrappers have no
@@ -1762,6 +1771,22 @@ async function handleCheckPending(
   if (wrapperWorld !== resolveWorld(refreshed.header)) {
     console.log(
       `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} changed injection world (next reload will pick it up)`,
+    );
+    return { action: 'run' };
+  }
+  // The shared `__SM_GM__` runtime follows the scripts that need it
+  // (see `buildGmRuntimeSpecs`), so a refresh that adds the first
+  // runtime-backed grant on this page produces a body whose GM_*
+  // bindings resolve to nothing until the next reload registers it.
+  // Same remedy as the world change: defer.
+  //
+  // The wrapper reports what its own world actually has rather than us
+  // inferring it from storage — the registration set the document was
+  // built with is the only thing that matters here, and it can lag a
+  // sync by a navigation.
+  if (needsGmRuntime(refreshed.header) && payload.hasGmRuntime !== true) {
+    console.log(
+      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} needs the GM runtime, which this document does not have yet (next reload will pick it up)`,
     );
     return { action: 'run' };
   }
@@ -1807,17 +1832,19 @@ async function handleCheckPending(
   // one here would be latency on the document-start critical path for
   // a value that gets discarded.
   //
-  // The `__viaBridge` refusal is the same read-leak guard the message
-  // handler applies: a swap reply carrying `gmValues` is a value read
-  // like any other, and a bridge-relayed request may be a page forging
-  // another script's id. It can't fire in practice — a storage grant
-  // resolves to USER_SCRIPT world, so the world check above turned
-  // every bridge request away already — but the guard belongs where
-  // the values are handed out, not two screens up in a check that
-  // exists for another reason.
-  const handlerWillAttach = payload.needsValues === true && payload.__viaBridge !== true;
+  // The bridge gate is the same read-leak guard the message handler
+  // applies: a swap reply carrying `gmValues` is a value read like any
+  // other, and a bridge-relayed request may be a page forging another
+  // script's id. It DOES fire in practice now — `@grant unsafeWindow`
+  // puts a storage-granting script in MAIN world, whose only route in
+  // is the bridge — so it asks `bridgeMayActAs` rather than refusing
+  // outright. The guard belongs where the values are handed out, not
+  // two screens up in a check that exists for another reason.
+  const bridgeValuesOk = payload.__viaBridge !== true
+    || await bridgeMayActAs(payload.id, sender);
+  const handlerWillAttach = payload.needsValues === true && bridgeValuesOk;
   let gmValues: Record<string, unknown> | undefined;
-  if (swap.needsValues && !handlerWillAttach && payload.__viaBridge !== true) {
+  if (swap.needsValues && !handlerWillAttach && bridgeValuesOk) {
     try {
       gmValues = await loadSnapshotForCheckPending(refreshed.id);
     } catch (err) {
@@ -2231,13 +2258,16 @@ async function handleWindowControl(
   sender: chrome.runtime.MessageSender,
   which: 'close' | 'focus',
 ): Promise<WindowControlResult> {
-  // Refuse a bridge-relayed request, as `handleGmResync` does: closing
-  // the user's tab is the most destructive thing a GM handler can be
-  // asked to do, and the bridge's allowlist not carrying these types
-  // today shouldn't be the only thing standing in front of it. See
-  // wrapper-bridge.js.
-  if (msg.__viaBridge === true) return { ok: false, error: NO_ORIGINATOR_TAB };
   const scriptId = msg.scriptId;
+  // A bridge-relayed request goes through the same gate as every other
+  // script-scoped one: only a script running in MAIN world on the
+  // sending page may be acted for. The blast radius is bounded to that
+  // page's own tab, and in MAIN world the override lives on the page's
+  // own `window` — so the page could make this call through the script
+  // regardless. See `bridgeMayActAs` and wrapper-bridge.js.
+  if (viaBridge(msg) && !(await bridgeMayActAs(scriptId, sender))) {
+    return { ok: false, error: NO_ORIGINATOR_TAB };
+  }
   const tabId = sender.tab?.id;
   if (tabId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
@@ -2297,6 +2327,7 @@ function sendDownloadEvent(
   }
   void chrome.tabs.sendMessage(tabId, {
     type: 'sm:gm-download-event',
+    smWorld: pushWorld(scriptId),
     requestId,
     event,
   }).catch(() => undefined);
@@ -2311,6 +2342,11 @@ async function handleDownloadStart(
     console.info('[SourceMonkey] gm-download-start without tab id; ignoring');
     return;
   }
+  // Same gate as every other script-scoped bridge call: a page can
+  // forge the scriptId on anything it gets the bridge to forward, and
+  // the id decides which Log tab a failed download is filed under.
+  // See `bridgeMayActAs`.
+  if (viaBridge(payload) && !(await bridgeMayActAs(payload.scriptId, sender))) return;
   const emit = (event: GmDownloadEvent): void => {
     sendDownloadEvent(tabId, payload.scriptId, payload.requestId, payload.url, event);
   };
@@ -2706,15 +2742,15 @@ async function handleGmResync(
   payload: { scriptId?: unknown; __viaBridge?: unknown },
   sender: chrome.runtime.MessageSender,
 ): Promise<{ ok: boolean; values?: Record<string, unknown> }> {
-  // Refuse a bridge-relayed request, exactly as the check-pending
-  // value read does: this hands back another script's whole value map,
-  // and a MAIN-world page can forge the scriptId on anything it gets
-  // the bridge to forward. The bridge's allowlist doesn't carry
-  // `sm:gm-resync` today — this keeps that from being the only thing
-  // standing between a page and the values. See wrapper-bridge.js.
-  if (payload.__viaBridge === true) return { ok: false };
+  // A bridge-relayed request hands back a whole value map, and a
+  // MAIN-world page can forge the scriptId on anything it gets the
+  // bridge to forward — so it goes through the same gate every other
+  // script-scoped bridge call does. `bridgeMayActAs` allows only a
+  // script running in MAIN world on the sending page, whose values are
+  // reachable from that page's own realm anyway. See wrapper-bridge.js.
   const scriptId = payload.scriptId;
   if (typeof scriptId !== 'string' || !scriptId) return { ok: false };
+  if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender))) return { ok: false };
   const tabId = sender.tab?.id;
   if (tabId != null) registerOpener(scriptId, tabId);
   const values = await loadSnapshotForCheckPending(scriptId);

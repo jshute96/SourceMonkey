@@ -78,7 +78,6 @@ import {
   GM_RUNTIME_SCRIPT_ID,
   registerWithFallback,
   buildBridgeSpec,
-  buildGmRuntimeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
   buildSwapEvalBody,
@@ -1411,25 +1410,6 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-worl
   // Tagged with a page-wide sourceURL so devtools shows it under a
   // friendly name rather than a UUID.
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
-});
-
-// ---------- buildGmRuntimeSpec ----------
-
-test('buildGmRuntimeSpec: emitted only when a USER_SCRIPT-world script is active', () => {
-  const main = { id: 'a', world: 'MAIN', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' };
-  const isolated = { ...main, id: 'b', world: 'USER_SCRIPT' };
-  assert.equal(buildGmRuntimeSpec([]), null);
-  assert.equal(buildGmRuntimeSpec([main]), null, 'MAIN world has no window.__SM_GM__ to install');
-
-  const runtime = buildGmRuntimeSpec([main, isolated]);
-  assert.ok(runtime, 'expected a GM-runtime spec');
-  assert.equal(runtime.id, GM_RUNTIME_SCRIPT_ID);
-  assert.equal(runtime.world, 'USER_SCRIPT');
-  assert.deepEqual(runtime.matches, ['<all_urls>']);
-  // document_start, so the global is in place before any wrapper that
-  // compiled GM_* bindings against it runs.
-  assert.equal(runtime.runAt, 'document_start');
-  assert.match(runtime.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__gm-runtime\.js/);
 });
 
 // ---------- wrapPreludeEntry ----------
