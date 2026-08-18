@@ -329,7 +329,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
@@ -367,7 +367,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
         });
       `,
     });
-    await sm.addSource(scriptsDir.path);
+    await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
 
     const page = await extensionContext.newPage();
