@@ -43,19 +43,96 @@ function fakeFailure(errorMessage = 'The file may not exist, or may not be reada
 
 // ---------- localSearchRoots ----------
 
+// The two scopes with no collection root in play — the shape the
+// viewer's preview and a container collection's scripts get.
+const ON = { enabled: true };
+const OFF = { enabled: false };
+
+// A collection whose root is two levels above the script, the layout a
+// repo of userscripts uses: scripts under `sites/<host>/`, shared
+// libraries under `lib/`.
+const NESTED_SCRIPT_URL = 'file:///home/me/repo/sites/example.com/foo.user.js';
+const NESTED_SCRIPT_DIR = 'file:///home/me/repo/sites/example.com/';
+const REPO_ROOT = 'file:///home/me/repo/';
+
 test('localSearchRoots: a local script gets its own folder', () => {
-  assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+  assert.deepEqual(localSearchRoots(SCRIPT_URL, ON), [SCRIPT_DIR]);
 });
 
 test('localSearchRoots: disabled means no roots at all', () => {
-  assert.deepEqual(localSearchRoots(SCRIPT_URL, false), []);
+  assert.deepEqual(localSearchRoots(SCRIPT_URL, OFF), []);
 });
 
 // The load-bearing safety rule: inference is for locally-loaded scripts
 // only, so an http(s)-hosted script can never reach the filesystem.
 test('localSearchRoots: an http-loaded script never gets roots', () => {
-  assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', true), []);
-  assert.deepEqual(localSearchRoots('', true), []);
+  assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', ON), []);
+  assert.deepEqual(localSearchRoots('', ON), []);
+});
+
+// The point of the collection root: a script nested inside the tree the
+// user added can see a shared `lib/` that its own folder never would,
+// because the search never climbs.
+test('localSearchRoots: the collection root follows the script\'s own folder', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: '/home/me/repo' }),
+    [NESTED_SCRIPT_DIR, REPO_ROOT],
+  );
+});
+
+// A manifest names a file; the tree its entries resolve against is the
+// file's own directory.
+test('localSearchRoots: a manifest collection contributes its parent directory', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, {
+      enabled: true,
+      collectionPath: '/home/me/repo/script_manifest.json',
+    }),
+    [NESTED_SCRIPT_DIR, REPO_ROOT],
+  );
+});
+
+// A script at the top of its collection already HAS the root as its own
+// folder — one entry, not two.
+test('localSearchRoots: a collection root equal to the script folder is not repeated', () => {
+  assert.deepEqual(
+    localSearchRoots(SCRIPT_URL, { enabled: true, collectionPath: '/home/me/scripts' }),
+    [SCRIPT_DIR],
+  );
+});
+
+// Container collections aggregate individually added scripts that share
+// no tree, so their synthetic path contributes nothing.
+test('localSearchRoots: a container collection contributes no root', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: 'container:file' }),
+    [NESTED_SCRIPT_DIR],
+  );
+});
+
+// The `file://` gate covers the collection root too: an http(s)
+// collection is not a local tree, and its scripts aren't local either.
+test('localSearchRoots: an http collection contributes no root', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, {
+      enabled: true,
+      collectionPath: 'https://example.com/scripts/',
+    }),
+    [NESTED_SCRIPT_DIR],
+  );
+});
+
+// `StoredCollection.path` holds a `file://` URL for inputs the
+// canonicalizer leaves in URL form, so the root has to come out of
+// either spelling the same way.
+test('localSearchRoots: a file:// collection path yields the same root', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, {
+      enabled: true,
+      collectionPath: 'file:///home/me/repo',
+    }),
+    [NESTED_SCRIPT_DIR, REPO_ROOT],
+  );
 });
 
 // ---------- Configured roots ----------
@@ -74,13 +151,17 @@ function withRoots(paths, fn) {
   }
 }
 
-test('localSearchRoots: configured roots follow the script\'s own folder', () => {
+test('localSearchRoots: configured roots follow the collection root', () => {
   withRoots(['/home/me/dev/lib', '/opt/shared'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [
-      SCRIPT_DIR,
-      'file:///home/me/dev/lib/',
-      'file:///opt/shared/',
-    ]);
+    assert.deepEqual(
+      localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: '/home/me/repo' }),
+      [
+        NESTED_SCRIPT_DIR,
+        REPO_ROOT,
+        'file:///home/me/dev/lib/',
+        'file:///opt/shared/',
+      ],
+    );
   });
 });
 
@@ -88,7 +169,18 @@ test('localSearchRoots: configured roots follow the script\'s own folder', () =>
 // too should not produce a duplicate (and a duplicated probe).
 test('localSearchRoots: a configured root equal to the script folder is not repeated', () => {
   withRoots(['/home/me/scripts'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, ON), [SCRIPT_DIR]);
+  });
+});
+
+// The collection root is already in the list by the time configured
+// roots are appended, so listing it globally too must not duplicate it.
+test('localSearchRoots: a configured root equal to the collection root is not repeated', () => {
+  withRoots(['/home/me/repo'], () => {
+    assert.deepEqual(
+      localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: '/home/me/repo' }),
+      [NESTED_SCRIPT_DIR, REPO_ROOT],
+    );
   });
 });
 
@@ -96,13 +188,13 @@ test('localSearchRoots: a configured root equal to the script folder is not repe
 // nothing, however many roots are set.
 test('localSearchRoots: configured roots do not apply to an http-loaded script', () => {
   withRoots(['/home/me/dev/lib'], () => {
-    assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', true), []);
+    assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', ON), []);
   });
 });
 
 test('localSearchRoots: the per-collection opt-out also disables configured roots', () => {
   withRoots(['/home/me/dev/lib'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, false), []);
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, OFF), []);
   });
 });
 
@@ -173,7 +265,7 @@ test('parseLocalRootLines: a typed path containing %2f is escaped, not rejected'
 // nothing may be generated under a root that never parsed.
 test('localSearchRoots: a rejected root never reaches the search list', () => {
   withRoots(['file:///a/b#frag'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, ON), [SCRIPT_DIR]);
   });
 });
 

@@ -44,6 +44,7 @@ import {
   setCollectionEnabled,
   setCollectionLocalFiles,
   collectionUsesLocalFiles,
+  localFileScope,
   STORAGE_NEARLY_FULL,
   touchesStructuralRows,
   type StoredScript,
@@ -53,6 +54,7 @@ import {
   installLocalRootsListener,
   localRootsReady,
   localSearchRoots,
+  type LocalFileScope,
   collectionSupportsLocalFiles,
 } from './local-file-overrides.js';
 import {
@@ -648,7 +650,7 @@ async function syncScriptRowsFromStorage(
   scripts: readonly StoredScript[],
 ): Promise<void> {
   const inContainer = isContainerCollection(collection.path);
-  const useLocalFiles = collectionUsesLocalFiles(collection);
+  const localFiles = localFileScope(collection);
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
 
@@ -671,10 +673,10 @@ async function syncScriptRowsFromStorage(
   for (const script of scripts) {
     const row = existing.get(script.id);
     if (row) {
-      syncScriptRow(row, script, collectionOn, inContainer, useLocalFiles);
+      syncScriptRow(row, script, collectionOn, inContainer, localFiles);
       existing.delete(script.id);
     }
-    ordered.push(row ?? renderScriptRow(script, collectionOn, inContainer, useLocalFiles));
+    ordered.push(row ?? renderScriptRow(script, collectionOn, inContainer, localFiles));
   }
   // Whatever is left in `existing` is a row whose script is gone. The
   // per-script bookkeeping is pruned by the caller, against the whole
@@ -698,7 +700,7 @@ function syncScriptRow(
   script: StoredScript,
   collectionOn: boolean,
   inContainer: boolean,
-  useLocalFiles: boolean,
+  localFiles: LocalFileScope,
 ): void {
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
@@ -722,8 +724,8 @@ function syncScriptRow(
   // moved. Rebuilding unconditionally would re-run the favicon fetch and
   // flash the globe placeholder on every unrelated repaint.
   const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
-  if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script, useLocalFiles)) {
-    fillNameCell(nameCell, script, inContainer, useLocalFiles);
+  if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script, localFiles)) {
+    fillNameCell(nameCell, script, inContainer, localFiles);
   }
 
   const scriptOn = isScriptEnabled(script);
@@ -767,7 +769,7 @@ function sameNodeOrder(container: Element, wanted: readonly Element[]): boolean 
 // one that would only flash its favicon for nothing.
 const nameCellKeys = new Map<string, string>();
 
-function nameCellKey(script: StoredScript, useLocalFiles: boolean): string {
+function nameCellKey(script: StoredScript, localFiles: LocalFileScope): string {
   return JSON.stringify([
     script.relativePath,
     script.fileUrl,
@@ -780,12 +782,15 @@ function nameCellKey(script: StoredScript, useLocalFiles: boolean): string {
     // a script that moves between collections is a different row.
     iconRefFromHeader(script.header),
     script.matching,
-    // The collection's local-files setting decides whether the `@icon`
-    // is fetched from its declared URL or from a file on disk, so
-    // flipping it changes what this cell paints. Without it here,
+    // The collection's local-files scope decides whether the `@icon` is
+    // fetched from its declared URL or from a file on disk, so flipping
+    // the toggle changes what this cell paints. Without it here,
     // toggling the switch would repaint the page and leave the old
     // favicon in place until something unrelated rebuilt the row.
-    useLocalFiles,
+    // Flattened rather than stringified whole: the key must not depend
+    // on the scope object's property order.
+    localFiles.enabled,
+    localFiles.collectionPath ?? '',
   ]);
 }
 
@@ -1130,7 +1135,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   const data = await getCollectionWithScripts(collection.id);
   const scripts = data?.scripts ?? [];
   const inContainer = isContainerCollection(collection.path);
-  const useLocalFiles = collectionUsesLocalFiles(collection);
+  const localFiles = localFileScope(collection);
 
   if (scripts.length === 0) {
     return makeMessage(
@@ -1178,7 +1183,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
 
   const tbody = document.createElement('tbody');
   for (const script of scripts) {
-    tbody.appendChild(renderScriptRow(script, collectionOn, inContainer, useLocalFiles));
+    tbody.appendChild(renderScriptRow(script, collectionOn, inContainer, localFiles));
   }
   table.appendChild(tbody);
   return table;
@@ -1188,7 +1193,7 @@ function renderScriptRow(
   script: StoredScript,
   collectionOn: boolean,
   inContainer: boolean,
-  useLocalFiles: boolean,
+  localFiles: LocalFileScope,
 ): HTMLTableRowElement {
   const scriptOn = isScriptEnabled(script);
 
@@ -1213,7 +1218,7 @@ function renderScriptRow(
 
   const nameCell = document.createElement('td');
   nameCell.classList.add('name-cell');
-  fillNameCell(nameCell, script, inContainer, useLocalFiles);
+  fillNameCell(nameCell, script, inContainer, localFiles);
   tr.appendChild(nameCell);
 
   const sizeCell = document.createElement('td');
@@ -1258,10 +1263,11 @@ function fillNameCell(
   nameCell: HTMLTableCellElement,
   script: StoredScript,
   inContainer: boolean,
-  // Does this script's collection allow local file overrides? Threaded
-  // alongside `inContainer` — both are per-collection facts the row
-  // needs and neither is worth re-loading the collection row for.
-  useLocalFiles: boolean,
+  // Where this script's collection allows local file overrides to come
+  // from. Threaded alongside `inContainer` — both are per-collection
+  // facts the row needs and neither is worth re-loading the collection
+  // row for.
+  localFiles: LocalFileScope,
 ): void {
   nameCell.textContent = '';
   // Slot for the favicon: a fixed-width container so the name
@@ -1272,7 +1278,7 @@ function fillNameCell(
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
-  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, useLocalFiles));
+  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
   const a = document.createElement('a');
   // Slash-aware appender (not textContent) so a long name wraps at `/`
   // boundaries before breaking mid-segment, matching the collection
@@ -1296,7 +1302,7 @@ function fillNameCell(
   nameCell.appendChild(suffix);
   // Record what this cell was drawn from, so the next repaint can skip
   // it unless one of those inputs moved.
-  nameCellKeys.set(script.id, nameCellKey(script, useLocalFiles));
+  nameCellKeys.set(script.id, nameCellKey(script, localFiles));
 }
 
 // Text in the Name column: the script's own `@name`, falling back to
@@ -1817,9 +1823,10 @@ function makeLocalFilesToggle(collection: StoredCollection): HTMLLabelElement {
   const label = document.createElement('label');
   label.className = 'local-files-toggle';
   label.title =
-    'Load @require / @resource files from the script\'s own folder — and from the ' +
-    'search roots configured in Options — when a file there matches the end of the ' +
-    'declared URL';
+    'Load @require / @resource files from the script\'s own folder, this ' +
+    'collection\'s own directory, or the search roots configured in Options, ' +
+    'when a file there matches the end of the declared URL. Any file under ' +
+    'those directories can be read by a script in this collection';
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';

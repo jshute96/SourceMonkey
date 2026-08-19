@@ -246,11 +246,14 @@ function initLocalRootControls(): void {
       return;
     }
     if (entries.length === 0) {
-      setStatus('No directories configured — only each script\'s own folder is searched', '');
+      setStatus(
+        'No directories configured — only each script\'s own folder and its collection\'s',
+        '',
+      );
       return;
     }
     setStatus(
-      `Searching ${entries.length} ${entries.length === 1 ? 'directory' : 'directories'} after each script's own folder`,
+      `Searching ${entries.length} ${entries.length === 1 ? 'directory' : 'directories'} after each script's own folder and its collection's`,
       'ok',
     );
   }

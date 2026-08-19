@@ -97,6 +97,30 @@ test.describe('local file overrides', () => {
     expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LOCAL = "deep";');
   });
 
+  // The layout a repo of userscripts actually uses: scripts nested
+  // under `sites/<host>/`, shared libraries in `lib/` at the top. Only
+  // the COLLECTION root can see that `lib/` — the script's own folder is
+  // a floor, and the search never climbs out of it.
+  test('a nested script finds a library at the collection root', async ({ sm }) => {
+    fs.mkdirSync(path.join(scriptsDir.path, 'lib'));
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib', 'util.js'), 'window.__SM_LOCAL = "repo";');
+    scriptsDir.write({
+      relativePath: 'sites/example.com/main.user.js',
+      meta: {
+        name: 'Nested',
+        match: ['https://example.com/*'],
+        extra: [`// @require     ${server.baseUrl}/lib/util.js`],
+      },
+      body: 'void window.__SM_LOCAL;',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
+    const req = data!.scripts[0].requires?.[0];
+    expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
+    expect(req?.source).toBe('window.__SM_LOCAL = "repo";');
+    expect(server.countResponses('/lib/util.js', 200)).toBe(0);
+  });
+
   // The dev loop: edit the library, reload the page, see the change.
   // An opportunistic refresh is what a navigation triggers, and it
   // normally reuses every cached dependency verbatim.
@@ -199,6 +223,56 @@ test.describe('local file overrides', () => {
     } finally {
       fs.rmSync(secret, { force: true });
     }
+  });
+
+  // The collection root is a floor too, and it is the OUTERMOST implicit
+  // root — so this is the case the test above no longer covers now that
+  // a nested script has two roots (its own folder, then the
+  // collection's). The planted file is one level above the collection.
+  test('a nested script cannot reach outside the collection root', async ({ sm }) => {
+    const parent = path.dirname(scriptsDir.path);
+    const secret = path.join(parent, 'sm-local-secret.js');
+    fs.writeFileSync(secret, 'window.__SM_LOCAL = "escaped";');
+    try {
+      scriptsDir.write({
+        relativePath: 'sites/example.com/main.user.js',
+        meta: {
+          name: 'Nested Climber',
+          match: ['https://example.com/*'],
+          extra: [`// @require     ${server.baseUrl}/a/../../../sm-local-secret.js`],
+        },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
+      expect(req?.source).not.toBe('window.__SM_LOCAL = "escaped";');
+      expect(req?.localUrl).toBeUndefined();
+    } finally {
+      fs.rmSync(secret, { force: true });
+    }
+  });
+
+  // A manifest names a file, so the root its scripts share is the
+  // manifest's own directory — the same `lib/` reach a directory
+  // collection gets, through a different derivation.
+  test('a manifest collection roots its scripts at the manifest directory', async ({ sm }) => {
+    fs.mkdirSync(path.join(scriptsDir.path, 'lib'));
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib', 'util.js'), 'window.__SM_LOCAL = "manifest";');
+    scriptsDir.write({
+      relativePath: 'sites/example.com/main.user.js',
+      meta: {
+        name: 'Manifest Nested',
+        match: ['https://example.com/*'],
+        extra: [`// @require     ${server.baseUrl}/lib/util.js`],
+      },
+      body: '',
+    });
+    const manifest = path.join(scriptsDir.path, 'script_manifest.json');
+    fs.writeFileSync(manifest, JSON.stringify(['sites/example.com/main.user.js']));
+    const collection = await sm.addCollection(manifest);
+    const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
+    expect(req?.source).toBe('window.__SM_LOCAL = "manifest";');
+    expect(server.countResponses('/lib/util.js', 200)).toBe(0);
   });
 
   // Substitution must never be silent. One line when it starts, one per
@@ -396,7 +470,7 @@ test.describe('local file overrides', () => {
   });
 
   // THE security property, end to end. An http-sourced script reaches
-  // the same pipeline with `useLocalFiles` true — the http container
+  // the same pipeline with local files enabled — the http container
   // carries no opt-out, so the flag defaults on — and must still get no
   // stand-in, because the gate is the host script's own scheme. This is
   // where `@resource file:///home/you/.ssh/id_rsa` + GM_getResourceText

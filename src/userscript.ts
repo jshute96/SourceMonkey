@@ -41,7 +41,7 @@ import {
   setScriptsEnabled,
   validateHeader,
   type StoredScript,
-  collectionUsesLocalFiles,
+  localFileScope,
   type StoredCollection,
 } from './script-store.js';
 import {
@@ -132,6 +132,7 @@ import {
   installLocalRootsListener,
   localRootsReady,
   localSearchRoots,
+  type LocalFileScope,
 } from './local-file-overrides.js';
 import {
   installGithubAuthListener,
@@ -610,7 +611,7 @@ function render(script: StoredScript): void {
   renderHeading(
     displayLocation(script.relativePath),
     script,
-    collectionRow ? collectionUsesLocalFiles(collectionRow) : true,
+    collectionRow ? localFileScope(collectionRow) : { enabled: true },
   );
   document.title = `${displayLocation(script.relativePath)} — SourceMonkey`;
 
@@ -1696,7 +1697,7 @@ function renderPreviewDetails(): void {
 // collection row: a preview is a file the user pointed at directly, and
 // `localSearchRoots` still refuses anything that isn't `file://`.
 function previewLocalRoots(): string[] {
-  return localSearchRoots(previewFileUrl, true);
+  return localSearchRoots(previewFileUrl, { enabled: true });
 }
 
 // Fold the parse check's resolved files into the preview's state and
@@ -2199,18 +2200,18 @@ function startBusy(btn: HTMLButtonElement): HTMLElement {
 function renderHeading(
   text: string,
   script: Parameters<typeof renderSiteIconInto>[1],
-  // Local override roots for the script's `@icon`. Installed mode
-  // passes its collection's setting; the preview passes `true` outright,
-  // the same way its `@require` / `@resource` resolution does — a file
-  // the user pointed at directly has no collection row to consult.
-  useLocalFiles = true,
+  // Local override scope for the script's `@icon`. Installed mode passes
+  // its collection's; the preview passes a bare `enabled` outright, the
+  // same way its `@require` / `@resource` resolution does — a file the
+  // user pointed at directly has no collection row to consult.
+  localFiles: LocalFileScope = { enabled: true },
 ): void {
   filenameEl.replaceChildren();
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   filenameEl.appendChild(iconSlot);
   appendWithSlashBreaks(filenameEl, text);
-  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, useLocalFiles));
+  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
 }
 
 function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {

@@ -69,15 +69,33 @@ In search order:
 1. **The host script's own folder.** Implicit, always first, always
    present. A file sitting next to the script is the least surprising
    answer, so it wins over anything configured.
-2. **Configured global roots.** The search-paths box on the options
+2. **The collection's own root.** Implicit too, for a local directory or
+   manifest collection — the tree the user named, which the collection's
+   scripts already sit at relative paths inside.
+3. **Configured global roots.** The search-paths box on the options
    page, in the order typed.
 
-A configured root that duplicates the script's own folder is dropped,
-so the list reads as what it claims to be — the *additional* places
+Why the collection root: a repo of userscripts keeps its scripts nested
+(`sites/example.com/foo.user.js`) and its libraries shared (`lib/util.js`
+at the top). A root is a floor and the search never climbs, so without
+it a nested script could never see the `lib/` its own repo ships.
+
+Which directory a collection contributes:
+
+- **Local directory** — itself.
+- **Manifest** — the manifest file's own directory, which is what its
+  relative entries already resolve against.
+- **Containers** (`container:file` and friends) — none. Their scripts
+  are individually added absolute paths sharing no tree; each script's
+  own folder is all they have in common.
+- **http(s) collections** — none, and their scripts get no roots at all
+  (the `file://` gate).
+
+A root that duplicates one already in the list is dropped — a script at
+the top of its collection has its own folder *as* the collection root —
+so the list reads as what it claims to be: the *additional* places
 searched, each appearing once. (Duplicate candidates would be collapsed
 anyway; the de-dupe is about the list, not the probing.)
-
-Per-collection roots are a planned follow-on — see [TODO.md](../TODO.md).
 
 ### Configured roots
 
@@ -138,20 +156,27 @@ How the existence test works:
 Not which tag is being resolved, but **who the host script is**:
 
 - **Inferred** substitution applies only when the host script's own URL
-  is `file://`. Such a script already has ambient reach over its own
-  folder — a relative `@require ./util.js` resolves there today — so a
-  stand-in from that folder grants nothing new.
+  is `file://`. Its **own folder** grants nothing new: a relative
+  `@require ./util.js` resolves there today, and `file-loader.ts`
+  confines a relative ref to exactly that folder.
 - An **http(s)-loaded script never gets inference**. That is the case
   where a hostile `@resource file:///home/you/.ssh/id_rsa` followed by
-  `GM_getResourceText` would actually matter. The gate covers configured
-  roots too — a script installed from the web resolves nothing out of a
-  development directory.
-- A **configured root is reach the script didn't otherwise have**, and
-  the script picks the path suffix it looks for. So every file under a
-  root is readable by any locally-loaded script, `@resource` +
-  `GM_getResourceText` included. That is a property of the setting,
-  stated on the options page where it's configured: roots name
-  directories of script content, not home directories.
+  `GM_getResourceText` would actually matter. The gate covers the
+  collection root and configured roots too — a script installed from the
+  web resolves nothing out of a development directory.
+- The **collection root and a configured root are reach the script
+  didn't otherwise have** — a relative ref cannot climb into either —
+  and the script picks the path suffix it looks for. So every file under
+  one is readable by any locally-loaded script in it, `@resource` +
+  `GM_getResourceText` included.
+  - What justifies each is that the user named that directory: a
+    configured root on the options page, a collection root by adding the
+    collection.
+  - Both say so where they're set — the options page's note, and the
+    per-collection **Local files** toggle's tooltip.
+  - So point either at a directory of script content, not at a home
+    directory. Turning **Local files** off for a collection takes the
+    whole mechanism away for it.
 - Explicit per-file overrides (a path you typed for one specific ref)
   will be allowed for any host script, because naming the file *is* the
   authorization. Not built yet — see [TODO.md](../TODO.md).
@@ -230,9 +255,11 @@ exception:
   keeping it would serve a stand-in that no longer exists.
 
 Cost when enabled, for scripts in a local collection only: up to one
-local read per path segment of each declared dependency's URL, plus one
-for the host-qualified form, per refresh. A hit short-circuits the rest,
-and `ensureFetch` dedups within a pass. Note that a script with local
+local read **per root** per path segment of each declared dependency's
+URL, plus one for the host-qualified form, per refresh. A nested script
+has two implicit roots (its own folder and its collection's), so a miss
+costs roughly twice what it did before the collection root existed. A
+hit short-circuits the rest, and `ensureFetch` dedups within a pass. Note that a script with local
 roots also skips the whole-list `preserve`
 shortcut, so it re-runs resolution every opportunistic refresh — that is
 the price of edits showing up without a Refresh click.

@@ -74,7 +74,7 @@ import {
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
-import { localSearchRoots, localRootsReady } from './local-file-overrides.js';
+import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import {
@@ -280,6 +280,12 @@ export interface StoredCollection {
 // `isCollectionEnabled` treats `enabled`.
 export function collectionUsesLocalFiles(collection: StoredCollection): boolean {
   return collection.localFiles !== false;
+}
+
+// Everything the local-stand-in resolver needs from a collection row,
+// in one value — so no caller can pass the toggle and forget the root.
+export function localFileScope(collection: StoredCollection): LocalFileScope {
+  return { enabled: collectionUsesLocalFiles(collection), collectionPath: collection.path };
 }
 
 // Treat any pre-`enabled`-era stored entry as enabled. The schema now
@@ -831,10 +837,11 @@ export async function applyFiles(
   recheck: 'all' | 'preserve',
   fetchCache: FileFetchCache,
   now: number,
-  // Whether this script's collection allows local stand-ins. Defaults
-  // to false so the offline validator (and any other caller outside the
+  // What this script's collection says about local stand-ins — whether
+  // they're allowed, and the collection's own root. Defaults to
+  // disabled so the offline validator (and any other caller outside the
   // extension) keeps the plain declared-URL behavior.
-  useLocalFiles = false,
+  localFiles: LocalFileScope = { enabled: false },
   // Whether to wait for the parse verdict before returning. Defaults to
   // 'await' so every caller that hasn't thought about it keeps today's
   // behavior; see `ParseCheckMode`.
@@ -845,8 +852,8 @@ export async function applyFiles(
   // Configured roots come from storage, so make sure that read has
   // landed before asking — a refresh racing SW startup would otherwise
   // resolve as if none were set and persist that.
-  if (useLocalFiles) await localRootsReady();
-  const localRoots = localSearchRoots(built.fileUrl, useLocalFiles);
+  if (localFiles.enabled) await localRootsReady();
+  const localRoots = localSearchRoots(built.fileUrl, localFiles);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.
@@ -1422,12 +1429,13 @@ interface RebuildArgs {
   // refreshAllCollections); rebuildCollection itself never mutates the
   // entry semantics, just hands the cache to attachFiles.
   fileFetchCache?: FileFetchCache;
-  // Does this collection allow local stand-ins for the files its scripts
-  // declare (`StoredCollection.localFiles`)? Passed as a plain flag rather
-  // than the whole collection row because the roots are derived per script,
-  // from each script's own `fileUrl`. Defaults to false so a caller that
-  // hasn't thought about it gets the declared-URL-only behavior.
-  useLocalFiles?: boolean;
+  // What this collection says about local stand-ins for the files its
+  // scripts declare — the `StoredCollection.localFiles` toggle plus the
+  // root to search. One value rather than the whole collection row, and
+  // `localFileScope` is the one thing that builds it. Defaults to
+  // disabled so a caller that hasn't thought about it gets the
+  // declared-URL-only behavior.
+  localFiles?: LocalFileScope;
   // Whether the rows this returns carry a parse verdict. Defaults to
   // 'await'; see `ParseCheckMode`. A 'defer' caller owes the rows a
   // `checkParsesInBackground` after it has written them.
@@ -1451,7 +1459,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   const newId = args.newId ?? (() => crypto.randomUUID());
   const recheckFiles = args.recheckFiles ?? 'all';
   const fileFetchCache: FileFetchCache = args.fileFetchCache ?? new Map();
-  const useLocalFiles = args.useLocalFiles ?? false;
+  const localFiles: LocalFileScope = args.localFiles ?? { enabled: false };
   const parseCheck = args.parseCheck ?? 'await';
   // Deferring is only safe where the deferred verdict does exactly what
   // an awaited one would have done — and where `keepsPriorOnInvalid`
@@ -1508,7 +1516,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
         const withFiles = await applyFiles(
-          built, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles,
+          built, prior, recheckFiles, fileFetchCache, args.now, localFiles,
           parseCheckFor(fileUrl, prior));
         // Soft-failure preservation — see `keepsPriorOnInvalid`. Keep
         // the prior good body running and annotate `refreshError`
@@ -1560,7 +1568,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // short-circuits.
         entryTasks.push(
           () => applyFiles(
-            next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles,
+            next, prior, recheckFiles, fileFetchCache, args.now, localFiles,
             parseCheckFor(fileUrl, prior)),
         );
       } else {
@@ -2311,7 +2319,7 @@ export async function refreshCollection(
     now,
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
-    useLocalFiles: collectionUsesLocalFiles(collection),
+    localFiles: localFileScope(collection),
   });
   timer.mark('rebuild');
   // Thunked: counting the skips walks every fetch result, which a
@@ -2655,7 +2663,7 @@ export async function refreshScript(
     // only reflects that `fileFetchCache` is part of the inherited
     // `RefreshOptions`; no caller of `refreshScript` sets it today.
     fileFetchCache: opts.fileFetchCache ?? opts.batch?.fileFetchCache,
-    useLocalFiles: collectionUsesLocalFiles(collectionRow),
+    localFiles: localFileScope(collectionRow),
     parseCheck: opts.parseCheck,
   });
   const next = result[0];

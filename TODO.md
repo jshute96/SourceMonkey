@@ -714,13 +714,14 @@ during cumulative review of the GM_* phases:
 ## Local file overrides — follow-ups
 
 Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). Search
-roots today: the host script's own folder, then the global list from
-the options page.
+roots today: the host script's own folder, then the collection's own
+root, then the global list from the options page.
 
-- **Per-collection search roots.** The global list covers the common `lib/`
-  layout; a per-collection list would let one directory of scripts search
-  somewhere the rest don't. `StoredCollection.localRoots?: string[]`,
-  ordered implicit-folder → collection → global.
+- **Extra per-collection search roots.** A collection already searches
+  its own root; a configurable per-collection list would let one
+  directory of scripts also search somewhere the rest don't.
+  `StoredCollection.localRoots?: string[]`, ordered implicit-folder →
+  collection root → collection list → global.
   - Roots are absolute paths the user types, for the same reason
     collections are: `<input type="file">` gives no absolute path in
     Chrome, and `webkitdirectory` only gives relative ones, so a

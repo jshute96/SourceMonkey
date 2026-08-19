@@ -168,8 +168,10 @@ Therefore, when publishing a script, absolute http paths are preferred.
 
 SourceMonkey enables local development on these scripts by **reading local files
 in place of http references**. For scripts run from local files, if there's
-a file under the script's directory matching any suffix of the requested host and path,
-the local file will be read instead.
+a file under the script's directory — or under the directory of the collection
+it came from — matching any suffix of the requested host and path, the local
+file will be read instead. So a shared `lib/` at the top of a scripts
+directory is reachable from a script nested inside it.
 
 Additional local directories can be added to the search path on the Options page.
 
