@@ -442,7 +442,9 @@ collection's `enabled` flag are both true, we build a
   one pattern can expand to more than one), minus any Chrome's grammar
   would still refuse — one of those would take the whole registration
   down.
-- `includeGlobs` — `@include` glob patterns.
+- `includeGlobs` — `@include` glob patterns. Chrome ORs these with
+  `matches` rather than filtering within them (see
+  [How Chrome reads includeGlobs](#how-chrome-reads-includeglobs)).
 - `excludeGlobs` — `@exclude` glob patterns.
 - `js` — the per-script config blob, the inlined prelude, the user
   program (every `@require` concatenated ahead of the script's own
@@ -581,9 +583,11 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
   `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`. If a
-  script's *only* includes are regexes (no `@match`, no glob
-  `@include`), we register with `matches: ['<all_urls>']` so Chrome
-  hands us every page.
+  script has no `@match` at all — only `@include`, in either form — we
+  register with `matches: ['<all_urls>']` so Chrome hands us every
+  page, and let the wrapper narrow it. Chrome refuses a registration
+  with no `matches` (*"must specify 'matches'"*), so there is nothing
+  else to give it.
 - **Wrapper layer.** When a script has any regex pattern, the wrapper
   embeds the full `{matches, includes, excludes}` object and a small
   self-contained matcher equivalent to `urlMatchesScript()`. Before
@@ -593,6 +597,29 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test
 eval's the embedded snippet to verify the regex-relevant cases.
+
+### How Chrome reads includeGlobs
+
+Measured against real Chrome (151), not taken from the docs — the probe
+lives in `tests/e2e/include-only.spec.ts`:
+
+- `chrome.userScripts` **ORs** `includeGlobs` with `matches`: a page
+  matching either one runs the script. That is userscript `@include`
+  semantics, and it differs from the content-script API, whose
+  `include_globs` filters *within* `matches`.
+- So a script declaring both `@match` and `@include` runs on the union,
+  which is what its header says and what the badge predicts. No
+  divergence to fix.
+- `excludeGlobs` subtracts under either reading, so it needs no care.
+
+Consequences for the `<all_urls>` fallback:
+
+- It cannot be narrowed by handing Chrome the globs alongside it —
+  `<all_urls>` OR anything is still every page.
+- So every no-`@match` script carries the wrapper-side matcher, glob
+  includes included.
+- The globs go to Chrome anyway, so the registration stays correct if
+  Chrome ever moves to the documented AND.
 
 ## The activation / error wrapper
 

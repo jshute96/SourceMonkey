@@ -340,6 +340,32 @@ export async function waitForGmValues(
 }
 
 // Convenience: wait until a tab's badge state matches `predicate`.
+// The active tab's numeric `chrome.tabs.Tab.id` — the same ID the
+// action APIs take as `tabId`. Playwright doesn't expose it on Page,
+// so every badge-watching spec asks the SW right after opening a page.
+export async function activeTabId(
+  getServiceWorker: () => Promise<Worker>,
+): Promise<number> {
+  const sw = await getServiceWorker();
+  return sw.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id) throw new Error('no active tab');
+    return tab.id;
+  });
+}
+
+// Does the snapshot's badge carry this `#rrggbb`?
+// `chrome.action.getBadgeBackgroundColor` returns [r, g, b, a].
+export function hasBadgeColor(snapshot: TabStateSnapshot, hex: string): boolean {
+  if (!Array.isArray(snapshot.badgeColor)) return false;
+  const [r, g, b] = snapshot.badgeColor as number[];
+  return (
+    r === parseInt(hex.slice(1, 3), 16) &&
+    g === parseInt(hex.slice(3, 5), 16) &&
+    b === parseInt(hex.slice(5, 7), 16)
+  );
+}
+
 export async function waitForTabState(
   api: SmApi,
   tabId: number,

@@ -302,10 +302,12 @@
   /* ---------- matcher (regex-aware URL recheck) ---------- */
 
   /* Mirrors the algorithm in src/url-match.ts. Inlined here so a
-     regex-using script doesn't need a separate matcher entry; the
-     prelude is on every script's js[] and the algorithm is tiny.
-     The matcher block is only consulted when cfg.matching is
-     present — pure @match / glob scripts skip it. */
+     script needing the recheck doesn't need a separate matcher entry;
+     the prelude is on every script's js[] and the algorithm is tiny.
+     The matcher block is only consulted when cfg.matching is present:
+     scripts with a regex @include/@exclude, and scripts with no
+     @match at all (registered <all_urls>). A script whose @match
+     patterns carry the whole registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
@@ -368,9 +370,9 @@
     /* Split off a trailing `:port` so a port-pinned pattern matches the
        way Chrome's matcher (and src/url-match.ts) does — without this
        the whole `host:port` was compared against u.hostname (no port)
-       and a script declaring both a port-pinned @match and a regex
-       @include/@exclude (the only case cfg.matching ships) was wrongly
-       rejected in-page even though Chrome injected it. A pattern host
+       and a script declaring a port-pinned @match alongside anything
+       that makes cfg.matching ship was wrongly rejected in-page even
+       though Chrome injected it. A pattern host
        with no port matches any port. Keep this in lockstep with
        url-match.ts. */
     var colon = host.lastIndexOf(":");
@@ -665,9 +667,9 @@
        from its absence — and initScript stores the entry BEFORE
        running the matcher, so on a page the script doesn't match the
        entry exists with runRegistered false and nothing wrong. Without
-       this check a script with a regex @include (registered at
-       <all_urls>, filtered in-page) would log an error and turn the
-       badge red on every page the user visits. */
+       this check a script registered at <all_urls> and filtered
+       in-page would log an error and turn the badge red on every page
+       the user visits. */
     if (!entry.matched) return;
     var msg = "Script source failed to parse (a @require or the script body has a syntax error); nothing was run";
     try { console.info("[SourceMonkey]", entry.cfg.name + ":", msg); } catch (_e) {}

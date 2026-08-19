@@ -768,20 +768,47 @@ export async function buildRegistrationSpec(
     else excludeGlobs.push(ex);
   }
 
-  // If Chrome has nothing to pattern-match on, fall back to <all_urls>
-  // (only when there's at least a regex @include to defer to — a
-  // script with literally no match/include patterns shouldn't reach
-  // here because validateHeader rejects it).
-  if (matches.length === 0 && includeGlobs.length === 0) {
-    if (hasRegexInclude) matches.push('<all_urls>');
-    else return null;
+  // Chrome refuses a registration without `matches` ("must specify
+  // 'matches'"), so a script whose header carries only `@include` needs
+  // a stand-in — `<all_urls>`, with the wrapper's in-page matcher doing
+  // the real narrowing (the arrangement regex `@include`s already use).
+  //
+  // Handing Chrome the globs *as well* is deliberate, and the reason is
+  // that Chrome's own reading of `includeGlobs` is not what the docs for
+  // content scripts say. Measured on Chrome 151 (see the probe in
+  // tests/e2e/include-only.spec.ts): `chrome.userScripts` ORs
+  // `includeGlobs` with `matches` — userscript `@include` semantics —
+  // rather than filtering within them. So:
+  //   - Under the OR we measured, `<all_urls>` alone already runs
+  //     everywhere and the wrapper filter is what makes the script
+  //     obey its header.
+  //   - Were it ever the documented AND instead, Chrome would narrow
+  //     `<all_urls>` to the glob set and the wrapper would agree.
+  // Emitting both keeps us correct either way. `excludeGlobs` is a true
+  // AND under both readings, so it needs no such care.
+  //
+  // A script with no match/include patterns whatsoever shouldn't reach
+  // here — validateHeader stores it `invalid`.
+  //
+  // One asymmetry to know about: a script can land here with `@match`
+  // patterns that Chrome's grammar refused (dropped above) alongside
+  // its includes. The wrapper matcher then evaluates the script's whole
+  // `matching`, refused patterns included, so it can run where a
+  // registered `@match` never would have. That is the lenient reading
+  // the badge already gives those patterns, so the two agree — the
+  // script just doesn't get the stricter answer a valid `@match` would.
+  let usedAllUrlsFallback = false;
+  if (matches.length === 0) {
+    if (includeGlobs.length === 0 && !hasRegexInclude) return null;
+    matches.push('<all_urls>');
+    usedAllUrlsFallback = true;
   }
 
   const declaredRunAt = normalizeDeclaredRunAt(
     script.header ? getValue(script.header, 'run-at') : undefined,
   );
   const name = scriptDisplayName(script);
-  const needsWrapperFilter = hasRegexInclude || hasRegexExclude;
+  const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback;
   const sourceUrl = buildSourceUrl(logLabel);
 
   const world = resolveWorld(script.header);

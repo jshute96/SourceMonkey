@@ -765,9 +765,62 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
       includes: ['*://example.com/*', '/^https:\\/\\/foo\\..*$/'],
     },
   }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   // The regex pattern travels through the config blob into the
   // prelude's runtime matcher.
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: glob-only @include still gets a matches pattern', async () => {
+  // Chrome refuses a registration without `matches`, so an
+  // `@include`-only script rides in on `<all_urls>`.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: [], excludes: [], includes: ['*://example.com/*'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
+  // Chrome ORs includeGlobs with matches, so `<all_urls>` runs the
+  // script everywhere — the wrapper's matcher is what holds it to the
+  // glob. Its block has to be in the config blob.
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: @match beside a glob @include leaves matching to Chrome', async () => {
+  // Chrome ORs includeGlobs with matches (measured — see
+  // tests/e2e/include-only.spec.ts), which is what the header means,
+  // so this shape needs no wrapper-side matcher.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*'],
+      excludes: [],
+      includes: ['*://other.example/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.deepEqual(spec.includeGlobs, ['*://other.example/*']);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.doesNotMatch(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: all @match patterns refused + glob @include falls back to <all_urls>', async () => {
+  // `https://example.com` (no path) is a pattern Chrome's grammar
+  // refuses, so it never reaches the spec — leaving the script with
+  // globs only, which is the fallback case.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com'],
+      excludes: [],
+      includes: ['*://example.com/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);

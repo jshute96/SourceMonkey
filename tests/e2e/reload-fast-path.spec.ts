@@ -9,29 +9,10 @@ import path from 'node:path';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { UserscriptServer } from '../fixtures/userscript-server';
-import { waitForTabState, type TabStateSnapshot } from '../fixtures/sw-api';
+import { waitForTabState, activeTabId, hasBadgeColor } from '../fixtures/sw-api';
 
 const GREEN = '#2e7d32';
 const PURPLE = '#d500f9';
-
-function hasColor(snapshot: TabStateSnapshot, hex: string): boolean {
-  if (!Array.isArray(snapshot.badgeColor)) return false;
-  const [r, g, b] = snapshot.badgeColor as number[];
-  return (
-    r === parseInt(hex.slice(1, 3), 16) &&
-    g === parseInt(hex.slice(3, 5), 16) &&
-    b === parseInt(hex.slice(5, 7), 16)
-  );
-}
-
-async function activeTabId(getServiceWorker: () => Promise<import('@playwright/test').Worker>): Promise<number> {
-  const sw = await getServiceWorker();
-  return sw.evaluate(async () => {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab?.id) throw new Error('no active tab');
-    return tab.id;
-  });
-}
 
 test.describe('reload fast-path', () => {
   let scriptsDir: ScriptsDir;
@@ -62,7 +43,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial v1 green');
 
     // Edit the file on disk. Crucially: do NOT call updateCollection. The
     // whole point is that the reload itself discovers the update.
@@ -79,7 +60,7 @@ test.describe('reload fast-path', () => {
     // keeps the row non-stale.
     await waitForTabState(
       sm, tabId,
-      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN),
       'green after reload swap',
     );
     await page.close();
@@ -103,7 +84,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial v1 green');
 
     scriptsDir.rewriteBody('flash.user.js', `document.title = 'v2';`);
 
@@ -117,7 +98,7 @@ test.describe('reload fast-path', () => {
     // rather than passing this wait and failing the title check.
     await waitForTabState(
       sm, tabId,
-      (s) => hasColor(s, PURPLE) && !s.title.includes('Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && !s.title.includes('Reload to update'),
       'purple while the swap lands',
     );
     await navigated;
@@ -125,7 +106,7 @@ test.describe('reload fast-path', () => {
     // Comes back down on its own — nothing here reloads again.
     await waitForTabState(
       sm, tabId,
-      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN),
       'green once the flash ends',
     );
     await page.close();
@@ -150,13 +131,13 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('same');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial green');
 
     await page.reload();
     await expect(page).toHaveTitle('same');
     await waitForTabState(
       sm, tabId,
-      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN),
       'green after no-op reload',
     );
     await page.close();
@@ -184,7 +165,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial v1 green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial v1 green');
 
     scriptsDir.rewriteBody('main.user.js', `document.title = 'v2';`);
     await page.reload();
@@ -193,7 +174,7 @@ test.describe('reload fast-path', () => {
     await expect(page).toHaveTitle('v2');
     await waitForTabState(
       sm, tabId,
-      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN),
       'green after MAIN-world swap',
     );
     await page.close();
@@ -220,7 +201,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle(/-baked$/);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'first-visit green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'first-visit green');
 
     // Edit on disk, then navigate (not reload) to a different page on
     // the same origin. The new page's first injection should still run
@@ -272,7 +253,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1-swapped-v2');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial green');
 
     // Edit the main body. The require is untouched.
     scriptsDir.rewriteBody('reqswap.user.js', `document.title = 'v2-' + __SM_REQ_FN();`);
@@ -323,7 +304,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1-const-ok-class-ok');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial green');
 
     scriptsDir.rewriteBody('lexswap.user.js', `document.title = 'v2-' + REQ_CONST + '-' + new ReqClass().tag();`);
 
@@ -368,7 +349,7 @@ test.describe('reload fast-path', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1:init');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial green');
 
     scriptsDir.rewriteBody('store.user.js', `
       const prev = GM_getValue('marker', 'init');
@@ -383,7 +364,7 @@ test.describe('reload fast-path', () => {
     await expect(page).toHaveTitle('v2:v1');
     await waitForTabState(
       sm, tabId,
-      (s) => s.badgeText === '1' && hasColor(s, GREEN),
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN),
       'green after storage swap',
     );
     await page.close();
