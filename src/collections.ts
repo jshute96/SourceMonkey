@@ -82,6 +82,7 @@ import {
   scriptBasename,
   scriptDisplayName,
   scriptOutdatedProbe,
+  viewerUrl,
 } from './script-display.js';
 import { probeLabel, type VersionProbe } from './version-probe.js';
 import { computeLogIds } from './script-log-id.js';
@@ -392,7 +393,7 @@ function paintStatusCell(
   // tab — the same destination regardless of effective status, since
   // even OK rows may have informative entries.
   const link = document.createElement('a');
-  link.href = viewerUrl(scriptId, 'log').toString();
+  link.href = viewerUrl(scriptId, 'log');
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   link.textContent = formatScriptStatusLabel(effective);
@@ -1289,7 +1290,7 @@ function fillNameCell(
   // (which carry their own meaning) don't inherit it as a row-wide
   // tooltip.
   a.title = nameCellTooltip(script);
-  a.href = viewerUrl(script.id).toString();
+  a.href = viewerUrl(script.id);
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
   nameCell.appendChild(a);
@@ -2095,20 +2096,6 @@ function makeToggle(
   cb.addEventListener('change', () => onChange(cb.checked, label));
   label.appendChild(cb);
   return label;
-}
-
-// A page-relative viewer link (e.g. `userscript.html?script=<id>#Log`).
-// Relative — not the absolute `chrome.runtime.getURL(...)` form — because
-// both pages live at the extension root, so the browser resolves it
-// against the current page; this keeps the long `chrome-extension://<id>/`
-// prefix from being inlined twice per row (name + status link) across
-// a table that can hold hundreds of scripts. Returns a string; the two
-// callers already `.toString()` it (a no-op on a string).
-function viewerUrl(scriptId: string, tab?: 'log'): string {
-  const params = new URLSearchParams({ script: scriptId });
-  // The viewer parses #Log via parseHash and lands on the Log pane.
-  const hash = tab === 'log' ? '#Log' : '';
-  return `userscript.html?${params.toString()}${hash}`;
 }
 
 // CSS.escape isn't on every old runtime; fall back to a minimal escape

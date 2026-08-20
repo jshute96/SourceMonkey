@@ -50,6 +50,7 @@ import {
   findRelatedVersions,
   isRunning,
   otherRunningCopies,
+  type RelatedScript,
   type RelatedVersions,
   type ScriptEnableChange,
 } from './script-identity.js';
@@ -71,8 +72,10 @@ import {
 } from './external-files.js';
 import {
   clearScriptLog,
+  getAllMaxLogLevels,
   getMaxLogLevel,
   getScriptLog,
+  LOG_LEVEL_KEY_PREFIX,
   type LogEntry,
   type LogLevel,
 } from './script-log.js';
@@ -89,21 +92,21 @@ import {
   coerceRejectionMap,
   describeRejection,
   readRejections,
+  type RejectionMap,
 } from './script-rejection.js';
 import { updateScript } from './script-updater.js';
 import {
   decodeForDisplay,
   displayLocation,
-  effectiveScriptStatus,
   formatBytes,
   formatScriptSize,
-  formatScriptStatusLabel,
   leafName,
   scriptBasename,
-  scriptOutdatedProbe,
+  scriptStatusView,
   stripSriFragment,
+  viewerUrl,
+  type ScriptStatusView,
 } from './script-display.js';
-import { probeLabel } from './version-probe.js';
 import {
   getValue,
   joinFullSource,
@@ -272,6 +275,13 @@ async function load(): Promise<void> {
 // script that shares this basename, our `#N` would otherwise go
 // stale. Listen for any script:* mutation and re-derive.
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  // Before the `scriptId` gate below: the panel's Status column speaks
+  // for every copy it draws, and a PREVIEW draws copies too. Everything
+  // after the gate is about the one installed script this page is
+  // showing, which a preview doesn't have.
+  if (areaName === 'session' && panelStatusChanged(changes)) {
+    if (lastRelatedPaint) void repaintRelatedVersions(lastRelatedPaint);
+  }
   if (!scriptId) return;
   if (areaName === 'local') {
     // Repaint on any script:* mutation (this script, or a sibling whose
@@ -711,6 +721,7 @@ function render(script: StoredScript): void {
 // form.
 async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   const generation = ++relatedVersionsGeneration;
+  lastRelatedPaint = args;
   const snapshot = await readStoreSnapshot();
   // A later paint started while this one was reading storage, so this
   // result is already stale. Drop it rather than let two in-flight
@@ -723,6 +734,12 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     location: args.location,
     header: args.header,
   });
+  const rows = allRelatedRows(related);
+  lastRelatedIds = new Set(rows.map((r) => r.script.id));
+  const status = await relatedStatuses(rows);
+  // Same staleness check as after the store read: the session reads
+  // above are two more awaits a newer paint can overtake.
+  if (generation !== relatedVersionsGeneration) return;
 
   const actions: RelatedVersionsActions = {
     currentScriptId: args.currentScriptId,
@@ -818,6 +835,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   renderRelatedVersions(versionsEl, {
     ...related,
     actions,
+    status,
     mode: args.mode,
     version: args.header ? getValue(args.header, 'version') : undefined,
     message: relatedVersionsMessage,
@@ -836,6 +854,41 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     const others = otherRunningCopies(allRelatedRows(related), args.currentScriptId);
     enableLabelEl.title = enableTitle(others.length > 0);
   }
+}
+
+// The Status cell for every row the panel is about to draw.
+//
+// The two inputs live in `chrome.storage.session` — the per-script max
+// log level and Chrome's registration verdicts — and neither is on the
+// stored row, so they are read here and handed to the renderer rather
+// than looked up per cell. One read for the whole table: a session
+// `get(null)` per row would repeat the same scan once per copy.
+//
+// Fails open with an empty map, which renders every cell as an em
+// dash. The panel is supplementary and its other columns are still
+// worth showing; a status we could not compute must not blank them.
+//
+// Deliberately NOT reusing this page's own `currentLogLevel` /
+// `currentRejection` for the current row: those track one script, and
+// a cell that agreed with the page for one row while every neighbour
+// came from a different read would be the drift this shares a helper
+// to avoid.
+async function relatedStatuses(
+  rows: readonly RelatedScript[],
+): Promise<Map<string, ScriptStatusView>> {
+  const out = new Map<string, ScriptStatusView>();
+  let levels: Map<string, LogLevel>;
+  let rejections: RejectionMap;
+  try {
+    [levels, rejections] = await Promise.all([getAllMaxLogLevels(), readRejections()]);
+  } catch (err) {
+    dlog(`[SourceMonkey] related-versions status lookup failed: ${describeError(err)}`);
+    return out;
+  }
+  for (const { script } of rows) {
+    out.set(script.id, scriptStatusView(script, levels.get(script.id), rejections[script.id]));
+  }
+  return out;
 }
 
 // Everything that has to catch up after one of the panel's own actions
@@ -886,6 +939,32 @@ interface RelatedVersionsPaint {
 
 // Bumped by every paint so a slower earlier one can tell it lost.
 let relatedVersionsGeneration = 0;
+
+// What the last panel paint was for, so a session-storage change that
+// moves any drawn copy's Status cell can re-run the same paint. Null
+// until the first one. Set by previews too, and used there: the
+// session branch of the listener runs before the `scriptId` gate.
+let lastRelatedPaint: RelatedVersionsPaint | null = null;
+
+// The ids the panel last drew a Status cell for. Kept so a session
+// change can be tested against what is actually on screen.
+let lastRelatedIds = new Set<string>();
+
+// Whether a `storage.session` change carries anything a Status cell
+// currently on screen reads.
+//
+// Matched against the drawn rows, not against the `loglevel:` prefix
+// alone: a page with a dozen unrelated userscripts throwing during
+// load would otherwise rebuild this table a dozen times over content
+// that never changed. The rejection map is one shared row, so any
+// write to it may name a copy we draw.
+function panelStatusChanged(changes: Record<string, unknown>): boolean {
+  return Object.keys(changes).some(
+    (key) => key === REJECTIONS_KEY
+      || (key.startsWith(LOG_LEVEL_KEY_PREFIX)
+        && lastRelatedIds.has(key.slice(LOG_LEVEL_KEY_PREFIX.length))),
+  );
+}
 
 // The user removed the script this page is showing, from the panel's
 // own trash can. Without it the not-found state that follows reads as
@@ -1082,32 +1161,20 @@ function requireBasename(url: string, ref: string): string {
 // REJECTED / MISSING / OUTDATED / ERROR / WARNING / OK) computed
 // against the current log level and registration verdict.
 function buildStatusCell(script: StoredScript): Node {
-  const outdated = scriptOutdatedProbe(script);
-  const effective = effectiveScriptStatus(
-    { status: script.status, refreshError: script.refreshError },
-    currentLogLevel,
-    outdated !== null,
-    currentRejection !== undefined,
-  );
+  // The same verdict, wording, and hover text the panel's Status
+  // column below shows for every other copy — a row that explained
+  // itself differently from its own neighbours would read as a
+  // different measurement.
+  //
+  // A `title` is plain text, so an error location is flattened in
+  // rather than linked; the clickable form of the same verdict is in
+  // the message bar this row sits above.
+  const view = scriptStatusView(script, currentLogLevel, currentRejection);
   const link = document.createElement('a');
   link.href = '#Log';
-  link.textContent = formatScriptStatusLabel(effective);
-  link.className = `meta-status status-${effective}`;
-  // Hover text follows whatever the cell is showing: Chrome's rejection
-  // reason, the refresh-failure reason, the newer version found
-  // upstream, or the load errorMessage. A `title` is plain text, so the
-  // location is flattened in rather than linked — the clickable form of
-  // the same verdict is in the message bar this row sits above.
-  const title = effective === 'rejected' && currentRejection
-    ? currentRejection
-    : effective === 'refresh-failed'
-      ? script.refreshError
-      : effective === 'outdated' && outdated
-        ? `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`
-        : script.errorMessage
-          ? describeDiagnostic(script.errorMessage, script.errorLocation)
-          : undefined;
-  if (title) link.title = title;
+  link.textContent = view.label;
+  link.className = `meta-status status-${view.status}`;
+  if (view.title) link.title = view.title;
   return link;
 }
 
@@ -1875,7 +1942,7 @@ async function readStoreSnapshot(): Promise<StoreSnapshot> {
 function showOpenButton(id: string): void {
   openBtn.hidden = false;
   openBtn.onclick = () => {
-    location.href = `userscript.html?script=${encodeURIComponent(id)}`;
+    location.href = viewerUrl(id);
   };
 }
 
@@ -1913,7 +1980,7 @@ async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
     // rewrite enable state from.
     if (scriptId && isSingleFileInput(previewLocation)) await soloNewlyInstalled(scriptId);
     location.href = scriptId
-      ? `userscript.html?script=${encodeURIComponent(scriptId)}`
+      ? viewerUrl(scriptId)
       : 'collections.html';
   } catch (err) {
     setMessage(`Install failed: ${describeError(err)}`, 'error');
@@ -1973,7 +2040,7 @@ async function doUpdate(id: string): Promise<void> {
   const spinner = startBusy(updateBtn);
   try {
     await updateScript(id, 'manual', 'force');
-    location.href = `userscript.html?script=${encodeURIComponent(id)}`;
+    location.href = viewerUrl(id);
   } catch (err) {
     setMessage(`Update failed: ${describeError(err)}`, 'error');
     spinner.remove();

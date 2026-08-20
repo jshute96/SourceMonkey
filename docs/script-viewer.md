@@ -275,6 +275,9 @@ One page, one set of panels, two query strings:
        `errorMessage` when present.
      - Rendered as an `<a href="#Log">` so clicking switches to the Log
        tab via the same hashchange listener as a manual tab click.
+     - Label and `title` come from `scriptStatusView`
+       (`script-display.ts`), shared with the Other-versions panel's
+       Status column.
      - The level promotes live as new log entries arrive — the
        `storage.session.onChanged` listener for `loglevel:<scriptId>`
        repaints just this row, and the same listener repaints it (plus
@@ -289,9 +292,13 @@ One page, one set of panels, two query strings:
      script from a different URL** (same `@namespace` + `@name`).
    - Per row: enable toggle, type bubble + collection name linking to the
      collections page, location linking to that copy's own viewer tab,
-     version, a refetch button — **Refresh** here, **Update** in a
-     preview, matching whichever control the page already shows — and a
-     trash can, live only for single-file installs.
+     status linking to that copy's Log tab, version, a refetch button —
+     **Refresh** here, **Update** in a preview, matching whichever
+     control the page already shows — and a trash can, live only for
+     single-file installs.
+   - The Status column carries the same verdict as the `Status` row
+     above — same helper, same wording — for every copy rather than
+     only this one.
    - Enabling a copy disables the others, since two enabled copies both
      run; ctrl/cmd-click opts out. Same rule on the controls-row
      toggle, and the whole set flips on screen before the writes land.

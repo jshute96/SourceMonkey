@@ -274,16 +274,27 @@
         border-collapse: collapse;
         table-layout: fixed;
       }
+      /* Status, Version, and the actions column are sized to their own
+         widest content by `fitColumns` (related-versions.ts), which
+         writes the three custom properties below onto the panel. The
+         fallbacks are what the first paint uses and what a measurement
+         of a hidden panel falls back to: wide enough for REFRESH
+         FAILED and a date-shaped @version. Everything left over goes to
+         Location, which is the column that can always use it. */
       .versions-table col.col-enabled  { width: 2.2em; }
       .versions-table col.col-collection { width: 26%; }
-      .versions-table col.col-version  { width: 7em; }
-      .versions-table col.col-actions  { width: 6.5em; }
+      .versions-table col.col-status   { width: var(--w-col-status, 8em); }
+      .versions-table col.col-version  { width: var(--w-col-version, 7em); }
+      .versions-table col.col-actions  { width: var(--w-col-actions, 6em); }
       .versions-table col.col-remove   { width: 2.4em; }
+      /* Same #444 as the section heading above the table: the panel's
+         two kinds of heading are both headings, and at 11px uppercase
+         a lighter grey reads as faded rather than as secondary. */
       .versions-table th {
         text-align: left;
         font-size: 11px;
         font-weight: 600;
-        color: #888;
+        color: #444;
         text-transform: uppercase;
         letter-spacing: 0.04em;
         padding: 0 0.5em 0.2em 0;
@@ -301,11 +312,37 @@
         white-space: nowrap;
       }
       .versions-table th.col-actions button { font-size: 12px; padding: 1px 8px; }
-      .versions-table .col-version {
+      /* Type styling for the body cells is scoped to `td`, here and in
+         the Location rule below. A column class sits on the `th` too,
+         and `.versions-table .col-x` outranks `.versions-table th`, so
+         an unscoped `color` / `font-size` here leaks into that
+         column's heading — which is how COLLECTION, LOCATION, STATUS
+         and VERSION ended up drawn in three combinations of size and
+         grey. The heading row is one row and reads as one. */
+      .versions-table td.col-version {
         color: #555;
         font-variant-numeric: tabular-nums;
         overflow-wrap: anywhere;
       }
+      /* A wider right gutter than the other columns get: these two are
+         measured to their content, so without it the widest status
+         would sit hard against the version beside it. On the `th` as
+         well, so heading and values share an edge, and inside the
+         measured width, so the gutter survives the fit. */
+      .versions-table .col-status,
+      .versions-table .col-version { padding-right: 1.1em; }
+      /* Status reuses the `status-*` colours the controls row and the
+         collections page already use, so one verdict is one colour
+         everywhere, and styles its link as status text — see
+         docs/script-identity.md for why the colour, not the underline,
+         is what has to carry. */
+      .versions-table td.col-status { font-size: 12px; }
+      .versions-table .col-status a {
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .versions-table .col-status a:hover { text-decoration: underline; }
       /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
          a long URL shrink its column rather than widening the table. */
       .versions-table .col-collection,
@@ -314,7 +351,7 @@
         word-break: normal;
         min-width: 0;
       }
-      .versions-table .col-location { font-size: 12px; color: #555; }
+      .versions-table td.col-location { font-size: 12px; color: #555; }
       .versions-collection-name {
         color: inherit;
         text-decoration: none;
@@ -394,6 +431,10 @@
          cells is what actually reclaims the space: under
          `table-layout: fixed` the colgroup, not the cells, is what
          sets column width.
+
+         Status does not shed either: it is the column that says
+         whether a copy is actually working, and its link is the only
+         route to that copy's log from here.
 
          Location does NOT shed, though it used to. Its link is the
          only way to reach another copy's page now that a preview with

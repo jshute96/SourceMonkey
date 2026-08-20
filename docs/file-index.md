@@ -75,7 +75,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
 | `src/copy-button.ts` | The viewer's square copy-to-clipboard button: icons, per-button "Copied" flash, text read at click time |
 | `src/script-identity.ts` | Finds other installed copies of a script — match by absolute `fileUrl`, and by `@namespace`+`@name`; the exclusive-enable rule |
-| `src/related-versions.ts` | Renders the viewer's "Other versions" / "Existing versions" panel: per-copy enable, refresh, install, remove |
+| `src/related-versions.ts` | Renders the viewer's "Other versions" / "Existing versions" panel: per-copy enable, status, refresh, install, remove |
 | `src/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
@@ -87,7 +87,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
 | `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, container-collection dispatch in addCollection, parse-time diagnostics, refreshAllCollections, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
 | `src/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
-| `src/script-display.ts` | Pure display helpers: size/status formatting, decode-for-display name/path helpers, SRI-fragment strip, the shared enable-toggle tooltip |
+| `src/script-display.ts` | Pure display helpers: size/status formatting, the shared status view + viewer URL, name/path decoding, SRI-fragment strip, enable-toggle tooltip |
 | `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same verdict |
 | `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
 | `src/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |

@@ -324,13 +324,42 @@ it.
 
 ### Row layout
 
-- Columns: enable toggle, collection, location, version, actions, remove.
+- Columns: enable toggle, collection, location, status, version,
+  actions, remove.
 - **Collection cell leads with the type bubble**, then the name — the same
   order as the details panel's Collection row and the collections page's
   headings. The bubble is fixed-width and the name is the variable
   part, so leading with it also keeps rows aligned down the left edge.
 - Location shows the row's own stored `relativePath` (relative for a
   collection copy), with the absolute form on the tooltip.
+- **Status** is the same verdict the collections list and the viewer's
+  own Status row show. `scriptStatusView` in `script-display.ts`
+  computes label and hover text for all three.
+  - Titled only where the verdict has more to say, so a cell can't
+    carry an explanation the identical verdict above it lacks.
+  - **Links to that copy's Log tab**, which makes the panel a route to
+    each copy's diagnostics rather than only a report on them.
+  - **Every row links, OK ones included.** "Why is it OK" is the same
+    pane as "why is it ERROR", and a column where only broken rows
+    respond teaches the user to stop clicking.
+  - **No `target="_blank"`**, unlike the collections page's status
+    cell. That page is a list you come back to; this panel is already
+    inside the viewer, a tab away from the Log.
+  - **Coloured**, unlike the controls row's status link, which inherits
+    its colour to read as one line of text. Down a column the colour is
+    what finds the broken copy among five.
+  - **Live for every row it draws**, on the preview as well as the
+    viewer — that listener branch runs before the installed-script
+    gate. A sibling that starts erroring while you sit here says so.
+    - Repaints on a `loglevel:` write for a **drawn** id, or on any
+      write to the shared rejection map. A dozen unrelated scripts
+      failing on some page must not rebuild this table a dozen times.
+  - **The offer row has no status**, and nor does a row whose lookup
+    failed: both show an em dash. Absent is not the same claim as OK.
+    - A failed lookup empties the whole column, including the row for
+      the script whose own Status row above still reads normally —
+      that row's verdict comes from a separate read. The alternative,
+      one column reading from two sources, is worse.
 
 ### Layout
 
@@ -338,6 +367,24 @@ it.
   `table-layout: fixed` pins their columns to the same widths — without
   it each table sizes its own and the panel reads as two unrelated
   grids.
+- **Status does not shed** either: it says whether a copy works, and
+  its link is the only route from here to that copy's log.
+- **Status, Version, and the actions column are measured, not
+  guessed.** `fitColumns` sizes each to its own widest cell across both
+  tables and writes the result to the panel as custom properties;
+  Location absorbs everything left over.
+  - Under `table-layout: fixed` a column cannot shrink to its content,
+    so a fixed width has to cover the worst case (`REFRESH FAILED`, a
+    date-shaped `2026.08.19`) — which left a short `1.2.0` stranded a
+    column's breadth from the button beside it.
+  - Measured by switching the tables to `auto` layout at `max-content`
+    width, with the `<col>` widths taken off (under `auto` they are
+    still honoured, so leaving them on measures the guess). Restored in
+    the same task, so no frame paints mid-measurement.
+  - Custom properties rather than inline `<col>` widths, which would
+    beat the narrow-window rule that zeroes Version.
+  - The stylesheet's widths remain as fallbacks, for the first paint
+    and for a panel measured while hidden (which reports zero).
 - Narrow windows shed **Version** below 640px rather than wrapping
   every cell to a ribbon. It is the least load-bearing: nothing acts on
   it, and the copies it distinguishes are still told apart by collection

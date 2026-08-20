@@ -20,7 +20,12 @@
 // See [docs/script-identity.md].
 
 import { isContainerCollection } from './directories.js';
-import { displayLocation, ENABLE_TITLE } from './script-display.js';
+import {
+  displayLocation,
+  ENABLE_TITLE,
+  viewerUrl,
+  type ScriptStatusView,
+} from './script-display.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
 import {
   appendWithSlashBreaks,
@@ -140,6 +145,13 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // would read as version-less next to copies that all show one,
   // which looks like missing data rather than a missing install.
   version?: string;
+  // What each stored row's Status cell should say, keyed by script id.
+  // Built by the caller because the inputs — the per-script max log
+  // level and Chrome's registration verdicts — live in
+  // `chrome.storage.session`, which this renderer does no reading of.
+  // A row with no entry renders an em dash: absent status is not the
+  // same claim as OK.
+  status?: ReadonlyMap<string, ScriptStatusView>;
   // A failure from one of the panel's own actions, shown inside the
   // panel. It cannot use the page's `#message` bar: that bar is
   // rewritten from the current script's stored state on every
@@ -227,7 +239,9 @@ export function renderRelatedVersions(
         : undefined,
     );
     for (const rel of sameLocation) {
-      table.tBodies[0].appendChild(versionRow(rel, model.actions, verb, allRows));
+      table.tBodies[0].appendChild(
+        versionRow(rel, model.actions, verb, allRows, model.status?.get(rel.script.id)),
+      );
     }
     if (installTarget) {
       table.tBodies[0].appendChild(installRow(installTarget, model));
@@ -242,10 +256,77 @@ export function renderRelatedVersions(
     const table = makeTable();
     for (const rel of sameIdentity) {
       table.tBodies[0].appendChild(
-        versionRow(rel, model.actions, refetchVerb(model.mode), allRows),
+        versionRow(
+          rel, model.actions, refetchVerb(model.mode), allRows, model.status?.get(rel.script.id),
+        ),
       );
     }
     container.appendChild(table);
+  }
+
+  // Last, once every row both tables will hold is in the document:
+  // the fit is across all of them, and a column measured before its
+  // widest row existed would be too narrow for it.
+  fitColumns(container);
+}
+
+// Columns sized to their own content rather than to a guess. Each is
+// as wide as its widest cell (header included) across BOTH section
+// tables, so the two stay aligned and Location — the column that can
+// always use more room — gets everything left over.
+//
+// Why measure at all: `table-layout: fixed` is what keeps the two
+// tables' columns aligned, and under it the `<colgroup>` decides the
+// width outright, so a column can't shrink to fit its own content. A
+// fixed guess has to cover the worst case (`REFRESH FAILED`, a
+// date-shaped `2026.08.19`), which left a short `1.2.0` stranded a
+// column's breadth from the button beside it.
+//
+// Only the columns whose content has a natural width. Collection and
+// Location are the flexible pair that absorb the remainder, and the
+// two icon columns are already exactly a control wide.
+const FITTED_COLUMNS = ['col-status', 'col-version', 'col-actions'] as const;
+
+// Measured by switching the tables to `auto` layout at `max-content`
+// width — the one state where a cell reports what its content actually
+// needs — then restoring. Both happen inside this call with no `await`
+// between, so no frame is ever painted in the measuring state.
+//
+// The widths land as custom properties on the panel rather than as
+// inline widths on the `<col>`s: an inline width would beat the
+// stylesheet's narrow-window rule, which zeroes Version below 640px.
+function fitColumns(container: HTMLElement): void {
+  const tables = [...container.querySelectorAll<HTMLTableElement>('.versions-table')];
+  if (tables.length === 0) return;
+  // The `<col>` widths have to come off for the measurement too: under
+  // `auto` layout a colgroup width is still a suggestion the browser
+  // honours, so leaving them on measures the guess we are trying to
+  // replace.
+  const cols = [...container.querySelectorAll<HTMLElement>('.versions-table col')];
+  for (const col of cols) col.style.width = 'auto';
+  for (const table of tables) {
+    table.style.tableLayout = 'auto';
+    table.style.width = 'max-content';
+  }
+  const widths = new Map<string, number>();
+  for (const table of tables) {
+    for (const cls of FITTED_COLUMNS) {
+      for (const cell of table.querySelectorAll<HTMLElement>(`td.${cls}, th.${cls}`)) {
+        widths.set(cls, Math.max(widths.get(cls) ?? 0, cell.getBoundingClientRect().width));
+      }
+    }
+  }
+  for (const table of tables) {
+    table.style.tableLayout = '';
+    table.style.width = '';
+  }
+  for (const col of cols) col.style.width = '';
+  for (const cls of FITTED_COLUMNS) {
+    const width = widths.get(cls);
+    // A panel measured while hidden reports zero. Leaving the property
+    // unset falls back to the stylesheet's worst-case width, which is
+    // wrong-but-readable; a zero would collapse the column outright.
+    if (width) container.style.setProperty(`--w-${cls}`, `${Math.ceil(width)}px`);
   }
 }
 
@@ -293,6 +374,7 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
     'col-enabled',
     'col-collection',
     'col-location',
+    'col-status',
     'col-version',
     'col-actions',
     'col-remove',
@@ -307,6 +389,7 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
     ['On', 'col-enabled'],
     ['Collection', 'col-collection'],
     ['Location', 'col-location'],
+    ['Status', 'col-status'],
     ['Version', 'col-version'],
     ['', 'col-actions'],
     ['', 'col-remove'],
@@ -327,6 +410,7 @@ function versionRow(
   actions: RelatedVersionsActions,
   verb: string,
   allRows: readonly RelatedScript[],
+  status: ScriptStatusView | undefined,
 ): HTMLTableRowElement {
   const { script } = rel;
   const isCurrent = script.id === actions.currentScriptId;
@@ -343,6 +427,7 @@ function versionRow(
   tr.appendChild(enabledCell(rel, actions, allRows));
   tr.appendChild(collectionCell(rel));
   tr.appendChild(locationCell(rel, isCurrent));
+  tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb));
   tr.appendChild(removeCell(rel, actions));
@@ -488,9 +573,42 @@ function locationCell(rel: RelatedScript, isCurrent: boolean): HTMLTableCellElem
     return td;
   }
   const a = document.createElement('a');
-  a.href = `userscript.html?script=${encodeURIComponent(rel.script.id)}`;
+  a.href = viewerUrl(rel.script.id);
   a.title = rel.script.relativePath;
   appendWithSlashBreaks(a, text);
+  td.appendChild(a);
+  return td;
+}
+
+// Status, linking to that copy's Log tab. Every row links, including
+// OK ones, and the colour rather than the underline is what carries
+// the meaning — see [docs/script-identity.md] for both arguments.
+//
+// The current row's href resolves to this page's own URL plus `#Log`,
+// which is a same-document fragment navigation: it switches tabs via
+// the ordinary hashchange listener rather than reloading. That holds
+// only while the query string matches byte-for-byte — a viewer URL
+// that grew a second parameter would silently turn this into a page
+// load.
+function statusCell(scriptId: string, status: ScriptStatusView | undefined): HTMLTableCellElement {
+  const td = cell('col-status');
+  if (!status) {
+    // Nothing was passed for this row, so say nothing rather than
+    // guess: an unlabelled cell is honest, a green OK would not be.
+    td.textContent = '—';
+    return td;
+  }
+  const a = document.createElement('a');
+  // The `status-*` colour classes only — NOT the controls row's
+  // `.meta-status`, which forces `color: inherit`.
+  a.className = `status-${status.status}`;
+  a.href = viewerUrl(scriptId, 'log');
+  a.textContent = status.label;
+  // Titled only when the verdict has something to add, exactly as the
+  // controls row does with the same view — a cell that carried a
+  // tooltip the identical verdict an inch above lacks would read as a
+  // different measurement.
+  if (status.title) a.title = status.title;
   td.appendChild(a);
   return td;
 }
@@ -625,6 +743,14 @@ function installRow(
   loc.className += ' versions-offer-text';
   loc.textContent = 'Not installed here yet';
   tr.appendChild(loc);
+
+  // No stored row, so no status: this file has never been loaded,
+  // registered, or logged against. An em dash rather than a word,
+  // matching the enable cell two columns left.
+  const stat = cell('col-status');
+  stat.className += ' versions-offer-text';
+  stat.textContent = '—';
+  tr.appendChild(stat);
 
   // Not a copy — an offer — so the no-version tooltip has to be about
   // the file being previewed, not about a row that doesn't exist.

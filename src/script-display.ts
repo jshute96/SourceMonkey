@@ -10,7 +10,8 @@
 
 import type { StoredScript } from './script-store.js';
 import { getValue } from './userscript-header.js';
-import { outdatedProbe, type VersionProbe } from './version-probe.js';
+import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
+import { describeDiagnostic } from './diagnostic-location.js';
 
 // ---------- Names and paths ----------
 
@@ -215,6 +216,69 @@ export function formatScriptStatusLabel(status: DisplayStatus): string {
     case 'outdated': return 'OUTDATED';
     case 'warning': return 'WARNING';
     case 'error': return 'ERROR';
+  }
+}
+
+// The viewer URL for a stored script, optionally landing on its Log
+// pane. Shared by every in-page surface that links to or navigates to
+// a script, so none of them can drift on how the tab is addressed.
+//
+// Page-relative, not the absolute `chrome.runtime.getURL(...)` form:
+// every extension page lives at the extension root, so the browser
+// resolves it against the current page, and the long
+// `chrome-extension://<id>/` prefix stays out of a table that can hold
+// hundreds of rows with two links each. The service worker builds the
+// absolute form instead (`viewerUrlForScript` in background.ts)
+// because it has no page to be relative to.
+export function viewerUrl(scriptId: string, tab?: 'log'): string {
+  const params = new URLSearchParams({ script: scriptId });
+  // The viewer parses `#Log` via parseHash and lands on the Log pane.
+  return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
+}
+
+// Everything a Status cell shows about one stored script: the
+// effective status, the word for it, and the hover text explaining
+// whichever verdict won.
+export interface ScriptStatusView {
+  status: DisplayStatus;
+  label: string;
+  // Absent when there is nothing to add — an OK script with no logs
+  // has no explanation to give.
+  title?: string;
+}
+
+// What a script's Status cell should say. The label follows
+// `effectiveScriptStatus`; the hover text follows whatever the cell is
+// actually showing — Chrome's rejection reason, the refresh-failure
+// reason, the newer version found upstream, or the load error.
+//
+// Shared by the viewer's own Status row and the "Other versions"
+// panel's Status column, which would otherwise explain the same
+// verdict two ways. The collections page keeps its own copy of this
+// logic: its repaint path rebuilds status cells from DOM datasets with
+// no script row in hand, which is exactly what this takes.
+export function scriptStatusView(
+  script: Pick<
+    StoredScript,
+    'status' | 'refreshError' | 'errorMessage' | 'errorLocation' | 'header' | 'versionProbes'
+  >,
+  maxLogLevel: LogLevelForStatus | undefined,
+  rejection: string | undefined,
+): ScriptStatusView {
+  const outdated = scriptOutdatedProbe(script);
+  const status = effectiveScriptStatus(
+    script, maxLogLevel, outdated !== null, rejection !== undefined,
+  );
+  return { status, label: formatScriptStatusLabel(status), title: statusTitle() };
+
+  function statusTitle(): string | undefined {
+    if (status === 'rejected' && rejection) return rejection;
+    if (status === 'refresh-failed') return script.refreshError;
+    if (status === 'outdated' && outdated) {
+      return `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`;
+    }
+    if (script.errorMessage) return describeDiagnostic(script.errorMessage, script.errorLocation);
+    return undefined;
   }
 }
 

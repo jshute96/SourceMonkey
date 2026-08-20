@@ -159,6 +159,159 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
+  // Status is the column that says whether a copy actually works, and
+  // it is the route to that copy's log.
+  test('each row shows its status, linked to that copy\'s log', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const good = write('hello.user.js', 'Shared Script');
+    // Same file installed twice — once through the folder, once on its
+    // own — so both rows describe a script that loaded fine.
+    await sm.addCollection(dir.path);
+    await sm.addCollection(good);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === good)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    // Status sits between Location and Version.
+    const headings = await page.locator(`${PANEL} thead th`).allTextContents();
+    expect(headings.slice(2, 5)).toEqual(['Location', 'Status', 'Version']);
+
+    const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
+    await expect(cell).toHaveText('OK');
+    // Links to that copy's OWN log, not to the page we are standing on.
+    await expect(cell).toHaveAttribute(
+      'href', `userscript.html?script=${encodeURIComponent(inFolder.id)}#Log`,
+    );
+    await page.close();
+  });
+
+  // The Status column speaks for every copy, so it has to move when
+  // another copy's log escalates — not only when this one's does.
+  test('another copy\'s status updates without a reload', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
+    await expect(cell).toHaveText('OK');
+
+    // The OTHER copy hits a runtime error while this page sits open.
+    await sm.appendScriptLog(inFolder.id, {
+      level: 'error',
+      source: 'test',
+      message: 'boom',
+    });
+
+    await expect(cell).toHaveText('ERROR');
+    // This page's own row is about a different copy, so it stays put.
+    await expect(
+      page.locator(`${PANEL} tr[data-script-id="${standalone.id}"] td.col-status a`),
+    ).toHaveText('OK');
+    await page.close();
+  });
+
+  // The preview's panel is live too — its own listener branch runs
+  // before the installed-script gate that the rest of the page's
+  // storage handling sits behind.
+  test('a preview\'s panel tracks another copy\'s status', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const inFolder = (await allScripts(sm))[0];
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
+    await expect(cell).toHaveText('OK');
+
+    await sm.appendScriptLog(inFolder.id, {
+      level: 'warning',
+      source: 'test',
+      message: 'careful',
+    });
+    await expect(cell).toHaveText('WARNING');
+    await page.close();
+  });
+
+  // A copy that can't run says so from the panel, without the user
+  // having to open it.
+  test('a broken copy reports its status in the panel', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const good = write('good.user.js', 'Twin Script', { namespace: ns });
+    // Parses, carries the same identity, but declares no @match — so it
+    // fails validation and lands `invalid`.
+    const broken = dir.writeRaw(
+      'broken.user.js',
+      [
+        '// ==UserScript==',
+        '// @name        Twin Script',
+        `// @namespace   ${ns}`,
+        '// ==/UserScript==',
+        '',
+        'console.log("hi");',
+        '',
+      ].join('\n'),
+    );
+    await sm.addCollection(good);
+    await sm.addCollection(broken);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const goodScript = scripts.find((s) => s.relativePath === good)!;
+    const brokenScript = scripts.find((s) => s.relativePath === broken)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(goodScript.id)}`);
+    const cell = page.locator(`${PANEL} tr[data-script-id="${brokenScript.id}"] td.col-status a`);
+    await expect(cell).toHaveText('INVALID');
+    // The hover text carries the REASON, not just any string: the
+    // point of the column is that the user knows what to fix before
+    // clicking through.
+    await expect(cell).toHaveAttribute('title', /@match|@include/);
+    await page.close();
+  });
+
+  // The offer row is not a copy: nothing has been loaded, registered,
+  // or logged, so it has no status to report.
+  test('the not-installed-yet offer row shows no status', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-status`)).toHaveText('\u2014');
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-status a`)).toHaveCount(0);
+    await page.close();
+  });
+
   test('the per-row toggle disables that copy and only that copy', async ({
     extensionContext, extensionId, sm,
   }) => {
