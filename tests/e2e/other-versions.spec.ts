@@ -544,6 +544,78 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
+  // Installing is an enable, so it sweeps too: after Install the copy
+  // just added is the only one running.
+  test('installing from a preview disables the copies already installed', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0.0' });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.0' });
+    await sm.addCollection(a);
+    await sm.syncNow();
+    // The copy the sweep has to switch off starts ON — without this the
+    // assertion below passes for a copy that was never enabled at all.
+    expect((await allScripts(sm)).find((s) => s.relativePath === a)!.enabled).not.toBe(false);
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${b}`)}`,
+    );
+    // Two targets (the installed twin and the offer), so the header
+    // Install defers to the table's offer row.
+    await page.locator(`${PANEL} tr.is-offer button`).click();
+    // Install navigates to the new script's own page.
+    await page.waitForURL(/userscript\.html\?script=/);
+
+    await expect.poll(async () => {
+      const scripts = await allScripts(sm);
+      return {
+        old: scripts.find((s) => s.relativePath === a)?.enabled,
+        installed: scripts.find((s) => s.relativePath === b)?.enabled,
+      };
+    }).toEqual({ old: false, installed: true });
+    await page.close();
+  });
+
+  // The install sweep asks the same "is it running" question of the new
+  // copy that it asks of the ones it switches off. A container the user
+  // has turned off means the new copy can't run, so switching the
+  // working one off would leave nothing running.
+  test('installing into a disabled container sweeps nothing', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    write('a.user.js', 'Twin Script', { namespace: ns });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns });
+    // A third file, installed on its own purely to create the container
+    // collection so there is something to disable before installing `b`.
+    await sm.addCollection(write('other.user.js', 'Unrelated Script'));
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const container = (await sm.getCollections()).find((s) => s.path !== dir.path)!;
+    await sm.setCollectionEnabled(container.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${b}`)}`,
+    );
+    await page.locator(`${PANEL} tr.is-offer button`).click();
+    await page.waitForURL(/userscript\.html\?script=/);
+
+    // The install itself landed — otherwise there would be no sweep to
+    // skip and the assertions below would prove nothing.
+    const after = await allScripts(sm);
+    expect(after.some((s) => s.relativePath === b)).toBe(true);
+    // Both directory copies keep their stored intent: the same-identity
+    // twin and the directory's own copy of the file just installed.
+    expect(after.find((s) => s.relativePath === 'a.user.js')!.enabled).not.toBe(false);
+    expect(after.find((s) => s.relativePath === 'b.user.js')!.enabled).not.toBe(false);
+    await page.close();
+  });
+
   // Removing the row you are standing on is allowed, and the page says
   // so rather than reporting a store that lost your script.
   test('removing the script being viewed reports it as removed', async ({

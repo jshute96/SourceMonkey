@@ -124,6 +124,32 @@ the *other* rows.
 - **Clicking a checked box just disables it.** That leaves none running,
   which is an ordinary thing to want, and there is no other copy that
   should be promoted in its place.
+- **Installing counts as enabling.** A fresh install lands enabled, so
+  it sweeps the other running copies off on its way to the new script's
+  page.
+  - Both Install controls do it — the preview's header button and the
+    panel's offer row.
+  - And so does the collections page's **Add** field, which previews any
+    single-file location the user types rather than adding it directly.
+    (First-run seeding bypasses the preview, so it never sweeps.)
+  - **Single-file installs only.** The preview keeps an Install button
+    for other shapes too, and those add a whole collection — no one
+    script for the rule to be about.
+  - **Only when the new copy will actually run.** It must have landed
+    `ok` — a row stored `invalid` can't run — and its container
+    collection must be enabled. Switching a working copy off in favour
+    of one that can't run would leave nothing running at all.
+  - **A duplicate Install doesn't sweep.** Nothing new landed, so
+    nothing was enabled; the message says the script is already
+    installed and the panel below is where to choose between copies.
+  - **Fails open, and never blocks the navigation.** A sweep that
+    can't run — or whose write fails — is not reported: the install
+    itself succeeded, and the panel on the page it lands on shows the
+    real enable state.
+  - No ctrl/cmd opt-out here: the modifier belongs to the checkboxes,
+    where the sweep is the whole effect of the click. Two copies that
+    really are meant to run together are one checkbox away on the page
+    Install lands on.
 - **A copy under a disabled collection is spared.** It isn't running, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it

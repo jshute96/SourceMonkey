@@ -459,6 +459,10 @@ Banner (`#banner-slot`) states what this file is; the action row
   viewer. A web install is not a special kind of script: it lands in
   the http / github container collection and picks up normal refresh and
   update behavior.
+  - The new copy is left as the **only** running one: installing is an
+    enable, so it applies the same exclusive rule as the enable
+    checkboxes. See
+    [script-identity.md](script-identity.md#enabling-is-exclusive-disabling-is-not).
 - Already-installed rows come from `findRelatedVersions`, matched on
   the absolute `fileUrl` — the same lookup the Existing versions panel
   uses, so both apply the same rule for what counts as installed. Each

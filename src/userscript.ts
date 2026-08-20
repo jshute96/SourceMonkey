@@ -48,6 +48,7 @@ import {
   allRelatedRows,
   enableChanges,
   findRelatedVersions,
+  isRunning,
   otherRunningCopies,
   type RelatedVersions,
   type ScriptEnableChange,
@@ -120,6 +121,7 @@ import {
   normalizeCollectionInput,
   scriptAbsolutePath,
   collectionCanonicalUrl,
+  isSingleFileInput,
 } from './directories.js';
 import {
   appendWithSlashBreaks,
@@ -1903,6 +1905,13 @@ async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
       result.kind === 'existingContainer'
         ? result.scriptId
         : result.collection.scriptIds[0];
+    // Only a single-file install has one script to speak for. The
+    // preview keeps its Install button for other shapes too (a bare
+    // `.js` file, a manifest URL), and those land a whole collection
+    // whose `scriptIds[0]` is whatever the scan ordered first —
+    // arbitrary enough for a navigation target, not something to
+    // rewrite enable state from.
+    if (scriptId && isSingleFileInput(previewLocation)) await soloNewlyInstalled(scriptId);
     location.href = scriptId
       ? `userscript.html?script=${encodeURIComponent(scriptId)}`
       : 'collections.html';
@@ -1911,6 +1920,52 @@ async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
   } finally {
     spinner.remove();
     btn.disabled = false;
+  }
+}
+
+// A fresh install is an enable, so it follows the same exclusive rule
+// as the panel's checkboxes: the copy just installed is the one the
+// user wants running, and leaving an older copy of the same script on
+// means both register and both run on every page they match.
+//
+// Skipped whenever the new copy won't itself run — it landed
+// `invalid`, or its container collection is disabled. Switching a
+// working copy off in favour of one that can't run would leave nothing
+// running at all.
+//
+// Fails open and never blocks the navigation to the new script's page.
+// The install itself succeeded; if the sweep didn't, the panel on that
+// page is right there to fix the enable state by hand.
+async function soloNewlyInstalled(newScriptId: string): Promise<void> {
+  try {
+    const snapshot = await readStoreSnapshot();
+    const installed = snapshot.scripts.find((s) => s.id === newScriptId);
+    if (!installed || installed.status !== 'ok') return;
+    // Read the location and header off the STORED row rather than the
+    // preview's: they are what the rest of the store will be compared
+    // against from now on, and for a github blob URL the stored
+    // `fileUrl` is the resolved raw one.
+    const related = findRelatedVersions({
+      ...snapshot,
+      location: installed.fileUrl,
+      header: installed.header ?? null,
+    });
+    const rows = allRelatedRows(related);
+    // The other half of the "will it run" test: the row lands
+    // `enabled`, but its container collection may be disabled, and
+    // installing into a collection the user has turned off must not
+    // leave every copy of the script dark. `isRunning` is the same
+    // predicate the sweep applies to the rows it switches off.
+    //
+    // `own` can't actually be missing — the lookup ran on this row's
+    // own `fileUrl`, so it always matches itself — but a partially
+    // written store must not take the install's navigation down with
+    // it.
+    const own = rows.find((r) => r.script.id === newScriptId);
+    if (!own || !isRunning(own)) return;
+    await applyEnableChanges(enableChanges(newScriptId, true, rows));
+  } catch (err) {
+    dlog(`[SourceMonkey] install exclusive-enable skipped: ${describeError(err)}`);
   }
 }
 

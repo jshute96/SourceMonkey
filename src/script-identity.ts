@@ -219,7 +219,12 @@ export function enableChanges(
 }
 
 // Whether a row is actually running: its own flag AND its collection's.
-function isRunning(rel: RelatedScript): boolean {
+//
+// Exported because the sweep has a second question to ask with it: a
+// copy that is about to be enabled has to be running itself before it
+// is worth switching the others off (see `soloNewlyInstalled` in
+// userscript.ts).
+export function isRunning(rel: RelatedScript): boolean {
   if (!isScriptEnabled(rel.script)) return false;
   return rel.collection ? isCollectionEnabled(rel.collection) : true;
 }
