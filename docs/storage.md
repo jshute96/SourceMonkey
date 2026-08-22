@@ -807,7 +807,59 @@ after writing new userscripts to disk. Combined with the unchanged-file
 skip and the [changed-rows-only write](#only-changed-rows-are-written),
 this is cheap when most files are untouched.
 
-Similarly, `?add=<path-or-url>`:
+#### Narrower refresh triggers
+
+`?refresh` re-reads every http(s) and GitHub collection too, which is
+wasted work when what changed was a file on disk. Two narrower triggers
+cover that case (selection rules in `src/refresh-targets.ts`):
+
+- **`?refresh_local`** — every local collection: scanned directories,
+  local `script_manifest.json` collections, and the local-files
+  container. No http(s) or GitHub collection is touched. (A *local*
+  manifest listing http(s) entries still refetches them — "local" is
+  about where the collection lives, not every file it names.)
+- **`?refresh_file=<path>`** — one file or directory path, as a raw
+  absolute path or a POSIX `file://` URL. Selects:
+  - each scanned local collection whose directory **overlaps** the path
+    — in either direction, so naming a file finds the directory that
+    scans it, and naming a tree finds the collections inside it;
+  - each scanned local collection that already holds a row pointing at
+    the path (a manifest may list files outside its own directory);
+  - individual rows of the local-files container that point at the path
+    — that collection has no directory to re-scan.
+
+Notes:
+
+- Overlapping collections refresh **whole**, not just the named file.
+  That re-scan is what notices files added, renamed, or deleted
+  alongside the edit.
+- Disabled collections refresh too, matching Refresh All.
+- Each target refreshes on its own — no shared file-fetch cache and one
+  update-probe pass per collection, unlike `refreshAllCollections`.
+- A collection that fails doesn't stop its siblings, also matching
+  Refresh All; the reason lands where the repaint shows it.
+
+**Slashes need no escaping** — write the path as it appears on disk.
+The value is read with `URLSearchParams`, which applies form decoding,
+so only a filename containing `+` (arrives as a space), `%`, `&`, or
+`#` (cuts the value short) has to be percent-encoded.
+
+Rejected up front, with `Refresh failed: <reason>` on the page's error
+line:
+
+- A relative path or an http(s) URL.
+- A `file://` URL carrying a host or a Windows drive letter —
+  `locationFsPath` would drop the host and compare against a different
+  place than the one named.
+- Anything resolving to bare `/`, which would sweep every local
+  collection. The Add field refuses `/` for the same reason.
+
+```
+google-chrome chrome-extension://<extension-id>/collections.html?refresh_local
+google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/home/me/scripts/a.user.js'
+```
+
+#### `?add=<path-or-url>`
 
 - Runs the same flow as typing the value into the Add field and
   clicking Add (validation, dedup, scroll-to-section).
@@ -817,8 +869,14 @@ Similarly, `?add=<path-or-url>`:
   manifest / github-dir values still add directly.
 - Scrubs the param from the URL only on success/duplicate; an
   invalid value stays in the URL so the user can edit and retry.
-- `?refresh` is also scrubbed once it's been consumed, so a reload
-  after the bootstrap actions doesn't re-fire them.
+- `?refresh` / `?refresh_local` are also scrubbed once consumed, so a
+  reload after the bootstrap actions doesn't re-fire them.
+- `?refresh_file=` follows the `?add` rule instead: scrubbed only when
+  it was acted on, so a path that was rejected or matched nothing stays
+  in the URL alongside its message.
+- `?add` runs first, so a collection the same URL adds is included in
+  the refresh — and a `?refresh_file=` rejection is the message left
+  standing on the page's single error line.
 - Is the entry point used by `docs/redirect-page.md` (see
   [`deep-link.md`](deep-link.md)).
 

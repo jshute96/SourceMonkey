@@ -63,7 +63,7 @@
 
 | `page=` | Target | Recognised forwarded params |
 |---------|--------|-----------------------------|
-| `collections.html` | Collections page | `refresh`, `add=<path-or-url>` (a single `.user.js` hands off to the viewer's preview — see [script-viewer.md](script-viewer.md#preview-mode)) |
+| `collections.html` | Collections page | `refresh`, `refresh_local`, `refresh_file=<path>`, `add=<path-or-url>` (a single `.user.js` hands off to the viewer's preview — see [script-viewer.md](script-viewer.md#preview-mode)) |
 | `options.html` | Options page | — |
 | `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` (`captured` is stripped — see Security) |
 

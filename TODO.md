@@ -655,6 +655,15 @@ during cumulative review of the GM_* phases:
 
 ## Collections page — follow-ups
 
+- **A `file://` row inside an http(s) collection can't be targeted.**
+  `?refresh_file=` decides "local" from the collection's own location,
+  so a `script_manifest.json` served over http that lists a `file://`
+  entry is skipped — the caller gets "No local collection or script
+  covers …" for a path that really is on disk. Refreshing just that row
+  (`updateScript`) would avoid re-reading the manifest over the network,
+  but the shape is rare enough that the extra branch hasn't earned its
+  keep yet. See `src/refresh-targets.ts`.
+
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
   element, so the first handler's `finally` removes it while the second

@@ -237,8 +237,14 @@ To generate a manifest from a directory of userscripts, run
   races a quick re-check against the page load, so a script you just
   saved usually runs on that very reload.
 - **Refresh** (per collection, or **Refresh All**) checks for updates manually.
-  External tools can trigger it by opening
-  `chrome-extension://<extension-id>/collections.html?refresh`.
+  External tools can trigger a refresh by opening the collections page with
+  one of these, where `<id>` is the extension's ID:
+  - `chrome-extension://<id>/collections.html?refresh` — every collection.
+  - `chrome-extension://<id>/collections.html?refresh_local` — only the
+    collections that live on local disk, skipping the web ones.
+  - `chrome-extension://<id>/collections.html?refresh_file=<path>` — only
+    what covers that file or directory, including the collections that
+    scan it, so a file you added, renamed, or deleted is noticed too.
 - Re-fetches are cheap: HTTP collections use conditional GETs, local files
   compare size + mtime, and unchanged content is detected by hash.
 - Every script updates from the place you installed it. A declared

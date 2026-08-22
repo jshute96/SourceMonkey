@@ -147,7 +147,10 @@ export function locationFsPath(input: string): string {
 // as URLs rather than producing a path that points somewhere else.
 // The rest of the module is POSIX-only by design (see `pathToFileUrl`,
 // `parentDir`), so this is containment, not Windows support.
-function isNonPosixFileUrl(input: string): boolean {
+// Exported because the collections page's `?refresh_file=` validator
+// has to refuse the same two shapes before comparing paths — a mangled
+// path there would silently match the wrong local collection.
+export function isNonPosixFileUrl(input: string): boolean {
   let u: URL;
   try {
     u = new URL(input);

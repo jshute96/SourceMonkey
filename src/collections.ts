@@ -70,6 +70,7 @@ import { installDebugLoggingListener, loadDebugLoggingFlag } from './debug-log.j
 import {
   updateAllCollections,
   updateCollection,
+  updateScript,
 } from './script-updater.js';
 import {
   displayLocation,
@@ -105,6 +106,19 @@ import {
   type RefreshErrorMap,
 } from './refresh-error.js';
 import { iconRefFromHeader, renderSiteIconInto } from './site-icon.js';
+import {
+  mapWithConcurrency,
+  FETCH_COLLECTIONS_CONCURRENCY,
+  FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
+} from './concurrency.js';
+import {
+  localRefreshTargets,
+  pathRefreshTargets,
+  refreshPathProblem,
+  REFRESH_FAILED_PREFIX,
+  type CollectionScripts,
+  type RefreshTargets,
+} from './refresh-targets.js';
 import {
   canonicalCollectionInput,
   containerKindForSingleFileInput,
@@ -815,6 +829,16 @@ function forgetScriptsExcept(keep: ReadonlySet<string>): void {
 //   google-chrome chrome-extension://<id>/collections.html?refresh
 // after they've written new userscripts.
 //
+// Two narrower triggers exist for the common "I just edited files on
+// disk" case, where a refresh-all would also re-read every http(s) and
+// GitHub collection for nothing:
+//   - `?refresh_local` — every local collection, and nothing else.
+//   - `?refresh_file=<path>` — a file or directory path (raw or
+//     `file://`). Refreshes the local collections whose scanned
+//     directory overlaps it (so an added / renamed / deleted file is
+//     noticed) plus any individually-added local script it names.
+// See src/refresh-targets.ts for the selection rules.
+//
 // `?add=<path-or-url>` does the equivalent of typing the value
 // into the Add field and clicking Add. Validates the input;
 // shows an error if it doesn't look like an absolute path or URL.
@@ -867,6 +891,17 @@ async function bootstrap(): Promise<void> {
   const addArg = params.get('add');
   if (addArg !== null) {
     await handleAddParam(addArg);
+  }
+  // After `?add`, so a collection added by the same URL is included —
+  // and so a rejected `?refresh_file` message is the one left standing
+  // on the page's single error line.
+  if (params.has('refresh_local')) {
+    await onRefreshSubset(localRefreshTargets(await readCollectionScripts()));
+    scrubQueryParams(['refresh_local']);
+  }
+  const refreshFileArg = params.get('refresh_file');
+  if (refreshFileArg !== null) {
+    if (await handleRefreshFileParam(refreshFileArg)) scrubQueryParams(['refresh_file']);
   }
 }
 
@@ -936,6 +971,45 @@ async function handleAddParam(raw: string): Promise<void> {
   addInput.value = raw;
   const ok = await onAddCollection(raw);
   if (ok) scrubQueryParams(['add']);
+}
+
+// Every collection paired with the scripts it holds, which is what the
+// `refresh-targets` selectors read. One storage scan for all the
+// scripts rather than a per-collection read.
+async function readCollectionScripts(): Promise<CollectionScripts[]> {
+  const [collections, scripts] = await Promise.all([getCollections(), getAllScripts()]);
+  const byCollection = new Map<string, StoredScript[]>();
+  for (const script of scripts) {
+    const list = byCollection.get(script.collectionId);
+    if (list) list.push(script);
+    else byCollection.set(script.collectionId, [script]);
+  }
+  return collections.map((collection) => ({
+    collection,
+    scripts: byCollection.get(collection.id) ?? [],
+  }));
+}
+
+// Drive a targeted refresh from a `?refresh_file=` query param.
+// Returns whether the param was consumed: a value we couldn't act on —
+// wrong shape, or naming somewhere no local collection or script covers
+// — stays in the URL (like a rejected `?add`) with the reason on the
+// page, so the caller can see what it asked for and fix it.
+async function handleRefreshFileParam(raw: string): Promise<boolean> {
+  const path = raw.trim();
+  const problem = refreshPathProblem(path);
+  if (problem !== null) {
+    showPageError(`${REFRESH_FAILED_PREFIX}${problem}`);
+    return false;
+  }
+  const targets = pathRefreshTargets(await readCollectionScripts(), path);
+  if (targets.collectionIds.length === 0 && targets.scripts.length === 0) {
+    showPageError(`${REFRESH_FAILED_PREFIX}No local collection or script covers ${path}`);
+    return false;
+  }
+  showPageError(null);
+  await onRefreshSubset(targets);
+  return true;
 }
 
 // Remove the given query params from the current URL via
@@ -1381,10 +1455,10 @@ async function onAddCollection(
   if (!path) return false;
 
   if (!isValidCollectionInput(path)) {
-    showAddError(`A location ${LOCATION_SHAPES}`);
+    showPageError(`A location ${LOCATION_SHAPES}`);
     return false;
   }
-  showAddError(null);
+  showPageError(null);
 
   // One script → preview it first. The viewer shows its metadata,
   // what it asks permission to do, and its source text, then installs on
@@ -1412,7 +1486,7 @@ async function onAddCollection(
       // holds.
       stored = canonicalCollectionInput(await normalizeCollectionInput(path));
     } catch (err) {
-      showAddError(err instanceof Error ? err.message : String(err));
+      showPageError(err instanceof Error ? err.message : String(err));
       return false;
     }
     // `addCollection` seeds the collection row inside its write lock and
@@ -1434,7 +1508,7 @@ async function onAddCollection(
     try {
       result = await addCollection(stored);
     } catch (err) {
-      showAddError(describeError(err));
+      showPageError(describeError(err));
       await repaintPage();
       return true;
     }
@@ -1451,7 +1525,7 @@ async function onAddCollection(
         // Name the collection rather than the internal "container"
         // kind: it is the heading the jump below scrolls to, so the
         // message and the destination read as the same thing.
-        showAddError(
+        showPageError(
           isContainerCollection(existing.path)
             ? `This script is already in ${effectiveDisplayName(existing)}`
             : 'This collection is already registered',
@@ -1497,9 +1571,11 @@ function isValidCollectionInput(value: string): boolean {
   return value.startsWith('/') && value.length > 1;
 }
 
-// Show or clear the Add error line below the form. Pass null
-// to hide it; pass a string to surface a validation failure.
-function showAddError(message: string | null): void {
+// Show or clear the page's error line, which sits below the Add form.
+// Pass null to hide it; pass a string to surface a validation failure.
+// Shared by the Add flow and the `?refresh_file=` rejections — one
+// line, so the page never has two competing error slots.
+function showPageError(message: string | null): void {
   if (message === null) {
     addErrorEl.textContent = '';
     addErrorEl.hidden = true;
@@ -1657,36 +1733,58 @@ async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLBut
   }
 }
 
+// Snapshot / refresh / repaint / highlight — the shape every refresh
+// flow on this page shares. `run` does the actual refreshing;
+// `collectionIds` names the sections to diff, which for a
+// script-level refresh is the section that holds the script.
+//
+// Refresh may have added/removed scripts, flipped statuses, etc. The
+// repaint brings the sections' rows in line with what was just
+// written; then the rows that actually changed get their highlight.
+// Rows are updated in place, so the highlight goes onto the same `<tr>`
+// the user was already looking at.
+//
+// Never throws: a refresh that couldn't be saved already recorded its
+// reason in session storage, so the repaint is what puts it on screen.
+// Callers are click handlers whose `void` would drop a rejection
+// silently, leaving the user watching a button finish with no
+// explanation.
+async function refreshAndHighlight(
+  collectionIds: readonly string[],
+  label: string,
+  run: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    // Snapshot the prior scripts so we can highlight rows that
+    // actually changed after the refresh lands.
+    const priors = new Map<string, StoredScript[]>();
+    await Promise.all(collectionIds.map(async (id) => {
+      const before = await getCollectionWithScripts(id);
+      priors.set(id, before?.scripts ?? []);
+    }));
+    await run();
+    await repaintPage();
+    for (const id of collectionIds) {
+      const section = findSection(id);
+      if (!section) continue;
+      const after = await getCollectionWithScripts(id);
+      applyChangeHighlights(section, priors.get(id) ?? [], after?.scripts ?? []);
+    }
+  } catch (err) {
+    console.info(`[SourceMonkey] ${label} failed`, err);
+    await repaintPage();
+  }
+}
+
 async function onRefreshCollection(id: string, btn: HTMLButtonElement): Promise<void> {
   const prevText = btn.textContent ?? 'Refresh';
   btn.disabled = true;
   btn.textContent = 'Refreshing…';
   try {
-    // Snapshot the prior scripts so we can highlight rows that
-    // actually changed after the refresh lands.
-    const before = await getCollectionWithScripts(id);
-    const priorScripts = before?.scripts ?? [];
     // Goes through script-updater so a background opportunistic check
     // already in flight for this collection coalesces with our click
     // instead of doing redundant work.
-    await updateCollection(id, 'manual');
-    // Refresh may have added/removed scripts, flipped statuses, etc.
-    // The repaint brings this section's rows in line with what was just
-    // written; then the rows that actually changed get their highlight.
-    // Rows are updated in place, so the highlight goes onto the same
-    // `<tr>` the user was already looking at.
-    await repaintPage();
-    const section = findSection(id);
-    const after = await getCollectionWithScripts(id);
-    if (section) applyChangeHighlights(section, priorScripts, after?.scripts ?? []);
-  } catch (err) {
-    // A refresh that couldn't be saved already recorded its reason in
-    // session storage, so the repaint is what puts it on screen. Caught
-    // rather than rethrown because there is nothing above this to
-    // handle it: the click handler's `void` would drop it silently and
-    // the user would watch the button finish with no explanation.
-    console.info('[SourceMonkey] collection refresh failed', err);
-    await repaintPage();
+    await refreshAndHighlight([id], 'collection refresh', () => updateCollection(id, 'manual'));
   } finally {
     btn.disabled = false;
     btn.textContent = prevText;
@@ -1699,33 +1797,68 @@ async function onRefreshCollection(id: string, btn: HTMLButtonElement): Promise<
 async function onRefreshAll(): Promise<void> {
   setRefreshAllBusy(true);
   try {
-    // Snapshot each collection's prior scripts before kicking off the
-    // refresh so we can compute "what changed" per row.
+    // Inside the try, and inside a flow that swallows: the click
+    // handler's `void` would turn a throw from this read into an
+    // unhandled rejection, which Chrome files under the extension's
+    // errors even though nothing here is the user's to fix.
     const collections = await getCollections();
-    const priorsByCollection = new Map<string, StoredScript[]>();
-    await Promise.all(collections.map(async (s) => {
-      const before = await getCollectionWithScripts(s.id);
-      priorsByCollection.set(s.id, before?.scripts ?? []);
-    }));
-
-    await updateAllCollections('manual');
-
-    // One repaint brings the whole page in line with what was written;
-    // then each section's changed rows get their highlight.
-    await repaintPage();
-    for (const s of collections) {
-      const section = findSection(s.id);
-      if (!section) continue;
-      const after = await getCollectionWithScripts(s.id);
-      applyChangeHighlights(section, priorsByCollection.get(s.id) ?? [], after?.scripts ?? []);
-    }
-  } catch (err) {
     // `refreshAllCollections` records each collection's failure and
-    // keeps going, so reaching here means something outside that loop
-    // broke. Repaint anyway: whatever DID save should show, and any
-    // recorded per-collection reason goes up with it.
+    // keeps going, so anything `refreshAndHighlight` catches broke
+    // outside that loop. It repaints anyway: whatever DID save should
+    // show, and any recorded per-collection reason goes up with it.
+    await refreshAndHighlight(
+      collections.map((c) => c.id),
+      'refresh all',
+      () => updateAllCollections('manual'),
+    );
+  } catch (err) {
     console.info('[SourceMonkey] refresh all failed', err);
-    await repaintPage();
+  } finally {
+    setRefreshAllBusy(false);
+  }
+}
+
+// Refresh a chosen subset — the `?refresh_local` / `?refresh_file=`
+// triggers. Collections refresh whole (a re-scan is what notices added,
+// renamed, and deleted files); individually-selected scripts refresh on
+// their own, which is the only option for the local-files container
+// since it has no directory to scan.
+//
+// Bounded like the store's own fan-out so a wide target (a tree holding
+// many collections) doesn't open every collection's fetch set at once.
+//
+// Unlike Refresh All this is a plain loop over `updateCollection`, so
+// the targets don't share one file-fetch cache and each runs its own
+// update-probe pass. Fine for a subset (usually one collection); don't
+// assume parity with `refreshAllCollections` here.
+async function onRefreshSubset(targets: RefreshTargets): Promise<void> {
+  setRefreshAllBusy(true);
+  try {
+    // Highlight the section behind each refreshed script too, not just
+    // the wholly-refreshed collections.
+    const sections = new Set(targets.collectionIds);
+    for (const script of targets.scripts) sections.add(script.collectionId);
+    await refreshAndHighlight([...sections], 'targeted refresh', async () => {
+      // Per-target catch, the way `refreshAllCollections` wraps each
+      // collection: `mapWithConcurrency` rejects on the FIRST failure,
+      // which would otherwise abandon the sibling collections and skip
+      // the script pass below entirely. Each failure has already
+      // recorded its own reason where the repaint will show it.
+      await mapWithConcurrency(
+        targets.collectionIds, FETCH_COLLECTIONS_CONCURRENCY,
+        (id) => updateCollection(id, 'manual').catch((err: unknown) => {
+          console.info(`[SourceMonkey] collection refresh failed: ${describeError(err)}`);
+          return null;
+        }),
+      );
+      await mapWithConcurrency(
+        targets.scripts, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
+        (script) => updateScript(script.id, 'manual', 'force').catch((err: unknown) => {
+          console.info(`[SourceMonkey] script refresh failed: ${describeError(err)}`);
+          return null;
+        }),
+      );
+    });
   } finally {
     setRefreshAllBusy(false);
   }
