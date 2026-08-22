@@ -626,6 +626,15 @@ during cumulative review of the GM_* phases:
   collapses into one pass, and that `await repaintPage()` observes the
   caller's own write. The add / remove / refresh tests depend on it but
   only cover it incidentally.
+- **`chrome.userScripts.update` behaviours with no live probe.** Two
+  facts the registration path is built on are modelled by the fake in
+  `tests/unit/injector.test.mjs` but never re-measured against Chrome:
+  that `matches: []` is refused (so `matches` can be changed but not
+  cleared), and that an updated registration moves to the END of
+  Chrome's set. The glob half now has a probe in
+  `tests/e2e/exclude-globs.spec.ts`; these two should join it, so a
+  Chrome change that invalidates them fails a test rather than silently
+  changing injection order or leaving a stale match set.
 
 ## Storage-key migration — remove after 2026-09-01
 

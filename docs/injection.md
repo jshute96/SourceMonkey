@@ -189,26 +189,41 @@ against and a pure diff would strand stale registrations.
 property is only updated for the existing script if it is specified" —
 and testing against real Chrome adds the part the contract doesn't say.
 
-- **An explicit empty array counts as unspecified.** `excludeGlobs: []`
-  leaves the old exclusions in place, exactly as omitting the key does.
-- **`matches: []` is refused outright** — *"must specify at least one
-  match"*. So there is no way at all to clear a pattern field through
-  `update`.
+- **`includeGlobs` / `excludeGlobs` are ignored entirely.** `update`
+  cannot add them, change them, or clear them. The call succeeds and
+  `getScripts` keeps reporting whatever was registered, so nothing
+  surfaces the loss. Only `matches` really updates.
+- **An explicit empty array counts as unspecified.** `matches: []` is
+  refused outright — *"must specify at least one match"* — so `matches`
+  can be changed but never cleared.
 - **An updated registration moves to the END** of Chrome's set, in
   batch order. See [Ordering](#ordering).
+
+Only the glob behaviour has a live probe
+(`tests/e2e/exclude-globs.spec.ts`). The `matches` and ordering
+behaviours were measured against Chrome when they were first relied on,
+and today are only *modelled* by the fake in
+`tests/unit/injector.test.mjs` — a fake encodes the assumption, it does
+not re-establish it. Probes for those two are filed in
+[TODO.md](../TODO.md).
 
 Why this bites: `buildRegistrationSpec` emits `matches` / `includeGlobs`
 / `excludeGlobs` only when non-empty. Under wipe-and-replace every
 placement was a `register` onto an empty set, so an absent key meant
-"unset"; on the update path it means "keep".
+"unset"; on the update path it means "keep" — and for the globs, it
+means "keep" no matter what the key says.
 
-- A user deleting their last `@exclude` would get a registration still
-  carrying it. The script keeps not running on a site its header no
-  longer excludes, our own matcher (badge, tab status) says otherwise,
-  and nothing in the UI explains the difference.
-- So the injector records which pattern fields each registration
-  carries, and a spec that drops one is placed by `replaceRegistration`
-  — `unregister` then `register`.
+- A user **adding** an `@exclude` would get a registration without it.
+  The script keeps running on the site its header now excludes, our own
+  matcher (badge, tab status) says it shouldn't, and the row reads
+  UNEXPECTED with nothing the user can do about it.
+- A user **deleting** their last `@exclude` is the mirror case: a
+  registration still carrying an exclusion the header no longer
+  declares.
+- So the injector records the pattern fields each registration carries —
+  the glob **values**, since those never update, and presence only for
+  `matches` — and any spec `update` would not faithfully apply is placed
+  by `replaceRegistration` — `unregister` then `register`.
 - **That is the one place the closed window reopens**, for one script,
   for the length of one call pair. The trade is narrow and in the right
   direction: a gap costs that script one navigation, and only a script
@@ -258,14 +273,15 @@ A registration that is *staying* is replaced with
     registration that was working — and filed our own sequencing
     against the script as Chrome's reason.
   - Asking also yields the registration's real *shape*, which is what
-    says whether an `update` would silently keep a pattern field.
+    says whether an `update` would silently keep the pattern fields it
+    already holds.
 - **The reported reason is the real refusal**, never the second call's.
 - **A refused spec for an id Chrome already holds IS unregistered.**
   Otherwise the previous version keeps injecting while the row reads
   REJECTED — and REJECTED says the script will not run.
 - **The remaining `unregister` calls are all for scripts that are
   genuinely going away**: disabled, deleted, newly INVALID, the one case
-  above, or a pattern field being cleared.
+  above, or a pattern field `update` cannot apply.
 - **Removals do not consult our record of the set.** Every affected
   script that no longer wants a registration is dropped, whether or not
   this context believes it has one — the collections page and the viewer

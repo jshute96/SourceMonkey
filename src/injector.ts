@@ -755,18 +755,26 @@ export async function buildRegistrationSpec(
         .filter((m) => matchPatternProblem(m) === null),
     ),
   ];
-  const includeGlobs: string[] = [];
-  const excludeGlobs: string[] = [];
+  // Deduplicated like `matches` above, and for a reason beyond tidiness:
+  // `needsReplace` compares the glob lists we sent against the ones
+  // `getScripts` reports back, and a header repeating an `@exclude`
+  // would leave those two disagreeing forever if Chrome collapsed the
+  // duplicate — re-registering the script, and costing it an injection
+  // gap, on every sync.
+  const includeGlobSet = new Set<string>();
+  const excludeGlobSet = new Set<string>();
   let hasRegexInclude = false;
   let hasRegexExclude = false;
   for (const inc of script.matching.includes) {
     if (isRegexLiteral(inc)) hasRegexInclude = true;
-    else includeGlobs.push(inc);
+    else includeGlobSet.add(inc);
   }
   for (const ex of script.matching.excludes) {
     if (isRegexLiteral(ex)) hasRegexExclude = true;
-    else excludeGlobs.push(ex);
+    else excludeGlobSet.add(ex);
   }
+  const includeGlobs = [...includeGlobSet];
+  const excludeGlobs = [...excludeGlobSet];
 
   // Chrome refuses a registration without `matches` ("must specify
   // 'matches'"), so a script whose header carries only `@include` needs
@@ -1116,27 +1124,35 @@ export interface SyncScope {
 // ---------- What `update` can and cannot change ----------
 //
 // `chrome.userScripts.update` MERGES rather than replaces: "a property
-// is only updated for the existing script if it is specified". Verified
-// against real Chrome, including the part the contract doesn't say —
-// **an explicit empty array counts as unspecified**, so there is no way
-// at all to clear `matches` / `includeGlobs` / `excludeGlobs` through
-// it. (`matches: []` is refused outright: "must specify at least one
-// match".)
+// is only updated for the existing script if it is specified". Two
+// things the contract doesn't say, both measured against real Chrome
+// (the glob probe lives in tests/e2e/exclude-globs.spec.ts):
 //
-// That matters because `buildRegistrationSpec` emits these keys only
-// when non-empty. Under the old wipe-and-replace every placement was a
-// `register` onto an empty set, so an absent key meant "unset". On the
-// update path it means "keep". A user deleting their last `@exclude`
-// would get a registration that still carries it — the script keeps not
-// running on a site its header no longer excludes, our own matcher says
-// otherwise, and nothing in the UI explains the difference.
+//   - **An explicit empty array counts as unspecified**, so `update`
+//     cannot clear `matches` either. (`matches: []` is refused
+//     outright: "must specify at least one match".)
+//   - **`includeGlobs` / `excludeGlobs` are ignored entirely** by
+//     `update` — it cannot add them, change them, or clear them. The
+//     call succeeds and `getScripts` keeps reporting the old globs (or
+//     none), so nothing surfaces the loss. Only `matches` really
+//     updates.
 //
-// So we track which pattern fields each registration currently carries,
-// and a spec that drops one is placed by `replaceRegistration` instead.
+// The glob half is what made a newly added `@exclude` do nothing: the
+// header said the script was excluded, our own matcher agreed, and
+// Chrome kept injecting on the excluded page — the badge showed
+// UNEXPECTED with no way to act on it. The `matches` half is the
+// mirror case: `buildRegistrationSpec` emits keys only when non-empty,
+// so a user deleting their last `@exclude` would keep an exclusion
+// their header no longer declares.
+//
+// So we track the pattern fields each registration currently carries —
+// the glob VALUES, since those can't be updated at all, and only
+// presence for `matches`, which can — and any spec that `update` would
+// not faithfully apply is placed by `replaceRegistration` instead.
 interface PlacedPatterns {
   matches: boolean;
-  includeGlobs: boolean;
-  excludeGlobs: boolean;
+  includeGlobs: readonly string[];
+  excludeGlobs: readonly string[];
 }
 
 function patternsOf(spec: {
@@ -1144,26 +1160,35 @@ function patternsOf(spec: {
 }): PlacedPatterns {
   return {
     matches: (spec.matches?.length ?? 0) > 0,
-    includeGlobs: (spec.includeGlobs?.length ?? 0) > 0,
-    excludeGlobs: (spec.excludeGlobs?.length ?? 0) > 0,
+    // Sorted, deduplicated copies — the comparison below is about the
+    // pattern SET. Re-registering a script only because its globs came
+    // back in a different order, or with a duplicate collapsed, would
+    // cost it an injection gap for nothing.
+    includeGlobs: [...new Set(spec.includeGlobs ?? [])].sort(),
+    excludeGlobs: [...new Set(spec.excludeGlobs ?? [])].sort(),
   };
 }
 
-// Would placing `spec` over a registration shaped like `prior` leave a
-// pattern field behind that the spec no longer declares?
-function dropsPattern(prior: PlacedPatterns, spec: RegistrationSpec): boolean {
-  const next = patternsOf(spec);
-  return (prior.matches && !next.matches)
-    || (prior.includeGlobs && !next.includeGlobs)
-    || (prior.excludeGlobs && !next.excludeGlobs);
+function sameGlobs(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
-function dropsPatternFrom(
+// Would `update` fail to bring a registration shaped like `prior` to
+// what `spec` declares? True when the spec drops the `matches` field,
+// or when its glob sets differ from the placed ones at all.
+function needsReplace(prior: PlacedPatterns, spec: RegistrationSpec): boolean {
+  const next = patternsOf(spec);
+  return (prior.matches && !next.matches)
+    || !sameGlobs(prior.includeGlobs, next.includeGlobs)
+    || !sameGlobs(prior.excludeGlobs, next.excludeGlobs);
+}
+
+function needsReplaceFrom(
   present: ReadonlyMap<string, PlacedPatterns>,
   spec: RegistrationSpec,
 ): boolean {
   const prior = present.get(spec.id);
-  return prior !== undefined && dropsPattern(prior, spec);
+  return prior !== undefined && needsReplace(prior, spec);
 }
 
 // What Chrome actually holds for one id, or undefined if it holds
@@ -1653,8 +1678,9 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   // heard of, and guarding on the record would leave it injecting after
   // the user disabled or deleted it.
   //
-  // Every other place a wrong belief could do harm self-corrects,
-  // because `placeSpec` has a second call that disagrees with it.
+  // A wrong belief about *presence* self-corrects everywhere else,
+  // because `placeSpec` has a second call that disagrees with it (a
+  // wrong belief about glob values doesn't — see `placeSpec`).
   // Removal has no such fallback, so it does not get to guess: an
   // unregister for an id nothing holds costs one refused call and is
   // swallowed (see `unregisterIds`).
@@ -1907,6 +1933,15 @@ export async function retryRejectedRegistrations(
 // call ever leaves the id unregistered, which is the property the whole
 // sync now rests on.
 //
+// That self-correction covers *presence* only. A belief carrying stale
+// glob VALUES that happen to equal the spec's makes `needsReplace`
+// false, `update` succeeds, and no second call ever disagrees — so
+// Chrome can hold globs neither the record nor the header describes
+// until the next full reconcile rebuilds `present` from `getScripts`.
+// Bounded by the worker's life, and it takes another context placing a
+// different glob set for the same id with no storage write behind it,
+// so we live with it rather than spending a round trip per spec.
+//
 // Chrome answers a `register` for an id it already knows with
 // "Duplicate script ID '<id>'" rather than replacing it, and there are
 // two ordinary ways it already knows one of ours:
@@ -1953,9 +1988,10 @@ async function placeSpec(
   believed: PlacedPatterns | undefined,
 ): Promise<void> {
   if (believed) {
-    // A spec that drops a pattern field can't go through `update` at
-    // all — see `dropsPattern`.
-    if (dropsPattern(believed, spec)) return await replaceRegistration(spec);
+    // A spec whose pattern fields `update` won't apply — changed
+    // globs, or a dropped `matches` — can't go through it at all. See
+    // `needsReplace`.
+    if (needsReplace(believed, spec)) return await replaceRegistration(spec);
     let refusal: unknown;
     try {
       await chrome.userScripts.update([spec]);
@@ -1991,8 +2027,8 @@ async function placeSpec(
   if (!actual) throw refusal;
   dlog(`[SourceMonkey] script ${spec.id} was already registered; replacing it`);
   // Now we know the registration's real shape, which is what says
-  // whether an update would silently keep a pattern field.
-  if (dropsPattern(actual, spec)) return await replaceRegistration(spec);
+  // whether an update would silently keep the pattern fields it holds.
+  if (needsReplace(actual, spec)) return await replaceRegistration(spec);
   await chrome.userScripts.update([spec]);
 }
 
@@ -2000,19 +2036,19 @@ async function placeSpec(
 // back, and the one place the closed window reopens — for one script,
 // for the length of one call pair.
 //
-// Unavoidable: Chrome's `update` merges, and there is no way to clear a
-// pattern field through it (verified — an omitted field keeps its old
-// value, and an explicit `[]` is treated as omitted). A script that
-// just lost its last `@exclude` would otherwise keep an exclusion its
-// header no longer declares, with nothing in the UI to explain why it
-// doesn't run.
+// Unavoidable: Chrome's `update` ignores `includeGlobs` /
+// `excludeGlobs` outright and cannot clear `matches` (verified — see
+// `PlacedPatterns`). A script that just gained an `@exclude` would
+// otherwise keep running on the site its header now excludes, and one
+// that just lost its last `@exclude` would keep an exclusion its header
+// no longer declares — both with nothing in the UI to explain it.
 //
 // The trade is narrow and in the right direction: the gap costs one
 // script one navigation, and only a script whose match set the user is
 // actively rewriting; the alternative is Chrome and our own matcher
 // disagreeing indefinitely.
 async function replaceRegistration(spec: RegistrationSpec): Promise<void> {
-  dlog(`[SourceMonkey] script ${spec.id} dropped a pattern field; re-registering it outright`);
+  dlog(`[SourceMonkey] script ${spec.id} changed a pattern field; re-registering it outright`);
   try {
     await chrome.userScripts.unregister({ ids: [spec.id] });
   } catch { /* already gone; the register below is then the whole job */ }
@@ -2036,9 +2072,12 @@ async function placeSpecs(
 ): Promise<{ placed: string[]; refused: Map<string, string> }> {
   const placed: string[] = [];
   const refused = new Map<string, string>();
-  const placeOne = async (spec: RegistrationSpec): Promise<void> => {
+  const placeOne = async (
+    spec: RegistrationSpec,
+    beliefs: ReadonlyMap<string, PlacedPatterns> = present,
+  ): Promise<void> => {
     try {
-      await placeSpec(spec, present.get(spec.id));
+      await placeSpec(spec, beliefs.get(spec.id));
       placed.push(spec.id);
     } catch (err) {
       refused.set(spec.id, describeError(err));
@@ -2051,14 +2090,35 @@ async function placeSpecs(
   // just offer the same spec to Chrome twice. Matters beyond the wasted
   // round trip: the targeted retry offers exactly one spec, and its
   // whole rate-limiting story is about how many attempts we make.
+  // What the per-spec fallback below believes about each id. Starts as
+  // the caller's `present` and is corrected as the batch pass lands, so
+  // a failure part-way through doesn't make the fallback redo work that
+  // already succeeded.
+  const believed = new Map(present);
   if (users.length > 1) {
-    const replace = users.filter((s) => dropsPatternFrom(present, s));
-    const existing = users.filter((s) => present.has(s.id) && !dropsPatternFrom(present, s));
-    const fresh = users.filter((s) => !present.has(s.id));
+    // One partition pass: `needsReplaceFrom` sorts two arrays per call,
+    // so asking it twice per spec is worth avoiding.
+    const replace: RegistrationSpec[] = [];
+    const existing: RegistrationSpec[] = [];
+    const fresh: RegistrationSpec[] = [];
+    for (const spec of users) {
+      if (!believed.has(spec.id)) fresh.push(spec);
+      else if (needsReplaceFrom(believed, spec)) replace.push(spec);
+      else existing.push(spec);
+    }
     try {
       if (existing.length > 0) await chrome.userScripts.update(existing);
       if (fresh.length > 0) await chrome.userScripts.register(fresh);
-      for (const spec of replace) await replaceRegistration(spec);
+      for (const spec of replace) {
+        await replaceRegistration(spec);
+        // Chrome now holds this spec outright. Recording that matters
+        // for the catch below: without it, a later `replaceRegistration`
+        // throwing would send the fallback back over this script with a
+        // stale `present`, and it would be unregistered and registered a
+        // second time — a second injection gap for a script that is
+        // already correct.
+        believed.set(spec.id, patternsOf(spec));
+      }
       return { placed: [...placed, ...users.map((s) => s.id)], refused };
     } catch {
       // Either a spec is bad or our belief about who holds an id is
@@ -2066,7 +2126,7 @@ async function placeSpecs(
       // Re-placing the ones that already went in is harmless.
     }
   }
-  for (const spec of users) await placeOne(spec);
+  for (const spec of users) await placeOne(spec, believed);
   return { placed, refused };
 }
 
