@@ -68,7 +68,7 @@
          The toggle itself stays at full opacity so users can flip it back. */
       .collection.disabled .collection-header h2,
       .script-table tr.disabled td:not(.toggle-cell) { opacity: 0.45; }
-      .toggle { display: inline-flex; align-items: center; cursor: pointer; }
+      .toggle { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
       .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
@@ -166,6 +166,13 @@
       /* Bulk-toggle button shows its spinner in place of the +/- glyph. */
       .bulk-toggle.busy { position: relative; color: transparent; }
       .bulk-toggle.busy::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -5px 0 0 -5px; width: 10px; height: 10px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
+      /* A toggle's spinner is overlaid on its own checkbox rather than
+         appended beside it. The script table's toggle cell sizes to its
+         content, so an in-flow spinner widened that column and shifted
+         every row in the collection a few pixels right (and back) for as
+         long as the write was in flight. */
+      .toggle .busy-spinner { position: absolute; inset: 0; width: auto; height: auto; margin: 0; }
+      .toggle:has(.busy-spinner) input[type="checkbox"] { opacity: 0.3; }
       /* While a collection is being removed, dim the whole section and block further clicks. */
       .collection.removing { opacity: 0.5; pointer-events: none; }
       /* Highlight rows that changed during a refresh. The color
@@ -178,7 +185,6 @@
          button anchors the left edge; Refresh All anchors the right. */
       .top-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5em; }
       .top-actions .right-actions { display: flex; align-items: center; }
-      .top-actions .busy-spinner { margin-left: 0.5em; }
     </style>
   </head>
   <body>

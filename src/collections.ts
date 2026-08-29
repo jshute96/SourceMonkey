@@ -2129,10 +2129,15 @@ function removeEmptyPlaceholder(): void {
 
 // ---------- Busy indicators ----------
 
-// Append/remove a small inline spinner inside a toggle label and
-// disable the underlying checkbox while async work is in flight. The
-// checkbox keeps its just-clicked `checked` value so the user sees
-// the intended state immediately.
+// Append/remove a small spinner inside a toggle label and disable the
+// underlying checkbox while async work is in flight. The checkbox keeps
+// its just-clicked `checked` value so the user sees the intended state
+// immediately.
+//
+// The CSS overlays the spinner on the checkbox rather than letting it
+// sit in flow: the script table's toggle cell sizes to its content, so
+// an in-flow spinner widened that column and shifted every row in the
+// collection sideways until the write landed.
 function setToggleBusy(label: HTMLLabelElement, busy: boolean): void {
   const cb = label.querySelector<HTMLInputElement>('input[type="checkbox"]');
   if (cb) cb.disabled = busy || label.classList.contains('toggle-disabled');

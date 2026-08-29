@@ -920,10 +920,15 @@ on every interaction. Each user action mutates only the affected DOM:
   was stored rather than from a hand-rendered result.
 
 While the async work is in flight the triggering control shows a small
-inline spinner (toggle labels get a `.busy-spinner` sibling; the
-bulk-toggle's glyph is replaced via `.bulk-toggle.busy`). The rest of
-the page — banners, other directories, scroll position — is
-undisturbed.
+spinner, and the rest of the page — banners, other directories, scroll
+position — is undisturbed.
+
+- A toggle label gets a `.busy-spinner` child, absolutely positioned
+  over its own checkbox. It must not take up layout space: the script
+  table's toggle cell sizes to its content, so an in-flow spinner
+  widened the column and shifted every row in the collection sideways
+  for as long as the write ran.
+- The bulk-toggle's glyph is replaced in place via `.bulk-toggle.busy`.
 
 ### Live repaint (changes from any origin)
 
