@@ -131,8 +131,8 @@
          Location / Size / Status rows. Cleared via :empty when there's
          no script. */
       #header-summary {
-        margin: 0 0 0.8em;
-        padding: 0.6em 0.8em;
+        margin: 0 0 11px;
+        padding: 8px 11px;
         border: 1px solid #ddd;
         border-radius: 4px;
         background: #f5f7fa;
@@ -236,8 +236,8 @@
          rule rather than a `hidden` attribute the renderer would have
          to manage. */
       #other-versions {
-        margin: 0 0 0.8em;
-        padding: 0.6em 0.8em;
+        margin: 0 0 11px;
+        padding: 8px 11px;
         border: 1px solid #b9d4b1;
         border-radius: 4px;
         background: #dbecd6;
@@ -247,13 +247,15 @@
         font-size: 1.1em;
         font-weight: 650;
         color: #333;
-        margin: 0 0 0.6em;
+        line-height: 18px;
+        margin: 0 0 8px;
       }
       .versions-section-heading {
         font-size: 1em;
         font-weight: 600;
         color: #444;
-        margin: 0.9em 0 0.3em;
+        line-height: 16px;
+        margin: 13px 0 4px;
       }
       .versions-section-heading:first-of-type { margin-top: 0; }
       /* The parenthesized gloss names which match produced the rows
@@ -269,9 +271,14 @@
          two sections' columns aligned with each other: without it each
          <table> sizes its own columns from its own content and the
          panel reads as two unrelated grids. */
+      /* Whole-px vertical metrics in this panel, and `separate` borders
+         rather than `collapse` (a collapsed border is split half into each
+         adjacent cell, landing rows on half pixels) — see
+         docs/architecture.md, "Extension-page styling". */
       .versions-table {
         width: 100%;
-        border-collapse: collapse;
+        border-collapse: separate;
+        border-spacing: 0;
         table-layout: fixed;
       }
       /* Status, Version, and the actions column are sized to their own
@@ -297,15 +304,16 @@
         color: #444;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        padding: 0 0.5em 0.2em 0;
+        padding: 0 6px 2px 0;
         border-bottom: 1px solid #b9d4b1;
       }
       .versions-table td {
-        padding: 0.35em 0.5em 0.35em 0;
+        padding: 5px 7px 5px 0;
+        line-height: 16px;
         vertical-align: top;
         border-bottom: 1px solid #c9e0c2;
       }
-      .versions-table tr:last-child td { border-bottom: none; }
+      .versions-table tr:last-child td { border-bottom-color: transparent; }
       .versions-table .col-actions {
         text-align: right;
         padding-right: 0;

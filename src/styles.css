@@ -19,14 +19,14 @@
 .banner {
   border: 1px solid #d97706;
   background: #fffbeb;
-  padding: 0.7em 1em;
+  padding: 10px 14px;
   border-radius: 6px;
-  margin-bottom: 0.7em;
+  margin-bottom: 10px;
 }
 
-.banner strong { display: block; margin-bottom: 0.3em; }
+.banner strong { display: block; margin-bottom: 4px; }
 
-.banner p { margin: 0.3em 0; }
+.banner p { margin: 4px 0; line-height: 16px; }
 
 /* The `chrome://extensions/?id=…` link every permission banner ends
    with. Styled as inline code because that's what it is — an address
@@ -64,7 +64,8 @@
   letter-spacing: 0.04em;
   color: #fff;
   text-decoration: none;
-  line-height: 1.5;
+  /* Whole px: 1.5 x 11px = 16.5 would make its whole row fractional. */
+  line-height: 16px;
   white-space: nowrap;
   flex: 0 0 auto;
 }

@@ -172,6 +172,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |
 | `tests/e2e/collections.spec.ts` | Collection lifecycle (add/refresh/remove) via the real file:// scan pipeline |
+| `tests/e2e/layout-metrics.spec.ts` | Guards the whole-pixel vertical metrics behind uniform checkbox rendering on collections, viewer, and Options |
 | `tests/e2e/live-updates.spec.ts` | Live watchers: collections page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
 | `tests/e2e/container-collections.spec.ts` | Container-collection lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |

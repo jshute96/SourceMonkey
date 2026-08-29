@@ -6,7 +6,7 @@
     <link rel="stylesheet" href="styles.css" />
     <style>
       body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
-      h1 { margin-top: 0; }
+      h1 { margin-top: 0; margin-bottom: 19px; }
       /* Grid layout so a long display name that needs to wrap stays
          inside the right-hand column instead of dropping back to the
          row's left edge. Column 1 sizes to the bubble; column 2 takes
@@ -23,13 +23,13 @@
       /* `.collection-type-bubble` + colored `.bubble-*` variants +
          `.collection-display-name` typography are in styles.css (the
          cross-page shared stylesheet). */
-      button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
-      input[type="text"] { font: inherit; padding: 0.3em 0.5em; }
+      button { font: inherit; padding: 4px 11px; cursor: pointer; }
+      input[type="text"] { font: inherit; padding: 4px 7px; }
       .placeholder { color: #666; }
       .add-form { display: flex; gap: 0.5em; margin-bottom: 1em; align-items: center; }
       .add-form input[type="text"] { flex: 1 1 auto; }
-      .collection { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
-      .collection-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
+      .collection { border: 1px solid #ddd; border-radius: 6px; padding: 11px 14px; margin-bottom: 11px; }
+      .collection-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 7px; }
       .collection-header h2 { flex: 1 1 auto; min-width: 0; }
       .collection-toggle { flex: 0 0 auto; }
       .collection-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
@@ -51,19 +51,23 @@
         cursor: pointer;
         white-space: nowrap;
       }
-      .move-collection { padding: 0.3em 0.5em; }
+      .move-collection { padding: 4px 7px; }
       .move-collection:disabled { cursor: not-allowed; opacity: 0.35; }
-      .script-table { width: 100%; border-collapse: collapse; }
-      .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
-      .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
-      .script-table tbody tr:last-child td { border-bottom: none; }
+      /* Whole-px vertical metrics on this page, and `separate` borders rather
+         than `collapse` (a collapsed border is split half into each adjacent
+         cell, landing rows on half pixels) — see docs/architecture.md,
+         "Extension-page styling". */
+      .script-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+      .script-table th, .script-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+      .script-table th { font-weight: 600; color: #555; font-size: 0.9em; line-height: 16px; }
+      .script-table tbody tr:last-child td { border-bottom-color: transparent; }
       .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell { white-space: nowrap; width: 1%; }
       /* Container-collection action column: the per-row remove button.
          Right-aligned so the trash icon hugs the table edge regardless
          of how narrow / wide the name column wants to be. */
-      .script-table td.action-cell { text-align: right; padding-left: 0.2em; }
+      .script-table td.action-cell { text-align: right; padding-left: 3px; }
       .script-table th:last-child { width: 1%; }
-      .script-table td.toggle-cell { padding-right: 0.2em; }
+      .script-table td.toggle-cell { padding-right: 3px; }
       /* When a collection is off, its whole section dims; when a script is off, just the row dims.
          The toggle itself stays at full opacity so users can flip it back. */
       .collection.disabled .collection-header h2,
@@ -81,7 +85,7 @@
       .bulk-toggle { vertical-align: middle; width: 14px; height: 14px; padding: 0; font: inherit; font-weight: 700; line-height: 1; border: 1px solid #888; border-radius: 2px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
       .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
       .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
-      .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 0.2em; }
+      .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 3px; }
       /* Dupe-basename suffix (e.g. " #2") shown after the script's
          name link. Empty for unique basenames so the column stays
          clean. */
@@ -130,7 +134,7 @@
       .script-table td.name-cell {
         overflow-wrap: anywhere;
         word-break: normal;
-        padding-left: calc(0.6em + 16px + 0.4em);
+        padding-left: calc(8px + 16px + 0.4em);
         text-indent: calc(-16px - 0.4em);
       }
       .status-ok { color: #166534; }

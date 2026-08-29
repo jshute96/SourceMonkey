@@ -209,6 +209,24 @@ details live in the topic-specific docs linked below.
   which is what makes them work where the page's own calls are
   refused.
 
+## Extension-page styling
+
+- **Vertical metrics are whole pixels** wherever a checkbox column sits:
+  the collections page, Options, and the viewer's "Other versions" panel
+  (plus their shared ancestors — the banner, the collection bubble).
+  They are written in `px`, not `em`.
+- Why: an em value at the 14px base font (`0.3em` = 4.2px) puts every
+  row and card at a different fractional offset.
+  - A 13px checkbox then rasterizes a device pixel larger or smaller
+    depending on which row it landed in.
+  - That reads as a column of not-quite-equal checkboxes, and as rows
+    shifting whenever something above them resizes.
+- The rest of the viewer is still em-derived, so its panel settles on a
+  shared *fractional* offset. Uniform is what matters — every checkbox
+  in one column rasterizing alike — not whole-pixel specifically.
+- `tests/e2e/layout-metrics.spec.ts` measures each checkbox column and
+  fails if one stops agreeing with itself.
+
 ## Cross-cutting docs
 
 - [storage.md](storage.md) — `chrome.storage.local` schema, status
