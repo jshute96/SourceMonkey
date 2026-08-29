@@ -44,8 +44,9 @@ array — declaration order, deduplicated by name.
 Per-entry fields:
 
 - `name` — the `@resource` name. Duplicate names: first declaration
-  wins (TM/VM raise an install error; we're lenient so a typo only
-  costs the one entry).
+  wins; we're lenient so a typo only costs the one entry. TM rejects
+  the script outright, and VM silently keeps the *last* declaration —
+  see [supported-headers.md](supported-headers.md).
 - `ref` — verbatim from the metadata line.
 - `url` — canonical resolved URL.
 - `bytesBase64` — body bytes, base64-encoded for JSON-friendly
@@ -89,7 +90,10 @@ The runtime keeps a per-script box of:
 
 - Empty Content-Type for the blob falls back to
   `application/octet-stream` so the browser has something to dispatch
-  on (matches VM).
+  on. VM leaves the type empty in that case (its stored resource is
+  literally `<content-type>,<base64>`, and a missing header makes the
+  first field blank), so a typeless resource is one of the few places
+  the two blob URLs differ.
 - The minted blob URL is valid for the document's lifetime — we
   don't `URL.revokeObjectURL` since the runtime stays around.
 - Memory cost is ≈ 2× the resource size per document in the worst

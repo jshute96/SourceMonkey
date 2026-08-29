@@ -260,15 +260,32 @@ gates, or the emitted wrap — the rate is the regression signal.
 - **No `tests/examples/` script exercises `@require` under
   Tampermonkey.** `require-scope/` covers both injection worlds, but
   skips under `--project=tampermonkey`: it uses a relative `@require`,
-  which is a SourceMonkey extension, and TM installs these examples
-  from a local file so there's no base URL to resolve against. Baking
-  in an absolute URL doesn't work either — the fixture server's port
-  is assigned per run.
+  which TM doesn't resolve, and TM installs these examples from a
+  local file so there's no base URL to resolve against. Baking in an
+  absolute URL doesn't work either — the fixture server's port is
+  assigned per run.
+  - VM *would* resolve it, against the install URL — but VM isn't a
+    project in the suite. See the next item.
 - Closing this needs either a fixed-port fixture server for the TM
   project, or a rewrite step that stamps the server URL into a
   generated copy of the script before TM installs it. Until then the
   TM-compatibility claim for `@require` — the whole premise of the
   concatenated arrangement — rests on unit and SM-only e2e coverage.
+- **No `violentmonkey` Playwright project.** VM was a dead end on
+  Chrome under MV3 when the cross-manager harness was built; its MV3
+  build (2.41.2+, Chrome ≥ 135) removes that blocker, so a third
+  project alongside `sourcemonkey` / `tampermonkey` is now possible.
+  - Worth it because VM is the manager whose semantics we match most
+    often on purpose — `@inject-into`, the `GM_addElement` default
+    parent, relative `@require` resolution — and every one of those
+    claims currently rests on reading VM's source, not on a run.
+  - Needs a persistent VM profile the way
+    [docs/cross-manager-testing.md](docs/cross-manager-testing.md)
+    sets one up for TM, plus VM's own install flow (its confirm
+    page) in the driver.
+  - The known divergences to expect are catalogued in
+    [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
+    [docs/supported-headers.md](docs/supported-headers.md).
 
 ## `GM_*` — deferred surface
 
@@ -313,8 +330,14 @@ extension `Origin` is removed by default. What's still open:
 Adding any of these is a catalog entry + a body — nothing structural.
 
 - `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
-  with per-script `@match` validation. VM's `checkCookieOpts` is
-  the reference shape.
+  with per-script `@match` validation. VM's `checkCookieOpts`
+  (`src/background/utils/cookies.js`, shipped in VM 2.35.1) is the
+  reference shape: validate the target URL against the calling
+  script's `@match`, and hide `httpOnly` cookies unless the user
+  opted in.
+- `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
+  calls that both TM (5.x) and VM (2.19.1+) have. Convenience over our
+  existing per-key APIs, which already batch writes.
 
 ### GM_* implementation follow-ups
 
@@ -346,6 +369,32 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
+- **Binary XHR encoding monopolizes the SW loop.** `runXhr` buffers
+  the whole body and calls `bytesToBase64` once (`src/gm-xhr.ts`),
+  bounded only by the 50 MB `MAX_RESPONSE_BYTES` cap.
+  `String.fromCharCode` is chunked at 32 KB but the closing `btoa` is
+  a single call over the whole string, and the worker holds the bytes
+  and the string at once.
+  - It matters because that same loop answers `sm:check-pending` on
+    the document-start critical path, so one script pulling a large
+    binary can delay injection in unrelated tabs.
+  - VM doesn't have the problem: its XHR and encoding run in the
+    offscreen document, chunked at 1 MB precisely so neither the
+    extension nor the page stops responding
+    (`src/offscreen/xhr.js`).
+  - Two ways out. Cheap: chunk the encode and yield between chunks,
+    which keeps it in the worker but stops the monopolization.
+    Thorough: move the binary path to our offscreen document, which
+    also gets us `xhr.upload` progress events — `fetch` can't report
+    upload progress at all, so that's the one part of the
+    `GM_xmlhttpRequest` surface the worker cannot reach.
+  - Either way, measure first: we have no data on real-world
+    response sizes, and most `GM_xmlhttpRequest` payloads are small
+    enough that this never fires.
+  - If it goes to the offscreen document, it shares the host with
+    the clipboard item above — `reasons` is fixed at creation time,
+    so both consumers' reasons (`BLOBS`, and `WORKERS` if the encode
+    moves to a worker) have to be added in the same change.
 - **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
   USER_SCRIPT world's own `window`, not the page's. A real bridge
   would need a MAIN-world helper + postMessage protocol, or a
@@ -470,9 +519,15 @@ Adding any of these is a catalog entry + a body — nothing structural.
   sees no error. Surface on the per-script log.
 - **Storage value type-tag encoding.** Today we round-trip values
   through `chrome.storage.local`'s JSON-ish serialization. VM/TM
-  encode with type tags (`o`/`n`/`b`/`s`/`u`) so `Date` and other
-  non-JSON-clean values survive. Add when a real userscript needs
-  it.
+  store each value as a tagged string instead — VM's
+  `dumpScriptValue` (`src/common/util.js`) writes `s`/`n`/`b` plus
+  the literal for primitives and `o` plus JSON for everything else,
+  so reads of primitives skip `JSON.parse` entirely.
+  - Worth being clear about what it doesn't buy: `Date` and other
+    non-JSON-clean values don't survive there either — they go
+    through `JSON.stringify` exactly as they do here.
+  - So this is a read-path optimization to copy if storage reads
+    ever show up in a profile, not a correctness gap.
 - **Cache the gmValues snapshot in SW memory.** Every storage-
   granting script's `sm:check-pending` reply triggers a
   `chrome.storage.local.get(null)` on the document-start critical
@@ -594,9 +649,10 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Same root cause as the bare-host port issue above.
 - **`@connect *` install-time warning.** A wildcard `@connect`
   effectively asks for cross-origin fetch reach against any host.
-  TM prompts, VM logs a warning. Surface a "this script wants to
-  talk to any host" signal in the collections-page row at install /
-  refresh time.
+  TM prompts the user at request time; VM doesn't enforce `@connect`
+  at all, it just lists the declared hosts on its install-confirm
+  page. Surface a "this script wants to talk to any host" signal in
+  the collections-page row at install / refresh time.
 
 ## Test coverage gaps
 

@@ -65,12 +65,19 @@ recommends a path.
 
 ### Violentmonkey (MIT, OSS, copy-able)
 
+VM has shipped a real MV3 build since 2.41.2 (July 2026); the MV3
+bullets below were re-verified against 2.48.0 (August 2026). The
+size figures are from the original survey and drift upward with
+every release. See [what changed since this
+decision](#what-changed-in-vm-since-this-decision).
+
 - Webpack-bundled, two injected entries: `injected-web` (page-world
   bundle) and `injected` (content-world bundle, contains the page
   bundle as a string for `eval`-injection).
 - Topology: PAGE ↔ CONTENT ↔ BG with a bespoke bridge
   (`bridge.post/call/promise`) over `dispatchEvent(CustomEvent)` for
   PAGE↔CONTENT and `chrome.runtime.sendMessage` for CONTENT↔BG.
+  **MV3 kept this unchanged.**
 - Userscript runs in PAGE or CONTENT realm chosen by
   `@inject-into auto|page|content`. CSP-blocked pages run the
   userscript itself in CONTENT to bypass page CSP.
@@ -80,15 +87,58 @@ recommends a path.
   tabs}.js`.
 - Paranoid runtime: `safe-globals*.js` snapshots every native it
   touches before page code runs; a Babel transform rewrites
-  `obj::method()` into `safeCall(method, obj)` — 121 such call
-  sites in `src/injected/*` alone. Uses `cloneInto` /
+  `obj::method()` into `safeCall(method, obj)` — well over a hundred
+  such call sites in `src/injected/*` alone. Uses `cloneInto` /
   `exportFunction` for Firefox cross-realm safety.
-- MV2-shaped. The MV3 build path exists but the SW-side request
-  handler still does `new XMLHttpRequest()` and constructs Blobs
-  directly — works in MV2 / Firefox background pages, breaks in an
-  MV3 service worker (no DOM, no reliable `URL.createObjectURL`).
-- ~2900 lines `src/injected/*` + ~1150 lines of relevant
+- One tree, two builds: `MV3=1` flips a webpack define (`__.MV3`)
+  that compiles the MV2 or MV3 path into each module, and rewrites
+  the MV2 `manifest.yml` on the way out. Chrome/Edge get MV3;
+  Firefox stays MV2.
+- ~3k lines `src/injected/*` + ~1150 lines of relevant
   `background/utils/*`, plus shared `src/common/*` helpers.
+
+#### What VM's MV3 build does
+
+Where it lands relative to us (`src/background/utils/*`, verified in
+the tree):
+
+- **`chrome.userScripts` registers VM's own injector, not the user's
+  scripts.** One registration for `<all_urls>` holds
+  `injected-web.js` + `injected.js`; VM keeps its own matcher and
+  decides per-URL what runs. A source comment flags registering
+  scripts individually with real `matches` as a TODO. We register
+  each userscript with Chrome and let Chrome own matching.
+- **Page-realm code still goes in through a `<script>` element**,
+  not `world: 'MAIN'`. That keeps VM subject to page CSP, hence the
+  nonce-sniffing and the "this page lost injectability, re-run it in
+  the content realm" fallback. Our MAIN-world registration doesn't
+  have that problem.
+- **Content-realm userscripts run via `chrome.userScripts.execute`**
+  (the reason for VM's Chrome ≥ 135 floor), in the USER_SCRIPT world
+  configured with `configureWorld({ csp, messaging: true })`.
+- **Per-URL data registration is the default.** `registerScriptData`
+  registers a second userscript whose `matches` is the exact page URL
+  and whose body is the JSON payload for that page, then bumps the
+  injector's registration so Chrome keeps the order.
+- **A leased blob is the opt-in alternative.** With `xhrInject`
+  ("synchronous page mode", off by default) a DNR session rule
+  appends a `Set-Cookie` carrying a blob id; the content script reads
+  the cookie, does a *synchronous* XHR against `blob:<vm-uuid><id>`,
+  and deletes the cookie. The blob is minted in the offscreen
+  document. It exists for scripts that must beat the parser.
+- **Offscreen document** (`BLOBS`, `CLIPBOARD`, `WORKERS`) hosts the
+  `GM_xmlhttpRequest` `XMLHttpRequest`, blob leasing, and the
+  `execCommand('copy')` clipboard path.
+- **`declarativeNetRequest` session rules do the header surgery** for
+  `GM_xmlhttpRequest` — forbidden and UA headers, and Cookie /
+  Set-Cookie removal for `anonymous`. Keyed by `urlFilter` on a
+  `#<request-id>`-tagged URL plus `tabIds: [-1]`.
+- **`webRequest` is still used, non-blocking**, for preinject timing
+  (`onSendHeaders`). `onBeforeRequest` is attached only by the
+  opt-in synchronous page mode.
+- MV3 permissions add `alarms`, `declarativeNetRequestWithHostAccess`,
+  `identity`, `offscreen`, `userScripts`, `webNavigation`; `<all_urls>`
+  moves to `host_permissions` and `webRequestBlocking` is dropped.
 
 ### Tampermonkey (closed-source, reference only)
 
@@ -153,16 +203,21 @@ a threat model we don't have.
 (For MAIN-world `@grant none` scripts the threat model returns, but
 those scripts don't use GM_* anyway.)
 
-### 4. VM's MV3 story is incomplete; ours is MV3-only
+### 4. VM's MV3 story was incomplete; ours is MV3-only
 
-VM's BG-side `GM_xmlhttpRequest` does `new XMLHttpRequest()` plus
-`URL.createObjectURL(blob)` directly in the background context. In
-MV3 (Chrome) the SW has no DOM, can't construct Blobs reliably, and
-ObjectURLs created there don't survive into the page. Either we
-follow Tampermonkey's lead and add an offscreen document, or we use
-`fetch()` and stream chunks back as base64 (works without an
-offscreen doc but loses native Blob/ArrayBuffer). VM has neither
-piece today.
+*True when this was written. See [What changed in VM since this
+decision](#what-changed-in-vm-since-this-decision) below.*
+
+- VM's BG-side `GM_xmlhttpRequest` did `new XMLHttpRequest()` plus
+  `URL.createObjectURL(blob)` directly in the background context.
+- In MV3 (Chrome) the SW has no DOM, can't construct Blobs reliably,
+  and ObjectURLs created there don't survive into the page.
+- So either we follow Tampermonkey's lead and add an offscreen
+  document, or we `fetch()` and stream chunks back as base64 — which
+  works without an offscreen doc but loses native Blob/ArrayBuffer.
+- VM had neither piece then. It has since taken the offscreen route,
+  keeping its `XMLHttpRequest` and moving it into the offscreen
+  document.
 
 ### 5. VM's openers / preinject hook into things we don't have
 
@@ -176,6 +231,43 @@ diff-broadcast we'd need our wrapper to send a registration ping at
 
 (Not blocking; just means the openers table comes from a different
 signal than VM's preinject hook.)
+
+## What changed in VM since this decision
+
+VM shipped its MV3 build in 2.41.2 (July 2026), and that is what the
+Chrome Web Store listing gets; the Edge release workflow switched to
+it in August 2026, landing with their next release. This section
+records what that changes for the comparison above — the
+recommendation itself still stands.
+
+- **Every mismatch except #4 is unchanged.** No bundler on our side,
+  a PAGE↔CONTENT bridge we don't have, safe-globals we don't need,
+  and a preinject openers hook we can't reproduce: all still true of
+  the MV3 build, which shares one tree with the MV2 one.
+- **#4 is resolved, VM's way.** VM added an offscreen document
+  (`src/offscreen/`) and kept its `XMLHttpRequest`; we chose SW
+  `fetch` + base64 chunks and never needed one for XHR. Same problem,
+  two liveable answers — and it confirms the doc's premise that this
+  piece is real work either way, not something borrowable.
+- **We and VM converged on `declarativeNetRequest`** for XHR header
+  surgery, down to keying the rule on a `#<request-id>` URL tag. Ours
+  discriminates by `initiatorDomains`, VM's by `tabIds: [-1]` (its
+  requests come from the offscreen document). See
+  [xhr-header-surgery.md](xhr-header-surgery.md).
+- **We use `chrome.userScripts` more than VM does.** VM registers its
+  own injector bundle and keeps its own matcher; Chrome does our
+  matching and injection. That's the same split as before MV3 — VM's
+  MV3 port swapped the API underneath its existing model rather than
+  adopting Chrome's.
+- **VM's API surface grew** past what this doc assumed: `GM_cookie`
+  (2.35.1+), and `GM_getValues` / `GM_setValues` / `GM_deleteValues`
+  (2.19.1+). None of those are in our catalog; they're listed as gaps
+  in [supported-GM-APIs.md](supported-GM-APIs.md) and
+  [TODO.md](../TODO.md).
+- **VM remains cross-browser**, which is why the parts we called
+  redundant for us (Firefox `cloneInto` / `exportFunction`,
+  MV2 `webRequest` blocking) are still in its tree and still not
+  worth importing.
 
 ## Prototype-poisoning defense (the "vault" question)
 
@@ -425,6 +517,8 @@ Reasons, in priority order:
   direct `createObjectURL` path doesn't work in an MV3 SW. Whether
   we start from VM's code or from a blank file, the offscreen-doc
   piece is new work. That removes Option C's biggest argument.
+  (VM has since done that work its own way — an offscreen document
+  hosting the same `XMLHttpRequest`. The premise held.)
 - **Our topology is closer to TM's than VM's.** Both we and TM
   inject via `chrome.userScripts` into USER_SCRIPT world. VM's
   PAGE↔CONTENT bridge solves problems we don't have. Code that

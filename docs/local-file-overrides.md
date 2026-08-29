@@ -13,8 +13,13 @@ rest of the loading pipelines.
 
 ## The problem
 
-- SourceMonkey accepts **relative** `@require` paths. Nothing else does
-  — not Tampermonkey, not Violentmonkey, not Greasemonkey.
+- SourceMonkey accepts **relative** `@require` paths, resolved against
+  the script's own parent directory — including a local one.
+  - Violentmonkey resolves relative `@require` / `@resource` /
+    `@icon` too, but against the URL the script was *installed from*
+    (`buildPathMap` in `src/background/utils/db.js`), which for a
+    remotely-installed script is a remote directory.
+  - Tampermonkey and Greasemonkey want an absolute URL.
 - So a script meant to run anywhere has to write the published absolute
   URL.
 - But while you are *writing* that library, the published copy is stale,

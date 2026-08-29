@@ -49,7 +49,10 @@ A script can be all three at once, or only one.
 - This is the convention, not our invention:
   - Greasemonkey documents `@namespace` as the value that, combined
     with the name, forms a unique identifier.
-  - Violentmonkey derives an internal `uri` from the pair.
+  - Violentmonkey derives an internal `uri` from the pair —
+    `<namespace>\n<name>\n` with a custom `-<hex>` escape (not
+    percent-encoding), and it appends its own generated id when both
+    parts are empty (`getNameURI`, `src/background/utils/script.js`).
   - Tampermonkey mints a UUID per installed entry, but decides
     install-vs-update on the pair. `docs/cross-manager-testing.md`
     relies on exactly this to find existing TM scripts.

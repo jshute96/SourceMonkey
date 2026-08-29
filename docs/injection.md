@@ -32,6 +32,36 @@ Tampermonkey / Violentmonkey use in MV3. We picked it over
   page and our content-script world (we currently use no content
   scripts).
 
+### How Violentmonkey uses the same API
+
+Worth knowing when comparing behavior, since "both use
+`chrome.userScripts`" hides the interesting part. Verified against
+VM 2.48.0.
+
+- **VM registers its own injector, not your scripts.** One
+  registration for `<all_urls>` carries VM's content bundle; VM keeps
+  its own URL matcher and decides what to run. We hand Chrome one
+  registration per script and let Chrome match.
+- **VM's content-realm userscripts run via
+  `chrome.userScripts.execute`** — a per-navigation call, which is
+  why its MV3 build needs Chrome ≥ 135. Ours are declarative, so no
+  worker wake-up sits on the injection path.
+- **VM's page-realm scripts don't use `world: 'MAIN'`** — they go in
+  through a `<script>` element appended from the content realm, so a
+  page CSP can block them and VM falls back to running them in the
+  content realm. Our MAIN-world registration isn't subject to page
+  CSP, so `@inject-into page` means what it says.
+- **VM registers a second script per URL to carry its data.** The
+  payload for one page is `JSON.stringify`d into a
+  `chrome.userScripts.register` whose `matches` is that exact URL,
+  registered ahead of the injector. We bake each script's data into
+  that script's own registration instead, so nothing is keyed by URL.
+- **VM has an opt-in path that beats the parser.** With "synchronous
+  page mode" on (`xhrInject`, off by default), a DNR rule appends a
+  `Set-Cookie` naming a blob and the content script reads it with a
+  *synchronous* XHR at `document_start` — for scripts that would
+  otherwise run too late. We have no equivalent.
+
 ## One-time user opt-in
 
 Chrome requires an explicit user toggle before the API will execute:
@@ -39,6 +69,10 @@ Chrome requires an explicit user toggle before the API will execute:
 - **Chrome ≥ 138**: "Allow User Scripts" toggle on the extension's
   details page (`chrome://extensions/?id=<extId>`).
 - **Chrome 120–137**: Developer mode toggle on `chrome://extensions`.
+
+Not a SourceMonkey quirk: Violentmonkey's MV3 build splits the same
+two cases — it tells the user to enable "Allow User Scripts" on
+Chrome ≥ 138 and "Developer Mode" below that, then reload the tab.
 
 Until the user flips that, **every** `register()` call throws. The
 badge logic is unaffected (it's local code, not the userScripts API),

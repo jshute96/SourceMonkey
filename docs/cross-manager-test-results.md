@@ -27,8 +27,8 @@ Specs that opt out under TM via
   message. Out of scope for cross-manager comparison.
 - **`gm-resource/`** — the example uses relative `@resource` refs
   (`./resource.css`, etc.) resolved against the host script's URL,
-  which is a SourceMonkey extension over TM/VM. TM accepts absolute
-  URLs only, so it can't install the example cleanly. Skipped under
+  which TM doesn't do (VM does, against the install URL). TM accepts
+  absolute URLs only, so it can't install the example cleanly. Skipped under
   TM until we ship an absolute-URL variant. SM coverage:
   `tests/examples/gm-resource/gm-resource.spec.ts`.
 - **`require-scope/`** — same shape, for `@require ./lib.js`. TM
@@ -94,9 +94,10 @@ specific rule stays enforced in an SM-only spec.
     runs under both. SM's rule stays enforced by the same spec on the
     `sourcemonkey` project.
 - **`gm-dom/`** (default-parent `<p>`) — TM appends the no-parent
-  element to `<head>` regardless of tag; SM/VM route by tag (head
-  for `script`/`style`/`link`/`meta`/`title`/`base`, body for
-  everything else). The TM docs don't pin the default parent down,
+  element to `<head>` regardless of tag; SM and VM route by tag
+  instead (SM: head for `script`/`style`/`link`/`meta`/`title`/
+  `base`, body for everything else; VM's head list stops at
+  `meta`). The TM docs don't pin the default parent down,
   so neither rule is wrong. Cross-manager assertion: element was
   inserted and the count of matching `<p>`s went up by one. SM rule
   enforced strictly in `tests/e2e/gm-dom.spec.ts`.

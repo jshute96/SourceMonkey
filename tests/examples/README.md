@@ -194,9 +194,11 @@ by relative ref — `gm-resource/` has `resource.css` / `resource.json` /
 - The TM sync only walks `*.user.js`, so these files are never
   installed on their own. They're fetched by the manager when it
   resolves the ref.
-- Relative refs are a SourceMonkey extension — TM/VM/GM take absolute
+- Relative refs don't survive the trip to TM: TM and GM take absolute
   URLs only, and TM installs these examples from a local file, so it
-  has no base URL to resolve against. A spec relying on one must
+  has no base URL to resolve against. (VM resolves relative refs
+  against the install URL, but it isn't a project in this suite.)
+  A spec relying on one must
   `test.skip(setup.manager === 'tampermonkey', ...)` with the reason
   stated. The `*.user.js` still syncs to TM harmlessly.
 
