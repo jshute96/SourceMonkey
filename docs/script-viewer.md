@@ -475,7 +475,10 @@ re-renders when:
     otherwise re-render every viewer open on it, on every retry.
 
 If the re-read finds the script gone (its collection was removed), the
-viewer drops into the not-found state. Session-storage changes
+viewer drops into the not-found state — including when another tab
+deleted this copy. Only a deletion made *here*, from the versions
+panel's trash can, moves the page to another copy instead; see
+[script-identity.md](script-identity.md). Session-storage changes
 (`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
 repaint separately, as described above.
 
@@ -557,6 +560,11 @@ is the only way to reach that copy.
 - A link to the script already on screen is left alone: that is the
   current row's own Status link, and its `#Log` is an ordinary
   same-document fragment navigation.
+- **Deleting the copy on screen** switches the same way, to the next
+  row in the table (wrapping to the first) — but with
+  `history.replaceState`, since the entry being left names a script
+  that no longer exists, and without the fragment, which named a place
+  in the file that just went away.
 - Preview mode does not do this. It has no installed script to swap,
   and its panel's links are how the user leaves the preview.
 

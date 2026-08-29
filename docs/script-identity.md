@@ -279,10 +279,32 @@ the *other* rows.
     the thing a user would most want to clear out, and nothing will
     scan it back in.
   - **Removing the row you are looking at is allowed.** Refusing only
-    where the user happens to be standing would be arbitrary. The viewer
-    then reports "This script has been removed" rather than its generic
-    not-found message, and clears the panel along with the rest of the
-    page — its heading has nothing left to be *other than*.
+    where the user happens to be standing would be arbitrary.
+  - **The page then moves to the next row in the table**, wrapping to
+    the first. The user asked to lose one copy, not to lose the script,
+    and the table is right there to say which copy comes next.
+    - Each candidate is re-read from the store first. The row list is
+      the table as it was *painted*, and another tab may have deleted
+      copies since; landing on one of those would answer a deliberate
+      deletion with a not-found page for a script the user never picked.
+    - The fragment is dropped — it named a tab or a line in the file
+      that just went away.
+    - `replaceState`, not a new history entry: the entry being left
+      names a script that no longer exists, so keeping it would give
+      Back a not-found page.
+    - **Only for a removal made here.** A copy that disappears because
+      another tab deleted it drops to the not-found state as before —
+      swapping in some other version would be a page the user never
+      asked for.
+  - **With no surviving row, the viewer reports "This script has been
+    removed"** rather than its generic not-found message, and clears the
+    panel along with the rest of the page — its heading has nothing left
+    to be *other than*. A panel showing only your own row isn't drawn at
+    all, so this is the race where every other copy went away between
+    the paint and the click.
+    - The flag behind that wording is set before the successor lookup,
+      so a not-found state painted by the removal's own storage event
+      mid-lookup says the same thing.
     - The removed state is driven from the action, not left to the
       storage listener: `removeScript` writes nothing when the row was
       already gone, so there may be no event to wait for.

@@ -13,7 +13,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { allScripts } from '../fixtures/sw-api';
+import { allScripts, type SmApi } from '../fixtures/sw-api';
 
 const PANEL = '#other-versions';
 const ROWS = `${PANEL} tbody tr`;
@@ -756,28 +756,68 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // Removing the row you are standing on is allowed, and the page says
-  // so rather than reporting a store that lost your script.
-  test('removing the script being viewed reports it as removed', async ({
+  // Removing the row you are standing on is allowed, and the page moves
+  // to another copy rather than stranding itself on the not-found line.
+  //
+  // Three containers, named so their display-name sort is A / M / Z:
+  // that fixes the table order, which is the order these two tests are
+  // about. Returns the script id of the copy in each, in that order.
+  async function threeCopies(sm: SmApi, path: string): Promise<[string, string, string]> {
+    const collectionIds: string[] = [];
+    for (const name of ['A first', 'M middle', 'Z last']) {
+      const collection = await sm.createCollection({ kind: 'scripts', name });
+      await sm.installScript(`file://${path}`, { collectionId: collection!.id });
+      collectionIds.push(collection!.id);
+    }
+    await sm.syncNow();
+    const scripts = await allScripts(sm);
+    const [a, m, z] = collectionIds.map((id) => scripts.find((s) => s.collectionId === id)!.id);
+    return [a, m, z];
+  }
+
+  test('removing the script being viewed switches to the next copy', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addCollection(dir.path);
-    await sm.addCollection(path);
-    await sm.syncNow();
-
-    const scripts = await allScripts(sm);
-    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const [, middle, last] = await threeCopies(sm, path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
 
-    await expect(page.locator('#message')).toContainText('This script has been removed');
-    // The panel goes with the rest of the page — its heading has
-    // nothing left to be "other than".
-    await expect(page.locator(PANEL)).toBeHidden();
-    expect(await allScripts(sm)).toHaveLength(1);
+    // The row below the one that went away — the whole page, not just
+    // the URL: the title is the successor's and the not-found state
+    // never appears.
+    await page.waitForURL(`**/${viewer(last)}`);
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
+    await expect(page.locator('h1')).not.toHaveText('Not available');
+    await expect(page.locator(ROWS)).toHaveCount(2);
+    expect(await allScripts(sm)).toHaveLength(2);
+    await page.close();
+  });
+
+  test('removing the last copy in the table wraps to the first', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    const [first, middle, last] = await threeCopies(sm, path);
+
+    const page = await extensionContext.newPage();
+    // Arrive at the last copy from the middle one, so there is a
+    // history entry to go back to.
+    await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
+    await page.locator(`${PANEL} tr[data-script-id="${last}"]`).click();
+    await page.waitForURL(`**/${viewer(last)}`);
+
+    await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    await page.waitForURL(`**/${viewer(first)}`);
+
+    // The entry for the removed copy was replaced, not stacked on top
+    // of: Back goes to where the user came from, not to a not-found
+    // page for a script that no longer exists.
+    await page.goBack();
+    await page.waitForURL(`**/${viewer(middle)}`);
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', middle);
     await page.close();
   });
 

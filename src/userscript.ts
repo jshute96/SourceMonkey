@@ -1004,12 +1004,25 @@ function viewerLinkTarget(href: string | null): { scriptId: string; hash: string
   return id ? { scriptId: id, hash: url.hash } : null;
 }
 
-// Show another installed copy without a page load: one history entry,
-// then the same hydrate the initial load runs.
-async function navigateToScript(id: string, hash: string): Promise<void> {
+// Show another installed copy without a page load: move the URL, then
+// run the same hydrate the initial load runs.
+//
+// `replace` is for the copy on screen being deleted — the entry we are
+// leaving names a script that no longer exists, so pushing on top of it
+// would give Back a not-found page. Everything else pushes.
+async function swapToScript(
+  id: string,
+  opts: { hash?: string; replace?: boolean } = {},
+): Promise<void> {
   scriptId = id;
-  history.pushState(null, '', `${viewerUrl(id)}${hash}`);
+  const url = `${viewerUrl(id)}${opts.hash ?? ''}`;
+  if (opts.replace) history.replaceState(null, '', url);
+  else history.pushState(null, '', url);
   await showSelectedScript();
+}
+
+async function navigateToScript(id: string, hash: string): Promise<void> {
+  await swapToScript(id, { hash });
 }
 
 // Back / Forward across those entries. A move that changed only the
@@ -1157,14 +1170,33 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
         return;
       }
       if (isCurrent) {
-        // Driven from here rather than left to the storage listener:
-        // `removeScript` writes nothing when the row was already gone,
-        // so there may be no event to wait for — and waiting for one
-        // that never comes would leave the page sitting on a table of
-        // rows it no longer has, with the trash can stuck disabled.
-        // The flag makes the not-found state read as the result the
-        // user asked for.
+        // Deleting the copy you are standing on moves the page to the
+        // next one in the table rather than stranding it on the
+        // not-found line: the user asked to lose one copy, not to lose
+        // the script. Only for a deletion made HERE — a copy that
+        // vanishes from another tab gets the not-found state, because
+        // silently swapping in some other version would be a page the
+        // user never asked for.
+        // Set before the lookup below, not after it: the removal's own
+        // storage event can land while we are reading, and a not-found
+        // state painted by that listener must say the result the user
+        // asked for. `render` clears it as soon as a script is back on
+        // screen, so the successor path pays nothing for it.
         removedHere = true;
+        const successor = await survivingRowAfter(rows, id);
+        if (successor) {
+          // The fragment is dropped: it named a tab or line in the file
+          // that just went away.
+          await swapToScript(successor, { replace: true });
+          return;
+        }
+        // Nothing left to show. Driven from here rather than left to
+        // the storage listener: `removeScript` writes nothing when the
+        // row was already gone, so there may be no event to wait for —
+        // and waiting for one that never comes would leave the page
+        // sitting on a table of rows it no longer has, with the trash
+        // can stuck disabled. The flag set above makes the not-found
+        // state read as the result the user asked for.
         await rehydrateAfterStorageChange();
         return;
       }
@@ -1250,6 +1282,32 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     const others = otherRunningCopies(allRelatedRows(displayed), args.currentScriptId);
     enableLabelEl.title = enableTitle(others.length > 0);
   }
+}
+
+// The row that should take over when `id` is deleted: the first one
+// after it in the table that is still in the store, wrapping to the
+// front. `undefined` when nothing is left, so the caller falls back to
+// the not-found state.
+//
+// Table order, not store order — it is the order the user is looking
+// at, so the copy that takes over is the one their eye was already
+// heading towards.
+//
+// Each candidate is re-read because `rows` is the table as it was
+// PAINTED: another tab may have deleted copies since, and swapping to
+// one of those would answer a deliberate deletion with a not-found
+// page for a script the user never asked for.
+async function survivingRowAfter(
+  rows: readonly RelatedScript[],
+  id: string,
+): Promise<string | undefined> {
+  const at = rows.findIndex((r) => r.script.id === id);
+  if (at < 0) return undefined;
+  for (let step = 1; step < rows.length; step++) {
+    const candidate = rows[(at + step) % rows.length].script.id;
+    if (await getScript(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 // Where this paint's two sections are computed from.
@@ -3168,9 +3226,9 @@ function showMissing(message: string): void {
   summaryEl.replaceChildren();
   // The panel goes with the rest. Its rows carry live toggles and trash
   // cans keyed to script ids, and its heading — "Other versions of THIS
-  // script" — has nothing left to be other than. Reached by the panel's
-  // own trash can removing the row being viewed, and by another tab
-  // removing it out from under us.
+  // script" — has nothing left to be other than. Reached when another
+  // tab removes the script out from under us, and when the panel's own
+  // trash can takes the last copy there was to switch to.
   versionsEl.replaceChildren();
   // And the bookkeeping that would paint it back: a `storage.session`
   // change matching one of the ids we just wiped would otherwise
