@@ -147,9 +147,12 @@ test.describe('install target dropdown', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(previewUrl(extensionId, scriptUrl));
-    // A copy exists: the table carries the offer, with the default
-    // selected but marked, and Install off until another pick.
+    // A copy exists: the panel's third section carries the offer, with
+    // the default selected but marked, and Install off until another
+    // pick — with a line saying why.
     await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator(`${PANEL} .versions-section-heading`).last())
+      .toHaveText('Install another copy of this script');
     const offer = page.locator(`${PANEL} tr.is-offer`);
     expect(await optionTexts(page, `${PANEL} tr.is-offer select`)).toEqual([
       'Scripts from web (already installed)',
@@ -158,10 +161,14 @@ test.describe('install target dropdown', () => {
     ]);
     await expect(offer.locator('select option:checked')).toHaveText('Scripts from web (already installed)');
     await expect(offer.locator('button')).toBeDisabled();
+    await expect(offer.locator('.install-offer-note'))
+      .toHaveText('Already installed there. Choose another collection.');
+    // The row lines up under the copies above it: same Location column.
+    await expect(offer.locator('td.col-location')).toHaveText(scriptUrl);
 
     await offer.locator('select').selectOption({ label: 'Mine' });
     await expect(offer.locator('button')).toBeEnabled();
-    await expect(offer).toContainText('Not installed here yet');
+    await expect(offer.locator('.install-offer-note')).toHaveText('');
     await offer.locator('button').click();
     await page.waitForURL(/userscript\.html\?script=/);
 

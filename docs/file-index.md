@@ -79,7 +79,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/copy-button.ts` | The viewer's square copy-to-clipboard button: icons, per-button "Copied" flash, text read at click time |
 | `src/script-identity.ts` | Finds other installed copies of a script — match by absolute `fileUrl`, and by `@namespace`+`@name`; the exclusive-enable rule; the install / move target options |
 | `src/select-open-guard.ts` | Opens a `<select>`'s list on the mouse release, so the click that opens it can't also pick from it |
-| `src/related-versions.ts` | Renders the viewer's "Other versions" panel (headed when installed, headless inside the preview's banner box): per-copy enable, status, refresh, install, remove; the collection-dropdown builder both Install and Move use; the heading's fold toggle |
+| `src/related-versions.ts` | Renders the "Other versions" panel: a section per relationship, per-copy controls, the preview's install-offer section, the fold toggle, and the collection dropdown Install and Move share |
 | `src/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
@@ -258,7 +258,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-grants.spec.ts` | E2E tests: `@grant` gating, ungranted APIs return undefined, GM_info shape, `GM.` alias namespace, `GM.setValue` granted form |
 | `tests/e2e/gm-storage.spec.ts` | E2E tests for `GM_setValue`/`GM_getValue`/`GM_deleteValue`/`GM_listValues` round-trip, persistence across reloads, per-script namespace isolation, `GM.` promised forms |
 | `tests/e2e/versions-navigation.spec.ts` | E2E for the panel's place on the page, its keyboard walk, and selecting copies from it in place: click / Enter / Space / new-tab, where focus lands, sticky sections, Back, the preview's merged box |
-| `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / offer row, the heading fold |
+| `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |

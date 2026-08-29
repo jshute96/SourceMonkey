@@ -303,7 +303,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // after the gate is about the one installed script this page is
   // showing, which a preview doesn't have.
   if (areaName === 'session' && panelStatusChanged(changes)) {
-    // Held back while the offer row's dropdown is open — see
+    // Held back while the offer section's dropdown is open — see
     // `panelPaintDeferred`. Nothing is lost: the flush repaints from
     // the latest args once the dropdown is done with.
     if (lastRelatedPaint) {
@@ -860,7 +860,7 @@ versionsEl.addEventListener('click', (ev: MouseEvent) => {
   const id = row.dataset.scriptId;
   if (!id || id === scriptId) return;
   // Every control in the row means something of its own: the enable
-  // checkbox and its label, Refresh, the trash can, the offer row's
+  // checkbox and its label, Refresh, the trash can, the offer section's
   // dropdown. A click that lands on one is that control's, not the
   // row's.
   if (from.closest('button, input, select, label')) return;
@@ -913,7 +913,7 @@ versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
 // table has no walk and Tab through the controls is what it gets. The
 // alternative, landing on each row's first control, would be the same
 // coin toss the row rule exists to avoid: the collection <select> in
-// the install-offer row, which the guard below then traps the walk on
+// the install-offer section, which the guard below then traps the walk on
 // while every arrow silently re-targets the install.
 versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
   if (ev.defaultPrevented) return;
@@ -924,7 +924,7 @@ versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
   const from = ev.target;
   if (!(from instanceof HTMLElement)) return;
   // A closed <select> owns the arrow keys — they change its value, and
-  // the offer row's collection picker is one.
+  // the offer section's collection picker is one.
   if (from.closest('select')) return;
   const row = from.closest('tr');
   if (!row) return;
@@ -1229,7 +1229,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       }
       await afterPanelAction(args);
     },
-    // Omitted — which is what suppresses the offer row — unless the
+    // Omitted — which is what suppresses the offer section — unless the
     // caller says installing here is a thing the user can actually do.
     install: args.offerInstall ? (btn, choice) => doInstall(btn, choice) : undefined,
   };
@@ -1266,6 +1266,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     actions,
     status,
     mode: args.mode,
+    location: args.location,
     version: args.header ? getValue(args.header, 'version') : undefined,
     message: relatedVersionsMessage,
   });
@@ -1515,7 +1516,9 @@ let relatedVersionsMessage = '';
 // A repaint the panel owes to a storage echo, held back while the user
 // is working a control that a rebuild would destroy.
 //
-// The offer row's "Install into" dropdown is a native `<select>`: its
+// The install-offer section's collection dropdown — labelled *Into*,
+// the panel's copy of the callout's "Install into" — is a native
+// `<select>`: its
 // popup is drawn by the browser and dies with the element. A rebuild
 // while that popup is open closes it, and the mouseup that was going
 // to pick an entry lands on whatever the rebuild put underneath —
@@ -2417,14 +2420,14 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
 //     with the built-in default for this script's scheme pre-selected,
 //     so the common case is one click;
 //   - any copy, here or from a mirror → the "already installed" banner,
-//     with the table in the same box as the only place to act. Every
-//     action exists per row in there — Open (the location link) and
-//     Update on each copy, Install with the same dropdown on the offer
-//     row — so header buttons would only leave the user guessing which
-//     row they meant.
+//     with the panel in the same box as the only place to act. Every
+//     action is in there — Open (the location link) and Update on each
+//     copy, Install with the same dropdown in the panel's own
+//     "Install another copy of this script" section — so header buttons
+//     would only leave the user guessing which copy they meant.
 //
 // The one exception is a location with no single-file spelling (a
-// `foo.js`, a manifest URL): the table has no offer row to carry
+// `foo.js`, a manifest URL): the panel has no offer section to carry
 // Install, so the callout stays — without a dropdown — as long as
 // nothing is installed at this location. `addCollection` judges those.
 async function wireInstallButtons(): Promise<void> {

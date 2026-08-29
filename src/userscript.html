@@ -368,6 +368,19 @@
         color: #777;
         font-size: 12px;
       }
+      /* A heading row that is there for a screen reader and not for the
+         eye — the install-offer section's, whose labels the section
+         above it has already shown (see `makeTable`). Taken out of
+         flow rather than `display: none`, which drops it from the
+         accessibility tree along with the page. */
+      .versions-table thead.visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
       /* `fixed` + the <colgroup> the renderer emits is what keeps the
          two sections' columns aligned with each other: without it each
          <table> sizes its own columns from its own content and the
@@ -494,6 +507,61 @@
       .versions-this-page { font-weight: 700; color: #333; }
       .versions-table tr.is-offer .versions-offer-text {
         color: #888;
+        font-style: italic;
+      }
+      /* The install-offer row's controls, in the one cell that spans
+         everything left of Location (see `installRow`). Stacked —
+         label, dropdown, button — so they read as the callout's one
+         question does, and so the button stays next to the dropdown
+         that decides what it will do rather than out at the table's
+         right edge. Label beside the dropdown, button under both, and
+         the disabled-button explanation beside the button. */
+      .versions-table td.col-install { padding-right: 10px; }
+      /* Label and dropdown on one line. `min-width: 0` on the select is
+         what lets it give way to the label instead of overflowing the
+         cell — a flex item's default floor is its content width, and a
+         long collection name is wider than two columns. */
+      .install-offer-pick {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .install-offer-label { font-weight: 600; }
+      .install-offer-pick select { flex: 1 1 auto; min-width: 0; }
+      /* Install, and beside it the line saying why it is off. */
+      .install-offer-go {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 9px;
+        margin-top: 5px;
+      }
+      /* Same floor as the dropdown two rules up, and for the same
+         reason: a flex item's automatic minimum is its longest word, so
+         without it the note widens the cell rather than wrapping in it.
+         `flex-wrap` above then drops it under the button when even a
+         wrapped note won't fit beside one. */
+      .install-offer-note { min-width: 0; }
+      .versions-table td.col-install button {
+        flex: none;
+        font: inherit;
+        font-weight: 600;
+        padding: 0.35em 0.9em;
+        cursor: pointer;
+      }
+      /* Greyed by explicit colours, not by `opacity` — on this panel's
+         green ground a translucent button takes the green on and stops
+         reading as a disabled control at all. */
+      .versions-table td.col-install button:disabled {
+        cursor: not-allowed;
+        background: #ececec;
+        border-color: #c2c2c2;
+        color: #999;
+      }
+      /* Why Install is off. Empty — and so invisible — otherwise. */
+      .install-offer-note {
+        font-size: 12px;
+        color: #666;
         font-style: italic;
       }
       .versions-table .toggle {

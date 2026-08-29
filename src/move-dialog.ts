@@ -154,7 +154,7 @@ function runDialog(
   // Move starts with nothing to do and a move takes a deliberate pick.
   // No message with it: the entry says *(current)* and the greyed
   // button says the rest, where red text on open would read as a
-  // failure. Same predicate as the install page's offer row.
+  // failure. Same predicate as the install page's offer section.
   //
   // The button also names what it is about to do. "New collection…"
   // creates before it moves, and a plain "Move" gives no hint of that

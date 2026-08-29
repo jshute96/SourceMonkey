@@ -121,8 +121,8 @@ export interface RelatedVersionsActions {
   // report a failure. Omitted by callers that have nowhere to report
   // one.
   update?(scriptIds: readonly string[]): void | Promise<void>;
-  // Install a single-file copy of this location where the offer row's
-  // dropdown says. Only ever offered for that row. Receives the row's
+  // Install a single-file copy of this location where the offer
+  // section's dropdown says. Only ever offered there. Receives the row's
   // own button so the caller can put the busy state on the control
   // that was clicked.
   install?(button: HTMLButtonElement, choice: InstallChoice): void | Promise<void>;
@@ -148,10 +148,15 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // by `actions.install`, not by this.
   mode: 'installed' | 'preview';
   // `@version` of the script on screen, used to fill the Version cell
-  // of the not-installed-here offer row. Without it that one row
+  // of the install-offer row. Without it that one row
   // would read as version-less next to copies that all show one,
   // which looks like missing data rather than a missing install.
   version?: string;
+  // The absolute location the panel was computed for, for the Location
+  // cell of the install-offer row — the copy that row would add loads
+  // from here, so the cell is filled in the same terms as the rows it
+  // lines up under rather than left blank.
+  location: string;
   // What each stored row's Status cell should say, keyed by script id.
   // Built by the caller because the inputs — the per-script max log
   // level and Chrome's registration verdicts — live in
@@ -179,10 +184,9 @@ export function renderRelatedVersions(
 ): void {
   container.replaceChildren();
   const { sameLocation, sameIdentity } = model;
-  // No install action means no offer row. A row that says "not
-  // installed here yet" and offers nothing to do about it is worse
-  // than no row, and an offer whose button the caller has decided
-  // against would contradict the page around it. Callers gate on:
+  // No install action means no offer section: an offer whose button
+  // the caller has decided against would contradict the page around
+  // it. Callers gate on:
   //   - installed mode — an Install there would add a SECOND row for a
   //     file already installed, and two enabled rows at one URL inject
   //     the script twice;
@@ -191,8 +195,8 @@ export function renderRelatedVersions(
   const offer = model.actions.install ? model.installOptions : undefined;
   if (!sameLocation.length && !sameIdentity.length) {
     // A preview with nothing installed anywhere has no *existing*
-    // versions to head a panel with, and the offer row would only
-    // repeat the page's own Install button one line lower. The
+    // versions to head a panel with, and the offer section would only
+    // repeat the page's own Install callout one line lower. The
     // installed viewer never reaches this branch — its own row is
     // always in `sameLocation`.
     return;
@@ -246,11 +250,9 @@ export function renderRelatedVersions(
   // controls nobody can reach.
   if (model.mode === 'installed' && isPanelCollapsed()) return;
 
-  if (sameLocation.length || offer) {
+  if (sameLocation.length) {
     // "This URL" rather than "Same URL": the section also covers the
-    // row the user is looking at, and the case where nothing is
-    // installed from this URL at all — neither of which is "same as"
-    // anything.
+    // row the user is looking at, so it isn't "same as" anything.
     container.appendChild(sectionHeading('This URL'));
     // Every row here loads from the same place, so the refetch means
     // the same thing on all of them — including the current script's
@@ -259,19 +261,17 @@ export function renderRelatedVersions(
     // neighbours have reads as though that row couldn't be refreshed.
     const updatable = sameLocation.map((r) => r.script.id);
     const verb = refetchVerb(model.mode);
-    const table = makeTable(
-      updatable.length > 1 && model.actions.update
-        ? button(`${verb} all`, `${verb} every copy at this URL`, () =>
-            void model.actions.update?.(updatable))
-        : undefined,
-    );
+    const table = makeTable({
+      headerAction:
+        updatable.length > 1 && model.actions.update
+          ? button(`${verb} all`, `${verb} every copy at this URL`, () =>
+              void model.actions.update?.(updatable))
+          : undefined,
+    });
     for (const rel of sameLocation) {
       table.tBodies[0].appendChild(
         versionRow(rel, model.actions, verb, allRows, model.status?.get(rel.script.id), model.mode),
       );
-    }
-    if (offer) {
-      table.tBodies[0].appendChild(installRow(offer, model));
     }
     container.appendChild(table);
   }
@@ -296,7 +296,24 @@ export function renderRelatedVersions(
     container.appendChild(table);
   }
 
-  // Last, once every row both tables will hold is in the document:
+  // Third and last section: the copy you do NOT have yet. A section of
+  // its own rather than a row tacked onto "This URL" — it is an offer,
+  // not an inventory entry, and inside the inventory its dropdown read
+  // as one more cell of data with its button stranded in the actions
+  // column at the far right of the table.
+  if (offer) {
+    container.appendChild(sectionHeading('Install another copy of this script'));
+    // The heading row is there but off screen: the section above has
+    // already shown the reader these labels, and this table's own
+    // left-hand columns are given over to the install controls — but a
+    // screen reader has no link between two tables, so the row still
+    // needs headers of its own to announce against.
+    const table = makeTable({ headings: 'hidden' });
+    table.tBodies[0].appendChild(installRow(offer, model));
+    container.appendChild(table);
+  }
+
+  // Last, once every row all three tables will hold is in the document:
   // the fit is across all of them, and a column measured before its
   // widest row existed would be too narrow for it.
   fitColumns(container);
@@ -389,8 +406,8 @@ function collapseToggle(container: HTMLElement, model: RelatedVersionsModel): HT
 }
 
 // Columns sized to their own content rather than to a guess. Each is
-// as wide as its widest cell (header included) across BOTH section
-// tables, so the two stay aligned and Location — the column that can
+// as wide as its widest cell (header included) across EVERY section
+// table, so they stay aligned and Location — the column that can
 // always use more room — gets everything left over.
 //
 // Why measure at all: `table-layout: fixed` is what keeps the two
@@ -480,11 +497,20 @@ function sectionHeading(text: string, gloss?: string): HTMLElement {
 // it lines up under nothing and over every per-row button — the
 // natural home for a control that acts on the whole section.
 //
-// The two sections are separate `<table>`s, so their columns would
-// size independently and the panel would read as two unrelated grids.
-// A `<colgroup>` plus `table-layout: fixed` (in the stylesheet) pins
-// every column to the same width in both.
-function makeTable(headerAction?: HTMLElement): HTMLTableElement {
+// Each section is a separate `<table>`, so their columns would size
+// independently and the panel would read as unrelated grids. A
+// `<colgroup>` plus `table-layout: fixed` (in the stylesheet) pins
+// every column to the same width in all of them.
+//
+// `headings: 'hidden'` keeps the heading row but takes it off screen —
+// for a section drawn under one whose labels the reader has already
+// seen. Off screen rather than dropped: the visual labelling carries
+// over between the tables, but the ACCESSIBILITY tree has no link
+// between them, and a row of cells with no `<th>` in their own table
+// announces as four unlabelled values.
+function makeTable(
+  opts: { headerAction?: HTMLElement; headings?: 'visible' | 'hidden' } = {},
+): HTMLTableElement {
   const table = document.createElement('table');
   table.className = 'versions-table';
   const cols = document.createElement('colgroup');
@@ -502,7 +528,19 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
     cols.appendChild(col);
   }
   table.appendChild(cols);
-  const head = table.createTHead().insertRow();
+  appendHeadings(table, opts.headerAction, opts.headings === 'hidden');
+  table.createTBody();
+  return table;
+}
+
+function appendHeadings(
+  table: HTMLTableElement,
+  headerAction: HTMLElement | undefined,
+  hidden: boolean,
+): void {
+  const thead = table.createTHead();
+  if (hidden) thead.className = 'visually-hidden';
+  const head = thead.insertRow();
   for (const [label, cls] of [
     ['On', 'col-enabled'],
     ['Collection', 'col-collection'],
@@ -519,8 +557,6 @@ function makeTable(headerAction?: HTMLElement): HTMLTableElement {
     else th.textContent = label;
     head.appendChild(th);
   }
-  table.createTBody();
-  return table;
 }
 
 function versionRow(
@@ -696,9 +732,9 @@ function collectionCell(rel: RelatedScript): HTMLTableCellElement {
   return td;
 }
 
-// Back-link to a collection's section on the collections page. Shared
-// by the version rows and the install-offer row so both carry the same
-// class, href, and tooltip — they drifted apart when written twice.
+// Back-link to a collection's section on the collections page. One
+// helper so every row carries the same class, href, and tooltip — they
+// drifted apart when this was written twice.
 function collectionNameLink(collection: StoredCollection): HTMLAnchorElement {
   const a = document.createElement('a');
   a.className = 'versions-collection-name';
@@ -904,10 +940,21 @@ function removeCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTa
 }
 
 // The offer to install your own copy of the script you are looking at,
-// somewhere of your choosing. Rendered as a row in the same table so
-// each container reads as one more place the script could live, rather
-// than a separate call to action. The dropdown is the same one the
-// install callout uses when nothing is installed yet.
+// somewhere of your choosing — the whole of the panel's third section.
+//
+// Still a row in a table like the sections above it, so the Location
+// and Version of the copy you would be adding line up under the copies
+// you already have. That comparison is the reason it is here rather
+// than in a callout of its own.
+//
+// What it does NOT keep is the columns left of Location: a copy that
+// does not exist has no enable box, and its collection is the question
+// rather than an answer. Those two cells become one, holding the same
+// "Into [dropdown]" + Install the callout asks when nothing is
+// installed anywhere — with the button on the line under the dropdown.
+// Under, because the actions column is a whole table's width away from
+// the control that decides what the button would do; the line saying
+// why Install is off sits beside the button it is about.
 function installRow(
   options: readonly InstallOption[],
   model: RelatedVersionsModel,
@@ -916,36 +963,52 @@ function installRow(
   const tr = document.createElement('tr');
   tr.className = 'is-offer';
 
-  const on = cell('col-enabled');
-  on.textContent = '—';
-  tr.appendChild(on);
+  const controls = cell('col-install');
+  controls.colSpan = 2;
 
-  const loc = cell('col-location');
-  loc.className += ' versions-offer-text';
+  const select = buildInstallSelect(options, { onChange: () => sync() });
+  select.id = OFFER_SELECT_ID;
+  const label = document.createElement('label');
+  label.className = 'install-offer-label';
+  label.htmlFor = OFFER_SELECT_ID;
+  // Just "Into", not the callout's "Install into": the section heading
+  // above has already said Install, and this cell is only as wide as
+  // two columns — a word spent twice is a word off the dropdown.
+  label.textContent = 'Into';
+  // The pair shares a line, so the label reads as the dropdown's own
+  // rather than as a heading over it.
+  const pick = document.createElement('div');
+  pick.className = 'install-offer-pick';
+  pick.append(label, select);
 
   const b = button('Install', 'Install a copy of this script into the chosen collection', () => {
     void actions.install?.(b, selectedInstallChoice(select, options));
   }, true);
 
-  const select = buildInstallSelect(options, { onChange: () => sync() });
   // The pre-selected entry can be one that already holds this script
   // (the default stays first regardless); Install then waits for a
-  // deliberate pick, and the Location cell says why.
+  // deliberate pick, and this line — beside the button, where the
+  // button is what it explains — says why it is off.
+  const note = document.createElement('span');
+  note.className = 'install-offer-note';
+  const go = document.createElement('div');
+  go.className = 'install-offer-go';
+  go.append(b, note);
   const sync = (): void => {
     const blocked = installChoiceBlocked(select, options);
     b.disabled = blocked;
-    loc.textContent = blocked ? PICK_ANOTHER_COLLECTION : 'Not installed here yet';
+    note.textContent = blocked ? CHOOSE_ANOTHER_COLLECTION : '';
   };
   sync();
 
-  const src = cell('col-collection');
-  src.appendChild(select);
-  tr.appendChild(src);
-  tr.appendChild(loc);
+  controls.append(pick, go);
+  tr.appendChild(controls);
+
+  tr.appendChild(offerLocationCell(model.location));
 
   // No stored row, so no status: this file has never been loaded,
-  // registered, or logged against. An em dash rather than a word,
-  // matching the enable cell two columns left.
+  // registered, or logged against. An em dash, as a row whose status
+  // lookup failed also uses.
   const stat = cell('col-status');
   stat.className += ' versions-offer-text';
   stat.textContent = '—';
@@ -955,23 +1018,53 @@ function installRow(
   // the file being previewed, not about a row that doesn't exist.
   tr.appendChild(versionCellFor(model.version, 'This script declares no @version'));
 
-  const act = cell('col-actions');
-  act.appendChild(b);
-  tr.appendChild(act);
-  // No stored row yet, so nothing to remove — an empty cell rather
-  // than a disabled trash can, which would imply a copy exists.
+  // Nothing to refetch and nothing to remove: the copy does not exist
+  // yet. Empty cells rather than disabled controls, which would imply
+  // one does.
+  tr.appendChild(cell('col-actions'));
   tr.appendChild(cell('col-remove'));
   return tr;
 }
 
+// Where the copy this row offers would load from — the location the
+// whole panel was computed for, in the same column as the installed
+// copies' own paths.
+//
+// The ABSOLUTE location, which is not always the spelling above it: a
+// row inside a directory or manifest collection stores its path under
+// that collection's root and prints the short form. Absolute anyway,
+// because it is what this row's install would store — only a scripts
+// collection can take an individually installed script, and those keep
+// the location whole. The column lines the two up; it does not claim
+// they are spelled alike.
+//
+// Never a link: it is the page you are already on. Tooltipped with the
+// undecoded spelling when percent-encoding makes one differ from the
+// other — `locationTitle`'s decoding case, without its resolve-the-
+// collection-root case, which a location that is already absolute
+// cannot be in.
+function offerLocationCell(location: string): HTMLTableCellElement {
+  const td = cell('col-location');
+  const text = displayLocation(location);
+  if (text !== location) td.title = location;
+  appendWithSlashBreaks(td, text);
+  return td;
+}
+
+// The offer section's dropdown, which is a labelled control and so
+// needs an id. Distinct from the callout's `install-target`: the callout is
+// hidden rather than emptied when the row takes over, so a shared id
+// would put two of them in the document.
+const OFFER_SELECT_ID = 'install-target-offer';
+
 // The `<option>` value that means "New collection…".
 const NEW_COLLECTION_VALUE = 'new';
 
-// Why the offer row's Install is off: the pre-selected default is a
+// Why the offer section's Install is off: the pre-selected default is a
 // collection that already holds this script. Only this row says it in
 // words — the move dialog's equivalent state is the *(current)* entry,
 // which is labelled rather than explained.
-const PICK_ANOTHER_COLLECTION = 'Already installed there. Pick another collection.';
+const CHOOSE_ANOTHER_COLLECTION = 'Already installed there. Choose another collection.';
 
 // Whether the dropdown's current answer is an entry neither Install
 // nor Move can act on: one that already holds this script, or — for a

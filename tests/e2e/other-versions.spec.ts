@@ -909,16 +909,37 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#cancel-btn')).toBeVisible();
 
     // No heading of its own — the banner line above the table is the
-    // heading in a preview. Then the offer row with the local default
-    // — which has no row yet — pre-selected.
+    // heading in a preview. Then the install-offer section, with the
+    // local default — which has no row yet — pre-selected and nothing
+    // saying Install is blocked.
     await expect(page.locator(`${PANEL} h2`)).toHaveCount(0);
+    await expect(page.locator(`${PANEL} .versions-section-heading`).last())
+      .toHaveText('Install another copy of this script');
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
-    await expect(page.locator(`${PANEL} tr.is-offer`)).toContainText('Not installed here yet');
+    await expect(page.locator(`${PANEL} .install-offer-note`)).toHaveText('');
     await expect(page.locator(`${PANEL} tr.is-offer select option:checked`))
       .toHaveText('Scripts from local disk (new)');
     // The offer row borrows the previewed file's version rather than
     // reading as missing data.
     await expect(page.locator(`${PANEL} tr.is-offer td.col-version`)).toHaveText('1.0.0');
+    // The offer's Location is ABSOLUTE, which is not how the directory
+    // collection's own row spells the same file — that one stores a
+    // path under the collection root. Absolute because it is what
+    // installing from here would store; the column lines the two up
+    // without claiming they read alike.
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-location`)).toHaveText(path);
+    await expect(page.locator(`${PANEL} tbody td.col-location`).first()).toHaveText('hello.user.js');
+    // The offer's table keeps a heading row for a screen reader — the
+    // labelling of the section above does not reach across tables —
+    // and takes it off screen, rather than dropping it.
+    const offerHead = page.locator(`${PANEL} table`).last().locator('thead');
+    await expect(offerHead).toHaveClass(/visually-hidden/);
+    await expect(offerHead.locator('th')).toHaveCount(7);
+    await expect(offerHead).not.toBeInViewport();
+    // The dropdown is labelled, and the callout's own copy of it is not
+    // in the document twice over.
+    await expect(page.locator('label[for="install-target-offer"]')).toHaveText('Into');
+    await expect(page.locator('#install-target')).toHaveCount(0);
     // Every action the header gave up is present in the table.
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
     await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Update');
@@ -1060,7 +1081,7 @@ test.describe('other-versions panel', () => {
     await expect(offer.locator('select option:checked')).toHaveText('Scripts from local disk (already installed)');
     await expect(offer.locator('select option:checked')).toBeDisabled();
     await expect(offer.locator('button')).toBeDisabled();
-    await expect(offer).toContainText('Pick another collection');
+    await expect(offer).toContainText('Choose another collection');
     await page.close();
   });
 
@@ -1177,6 +1198,11 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#install-callout')).toBeHidden();
     await expect(page.locator(PANEL)).toContainText('Same script from a different URL');
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
+    // Nothing is installed at this URL, so there is no "This URL"
+    // section at all — it lists copies, and there are none. The offer
+    // is a section of its own below it either way.
+    await expect(page.locator(PANEL)).not.toContainText('This URL');
+    await expect(page.locator(`${PANEL} .versions-section-heading`)).toHaveCount(2);
     await page.close();
   });
 

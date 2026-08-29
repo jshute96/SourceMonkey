@@ -104,8 +104,13 @@ row offers, which the caller supplies as callbacks.
 | Current row | highlighted, **(this page)**, not a link | — |
 | Nothing installed anywhere | can't happen — its own row is always there | no panel at all |
 
-Sections: **This URL**, then **Same script from a different URL** with
-a normal-weight gloss naming the match.
+Sections, each its own `<table>` under a bold heading:
+
+- **This URL** — copies installed from the location on screen.
+- **Same script from a different URL**, with a normal-weight gloss
+  naming the match.
+- **Install another copy of this script** — the install offer, preview
+  only. See [the offer section](#the-install-offer-section).
 
 The panel sits at the top of the page, under the title and above the
 controls row — which copy you are looking at comes before anything that
@@ -166,7 +171,7 @@ the *other* rows.
   it sweeps the other running copies off on its way to the new script's
   page.
   - Both Install controls do it — the preview's header button and the
-    panel's offer row.
+    panel's offer section.
   - And so does the collections page's **Add** field, which previews any
     single-file location the user types rather than adding it directly.
     (First-run seeding bypasses the preview, so it never sweeps.)
@@ -266,7 +271,7 @@ the *other* rows.
   different upstream — a reasonable thing to want, but not "bring this
   up to date with what you are looking at", and offering it here would
   read as though it were.
-- **Install**, only on the offer row — with the dropdown that picks
+- **Install**, only in the offer section — with the dropdown that picks
   where — and only when the caller passes an `install` action. Two
   callers decline:
   - the **installed page**, where an Install would add a second row for
@@ -352,9 +357,9 @@ the *other* rows.
 
 ### A repaint waits for an open dropdown
 
-The panel rebuilds by `replaceChildren`, and the offer row's "Install
-into" control is a native `<select>` whose popup is drawn by the browser
-and dies with the element.
+The panel rebuilds by `replaceChildren`, and the offer section's
+collection dropdown is a native `<select>` whose popup is drawn by the
+browser and dies with the element.
 
 - **The hazard**: a `storage.session` write — the injector's rejection
   map, or any drawn copy's log level — repaints the panel. If that
@@ -453,7 +458,7 @@ hides it.
     - Repaints on a `loglevel:` write for a **drawn** id, or on any
       write to the shared rejection map. A dozen unrelated scripts
       failing on some page must not rebuild this table a dozen times.
-  - **The offer row has no status**, and nor does a row whose lookup
+  - **The offer section's row has no status**, and nor does a row whose lookup
     failed: both show an em dash. Absent is not the same claim as OK.
     - A failed lookup empties the whole column, including the row for
       the script whose own Status row still reads normally —
@@ -462,15 +467,15 @@ hides it.
 
 ### Layout
 
-- Two `<table>`s, not one, but a shared `<colgroup>` plus
-  `table-layout: fixed` pins their columns to the same widths — without
-  it each table sizes its own and the panel reads as two unrelated
-  grids.
+- One `<table>` per section, not one for the panel, but a shared
+  `<colgroup>` plus `table-layout: fixed` pins their columns to the
+  same widths — without it each table sizes its own and the panel reads
+  as unrelated grids.
 - **Status does not shed** either: it says whether a copy works, and
   its link is the only route from here to that copy's log.
 - **Status, Version, and the actions column are measured, not
-  guessed.** `fitColumns` sizes each to its own widest cell across both
-  tables and writes the result to the panel as custom properties;
+  guessed.** `fitColumns` sizes each to its own widest cell across every
+  section table and writes the result to the panel as custom properties;
   Location absorbs everything left over.
   - Under `table-layout: fixed` a column cannot shrink to its content,
     so a fixed width has to cover the worst case (`REFRESH FAILED`, a
@@ -496,11 +501,67 @@ hides it.
   button in favour of this table when there are several targets.
   Wrapping a long path is the lesser cost.
 
+### The install offer section
+
+The panel's third and last section, on a preview only: where to put a
+copy of the script you are looking at. Its one row is the offer.
+
+- **A section of its own, not a row appended to This URL.** It is an
+  offer, not an inventory entry. Inside the inventory its dropdown read
+  as one more cell of data, and its Install button sat in the actions
+  column at the far right of the table — a table's width from the
+  control that decides what it would install.
+- **Still a table row**, so the Location and Version of the copy you
+  would be adding line up under the copies you already have. That
+  comparison is why it isn't a callout of its own.
+- **Its heading row is there but off screen.** The section above has
+  already shown the reader those labels — but a screen reader has no
+  link between two tables, and cells with no `<th>` of their own
+  announce as unlabelled values. Off screen, not `display: none`, which
+  would drop it from the accessibility tree too.
+- **The columns left of Location become one cell** holding the same
+  question the callout asks when nothing is installed anywhere:
+  *Into [dropdown]* on one line, **Install** on the line under it. A
+  copy that does not exist has no enable box, and its collection is the
+  question rather than an answer.
+  - ***Into*, not *Install into*** — the section heading has already
+    said Install, and the cell is only two columns wide.
+- **Location** is the location the whole panel was computed for — the
+  page you are on, so never a link.
+  - **Absolute, which is not always how the rows above spell it**: a
+    copy inside a directory or manifest collection stores its path
+    under that collection's root and prints the short form. Absolute
+    anyway, because it is what installing from here would store — only
+    a scripts collection can take an individually installed script, and
+    those keep the location whole. The column lines the two up; it does
+    not claim they are spelled alike.
+- **Status is an em dash**: the file has never been loaded, registered
+  or logged against. **Version** is the `@version` of the file on
+  screen, so the row isn't version-less beside copies that all show one.
+- **Actions and remove are empty**, not disabled controls, which would
+  imply a copy already exists.
+- **Why Install is off** — the pre-selected entry already holds this
+  script — is said in words *beside* the button, which is what the
+  sentence is about (`CHOOSE_ANOTHER_COLLECTION`).
+- **The disabled button is greyed by explicit colours**, not by
+  `opacity`: translucent on this panel's green ground it takes the
+  green on and stops reading as a disabled control.
+- **Suppressed entirely** when nothing is installed anywhere: the page's
+  own install callout is the question then, and the panel does not draw.
+- **Nothing is installed at this URL** → there is simply no *This URL*
+  section. The old offer row said so in words (*Not installed here
+  yet*) because it sat in that section; now that section only ever
+  lists copies, and its absence is the statement. What the user came
+  for — where a copy could go — is the section below it either way.
+
 ## The "Install into" dropdown
 
 Where a single-file install lands is the user's choice, made in one
 dropdown that appears in two places: the install callout (nothing
-installed yet) and the panel's offer row (some copy exists). Built by
+installed yet) and the panel's offer section (some copy exists). The
+two carry different ids — `install-target` and `install-target-offer` —
+because the callout is hidden rather than emptied when the section
+takes over. Built by
 `buildInstallSelect` in `src/related-versions.ts` from `installOptions`.
 
 - **Three groups**, separated by rules:
@@ -530,8 +591,8 @@ installed yet) and the panel's offer row (some copy exists). Built by
 - **The first entry is pre-selected** for an install (a move opens on
   its *(current)* entry instead), even when disabled;
   Install is then disabled until the user picks another entry, and the
-  offer row's Location cell says why. Installing a second copy is never
-  the one-click path.
+  line beside the offer section's button says why. Installing a second
+  copy is never the one-click path.
 - On a fresh profile the list is just *Scripts from web (new)* and
   *New collection…*. No default is created up-front — only by an
   install that targets it.
@@ -610,14 +671,14 @@ what it adds.
 | What exists | Banner | Header | Table |
 |---|---|---|---|
 | Nothing, anywhere | none | the **install callout**: *Install into [dropdown]* + Install | none |
-| Any copy, here or from a mirror | one line: ***This script is already installed.*** *Select which instance to update or install.* | Cancel, View raw source | every copy, plus the offer row with the same dropdown |
-| A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer row |
+| Any copy, here or from a mirror | one line: ***This script is already installed.*** *Select which instance to update or install.* | Cancel, View raw source | every copy, plus an **Install another copy of this script** section with the same dropdown |
+| A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer section |
 
 - **"Not installed" means nowhere**, not merely not here: a same-`@name`
   copy from a mirror is still this script, installed.
 - **Once any copy exists the table is the only place to act.** Every
-  action exists per row: Open (the location link) and Update on each
-  copy, Install on the offer row. Header buttons acting on "the" copy
+  action exists in the table: Open (the location link) and Update on
+  each copy, Install in the offer section. Header buttons acting on "the" copy
   would leave the user guessing which row they meant.
 - The banner and the panel are one green box, not two stacked cards:
   the banner is about which of the copies the table lists, so its single
