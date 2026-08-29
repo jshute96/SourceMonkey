@@ -13,6 +13,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { allScripts } from '../fixtures/sw-api';
+import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const PANEL = '#other-versions';
 const ROWS = `${PANEL} tbody tr`;
@@ -90,8 +91,13 @@ test.describe('switching copies from the versions panel', () => {
     // The URL moved to the copy that was picked...
     await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
     // ...and so did everything below the panel.
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
     await expect(page.locator('#content')).toContainText('copy B');
+    // Focus parks on the heading so a screen reader announces the new
+    // copy, but the two copies share an `@name` — so what the heading
+    // announces has to carry the location the visible text drops.
+    await expect(page.locator('h1#filename'))
+      .toHaveAttribute('aria-label', /Twin Script, .*b\.user\.js$/);
     expect(await page.evaluate(
       () => (window as unknown as { __alive?: number }).__alive,
     )).toBe(1);
@@ -109,7 +115,7 @@ test.describe('switching copies from the versions panel', () => {
     const orderBefore = await rowIds(page);
 
     await page.locator(`${ROWS}[data-script-id="${second.id}"] td.col-location`).click();
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
 
     // Anchored on the script the page was opened with: `b` is still
     // filed under "a different URL", not promoted to "This URL".
@@ -138,7 +144,7 @@ test.describe('switching copies from the versions panel', () => {
     await page.locator(`${ROWS}[data-script-id="${second.id}"] td.col-version`).click();
 
     await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
     await expect(page.locator(`${PANEL} tr.is-current`))
       .toHaveAttribute('data-script-id', second.id);
     // The row it moved off is navigable again; the one it landed on
@@ -158,7 +164,7 @@ test.describe('switching copies from the versions panel', () => {
     // The enable checkbox toggles that copy and does NOT navigate.
     await page.locator(`${other} td.col-enabled input[type=checkbox]`).click();
     await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
-    await expect(page.locator('h1')).toContainText('a.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('a.user.js');
 
     // Nor does the Collection cell's link out to the collections page,
     // which is a real navigation of its own. Last, because it leaves.
@@ -219,7 +225,7 @@ test.describe('switching copies from the versions panel', () => {
     await page.keyboard.press('Enter');
 
     await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
 
     await page.close();
   });
@@ -270,7 +276,7 @@ test.describe('switching copies from the versions panel', () => {
 
     // ...and this page stayed where it was.
     await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
-    await expect(page.locator('h1')).toContainText('a.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('a.user.js');
 
     await tab.close();
     await page.close();
@@ -281,11 +287,11 @@ test.describe('switching copies from the versions panel', () => {
   }) => {
     const { page, first, second } = await twoCopies(extensionContext, extensionId, sm);
     await page.locator(`${ROWS}[data-script-id="${second.id}"] td.col-location`).click();
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
 
     await page.goBack();
     await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
-    await expect(page.locator('h1')).toContainText('a.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('a.user.js');
     await expect(page.locator('#content')).toContainText('copy A');
 
     await page.close();
@@ -326,7 +332,7 @@ test.describe('switching copies from the versions panel', () => {
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${anchor.id}`);
     await expect(page.locator(ROWS)).toHaveCount(3);
     await page.locator(`${ROWS}[data-script-id="${shown.id}"] td.col-location`).click();
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
     // Still filed around `a`: the copy on screen is in the second
     // section, and `a` alone is under "This URL".
     await expect(page.locator(`${PANEL} .versions-this-page`)).toHaveCount(1);
@@ -344,7 +350,7 @@ test.describe('switching copies from the versions panel', () => {
     await expect(firstSectionRow).toHaveCount(1);
     await expect(firstSectionRow).toHaveAttribute('data-script-id', shown.id);
     await expect(page.locator(`${ROWS}[data-script-id="${third.id}"]`)).toHaveCount(1);
-    await expect(page.locator('h1')).toContainText('b.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
 
     await page.close();
   });
@@ -404,7 +410,7 @@ test.describe('switching copies from the versions panel', () => {
 
     expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).not.toBe('');
     await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
-    await expect(page.locator('h1')).toContainText('a.user.js');
+    await expect(page.locator(LOCATION_ROW)).toContainText('a.user.js');
 
     await page.close();
   });

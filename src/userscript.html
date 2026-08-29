@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>SourceMonkey — Userscript</title>
+    <title>SourceMonkey | Userscript</title>
     <link rel="stylesheet" href="vendor/prism/prism.css" />
     <link rel="stylesheet" href="vendor/prism/prism-line-numbers.css" />
     <link rel="stylesheet" href="styles.css" />
@@ -25,6 +25,11 @@
          replaced came from the keyboard, so the ring appeared for some
          clicks and not others. */
       h1:focus { outline: none; }
+      /* No hanging indent here, unlike the collections page's name cell:
+         the favicon is no longer the first thing on the line (the
+         "SourceMonkey | " / "SourceMonkey | Install " prefix is), so
+         there is no single x-position for continuation lines to align
+         to. */
       h1 {
         font-size: 1em;
         font-weight: 600;
@@ -34,17 +39,17 @@
            inside a word only when nothing else fits. */
         overflow-wrap: anywhere;
         word-break: normal;
-        /* Hanging indent past the favicon slot below, so a wrapped
-           name's continuation lines align with the first line's text
-           instead of tucking under the icon. No `0.6em` term here (an
-           h1 has no cell padding to absorb) — don't copy the collections
-           page's constant. */
-        padding-left: calc(16px + 0.4em);
-        text-indent: calc(-16px - 0.4em);
       }
-      /* Fixed-width slot for the site favicon, immediately before the
-         filename text in the h1. Always present so the text always
-         starts at the same x-position. Holds a clickable <a> when the
+      /* The product prefix is context around the script's name, not
+         part of it, so it stays out of the name's weight. */
+      h1 .heading-prefix {
+        font-weight: 400;
+        color: #555;
+      }
+      /* Fixed-width slot for the site favicon, sitting between the
+         heading's product prefix and the script's name. Always present,
+         so the name starts at the same offset past the prefix whether
+         or not a favicon resolves. Holds a clickable <a> when the
          script's @match yields an origin, or an inert <span>
          otherwise. Inner content is a globe placeholder until the real
          favicon loads. */
@@ -54,10 +59,6 @@
         height: 16px;
         margin-right: 0.4em;
         vertical-align: text-bottom;
-        /* text-indent inherits, and this is a block container: reset it
-           so the h1's negative hanging indent can't shift the icon if a
-           future inner is ever inline rather than display:block. */
-        text-indent: 0;
       }
       .site-icon-inner {
         display: block;

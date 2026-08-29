@@ -9,7 +9,7 @@
 // `version-probe-fetch.js` and is deliberately not reachable here.)
 
 import type { StoredScript } from './script-store.js';
-import { getValue } from './userscript-header.js';
+import { getValue, type ParsedHeader } from './userscript-header.js';
 import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
 import { describeDiagnostic } from './diagnostic-location.js';
 
@@ -105,8 +105,15 @@ export function scriptDisplayName(
   script: Pick<StoredScript, 'header' | 'relativePath'>,
   fallback?: string,
 ): string {
-  const name = script.header ? getValue(script.header, 'name')?.trim() : undefined;
-  return name || fallback || displayLocation(script.relativePath);
+  return headerDisplayName(script.header) || fallback || displayLocation(script.relativePath);
+}
+
+// The `@name` a header declares, or '' when it declares none usable.
+// Split out so the viewer's heading label and every other surface agree
+// on what counts as a name — a future change to the rule (a localized
+// `@name:en`, different trimming) must not land in only one of them.
+export function headerDisplayName(header: ParsedHeader | null | undefined): string {
+  return (header ? getValue(header, 'name')?.trim() : undefined) || '';
 }
 
 // Format a byte count for the size column. Returns "1.2 KB", "950 B",

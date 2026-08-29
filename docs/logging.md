@@ -36,7 +36,7 @@ or UI surface refers to it.
     tells the rows apart is one hover away.
 - Userscript viewer — a `Log ID` row in the details panel, but only
   for a script whose ID carries a `#N`. A unique log ID is just the
-  basename, which the heading and the `Location` row already say.
+  basename, which the `Location` row already says.
   Absent in preview mode, which is showing a script that has never
   run.
 

@@ -23,6 +23,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
+import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
 
@@ -69,8 +70,8 @@ test.describe('.user.js capture for local files', () => {
     // be keyed on the URL the browser would actually navigate to.
     expect(new URL(page.url()).searchParams.get('preview')).toBe(url);
     // …but everything user-facing shows the bare path.
-    await expect(page.locator('h1#filename')).toContainText('/hello.user.js');
-    await expect(page.locator('h1#filename')).not.toContainText('file://');
+    await expect(page.locator(LOCATION_ROW)).toContainText('/hello.user.js');
+    await expect(page.locator(LOCATION_ROW)).not.toContainText('file://');
     await expect(page.locator('#header-summary')).toContainText('Hello From Disk');
     await expect(page.locator('#content')).toContainText('==UserScript==');
     await expect(page.locator('#install-callout')).toBeVisible();
@@ -155,7 +156,7 @@ test.describe('.user.js capture for local files', () => {
     // We already hold a copy, so it renders on raw.html — titled with
     // the filename, and line-for-line rather than collapsed.
     expect(rawPage.url()).toContain('raw.html');
-    await expect(rawPage).toHaveTitle('hello.user.js');
+    await expect(rawPage).toHaveTitle('hello.user.js | SourceMonkey');
     const text = await rawPage.locator('#raw').innerText();
     expect(text).toContain('==UserScript==');
     expect(text.split('\n').length).toBeGreaterThan(3);
@@ -300,7 +301,7 @@ test.describe('.user.js capture for local files', () => {
     );
     const [opened] = await Promise.all([
       extensionContext.waitForEvent('page'),
-      page.locator('.filename-text').click(),
+      page.locator(LOCATION_ROW).click(),
     ]);
     await page.waitForTimeout(1000);
     expect(opened.url()).not.toContain('userscript.html');

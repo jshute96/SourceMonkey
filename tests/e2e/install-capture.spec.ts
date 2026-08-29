@@ -15,6 +15,7 @@ import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
 import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
+import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
 
@@ -64,9 +65,11 @@ test.describe('.user.js link capture', () => {
     await waitForInstallPrompt(page);
 
     // The preview carries the clicked URL and describes the script,
-    // using the same panels an installed script gets.
+    // using the same panels an installed script gets. The heading is the
+    // script's `@name`; the URL is the Location row's job.
     expect(new URL(page.url()).searchParams.get('preview')).toBe(scriptUrl);
-    await expect(page.locator('h1#filename')).toContainText(scriptUrl);
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Install Hello From The Web');
+    await expect(page.locator(LOCATION_ROW)).toHaveText(scriptUrl);
     await expect(page.locator('#header-summary')).toContainText('Hello From The Web');
     await expect(page.locator('#header-summary')).toContainText('https://example.com/*');
     await expect(page.locator('#content')).toContainText('==UserScript==');
@@ -121,19 +124,18 @@ test.describe('.user.js link capture', () => {
     const page = await extensionContext.newPage();
     await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
-    // The preview's heading and Location row read plainly, but the
-    // href is still the URL the browser would request.
-    await expect(page.locator('h1#filename')).toContainText(decodedName);
-    expect(await page.locator('.filename-text').getAttribute('href')).toBe(scriptUrl);
+    // The preview's Location row reads plainly, but the href is still
+    // the URL the browser would request.
+    await expect(page.locator(LOCATION_ROW)).toContainText(decodedName);
+    expect(await page.locator(LOCATION_ROW).getAttribute('href')).toBe(scriptUrl);
 
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
-    // Heading and tab label both show the decoded name…
-    await expect(page.locator('h1#filename')).toContainText(decodedName);
+    // The code tab's label shows the decoded name…
     await expect(page.locator('#tabs')).toContainText(decodedName);
     // …and so does the Location row, while its href stays encoded.
-    const location = page.locator('.filename-text');
+    const location = page.locator(LOCATION_ROW);
     await expect(location).toHaveText(scriptUrl.replace(encodedPath, `/${decodedName}`));
     expect(await location.getAttribute('href')).toBe(scriptUrl);
     // What we stored — and would refetch — is the real URL.
@@ -300,7 +302,7 @@ test.describe('.user.js link capture', () => {
       // versions, so the prompt shows its own fetched copy on raw.html,
       // titled with the filename rather than an opaque URL.
       expect(rawPage.url()).toContain('raw.html');
-      await expect(rawPage).toHaveTitle('hello.user.js');
+      await expect(rawPage).toHaveTitle('hello.user.js | SourceMonkey');
       expect(await rawPage.locator('#raw').innerText()).toBe(body);
     } else {
       // Chrome renders it itself here, so the raw view navigates for

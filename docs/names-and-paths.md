@@ -66,10 +66,12 @@ How a stored location becomes the text a user reads. Helpers live in
   computed from, and two rows sharing an `@name` but not a basename get
   no suffix at all. The tooltip's first line is the disambiguator in
   both directions. See [logging.md](logging.md#log-ids).
-- **The viewer keeps the location as its heading.** The collections page
-  is a list you scan, where the author's name for a script is the
-  useful label; the viewer is where you go *for* the file, so its `<h1>`
-  and tab title stay `displayLocation(relativePath)`.
+- **The viewer heads with the `@name` too**, falling back to the
+  location only when there is no usable name — the same pick the
+  collections page makes, through the same helper. The full location
+  stays one glance away in the details panel's `Location` row rather
+  than in the heading. See
+  [script-viewer.md](script-viewer.md#heading-and-page-title).
 
 ### Only URLs get decoded
 
@@ -128,11 +130,15 @@ How a stored location becomes the text a user reads. Helpers live in
 - `anywhere` (not `break-word`) is load-bearing: only `anywhere` lowers
   the element's min-content width, which is what lets the collections
   table's name column actually shrink.
-- Where a fixed-width favicon slot precedes the text, add a hanging
+- Where a fixed-width favicon slot **starts** the line, add a hanging
   indent (`padding-left` past the icon + a matching negative
   `text-indent`) so continuation lines align with the text, not the
-  icon. The `td` version also absorbs the cell's own padding, so the
-  two constants differ — don't copy one to the other.
+  icon. Used by the collections page; the `td` version also absorbs the
+  cell's own padding, so if a second one is ever added, don't copy the
+  constant.
+- The viewer's `h1` is the exception: its product prefix comes before
+  the icon, so there is no one x-position to hang from and it wraps flush
+  left. See [script-viewer.md](script-viewer.md#heading-and-page-title).
 - `<wbr>` adds no characters, so `textContent` reads, copy/paste, and
   test assertions still see the original string.
 - Exception: the viewer's code box passes `slashBreaks=false` — see

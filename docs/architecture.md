@@ -214,6 +214,22 @@ details live in the topic-specific docs linked below.
   which is what makes them work where the page's own calls are
   refused.
 
+## Page names
+
+- Every user-visible extension page is named
+  `SourceMonkey | <what this page is>` in its `<title>`, and in its
+  `<h1>` where it has one.
+  - Collections → `SourceMonkey | Collections`; Options →
+    `SourceMonkey | Options`.
+  - Pages naming a script put the script first, so it survives a narrow
+    tab strip: the raw-source tab is `<basename> | SourceMonkey`, and
+    the viewer pivots the same way — see
+    [script-viewer.md](script-viewer.md#heading-and-page-title).
+  - `offscreen.html` and `parse-sandbox.html` are exempt: no user ever
+    sees them.
+- `|`, not an em dash: it reads as a separator at a glance in a crowded
+  tab strip, where an em dash reads as punctuation inside a sentence.
+
 ## Extension-page styling
 
 - **Vertical metrics are whole pixels** wherever a checkbox column sits:

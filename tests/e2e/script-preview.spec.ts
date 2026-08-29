@@ -55,6 +55,67 @@ test.describe('script preview', () => {
     await page.close();
   });
 
+  test('the heading and tab title name the script, and say which page this is', async ({
+    extensionContext, extensionId,
+  }) => {
+    const file = scriptsDir.write({
+      relativePath: 'named.user.js',
+      meta: { name: 'Named Script', match: ['https://example.com/*'] },
+      body: '',
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
+    );
+    // Preview mode says it is the install question, in both places.
+    await expect(page.locator('h1#filename'))
+      .toHaveText('SourceMonkey | Install Named Script');
+    await expect(page).toHaveTitle('Install script: Named Script | SourceMonkey');
+
+    await page.locator('#install-btn').click();
+    await page.waitForURL(/userscript\.html\?script=/);
+
+    // Installed mode carries the same name, with no install wording.
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Named Script');
+    await expect(page).toHaveTitle('Named Script | SourceMonkey');
+    await page.close();
+  });
+
+  test('a script with no @name is headed by its location alone', async ({
+    extensionContext, extensionId,
+  }) => {
+    const file = scriptsDir.write({
+      relativePath: 'anon.user.js',
+      meta: { name: '', match: ['https://example.com/*'] },
+      body: '',
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
+    );
+    // The location stands in for the name it doesn't have.
+    await expect(page.locator('h1#filename')).toHaveText(`SourceMonkey | Install ${file}`);
+    await expect(page).toHaveTitle(`Install script: ${file} | SourceMonkey`);
+    await page.close();
+  });
+
+  test('with no script to name, both the heading and the tab say so', async ({
+    extensionContext, extensionId,
+  }) => {
+    const page = await extensionContext.newPage();
+    // Neither `?script=` nor `?preview=`: nothing to name, and no mode
+    // to flavor the wording with.
+    await page.goto(`chrome-extension://${extensionId}/userscript.html`);
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Not available');
+    // The title too — this state is also reached by removing the script
+    // an open viewer is showing, where a stale title would keep
+    // advertising it.
+    await expect(page).toHaveTitle('Not available | SourceMonkey');
+    await page.close();
+  });
+
   test('previewing a script we already have offers Update, not Install', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -133,6 +194,13 @@ test.describe('script preview', () => {
     await expect(message).toContainText('must be a URL or absolute file path');
     await expect(message).not.toContainText('Could not fetch');
     await expect(page.locator('#install-btn')).toBeHidden();
+    // The heading survives a location we never fetched: no header to
+    // read a name from, so it is the raw input under the install
+    // wording.
+    await expect(page.locator('h1#filename'))
+      .toHaveText('SourceMonkey | Install ftp://example.com/thing.user.js');
+    await expect(page)
+      .toHaveTitle('Install script: ftp://example.com/thing.user.js | SourceMonkey');
     await page.close();
   });
 

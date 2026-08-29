@@ -114,7 +114,7 @@ test.describe('file-access banner', () => {
     // positive assertion first: `.not` resolves the instant it holds,
     // and the empty `<div>` straight from the HTML would satisfy it
     // before the viewer's async load() has rendered anything at all.
-    await expect(page.locator('#filename')).toContainText('hello.user.js');
+    await expect(page.locator('#filename')).toHaveText('SourceMonkey | Hello');
     await expect(page.locator('#banner-slot')).not.toContainText(BANNER);
 
     dir.remove('hello.user.js');

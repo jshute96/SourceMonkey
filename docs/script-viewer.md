@@ -78,17 +78,57 @@ One page, one set of panels, two query strings:
 - **Installed** hydrates from the [script store](storage.md) — it does
   **not** re-fetch from disk on open, so what the user sees matches
   what the collections page table reports.
-- **Preview** fetches the URL itself and shows the same heading,
-  details panel, and code tabs for a script that isn't in the store.
+- **Preview** fetches the URL itself and shows the same panels for a
+  script that isn't in the store, under an install-flavored heading.
   Nothing is written until the user says Install.
 - The differences are listed per-section below and gathered in
   [Preview mode](#preview-mode).
 
+### Heading and page title
+
+Both name the script the same way, pivoted for where they're read.
+
+- **Label** (`scriptLabel`) — the script's `@name`, or its location
+  (percent-decoded per [names-and-paths.md](names-and-paths.md)) when it
+  declares no usable one.
+  - The location is **not** appended to a name that exists: a heading
+    carrying both runs the width of the window, and a tab strip shows
+    almost none of it. The details panel's `Location` row is where a
+    reader goes for the full path.
+  - `headerDisplayName` does the `@name` pick, so the viewer and the
+    collections page can't disagree about what a script is called.
+- **Heading** — `<prefix><favicon> <label>`, prefixed
+  `SourceMonkey | ` installed and `SourceMonkey | Install ` in
+  preview.
+- **Title** — `<label> | SourceMonkey`, with `Install script: ` in
+  front in preview.
+- The prefix is what tells the two modes apart at a glance; before it
+  the pages were indistinguishable from their heading alone. It renders
+  in normal weight — the name is the part being labeled.
+- **The location is announced, not drawn.** When the label came from an
+  `@name`, the `<h1>` carries an `aria-label` of
+  `<prefix><label>, <location>`.
+  - Why: switching copies from the versions panel repaints in place and
+    parks focus on the `<h1>` (see
+    [switching copies](#switching-copies-in-place)), but two copies of
+    one script share an `@name` — without the location a screen reader
+    hears the same heading before and after.
+  - An `aria-label`, not a clipped span: the location must stay out of
+    `textContent`, which is what a copy/paste of the heading reads.
+- **No script to name** (`showMissing`) — `SourceMonkey | Not
+  available`, and `Not available | SourceMonkey` in the tab.
+  - No favicon slot, no label, no `aria-label`, and the bare prefix in
+    both modes: the preview's prefix ends in a verb with nothing here to
+    govern, and "Install Not available" is not a page name.
+  - The title is set here too. This state is reached by removing the
+    script an open viewer is showing, not only by opening a bad URL — a
+    stale title would keep advertising a script that is gone.
+
 ### Layout
 
-1. **Filename** (`<h1>`) — the script's `relativePath`, decoded for
-   reading when it's a URL (also the page `<title>`). See
-   [names-and-paths.md](names-and-paths.md).
+1. **Heading** (`<h1>`) — the product prefix, the site favicon, and the
+   script's name. See
+   [Heading and page title](#heading-and-page-title).
 2. **Other versions panel** (`#other-versions`) — every installed copy
    of this script, when there is more than one to talk about. Built by
    `renderRelatedVersions` in
@@ -252,10 +292,9 @@ One page, one set of panels, two query strings:
    - `Log ID` — short file-derived handle used in every SW log line.
      See [logging.md](logging.md). Installed mode only.
      - **Only when it carries a `#N` dupe suffix.** Without one the log
-       ID is the script's own basename, which the heading and the
-       `Location` row already say. The `#N` is the part written nowhere
-       in the file, and it's what a stack trace or `//# sourceURL=`
-       names — so a reader holding a `foo.user.js#2` can ask whether
+       ID is the script's own basename, which the `Location` row already
+       says. The `#N` is the part written nowhere in the file, and it's
+       what a stack trace or `//# sourceURL=` names — so a reader holding a `foo.user.js#2` can ask whether
        that's this one.
      - A script added by URL shows its decoded filename — see
        [names-and-paths.md](names-and-paths.md).
@@ -570,8 +609,9 @@ Behaviour:
 ## Preview mode
 
 `userscript.html?preview=<url>` renders a script that isn't installed.
-Same heading, details panel, and code tabs as an installed script —
-what differs is the controls and where the data comes from.
+Same details panel and code tabs as an installed script, and the same
+heading shape under its own install wording — what differs is the
+controls and where the data comes from.
 
 ### Getting the script
 

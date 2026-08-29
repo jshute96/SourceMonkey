@@ -223,7 +223,7 @@ test.describe('collections', () => {
 
     const viewer = await extensionContext.newPage();
     await viewer.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
-    await expect(viewer.locator('h1#filename')).toHaveText('a%20b.user.js');
+    await expect(viewer.locator('h1#filename')).toHaveText('SourceMonkey | a%20b.user.js');
     await viewer.close();
 
     const collections = await extensionContext.newPage();
