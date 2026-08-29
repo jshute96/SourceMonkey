@@ -181,8 +181,8 @@ export const REFRESH_PATH_SHAPES =
 //     drops the host — the same hazard `canonicalCollectionInput`
 //     sidesteps), and
 //   - anything resolving to bare `/`, which would overlap every local
-//     collection. `isValidCollectionInput` refuses `/` in the Add field
-//     for the same reason, and the two shouldn't disagree.
+//     collection. `isValidLocationShape` refuses the root in the Add
+//     field for the same reason, and the two shouldn't disagree.
 export function refreshPathProblem(input: string): string | null {
   const value = input.trim();
   if (!value.startsWith('/') && !isFileUrl(value)) {

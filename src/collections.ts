@@ -123,8 +123,7 @@ import {
 import {
   canonicalCollectionInput,
   isContainerCollection,
-  isHttpUrl,
-  isFileUrl,
+  isValidLocationShape,
   LOCATION_SHAPES,
   isSingleFileInput,
   normalizeCollectionInput,
@@ -1452,7 +1451,7 @@ async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTML
 async function seedCollection(rawPath: string): Promise<void> {
   const path = rawPath.trim();
   if (!path) return;
-  if (!isValidCollectionInput(path)) {
+  if (!isValidLocationShape(path)) {
     showPageError(`Location ${LOCATION_SHAPES}`);
     return;
   }
@@ -1508,7 +1507,8 @@ async function seedCollection(rawPath: string): Promise<void> {
 //   - a single `.user.js` (URL, `file://`, or absolute path) → the
 //     install page, which asks where to put it;
 //   - any other URL / absolute path → the create dialog, prefilled
-//     with the location (type and name inferred from it);
+//     with the location, which is what the dialog classifies and names
+//     the collection from;
 //   - blank → the create dialog, empty;
 //   - anything else → the create dialog, with the text as the name of
 //     a new scripts collection.
@@ -1519,7 +1519,7 @@ async function seedCollection(rawPath: string): Promise<void> {
 async function onAddViaDialog(rawPath: string, jump: boolean): Promise<boolean> {
   const text = rawPath.trim();
   showPageError(null);
-  if (text && isValidCollectionInput(text) && isSingleFileInput(text)) {
+  if (text && isValidLocationShape(text) && isSingleFileInput(text)) {
     location.href = `userscript.html?preview=${encodeURIComponent(text)}`;
     return true;
   }
@@ -1530,7 +1530,7 @@ async function onAddViaDialog(rawPath: string, jump: boolean): Promise<boolean> 
   let request: CollectionDialogRequest;
   if (!text) request = { mode: 'create' };
   else if (looksLikeLocation(text)) request = { mode: 'create', prefill: { location: text } };
-  else request = { mode: 'create', prefill: { kind: 'scripts', name: text } };
+  else request = { mode: 'create', prefill: { name: text } };
   const outcome = await openCollectionDialog(request);
   if (!outcome) return false;
   addInput.value = '';
@@ -1558,16 +1558,6 @@ async function onEditCollection(id: string): Promise<void> {
 // name: any URL scheme, or a leading slash.
 function looksLikeLocation(value: string): boolean {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || value.startsWith('/');
-}
-
-// Accept three forms: an http(s):// URL, a file:// URL, or an
-// absolute POSIX path of length > 1. Everything else (relative
-// paths, bare names, other schemes, bare `/`) is rejected so the
-// user gets a clear message instead of a downstream scan failure or
-// a scan of the filesystem root.
-function isValidCollectionInput(value: string): boolean {
-  if (isHttpUrl(value) || isFileUrl(value)) return true;
-  return value.startsWith('/') && value.length > 1;
 }
 
 // Show or clear the page's error line, which sits below the Add form.

@@ -448,7 +448,8 @@ installed yet) and the panel's offer row (some copy exists). Built by
      other two defaults, if they exist);
   3. **New collection…**, which is an ordinary entry: picking it only
      selects it. The collection dialog opens when **Install** is
-     clicked, locked to Individual scripts, titled *Create new
+     clicked, with no location on offer (only a scripts collection
+     can take an individually installed script), titled *Create new
      collection and install script* with a **Create and install**
      button — so the dialog's confirm doesn't quietly install too.
      Cancelling it installs nothing and leaves the page as it was.

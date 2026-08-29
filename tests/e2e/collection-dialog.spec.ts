@@ -1,7 +1,8 @@
 // The create / edit collection dialog (src/collection-dialog.ts) as
 // driven from the collections page: how the Add field routes into it,
-// what it infers from a location, what it refuses and why, and what
-// Edit can change.
+// what it makes of a location (the Type row is the dialog's own
+// verdict, never a choice), what it refuses and why, and what Edit can
+// change.
 //
 // Every test takes the `sm` fixture even when it never calls it: `sm`
 // is what runs `resetAllState()` around each test.
@@ -12,6 +13,7 @@ import { ScriptsDir } from '../fixtures/scripts-dir';
 import { UserscriptServer } from '../fixtures/userscript-server';
 
 const DIALOG = 'dialog.collection-dialog';
+const TYPE_BUBBLE = '.dlg-type .collection-type-bubble';
 
 async function openCollectionsPage(page: Page, extensionId: string): Promise<void> {
   await page.goto(`chrome-extension://${extensionId}/collections.html`);
@@ -38,16 +40,18 @@ test.describe('collection dialog', () => {
     const dialog = page.locator(DIALOG);
     await expect(dialog).toBeVisible();
     await expect(dialog.locator('.dlg-title')).toHaveText('New collection');
-    await expect(dialog.locator('input[name="collection-kind"][value="scripts"]')).toBeChecked();
-    // No location for a scripts collection, and nothing to create
-    // until it has a name.
-    await expect(dialog.locator('#collection-dialog-location')).toBeHidden();
+    // Nothing typed yet: not a collection of any kind, and the Type row
+    // is where that is said — the error slot stays empty.
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-type .dlg-hint')).toHaveText('Enter a name or path');
     await expect(dialog.locator('#collection-dialog-name'))
       .toHaveAttribute('placeholder', 'Name is required for scripts collections');
     await expect(dialog.locator('.dlg-error')).toHaveText('');
     await expect(dialog.locator('button.primary')).toBeDisabled();
 
+    // A name with no location is a collection of individual scripts.
     await dialog.locator('#collection-dialog-name').fill('Work');
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('scripts');
     await expect(dialog.locator('button.primary')).toBeEnabled();
     await dialog.locator('button.primary').click();
     await expect(dialog).toBeHidden();
@@ -72,7 +76,7 @@ test.describe('collection dialog', () => {
     await addField(page, 'Shopping');
 
     const dialog = page.locator(DIALOG);
-    await expect(dialog.locator('input[name="collection-kind"][value="scripts"]')).toBeChecked();
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('scripts');
     await expect(dialog.locator('#collection-dialog-name')).toHaveValue('Shopping');
     await dialog.locator('button.primary').click();
     await expect(dialog).toBeHidden();
@@ -82,7 +86,7 @@ test.describe('collection dialog', () => {
     await page.close();
   });
 
-  test('a directory path prefills Directory with the name left blank, and can be named before Create', async ({
+  test('a directory path reads as a directory with the name left blank, and can be named before Create', async ({
     extensionContext, extensionId, sm,
   }) => {
     scriptsDir.write({
@@ -95,7 +99,7 @@ test.describe('collection dialog', () => {
     await addField(page, scriptsDir.path);
 
     const dialog = page.locator(DIALOG);
-    await expect(dialog.locator('input[name="collection-kind"][value="directory"]')).toBeChecked();
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('file-dir');
     await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);
     // Blank means the inferred name; the placeholder says so.
     await expect(dialog.locator('#collection-dialog-name')).toHaveValue('');
@@ -120,7 +124,7 @@ test.describe('collection dialog', () => {
     await page.close();
   });
 
-  test('a location that cannot be read is refused in the dialog, and nothing is created', async ({
+  test('a location that cannot be read is refused live, and nothing is created', async ({
     extensionContext, extensionId, sm,
   }) => {
     const page = await extensionContext.newPage();
@@ -128,16 +132,84 @@ test.describe('collection dialog', () => {
     await addField(page, '/nonexistent-sourcemonkey-dir/scripts');
 
     const dialog = page.locator(DIALOG);
-    await expect(dialog.locator('button.primary')).toBeEnabled();
-    await dialog.locator('button.primary').click();
-    // The probe failed: the dialog stays, says so, and no section
-    // appeared behind it.
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator('.dlg-error')).not.toHaveText('');
+    // Nothing could be read, so there is nothing to classify — the
+    // dialog says that rather than filing it as a directory.
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-error'))
+      .toHaveText('Could not read /nonexistent-sourcemonkey-dir/scripts. Check that the path exists.');
     await expect(dialog.locator('#collection-dialog-location')).toHaveClass(/invalid/);
+    await expect(dialog.locator('button.primary')).toBeDisabled();
     expect(await sm.getCollections()).toHaveLength(0);
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('section.collection')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('a path that resolves to the filesystem root is refused', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const page = await extensionContext.newPage();
+    await openCollectionsPage(page, extensionId);
+    await addField(page, '');
+    const dialog = page.locator(DIALOG);
+    // `/` is refused everywhere already; the spellings that reach the
+    // same place have to go with it, or Create would offer to scan the
+    // whole disk.
+    for (const root of ['/', '//', '/..']) {
+      await dialog.locator('#collection-dialog-location').fill(root);
+      await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+      await expect(dialog.locator('.dlg-error'))
+        .toHaveText('Location must be a URL or absolute file path');
+      await expect(dialog.locator('button.primary')).toBeDisabled();
+    }
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    expect(await sm.getCollections()).toHaveLength(0);
+    await page.close();
+  });
+
+  test('a refusal is forgotten on the next edit, so a directory created meanwhile is picked up', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    void sm;
+    const later = `${scriptsDir.path}/made-later`;
+    const page = await extensionContext.newPage();
+    await openCollectionsPage(page, extensionId);
+    await addField(page, later);
+
+    const dialog = page.locator(DIALOG);
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-error')).toContainText('Could not read');
+
+    // The directory appears while the dialog is open. Retyping the same
+    // path is the retry — the refusal must not have been cached.
+    scriptsDir.write({
+      relativePath: 'made-later/a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    await dialog.locator('#collection-dialog-location').fill(`${later}/x`);
+    await dialog.locator('#collection-dialog-location').fill(later);
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('file-dir');
+    await expect(dialog.locator('button.primary')).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.close();
+  });
+
+  test('a readable file that is neither a script nor a manifest is an unsupported type', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const notes = scriptsDir.writeRaw('notes.json', '{}\n');
+    const page = await extensionContext.newPage();
+    await openCollectionsPage(page, extensionId);
+    await addField(page, notes);
+
+    const dialog = page.locator(DIALOG);
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-error'))
+      .toContainText('File must be a script (.user.js) or a manifest (script_manifest.json)');
+    await expect(dialog.locator('button.primary')).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    expect(await sm.getCollections()).toHaveLength(0);
     await page.close();
   });
 
@@ -162,7 +234,7 @@ test.describe('collection dialog', () => {
     await page.close();
   });
 
-  test('a manifest URL infers Manifest and greys the local-overrides option', async ({
+  test('a manifest URL reads as a manifest and greys the local-overrides option', async ({
     extensionContext, extensionId, sm,
   }) => {
     void sm;
@@ -173,17 +245,11 @@ test.describe('collection dialog', () => {
       await addField(page, `${server.baseUrl}/scripts/script_manifest.json`);
 
       const dialog = page.locator(DIALOG);
-      await expect(dialog.locator('input[name="collection-kind"][value="manifest"]')).toBeChecked();
+      await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('http-manifest');
       await expect(dialog.locator('#collection-dialog-name'))
         .toHaveAttribute('placeholder', 'Name is optional for manifest collections');
       await expect(dialog.locator('#collection-dialog-local-files')).toBeDisabled();
       await expect(dialog.locator('.dlg-check')).toContainText('Not applicable for scripts loaded over http');
-
-      // Switching the type under a manifest-shaped location is caught
-      // live.
-      await dialog.locator('input[name="collection-kind"][value="directory"]').check();
-      await expect(dialog.locator('.dlg-error')).toContainText('Choose Manifest');
-      await expect(dialog.locator('button.primary')).toBeDisabled();
       await dialog.getByRole('button', { name: 'Cancel' }).click();
       await page.close();
     } finally {
@@ -191,19 +257,75 @@ test.describe('collection dialog', () => {
     }
   });
 
-  test('a .user.js typed as the location is refused live', async ({
+  test('an http URL that names no collection says what would work', async ({
     extensionContext, extensionId, sm,
   }) => {
     void sm;
     const page = await extensionContext.newPage();
     await openCollectionsPage(page, extensionId);
+    await addField(page, 'https://example.com/scripts/');
+
+    const dialog = page.locator(DIALOG);
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-error'))
+      .toContainText('URL must be a GitHub folder');
+    await expect(dialog.locator('button.primary')).toBeDisabled();
+
+    // A GitHub tree URL is the shape it asks for — classified from the
+    // URL alone, with no API call.
+    await dialog.locator('#collection-dialog-location')
+      .fill('https://github.com/owner/repo/tree/main/scripts');
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('github-dir');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await page.close();
+  });
+
+  test('a script URL gets the same install offer a local script does', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    void sm;
+    const server = await UserscriptServer.start();
+    try {
+      server.setRoute('/one.user.js', '// ==UserScript==\n// @name One\n// @match https://example.com/*\n// ==/UserScript==\n');
+      const page = await extensionContext.newPage();
+      await openCollectionsPage(page, extensionId);
+      await addField(page, '');
+      const dialog = page.locator(DIALOG);
+      await dialog.locator('#collection-dialog-location').fill(`${server.baseUrl}/one.user.js`);
+      await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+      await expect(dialog.locator('.dlg-error')).toHaveText('This is a single script, not a collection');
+      await expect(dialog.locator('button.primary')).toBeDisabled();
+
+      await dialog.locator('.dlg-error-action').click();
+      await page.waitForURL(/userscript\.html\?preview=/);
+      await page.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test('a real .user.js typed as the location is refused, with an install button instead', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    void sm;
+    const script = scriptsDir.write({
+      relativePath: 'one.user.js',
+      meta: { name: 'One', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const page = await extensionContext.newPage();
+    await openCollectionsPage(page, extensionId);
     await addField(page, '');
     const dialog = page.locator(DIALOG);
-    await dialog.locator('input[name="collection-kind"][value="directory"]').check();
-    await dialog.locator('#collection-dialog-location').fill('/home/me/one.user.js');
-    await expect(dialog.locator('.dlg-error')).toContainText('paste it in the Add field');
+    await dialog.locator('#collection-dialog-location').fill(script);
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-error')).toContainText('This is a single script, not a collection');
     await expect(dialog.locator('button.primary')).toBeDisabled();
-    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    // The dialog can't make a collection of it, but it can hand it to
+    // the page that installs it.
+    await dialog.locator('.dlg-error-action').click();
+    await page.waitForURL(/userscript\.html\?preview=/);
     await page.close();
   });
 
@@ -260,9 +382,9 @@ test.describe('collection dialog', () => {
 
       const dialog = page.locator(DIALOG);
       await expect(dialog.locator('.dlg-title')).toHaveText('Edit collection');
-      // Type is fixed; there is no location to show.
-      await expect(dialog.locator('input[name="collection-kind"][value="scripts"]')).toBeChecked();
-      await expect(dialog.locator('input[name="collection-kind"]').first()).toBeDisabled();
+      // Already a scripts collection, so there is no location to show —
+      // one can't be added to it.
+      await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('scripts');
       await expect(dialog.locator('#collection-dialog-location')).toBeHidden();
       await expect(dialog.locator('button.primary')).toHaveText('Save');
 
@@ -278,6 +400,30 @@ test.describe('collection dialog', () => {
     } finally {
       await server.stop();
     }
+  });
+
+  test('Edit on a scripts collection will not save a blank name', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const mine = await sm.createCollection({ kind: 'scripts', name: 'Work' });
+    const page = await extensionContext.newPage();
+    await openCollectionsPage(page, extensionId);
+    const section = page.locator(`section.collection[data-collection-id="${mine!.id}"]`);
+    await section.locator('button.edit-collection').click();
+
+    // Nothing to infer a name from, so blank is missing rather than
+    // "use the inferred one" — the Type row says what is still needed.
+    const dialog = page.locator(DIALOG);
+    await dialog.locator('#collection-dialog-name').fill('');
+    await expect(dialog.locator('.dlg-type .dlg-hint')).toHaveText('Enter a name');
+    await expect(dialog.locator('button.primary')).toBeDisabled();
+
+    await dialog.locator('#collection-dialog-name').fill('Home');
+    await expect(dialog.locator('button.primary')).toBeEnabled();
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
+    await expect(section.locator('h2 .collection-display-name')).toHaveText('Home');
+    await page.close();
   });
 
   // The name a default is born with is its own, so renaming away from
@@ -332,7 +478,7 @@ test.describe('collection dialog', () => {
     await section.locator('button.edit-collection').click();
 
     const dialog = page.locator(DIALOG);
-    await expect(dialog.locator('input[name="collection-kind"][value="directory"]')).toBeChecked();
+    await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('file-dir');
     await expect(dialog.locator('#collection-dialog-location')).toBeVisible();
     await expect(dialog.locator('#collection-dialog-location')).toBeDisabled();
     await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);

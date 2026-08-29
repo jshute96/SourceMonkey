@@ -2041,7 +2041,7 @@ async function doInstall(
     // agrees.
     const outcome = await openCollectionDialog({
       mode: 'create',
-      lockKind: 'scripts',
+      scriptsOnly: true,
       andInstall: true,
     });
     if (!outcome) return;

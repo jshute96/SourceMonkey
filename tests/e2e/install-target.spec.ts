@@ -203,14 +203,18 @@ test.describe('install target dropdown', () => {
 
     const dialog = page.locator('dialog.collection-dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator('input[name="collection-kind"][value="scripts"]')).toBeChecked();
-    await expect(dialog.locator('input[name="collection-kind"][value="directory"]')).toBeDisabled();
+    // Scripts-only: no location may be given, so the location field
+    // isn't there at all and the Type row asks only for a name.
+    await expect(dialog.locator('#collection-dialog-location')).toBeHidden();
+    await expect(dialog.locator('.dlg-type .collection-type-bubble')).toHaveText('invalid');
+    await expect(dialog.locator('.dlg-type .dlg-hint')).toHaveText('Enter a name');
     // The title and button say the script lands too, so Create isn't a
     // surprise install.
     await expect(dialog.locator('.dlg-title')).toHaveText('Create new collection and install script');
     await expect(dialog.locator('button.primary')).toHaveText('Create and install');
 
     await dialog.locator('#collection-dialog-name').fill('Fresh');
+    await expect(dialog.locator('.dlg-type .collection-type-bubble')).toHaveText('scripts');
     await dialog.locator('button.primary').click();
     await page.waitForURL(/userscript\.html\?script=/);
 

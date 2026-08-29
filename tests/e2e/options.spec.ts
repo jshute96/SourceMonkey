@@ -173,7 +173,7 @@ test.describe('collections page', () => {
 
     const dialog = page.locator('dialog.collection-dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.locator('input[name="collection-kind"][value="scripts"]')).toBeChecked();
+    await expect(dialog.locator('.dlg-type .collection-type-bubble')).toHaveText('scripts');
     await expect(dialog.locator('#collection-dialog-name')).toHaveValue('not-a-valid-path-or-url');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
 

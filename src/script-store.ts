@@ -52,6 +52,7 @@ import {
   joinPath,
   newContainerPath,
   normalizeCollectionInput,
+  SINGLE_SCRIPT_USE_ADD_FIELD,
   scanForUserScripts,
   scriptFileUrl,
   locationFsPath,
@@ -2019,14 +2020,9 @@ export async function createCollection(spec: NewCollectionSpec): Promise<AddColl
     return { kind: 'newCollection', collection: created };
   }
   const path = await canonicalLocation(spec.path);
-  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_NOT_A_COLLECTION);
+  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_USE_ADD_FIELD);
   return await createLocationCollection(path, spec);
 }
-
-// A `.user.js` typed where a collection location was expected. Ends
-// with what to do, per the "name the fix" rule.
-export const SINGLE_SCRIPT_NOT_A_COLLECTION =
-  'This is a single script, not a collection. To install it, paste it in the Add field instead.';
 
 // What the collection dialog runs before creating a location-backed
 // collection: the same listing / manifest fetch / GitHub lookup a
@@ -2038,7 +2034,7 @@ export async function probeCollectionLocation(
   rawPath: string,
 ): Promise<{ path: string; scriptCount: number }> {
   const path = await canonicalLocation(rawPath);
-  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_NOT_A_COLLECTION);
+  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_USE_ADD_FIELD);
   const found = await scanForUserScripts(path);
   return { path, scriptCount: found.length };
 }

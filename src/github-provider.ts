@@ -165,6 +165,16 @@ function parseGithubRepoRoot(input: string): { owner: string; repo: string } | n
   return { owner: m[1]!, repo: m[2]!.replace(/\.git$/, '') };
 }
 
+// True for any GitHub input a collection can be built from without
+// naming a file: a `/tree/...` (or file-less `/blob/...`) directory URL,
+// or a bare repo root. The repo root needs one API call to resolve its
+// default branch before it can be stored (`normalizeGithubInput`), but
+// recognising it takes none — which is what lets the collection
+// dialog classify a location on every keystroke.
+export function isGithubDirInput(input: string): boolean {
+  return isGithubDirCollection(input) || parseGithubRepoRoot(input) !== null;
+}
+
 // Fetch a repo's default branch via the GitHub repository metadata
 // endpoint. One API call (counts against the same 60/hr/IP budget as
 // the Contents API for unauthenticated callers). Called only at

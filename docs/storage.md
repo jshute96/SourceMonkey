@@ -855,11 +855,12 @@ Routes by what was typed (trimmed):
   install page, `userscript.html?preview=…`, which asks where to put
   it. Nothing is written until Install.
 - **Any other URL, or anything starting with `/`** → the collection
-  dialog, prefilled with the location. Type is inferred (Manifest when
-  the basename is `script_manifest.json`, else Directory), the name is
-  left blank (blank means the inferred short form), and a bad shape (a
-  bare `/`, a relative path) is reported inside the dialog.
-- **Blank** → the dialog, empty, on Individual scripts.
+  dialog, prefilled with the location. The dialog classifies it (see
+  [what a location turns out to be](#what-a-location-turns-out-to-be)),
+  the name is left blank (blank means the inferred short form), and
+  anything it can't build a collection from — a bad shape, a path that
+  isn't there, an unsupported file — is reported inside the dialog.
+- **Blank** → the dialog, empty.
 - **Anything else** → the dialog, with the text as the name of a new
   scripts collection.
 
@@ -871,35 +872,78 @@ Refresh after adding.
 `src/collection-dialog.ts`, one `<dialog>` per page, shared by the
 collections page (Add, Edit) and the install page ("New collection…").
 
-- **Fields**: Type (Individual scripts / Directory / Manifest, with a
-  one-line gloss each), Location (hidden for Individual scripts; read-only
-  in edit), Name (its placeholder says whether it is required — scripts
-  collections — or optional, meaning "the name inferred from the
-  location"), and **Allow local file overrides** (see
+- **Fields**: Name (its placeholder says whether it is required — no
+  location — or optional, meaning "the name inferred from the
+  location"), *Directory or manifest* (the location; read-only in edit,
+  absent where none can be given), Type (**reported, never chosen** —
+  see below), and **Allow local file overrides** (see
   [local-file-overrides.md](local-file-overrides.md#per-collection-opt-out)).
+- **The Type row** shows the collection bubble the form would produce,
+  in the same colours (and with a tooltip each) the collections page
+  uses:
+  - a name and no location → `scripts`;
+  - a location we could classify → `file-dir`, `github-manifest`, …;
+  - `checking` while the location's verdict is being fetched;
+  - anything else → `invalid`, with the reason in the error slot.
+  - Neither a name nor a location is the one `invalid` with nothing
+    wrong yet, only unfinished: the error slot stays empty and the row
+    reads *Enter a name or path* — or *Enter a name* where no location
+    can be given.
 - **Live validation** on every keystroke, in the dialog's own error
-  slot, with Create/Save disabled while anything holds: a blank name on
-  a scripts collection; a chosen name already in use (case-insensitive);
-  a location that isn't an absolute path / `file://` / `http(s)://`; a
-  `.user.js` where a collection was expected; a location already
-  registered; a type that contradicts the location's shape.
-- **Typing a location** re-infers the type. The overrides option greys
-  out, with the reason, for an http(s) / GitHub location.
-- **Create, location kinds**: runs `probeCollectionLocation` first. A
+  slot, with Create/Save disabled while anything holds: a missing name
+  where nothing can be inferred; a chosen name already in use
+  (case-insensitive) or reserved; a location already registered; and
+  every `invalid` verdict below.
+- **Create, with a location**: runs `probeCollectionLocation` first. A
   location that can't be read stays in the dialog with the reason and
   **nothing is written** — previously it landed as a collection whose
   only content was a scan error. An empty directory warns once; the
   next Create adds it anyway.
-- **Create, Individual scripts**: `createCollection({kind: 'scripts'})`.
+- **Create, no location**: `createCollection({kind: 'scripts'})`.
 - **Edit**: Type and Location are fixed (changing them would be a
-  different collection). Save → `setCollectionOptions`; a changed
-  overrides option refreshes the collection, because the flag only
-  affects the next refresh.
-- **Locked to one type** when the install page opens it — a script can
+  different collection); a scripts collection shows no location field at
+  all, since one can't be added. Save → `setCollectionOptions`; a
+  changed overrides option refreshes the collection, because the flag
+  only affects the next refresh.
+- **No location on offer** when the install page opens it — a script can
   only be installed into a scripts collection. That route also sets the
   title to *Create new collection and install script* and the confirm
   button to *Create and install*, since the caller installs into the
   new collection the moment it exists.
+
+#### What a location turns out to be
+
+`classifyLocation` (`src/directories.ts`) decides, debounced ~250ms
+after typing stops. It reads rather than guesses, so a path that isn't
+there says so instead of being filed as a directory and failing later
+in a scan.
+
+- **Shape first** — not a URL or an absolute path, or a path that
+  resolves to the filesystem root (`/`, `//`, `/..`) → invalid.
+- **Local paths and `file://` URLs** are probed:
+  - the directory listing answers → `directory`;
+  - else a plain read answers → a file, classified by name: `.user.js` →
+    `script`, `script_manifest.json` → `manifest`, anything else →
+    invalid, *unsupported file type*;
+  - neither answers → invalid, *could not read* — naming which of the
+    two causes it is, since a `file://` read fails identically for "not
+    there" and "not allowed" and `isFileSchemeAccessAllowed()` can tell
+    them apart.
+- **http(s) URLs** are classified by shape alone — there is no remote
+  listing, and a keystroke-rate classifier must not fire reads at
+  arbitrary origins. `.user.js` → `script`, `script_manifest.json` →
+  `manifest`, a GitHub tree / repo-root URL → `directory`, anything else
+  → invalid. GitHub is the only folder here: a plain web directory has
+  nothing to list. Readability is checked at Create.
+
+A `script` verdict is not a refusal so much as a wrong door — local
+path or URL alike: the error slot says *This is a single script, not a
+collection* and offers an **Install script** button that hands the
+location to the viewer's install preview.
+
+Verdicts are cached per dialog session, but **refusals are forgotten on
+every edit** — a location that couldn't be read may become readable
+while the dialog is open, so retyping it is the retry.
 
 Each rendered collection section gets a stable DOM id
 (`collection-<collectionId>`) so it can be scrolled to via the URL fragment

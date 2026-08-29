@@ -67,7 +67,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
 | `src/collections.html` | Collections page markup: Options button, Add field, file-access banner slot, collection list |
 | `src/collections.ts` | Collections page controller — Add-field routing into the dialog, Edit button, render, in-place updates, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
-| `src/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: type / location / name / local-overrides fields, live validation, pre-create readability probe |
+| `src/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe |
 | `src/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, GitHub auth token, collections link |
 | `src/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), GitHub-token controls |
@@ -81,7 +81,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
-| `src/directories.ts` | Collection I/O + classifiers (single-file / manifest / github-dir / container, default vs user-created), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
+| `src/directories.ts` | Collection I/O + classifiers (single-file / manifest / github-dir / container, plus the read-it-first `classifyLocation`), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
 | `src/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |

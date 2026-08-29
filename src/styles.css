@@ -88,6 +88,11 @@
 .bubble-github-dir      { background: #6f42c1; }
 .bubble-github-manifest { background: #4c2889; }
 .bubble-scripts         { background: #4b5563; }
+/* Form states, not collection kinds — only the collection dialog's Type
+   row ever wears these: red for a location (or an empty form) that
+   can't become a collection, grey while its verdict is being fetched. */
+.bubble-invalid         { background: #b00; }
+.bubble-checking        { background: #9ca3af; }
 
 /* The per-row scheme chip inside a scripts collection: the same hues
    as the bubbles, smaller, so a mixed collection still says where each
@@ -157,27 +162,38 @@ dialog.collection-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
 /* `border-style` too: the UA gives text inputs an inset border, and
    recolouring an inset border shades each side a different tint. */
 .collection-dialog input[type="text"].invalid { border-style: solid; border-color: #b00; outline-color: #b00; }
-.collection-dialog .dlg-radios { display: flex; flex-direction: column; gap: 5px; }
-.collection-dialog .dlg-radio,
+/* The Type row: the inferred bubble, plus a hint for the one state
+   that has nothing to report in the error slot yet. */
+.collection-dialog .dlg-type { display: flex; gap: 8px; align-items: baseline; padding-top: 3px; }
+/* The shared bubble dims on hover because everywhere else it is a link.
+   This one is a report, not a target. */
+.collection-dialog .dlg-type .collection-type-bubble:hover { opacity: 1; }
 .collection-dialog .dlg-check {
   display: flex;
   gap: 6px;
   align-items: baseline;
   cursor: pointer;
 }
-.collection-dialog .dlg-radio input,
 .collection-dialog .dlg-check input { margin: 0; position: relative; top: 1px; flex: 0 0 auto; }
 .collection-dialog .dlg-hint { color: #666; font-size: 0.85em; }
-.collection-dialog .dlg-radio.off,
 .collection-dialog .dlg-check.off { opacity: 0.5; cursor: default; }
+.collection-dialog .dlg-error-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 16px 0;
+}
 .collection-dialog .dlg-error {
   color: #b00;
   margin: 0;
-  padding: 8px 16px 0;
   min-height: 1.3em;
   line-height: 1.3;
 }
 .collection-dialog .dlg-error.warn { color: #92400e; }
+/* Offered inside the error line — today only "Install script", under
+   the "this is a single script" verdict. */
+.collection-dialog .dlg-error-action { font: inherit; padding: 1px 8px; cursor: pointer; flex: 0 0 auto; }
+.collection-dialog .dlg-error-action[hidden] { display: none; }
 .collection-dialog .dlg-actions {
   display: flex;
   justify-content: flex-end;
