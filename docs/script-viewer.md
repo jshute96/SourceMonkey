@@ -155,6 +155,12 @@ Both name the script the same way, pivoted for where they're read.
      heading. Empty — and so hidden — when the only row would be the
      script already on screen, or, in a preview, when nothing is
      installed anywhere.
+   - A **triangle in the top-right corner folds the card** down to that
+     heading line and back, for when the table is long and beside the
+     point. Installed viewer only — the preview has no heading to fold
+     into — and the choice is kept in `localStorage`, so it holds across
+     the reload that opening another copy performs. See
+     [script-identity.md](script-identity.md#folding-it-away).
    - Green card directly under the title, above the controls row:
      *which* copy this page is about comes before anything that acts on
      it. In a preview's already-installed case the banner and the table

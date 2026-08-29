@@ -115,6 +115,24 @@ as a different kind of thing at a glance. On a preview whose script is
 already installed, the panel and the "already installed" banner are
 drawn as one box.
 
+### Folding it away
+
+- A **triangle in the panel's top-right corner** folds the whole green
+  box down to its heading line, and back.
+- Details page only — the preview has no heading to fold into.
+- Folded, the rows are **not drawn** rather than drawn and hidden:
+  hidden rows would still be found by the keyboard walk and by the
+  repaint's focus bookkeeping.
+- The choice is remembered in `localStorage` — read synchronously, so
+  the first paint can't flash open and fold a frame later, which an
+  async `chrome.storage` read would. The cost: a second viewer tab
+  keeps its own fold until it reloads.
+- The **message line stays above the fold.** A refresh that just failed
+  is the one time-sensitive thing in the panel, so folding must not
+  hold it back.
+- The toggle is restored after an unasked-for repaint, the same way a
+  focused row is — it is where a fold parks focus.
+
 On the details page, clicking a row anywhere that isn't a control opens
 that copy **in place**: new history entry, same table. The row is the
 control — `role="link"` and `tabindex="0"` with Enter / Space, and

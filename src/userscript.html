@@ -310,13 +310,47 @@
         background: #dbecd6;
       }
       #other-versions:empty { display: none; }
+      /* Heading line: the title, and the fold control pushed to the
+         far corner. The gap below belongs to the line rather than to
+         the <h2>, so a folded panel is exactly one line tall with no
+         trailing space under it. */
+      .versions-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 0 0 8px;
+      }
+      .versions-head.collapsed { margin: 0; }
+      /* …except when a failure line follows the folded heading: the two
+         are the whole panel then, and they still need a gap. */
+      .versions-head.collapsed + .versions-message { margin-top: 8px; }
       #other-versions h2 {
         font-size: 1.1em;
         font-weight: 650;
         color: #333;
         line-height: 18px;
-        margin: 0 0 8px;
+        margin: 0;
       }
+      /* A bare triangle, quiet until pointed at: it sits above the
+         panel's own controls and must not compete with them. Padded out
+         to a real target — it is the panel's only fold affordance, and
+         the glyph itself is a few pixels wide. */
+      .versions-collapse {
+        flex: none;
+        border: 0;
+        border-radius: 3px;
+        background: none;
+        padding: 0 6px;
+        font-size: 12px;
+        line-height: 18px;
+        color: #4a6a44;
+        cursor: pointer;
+      }
+      .versions-collapse:hover { background: #cbe3c5; color: #223; }
+      /* A bare glyph has no shape of its own to show focus with — and
+         this is the control the fold hands focus back to. */
+      .versions-collapse:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
       .versions-section-heading {
         font-size: 1em;
         font-weight: 600;

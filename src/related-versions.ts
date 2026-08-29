@@ -218,11 +218,19 @@ export function renderRelatedVersions(
   // rows are and what to do with them — a heading under it would be a
   // second, quieter statement of the same thing.
   if (model.mode === 'installed') {
+    const head = document.createElement('div');
+    head.className = 'versions-head';
     const h2 = document.createElement('h2');
     h2.textContent = 'Other versions of this script';
-    container.appendChild(h2);
+    head.appendChild(h2);
+    head.appendChild(collapseToggle(container, model));
+    container.appendChild(head);
+    if (isPanelCollapsed()) head.classList.add('collapsed');
   }
 
+  // Above the fold: the panel's own failure line is the one thing in
+  // here that is time-sensitive, and a report of a refresh that just
+  // failed must not be held back until the user happens to unfold.
   if (model.message) {
     const p = document.createElement('p');
     p.className = 'versions-message';
@@ -230,6 +238,13 @@ export function renderRelatedVersions(
     p.textContent = model.message;
     container.appendChild(p);
   }
+
+  // Collapsed: the heading line, its toggle, and any message ARE the
+  // panel. The rows are left undrawn rather than drawn and hidden —
+  // hidden rows would still be found by the panel's keyboard walk and
+  // by the repaint's focus bookkeeping, and every repaint would build
+  // controls nobody can reach.
+  if (model.mode === 'installed' && isPanelCollapsed()) return;
 
   if (sameLocation.length || offer) {
     // "This URL" rather than "Same URL": the section also covers the
@@ -285,6 +300,92 @@ export function renderRelatedVersions(
   // the fit is across all of them, and a column measured before its
   // widest row existed would be too narrow for it.
   fitColumns(container);
+}
+
+// Whether the installed viewer's panel is folded down to its heading
+// line. The table is the page's least urgent content and can run to
+// many rows, so it gets a way out of the way — but only in the
+// installed viewer, where the heading it folds into exists. A preview
+// draws the same rows headless inside its banner, with nothing to
+// leave behind.
+//
+// Remembered across pages, not just across repaints: selecting another
+// copy from the table reloads the viewer, and a fold that sprang open
+// on every hop would be no fold at all.
+//
+// `localStorage` rather than `chrome.storage.local`, the store
+// everything else here uses, because this one is read SYNCHRONOUSLY
+// during the first paint: an async read would draw the panel open and
+// fold it a frame later, which is a flash on every page load. The cost
+// is that the value is cached for the life of the page, so a second
+// viewer tab keeps its own fold until it reloads — which is the right
+// trade for a per-window view preference.
+//
+// A storage failure (privacy settings, quota) just means the choice
+// doesn't stick — nothing worth telling the user about.
+const COLLAPSE_KEY = 'sm.other-versions.collapsed';
+
+// Read lazily rather than at module load: this module is imported by
+// pages that may never draw the panel, and reading storage at import
+// time would make a stubbed DOM without `localStorage` fail on import.
+let panelCollapsed: boolean | undefined;
+
+function isPanelCollapsed(): boolean {
+  if (panelCollapsed === undefined) {
+    try {
+      panelCollapsed = localStorage.getItem(COLLAPSE_KEY) === '1';
+    } catch {
+      panelCollapsed = false;
+    }
+  }
+  return panelCollapsed;
+}
+
+function setPanelCollapsed(next: boolean): void {
+  panelCollapsed = next;
+  try {
+    localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
+  } catch {
+    // Unavailable storage costs the memory of the choice, not the fold.
+  }
+}
+
+// The fold control, in the panel's top-right corner. A triangle that
+// points down while the rows are showing, and right once they are
+// folded away.
+function collapseToggle(container: HTMLElement, model: RelatedVersionsModel): HTMLButtonElement {
+  const collapsed = isPanelCollapsed();
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'versions-collapse';
+  btn.textContent = collapsed ? '\u25B8' : '\u25BE';
+  // One string for both: the glyph names nothing on its own, so the
+  // label a screen reader reads and the tooltip a pointer gets have to
+  // be the same sentence — same as the row's Remove button.
+  const label = collapsed ? 'Show the other versions' : 'Hide the other versions';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  // The rows it folds are siblings of the button rather than inside
+  // it, so the relationship has to be stated rather than implied. Only
+  // when the panel has an id to point at — the viewer's does.
+  if (container.id) btn.setAttribute('aria-controls', container.id);
+  btn.addEventListener('click', () => {
+    // Read the flag rather than the captured value, so a path that
+    // changes the fold without a repaint can't be toggled backwards.
+    setPanelCollapsed(!isPanelCollapsed());
+    // Re-render from the model already in hand: a repaint from the
+    // store would be a round trip for a change that only concerns what
+    // is drawn. It can be a paint behind — one deferred while a
+    // `<select>` in the panel had focus — and the deferred paint that
+    // follows corrects it.
+    renderRelatedVersions(container, model);
+    // This button went out with the render that replaced it. Focus the
+    // one that took its place, so a keyboard fold can be undone with a
+    // second press.
+    container.querySelector<HTMLButtonElement>('.versions-collapse')?.focus();
+  });
+  return btn;
 }
 
 // Columns sized to their own content rather than to a guess. Each is

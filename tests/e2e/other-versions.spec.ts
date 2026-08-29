@@ -1179,4 +1179,60 @@ test.describe('other-versions panel', () => {
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
     await page.close();
   });
+
+  // The fold. Collapsed, the panel is its heading line and the button —
+  // no rows, no tables. The choice is kept in `localStorage`, so it
+  // survives the reload that opening another copy performs, and the
+  // test hands it back expanded (that storage outlives `resetAllState`).
+  test('the versions panel folds to its heading, and stays folded', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+
+    const toggle = page.locator(`${PANEL} .versions-collapse`);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator(ROWS)).toHaveCount(0);
+    await expect(page.locator(`${PANEL} table`)).toHaveCount(0);
+    // Still headed, and the button keeps focus so a second press undoes
+    // the first.
+    await expect(page.locator(PANEL)).toContainText('Other versions of this script');
+    await expect(toggle).toBeFocused();
+    // One sentence for the pointer and the screen reader both — the
+    // glyph names nothing on its own.
+    await expect(toggle).toHaveAttribute('title', 'Show the other versions');
+    await expect(toggle).toHaveAttribute('aria-label', 'Show the other versions');
+
+    // A repaint nobody asked for — the panel rebuilds on any drawn
+    // copy's stored change — must not cost the button its focus.
+    const other = scripts.find((s) => s.id !== standalone.id)!;
+    await sm.setScriptEnabled(other.id, false);
+    await sm.syncNow();
+    await expect(page.locator(`${PANEL} .versions-collapse`)).toBeFocused();
+
+    // A reload reopens the page folded.
+    await page.reload();
+    await expect(page.locator(`${PANEL} .versions-collapse`))
+      .toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator(ROWS)).toHaveCount(0);
+
+    await page.locator(`${PANEL} .versions-collapse`).click();
+    await expect(page.locator(ROWS)).toHaveCount(2);
+    // Explicit, not just implied by the unfold above: `resetAllState`
+    // wipes chrome.storage and nothing else, so a fold left behind here
+    // would follow the worker's profile into every later test.
+    await page.evaluate(() => localStorage.removeItem('sm.other-versions.collapsed'));
+    await page.close();
+  });
 });

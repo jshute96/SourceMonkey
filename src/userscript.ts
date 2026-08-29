@@ -1254,6 +1254,13 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   const focusedRowId = focusedPanelRowId()
     ?? (pending && focusIsUnclaimed() ? pending : undefined);
 
+  // The fold toggle is a tab stop too, and the one the panel itself
+  // parks focus on after a fold — so an unasked-for repaint must not
+  // cost it either. A collapsed panel still repaints on any drawn
+  // copy's `loglevel:` write, which is exactly when this would bite.
+  const toggleFocused = document.activeElement !== null
+    && document.activeElement === versionsEl.querySelector('.versions-collapse');
+
   renderRelatedVersions(versionsEl, {
     ...related,
     actions,
@@ -1267,7 +1274,13 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   // the heading was skipped for it: the copy was removed while the
   // paint was reading, or the table collapsed to nothing worth
   // showing. The heading is the fallback, as everywhere else.
-  if (!restoreRowFocus(focusedRowId) && pending) claimPendingRowFocus();
+  if (!restoreRowFocus(focusedRowId)) {
+    if (toggleFocused) {
+      versionsEl.querySelector<HTMLElement>('.versions-collapse')?.focus();
+    } else if (pending) {
+      claimPendingRowFocus();
+    }
+  }
 
   // Now that we know what else is installed, the controls-row toggle
   // can say what clicking it will do. `render` sets the plain wording
