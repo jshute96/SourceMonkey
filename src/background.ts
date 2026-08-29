@@ -131,6 +131,7 @@ import {
   setCollectionOptions,
   createCollection,
   installScript,
+  moveScript,
   describeError,
   type AddCollectionResult,
   type CollectionOptions,
@@ -241,6 +242,7 @@ interface SourceMonkeyApi {
   addCollection: (path: string) => Promise<AddCollectionResult>;
   createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
   installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
+  moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
   setCollectionOptions: (id: string, options: CollectionOptions) => Promise<StoredCollection | null>;
   removeCollection: (id: string) => Promise<void>;
   getCollections: () => Promise<StoredCollection[]>;
@@ -402,6 +404,7 @@ const api: SourceMonkeyApi = {
   addCollection,
   createCollection,
   installScript,
+  moveScript,
   setCollectionOptions,
   removeCollection,
   getCollections,

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-const { findRelatedVersions, identityKey, locationKey } = await import(
+const { findRelatedVersions, identityKey, installOptionsFor, locationKey } = await import(
   '../../dist/script-identity.js'
 );
 
@@ -289,6 +289,58 @@ test('installOptions marks a container that already holds this URL, and keeps th
     r.installOptions.map((o) => [o.path, o.installed]),
     [['container:http', true], ['container:uuid-1', false]],
   );
+});
+
+// ---------- installOptionsFor's `current` (the move dropdown) ----------
+
+// The move control asks the same question as Install into, plus which
+// entry is where the script lives now.
+
+test('current marks that container, and nothing else', () => {
+  const options = installOptionsFor(
+    'https://origin.example/a.user.js',
+    [],
+    [
+      collection({ id: 'c', path: 'container:http' }),
+      collection({ id: 'mine', path: 'container:uuid-1', displayName: 'Mine' }),
+    ],
+    'mine',
+  );
+  assert.deepEqual(
+    options.map((o) => [o.path, o.isCurrent]),
+    [['container:http', false], ['container:uuid-1', true]],
+  );
+});
+
+// The list shape doesn't depend on which collection the script is in:
+// every script gets the same entries, one of them marked.
+test('current does not drop anything, not even the scheme default', () => {
+  const collections = [
+    collection({ id: 'c', path: 'container:http' }),
+    collection({ id: 'mine', path: 'container:uuid-1', displayName: 'Mine' }),
+  ];
+  const loc = 'https://origin.example/a.user.js';
+  const paths = (cur) => installOptionsFor(loc, [], collections, cur).map((o) => o.path);
+  assert.deepEqual(paths('c'), ['container:http', 'container:uuid-1']);
+  assert.deepEqual(paths('mine'), ['container:http', 'container:uuid-1']);
+  assert.deepEqual(paths(undefined), ['container:http', 'container:uuid-1']);
+});
+
+test('an install asks without a current, so no entry claims to be one', () => {
+  const options = installOptionsFor(
+    'https://origin.example/a.user.js',
+    [],
+    [collection({ id: 'c', path: 'container:http' })],
+  );
+  assert.equal(options.every((o) => o.isCurrent === false), true);
+});
+
+// The synthesized default carries no row, so its id is `undefined` —
+// which must not read as "no current was asked for" and match.
+test('a not-yet-existing default is not current for an install', () => {
+  const [def] = installOptionsFor('https://origin.example/a.user.js', [], []);
+  assert.equal(def.collection, null);
+  assert.equal(def.isCurrent, false);
 });
 
 // A copy inside a repo collection is not a copy of your own, so the

@@ -27,6 +27,13 @@ export interface SmApi {
     location: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
+  // Move an installed script from one scripts collection to another.
+  // Resolves to the moved row, or null when the destination already
+  // has it. Not unwrapped — it returns a script row, not a collection.
+  moveScript(
+    scriptId: string,
+    target: { collectionId: string } | { schemeDefault: true },
+  ): Promise<StoredScriptLike | null>;
   setCollectionOptions(
     id: string,
     options: { displayName?: string; localFiles?: boolean },

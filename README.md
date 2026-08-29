@@ -95,6 +95,10 @@ Clicking a script name opens the **script viewer**, which shows the script's
 headers, content (including the `@require` files it loads), status, and a
 **Log** tab showing errors and other log messages.
 
+A script that lives in a scripts collection can be moved to another one
+from the viewer's **Collection** row, keeping its log and its stored
+`GM_setValue` data.
+
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel, where each one can be

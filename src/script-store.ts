@@ -2146,6 +2146,47 @@ export async function installScript(
   return await addScriptToContainer(path, target);
 }
 
+// Does this container already hold `canonicalPath`?
+//
+// A container holds one row per location, and both the install and the
+// move path have to agree on what "the same location" means — so the
+// rule lives here rather than being spelled twice. The STORED value is
+// canonicalized too: rows written before `addCollection` started
+// collapsing `file://` inputs still carry the URL spelling, and
+// comparing raw would offer a second copy of a file we already have.
+//
+// `canonicalPath` must already be through `canonicalCollectionInput`.
+// Caller-side, because both callers have it in hand.
+async function containerHoldsLocation(
+  container: StoredCollection,
+  canonicalPath: string,
+): Promise<boolean> {
+  const rows = await getMany(container.scriptIds.map(scriptKey));
+  for (const sid of container.scriptIds) {
+    const s = rows[scriptKey(sid)] as StoredScript | undefined;
+    if (s && canonicalCollectionInput(s.relativePath) === canonicalPath) return true;
+  }
+  return false;
+}
+
+// A brand-new container row. One spelling of the default field values,
+// so an install-created container and a move-created one can't drift
+// apart on `enabled`, the inferred name, or the never-refreshed marker.
+function newContainerRow(
+  id: string,
+  path: string,
+  scriptIds: string[],
+): StoredCollection {
+  return {
+    id,
+    path,
+    lastRefreshedAt: 0,
+    scriptIds,
+    enabled: true,
+    displayName: inferDisplayName(path),
+  };
+}
+
 async function addScriptToContainer(
   path: string,
   target: InstallTarget,
@@ -2171,20 +2212,10 @@ async function addScriptToContainer(
       existingContainer = collections.find((s) => s.path === cPath);
     }
     const isNew = !existingContainer;
-    if (existingContainer) {
-      // Each container script's `relativePath` is the full URL/path the
-      // user added; any prior row with the same value is a duplicate.
-      const existingScripts = await getMany(existingContainer.scriptIds.map(scriptKey));
-      for (const sid of existingContainer.scriptIds) {
-        const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
-        if (s === undefined) continue;
-        // Canonicalize the STORED value too: rows written before
-        // `addCollection` started collapsing `file://` inputs still
-        // carry the URL spelling, and comparing raw would offer to
-        // install a second copy of a file we already have.
-        if (canonicalCollectionInput(s.relativePath) === path) return null;
-      }
-    }
+    // Each container script's `relativePath` is the full URL/path the
+    // user added; any prior row with the same value is a duplicate.
+    // `path` arrived canonical (see `installScript`).
+    if (existingContainer && await containerHoldsLocation(existingContainer, path)) return null;
 
     const now = Date.now();
     const containerId = existingContainer?.id ?? crypto.randomUUID();
@@ -2192,14 +2223,7 @@ async function addScriptToContainer(
     const priorScriptIds = existingContainer?.scriptIds ?? [];
     const nextContainer: StoredCollection = existingContainer
       ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
-      : {
-          id: containerId,
-          path: cPath,
-          lastRefreshedAt: 0,
-          scriptIds: [scriptId],
-          enabled: true,
-          displayName: inferDisplayName(cPath),
-        };
+      : newContainerRow(containerId, cPath, [scriptId]);
     const seedScript = buildInitialInvalidEntry({
       id: scriptId,
       collectionId: containerId,
@@ -2233,6 +2257,102 @@ async function addScriptToContainer(
   const finalCollection = refreshed?.collection ?? nextContainer;
   if (isNew) return { kind: 'newCollection', collection: finalCollection };
   return { kind: 'existingContainer', collection: finalCollection, scriptId };
+}
+
+export const SCRIPT_GONE = 'This script no longer exists';
+
+// The one thing both `installScript` and `moveScript` decline: the
+// target container already holds this location. Shared, so the install
+// callout and the viewer's Move picker can't word the same refusal two
+// ways.
+export const ALREADY_INSTALLED_IN_TARGET = 'This script is already installed there';
+
+// Both ends of a move have to be container collections. A directory or
+// manifest script's `relativePath` is relative to its collection root,
+// so moving it would mean rewriting it to an absolute location — a
+// different feature. The UI never offers the button in that case, so
+// this is a wiring error, not something the user can act on.
+export const NOT_A_MOVABLE_SCRIPT =
+  'Internal error: only a script in an individual scripts collection can be moved';
+
+// Move one already-installed script from its container collection into
+// another. The stored row keeps its `id`, so its Chrome registration,
+// its `gmval:` rows, and its Log all follow it untouched — only the
+// `collectionId` and the two `scriptIds` lists change.
+//
+// Returns null when the destination already holds this location (the
+// same case `installScript` returns null for) or is the collection the
+// script is already in.
+//
+// What DOES change with the parent: whether the script runs at all
+// (`isRegistrationCandidate` requires the collection to be enabled
+// too), and the local-stand-in policy — so a move between collections
+// that disagree about `localFiles` ends with a refresh, because the
+// `@require` / `@resource` bodies were resolved under the old rule.
+export async function moveScript(
+  scriptId: string,
+  target: InstallTarget,
+): Promise<StoredScript | null> {
+  const moved = await mutate(async () => {
+    const script = await getRaw<StoredScript>(scriptKey(scriptId));
+    if (!script) throw new Error(SCRIPT_GONE);
+    const source = await getRaw<StoredCollection>(collectionKey(script.collectionId));
+    if (!source || !isContainerCollection(source.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
+    const collections = await getCollections();
+    let dest: StoredCollection | undefined;
+    let destPath: string;
+    if ('collectionId' in target) {
+      dest = collections.find((c) => c.id === target.collectionId);
+      // The dropdown was built from a snapshot; the row can have been
+      // removed from another tab since.
+      if (!dest) throw new Error(COLLECTION_GONE);
+      if (!isContainerCollection(dest.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
+      destPath = dest.path;
+    } else {
+      destPath = containerPath(containerKindForSingleFileInput(script.relativePath));
+      dest = collections.find((c) => c.path === destPath);
+    }
+    if (dest?.id === source.id) return null;
+    // Same dedup rule as an install, via the same helper — the stored
+    // `relativePath` needs canonicalizing here because it may predate
+    // the store doing so on the way in.
+    const here = canonicalCollectionInput(script.relativePath);
+    if (dest && await containerHoldsLocation(dest, here)) return null;
+
+    const destId = dest?.id ?? crypto.randomUUID();
+    const nextDest: StoredCollection = dest
+      ? { ...dest, scriptIds: [...dest.scriptIds, scriptId] }
+      : newContainerRow(destId, destPath, [scriptId]);
+    const nextScript: StoredScript = { ...script, collectionId: destId };
+    // One set call: a SW restart between writes must never leave the
+    // row listed by both collections, or by neither.
+    const toSet: Record<string, unknown> = {
+      [collectionKey(source.id)]: {
+        ...source,
+        scriptIds: source.scriptIds.filter((id) => id !== scriptId),
+      } satisfies StoredCollection,
+      [collectionKey(destId)]: nextDest,
+      [scriptKey(scriptId)]: nextScript,
+    };
+    if (!dest) toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((c) => c.id), destId];
+    await chrome.storage.local.set(toSet);
+    return {
+      script: nextScript,
+      localFilesChanged: collectionUsesLocalFiles(source) !== collectionUsesLocalFiles(nextDest),
+    };
+  });
+  if (!moved) return null;
+  if (!moved.localFilesChanged) return moved.script;
+  try {
+    // Outside the lock: `refreshScript` takes it itself.
+    return (await refreshScript(scriptId)) ?? moved.script;
+  } catch (err) {
+    // The move itself landed and is what the caller asked for; only the
+    // re-resolve of the declared files failed. Reporting it as a failed
+    // move would be wrong, and the user can click Refresh.
+    dlog(`[SourceMonkey] refresh after move failed: ${describeError(err)}`);
+    return moved.script;
+  }
 }
 
 // Copy a freshly-added script's load failure — and any local stand-in

@@ -140,9 +140,17 @@ export interface InstallOption {
   // it back on — so it is marked rather than refused.
   collectionOff: boolean;
   // The built-in default for the location's scheme. Always listed
-  // first and pre-selected — even when `installed`, so that a second
-  // copy anywhere is a deliberate pick rather than the one-click path.
+  // first — and pre-selected unless some other entry is `isCurrent`,
+  // so that a second copy anywhere is a deliberate pick rather than
+  // the one-click path.
   isDefault: boolean;
+  // The collection this script is in right now. Only the move
+  // dropdown sets it: the move list shows the current collection
+  // rather than hiding it, so every script's list reads the same and
+  // the pre-selection is a place the script already is — which makes
+  // moving it anywhere a deliberate pick. Always `false` for an
+  // install, which has no "current".
+  isCurrent: boolean;
 }
 
 export interface RelatedVersionsQuery {
@@ -200,10 +208,18 @@ export function findRelatedVersions(q: RelatedVersionsQuery): RelatedVersions {
 // row), then every other container in page order. Each is marked
 // `installed` when one of the same-location rows already sits in it.
 // The caller appends its own "New collection…" entry.
+//
+// `current` names the collection the script is in now — the move
+// dropdown's caller. That entry is still listed, marked `isCurrent`
+// so the dropdown can label it *(current)*, disable it and pre-select
+// it. Listing it rather than dropping it keeps one list shape for
+// every script, and makes the opening selection somewhere the script
+// already is, so nothing moves without a deliberate pick.
 export function installOptionsFor(
   loc: string,
   sameLocation: readonly RelatedScript[],
   collections: readonly StoredCollection[],
+  current?: string,
 ): InstallOption[] | undefined {
   if (!isSingleFileInput(loc)) return undefined;
   const kind = containerKindForSingleFileInput(loc);
@@ -222,6 +238,9 @@ export function installOptionsFor(
     // A default that doesn't exist yet is created enabled.
     collectionOff: def ? !isCollectionEnabled(def) : false,
     isDefault: true,
+    // `def?.id === current` alone would be `undefined === undefined`
+    // for an install (no current) whose default has no row yet.
+    isCurrent: current !== undefined && def?.id === current,
   }];
   for (const c of containers) {
     if (c.path === defaultPath) continue;
@@ -232,6 +251,7 @@ export function installOptionsFor(
       installed: holding.has(c.id),
       collectionOff: !isCollectionEnabled(c),
       isDefault: false,
+      isCurrent: c.id === current,
     });
   }
   return options;
@@ -269,7 +289,7 @@ export function enableChanges(
 //
 // Exported because the sweep has a second question to ask with it: a
 // copy that is about to be enabled has to be running itself before it
-// is worth switching the others off (see `soloNewlyInstalled` in
+// is worth switching the others off (see `soloRunningCopy` in
 // userscript.ts).
 export function isRunning(rel: RelatedScript): boolean {
   if (!isScriptEnabled(rel.script)) return false;

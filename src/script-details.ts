@@ -103,6 +103,10 @@ export interface DetailsModel {
   // Installed scripts only.
   logId?: string;
   collection?: StoredCollection | null;
+  // Appended to the right of the Collection row's display name — the
+  // viewer's Move control. A node rather than a flag so the details
+  // renderer stays free of store calls; the caller owns the behavior.
+  collectionTrailing?: Node;
   status?: Node;
   location?: LocationRow;
   size?: string;
@@ -143,7 +147,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   // section). Above Location so the "where did this come from" rows are
   // grouped.
   if (model.collection) {
-    appendRow(dl, 'Collection', collectionCell(model.collection));
+    appendRow(dl, 'Collection', collectionCell(model.collection, model.collectionTrailing));
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
@@ -511,7 +515,7 @@ function logIdCell(logId: string): Node {
 // the underlying file:// / http(s):// URL), followed by the
 // collection's display name as a back-link to the collections page
 // anchored at this collection's section.
-function collectionCell(collection: StoredCollection): Node {
+function collectionCell(collection: StoredCollection, trailing?: Node): Node {
   const cell = document.createElement('span');
   cell.className = 'collection-cell';
 
@@ -528,6 +532,7 @@ function collectionCell(collection: StoredCollection): Node {
   // synthetic `container:…` path which would leak — skip then.
   if (!isContainerCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
+  if (trailing) cell.appendChild(trailing);
 
   return cell;
 }

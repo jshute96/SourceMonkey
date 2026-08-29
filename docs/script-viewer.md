@@ -362,6 +362,55 @@ gains an error-level entry carrying the same message (see
 content stays visible so the user can still read the last successful
 load.
 
+### Moving to another collection
+
+The details panel's **Collection** row carries a **Move…** button to
+the right of the collection name, for an installed script whose parent
+is an "individual scripts" (container) collection. It sits in a grid
+column of its own, right after the name — moving out to the right
+margin only when the name is long enough to fill the row, which is
+also what keeps a wrapping name from dragging it onto the last wrapped
+line.
+
+- No button at all for a directory or manifest script. Its
+  `relativePath` is relative to its collection root, so there is
+  nothing to move.
+
+Clicking it opens the **move dialog** (`src/move-dialog.ts`), which
+owns the whole action the way the collection dialog owns Create: the
+destination dropdown, the refusals, the `moveScript` call, and any
+failure in its own error slot.
+
+- **Why a dialog** rather than the dropdown inline in the row: the
+  control is a select plus two buttons, more than that row can hold
+  beside a collection name without crowding it — and a modal can't be
+  swept away by the header repaint a background refresh of any sibling
+  script triggers.
+- **The list** is the same one the install page uses, with the
+  script's own collection marked *(current)*, disabled and
+  pre-selected, so Move is greyed until a destination is picked — see
+  [script-identity.md](script-identity.md#the-same-dropdown-for-a-move).
+  It comes from the last "Other versions" paint, not a fresh store
+  read: `readStoreSnapshot` is a `storage.local.get(null)` over every
+  row in the store, which is a visible pause on a click, and the panel
+  below has already paid it. `moveScript` re-checks under the write
+  lock, so a stale entry costs a message, never a bad move.
+- **A destination that already holds this script** is disabled too,
+  marked *(already installed)*. No message goes with either case: the
+  labels and the greyed button carry it, where red error text on open
+  would read as a failure.
+- **New collection…** renames the confirm button to **Create and
+  move**, then stacks the collection dialog on top of this one, titled
+  *Create new collection and move script*. Cancelling that returns to
+  the move dialog with the choice intact, rather than abandoning the
+  move.
+- After a move the caller re-runs the exclusive-enable sweep — a move
+  out of a disabled collection makes this the copy that runs, so the
+  others are switched off. A move that *stops* the script enables
+  nothing in its place.
+- Nothing is repainted by hand: the row's `collectionId` changed, so
+  the live-sync listener below rehydrates the header.
+
 ### Live sync (changes from any origin)
 
 An installed viewer stays current with state written elsewhere — the

@@ -625,6 +625,36 @@ The write in step 5 is the last thing that can fail, and the one failure
   return shape as `addCollection`; null when that container already
   holds the location; throws `COLLECTION_GONE` when the id no longer
   exists.
+- `moveScript(scriptId, target)` — move one already-installed script
+  from its container collection into `{collectionId}` or the
+  `{schemeDefault: true}` container. Same target shape as
+  `installScript`, so both dropdowns share one builder.
+  - The stored row keeps its `id`. Its Chrome registration
+    (`chrome.userScripts` ids are the row id), its `gmval:<scriptId>:*`
+    rows, and its `log:<scriptId>` entries all follow it untouched.
+    Only `collectionId` and the two collections' `scriptIds` change,
+    written in one `storage.local.set`.
+  - `fileUrl` is unaffected: a container script's `scriptFileUrl` is its
+    own `relativePath`, so the body and content hash stay valid and
+    nothing is refetched.
+  - **Unless `localFiles` differs** between the two collections. That
+    toggle is what the `@require` / `@resource` bodies were resolved
+    under, so a move across it ends with a `refreshScript`.
+  - **Whether the script runs can change**: registration requires the
+    parent collection to be enabled too, so a move into a disabled
+    collection stops it and a move out of one starts it. The row's own
+    `enabled` flag is left alone either way.
+  - The viewer then applies the exclusive-enable sweep, as an install
+    does — but only in the one direction:
+    - the move made this copy start running → every other running copy
+      of the same script is switched off, since two would both run;
+    - the move made it stop → nothing else is touched. No other copy is
+      auto-enabled to take its place.
+  - Returns null when the destination already holds that location, or
+    is the collection the script is already in. Throws
+    `NOT_A_MOVABLE_SCRIPT` for either end that isn't a container — a
+    directory or manifest script's `relativePath` is relative to its
+    collection root, so it has no absolute spelling to carry over.
 - `probeCollectionLocation(path)` — the dialog's pre-create check: the
   same listing / manifest fetch / GitHub lookup a refresh runs, with
   nothing written. Throws with the reason when the location can't be
@@ -905,11 +935,17 @@ collections page (Add, Edit) and the install page ("New collection…").
   all, since one can't be added. Save → `setCollectionOptions`; a
   changed overrides option refreshes the collection, because the flag
   only affects the next refresh.
-- **No location on offer** when the install page opens it — a script can
-  only be installed into a scripts collection. That route also sets the
-  title to *Create new collection and install script* and the confirm
-  button to *Create and install*, since the caller installs into the
-  new collection the moment it exists.
+- **No location on offer** when a script is what will land in the new
+  collection — the install page's "New collection…", and the viewer's
+  move dialog. A script can only go into a scripts collection.
+- **The title and confirm button say what the caller will do with the
+  collection** the moment it exists, since a plain *Create* gives no
+  hint that a script lands too:
+  - plain → *New collection* / **Create**;
+  - install → *Create new collection and install script* / **Create and
+    install**;
+  - move → *Create new collection and move script* / **Create and
+    move**.
 
 #### What a location turns out to be
 

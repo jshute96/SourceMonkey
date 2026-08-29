@@ -474,16 +474,34 @@
         .versions-table .col-version { display: none; }
       }
       /* Collection row layout. Grid layout so a long display name wraps
-         inside the right-hand column instead of dropping back to the
-         row's left edge. The bubble's own styling (color, padding,
-         hover) is in styles.css, the cross-page shared stylesheet. */
+         inside the middle column instead of dropping back to the row's
+         left edge. The bubble's own styling (color, padding, hover) is
+         in styles.css, the cross-page shared stylesheet. */
+      /* `minmax(0, max-content)` on the name, not `1fr`: a name that
+         fits keeps its natural width, so the Move button sits right
+         after it instead of being flung to the margin. A name too long
+         for the row fills the track, wraps inside it, and the button
+         ends up at the right edge — which is where it belongs once
+         there is no "right after the name" to sit at. */
       .collection-cell {
         display: grid;
-        grid-template-columns: max-content 1fr;
+        grid-template-columns: max-content minmax(0, max-content) max-content;
         column-gap: 0.5em;
         align-items: baseline;
         min-width: 0;
       }
+      /* Move control: a column of its own, so a wrapping name never
+         drags it down onto the last wrapped line. */
+      .collection-move {
+        display: inline-flex;
+        align-items: center;
+      }
+      /* No font or padding of its own, deliberately: that is exactly
+         what the versions table's row buttons get, so both land on the
+         UA's default button metrics and come out the same height. The
+         details rows read badly if one control stands taller than the
+         rest. */
+      .collection-move button { cursor: pointer; }
       /* Square icon-only button. Swaps the copy icon for a checkmark
          while the .copied class is on it (set briefly after a
          successful clipboard write). */

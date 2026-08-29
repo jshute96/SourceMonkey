@@ -28,6 +28,7 @@
 
 import {
   addCollection,
+  ALREADY_INSTALLED_IN_TARGET,
   installScript,
   type InstallTarget,
   buildScriptFromText,
@@ -50,7 +51,9 @@ import {
   allRelatedRows,
   enableChanges,
   findRelatedVersions,
+  installOptionsFor,
   isRunning,
+  locationKey,
   otherRunningCopies,
   type InstallOption,
   type RelatedScript,
@@ -60,6 +63,7 @@ import {
 import {
   buildInstallSelect,
   enableTitle,
+  installChoiceBlocked,
   renderRelatedVersions,
   selectedInstallChoice,
   watchSoloModifier,
@@ -67,6 +71,7 @@ import {
   type RelatedVersionsActions,
 } from './related-versions.js';
 import { openCollectionDialog } from './collection-dialog.js';
+import { openMoveDialog } from './move-dialog.js';
 import { computeLogIds } from './script-log-id.js';
 import {
   attachFiles,
@@ -125,6 +130,7 @@ import {
   canonicalCollectionInput,
   fetchScriptFileUrlText,
   fetchHttpText,
+  isContainerCollection,
   isFileUrl,
   isHttpUrl,
   LOCATION_SHAPES,
@@ -697,6 +703,7 @@ function render(script: StoredScript): void {
     scriptUrl: script.fileUrl,
     logId: currentLogId,
     collection: collectionRow,
+    collectionTrailing: collectionRow ? makeMoveControl(script, collectionRow) : undefined,
     location: currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
@@ -761,6 +768,9 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   });
   const rows = allRelatedRows(related);
   lastRelatedIds = new Set(rows.map((r) => r.script.id));
+  // The two inputs the Move picker needs, kept so it can open without
+  // a store read of its own — see `moveTargetContext`.
+  moveTargetContext = { collections: snapshot.collections, sameLocation: related.sameLocation };
   const status = await relatedStatuses(rows);
   // Same staleness check as after the store read: the session reads
   // above are two more awaits a newer paint can overtake.
@@ -1957,8 +1967,7 @@ function showInstallCallout(options: readonly InstallOption[] | undefined): void
   // The pre-selected default can be one that already holds this
   // script; Install then waits for a deliberate pick.
   const sync = (): void => {
-    const chosen = selectedInstallChoice(select, options);
-    installBtn.disabled = 'option' in chosen && chosen.option.installed;
+    installBtn.disabled = installChoiceBlocked(select, options);
   };
   installTargetSlot.appendChild(select);
   sync();
@@ -2042,7 +2051,7 @@ async function doInstall(
     const outcome = await openCollectionDialog({
       mode: 'create',
       scriptsOnly: true,
-      andInstall: true,
+      createPurpose: 'install',
     });
     if (!outcome) return;
     target = { collectionId: outcome.collection.id };
@@ -2066,7 +2075,7 @@ async function doInstall(
       // that normalizes to an already-installed one). Re-run the
       // wiring so the page converges on the table instead of offering
       // an Install that can only repeat this message.
-      setMessage('This script is already installed there');
+      setMessage(ALREADY_INSTALLED_IN_TARGET);
       await wireInstallButtons();
       return;
     }
@@ -2080,7 +2089,7 @@ async function doInstall(
     // whose `scriptIds[0]` is whatever the scan ordered first —
     // arbitrary enough for a navigation target, not something to
     // rewrite enable state from.
-    if (scriptId && isSingleFileInput(previewLocation)) await soloNewlyInstalled(scriptId);
+    if (scriptId && isSingleFileInput(previewLocation)) await soloRunningCopy(scriptId);
     location.href = scriptId
       ? viewerUrl(scriptId)
       : 'collections.html';
@@ -2092,32 +2101,146 @@ async function doInstall(
   }
 }
 
-// A fresh install is an enable, so it follows the same exclusive rule
-// as the panel's checkboxes: the copy just installed is the one the
-// user wants running, and leaving an older copy of the same script on
-// means both register and both run on every page they match.
+// ---------- Move (installed viewer) ----------
+
+// What the last panel paint learned, reused by the Move picker so it
+// opens with no I/O at all.
 //
-// Skipped whenever the new copy won't itself run — it landed
-// `invalid`, or its container collection is disabled. Switching a
-// working copy off in favour of one that can't run would leave nothing
-// running at all.
+// Why it can't just read the store: `readStoreSnapshot` is a
+// `storage.local.get(null)`, which deserializes EVERY row — including
+// every script's full source and every `gmval:` value — to answer a
+// question about `fileUrl` and `collectionId`. That is a visible pause
+// on a click, and the panel below has already paid it. Written by every
+// successful paint and never cleared, so after a paint that failed it
+// holds the last good answer rather than nothing — which is the right
+// trade for a list the store re-validates anyway: `moveScript` checks
+// under the write lock, so a stale entry costs a message, never a bad
+// move.
+let moveTargetContext: {
+  collections: readonly StoredCollection[];
+  sameLocation: readonly RelatedScript[];
+} | null = null;
+
+// The Move button, to the right of the Collection row's display name.
+// Everything it does happens in the move dialog (src/move-dialog.ts);
+// this is the affordance and the store write that follows.
+//
+// Only for a script inside a container ("individual scripts")
+// collection: a directory or manifest script's `relativePath` is
+// relative to its collection root, so it has no absolute spelling to
+// carry into a container. `moveScript` refuses those too.
+function makeMoveControl(
+  script: StoredScript,
+  collection: StoredCollection,
+): Node | undefined {
+  if (!isContainerCollection(collection.path)) return undefined;
+  const host = document.createElement('span');
+  host.className = 'collection-move';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'move-collection-btn';
+  btn.textContent = 'Move…';
+  btn.title = 'Move this script to another collection';
+  btn.onclick = () => void openMove(btn);
+  host.appendChild(btn);
+
+  // Everywhere an install could land, with the collection the script
+  // is in now marked as the current one — listed, disabled, and what
+  // the dialog opens on.
+  const targetsFrom = (
+    ctx: { collections: readonly StoredCollection[]; sameLocation: readonly RelatedScript[] },
+  ): readonly InstallOption[] | undefined => installOptionsFor(
+    locationKey(script.fileUrl), ctx.sameLocation, ctx.collections, collection.id,
+  );
+
+  const openMove = async (button: HTMLButtonElement): Promise<void> => {
+    let options = moveTargetContext ? targetsFrom(moveTargetContext) : undefined;
+    // Only before the first panel paint has landed — it is fired off by
+    // the same render that built this button, so the user has to be
+    // quick. Reading the store here costs the pause the cache exists to
+    // avoid, which is why it is the fallback and not the path.
+    if (!moveTargetContext) {
+      const spinner = startBusy(button);
+      try {
+        const snapshot = await readStoreSnapshot();
+        const related = findRelatedVersions({
+          ...snapshot,
+          location: script.fileUrl,
+          header: script.header ?? null,
+        });
+        options = targetsFrom({
+          collections: snapshot.collections, sameLocation: related.sameLocation,
+        });
+      } catch (err) {
+        setMessage(`Could not list collections: ${describeError(err)}`, 'error');
+        return;
+      } finally {
+        spinner.remove();
+        button.disabled = false;
+      }
+    }
+    if (!options) {
+      // `installOptionsFor` declines anything that isn't a single-file
+      // location, and every container row is one — so a row that lands
+      // here was written by something that shouldn't have.
+      setMessage(MOVE_NOT_AVAILABLE, 'error');
+      return;
+    }
+    // The dialog owns the move itself, errors included; it resolves
+    // only once something actually moved.
+    const moved = await openMoveDialog({ scriptId: script.id, options });
+    if (!moved) return;
+    // This control closed over the collection the script WAS in, so
+    // until the repaint replaces it a second click would build the
+    // list with the wrong `current`. The repaint is already on its
+    // way; retiring the button is what covers the gap.
+    button.disabled = true;
+    // A move out of a disabled collection into an enabled one starts
+    // the script, which makes it the copy that should be running.
+    await soloRunningCopy(script.id);
+    // Nothing to repaint by hand: the row's `collectionId` changed, so
+    // the page's own `storage.onChanged` listener rehydrates the
+    // header — Collection row, Move button and all.
+  };
+
+  return host;
+}
+
+// A row whose stored location isn't a single-file one, which no
+// container row should ever hold.
+const MOVE_NOT_AVAILABLE =
+  'Internal error: this script has no single-file location to move';
+
+// A copy that just started running follows the same exclusive rule as
+// the panel's checkboxes: it is the one the user wants running, and
+// leaving an older copy of the same script on means both register and
+// both run on every page they match.
+//
+// Two callers, because both produce a copy that is newly running: a
+// fresh install, and a move INTO an enabled collection from a disabled
+// one. A move that changes nothing about whether the script runs finds
+// the sweep already done and is a no-op.
+//
+// Skipped whenever the copy won't itself run — it landed `invalid`, or
+// its container collection is disabled. Switching a working copy off in
+// favour of one that can't run would leave nothing running at all.
 //
 // Fails open and never blocks the navigation to the new script's page.
 // The install itself succeeded; if the sweep didn't, the panel on that
 // page is right there to fix the enable state by hand.
-async function soloNewlyInstalled(newScriptId: string): Promise<void> {
+async function soloRunningCopy(scriptId: string): Promise<void> {
   try {
     const snapshot = await readStoreSnapshot();
-    const installed = snapshot.scripts.find((s) => s.id === newScriptId);
-    if (!installed || installed.status !== 'ok') return;
+    const copy = snapshot.scripts.find((s) => s.id === scriptId);
+    if (!copy || copy.status !== 'ok') return;
     // Read the location and header off the STORED row rather than the
     // preview's: they are what the rest of the store will be compared
     // against from now on, and for a github blob URL the stored
     // `fileUrl` is the resolved raw one.
     const related = findRelatedVersions({
       ...snapshot,
-      location: installed.fileUrl,
-      header: installed.header ?? null,
+      location: copy.fileUrl,
+      header: copy.header ?? null,
     });
     const rows = allRelatedRows(related);
     // The other half of the "will it run" test: the row lands
@@ -2130,11 +2253,11 @@ async function soloNewlyInstalled(newScriptId: string): Promise<void> {
     // own `fileUrl`, so it always matches itself — but a partially
     // written store must not take the install's navigation down with
     // it.
-    const own = rows.find((r) => r.script.id === newScriptId);
+    const own = rows.find((r) => r.script.id === scriptId);
     if (!own || !isRunning(own)) return;
-    await applyEnableChanges(enableChanges(newScriptId, true, rows));
+    await applyEnableChanges(enableChanges(scriptId, true, rows));
   } catch (err) {
-    dlog(`[SourceMonkey] install exclusive-enable skipped: ${describeError(err)}`);
+    dlog(`[SourceMonkey] exclusive-enable sweep skipped: ${describeError(err)}`);
   }
 }
 

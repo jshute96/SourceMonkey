@@ -461,8 +461,10 @@ installed yet) and the panel's offer row (some copy exists). Built by
 - **Switched off** → marked *(disabled)*, but still selectable: a
   script installed there won't run, and the user may be about to turn
   the collection back on. At most one suffix per entry, in the order
-  *(already installed)* → *(new)* → *(disabled)*.
-- **The first entry is always pre-selected**, even when disabled;
+  *(already installed)* → *(new)* → *(disabled)* — a move's list adds
+  *(current)* ahead of all three, see below.
+- **The first entry is pre-selected** for an install (a move opens on
+  its *(current)* entry instead), even when disabled;
   Install is then disabled until the user picks another entry, and the
   offer row's Location cell says why. Installing a second copy is never
   the one-click path.
@@ -471,6 +473,30 @@ installed yet) and the panel's offer row (some copy exists). Built by
   install that targets it.
 - Directory / manifest collections never appear: a script can't be put
   into one.
+
+### The same dropdown, for a move
+
+The viewer's move dialog (see
+[script-viewer.md](script-viewer.md#moving-to-another-collection))
+builds the same list through `installOptionsFor`, with one addition:
+`current` marks the collection the script is in now.
+
+- **The current collection is listed, not hidden** — marked
+  *(current)*, disabled, and pre-selected. Two things follow: every
+  script's list has the same shape and ordering regardless of where it
+  lives, and the dialog opens on somewhere the script already is, so
+  nothing moves without a deliberate pick. Move is greyed until one is
+  made.
+- Entries that already hold this location stay listed and disabled,
+  marked *(already installed)*, exactly as for an install.
+- Suffix order is *(current)* → *(already installed)* → *(new)* →
+  *(disabled)*, at most one per entry.
+- **New collection…** works the same way, and for the same reason
+  (`change` fires on arrow keys over a closed select): picking it only
+  selects. Selecting it renames the dialog's confirm button to
+  **Create and move**, since that entry creates before it moves; the
+  collection dialog then opens on click, titled *Create new collection
+  and move script*.
 
 ## What the header offers
 

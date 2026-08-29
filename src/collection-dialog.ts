@@ -64,12 +64,22 @@ export interface CollectionDialogRequest {
   // into what it creates, and only a scripts collection can take an
   // individually installed script.
   scriptsOnly?: boolean;
-  // Create: the caller installs a script into the new collection as
-  // soon as it exists. Says so in the title and on the confirm button —
-  // a plain "Create" gives no hint that the script lands too, which
-  // read as a surprise when Create both created and installed.
-  andInstall?: boolean;
+  // Create: what the caller does with the collection the moment it
+  // exists. Says so in the title and on the confirm button — a plain
+  // "Create" gives no hint that the script lands too, which read as a
+  // surprise when Create both created and installed.
+  createPurpose?: CreatePurpose;
 }
+
+// Why a create-mode dialog was opened, and so what its title and
+// confirm button say. Kept as one table so the three read as a set.
+export type CreatePurpose = 'collectionOnly' | 'install' | 'move';
+
+const CREATE_WORDING: Record<CreatePurpose, { title: string; ok: string }> = {
+  collectionOnly: { title: 'New collection', ok: 'Create' },
+  install: { title: 'Create new collection and install script', ok: 'Create and install' },
+  move: { title: 'Create new collection and move script', ok: 'Create and move' },
+};
 
 export interface CollectionDialogOutcome {
   collection: StoredCollection;
@@ -170,7 +180,7 @@ function el<T extends HTMLElement>(tag: string, className?: string, text?: strin
 }
 
 function buildDialog(): DialogElements {
-  const dialog = el<HTMLDialogElement>('dialog', 'collection-dialog');
+  const dialog = el<HTMLDialogElement>('dialog', 'sm-dialog collection-dialog');
   const title = el<HTMLElement>('h2', 'dlg-title');
   dialog.appendChild(title);
 
@@ -325,12 +335,9 @@ async function runDialog(
   };
 
   // ---- fill ----
-  ui.title.textContent = editing ? 'Edit collection'
-    : request.andInstall ? 'Create new collection and install script'
-    : 'New collection';
-  ui.ok.textContent = editing ? 'Save'
-    : request.andInstall ? 'Create and install'
-    : 'Create';
+  const wording = CREATE_WORDING[request.createPurpose ?? 'collectionOnly'];
+  ui.title.textContent = editing ? 'Edit collection' : wording.title;
+  ui.ok.textContent = editing ? 'Save' : wording.ok;
   ui.location.value = editing ? locationFieldValue(editing.path) : request.prefill?.location ?? '';
   ui.location.disabled = !!editing;
   ui.locationLabel.hidden = !showLocation;

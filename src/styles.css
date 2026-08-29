@@ -13,8 +13,9 @@
    - the warning banner box, whose file-access variant (DOM helper in
      src/file-access.ts) renders on both the collections page and the
      viewer / install preview;
-   - the create / edit collection dialog (src/collection-dialog.ts),
-     opened from the collections page and the install page;
+   - the modal dialog shell, shared by the create / edit collection
+     dialog (src/collection-dialog.ts) and the move-script dialog
+     (src/move-dialog.ts);
    - the "Install into" dropdown (src/related-versions.ts), in the
      install page's callout and its versions table. */
 
@@ -115,8 +116,13 @@
 .chip-http   { background: #2563eb; }
 .chip-github { background: #6f42c1; }
 
-/* ---- Create / edit collection dialog (src/collection-dialog.ts) ---- */
-dialog.collection-dialog {
+/* ---- Modal dialog shell ---- */
+/* `.sm-dialog` is the shell — frame, title bar, body grid, error slot,
+   action row — shared by the create / edit collection dialog
+   (src/collection-dialog.ts) and the move-script dialog
+   (src/move-dialog.ts). Each dialog also carries its own identity
+   class, which is what page code and tests select on. */
+dialog.sm-dialog {
   border: 1px solid #bbb;
   border-radius: 8px;
   padding: 0;
@@ -128,15 +134,15 @@ dialog.collection-dialog {
   background: #fff;
   box-sizing: border-box;
 }
-dialog.collection-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
-.collection-dialog .dlg-title {
+dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+.sm-dialog .dlg-title {
   font-size: 1em;
   font-weight: 600;
   margin: 0;
   padding: 12px 16px;
   border-bottom: 1px solid #e5e7eb;
 }
-.collection-dialog .dlg-body {
+.sm-dialog .dlg-body {
   margin: 0;
   padding: 14px 16px 4px;
   display: grid;
@@ -145,67 +151,71 @@ dialog.collection-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
   row-gap: 12px;
   align-items: start;
 }
-.collection-dialog .dlg-label { padding-top: 5px; color: #444; }
-.collection-dialog .dlg-label[hidden] { display: none; }
-.collection-dialog input[type="text"] {
+.sm-dialog .dlg-label { padding-top: 5px; color: #444; }
+/* Slot for a control the dialog rebuilds per open. Fills its grid
+   column the way the collection dialog's text inputs do. */
+.sm-dialog .dlg-slot { min-width: 0; }
+.sm-dialog .dlg-slot select { width: 100%; font: inherit; padding: 4px 7px; }
+.sm-dialog .dlg-label[hidden] { display: none; }
+.sm-dialog input[type="text"] {
   width: 100%;
   box-sizing: border-box;
   font: inherit;
   padding: 4px 7px;
 }
-.collection-dialog input[type="text"][hidden] { display: none; }
-.collection-dialog input[type="text"]:disabled {
+.sm-dialog input[type="text"][hidden] { display: none; }
+.sm-dialog input[type="text"]:disabled {
   background: #f3f4f6;
   color: #666;
   border-color: #d1d5db;
 }
 /* `border-style` too: the UA gives text inputs an inset border, and
    recolouring an inset border shades each side a different tint. */
-.collection-dialog input[type="text"].invalid { border-style: solid; border-color: #b00; outline-color: #b00; }
+.sm-dialog input[type="text"].invalid { border-style: solid; border-color: #b00; outline-color: #b00; }
 /* The Type row: the inferred bubble, plus a hint for the one state
    that has nothing to report in the error slot yet. */
-.collection-dialog .dlg-type { display: flex; gap: 8px; align-items: baseline; padding-top: 3px; }
+.sm-dialog .dlg-type { display: flex; gap: 8px; align-items: baseline; padding-top: 3px; }
 /* The shared bubble dims on hover because everywhere else it is a link.
    This one is a report, not a target. */
-.collection-dialog .dlg-type .collection-type-bubble:hover { opacity: 1; }
-.collection-dialog .dlg-check {
+.sm-dialog .dlg-type .collection-type-bubble:hover { opacity: 1; }
+.sm-dialog .dlg-check {
   display: flex;
   gap: 6px;
   align-items: baseline;
   cursor: pointer;
 }
-.collection-dialog .dlg-check input { margin: 0; position: relative; top: 1px; flex: 0 0 auto; }
-.collection-dialog .dlg-hint { color: #666; font-size: 0.85em; }
-.collection-dialog .dlg-check.off { opacity: 0.5; cursor: default; }
-.collection-dialog .dlg-error-row {
+.sm-dialog .dlg-check input { margin: 0; position: relative; top: 1px; flex: 0 0 auto; }
+.sm-dialog .dlg-hint { color: #666; font-size: 0.85em; }
+.sm-dialog .dlg-check.off { opacity: 0.5; cursor: default; }
+.sm-dialog .dlg-error-row {
   display: flex;
   gap: 8px;
   align-items: baseline;
   padding: 8px 16px 0;
 }
-.collection-dialog .dlg-error {
+.sm-dialog .dlg-error {
   color: #b00;
   margin: 0;
   min-height: 1.3em;
   line-height: 1.3;
 }
-.collection-dialog .dlg-error.warn { color: #92400e; }
+.sm-dialog .dlg-error.warn { color: #92400e; }
 /* Offered inside the error line — today only "Install script", under
    the "this is a single script" verdict. */
-.collection-dialog .dlg-error-action { font: inherit; padding: 1px 8px; cursor: pointer; flex: 0 0 auto; }
-.collection-dialog .dlg-error-action[hidden] { display: none; }
-.collection-dialog .dlg-actions {
+.sm-dialog .dlg-error-action { font: inherit; padding: 1px 8px; cursor: pointer; flex: 0 0 auto; }
+.sm-dialog .dlg-error-action[hidden] { display: none; }
+.sm-dialog .dlg-actions {
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
   padding: 12px 16px 14px;
 }
-.collection-dialog .dlg-actions button { font: inherit; padding: 4px 11px; cursor: pointer; }
-.collection-dialog .dlg-actions button.primary { font-weight: 600; }
-.collection-dialog .dlg-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
+.sm-dialog .dlg-actions button { font: inherit; padding: 4px 11px; cursor: pointer; }
+.sm-dialog .dlg-actions button.primary { font-weight: 600; }
+.sm-dialog .dlg-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
 @keyframes sm-dialog-spin { to { transform: rotate(360deg); } }
-.collection-dialog .busy-spinner {
+.sm-dialog .busy-spinner {
   display: inline-block;
   width: 12px;
   height: 12px;

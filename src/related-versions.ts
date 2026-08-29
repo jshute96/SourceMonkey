@@ -746,12 +746,9 @@ function installRow(
   // (the default stays first regardless); Install then waits for a
   // deliberate pick, and the Location cell says why.
   const sync = (): void => {
-    const chosen = selectedInstallChoice(select, options);
-    const installed = 'option' in chosen && chosen.option.installed;
-    b.disabled = installed;
-    loc.textContent = installed
-      ? 'Already installed there. Pick another collection.'
-      : 'Not installed here yet';
+    const blocked = installChoiceBlocked(select, options);
+    b.disabled = blocked;
+    loc.textContent = blocked ? PICK_ANOTHER_COLLECTION : 'Not installed here yet';
   };
   sync();
 
@@ -784,7 +781,29 @@ function installRow(
 // The `<option>` value that means "New collection…".
 const NEW_COLLECTION_VALUE = 'new';
 
-export interface InstallSelectHandlers {
+// Why the offer row's Install is off: the pre-selected default is a
+// collection that already holds this script. Only this row says it in
+// words — the move dialog's equivalent state is the *(current)* entry,
+// which is labelled rather than explained.
+const PICK_ANOTHER_COLLECTION = 'Already installed there. Pick another collection.';
+
+// Whether the dropdown's current answer is an entry neither Install
+// nor Move can act on: one that already holds this script, or — for a
+// move — the collection it is in now. One predicate, so the two
+// controls can't disagree about when their button is live.
+export function installChoiceBlocked(
+  select: HTMLSelectElement,
+  options: readonly InstallOption[],
+): boolean {
+  const chosen = selectedInstallChoice(select, options);
+  return 'option' in chosen && (chosen.option.installed || chosen.option.isCurrent);
+}
+
+export interface InstallSelectConfig {
+  // The dropdown's tooltip. Defaults to the install wording; the
+  // viewer's Move control passes its own, since the same list answers
+  // a different question there.
+  title?: string;
   // The selection moved. Fires for "New collection…" like any other
   // entry — picking it only *selects* it; the dialog opens when
   // Install is clicked. Anything else would fire on a keyboard user
@@ -808,42 +827,54 @@ export interface InstallSelectHandlers {
 // extension's floor.
 export function buildInstallSelect(
   options: readonly InstallOption[],
-  handlers: InstallSelectHandlers,
+  config: InstallSelectConfig,
 ): HTMLSelectElement {
   const select = document.createElement('select');
   select.className = 'install-target';
-  select.title = 'Which collection to install this script into';
+  select.title = config.title ?? 'Which collection to install this script into';
+  // Which entry opens selected: the one the script is already in when
+  // there is one (the move dropdown), else the scheme default that
+  // leads the list. Either way the opening choice is somewhere the
+  // script already lives, so acting on it takes a deliberate pick.
+  const preselect = Math.max(options.findIndex((o) => o.isCurrent), 0);
   options.forEach((o, i) => {
     if (i === 1) select.appendChild(document.createElement('hr'));
-    // At most one suffix, in this order: "already installed" is why the
-    // entry can't be picked at all; "new" says the row doesn't exist
-    // yet; "disabled" warns about what happens after. The first two
-    // can't co-occur with "disabled" anyway — a default that doesn't
-    // exist is created enabled.
-    const text = o.installed ? `${o.label} (already installed)`
+    // At most one suffix, in this order: "current" is where the script
+    // is now; "already installed" is why another entry can't be picked;
+    // "new" says the row doesn't exist yet; "disabled" warns about what
+    // happens after. The first three can't co-occur with "disabled"
+    // anyway — a default that doesn't exist is created enabled.
+    const text = o.isCurrent ? `${o.label} (current)`
+      : o.installed ? `${o.label} (already installed)`
       : !o.collection ? `${o.label} (new)`
       : o.collectionOff ? `${o.label} (disabled)`
       : o.label;
     const opt = new Option(text, String(i));
-    opt.disabled = o.installed;
-    if (i === 0) opt.selected = true;
+    opt.disabled = o.installed || o.isCurrent;
+    if (i === preselect) opt.selected = true;
     select.appendChild(opt);
   });
   select.appendChild(document.createElement('hr'));
   select.appendChild(new Option('New collection…', NEW_COLLECTION_VALUE));
-  select.onchange = () => handlers.onChange?.();
+  select.onchange = () => config.onChange?.();
   return select;
 }
 
 // What a `buildInstallSelect` dropdown currently answers: one of the
 // listed containers, or "make me a new one". Falls back to the first
 // entry, since the select holds nothing else.
+//
+// The empty-list fallback is a guard, not a reachable state:
+// `installOptionsFor` always returns at least the scheme default. It
+// exists because every caller dereferences `choice.option`, so a list
+// that somehow came back empty must not hand them `undefined`.
 export function selectedInstallChoice(
   select: HTMLSelectElement,
   options: readonly InstallOption[],
 ): InstallChoice {
   if (select.value === NEW_COLLECTION_VALUE) return { newCollection: true };
-  return { option: options[Number(select.value)] ?? options[0] };
+  const option = options[Number(select.value)] ?? options[0];
+  return option ? { option } : { newCollection: true };
 }
 
 function cell(cls: string): HTMLTableCellElement {
