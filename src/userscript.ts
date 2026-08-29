@@ -809,6 +809,13 @@ function render(script: StoredScript): void {
 // `resolveAnchor`.
 let panelAnchorId = '';
 
+// The row the next panel paint should put focus on: set when a
+// selection is made from the table, consumed by that paint. Held
+// across the paint rather than restored inline because the paint is
+// fire-and-forget — it finishes after the navigation that started it
+// has already returned.
+let pendingRowFocusId = '';
+
 // Selecting a copy from the panel opens it in place rather than
 // reloading the page: same table, same order, a different script below
 // it. Two ways in — a viewer link (a row's Location, or its Status,
@@ -870,13 +877,77 @@ versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
   if (!scriptId || ev.defaultPrevented) return;
   if (ev.key !== 'Enter' && ev.key !== ' ') return;
   const row = ev.target;
-  if (!(row instanceof HTMLElement) || !row.classList.contains('is-navigable')) return;
+  if (!(row instanceof HTMLTableRowElement) || row.tabIndex < 0) return;
   const id = row.dataset.scriptId;
-  if (!id || id === scriptId) return;
-  // Space would scroll the page.
+  if (!id) return;
+  // Swallowed on the CURRENT row too, where selecting is a no-op:
+  // Space on a focused row scrolls the page, and a tab stop that
+  // scrolls when you press the key that activates its neighbours is
+  // a worse answer than one that does nothing.
   ev.preventDefault();
+  if (id === scriptId) return;
   void navigateToScript(id, '');
 });
+
+// Up / Down anywhere in the panel walk the table a row at a time,
+// landing on the ROW — never on a control inside it, wherever they
+// were pressed from.
+//
+// Without them the table is a long run of tab stops — every row plus
+// every control in it — and reaching the copy three rows down means
+// counting Tabs through the controls of the two rows between. This is
+// the same shape browsers give a listbox, and it is why the CURRENT
+// row is focusable too: a row you cannot stand on is a hole in the
+// walk.
+//
+// Landing on the row rather than on the same column's control in it:
+// the columns don't line up as controls. The Collection cell holds two
+// links (the type bubble and the name), a same-identity row has no
+// Refresh, a disabled collection's checkbox is disabled — so "the
+// corresponding one" is often a guess, and a guess that lands on the
+// bubble when you started on the name is worse than a rule you can
+// predict. Tab still walks the controls within a row.
+//
+// Installed mode only, because that is where the rows are focusable.
+// A preview's rows are not — nothing there selects a copy — so its
+// table has no walk and Tab through the controls is what it gets. The
+// alternative, landing on each row's first control, would be the same
+// coin toss the row rule exists to avoid: the collection <select> in
+// the install-offer row, which the guard below then traps the walk on
+// while every arrow silently re-targets the install.
+versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
+  if (ev.defaultPrevented) return;
+  if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+  // A modified arrow is somebody else's: the browser's own scroll and
+  // caret gestures, none of which mean "next row".
+  if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return;
+  const from = ev.target;
+  if (!(from instanceof HTMLElement)) return;
+  // A closed <select> owns the arrow keys — they change its value, and
+  // the offer row's collection picker is one.
+  if (from.closest('select')) return;
+  const row = from.closest('tr');
+  if (!row) return;
+  const rows = walkableRows();
+  // `indexOf` below is what keeps a press from inside a row the walk
+  // does not step between — the install offer — from joining it.
+  const at = rows.indexOf(row);
+  if (at < 0) return;
+  const next = rows[at + (ev.key === 'ArrowDown' ? 1 : -1)];
+  if (!next) return;
+  ev.preventDefault();
+  next.focus();
+});
+
+// The rows the walk steps between: every body row that can be stood
+// on, in the order they are read. Both sections are separate tables
+// and the walk crosses between them — to the user they are one list
+// under two headings — while the install offer and every preview row,
+// none of which are focusable, are not part of it.
+function walkableRows(): HTMLTableRowElement[] {
+  const rows = Array.from(versionsEl.querySelectorAll<HTMLTableRowElement>('tbody tr'));
+  return rows.filter((r) => r.tabIndex >= 0);
+}
 
 // Ctrl/Cmd-click and middle-click on a row, which mean "somewhere else,
 // not here". The Location cell is plain text on this page, so there is
@@ -971,12 +1042,26 @@ async function showSelectedScript(): Promise<void> {
   // ("Could not refresh <copy>"), and the table it belongs to is
   // exactly what this navigation leaves standing.
   tabsView.reseedFromHash();
+  // Where focus goes once the new copy is on screen. The panel is
+  // about to be rebuilt, destroying whatever was clicked or arrowed
+  // to, so something has to claim it or it falls back to <body>.
+  //
+  // Coming from the table, that is the row for the copy now shown —
+  // the same row the user was standing on, which the rebuild turns
+  // into the current row. Keeping their place is the whole point of a
+  // walk through the table, and the row is not silent: it carries
+  // `aria-current` and the copy's location.
+  //
+  // Coming from anywhere else — Back / Forward, mostly — the heading
+  // instead: the title, the details and the code all changed, and a
+  // screen reader has had no document change to announce them.
+  const pending = versionsEl.contains(document.activeElement) ? scriptId ?? '' : '';
+  pendingRowFocusId = pending;
   await loadStored();
-  // The panel just repainted, destroying the link that was clicked, so
-  // focus would fall back to <body>. Put it on the heading instead:
-  // the title, the details and the code all changed, and a screen
-  // reader has had no document change to announce them.
-  filenameEl.focus();
+  // The local, not the field: the paint clears the field, and reading
+  // it back here would send focus to the heading it had just put on
+  // the row.
+  if (!pending) filenameEl.focus();
 }
 
 // Paint the "Other versions" panel for whichever mode is on screen.
@@ -1122,7 +1207,20 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   // and the panel repaints for reasons the user didn't ask for — any
   // `loglevel:` write for a drawn copy — so without this a keyboard
   // walk through the table can be dumped back to <body> mid-stride.
-  const focusedRowId = focusedNavigableRowId();
+  //
+  // A live row holding focus comes first: the user arrowed there
+  // themselves, after the selection, and that is a newer answer than
+  // the selection's.
+  //
+  // Otherwise a pending selection, whose row is by now already gone
+  // from the document — there is nothing left to read the intent off
+  // of. Unless the user has put focus somewhere of their own outside
+  // the panel in the gap: the paint is fire-and-forget, and taking it
+  // back off whatever they reached would be worse than not restoring.
+  const pending = pendingRowFocusId;
+  pendingRowFocusId = '';
+  const focusedRowId = focusedPanelRowId()
+    ?? (pending && focusIsUnclaimed() ? pending : undefined);
 
   renderRelatedVersions(versionsEl, {
     ...related,
@@ -1133,7 +1231,11 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     message: relatedVersionsMessage,
   });
 
-  restoreRowFocus(focusedRowId);
+  // A pending restore that found no row leaves focus on <body>, since
+  // the heading was skipped for it: the copy was removed while the
+  // paint was reading, or the table collapsed to nothing worth
+  // showing. The heading is the fallback, as everywhere else.
+  if (!restoreRowFocus(focusedRowId) && pending) claimPendingRowFocus();
 
   // Now that we know what else is installed, the controls-row toggle
   // can say what clicking it will do. `render` sets the plain wording
@@ -1170,25 +1272,45 @@ function resolveAnchor(
   return { location: args.location, header: args.header };
 }
 
-// The script id of the navigable row holding focus, if one is.
-function focusedNavigableRowId(): string | undefined {
+// Has nothing taken focus since the panel started repainting? The
+// removed row leaves it on <body>, which is the case a pending
+// restore is for; anything else is the user's own doing, and the
+// panel is where they were already if they are still in it.
+function focusIsUnclaimed(): boolean {
   const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return undefined;
-  if (!active.classList.contains('is-navigable') || !versionsEl.contains(active)) return undefined;
+  return active === null || active === document.body || versionsEl.contains(active);
+}
+
+// The script id of the row holding focus, if one is. Current row
+// included — it is a tab stop like the rest.
+function focusedPanelRowId(): string | undefined {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLTableRowElement)) return undefined;
+  if (!versionsEl.contains(active)) return undefined;
   return active.dataset.scriptId;
 }
 
 // Put focus back on the row for `id` after a rebuild. Silently does
-// nothing when that row is gone — the copy was removed, or it is now
-// the current row and no longer focusable — because there is nowhere
-// equivalent to send focus and stealing it to a neighbour would be
-// worse than letting it fall back.
-function restoreRowFocus(id: string | undefined): void {
-  if (!id) return;
-  const row = versionsEl.querySelector(
-    `tr.is-navigable[data-script-id="${CSS.escape(id)}"]`,
-  );
-  if (row instanceof HTMLElement) row.focus();
+// nothing when that row is gone — the copy was removed — because there
+// is nowhere equivalent to send focus and stealing it to a neighbour
+// would be worse than letting it fall back.
+function restoreRowFocus(id: string | undefined): boolean {
+  if (!id) return false;
+  const row = versionsEl.querySelector(`tr[data-script-id="${CSS.escape(id)}"]`);
+  if (!(row instanceof HTMLElement)) return false;
+  row.focus();
+  return true;
+}
+
+// Give up on a pending row restore and put focus on the heading, the
+// same fallback the initial load and a Back use. Shared by every path
+// that can leave a selection with no row to land on: a failed repaint,
+// a table that came back without the row, a script that has gone
+// missing outright.
+function claimPendingRowFocus(): void {
+  const claim = focusIsUnclaimed();
+  pendingRowFocusId = '';
+  if (claim) filenameEl.focus();
 }
 
 // The Status cell for every row the panel is about to draw.
@@ -1390,6 +1512,10 @@ function repaintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     // have stopped existing. Stale rows that still act would be worse
     // than none. `:empty` then hides the container.
     versionsEl.replaceChildren();
+    // A selection was waiting for its row to be drawn, and now no row
+    // will be. Hand focus to the heading rather than let it sit on an
+    // element that has just been removed.
+    if (pendingRowFocusId) claimPendingRowFocus();
     dlog(`[SourceMonkey] other-versions repaint failed: ${describeError(err)}`);
   });
 }
@@ -2893,8 +3019,9 @@ function renderHeading(
   // The script's location. Not drawn — it goes on the heading's
   // `aria-label`, for the one case the visible heading can't tell
   // apart: two installed copies of one script share an `@name`, and
-  // switching between them from the versions panel repaints in place
-  // with focus parked on this `<h1>` (see `showSelectedScript`).
+  // switching between them from the versions panel repaints in place —
+  // with focus parked on this `<h1>` whenever the switch didn't come
+  // from the table itself (Back / Forward; see `showSelectedScript`).
   // Without it a screen reader hears the same heading before and after
   // the switch. Dropped when the label already IS the location.
   location: string,
@@ -3014,6 +3141,11 @@ function setDiagnosticMessage(
 
 function showMissing(message: string): void {
   currentScript = null;
+  // Focus standing in the panel is about to be destroyed with it, and
+  // no paint will run to put it anywhere (see `lastRelatedPaint` below)
+  // — so the heading takes it, same as every other path that loses the
+  // row it was going to.
+  const focusInPanel = versionsEl.contains(document.activeElement);
   controlsRowEl.hidden = true;
   actionsEl.hidden = true;
   bannerSlotEl.replaceChildren();
@@ -3048,6 +3180,8 @@ function showMissing(message: string): void {
   statusBoxEl.classList.remove('merged');
   logPaneEl.replaceChildren();
   tabsView.clear();
+  pendingRowFocusId = '';
+  if (focusInPanel) filenameEl.focus();
 }
 
 // ---------- Log pane (installed scripts only) ----------

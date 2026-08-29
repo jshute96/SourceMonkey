@@ -108,11 +108,12 @@ Both name the script the same way, pivoted for where they're read.
 - **The location is announced, not drawn.** When the label came from an
   `@name`, the `<h1>` carries an `aria-label` of
   `<prefix><label>, <location>`.
-  - Why: switching copies from the versions panel repaints in place and
-    parks focus on the `<h1>` (see
-    [switching copies](#switching-copies-in-place)), but two copies of
-    one script share an `@name` — without the location a screen reader
-    hears the same heading before and after.
+  - Why: switching copies from the versions panel repaints in place,
+    parking focus on the `<h1>` whenever the switch didn't come from
+    the table itself (see
+    [switching copies](#switching-copies-in-place)) — but two copies of
+    one script share an `@name`, so without the location a screen
+    reader hears the same heading before and after.
   - An `aria-label`, not a clipped span: the location must stay out of
     `textContent`, which is what a copy/paste of the heading reads.
 - **No script to name** (`showMissing`) — `SourceMonkey | Not
@@ -510,7 +511,7 @@ two things that link used to provide:
     lose their column associations; the current row and every preview
     row keep ordinary table semantics.
   - A repaint rebuilds the rows, so the panel **restores focus** to the
-    same copy's row afterwards (`focusedNavigableRowId` /
+    same copy's row afterwards (`focusedPanelRowId` /
     `restoreRowFocus`) — repaints happen for reasons the user didn't
     ask for, and a keyboard walk shouldn't be dumped back to `<body>`
     mid-stride.
@@ -530,14 +531,65 @@ is the only way to reach that copy.
   of the script being left is nothing in particular in the new one.
 - **Only plain left-clicks** swap the script here; see the row's other
   gestures below.
-- **Focus moves to the `<h1>`** (`tabindex="-1"`, no focus ring). The
-  repaint destroys whatever was clicked, and there is no document load
-  for a screen reader to announce the new script from.
+- **Focus follows the user.** The repaint destroys whatever was clicked
+  or arrowed to, so something has to claim it.
+  - From the table, the **row for the copy now shown** — which is the
+    same row, turned into the current row. `pendingRowFocusId` carries
+    the intent across to the paint that draws it, since the paint is
+    fire-and-forget and finishes after the navigation returns.
+    - A row the user has since arrowed to wins over it — that is the
+      newer answer — and it is dropped altogether if they reached
+      something outside the panel in the gap (`focusIsUnclaimed`): the
+      restore is for focus that fell to `<body>` when the old row was
+      destroyed, not a licence to take it back off whatever they just
+      tabbed to.
+  - **The `<h1>` when the row never arrives** (`claimPendingRowFocus`),
+    same fallback under two shapes: the repaint failed, or the table
+    came back without that row — removed meanwhile, or collapsed to
+    nothing worth showing.
+  - **The `<h1>` when the panel goes away**, which `showMissing` does
+    for itself: the script was removed out from under the page, focus
+    may have been standing in the table, and no paint will run to place
+    it.
+  - From anywhere else (Back / Forward, mostly), the **`<h1>`**
+    (`tabindex="-1"`, no focus ring): there is no document load for a
+    screen reader to announce the new script from.
 - A link to the script already on screen is left alone: that is the
   current row's own Status link, and its `#Log` is an ordinary
   same-document fragment navigation.
 - Preview mode does not do this. It has no installed script to swap,
   and its panel's links are how the user leaves the preview.
+
+#### Walking the table
+
+On the details page every body row is a tab stop, and **Up / Down** move
+between rows from anywhere in the panel — so reaching a copy three rows
+down doesn't mean counting Tabs through the controls of the two rows in
+between. The same shape a listbox has.
+
+- **They land on the row**, wherever they were pressed from — never on
+  a control inside it. The columns don't line up as controls: the
+  Collection cell holds two links (the type bubble and the name), a
+  same-identity row has no Refresh, a disabled collection's checkbox is
+  disabled. "The corresponding one" would be a guess, and a predictable
+  rule beats one. Tab still walks the controls within a row.
+- **The current row is focusable too** even though activating it does
+  nothing: a row that can't take focus would be a hole in the walk, and
+  it is where focus lands after a selection. No `role`/`aria-label` with
+  it — it goes nowhere, so it stays an ordinary `row`; `aria-current`
+  names it. Enter and Space are swallowed there rather than left to
+  scroll the page.
+- The walk **crosses the two sections**, which are separate tables but
+  one list to the user.
+- **Only rows that can be stood on take part** (`walkableRows`), which
+  in practice means installed mode. A **preview's** rows are not
+  focusable — nothing there selects a copy — so a preview has no walk
+  and Tab through the controls is what it gets.
+  - Landing on each row's first control instead would be the coin toss
+    the row rule exists to avoid, and in the install-offer row that
+    control is the collection `<select>`: the walk would trap itself
+    there while every arrow silently re-targeted the install.
+- A modified arrow is left alone, as is one aimed at a `<select>`.
 
 #### The panel holds still
 

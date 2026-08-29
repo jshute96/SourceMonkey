@@ -439,6 +439,17 @@ function versionRow(
     // to a screen reader it reads as more path, not as "you are here".
     // This says it as state.
     tr.setAttribute('aria-current', 'true');
+    // Focusable even though activating it does nothing — it is already
+    // the copy on screen. Two things need it to hold focus: Up/Down
+    // walk the table row by row, and a row that cannot take focus
+    // would be a hole in that walk; and it is where focus lands after
+    // a selection, so the user stays where they were standing.
+    //
+    // No `role`/`aria-label` to go with the tab stop, unlike the
+    // navigable rows: this one does nothing when activated, so it
+    // stays an ordinary `row` and keeps its cells' column
+    // associations. `aria-current` above is what names it.
+    if (mode === 'installed') tr.tabIndex = 0;
   } else if (mode === 'installed') {
     // The whole row selects this copy — the viewer picks the click up
     // off the row (see its `navigateToScript`). Marked here rather than

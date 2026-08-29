@@ -446,10 +446,13 @@
          the pointer is over one of them. */
       .versions-table tr.is-navigable { cursor: pointer; }
       .versions-table tr.is-navigable:hover { background: #d3e8cb; }
-      /* The row is the tab stop the Location link used to be, so it
-         needs a ring of its own. Inset, because an outline drawn
-         outside a table row is clipped by the row above it. */
-      .versions-table tr.is-navigable:focus-visible {
+      /* The rows are the tab stops the Location links used to be, so
+         they need a ring of their own — the current row included: it
+         takes focus after a selection and on the Up/Down walk, even
+         though activating it does nothing. Inset, because an outline
+         drawn outside a table row is clipped by the row above it. */
+      .versions-table tr.is-navigable:focus-visible,
+      .versions-table tr.is-current:focus-visible {
         outline: 2px solid #4a7f3d;
         outline-offset: -2px;
       }

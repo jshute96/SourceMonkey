@@ -118,10 +118,11 @@ drawn as one box.
 On the details page, clicking a row anywhere that isn't a control opens
 that copy **in place**: new history entry, same table. The row is the
 control — `role="link"` and `tabindex="0"` with Enter / Space, and
-Ctrl/Cmd- or middle-click for a new tab. The panel is
-anchored to the script the page was opened with, so selecting a copy
-moves only the highlight and never re-files the rows; the controls-row
-toggle keeps sweeping from the copy on **screen**. See
+Ctrl/Cmd- or middle-click for a new tab. Up / Down walk the table row by
+row, and focus stays on the row you selected. The panel is anchored to
+the script the page was opened with, so selecting a copy moves only the
+highlight and never re-files the rows; the controls-row toggle keeps
+sweeping from the copy on **screen**. See
 [script-viewer.md](script-viewer.md#switching-copies-in-place).
 
 ### Enabling is exclusive; disabling is not

@@ -93,9 +93,10 @@ test.describe('switching copies from the versions panel', () => {
     // ...and so did everything below the panel.
     await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
     await expect(page.locator('#content')).toContainText('copy B');
-    // Focus parks on the heading so a screen reader announces the new
-    // copy, but the two copies share an `@name` — so what the heading
-    // announces has to carry the location the visible text drops.
+    // The heading announces the new copy wherever focus parks on it —
+    // a Back, or a reload — and the two copies share an `@name`, so
+    // what it announces has to carry the location the visible text
+    // drops.
     await expect(page.locator('h1#filename'))
       .toHaveAttribute('aria-label', /Twin Script, .*b\.user\.js$/);
     expect(await page.evaluate(
@@ -226,6 +227,249 @@ test.describe('switching copies from the versions panel', () => {
 
     await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
     await expect(page.locator(LOCATION_ROW)).toContainText('b.user.js');
+
+    await page.close();
+  });
+
+  test('the selected row keeps focus, as the current row', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, second } = await twoCopies(extensionContext, extensionId, sm);
+
+    // Standing on a row and picking it should leave the user standing
+    // on it — not send them back to the heading to tab down again.
+    await page.locator(`${ROWS}[data-script-id="${second.id}"]`).focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
+
+    await expect(async () => {
+      expect(await page.evaluate(() => {
+        const active = document.activeElement as HTMLElement | null;
+        return {
+          row: active?.tagName,
+          id: active?.dataset.scriptId,
+          current: active?.classList.contains('is-current'),
+        };
+      })).toEqual({ row: 'TR', id: second.id, current: true });
+    }).toPass();
+
+    await page.close();
+  });
+
+  test('a click keeps focus on the row too, and Back from elsewhere takes the heading', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, first, second } = await twoCopies(extensionContext, extensionId, sm);
+
+    // Clicking a row focuses it — the row is a tab stop — so the same
+    // rule applies as to Enter: the user is left standing on it.
+    await page.locator(`${ROWS}[data-script-id="${second.id}"] td.col-location`).click();
+    await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
+    await expect(page.locator(`${ROWS}[data-script-id="${second.id}"]`)).toBeFocused();
+
+    // From outside the panel there is no place in it to keep, and Back
+    // changes the whole page under a user who was not in the table.
+    const enable = page.locator('#enable-checkbox');
+    await enable.focus();
+    // Settled before the Back: a panel repaint still in flight from the
+    // click above restores focus to the row, which would make this
+    // assert the previous case over again.
+    await expect(enable).toBeFocused();
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
+    await expect(page.locator('h1')).toBeFocused();
+
+    await page.close();
+  });
+
+  test('a selection does not take focus back off something the user reached first', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, second } = await twoCopies(extensionContext, extensionId, sm);
+
+    // Select, then land somewhere deliberately before the panel's
+    // fire-and-forget paint gets there. The paint must leave it alone.
+    await page.locator(`${ROWS}[data-script-id="${second.id}"]`).focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#enable-checkbox').focus();
+
+    await expect(page).toHaveURL(new RegExp(`script=${second.id}`));
+    await expect(page.locator('#enable-checkbox')).toBeFocused();
+    // And it stays there once the paint has certainly landed.
+    await expect(page.locator(`${PANEL} tr.is-current`))
+      .toHaveAttribute('data-script-id', second.id);
+    await expect(page.locator('#enable-checkbox')).toBeFocused();
+
+    await page.close();
+  });
+
+  test('the current row is a tab stop, and activating it does nothing', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, first } = await twoCopies(extensionContext, extensionId, sm);
+
+    const current = page.locator(`${ROWS}[data-script-id="${first.id}"]`);
+    await expect(current).toHaveClass(/is-current/);
+    await expect(current).toHaveAttribute('tabindex', '0');
+    // It is a plain `row` to a screen reader — no `role="link"` — since
+    // there is nowhere for it to go.
+    await expect(current).not.toHaveAttribute('role', 'link');
+
+    await current.focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
+    await expect(current).toBeFocused();
+
+    await page.close();
+  });
+
+  test('Up and Down walk the rows, landing on the row wherever they start', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, first, second } = await twoCopies(extensionContext, extensionId, sm);
+
+    const focusedRow = () => page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      const row = active?.closest('tr') as HTMLElement | null;
+      return { id: row?.dataset.scriptId, onRow: active === row, tag: active?.tagName };
+    });
+
+    // Row to row.
+    await page.locator(`${ROWS}[data-script-id="${first.id}"]`).focus();
+    await page.keyboard.press('ArrowDown');
+    expect(await focusedRow()).toEqual({ id: second.id, onRow: true, tag: 'TR' });
+    await page.keyboard.press('ArrowUp');
+    expect(await focusedRow()).toEqual({ id: first.id, onRow: true, tag: 'TR' });
+
+    // Past the end, nothing moves.
+    await page.keyboard.press('ArrowUp');
+    expect(await focusedRow()).toEqual({ id: first.id, onRow: true, tag: 'TR' });
+
+    // From a control inside a row, the walk still lands on the row —
+    // not on that column's control in the next one, which for the
+    // Collection cell's two links would be a coin toss.
+    await page.locator(`${ROWS}[data-script-id="${first.id}"] input[type="checkbox"]`).focus();
+    await page.keyboard.press('ArrowDown');
+    expect(await focusedRow()).toEqual({ id: second.id, onRow: true, tag: 'TR' });
+
+    await page.close();
+  });
+
+  test('Up and Down cross the two sections', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Three rows in two sections: one URL installed twice plus a
+    // same-identity copy at another path. Arrowing between them crosses
+    // from one section's table into the other's — separate tables, one
+    // list to the user.
+    const a = write('a.user.js', 'console.log("copy A");\n', '1.0.0');
+    write('b.user.js', 'console.log("copy B");\n', '2.0.0');
+    await sm.addCollection(dir.path);
+    await sm.addCollection(a);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === a)!;
+    const other = scripts.find((s) => s.relativePath === 'b.user.js')!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${standalone.id}`);
+    await expect(page.locator(ROWS)).toHaveCount(3);
+
+    // Down from a control in the row just above the same-identity one.
+    await page.evaluate((id) => {
+      const rows = Array.from(document.querySelectorAll('#other-versions tbody tr'));
+      const at = rows.findIndex((r) => (r as HTMLElement).dataset.scriptId === id);
+      const above = rows[at - 1] as HTMLElement;
+      above.querySelector<HTMLElement>('td.col-actions button')!.focus();
+    }, other.id);
+
+    await page.keyboard.press('ArrowDown');
+    expect(await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return { tag: active?.tagName, id: active?.dataset.scriptId };
+    })).toEqual({ tag: 'TR', id: other.id });
+
+    await page.close();
+  });
+
+  test('Space on the current row does nothing, and does not scroll', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, first } = await twoCopies(extensionContext, extensionId, sm);
+
+    // The current row is a tab stop now, so Space reaches it — and left
+    // to the browser it would scroll the page. Same assertion shape as
+    // the navigable-row case: what the handler did with the event.
+    await page.evaluate(() => {
+      const w = window as unknown as { __defaulted?: boolean };
+      window.addEventListener('keydown', (ev) => { w.__defaulted = ev.defaultPrevented; });
+    });
+    await page.locator(`${ROWS}[data-script-id="${first.id}"]`).focus();
+    await page.keyboard.press(' ');
+
+    expect(await page.evaluate(() => (window as unknown as { __defaulted?: boolean }).__defaulted))
+      .toBe(true);
+    await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
+
+    await page.close();
+  });
+
+  test('a modified arrow is left to the browser', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, first } = await twoCopies(extensionContext, extensionId, sm);
+
+    await page.locator(`${ROWS}[data-script-id="${first.id}"]`).focus();
+    await page.keyboard.press('Control+ArrowDown');
+
+    await expect(page.locator(`${ROWS}[data-script-id="${first.id}"]`)).toBeFocused();
+
+    await page.close();
+  });
+
+  test('a preview has no walk, and the offer row is not arrowed into', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, paths } = await twoCopies(extensionContext, extensionId, sm);
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(paths[0])}`,
+    );
+    await expect(page.locator(ROWS)).toHaveCount(3);
+
+    // Nothing to select here, so no row is a tab stop and there is
+    // nothing for Up/Down to step between. In particular the walk can't
+    // land in the offer row's collection <select>, where every further
+    // arrow would silently re-target the install.
+    await expect(page.locator(`${PANEL} tbody tr[tabindex]`)).toHaveCount(0);
+
+    const box = page.locator(`${ROWS} input[type="checkbox"]:not([disabled])`).first();
+    await box.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(box).toBeFocused();
+
+    await page.close();
+  });
+
+  test('a selection whose row never arrives falls back to the heading', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const { page, second } = await twoCopies(extensionContext, extensionId, sm);
+
+    // Remove the copy out from under the selection — each copy here is
+    // its own single-file collection — so the table the paint draws has
+    // no row to restore to.
+    const collections = await sm.getCollections();
+    const holder = collections.find((c) => c.scriptIds.includes(second.id))!;
+
+    await page.locator(`${ROWS}[data-script-id="${second.id}"]`).focus();
+    await page.keyboard.press('Enter');
+    await sm.removeCollection(holder.id);
+    await sm.syncNow();
+
+    // Either the panel came back without the row or the page went to
+    // "Not available"; both are the fallback's job.
+    await expect(page.locator('h1')).toBeFocused();
 
     await page.close();
   });
