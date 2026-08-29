@@ -558,7 +558,7 @@ async function ensureIconAt(url: string): Promise<string | null> {
 // header is consulted for `@icon` / `@iconURL` / etc. — when set, that
 // URL takes priority over origin-based favicon discovery. `fileUrl` is
 // the script's canonical fetchable URL, used as the base for resolving
-// relative `@icon` paths against the script's parent directory.
+// relative `@icon` paths.
 // Declared locally so this module stays free of a dependency on
 // script-store.
 interface ScriptWithMatching {
@@ -591,8 +591,9 @@ export function renderSiteIconInto(
   const target = representativeMatch(script.matching);
   // The header value is raw (URL, data:, or relative path). Resolve it
   // against the script's own URL so `@icon foo.png` reaches the
-  // sibling file alongside the script — and a `..`-bearing or
-  // host-absolute ref drops back to origin discovery.
+  // sibling file alongside the script. A ref that climbs out of a
+  // LOCAL script's folder is rejected and drops back to origin
+  // discovery; from a remote script it resolves like any other URL.
   const iconRef = iconRefFromHeader(script.header ?? null);
   const resolvedIcon = iconRef
     ? resolveScriptResource(iconRef, script.fileUrl)

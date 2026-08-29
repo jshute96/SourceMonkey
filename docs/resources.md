@@ -18,10 +18,10 @@ Same rules as `@require` / `@icon` — see
 [`src/file-loader.ts`](../src/file-loader.ts):
 
 - Absolute `http(s)://` URL.
-- Relative path — resolved against the parent directory of the host
-  script's own URL.
-- **Not accepted:** absolute `file://`, `data:`, traversal-bearing
-  relatives.
+- Relative path — resolved against the host script's own URL. May
+  climb out of the script's directory from an HTTP-loaded script;
+  confined to it from a local one.
+- **Not accepted:** absolute `file://`, `data:`.
 
 A resource declared by absolute URL can still be served from a file on
 disk next to the script — same rule and same gate as `@require`; see

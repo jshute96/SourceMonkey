@@ -902,8 +902,9 @@ pure rewrite — no network call, no stored field.
     `@icon64`, `@icon64URL`, `@require`, `@updateURL`,
     `@downloadURL`, `@homepage`, `@homepageURL`, `@website`,
     `@source`, `@supportURL`) → resolved against the tab's
-    `fileUrl` via `resolveScriptResource`. A `..`-bearing ref,
-    unknown-scheme ref, or `data:` URL falls back to plain text.
+    `fileUrl` via `resolveScriptResource`. A ref that escapes a
+    *local* script's folder, an unknown-scheme ref, or a `data:`
+    URL falls back to plain text.
   - `@resource` carve-out: the value has shape `<name> <url>` (two
     whitespace-separated tokens; the `<name>` token has no internal
     whitespace by Tampermonkey's grammar). The `<name>` plus the

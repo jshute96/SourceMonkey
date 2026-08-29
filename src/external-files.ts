@@ -23,7 +23,8 @@
 // Shared semantics:
 //   - resolveScriptResource rules from file-loader: absolute
 //     http(s):// or relative-against-script. file:// only reachable
-//     via relative resolution; no traversal. data: rejected.
+//     via relative resolution, and a local script's relative ref may
+//     not climb out of its own folder. data: rejected.
 //   - Same byte fetcher with size cap.
 //   - Same per-refresh cross-script fetch cache: two scripts (and
 //     two refs of either kind) pointing at the same URL share one
@@ -177,9 +178,14 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // is parenthesized rather than leading, so the sentence can open
       // with a capital of ours instead of a verbatim value.
       return `That URL scheme (${failure.scheme}) is not supported — ` +
-        'use an http(s) URL, or a relative path inside the script\'s folder';
+        'use an http(s) URL, or a relative path resolved against the script\'s own location';
     case 'outside-script-folder':
-      return 'That path points outside the script\'s own folder — a relative path has to stay inside it';
+      // Only reachable for a script loaded from `file://`: a relative
+      // ref in a script served over http(s) may climb, the way it does
+      // in Violentmonkey. So the message names the case it applies to
+      // rather than stating a rule that isn't universal.
+      return 'That path points outside the script\'s own folder — ' +
+        'a relative path in a local script has to stay inside it';
   }
 }
 

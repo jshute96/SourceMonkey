@@ -87,7 +87,8 @@ details live in the topic-specific docs linked below.
   [http-collections.md](http-collections.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
   (`@icon`, `@require`, `@resource`) into absolute URLs against the
-  script's parent dir (rejecting `..` and host-absolute paths), and
+  script's own URL (a local script's refs stay inside its folder;
+  a remote one's may climb, as in Violentmonkey), and
   exposes scheme-aware bounded byte + text fetchers used by the icon,
   require, and resource pipelines.
 - **External files** (`src/external-files.ts`) — `@require` +

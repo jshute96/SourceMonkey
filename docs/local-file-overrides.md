@@ -14,16 +14,38 @@ rest of the loading pipelines.
 ## The problem
 
 - SourceMonkey accepts **relative** `@require` paths, resolved against
-  the script's own parent directory — including a local one.
-  - Violentmonkey resolves relative `@require` / `@resource` /
-    `@icon` too, but against the URL the script was *installed from*
-    (`buildPathMap` in `src/background/utils/db.js`), which for a
-    remotely-installed script is a remote directory.
+  the script's own URL — including a `file://` one.
+  - Violentmonkey resolves relative `@require` / `@resource` / `@icon`
+    too, against the URL the script was *installed from*
+    (`buildPathMap` in `src/background/utils/db.js`). For a remote
+    install that is the same directory we use.
+  - The remaining difference is the *local* script: VM only keeps an
+    install URL for http(s) ones, so a script it holds on disk resolves
+    a relative ref nowhere.
   - Tampermonkey and Greasemonkey want an absolute URL.
 - So a script meant to run anywhere has to write the published absolute
   URL.
 - But while you are *writing* that library, the published copy is stale,
   or doesn't exist yet.
+
+### Relative paths and containment
+
+- A relative ref from an **HTTP-loaded** script may climb out of the
+  script's own directory — `../lib/util.js`, `/lib/util.js`,
+  `//cdn.example.com/util.js` — which is the ordinary layout of a
+  userscript repo published to a web server, and what VM does.
+  - It grants nothing new: that script may already name an absolute URL
+    on any origin.
+- A relative ref from a **local** (`file://`) script stays at or under
+  the script's own folder. There the same move would reach into the
+  rest of the disk, which is what the rule exists to stop.
+  - The sanctioned way to reach a sibling `lib/` from a local script is
+    a search root the user named — the collection root or a configured
+    one, below.
+- Enforced in
+  [`src/file-loader.ts`](../src/file-loader.ts)'s
+  `resolveScriptResourceDetailed`, on the resolved URL rather than on
+  the ref's text.
 
 ## The rule
 

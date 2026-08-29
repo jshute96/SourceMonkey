@@ -94,6 +94,35 @@ test.describe('@require', () => {
     }
   });
 
+  test('HTTP @require may climb out of the script\'s own directory', async ({ sm }) => {
+    // The published shape of a userscript repo: scripts nested under
+    // `pkg/`, shared libraries one level up. Violentmonkey resolves
+    // this; containment only applies to a local script (see
+    // file-loader.ts).
+    const server = await UserscriptServer.start();
+    try {
+      const requireBody = 'window.__SM_HTTP_UP = "up-one-level";';
+      server.setRoute('/lib/shared.js', requireBody, {
+        contentType: 'application/javascript; charset=utf-8',
+      });
+      server.setRoute('/pkg/main.user.js', [
+        '// ==UserScript==',
+        '// @name        HttpUp',
+        '// @match       https://example.com/*',
+        '// @require     ../lib/shared.js',
+        '// ==/UserScript==',
+        '',
+      ].join('\n'));
+      const collection = await sm.addCollection(`${server.baseUrl}/pkg/main.user.js`);
+      const data = await sm.getCollectionWithScripts(collection!.id);
+      expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
+      expect(data!.scripts[0].requires?.[0]?.url).toBe(`${server.baseUrl}/lib/shared.js`);
+      expect(data!.scripts[0].requires?.[0]?.source).toBe(requireBody);
+    } finally {
+      await server.stop();
+    }
+  });
+
   test('non-.js @require URL flips the script to error', async ({ sm }) => {
     // Write a sibling JSON file so the only failure surface is the
     // suffix check (not "file missing").

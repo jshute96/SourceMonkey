@@ -17,16 +17,18 @@
 - Accepted reference forms (handled by [`src/file-loader.ts`](../src/file-loader.ts)):
   - Absolute `http(s)://` URL.
   - `data:` URL (rendered inline, no fetch).
-  - Relative path — resolved against the script's parent directory.
-    Works for both file:// and HTTP scripts: an HTTP script's
-    `@icon foo.png` reaches `<script-dir>/foo.png` on the same origin.
+  - Relative path — resolved against the script's own URL. Works for
+    both file:// and HTTP scripts: an HTTP script's `@icon foo.png`
+    reaches `<script-dir>/foo.png` on the same origin.
 - Absolute `file://` URLs are *not* accepted — the extension holds
   `file:///*` host permission, so allowing arbitrary file:// refs
   would let a malicious HTTP-sourced script read host files.
-- Path-traversal is rejected: the resolved URL must still live at or
-  under the script's parent dir. Caught textually via a post-resolution
-  prefix check on the URL string, so `..`, `%2e%2e`, `..\`, and
-  host-absolute `/` paths are all rejected uniformly.
+- Path-traversal is rejected **for a local script**: from a `file://`
+  script the resolved URL must still live at or under the script's
+  parent dir. Caught via a post-resolution prefix check on the URL
+  string, so `..`, `%2e%2e`, `..\`, and host-absolute `/` paths are all
+  rejected uniformly. An HTTP script's icon may climb — it could name
+  any absolute URL anyway.
 - An absolute `http(s)` `@icon` can be served from a **local file**
   beside the script — same rule `@require` / `@resource` use, so a
   script keeps its portable URL while an icon on disk stands in during

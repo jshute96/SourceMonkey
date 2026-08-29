@@ -158,11 +158,14 @@ Details: [docs/install-capture.md](docs/install-capture.md),
 ### Local development vs deployed scripts
 
 Scripts can reference and load other files with `@require`, `@resource` and `@icon` headers.
-Tampermonkey and other managers require absolute paths.
+Tampermonkey and Greasemonkey require absolute paths.
 
 To make local development on disk easier, SourceMonkey also allows relative
-paths, under the same directory holding the script.
-This is convenient, but makes scripts incompatible with other managers.
+paths, resolved against the script's own location. A script loaded over
+http(s) may point anywhere it could already name with an absolute URL
+(`../lib/util.js`, `//cdn.example.com/util.js`), matching Violentmonkey;
+a script loaded from disk is confined to its own directory.
+Tampermonkey resolves neither, so relative paths still cost portability.
 
 Therefore, when publishing a script, absolute http paths are preferred.
 

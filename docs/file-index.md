@@ -117,7 +117,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor, plus the same-directory fallback for site-less patterns |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the slot renderer for collections page + viewer |
-| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's parent dir with traversal rejection; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
+| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's own URL, containing a local script to its folder; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, containment |
