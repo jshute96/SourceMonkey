@@ -517,17 +517,21 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **Storage quota error surfacing.** A `chrome.storage.local.set`
   rejection (quota exceeded) only `console.warn`s; the userscript
   sees no error. Surface on the per-script log.
-- **Storage value type-tag encoding.** Today we round-trip values
-  through `chrome.storage.local`'s JSON-ish serialization. VM/TM
-  store each value as a tagged string instead — VM's
-  `dumpScriptValue` (`src/common/util.js`) writes `s`/`n`/`b` plus
-  the literal for primitives and `o` plus JSON for everything else,
-  so reads of primitives skip `JSON.parse` entirely.
-  - Worth being clear about what it doesn't buy: `Date` and other
-    non-JSON-clean values don't survive there either — they go
-    through `JSON.stringify` exactly as they do here.
-  - So this is a read-path optimization to copy if storage reads
-    ever show up in a profile, not a correctness gap.
+- **Tagged-string storage as a read-path optimization.** VM/TM store
+  each value as a tagged *string* — VM's `dumpScriptValue`
+  (`src/common/util.js`) writes `s`/`n`/`b` plus the literal for
+  primitives and `o` plus JSON for everything else — so reads of
+  primitives skip `JSON.parse` entirely.
+  - Not a correctness gap: type fidelity is handled, by a different
+    scheme that stores values structurally rather than as strings.
+    See
+    [docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#value-type-fidelity).
+  - Also worth being clear that VM's own tags don't buy fidelity:
+    `Date` and other non-JSON-clean values go through
+    `JSON.stringify` there too.
+  - Copy only if storage reads ever show up in a profile, and note
+    the win is smaller for us — `chrome.storage.local` deserializes
+    the row either way.
 - **Cache the gmValues snapshot in SW memory.** Every storage-
   granting script's `sm:check-pending` reply triggers a
   `chrome.storage.local.get(null)` on the document-start critical

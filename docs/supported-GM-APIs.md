@@ -178,12 +178,22 @@ read from a per-document in-memory cache; the cache is seeded at
 document start from a snapshot the SW attaches to the wrapper's
 `sm:check-pending` reply. `GM.setValue` returns a Promise per GM4
 spec. Per-script namespace — `GM_listValues` from script A never
-returns script B's keys. See
-[GM-APIs-storage.md](GM-APIs-storage.md) for the full story.
+returns script B's keys.
+
+**Stored values keep their type.** TM and VM both require the value to
+be JSON-serializable; we tag the ones JSON would mangle, so `Date`,
+`RegExp`, `Map`, `Set`, `undefined`, `NaN`, `±Infinity`, `-0`,
+`BigInt`, typed arrays, `ArrayBuffer`, `DataView` and `Error` all come
+back as themselves on the next page load. Class prototypes,
+`Blob`/`File` and shared-reference identity are not preserved, and a
+circular reference throws. See
+[GM-APIs-storage.md](GM-APIs-storage.md) for the full story, including
+the [comparison with
+VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes batched (150 ms debounce, 1 s hard cap) and flushed on `pagehide` / `visibilitychange → hidden`. |
+| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes batched (150 ms debounce, 1 s hard cap) and flushed on `pagehide` / `visibilitychange → hidden`. Accepts more than JSON — see above; throws on a circular reference. |
 | `GM_getValue` / `GM.getValue` | ✅ | ✓ | ✓ | ✓ | Sync read from the in-page cache; returns `defaultValue` for unknown keys. |
 | `GM_deleteValue` / `GM.deleteValue` | ✅ | ✓ | ✓ | ✓ | Same flush/batching shape as `setValue`. |
 | `GM_listValues` / `GM.listValues` | ✅ | ✓ | ✓ | ✓ | Returns the list of currently-known keys. |

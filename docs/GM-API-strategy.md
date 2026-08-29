@@ -433,9 +433,18 @@ hard pieces (XHR, values broadcast) need attention either way.
 What we copy verbatim from VM (with attribution comments and the
 MIT notice retained):
 
-- The storage value type-tag encoding scheme (`o`/`n`/`b`/`s`/`u`
-  in `src/common/util.js`) — small, well-tested, no reason to
-  reinvent.
+- ~~The storage value type-tag encoding scheme~~ — done, but not
+  copied. VM's `dumpScriptValue` (`src/common/util.js`) tags only the
+  top-level type — `s`/`n`/`b` for primitives, `o` +
+  `JSON.stringify` for everything else — and `decodeValue`
+  (`src/injected/web/gm-values.js`) reverses exactly that, so a
+  `Date` still reads back as a string under VM. Ours is a tagged-node
+  format that actually revives `Date` / `RegExp` / `Map` / `Set` /
+  `NaN` / `undefined` / typed arrays / `Error`, and stores JSON-clean
+  values raw for backwards compatibility. Side-by-side table, with
+  the VM commits it was read from, in
+  [GM-APIs-storage.md](GM-APIs-storage.md#compared-with-violentmonkey)
+  (checked 2026-08-29 against VM v2.48.0).
 - The XHR response-getter laziness pattern (`response` /
   `responseText` / `responseXML` as getters on the event data) —
   drop-in correctness win.
