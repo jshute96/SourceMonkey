@@ -2103,17 +2103,16 @@ function refreshBulkToggle(section: HTMLElement): void {
   );
   const allOn = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
   btn.title = bulkTitle(collectionOn, allOn);
-  // While busy the symbol is replaced by a spinner and the button is
-  // held disabled by setBulkBusy; don't overwrite either. A bulk toggle
-  // writes every row at once, and the echo of that write reaches this
-  // function once per row — each call would otherwise re-enable the
-  // button under its own spinner, mid-operation.
-  if (!btn.classList.contains('busy')) {
-    btn.disabled = !collectionOn;
-    btn.textContent = allOn ? '−' : '+';
-  } else {
-    btn.dataset.idleText = allOn ? '−' : '+';
-  }
+  // The glyph can be written even while busy — `.bulk-toggle.busy`
+  // paints it transparent under the spinner, and it needs to be correct
+  // for the moment the spinner clears.
+  btn.textContent = allOn ? '−' : '+';
+  // The disabled state must NOT be written while busy: setBulkBusy holds
+  // the button disabled while its spinner is up. A bulk toggle writes
+  // every row at once, and the echo of that write reaches this function
+  // once per row — each call would otherwise re-enable the button
+  // mid-operation.
+  if (!btn.classList.contains('busy')) btn.disabled = !collectionOn;
 }
 
 function bulkTitle(collectionOn: boolean, allOn: boolean): string {
@@ -2153,21 +2152,19 @@ function setToggleBusy(label: HTMLLabelElement, busy: boolean): void {
   }
 }
 
-// Replace the bulk-toggle's +/− glyph with a spinner while async work
-// is in flight. We stash the idle text on the button so
-// `refreshBulkToggle` can restore the correct symbol afterwards.
+// Show a spinner over the bulk-toggle's +/− glyph while async work is
+// in flight. `.bulk-toggle.busy` paints the glyph transparent and draws
+// the ring on top, so the glyph stays in the button: emptying it moved
+// the baseline of this inline-flex button, which resized the header row
+// by a pixel and jiggled every collection below it for as long as the
+// write ran.
+//
+// Clearing busy leaves the button ENABLED: callers must follow with
+// `refreshBulkToggle`, synchronously, to settle it against the
+// collection's own on/off state.
 function setBulkBusy(btn: HTMLButtonElement, busy: boolean): void {
-  if (busy) {
-    btn.dataset.idleText = btn.textContent ?? '';
-    btn.textContent = '';
-    btn.classList.add('busy');
-    btn.disabled = true;
-  } else {
-    btn.classList.remove('busy');
-    btn.textContent = btn.dataset.idleText ?? '';
-    delete btn.dataset.idleText;
-    btn.disabled = false;
-  }
+  btn.classList.toggle('busy', busy);
+  btn.disabled = busy;
 }
 
 function setRefreshAllBusy(busy: boolean): void {

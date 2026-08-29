@@ -928,7 +928,10 @@ position — is undisturbed.
   table's toggle cell sizes to its content, so an in-flow spinner
   widened the column and shifted every row in the collection sideways
   for as long as the write ran.
-- The bulk-toggle's glyph is replaced in place via `.bulk-toggle.busy`.
+- The bulk-toggle's glyph is painted transparent under an overlaid
+  spinner via `.bulk-toggle.busy`. The glyph stays in the button:
+  emptying it moved the inline-flex button's baseline, resizing the
+  header row by a pixel and jiggling the collections below it.
 
 ### Live repaint (changes from any origin)
 
