@@ -422,9 +422,9 @@ path those differ.
 - **`Content-Disposition: attachment` responses** still download on
   every Chrome version when the capture loses the startup race; the
   DNR rule only rewrites `Content-Type`.
-- **No `@version` comparison logic** beyond displaying both values on
-  the already-installed banner — "Update now" always refetches, and
-  nothing says which copy is newer or whether they differ at all. A
-  comparison + diff view is planned; see TODO.md.
+- **No `@version` comparison logic** beyond the Version column of the
+  Existing versions table — Update always refetches, and nothing says
+  which copy is newer or whether they differ at all. A comparison +
+  diff view is planned; see TODO.md.
 - **Delete the DNR rule** once Chrome 152 is the supported floor
   (`needsDownloadWorkaround` and its unit tests go with it).

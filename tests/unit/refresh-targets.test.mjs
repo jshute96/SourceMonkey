@@ -31,9 +31,11 @@ const DIR = collection('c-dir', '/home/me/scripts', [
 const MANIFEST = collection('c-man', '/home/me/other/script_manifest.json', [
   script('s-c', 'file:///home/me/other/c.user.js'),
 ]);
+// A container may mix schemes; only its local rows are ever targets.
 const CONTAINER = collection('c-local', 'container:file', [
   script('s-d', 'file:///home/me/loose/d.user.js'),
   script('s-e', 'file:///elsewhere/e.user.js'),
+  script('s-web', 'https://example.com/web.user.js'),
 ]);
 const HTTP = collection('c-http', 'https://example.com/scripts/');
 const GITHUB = collection('c-gh', 'https://github.com/o/r/tree/main');
@@ -67,10 +69,13 @@ test('pathsOverlap: either containment direction, on `/` boundaries', () => {
 
 // ---------- refresh_local ----------
 
-test('localRefreshTargets: every local collection, whole; nothing remote', () => {
+test('localRefreshTargets: scanned local collections whole, container rows one by one, nothing remote', () => {
   assert.deepEqual(localRefreshTargets(ALL), {
-    collectionIds: ['c-dir', 'c-man', 'c-local'],
-    scripts: [],
+    collectionIds: ['c-dir', 'c-man'],
+    scripts: [
+      { id: 's-d', collectionId: 'c-local' },
+      { id: 's-e', collectionId: 'c-local' },
+    ],
   });
 });
 
@@ -163,7 +168,7 @@ test('refreshPathProblem: accepts absolute paths and POSIX file:// URLs', () => 
 
 test('refreshPathProblem: rejects relative paths and http URLs on shape', () => {
   for (const bad of ['scripts/a.user.js', 'a.user.js', 'https://example.com/a.user.js']) {
-    assert.match(refreshPathProblem(bad), /^A refresh path must be a file:\/\/ URL/);
+    assert.match(refreshPathProblem(bad), /^Refresh path must be a file:\/\/ URL/);
     assert.ok(refreshPathProblem(bad).endsWith(bad), 'message echoes the offending value');
   }
 });

@@ -50,6 +50,7 @@ import {
   isManifestCollection,
   isSingleFileInput,
   joinPath,
+  newContainerPath,
   normalizeCollectionInput,
   scanForUserScripts,
   scriptFileUrl,
@@ -90,7 +91,12 @@ import {
   type DiagnosticLocation,
 } from './diagnostic-location.js';
 import { displayLocation, stripSriFragment } from './script-display.js';
-import { inferDisplayName } from './collection-display.js';
+import {
+  collectionNameInUse,
+  inferDisplayName,
+  mayUseReservedName,
+  RESERVED_COLLECTION_NAME,
+} from './collection-display.js';
 import { appendScriptLog, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
 import { setRefreshError, pruneRefreshErrors } from './refresh-error.js';
@@ -1901,33 +1907,61 @@ export async function getCollection(id: string): Promise<StoredCollection | unde
   return await getRaw<StoredCollection>(collectionKey(id));
 }
 
-// Result of `addCollection`. Three outcomes:
+// Result of `addCollection` / `createCollection` / `installScript`.
+// Three outcomes:
 //   - newCollection: a brand-new collection row was created (a directory /
-//     manifest / github-dir collection, or a never-before-seen container
-//     auto-created for the first single-file add of its kind). The
-//     caller appends a fresh section to the DOM.
-//   - existingContainer: the input was a single-file URL/path added
-//     into a container that already existed. The caller re-renders
-//     that container's section in place.
+//     manifest / github-dir collection, a user-created scripts
+//     collection, or a built-in default container auto-created by the
+//     first install that targeted it). The caller appends a fresh
+//     section to the DOM.
+//   - existingContainer: a single script was installed into a container
+//     that already existed. The caller re-renders that container's
+//     section in place.
 //   - null: the input was a duplicate (an already-registered collection
-//     path, or a script URL/path already present in its container).
-//     The caller surfaces the duplicate message and jumps to the
-//     existing section.
+//     path, or a script URL/path already present in the target
+//     container). The caller surfaces the duplicate message and jumps
+//     to the existing section.
 export type AddCollectionResult =
   | { kind: 'newCollection'; collection: StoredCollection }
   | { kind: 'existingContainer'; collection: StoredCollection; scriptId: string }
   | null;
 
-// Register a new collection from a raw user input. Dispatches by input
-// shape:
-//   - single-file `.user.js` URL/path → folded into the matching
-//     container collection (created on demand if none exists). The script
+// Messages shared by the store's collection-shape checks and the
+// collection dialog's live validation, so the dialog can't say one
+// thing and the store another.
+export const COLLECTION_ALREADY_REGISTERED = 'This collection is already registered';
+export const COLLECTION_NAME_REQUIRED = 'Name is required for scripts collections';
+export const COLLECTION_GONE = 'This collection no longer exists';
+export function collectionNameInUseMessage(name: string): string {
+  return `Collection named "${name.trim()}" already exists`;
+}
+
+// What `createCollection` is asked to make.
+export type NewCollectionSpec =
+  | {
+      // A folder of individually installed scripts. Named by the user.
+      kind: 'scripts';
+      name: string;
+      localFiles?: boolean;
+    }
+  | {
+      // A scanned directory, a GitHub tree, or a `script_manifest.json`.
+      kind: 'location';
+      path: string;
+      // Blank → inferred from the path, as the Add field always did.
+      name?: string;
+      localFiles?: boolean;
+    };
+
+// Register a new collection from a raw user input — the Add field's
+// one-string entry point. Dispatches by input shape:
+//   - single-file `.user.js` URL/path → installed into the built-in
+//     default container for its scheme (created on demand). The script
 //     is added to the container's `scriptIds` and its initial fetch
 //     runs immediately so the table populates without a manual
 //     Refresh.
-//   - everything else (directory, manifest, github-dir URL) → mints a
-//     UUID, persists an empty collection row, then refreshes to populate
-//     the scripts.
+//   - everything else (directory, manifest, github-dir URL) → a new
+//     location-backed collection, as `createCollection` would make.
 //
 // `normalizeCollectionInput` runs first so a github.com
 // `/blob/.../foo.user.js` (or `/blob/.../script_manifest.json`) URL
@@ -1936,17 +1970,92 @@ export type AddCollectionResult =
 // verbatim would silently load the page chrome instead of the script —
 // see [docs/http-collections.md].
 export async function addCollection(rawPath: string): Promise<AddCollectionResult> {
-  // Two canonicalizations, in order: provider rewriting (github blob →
-  // raw), then the one-spelling-per-location rule. The second is what
-  // keeps `/x/a.user.js` typed into the collections page and
-  // `file:///x/a.user.js` arriving from a captured navigation from
-  // becoming two rows for one file — see `canonicalCollectionInput`.
-  const path = canonicalCollectionInput(await normalizeCollectionInput(rawPath));
-
+  const path = await canonicalLocation(rawPath);
   if (isSingleFileInput(path)) {
-    return await addScriptToContainer(path);
+    return await addScriptToContainer(path, { schemeDefault: true });
   }
+  return await createLocationCollection(path, {});
+}
 
+// Two canonicalizations, in order: provider rewriting (github blob →
+// raw), then the one-spelling-per-location rule. The second is what
+// keeps `/x/a.user.js` typed into the collections page and
+// `file:///x/a.user.js` arriving from a captured navigation from
+// becoming two rows for one file — see `canonicalCollectionInput`.
+async function canonicalLocation(rawPath: string): Promise<string> {
+  return canonicalCollectionInput(await normalizeCollectionInput(rawPath));
+}
+
+// Create a collection the collection dialog described. A scripts
+// collection is an empty container row with the user's name; a
+// location collection is what `addCollection` makes, plus the name and
+// local-files choice from the dialog.
+export async function createCollection(spec: NewCollectionSpec): Promise<AddCollectionResult> {
+  if (spec.kind === 'scripts') {
+    const name = spec.name.trim();
+    if (!name) throw new Error(COLLECTION_NAME_REQUIRED);
+    const created = await mutate(async () => {
+      const collections = await getCollections();
+      if (!mayUseReservedName(name, null)) throw new Error(RESERVED_COLLECTION_NAME);
+      if (collectionNameInUse(name, collections)) {
+        throw new Error(collectionNameInUseMessage(name));
+      }
+      const id = crypto.randomUUID();
+      const seed: StoredCollection = {
+        id,
+        path: newContainerPath(),
+        lastRefreshedAt: 0,
+        scriptIds: [],
+        enabled: true,
+        displayName: name,
+      };
+      if (spec.localFiles === false) seed.localFiles = false;
+      await chrome.storage.local.set({
+        [COLLECTIONS_INDEX_KEY]: [...collections.map((s) => s.id), id],
+        [collectionKey(id)]: seed,
+      });
+      return seed;
+    });
+    return { kind: 'newCollection', collection: created };
+  }
+  const path = await canonicalLocation(spec.path);
+  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_NOT_A_COLLECTION);
+  return await createLocationCollection(path, spec);
+}
+
+// A `.user.js` typed where a collection location was expected. Ends
+// with what to do, per the "name the fix" rule.
+export const SINGLE_SCRIPT_NOT_A_COLLECTION =
+  'This is a single script, not a collection. To install it, paste it in the Add field instead.';
+
+// What the collection dialog runs before creating a location-backed
+// collection: the same listing / manifest fetch / GitHub lookup a
+// refresh does, so a location that can't be read is refused in the
+// dialog instead of landing as a collection stuck in a scan error.
+// Nothing is written. The count lets the dialog warn about an empty
+// directory without refusing it — a directory can fill up later.
+export async function probeCollectionLocation(
+  rawPath: string,
+): Promise<{ path: string; scriptCount: number }> {
+  const path = await canonicalLocation(rawPath);
+  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_NOT_A_COLLECTION);
+  const found = await scanForUserScripts(path);
+  return { path, scriptCount: found.length };
+}
+
+// Mint a UUID, persist an empty collection row for an already-canonical
+// location, then refresh to populate the scripts.
+async function createLocationCollection(
+  path: string,
+  opts: { name?: string; localFiles?: boolean },
+): Promise<AddCollectionResult> {
+  // Only a name the user actually chose is held to the uniqueness rule.
+  // Inferred names can legitimately collide — two refs of one GitHub
+  // tree both read as `<owner>/<repo>/<path>` — and refusing those
+  // would block adding a real, distinct collection.
+  const inferred = inferDisplayName(path);
+  const chosen = opts.name?.trim() || '';
+  const explicitName = chosen && chosen !== inferred ? chosen : '';
   // Dedup-and-register atomically so two concurrent adds of the same
   // path can't both create a collection (and so this index write can't
   // lose a race with another index mutator). The refresh runs OUTSIDE
@@ -1958,6 +2067,12 @@ export async function addCollection(rawPath: string): Promise<AddCollectionResul
     // `addCollection` collapsed `file://` inputs still carries the URL
     // spelling.
     if (collections.some((s) => canonicalCollectionInput(s.path) === path)) return null;
+    if (explicitName) {
+      if (!mayUseReservedName(explicitName, null)) throw new Error(RESERVED_COLLECTION_NAME);
+      if (collectionNameInUse(explicitName, collections)) {
+        throw new Error(collectionNameInUseMessage(explicitName));
+      }
+    }
     const id = crypto.randomUUID();
     const seed: StoredCollection = {
       id,
@@ -1965,11 +2080,12 @@ export async function addCollection(rawPath: string): Promise<AddCollectionResul
       lastRefreshedAt: 0,
       scriptIds: [],
       enabled: true,
-      // Seed an inferred displayName at add-time so a viewer opened
-      // mid-add (or any other reader) doesn't briefly see a row whose
-      // name only materialises on the next backfill pass.
-      displayName: inferDisplayName(path),
+      // Seed a displayName at add-time so a viewer opened mid-add (or
+      // any other reader) doesn't briefly see a row whose name only
+      // materialises on the next backfill pass.
+      displayName: explicitName || inferred,
     };
+    if (opts.localFiles === false) seed.localFiles = false;
     const nextIndex = [...collections.map((s) => s.id), id];
     await chrome.storage.local.set({
       [COLLECTIONS_INDEX_KEY]: nextIndex,
@@ -2012,21 +2128,52 @@ export async function markFirstRunComplete(): Promise<void> {
   await chrome.storage.local.set({ [FIRST_RUN_DONE_KEY]: true });
 }
 
-// Add a single-file input to the matching container collection. Creates
-// the container row if this is the first script of its kind. Returns
-// null if the URL/path is already registered as a script under its
-// container. The fetch runs as part of `refreshCollection` so the new
-// row lands populated.
-async function addScriptToContainer(path: string): Promise<AddCollectionResult> {
-  const kind = containerKindForSingleFileInput(path);
-  const cPath = containerPath(kind);
+// Where a single script should be installed: a specific container by
+// id, or the built-in default container for the script's own scheme
+// (created if it doesn't exist).
+export type InstallTarget = { collectionId: string } | { schemeDefault: true };
 
+// Install one `.user.js` location into a container collection. Returns
+// null if the location is already a script in THAT container — the
+// same location may be installed into several containers, which is
+// what the "Other versions" panel and its exclusive-enable rule exist
+// for. The fetch runs as part of `refreshCollection` so the new row
+// lands populated.
+export async function installScript(
+  rawLocation: string,
+  target: InstallTarget,
+): Promise<AddCollectionResult> {
+  const path = await canonicalLocation(rawLocation);
+  if (!isSingleFileInput(path)) {
+    throw new Error('Internal error: only a .user.js location can be installed into a collection');
+  }
+  return await addScriptToContainer(path, target);
+}
+
+async function addScriptToContainer(
+  path: string,
+  target: InstallTarget,
+): Promise<AddCollectionResult> {
   // Dedup-check and seed the container + script atomically so a
-  // concurrent add (or index mutator) can't lose this scriptIds/index
+  // concurrent install (or index mutator) can't lose this scriptIds/index
   // write. The refresh runs OUTSIDE the lock. Returns null on duplicate.
   const seeded = await mutate(async () => {
     const collections = await getCollections();
-    const existingContainer = collections.find((s) => s.path === cPath);
+    let existingContainer: StoredCollection | undefined;
+    let cPath: string;
+    if ('collectionId' in target) {
+      existingContainer = collections.find((s) => s.id === target.collectionId);
+      // The dropdown was built from a snapshot; the row can have been
+      // removed from another tab since.
+      if (!existingContainer) throw new Error(COLLECTION_GONE);
+      if (!isContainerCollection(existingContainer.path)) {
+        throw new Error('Internal error: scripts can only be installed into a scripts collection');
+      }
+      cPath = existingContainer.path;
+    } else {
+      cPath = containerPath(containerKindForSingleFileInput(path));
+      existingContainer = collections.find((s) => s.path === cPath);
+    }
     const isNew = !existingContainer;
     if (existingContainer) {
       // Each container script's `relativePath` is the full URL/path the
@@ -2969,21 +3116,54 @@ export async function setCollectionEnabled(
   });
 }
 
-// Per-collection opt-out of local stand-ins. Writing the field only —
-// nothing is refetched here, because the flag changes what the NEXT
-// refresh resolves to, and the collections page follows this with its
-// own Refresh so the user sees the effect immediately.
-export async function setCollectionLocalFiles(
+// The per-collection settings the collection dialog edits.
+export interface CollectionOptions {
+  // The name shown everywhere. For a scripts collection it is required
+  // and must be unique; for a location collection blank means "back to
+  // the name inferred from the path".
+  displayName?: string;
+  // Per-collection opt-out of local stand-ins. Writing the field only —
+  // nothing is refetched here, because the flag changes what the NEXT
+  // refresh resolves to, and the collections page follows a change with
+  // its own Refresh so the user sees the effect immediately.
+  localFiles?: boolean;
+}
+
+export async function setCollectionOptions(
   id: string,
-  localFiles: boolean,
+  options: CollectionOptions,
 ): Promise<StoredCollection | null> {
   return mutate(async () => {
     const collection = await getRaw<StoredCollection>(collectionKey(id));
     if (!collection) return null;
-    const next: StoredCollection = { ...collection, localFiles };
+    const next: StoredCollection = { ...collection };
+    if (options.displayName !== undefined) {
+      const name = options.displayName.trim();
+      const inferred = inferDisplayName(collection.path);
+      if (!name && !inferred) throw new Error(COLLECTION_NAME_REQUIRED);
+      // Same rule as `createLocationCollection`: only a name the user
+      // chose is held unique; the inferred one may collide.
+      if (name && name !== inferred) {
+        // The default that already owns a reserved name is exempt — it
+        // keeps it — but nothing else may take it.
+        if (!mayUseReservedName(name, collection.path)) throw new Error(RESERVED_COLLECTION_NAME);
+        const all = await getCollections();
+        if (collectionNameInUse(name, all, id)) throw new Error(collectionNameInUseMessage(name));
+      }
+      next.displayName = name || inferred;
+    }
+    if (options.localFiles !== undefined) next.localFiles = options.localFiles;
     await chrome.storage.local.set({ [collectionKey(id)]: next });
     return next;
   });
+}
+
+// Test-surface convenience; the dialog goes through `setCollectionOptions`.
+export async function setCollectionLocalFiles(
+  id: string,
+  localFiles: boolean,
+): Promise<StoredCollection | null> {
+  return setCollectionOptions(id, { localFiles });
 }
 
 // Record what a script's upstream `@updateURL` / `@downloadURL` last

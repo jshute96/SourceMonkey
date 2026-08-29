@@ -14,6 +14,23 @@ export interface SmApi {
   // tests can keep using `result?.id` and `result?.path` directly.
   // Returns null on a duplicate.
   addCollection(path: string): Promise<{ id: string; path: string } | null>;
+  // The collection dialog's entry points. `createCollection` makes a
+  // named scripts collection or a location collection; `installScript`
+  // puts one `.user.js` into a specific container (or the built-in
+  // default for its scheme). Same unwrapping as `addCollection`.
+  createCollection(
+    spec:
+      | { kind: 'scripts'; name: string; localFiles?: boolean }
+      | { kind: 'location'; path: string; name?: string; localFiles?: boolean },
+  ): Promise<{ id: string; path: string } | null>;
+  installScript(
+    location: string,
+    target: { collectionId: string } | { schemeDefault: true },
+  ): Promise<{ id: string; path: string } | null>;
+  setCollectionOptions(
+    id: string,
+    options: { displayName?: string; localFiles?: boolean },
+  ): Promise<unknown>;
   removeCollection(id: string): Promise<void>;
   getCollections(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
   getCollectionWithScripts(id: string): Promise<{
@@ -273,12 +290,12 @@ export function makeSwApi(getServiceWorker: () => Promise<Worker>): SmApi {
       // container-reuse vs new-collection distinction). Tests just want
       // the resulting collection row; unwrap here so the SmApi contract
       // stays a thin pass-through.
-      if (prop === 'addCollection') {
+      if (prop === 'addCollection' || prop === 'createCollection' || prop === 'installScript') {
         return async (...args: unknown[]) => {
           const result = await call<{
             kind: string;
             collection: { id: string; path: string };
-          } | null>('addCollection', args);
+          } | null>(prop, args);
           return result?.collection ?? null;
         };
       }

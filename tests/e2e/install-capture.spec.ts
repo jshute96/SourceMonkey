@@ -70,7 +70,8 @@ test.describe('.user.js link capture', () => {
     await expect(page.locator('#header-summary')).toContainText('Hello From The Web');
     await expect(page.locator('#header-summary')).toContainText('https://example.com/*');
     await expect(page.locator('#content')).toContainText('==UserScript==');
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-target option:checked')).toHaveText('Scripts from web (new)');
     await expect(page.locator('#install-btn')).toBeEnabled();
     // Nothing has run, so there is no Log tab to offer.
     await expect(page.locator('#tabs')).not.toContainText('Log');
@@ -145,7 +146,7 @@ test.describe('.user.js link capture', () => {
   test('a second install joins the existing container and opens the new script', async ({
     extensionContext, sm,
   }) => {
-    // Exercises addCollection's `existingContainer` branch — the one that
+    // Exercises the store's `existingContainer` branch — the one that
     // has to pick the newly added script's id, not the container's
     // first. A single-install test can't tell those apart.
     server.setRoute('/first.user.js', userscriptText('First Script'));
@@ -169,7 +170,7 @@ test.describe('.user.js link capture', () => {
     await page.close();
   });
 
-  test('an already-installed script offers Open / Update instead of Install', async ({
+  test('an already-installed script offers its copy in the table instead of Install', async ({
     extensionContext, sm,
   }) => {
     server.setRoute('/hello.user.js', userscriptText('Hello From The Web'));
@@ -181,9 +182,9 @@ test.describe('.user.js link capture', () => {
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#open-btn')).toBeVisible();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toHaveCount(1);
+    await expect(page.locator('#other-versions tr.is-offer button')).toBeDisabled();
     await page.close();
   });
 

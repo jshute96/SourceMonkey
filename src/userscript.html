@@ -89,9 +89,30 @@
       .message.error { color: #b00; }
       .message.refresh-failed { color: #c2410c; }
       .message:empty { display: none; }
-      /* Preview-mode action row + banner. The banner states what the
-         file is relative to what's installed; the row carries the
-         Install / Update / Cancel decision. */
+      /* Preview-mode install callout, banner, and action row. With
+         nothing installed, the callout IS the page's question — "Install
+         into [collection]" — so it gets the box; when copies exist the
+         banner takes that spot and the table below carries the choice.
+         The row under either holds Cancel / View raw source. */
+      .install-callout {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        flex-wrap: wrap;
+        /* Same green as the "Existing versions" panel: both are about
+           where a copy of this script lives. */
+        border: 1px solid #b9d4b1;
+        background: #dbecd6;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 0 0 10px;
+      }
+      .install-callout[hidden] { display: none; }
+      .install-callout label { font-weight: 600; }
+      .install-callout label[hidden] { display: none; }
+      .install-callout button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
+      .install-callout button:disabled { cursor: not-allowed; opacity: 0.5; }
+      .install-callout .primary { font-weight: 600; }
       .actions { display: flex; gap: 0.5em; align-items: center; margin: 0 0 0.7em; }
       .actions[hidden] { display: none; }
       .actions button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
@@ -100,13 +121,12 @@
       .actions .spacer { margin-left: auto; }
       /* The banner box is in styles.css (shared with the collections page,
          which is also where the file-access banner comes from). Only
-         the viewer's own colour variants live here — the amber default
-         is a warning, and "already installed" / "preview" are not. */
+         the viewer's own colour variant lives here — the amber default
+         is a warning, and "already installed" is not. */
       /* Matches the "Existing versions" panel below it — this banner is
          about which of those copies the buttons act on, so the two are
          one thought and share a ground. */
       .banner.installed { border-color: #b9d4b1; background: #dbecd6; }
-      .banner.preview { border-color: #6b7280; background: #f3f4f6; }
       @keyframes sm-spin { to { transform: rotate(360deg); } }
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
       /* @connect row: hostnames and match rules, not prose. */
@@ -736,13 +756,19 @@
          banner slot is shared with the file-access banner, which either
          mode can raise when a local read fails. -->
     <div id="banner-slot"></div>
+    <!-- Install stays hidden until the fetch has landed and we know
+         whether this file is installable and not already installed,
+         so it is never clickable without a handler behind it. The
+         dropdown is filled per preview (see `showInstallCallout`); it
+         is absent for a location with no single-file spelling, where
+         Install adds a whole collection instead. -->
+    <div id="install-callout" class="install-callout" hidden>
+      <label id="install-target-label" for="install-target">Install into</label>
+      <span id="install-target-slot"></span>
+      <button id="install-btn" class="primary" type="button">Install</button>
+    </div>
     <div id="preview-actions" class="actions" hidden>
-      <!-- Install stays hidden until the fetch has landed and we know
-           whether this file is installable and not already installed,
-           so it is never clickable without a handler behind it. -->
-      <button id="install-btn" class="primary" type="button" hidden>Install</button>
       <button id="open-btn" type="button" hidden>Open installed script</button>
-      <button id="update-btn" type="button" hidden>Update now</button>
       <button id="continue-btn" class="primary" type="button" hidden
               title="Open this location in the browser, without previewing it">Continue to page</button>
       <button id="cancel-btn" type="button">Cancel</button>

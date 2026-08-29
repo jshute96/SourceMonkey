@@ -279,7 +279,7 @@ test.describe('collections page live updates', () => {
     // Two things at once. The table and the "no scripts" message are
     // different elements, so this is the one path a repaint can't update
     // in place — it swaps the block whole. And the copy has to be the
-    // CONTAINER's ("No scripts here yet"), not the
+    // CONTAINER's ("No scripts added yet"), not the
     // directory-scan one: the per-row Remove button only exists on
     // container rows, so hand-rolling that message here got it wrong on
     // every row that has the button.
@@ -301,7 +301,7 @@ test.describe('collections page live updates', () => {
 
     await expect(section.locator('table.script-table')).toHaveCount(0);
     await expect(section.locator('p.empty'))
-      .toHaveText('No scripts here yet — add one above.');
+      .toHaveText('No scripts added yet');
 
     await page.close();
   });
@@ -416,6 +416,13 @@ test.describe('collections page live updates', () => {
     // own append. Exactly one section must exist, not two.
     await page.locator('#add-path').fill(scriptsDir.path);
     await page.locator('#add-form button[type="submit"]').click();
+    // The field hands a location to the create dialog, prefilled;
+    // Create is what adds it.
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
 
     await expect(page.locator('section.collection')).toHaveCount(1);
     await expect(page.locator('section.collection tbody tr')).toHaveCount(1);

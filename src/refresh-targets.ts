@@ -11,9 +11,10 @@
 //   - A scanned collection (a directory, or a local `script_manifest.json`)
 //     refreshes as a WHOLE, because only a re-scan notices files that
 //     were added, renamed, or deleted.
-//   - The local-files container (`container:file`) has no directory of
-//     its own — each script row carries its own absolute path — so its
-//     rows are selected individually.
+//   - A container (`container:*`) has no directory of its own — each
+//     script row carries its own absolute location, and a container may
+//     hold web scripts alongside local ones — so its local rows are
+//     selected individually.
 //
 // "Local" is decided by where the COLLECTION lives, not by where its
 // rows point. So an http(s) manifest listing a `file://` entry is never
@@ -56,10 +57,11 @@ export interface RefreshTargets {
   scripts: ScriptTarget[];
 }
 
-// True for collections whose content lives on the local disk — scanned
-// directories, local manifests, and the local-files container. Shares
-// `inferCollectionType` with the UI's type bubble so "local" means the
-// same thing the user sees on the page.
+// True for collections that can hold content on the local disk —
+// scanned directories, local manifests, and every container (whose
+// rows are then filtered one by one). Shares `inferCollectionType` with
+// the UI's type bubble so "local" means the same thing the user sees on
+// the page.
 export function isLocalCollection(collection: StoredCollection): boolean {
   return inferCollectionType(collection.path) === 'file';
 }
@@ -101,12 +103,23 @@ function collectionScanDir(path: string): string {
   return isManifestCollection(path) ? parentDir(fs) : fs;
 }
 
-// Every local collection, refreshed whole. Used by `?refresh_local`.
+// Every local collection, refreshed whole — except containers, whose
+// local rows are picked out individually so their web rows aren't
+// refetched. Used by `?refresh_local`.
 export function localRefreshTargets(entries: readonly CollectionScripts[]): RefreshTargets {
-  return {
-    collectionIds: entries.filter((e) => isLocalCollection(e.collection)).map((e) => e.collection.id),
-    scripts: [],
-  };
+  const collectionIds: string[] = [];
+  const scripts: ScriptTarget[] = [];
+  for (const { collection, scripts: rows } of entries) {
+    if (!isLocalCollection(collection)) continue;
+    if (isContainerCollection(collection.path)) {
+      for (const s of rows) {
+        if (isFileUrl(s.fileUrl)) scripts.push({ id: s.id, collectionId: collection.id });
+      }
+      continue;
+    }
+    collectionIds.push(collection.id);
+  }
+  return { collectionIds, scripts };
 }
 
 // Local collections and scripts touching `target` — a file or directory
@@ -155,7 +168,7 @@ function scriptMatchesPath(script: StoredScript, target: string): boolean {
 // a message in its own right, hence its capital.
 export const REFRESH_FAILED_PREFIX = 'Refresh failed: ';
 
-// Shapes `?refresh_file=` accepts, as the tail of "A refresh path …".
+// Shapes `?refresh_file=` accepts, as the tail of "Refresh path …".
 // Narrower than `LOCATION_SHAPES`: the trigger exists for files on
 // local disk, so an http(s) URL has nothing to refresh against.
 export const REFRESH_PATH_SHAPES =
@@ -176,13 +189,13 @@ export function refreshPathProblem(input: string): string | null {
     // Every rejection echoes the value: the caller here is usually a
     // tool that built the URL, and the path it actually sent is the
     // thing that needs fixing.
-    return `A refresh path ${REFRESH_PATH_SHAPES}: ${value}`;
+    return `Refresh path ${REFRESH_PATH_SHAPES}: ${value}`;
   }
   if (isFileUrl(value) && isNonPosixFileUrl(value)) {
-    return `A refresh path must be a POSIX file:// URL, without a host: ${value}`;
+    return `Refresh path must be a POSIX file:// URL, without a host: ${value}`;
   }
   if (toFsPath(value).length <= 1) {
-    return `A refresh path must name something below the filesystem root: ${value}`;
+    return `Refresh path must name something below the filesystem root: ${value}`;
   }
   return null;
 }

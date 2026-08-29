@@ -714,6 +714,21 @@ during cumulative review of the GM_* phases:
 
 ## Collections page — follow-ups
 
+- **No way to move a script between scripts collections.** Today it is
+  install-into-the-other-then-remove (two clicks on two pages), which
+  loses the row's enabled state and log. A "Move to…" on the per-row
+  remove button's spot, or on the viewer's Collection row, would be the
+  natural home; the store side is a `scriptIds` splice plus a
+  `collectionId` rewrite under `mutate`.
+
+- **Creating from a location scans it twice.** The dialog's
+  `probeCollectionLocation` lists the directory / fetches the manifest /
+  calls the GitHub Contents API, and `createCollection` then refreshes
+  and does it again. Cheap for local; for GitHub it is a second
+  unauthenticated API call against the rate limit. Threading the probe's
+  scan into the first refresh would need `refreshCollection` to accept a
+  pre-computed scan.
+
 - **A `file://` row inside an http(s) collection can't be targeted.**
   `?refresh_file=` decides "local" from the collection's own location,
   so a `script_manifest.json` served over http that lists a `file://`

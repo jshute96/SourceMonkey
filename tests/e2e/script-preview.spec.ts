@@ -38,7 +38,10 @@ test.describe('script preview', () => {
     await page.waitForURL(/userscript\.html\?preview=/);
     await expect(page.locator('#header-summary')).toContainText('Local Script');
     await expect(page.locator('#content')).toContainText("console.log('local')");
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    // Nothing installed anywhere: the install callout is the page's
+    // question, with the local default pre-selected.
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-target option:checked')).toHaveText('Scripts from local disk (new)');
     expect(await sm.getCollections()).toHaveLength(0);
 
     await page.locator('#install-btn').click();
@@ -67,11 +70,12 @@ test.describe('script preview', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    await expect(page.locator('#install-callout')).toBeHidden();
+    const update = page.locator('#other-versions td.col-actions button', { hasText: 'Update' });
+    await expect(update).toBeVisible();
 
-    await page.locator('#update-btn').click();
-    await page.waitForURL(/userscript\.html\?script=/);
+    await update.click();
+    await expect(update).toBeEnabled();
     // Still one script — Update refreshed the existing row rather than
     // adding a second copy.
     const collections = await sm.getCollections();
@@ -99,7 +103,6 @@ test.describe('script preview', () => {
     );
     await expect(page.locator('#banner-slot')).toContainText('No @match or @include in the metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
     // Local `.user.js` navigations are captured too, so this file needs
     // the same way out an http one gets — pointed at the `file://` form,
     // since the bare path the preview was opened with isn't navigable.
@@ -127,7 +130,7 @@ test.describe('script preview', () => {
     );
     const message = page.locator('#message');
     await expect(message).toContainText('This is not a script location');
-    await expect(message).toContainText('http(s):// or file:// URL');
+    await expect(message).toContainText('must be a URL or absolute file path');
     await expect(message).not.toContainText('Could not fetch');
     await expect(page.locator('#install-btn')).toBeHidden();
     await page.close();

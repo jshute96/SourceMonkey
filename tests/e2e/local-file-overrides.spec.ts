@@ -464,14 +464,21 @@ test.describe('local file overrides', () => {
       .locator('.site-icon a.site-icon-inner img');
     await expect(img).toHaveAttribute('src', `data:image/png;base64,${localPng.toString('base64')}`);
 
-    await page.locator('.local-files-toggle input').click();
+    // The option lives in the Edit dialog; Save refreshes the collection.
+    await page
+      .locator(`section.collection[data-collection-id="${collection!.id}"] button.edit-collection`)
+      .click();
+    const dialog = page.locator('dialog.collection-dialog');
+    await dialog.locator('#collection-dialog-local-files').uncheck();
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
     await expect(img).toHaveAttribute('src', `data:image/png;base64,${remotePng.toString('base64')}`);
     await page.close();
   });
 
   // THE security property, end to end. An http-sourced script reaches
   // the same pipeline with local files enabled — the http container
-  // carries no opt-out, so the flag defaults on — and must still get no
+  // defaults the option on, like every collection — and must still get no
   // stand-in, because the gate is the host script's own scheme. This is
   // where `@resource file:///home/you/.ssh/id_rsa` + GM_getResourceText
   // would matter, so it is worth an e2e and not just the unit test on

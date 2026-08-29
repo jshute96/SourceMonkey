@@ -8,13 +8,18 @@
    Currently shared:
    - the collection-type bubble + its display-name sibling (DOM helper in
      src/collection-display.ts, used on the collections page heading and the
-     userscript viewer's Collection row);
+     userscript viewer's Collection row), and the per-row scheme chip a
+     script wears inside a scripts collection;
    - the warning banner box, whose file-access variant (DOM helper in
      src/file-access.ts) renders on both the collections page and the
-     viewer / install preview. */
+     viewer / install preview;
+   - the create / edit collection dialog (src/collection-dialog.ts),
+     opened from the collections page and the install page;
+   - the "Install into" dropdown (src/related-versions.ts), in the
+     install page's callout and its versions table. */
 
 /* Warning banner. Pages keep their own margin and colour variants
-   (`.banner.installed` / `.banner.preview` on the viewer) in their
+   (`.banner.installed` on the viewer) in their
    <style> block; everything below is common to every banner. */
 .banner {
   border: 1px solid #d97706;
@@ -71,9 +76,129 @@
 }
 .collection-type-bubble:hover { opacity: 0.85; }
 
-.bubble-file            { background: #d97706; }
+/* Kind + scheme: `-dir` in the scheme's base hue, `-manifest` darker,
+   and a neutral grey for a scripts collection, which has no scheme of
+   its own. `http-dir` is unreachable through the add paths (a plain
+   web directory can't be listed) but a legacy or hand-written row
+   still renders, and a bubble with no rule would be white on white. */
+.bubble-file-dir        { background: #d97706; }
+.bubble-http-dir        { background: #2563eb; }
 .bubble-file-manifest   { background: #92400e; }
-.bubble-http            { background: #2563eb; }
 .bubble-http-manifest   { background: #1e3a8a; }
-.bubble-github          { background: #6f42c1; }
+.bubble-github-dir      { background: #6f42c1; }
 .bubble-github-manifest { background: #4c2889; }
+.bubble-scripts         { background: #4b5563; }
+
+/* The per-row scheme chip inside a scripts collection: the same hues
+   as the bubbles, smaller, so a mixed collection still says where each
+   script loads from. */
+.scheme-chip {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: center;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.chip-file   { background: #d97706; }
+.chip-http   { background: #2563eb; }
+.chip-github { background: #6f42c1; }
+
+/* ---- Create / edit collection dialog (src/collection-dialog.ts) ---- */
+dialog.collection-dialog {
+  border: 1px solid #bbb;
+  border-radius: 8px;
+  padding: 0;
+  width: 520px;
+  max-width: calc(100vw - 2em);
+  color: #222;
+  font: 14px system-ui, sans-serif;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  background: #fff;
+  box-sizing: border-box;
+}
+dialog.collection-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+.collection-dialog .dlg-title {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.collection-dialog .dlg-body {
+  margin: 0;
+  padding: 14px 16px 4px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 12px;
+  align-items: start;
+}
+.collection-dialog .dlg-label { padding-top: 5px; color: #444; }
+.collection-dialog .dlg-label[hidden] { display: none; }
+.collection-dialog input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 4px 7px;
+}
+.collection-dialog input[type="text"][hidden] { display: none; }
+.collection-dialog input[type="text"]:disabled {
+  background: #f3f4f6;
+  color: #666;
+  border-color: #d1d5db;
+}
+/* `border-style` too: the UA gives text inputs an inset border, and
+   recolouring an inset border shades each side a different tint. */
+.collection-dialog input[type="text"].invalid { border-style: solid; border-color: #b00; outline-color: #b00; }
+.collection-dialog .dlg-radios { display: flex; flex-direction: column; gap: 5px; }
+.collection-dialog .dlg-radio,
+.collection-dialog .dlg-check {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  cursor: pointer;
+}
+.collection-dialog .dlg-radio input,
+.collection-dialog .dlg-check input { margin: 0; position: relative; top: 1px; flex: 0 0 auto; }
+.collection-dialog .dlg-hint { color: #666; font-size: 0.85em; }
+.collection-dialog .dlg-radio.off,
+.collection-dialog .dlg-check.off { opacity: 0.5; cursor: default; }
+.collection-dialog .dlg-error {
+  color: #b00;
+  margin: 0;
+  padding: 8px 16px 0;
+  min-height: 1.3em;
+  line-height: 1.3;
+}
+.collection-dialog .dlg-error.warn { color: #92400e; }
+.collection-dialog .dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 14px;
+}
+.collection-dialog .dlg-actions button { font: inherit; padding: 4px 11px; cursor: pointer; }
+.collection-dialog .dlg-actions button.primary { font-weight: 600; }
+.collection-dialog .dlg-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
+@keyframes sm-dialog-spin { to { transform: rotate(360deg); } }
+.collection-dialog .busy-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ccc;
+  border-top-color: #555;
+  border-radius: 50%;
+  animation: sm-dialog-spin 0.7s linear infinite;
+  box-sizing: border-box;
+}
+
+/* ---- "Install into" dropdown (src/related-versions.ts) ---- */
+select.install-target { font: inherit; padding: 3px 6px; max-width: 100%; }

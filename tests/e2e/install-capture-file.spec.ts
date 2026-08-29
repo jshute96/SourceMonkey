@@ -73,7 +73,8 @@ test.describe('.user.js capture for local files', () => {
     await expect(page.locator('h1#filename')).not.toContainText('file://');
     await expect(page.locator('#header-summary')).toContainText('Hello From Disk');
     await expect(page.locator('#content')).toContainText('==UserScript==');
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-target option:checked')).toHaveText('Scripts from local disk (new)');
     await expect(page.locator('#install-btn')).toBeEnabled();
     await page.close();
   });
@@ -127,9 +128,12 @@ test.describe('.user.js capture for local files', () => {
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#open-btn')).toBeVisible();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    // The table carries the copy's Update and its viewer link; the
+    // offer row keeps the (now installed) default selected with Install
+    // off, so no second row can come from a stray click.
+    await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toHaveCount(1);
+    await expect(page.locator('#other-versions tr.is-offer button')).toBeDisabled();
     await page.close();
   });
 

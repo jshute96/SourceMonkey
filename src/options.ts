@@ -141,9 +141,9 @@ function initLocalRootControls(): void {
     try {
       await chrome.storage.local.set({ [LOCAL_ROOTS_KEY]: roots });
       // The roots only change what the NEXT refresh resolves to, so the
-      // refresh is part of the save — same reasoning as the
-      // per-collection "Local files" switch, which refreshes its
-      // collection on toggle. Without it a newly-added root would
+      // refresh is part of the save — same reasoning as the collection
+      // dialog's local-overrides option, which refreshes its collection
+      // on save. Without it a newly-added root would
       // appear to do nothing until something else happened to touch a
       // collection.
       setStatus('Saved — refreshing scripts', '');

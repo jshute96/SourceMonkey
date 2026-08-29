@@ -50,7 +50,7 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
     can't grammatically (`is empty`), give it a subject (`The file is
     empty`) rather than exempting it.
   - Only a splice *inside* a sentence we wrote stays lowercase —
-    `LOCATION_SHAPES`, which completes `A location must be an …`.
+    `LOCATION_SHAPES`, which completes `Location must be a …`.
 - **One message per problem**; wrap the shared string rather than writing a
   second copy for another surface.
   - That covers code that *recognizes* a message too: import the shared

@@ -75,11 +75,13 @@ keys would look like a wiped profile.
   - `github.com/<o>/<r>/tree/<ref>(/<path>?)` URL for a directory
     collection (blob / file URLs are rewritten to `raw.githubusercontent.com`
     at add time).
-  - One of three **container** identifiers — `container:file`,
-    `container:http`, `container:github` — used by the synthetic
-    "Scripts from local disk / web / GitHub" collections that aggregate
-    individually added `.user.js` URLs and paths. Container collections
-    have no scan step; their `scriptIds` list is the source of truth.
+  - A **container** identifier — `container:file` / `container:http` /
+    `container:github` for the three built-in defaults ("Scripts from
+    local disk / web / GitHub"), or `container:<uuid>` for a
+    collection the user created — for a collection of individually
+    installed scripts. Container collections have no scan step; their
+    `scriptIds` list is the source of truth. See
+    [Container collections](#container-collections).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
@@ -90,12 +92,23 @@ keys would look like a wiped profile.
   `@require` / `@resource` / `@icon`. Only an explicit `false` disables
   it, so rows persisted before the field existed read as enabled. See
   [local-file-overrides.md](local-file-overrides.md#per-collection-opt-out).
-- `displayName?` — short, human-readable label shown on the collections
-  page heading and the viewer's Collection row. Backfilled from
-  `inferDisplayName(path)` on first read after upgrade
-  (`backfillCollectionDisplayNames`). Future user-rename UI would write
-  this field; the UI prefers it over the inferred form whenever it's
-  set (see [`src/collection-display.ts`](../src/collection-display.ts)).
+- `displayName?` — the name shown on the collections page heading, the
+  viewer's Collection row, and the install page's dropdown. Seeded from
+  `inferDisplayName(path)` at add time (and backfilled on first read
+  for older rows — `backfillCollectionDisplayNames`); the collection
+  dialog's Name field rewrites it (`setCollectionOptions`). Required for
+  a user-created container, which has no path to infer from. The UI
+  prefers it over the inferred form whenever it's set (see
+  [`src/collection-display.ts`](../src/collection-display.ts)).
+  - A name the user chose is unique across collections
+    (case-insensitive); an inferred one may collide, since two refs of
+    one GitHub tree infer the same short form.
+  - The three built-in defaults' names are **reserved**, whether or not
+    their rows exist yet — only the default that owns one may carry it
+    (`mayUseReservedName`). Otherwise a user collection could take
+    "Scripts from web", and the next web install would auto-create
+    `container:http` under the same name: two identical entries in the
+    install dropdown, in a state that couldn't be re-created afterwards.
 
 ### `StoredScript`
 
@@ -346,34 +359,50 @@ appropriate-for-scheme cheap check couldn't prove it.
 
 ## Container collections
 
-Container collections aggregate individually-added scripts of one kind:
+A container collection ("scripts" collection in the UI) is a folder of
+individually installed scripts. Two kinds of row, told apart by path:
 
-- `container:file` — "Scripts from local disk"
-- `container:http` — "Scripts from web"
-- `container:github` — "Scripts from GitHub"
+- **Built-in defaults** — `container:file` ("Scripts from local disk"),
+  `container:http` ("Scripts from web"), `container:github` ("Scripts
+  from GitHub"). One per scheme, recognised by this fixed path — never
+  by name, so a rename doesn't stop it being the default.
+- **User-created** — `container:<uuid>`, made by the collection dialog
+  with a name of the user's choosing.
 
 Properties:
 
-- Auto-created the first time the user adds a single-file URL/path of
-  the matching kind. Never created up-front.
-- Reused on subsequent single-file adds of the same kind.
+- A container may hold scripts from **any scheme** — local, web, and
+  GitHub together. The scheme is per script (classified from its
+  `relativePath` by `containerKindForSingleFileInput`); the collections
+  page shows it as a chip on each row.
+- A default is created on demand by the first install that targets it,
+  never up-front. Removing it is fine; a later install that picks it
+  recreates it with the default name.
 - Have no scan step. `scriptIds` is the explicit source of truth; the
   refresh pipeline builds a synthetic scan from those rows and runs
   the per-entry fetch path against each.
 - Survive `removeScript` of their last child (the empty container
   stays until the user clicks Remove on the section).
-- Per-script duplicate detection compares the new URL/path against
-  every `relativePath` already in the container — adding the same URL
-  twice returns null from `addCollection`.
+- Duplicate detection is **per container**: `installScript` compares
+  the new URL/path against every `relativePath` already in the target
+  container and returns null on a match. The same location may live in
+  several containers — that is what the viewer's "Other versions" panel
+  and its exclusive-enable rule exist for.
 
-The dispatch rule sits in `addCollection`:
+Where a single script lands:
 
-- input passes `isSingleFileInput` → folded into container by kind
-  (`containerKindForSingleFileInput` classifies `https://github.com/*`
-  and `raw.githubusercontent.com/*` as `github`, anything else
-  http(s) as `http`, raw paths / `file://` as `file`).
-- otherwise → directory / manifest / github-dir collection (existing
-  behavior).
+- `installScript(location, target)` takes the target explicitly — a
+  container by id, or `{schemeDefault: true}` for the built-in default
+  of the location's scheme (`https://github.com/*` and
+  `raw.githubusercontent.com/*` are `github`, anything else http(s) is
+  `http`, raw paths / `file://` are `file`).
+- `addCollection(input)` — the Add field's one-string entry point,
+  `?add=`, first-run seeding, and the test surface — sends a single-file
+  input to the scheme default. Everything else becomes a directory /
+  manifest / github-dir collection.
+- The install page's dropdown lists every container and lets the user
+  pick — see
+  [script-identity.md](script-identity.md#the-install-into-dropdown).
 
 ## Load / refresh pipeline
 
@@ -574,9 +603,9 @@ The write in step 5 is the last thing that can fail, and the one failure
 ### Entry points
 
 - `addCollection(path)` — dispatches by input shape:
-  - **single-file `.user.js`** input (URL or path) → folded into the
-    matching container collection (created if absent); the new script row
-    is seeded and refreshed. Returns
+  - **single-file `.user.js`** input (URL or path) → `installScript`
+    into the built-in default container for its scheme (created if
+    absent); the new script row is seeded and refreshed. Returns
     `{kind: 'newCollection' | 'existingContainer', collection, scriptId?}` to
     tell the caller whether to render a new section or replace an
     existing one. Returns `null` if the URL/path is already a script
@@ -585,6 +614,26 @@ The write in step 5 is the last thing that can fail, and the one failure
     create an empty collection row, then run `refreshCollection`. Returns
     `{kind: 'newCollection', collection}`. Returns `null` if the collection path
     is already registered.
+- `createCollection(spec)` — what the collection dialog calls.
+  `{kind: 'scripts', name, localFiles?}` writes an empty
+  `container:<uuid>` row; `{kind: 'location', path, name?, localFiles?}`
+  is the directory / manifest / github-dir half of `addCollection` plus
+  the dialog's name and local-overrides choice. Throws when a chosen
+  name is already in use.
+- `installScript(location, target)` — install one `.user.js` into
+  `{collectionId}` or the `{schemeDefault: true}` container. Same
+  return shape as `addCollection`; null when that container already
+  holds the location; throws `COLLECTION_GONE` when the id no longer
+  exists.
+- `probeCollectionLocation(path)` — the dialog's pre-create check: the
+  same listing / manifest fetch / GitHub lookup a refresh runs, with
+  nothing written. Throws with the reason when the location can't be
+  read; returns the script count otherwise (so the dialog can warn
+  about an empty directory without refusing it).
+- `setCollectionOptions(id, {displayName?, localFiles?})` — the dialog's
+  Save. A blank name on a location collection goes back to the
+  inferred one; a chosen name is held unique. `setCollectionLocalFiles`
+  remains as a thin wrapper for the test surface.
 - `refreshCollection(id)` — full rescan + reload of one collection
   (with the unchanged-file skip described above).
 - `refreshAllCollections()` — runs `refreshCollection` for every registered
@@ -666,9 +715,15 @@ materialising silently.
   reloads re-fire `onInstalled('install')`.
 - **Seed trigger.** `seedDefaultCollectionsViaUi()` (`collections.ts`) runs only
   when the page loads with `?first_run` AND the flag is unset — so an
-  ordinary collections-page visit never seeds. It adds each default via the
-  same `onAddCollection` the Add button uses; `addCollection` fetches the
-  collection's scripts as part of the add, so no follow-up Refresh is needed.
+  ordinary collections-page visit never seeds. It adds each default via
+  `seedCollection()`, which calls `addCollection` directly; that fetches
+  the collection's scripts as part of the add, so no follow-up Refresh
+  is needed.
+  - **Deliberately not the Add field's path.** Typing a location opens
+    the [collection dialog](#the-collection-dialog), which is right for
+    a user naming a collection and wrong for seeding: a fresh install
+    would put up a modal per default and wait. `seedCollection` is the
+    plain route — no dialog, no preview hand-off, no scroll.
 - **Run-once.** The page writes `"firstRunComplete"` after seeding;
   once set, neither the SW open nor the page seed fires again —
   including after the user deletes the seeded collections.
@@ -740,8 +795,12 @@ The collections page reads from the store and renders **one section per
 collection**:
 
 - **Enable** toggle (checkbox) for the collection as a whole, placed to
-  the left of the directory path.
-- Heading with the directory path.
+  the left of the name.
+- Heading: the type bubble (`file-dir`, `github-dir`, `file-manifest`,
+  `http-manifest`, `github-manifest`, or `scripts` — see
+  [`src/collection-display.ts`](../src/collection-display.ts)), then
+  the display name. For a location collection the tooltip carries the
+  path.
 - **Up / Down** arrow buttons → `moveCollection`. Swap this collection's
   position in the `"collections"` index. Up is disabled on the first
   section; Down is disabled on the last. The DOM moves the two
@@ -751,7 +810,13 @@ collection**:
 - **Remove** button → `removeCollection`. If the collection owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove collection with N scripts?" first;
   cancel aborts the remove. An empty collection removes silently.
-- Table with columns **(bulk toggle) | Name | Size | Status**.
+- **Edit** button → the [collection dialog](#the-collection-dialog) in
+  edit mode: rename, or change the local-overrides option (which
+  refreshes the collection on save).
+- Table with columns **(bulk toggle) | Name | Size | Status** — plus,
+  in a scripts collection, a small scheme chip (`file` / `http` /
+  `github`) after the name, since one such collection can mix all
+  three, and a trailing per-row remove button.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
     flips every script under this collection on (when not all are on) or
     off (when all are on). Greyed when the collection itself is off.
@@ -782,11 +847,59 @@ collection**:
     from the parent collection's `scriptIds`) — useful because a refresh
     won't re-add a row whose file the scan no longer reports.
 
-Adding a directory triggers a full load immediately — no need to
-click Refresh after adding. The input is validated client-side:
-- accepted: `http(s)://…`, `file://…`, or an absolute POSIX path.
-- anything else surfaces an inline error and the add is rejected
-  before it touches the store.
+### The Add field
+
+Routes by what was typed (trimmed):
+
+- **Ends in `.user.js`** (URL, `file://`, or absolute path) → the
+  install page, `userscript.html?preview=…`, which asks where to put
+  it. Nothing is written until Install.
+- **Any other URL, or anything starting with `/`** → the collection
+  dialog, prefilled with the location. Type is inferred (Manifest when
+  the basename is `script_manifest.json`, else Directory), the name is
+  left blank (blank means the inferred short form), and a bad shape (a
+  bare `/`, a relative path) is reported inside the dialog.
+- **Blank** → the dialog, empty, on Individual scripts.
+- **Anything else** → the dialog, with the text as the name of a new
+  scripts collection.
+
+Creating from a location loads it immediately — no need to click
+Refresh after adding.
+
+### The collection dialog
+
+`src/collection-dialog.ts`, one `<dialog>` per page, shared by the
+collections page (Add, Edit) and the install page ("New collection…").
+
+- **Fields**: Type (Individual scripts / Directory / Manifest, with a
+  one-line gloss each), Location (hidden for Individual scripts; read-only
+  in edit), Name (its placeholder says whether it is required — scripts
+  collections — or optional, meaning "the name inferred from the
+  location"), and **Allow local file overrides** (see
+  [local-file-overrides.md](local-file-overrides.md#per-collection-opt-out)).
+- **Live validation** on every keystroke, in the dialog's own error
+  slot, with Create/Save disabled while anything holds: a blank name on
+  a scripts collection; a chosen name already in use (case-insensitive);
+  a location that isn't an absolute path / `file://` / `http(s)://`; a
+  `.user.js` where a collection was expected; a location already
+  registered; a type that contradicts the location's shape.
+- **Typing a location** re-infers the type. The overrides option greys
+  out, with the reason, for an http(s) / GitHub location.
+- **Create, location kinds**: runs `probeCollectionLocation` first. A
+  location that can't be read stays in the dialog with the reason and
+  **nothing is written** — previously it landed as a collection whose
+  only content was a scan error. An empty directory warns once; the
+  next Create adds it anyway.
+- **Create, Individual scripts**: `createCollection({kind: 'scripts'})`.
+- **Edit**: Type and Location are fixed (changing them would be a
+  different collection). Save → `setCollectionOptions`; a changed
+  overrides option refreshes the collection, because the flag only
+  affects the next refresh.
+- **Locked to one type** when the install page opens it — a script can
+  only be installed into a scripts collection. That route also sets the
+  title to *Create new collection and install script* and the confirm
+  button to *Create and install*, since the caller installs into the
+  new collection the moment it exists.
 
 Each rendered collection section gets a stable DOM id
 (`collection-<collectionId>`) so it can be scrolled to via the URL fragment
@@ -865,10 +978,11 @@ google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/
   clicking Add (validation, dedup, scroll-to-section).
 - A single `.user.js` value (URL or path) hands off to the viewer's
   preview rather than being added outright — see
-  [script-viewer.md](script-viewer.md#preview-mode). Directory /
-  manifest / github-dir values still add directly.
-- Scrubs the param from the URL only on success/duplicate; an
-  invalid value stays in the URL so the user can edit and retry.
+  [script-viewer.md](script-viewer.md#preview-mode). Every other value
+  opens the collection dialog prefilled, so a deep-linked directory
+  gets a name and a readability check before it exists.
+- Scrubs the param from the URL once it was consumed; a cancelled
+  dialog leaves it in place so the user can edit and retry.
 - `?refresh` / `?refresh_local` are also scrubbed once consumed, so a
   reload after the bootstrap actions doesn't re-fire them.
 - `?refresh_file=` follows the `?add` rule instead: scrubbed only when

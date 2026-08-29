@@ -30,7 +30,6 @@ import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCol
 import {
   appendWithSlashBreaks,
   COLLECTION_OFF_TITLE,
-  CONTAINER_DISPLAY_NAMES,
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
@@ -41,10 +40,16 @@ import {
   allRelatedRows,
   enableChanges,
   otherRunningCopies,
+  type InstallOption,
   type RelatedScript,
   type RelatedVersions,
   type ScriptEnableChange,
 } from './script-identity.js';
+
+// What the "Install into" dropdown answered: one of its listed
+// containers (or the not-yet-existing default), or "New collection…" —
+// which the caller answers by opening the create dialog first.
+export type InstallChoice = { option: InstallOption } | { newCollection: true };
 
 // What every enable checkbox says, and the tail it adds when clicking
 // it would sweep other copies. Shared so both surfaces say exactly the
@@ -115,10 +120,11 @@ export interface RelatedVersionsActions {
   // report a failure. Omitted by callers that have nowhere to report
   // one.
   update?(scriptIds: readonly string[]): void | Promise<void>;
-  // Add a single-file copy at this location. Only ever offered for
-  // the `installTarget` row. Receives the row's own button so the
-  // caller can put the busy state on the control that was clicked.
-  install?(button: HTMLButtonElement): void | Promise<void>;
+  // Install a single-file copy of this location where the offer row's
+  // dropdown says. Only ever offered for that row. Receives the row's
+  // own button so the caller can put the busy state on the control
+  // that was clicked.
+  install?(button: HTMLButtonElement, choice: InstallChoice): void | Promise<void>;
   // Delete one stored row outright. Offered only for scripts in a
   // container collection (the single-file installs the user added one
   // at a time); a script that came in with a directory or manifest
@@ -181,7 +187,7 @@ export function renderRelatedVersions(
   //     the script twice;
   //   - an invalid preview — the page has already said this file
   //     cannot be installed.
-  const installTarget = model.actions.install ? model.installTarget : undefined;
+  const offer = model.actions.install ? model.installOptions : undefined;
   if (!sameLocation.length && !sameIdentity.length) {
     // A preview with nothing installed anywhere has no *existing*
     // versions to head a panel with, and the offer row would only
@@ -195,7 +201,7 @@ export function renderRelatedVersions(
   // place only when there is something to compare it against.
   const onlySelf =
     sameIdentity.length === 0
-    && !installTarget
+    && !offer
     && sameLocation.length === 1
     && sameLocation[0].script.id === model.actions.currentScriptId;
   if (onlySelf) return;
@@ -219,7 +225,7 @@ export function renderRelatedVersions(
     container.appendChild(p);
   }
 
-  if (sameLocation.length || installTarget) {
+  if (sameLocation.length || offer) {
     // "This URL" rather than "Same URL": the section also covers the
     // row the user is looking at, and the case where nothing is
     // installed from this URL at all — neither of which is "same as"
@@ -243,8 +249,8 @@ export function renderRelatedVersions(
         versionRow(rel, model.actions, verb, allRows, model.status?.get(rel.script.id)),
       );
     }
-    if (installTarget) {
-      table.tBodies[0].appendChild(installRow(installTarget, model));
+    if (offer) {
+      table.tBodies[0].appendChild(installRow(offer, model));
     }
     container.appendChild(table);
   }
@@ -331,10 +337,10 @@ function fitColumns(container: HTMLElement): void {
 }
 
 // One action, two names — the same `updateScript(id, 'manual',
-// 'force')` call the page's own control makes, labelled to match
-// whichever control the user can see next to it. The viewer calls it
-// Refresh; the preview calls it Update now. A panel button that said
-// something a third way would read as a third operation.
+// 'force')` call, labelled to match the page it appears on. The
+// installed viewer's own control says Refresh, so the panel's rows do
+// too; a preview is about bringing a copy up to what is on screen, so
+// there they say Update. A third name would read as a third operation.
 function refetchVerb(mode: 'installed' | 'preview'): string {
   return mode === 'installed' ? 'Refresh' : 'Update';
 }
@@ -711,12 +717,13 @@ function removeCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTa
   return td;
 }
 
-// The offer to keep your own single-file copy of a script you are
-// looking at inside someone else's collection. Rendered as a row in
-// the same table so the container reads as one more place the script
-// could live, rather than a separate call to action.
+// The offer to install your own copy of the script you are looking at,
+// somewhere of your choosing. Rendered as a row in the same table so
+// each container reads as one more place the script could live, rather
+// than a separate call to action. The dropdown is the same one the
+// install callout uses when nothing is installed yet.
 function installRow(
-  target: NonNullable<RelatedVersions['installTarget']>,
+  options: readonly InstallOption[],
   model: RelatedVersionsModel,
 ): HTMLTableRowElement {
   const actions = model.actions;
@@ -727,21 +734,30 @@ function installRow(
   on.textContent = '—';
   tr.appendChild(on);
 
-  const src = cell('col-collection');
-  src.appendChild(makeCollectionTypeBubble(target.path));
-  src.appendChild(document.createTextNode(' '));
-  if (target.collection) {
-    src.appendChild(collectionNameLink(target.collection));
-  } else {
-    // No row yet, so nothing to link to — the container is created by
-    // the install this row offers.
-    src.appendChild(document.createTextNode(CONTAINER_DISPLAY_NAMES[target.kind]));
-  }
-  tr.appendChild(src);
-
   const loc = cell('col-location');
   loc.className += ' versions-offer-text';
-  loc.textContent = 'Not installed here yet';
+
+  const b = button('Install', 'Install a copy of this script into the chosen collection', () => {
+    void actions.install?.(b, selectedInstallChoice(select, options));
+  }, true);
+
+  const select = buildInstallSelect(options, { onChange: () => sync() });
+  // The pre-selected entry can be one that already holds this script
+  // (the default stays first regardless); Install then waits for a
+  // deliberate pick, and the Location cell says why.
+  const sync = (): void => {
+    const chosen = selectedInstallChoice(select, options);
+    const installed = 'option' in chosen && chosen.option.installed;
+    b.disabled = installed;
+    loc.textContent = installed
+      ? 'Already installed there. Pick another collection.'
+      : 'Not installed here yet';
+  };
+  sync();
+
+  const src = cell('col-collection');
+  src.appendChild(select);
+  tr.appendChild(src);
   tr.appendChild(loc);
 
   // No stored row, so no status: this file has never been loaded,
@@ -757,17 +773,77 @@ function installRow(
   tr.appendChild(versionCellFor(model.version, 'This script declares no @version'));
 
   const act = cell('col-actions');
-  if (actions.install) {
-    const b = button('Install', 'Install your own copy of this script', () => {
-      void actions.install?.(b);
-    }, true);
-    act.appendChild(b);
-  }
+  act.appendChild(b);
   tr.appendChild(act);
   // No stored row yet, so nothing to remove — an empty cell rather
   // than a disabled trash can, which would imply a copy exists.
   tr.appendChild(cell('col-remove'));
   return tr;
+}
+
+// The `<option>` value that means "New collection…".
+const NEW_COLLECTION_VALUE = 'new';
+
+export interface InstallSelectHandlers {
+  // The selection moved. Fires for "New collection…" like any other
+  // entry — picking it only *selects* it; the dialog opens when
+  // Install is clicked. Anything else would fire on a keyboard user
+  // simply cursoring past it, since Chrome emits `change` on every
+  // arrow key over a closed select.
+  onChange?(): void;
+}
+
+// The "Install into" dropdown, in three groups separated by rules:
+// the built-in default for this script's scheme (existing, or "(new)"
+// — created by the install); every other scripts collection in page
+// order; "New collection…". Entries that already hold this script are
+// disabled and marked. The first entry is always pre-selected, even
+// when it is disabled — installing a second copy is never the one-click
+// path.
+//
+// Every entry, "New collection…" included, only *selects*. Nothing
+// happens until Install is clicked.
+//
+// `<hr>` inside `<select>` is native in Chrome ≥ 119, well under the
+// extension's floor.
+export function buildInstallSelect(
+  options: readonly InstallOption[],
+  handlers: InstallSelectHandlers,
+): HTMLSelectElement {
+  const select = document.createElement('select');
+  select.className = 'install-target';
+  select.title = 'Which collection to install this script into';
+  options.forEach((o, i) => {
+    if (i === 1) select.appendChild(document.createElement('hr'));
+    // At most one suffix, in this order: "already installed" is why the
+    // entry can't be picked at all; "new" says the row doesn't exist
+    // yet; "disabled" warns about what happens after. The first two
+    // can't co-occur with "disabled" anyway — a default that doesn't
+    // exist is created enabled.
+    const text = o.installed ? `${o.label} (already installed)`
+      : !o.collection ? `${o.label} (new)`
+      : o.collectionOff ? `${o.label} (disabled)`
+      : o.label;
+    const opt = new Option(text, String(i));
+    opt.disabled = o.installed;
+    if (i === 0) opt.selected = true;
+    select.appendChild(opt);
+  });
+  select.appendChild(document.createElement('hr'));
+  select.appendChild(new Option('New collection…', NEW_COLLECTION_VALUE));
+  select.onchange = () => handlers.onChange?.();
+  return select;
+}
+
+// What a `buildInstallSelect` dropdown currently answers: one of the
+// listed containers, or "make me a new one". Falls back to the first
+// entry, since the select holds nothing else.
+export function selectedInstallChoice(
+  select: HTMLSelectElement,
+  options: readonly InstallOption[],
+): InstallChoice {
+  if (select.value === NEW_COLLECTION_VALUE) return { newCollection: true };
+  return { option: options[Number(select.value)] ?? options[0] };
 }
 
 function cell(cls: string): HTMLTableCellElement {

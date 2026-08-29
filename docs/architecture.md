@@ -38,9 +38,12 @@ details live in the topic-specific docs linked below.
   and surfaces per-tab match counts via the action badge. See
   [matching.md](matching.md).
 - **Collections page** (`src/collections.html` + `src/collections.ts`) — manage
-  collections (directory, manifest, github-dir, or one of the three
-  per-kind containers that hold individually added `.user.js` URLs /
-  paths) and inspect per-script status. See [storage.md](storage.md).
+  collections (directory, manifest, github-dir, or a "scripts"
+  collection holding individually installed scripts — user-created, or
+  one of the built-in per-scheme defaults) and inspect per-script
+  status. Collections are created and edited through the shared
+  **collection dialog** (`src/collection-dialog.ts`). See
+  [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
   local-file-override search roots, and GitHub auth token entry.
@@ -49,7 +52,8 @@ details live in the topic-specific docs linked below.
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode
   (`userscript.html?preview=<url>`), which fetches, describes,
-  and — on confirmation — `addCollection`s the script. Its "View raw
+  asks which scripts collection to put it in, and — on confirmation —
+  `installScript`s it. Its "View raw
   source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
   through `src/raw-view.ts`. See
   [install-capture.md](install-capture.md).

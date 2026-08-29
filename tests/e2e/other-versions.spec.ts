@@ -808,18 +808,20 @@ test.describe('other-versions panel', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#open-btn')).toBeVisible();
+    // A copy exists, so the table carries every action and the callout
+    // stays down.
+    await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator('#banner-slot')).toContainText('already installed');
 
     await page.locator(`${PANEL} .versions-remove`).click();
 
-    // Nothing is installed anywhere now: Install comes back, the stale
-    // Open/Update pointing at a dead id go away, and the panel — with
-    // no existing versions left — hides itself.
-    await expect(page.locator('#install-btn')).toBeVisible();
+    // Nothing is installed anywhere now: the install callout comes
+    // back in place of the banner, and the panel — with no existing
+    // versions left — hides itself.
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-btn')).toBeEnabled();
     await expect(page.locator('#open-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
-    await expect(page.locator('#banner-slot')).toContainText('This script is not installed yet');
+    await expect(page.locator('#banner-slot')).not.toContainText('already installed');
     await expect(page.locator(PANEL)).toBeHidden();
     await page.close();
   });
@@ -869,24 +871,24 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#preview-actions')).toBeVisible();
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    // Two targets below — the installed copy and the offer — so
-    // "…below" must not point past a row of buttons doing the same
-    // three things.
+    // The table carries every action, so the banner points at it and
+    // the header keeps no button that acts on a copy.
     await expect(page.locator('#banner-slot'))
-      .toContainText('Select which instance to open, update or install below');
-    await expect(page.locator('#install-btn')).toBeHidden();
+      .toContainText('Select which copy to open, update, or install below');
+    await expect(page.locator('#install-callout')).toBeHidden();
     await expect(page.locator('#open-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
     // Cancel and View raw source are about the preview itself, not
     // about a copy, so they stay.
     await expect(page.locator('#cancel-btn')).toBeVisible();
 
-    // Preview heading, and the offer row for the container that has no
-    // copy yet.
+    // Preview heading, and the offer row with the local default — which
+    // has no row yet — pre-selected.
     await expect(page.locator(PANEL)).toContainText('Existing versions');
     await expect(page.locator(PANEL)).not.toContainText('Other versions of this script');
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
     await expect(page.locator(`${PANEL} tr.is-offer`)).toContainText('Not installed here yet');
+    await expect(page.locator(`${PANEL} tr.is-offer select option:checked`))
+      .toHaveText('Scripts from local disk (new)');
     // The offer row borrows the previewed file's version rather than
     // reading as missing data.
     await expect(page.locator(`${PANEL} tr.is-offer td.col-version`)).toHaveText('1.0.0');
@@ -1009,7 +1011,7 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  test('preview of a file already installed standalone offers no second install', async ({
+  test('preview of a file already installed in the default makes a second copy a deliberate pick', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
@@ -1022,11 +1024,14 @@ test.describe('other-versions panel', () => {
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    // The container already holds this URL, so there is nothing to add.
-    await expect(page.locator('#install-btn')).toBeHidden();
-    // One copy, at this very URL: the buttons above are unambiguous, so
-    // the banner does not send the user to the table to pick.
-    await expect(page.locator('#banner-slot')).not.toContainText('Select which instance');
+    await expect(page.locator('#install-callout')).toBeHidden();
+    // The offer row keeps the default first and selected even though it
+    // already holds this script; Install waits for another pick.
+    const offer = page.locator(`${PANEL} tr.is-offer`);
+    await expect(offer.locator('select option:checked')).toHaveText('Scripts from local disk (already installed)');
+    await expect(offer.locator('select option:checked')).toBeDisabled();
+    await expect(offer.locator('button')).toBeDisabled();
+    await expect(offer).toContainText('Pick another collection');
     await page.close();
   });
 
@@ -1042,16 +1047,17 @@ test.describe('other-versions panel', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
-    await expect(page.locator('#banner-slot')).toContainText('This script is not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
     await expect(page.locator('#install-btn')).toBeVisible();
+    await expect(page.locator('#banner-slot')).not.toContainText('installed');
     await expect(page.locator(PANEL)).toBeHidden();
     expect(await allScripts(sm)).toHaveLength(0);
     await page.close();
   });
 
-  // The banner says WHICH copies exist, because the buttons beside it
-  // only ever act on the one at this URL.
-  test('the preview banner names the multiple-copy case', async ({
+  // The banner says a copy exists and sends the reader to the table,
+  // which is where every copy — and the offer — is.
+  test('the preview banner covers the multiple-copy case', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
@@ -1065,10 +1071,12 @@ test.describe('other-versions panel', () => {
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot'))
-      .toContainText('This script is already installed multiple times');
+      .toContainText('This script is already installed');
     await expect(page.locator('#banner-slot'))
-      .toContainText('Select which instance to open, update or install below');
-    await expect(page.locator(ROWS)).toHaveCount(2);
+      .toContainText('Select which copy to open, update, or install below');
+    // Two copies plus the offer row.
+    await expect(page.locator(ROWS)).toHaveCount(3);
+    await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
     await page.close();
   });
 
@@ -1081,7 +1089,7 @@ test.describe('other-versions panel', () => {
   }) => {
     const ns = 'https://example.com/ns';
     // `.js`, not `.user.js`: previewable, but not a single-file input,
-    // so `installTarget` — and with it the offer row — is undefined.
+    // so `installOptions` — and with it the offer row — is undefined.
     const plain = dir.writeRaw(
       'plain.js',
       [
@@ -1105,10 +1113,13 @@ test.describe('other-versions panel', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${plain}`)}`,
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
-    // Two same-identity rows below, and no offer row to install from.
+    // Two same-identity rows below, and no offer row to install from —
+    // so the callout stays, without a dropdown.
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(0);
     await expect(page.locator(ROWS)).toHaveCount(2);
+    await expect(page.locator('#install-callout')).toBeVisible();
     await expect(page.locator('#install-btn')).toBeVisible();
+    await expect(page.locator('#install-target')).toHaveCount(0);
     await page.close();
   });
 
@@ -1129,14 +1140,12 @@ test.describe('other-versions panel', () => {
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot'))
-      .toContainText('This script is already installed from a different URL');
-    await expect(page.locator('#banner-slot')).toContainText('Select which instance');
-    // Nothing installed at THIS url, so nothing for Open/Update to act
-    // on; Install has two targets counting the twin's row, so it too
-    // defers to the table.
+      .toContainText('This script is already installed');
+    await expect(page.locator('#banner-slot')).toContainText('Select which copy');
+    // Nothing installed at THIS url, so nothing for Open to act on; the
+    // table carries Install on its offer row.
     await expect(page.locator('#open-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
-    await expect(page.locator('#install-btn')).toBeHidden();
+    await expect(page.locator('#install-callout')).toBeHidden();
     await expect(page.locator(PANEL)).toContainText('Same script from a different URL');
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
     await page.close();

@@ -81,11 +81,14 @@ Returns three things.
   **Disjoint** from `sameLocation`: a row matching both is listed once,
   under location, the stronger claim. Its `sameIdentity` flag still
   reports the second relationship.
-- **`installTarget`** — where a standalone install would land, present
-  only when it would actually add something:
-  - the location is a single-file input, **and**
-  - no `sameLocation` row already sits in that container.
-  - `collection: null` means the container does not exist yet.
+- **`installOptions`** — the entries of the install page's dropdown,
+  present only when the location is a single-file input:
+  - the built-in default for the location's scheme first, then every
+    other container in page order — see
+    [The "Install into" dropdown](#the-install-into-dropdown);
+  - each marked `installed` when a `sameLocation` row already sits in
+    it;
+  - `collection: null` on the default means it does not exist yet.
 
 Both lists sort by collection display name, then location, so the panel is
 stable across renders.
@@ -230,8 +233,9 @@ the *other* rows.
   different upstream — a reasonable thing to want, but not "bring this
   up to date with what you are looking at", and offering it here would
   read as though it were.
-- **Install**, only on the `installTarget` row — and only when the
-  caller passes an `install` action. Two callers decline:
+- **Install**, only on the offer row — with the dropdown that picks
+  where — and only when the caller passes an `install` action. Two
+  callers decline:
   - the **installed page**, where an Install would add a second row for
     a file already installed, and two enabled rows at one URL inject
     the script twice;
@@ -240,9 +244,9 @@ the *other* rows.
 - **A trash can on every row**, in its own column right of the refetch
   button — same glyph and behaviour as the collections page's per-script
   remove.
-  - **Live only for scripts in a container collection** (the *Scripts from
-    local disk* / *…from web* / *…from GitHub* buckets), which the user
-    added one at a time.
+  - **Live only for scripts in a container collection** (a scripts
+    collection — the built-in *Scripts from …* defaults or one the user
+    made), which the user installed one at a time.
   - **Disabled elsewhere**, with the tooltip *Script from **directory**
     collection can only be removed by removing the collection* — or
     ***manifest** collection*, per `collectionHasManifest`.
@@ -290,6 +294,35 @@ the *other* rows.
   - **Not on an invalid preview**, which has deliberately hidden those
     buttons; re-running the wiring would put them back on a file the
     page has said cannot be installed.
+
+### A repaint waits for an open dropdown
+
+The panel rebuilds by `replaceChildren`, and the offer row's "Install
+into" control is a native `<select>` whose popup is drawn by the browser
+and dies with the element.
+
+- **The hazard**: a `storage.session` write — the injector's rejection
+  map, or any drawn copy's log level — repaints the panel. If that
+  lands while the popup is open, the popup closes and the mouseup that
+  was going to pick an entry falls on whatever the rebuild put there.
+  It reads as the dropdown choosing something by itself.
+- **The rule**: an *echo-driven* repaint is held (`panelPaintDeferred`)
+  while a `<select>` inside the panel has focus. Focus is the only
+  signal the platform offers — there is no "is the popup showing" API —
+  so it errs wide: a select merely tabbed to also defers.
+- **Flushed on `change` or `focusout`.** Both, because picking an entry
+  closes the popup but leaves the select focused, so a `focusout`-only
+  flush could sit pending until the user happened to click elsewhere. A
+  `change` proves the popup closed, so it flushes without re-checking
+  focus.
+- **The flush repaints from `lastRelatedPaint`**, not from args captured
+  when it deferred — otherwise a paint that landed in between could be
+  overwritten with older state.
+- **A panel action still repaints immediately.** The user asked for it,
+  and by then the click that opened the popup has been spent on the
+  button that ran the action.
+- Same principle as the collections page's busy affordances: a repaint
+  nobody asked for waits for the control being used.
 
 ### Failures
 
@@ -399,89 +432,74 @@ it.
   several targets drops its header Open button in favour of this table.
   Wrapping a long path is the lesser cost.
 
-## What this changed
+## The "Install into" dropdown
 
-- **Install and Open/Update are no longer exclusive.** A script can be
-  installed inside a collection collection while the user still has no copy
-  of their own. `installTarget` — "would a standalone install add
-  anything?" — is what decides whether Install shows.
-- **The preview's already-installed check now uses this lookup**, so
-  the buttons and the panel apply the same rule for what counts as
-  installed. Each reads storage separately, so they can sit a moment
-  apart; sharing a cached snapshot would be worse, handing the buttons
-  a stale answer right after an install.
-  - The header **is** passed, but only the banner reads what it adds.
-    Every button decision comes from `sameLocation` / `installTarget`,
-    which the header cannot change: letting an identity match suppress
-    Install would strand the user with no way to add the script, since
-    installing one location over another is not a thing we can do.
+Where a single-file install lands is the user's choice, made in one
+dropdown that appears in two places: the install callout (nothing
+installed yet) and the panel's offer row (some copy exists). Built by
+`buildInstallSelect` in `src/related-versions.ts` from `installOptions`.
 
-### The preview's already-installed banner
+- **Three groups**, separated by rules:
+  1. the **built-in default** for the script's scheme — `Scripts from
+     web` / `…GitHub` / `…local disk` — matched by its stored path
+     (`container:http` etc.), never by name. Listed as-is if it
+     exists, as *… (new)* if not; the install creates it;
+  2. every other scripts collection, in page order (including the
+     other two defaults, if they exist);
+  3. **New collection…**, which is an ordinary entry: picking it only
+     selects it. The collection dialog opens when **Install** is
+     clicked, locked to Individual scripts, titled *Create new
+     collection and install script* with a **Create and install**
+     button — so the dialog's confirm doesn't quietly install too.
+     Cancelling it installs nothing and leaves the page as it was.
+     - Why not on selection: Chrome fires `change` on every arrow key
+       over a *closed* select, so a keyboard user cursoring past the
+       entry would get a modal without asking for one.
+- **Already holds this script** → the entry is disabled and marked
+  *(already installed)*.
+- **Switched off** → marked *(disabled)*, but still selectable: a
+  script installed there won't run, and the user may be about to turn
+  the collection back on. At most one suffix per entry, in the order
+  *(already installed)* → *(new)* → *(disabled)*.
+- **The first entry is always pre-selected**, even when disabled;
+  Install is then disabled until the user picks another entry, and the
+  offer row's Location cell says why. Installing a second copy is never
+  the one-click path.
+- On a fresh profile the list is just *Scripts from web (new)* and
+  *New collection…*. No default is created up-front — only by an
+  install that targets it.
+- Directory / manifest collections never appear: a script can't be put
+  into one.
 
-Install / Open / Update act on the copy at **this URL** and nothing
-else, so one sentence for every situation would leave the user guessing
-which copy they were about to touch. The banner splits by what exists:
+## What the header offers
 
-| What exists | Banner |
-|---|---|
-| One copy, at this URL | This script is already installed *(version …)* |
-| One copy, elsewhere | This script is already installed from a different URL |
-| More than one | This script is already installed multiple times |
-| None anywhere | This script is not installed yet |
+Every decision comes from `sameLocation` / `sameIdentity` /
+`installOptions`; the header is passed too, but only the banner reads
+what it adds.
 
-- A second line — *Select which instance to open, update or install
-  below* — appears wherever a choice actually exists: more than one
-  **row in the table below**, counting the install-offer row. That is
-  `choiceCount`, and it decides two things at once.
+| What exists | Banner | Header | Table |
+|---|---|---|---|
+| Nothing, anywhere | none | the **install callout**: *Install into [dropdown]* + Install | none |
+| Any copy, here or from a mirror | *This script is already installed* + *Select which copy to open, update, or install below* | Cancel, View raw source | every copy, plus the offer row with the same dropdown |
+| A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer row |
 
-### When there is more than one target, the header buttons stand down
-
-- **Install / Open / Update disappear** and the table becomes the only
-  place to act. Every one of them exists per-row down there: Install on
-  the offer row, Update on each *This URL* row, and every location is a
-  link to that copy's page.
-- Leaving them up would leave the user to guess which row they meant —
-  and the banner's *…below* would be pointing past a row of buttons
-  doing the same three things.
-- **Cancel and View raw source stay.** They are about the preview
-  itself, not about any one copy.
-- **Install only stands down for a table that offers one**, i.e. one
-  with the `installTarget` offer row. A previewable location with no
-  single-file spelling (a `foo.js`, a manifest URL) never gets that
-  row, so with two same-`@name` copies installed elsewhere the count
-  would say "defer" while the table had nowhere to install from —
-  leaving no way to install it at all.
-- One count drives both the banner line and the buttons, so they cannot
-  disagree about whether a choice exists.
-- The offer row counts as a target because it is what an Install would
-  land in. A collection collection holding this URL while the user has no
-  copy of their own is the case that motivated this: two rows below,
-  four buttons above, nothing tying them together — even though only
-  one copy is installed.
-- The single-target case is unchanged: one copy at this URL, no offer,
-  nothing elsewhere, and the header buttons act directly.
-- `syntaxErrorOutcome` asks `previewInstalledStatus`, not
-  `updateBtn.hidden`, for whether a row exists here. The two came apart
-  when the buttons started standing down — a copy can exist while
-  Update is deliberately hidden, and calling that an install would be
-  wrong.
-- The version aside is single-copy only. With several rows the answer is
-  the table's Version column, not a parenthetical about one of them.
 - **"Not installed" means nowhere**, not merely not here: a same-`@name`
   copy from a mirror is still this script, installed.
-- With no copy at this URL, **Open and Update stay hidden** — there is
-  no row for them to act on, and the panel below is the way across.
+- **Once any copy exists the table is the only place to act.** Every
+  action exists per row: Open (the location link) and Update on each
+  copy, Install on the offer row. Header buttons acting on "the" copy
+  would leave the user guessing which row they meant.
 - The banner shares the panel's green ground: it is about which of those
-  copies the buttons act on, so the two are one thought.
-- **A script inside a directory or repo collection is now recognized** when
-  the same URL is opened directly — previously it wasn't, and installing
-  by URL made a second copy.
-- **Install shows when installing would add something**: an
-  `installTarget`, *or* nothing installed at this location at all. The
-  second clause matters because a preview accepts any http(s)/file
-  location while `installTarget` only speaks for `.user.js` ones —
-  without it a `foo.js` or manifest URL would lose its Install button
-  with nothing said about why. `addCollection` remains what judges those.
+  copies the table lists, so the two are one thought. It says the fact
+  and points at the table; which versions exist is the Version column's
+  job, where several rows can't be confused for one.
+- `syntaxErrorOutcome` asks `previewInstalledStatus` — the row at this
+  location, recorded before the header is wired — for whether a copy
+  exists here.
+- **A script inside a directory or repo collection is recognized** when
+  the same URL is opened directly, and installing by URL then makes a
+  deliberate second copy of the user's own — the offer stays live
+  because no *container* holds it.
 
 ## Known limitations
 

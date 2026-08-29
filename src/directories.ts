@@ -62,7 +62,7 @@ export { MAX_SCAN_DEPTH } from './collection-scan.js';
 // (`isPreviewableInput`) — and their messages had already drifted into
 // two different descriptions of one rule.
 export const LOCATION_SHAPES =
-  'must be an http(s):// or file:// URL, or an absolute path starting with /';
+  'must be a URL or absolute file path';
 
 export function isHttpUrl(input: string): boolean {
   return /^https?:\/\//i.test(input);
@@ -72,29 +72,58 @@ export function isFileUrl(input: string): boolean {
   return /^file:\/\//i.test(input);
 }
 
-// Container collections aggregate individually-added scripts of one
-// kind (local files, web URLs, GitHub URLs). Their stored `path` is one
-// of the synthetic identifiers below — not a real URL — and per-script
-// `relativePath` carries the full URL/path the user added. There is no
-// scan step for a container collection; refresh iterates the explicit
-// scriptIds list and refetches each entry.
+// Container collections hold individually-installed scripts — the
+// folder-like collections the user creates and names, plus the three
+// built-in defaults. Their stored `path` is a synthetic
+// `container:<…>` identifier — not a real URL — and per-script
+// `relativePath` carries the full URL/path the user installed. A
+// container can mix local, web, and GitHub scripts: there is no scan
+// step, refresh iterates the explicit scriptIds list and refetches each
+// entry from its own location.
+//
+// Two spellings of the identifier:
+//   - `container:file` / `container:http` / `container:github` — the
+//     built-in default for each scheme ("Scripts from local disk" /
+//     "…from web" / "…from GitHub"). Created on demand by an install
+//     that targets it; recognised by this fixed path, never by name,
+//     so a rename doesn't stop it being the default.
+//   - `container:<uuid>` — a collection the user created.
 export type ContainerKind = 'file' | 'http' | 'github';
 
 const CONTAINER_PATH_PREFIX = 'container:';
 
+// The fixed path of the built-in default container for a scheme.
 export function containerPath(kind: ContainerKind): string {
   return CONTAINER_PATH_PREFIX + kind;
 }
 
-export function isContainerCollection(input: string): boolean {
-  return containerKind(input) !== null;
+// A fresh path for a user-created container.
+export function newContainerPath(): string {
+  return CONTAINER_PATH_PREFIX + crypto.randomUUID();
 }
 
+export function isContainerCollection(input: string): boolean {
+  return input.startsWith(CONTAINER_PATH_PREFIX);
+}
+
+// Which scheme this container is the built-in default for — or null
+// for a user-created container (and for anything that isn't a
+// container). NOT a restriction on what the container may hold.
 export function containerKind(input: string): ContainerKind | null {
   if (input === 'container:file') return 'file';
   if (input === 'container:http') return 'http';
   if (input === 'container:github') return 'github';
   return null;
+}
+
+// The three shapes a collection row can take. Derived from the stored
+// path rather than persisted, so a row can't disagree with itself.
+export type CollectionKind = 'scripts' | 'directory' | 'manifest';
+
+export function collectionKind(path: string): CollectionKind {
+  if (isContainerCollection(path)) return 'scripts';
+  if (isManifestCollection(path)) return 'manifest';
+  return 'directory';
 }
 
 // Pathname of an http(s) or file:// URL, sans query and fragment.
@@ -176,9 +205,9 @@ export function canonicalCollectionInput(input: string): string {
 
 // True for any input pointing at an individual `.user.js` script —
 // http(s):// URL, file:// URL, or absolute local path — based on the
-// pathname suffix. Single-script inputs no longer get their own
-// collection row; the add flow routes them into the matching container
-// collection (see `containerKindForSingleFileInput`).
+// pathname suffix. Single-script inputs don't get their own collection
+// row; the install flow puts them into a container collection (by
+// default the one for their scheme — see `containerKindForSingleFileInput`).
 export function isSingleFileInput(input: string): boolean {
   return locationPathname(input).endsWith('.user.js');
 }
@@ -194,13 +223,12 @@ export function isManifestCollection(input: string): boolean {
     || p.endsWith('/' + MANIFEST_FILENAME);
 }
 
-// Classify a single-file input string by container kind. Callers that
-// have already verified the input passes `isSingleFileInput` use this
-// to pick which container collection the script gets added to. github
-// URLs here mean both the human-facing `github.com/...` form and the
-// already-normalized `raw.githubusercontent.com/...` form, since
-// `normalizeCollectionInput` may have rewritten the input before this
-// runs.
+// Classify a script location by scheme: which built-in default
+// container it would install into, and which scheme chip its row wears
+// inside a container. github URLs here mean both the human-facing
+// `github.com/...` form and the already-normalized
+// `raw.githubusercontent.com/...` form, since `normalizeCollectionInput`
+// may have rewritten the input before this runs.
 export function containerKindForSingleFileInput(input: string): ContainerKind {
   if (/^https?:\/\/(www\.)?github\.com\//i.test(input)) return 'github';
   if (/^https?:\/\/raw\.githubusercontent\.com\//i.test(input)) return 'github';
@@ -721,8 +749,8 @@ export async function scanForUserScripts(
       // Ends with what to do, per the "name the fix" rule; the reader
       // is standing at the Add field that produced this.
       throw new Error(
-        `This URL is neither a folder (use a github tree URL) nor a ${MANIFEST_FILENAME} — ` +
-        'to install a single script, paste the URL of the .user.js file itself',
+        `This URL is neither a folder (use a github tree URL) nor a ${MANIFEST_FILENAME}. ` +
+        'To install a single script, paste the URL of the .user.js file itself.',
       );
     }
     // Local-directory only. Normalise file:// → raw path once so the

@@ -53,8 +53,8 @@
 //     `@resource` + `GM_getResourceText`. What justifies each is that
 //     the user named that directory: a configured root on the options
 //     page, a collection root by adding the collection. Both say so
-//     where they're set (the options page's note, the per-collection
-//     Local files toggle) — so point a collection at a directory of
+//     where they're set (the options page's note, the collection
+//     dialog's local-overrides option) — so point a collection at a directory of
 //     script content, not at a home directory.
 //
 // On top of that:
@@ -81,7 +81,7 @@
 import {
   isHttpUrl,
   isFileUrl,
-  containerKind,
+  isContainerCollection,
   pathToFileUrl,
   isManifestCollection,
   isSingleFileInput,
@@ -131,7 +131,7 @@ export function parseLocalRootLines(text: string): ParsedRoot[] {
     const entry: ParsedRoot = { lineNumber: i + 1, text: trimmed };
     const url = canonicalRootUrl(trimmed);
     if (url) entry.url = url;
-    else entry.error = `A local file root ${ROOT_SHAPES}`;
+    else entry.error = `Local file root ${ROOT_SHAPES}`;
     out.push(entry);
   }
   return out;
@@ -302,7 +302,7 @@ export interface LocalFileScope {
 // Everything else is a local directory: itself.
 function collectionRootUrl(collectionPath: string): string | null {
   if (!collectionPath) return null;
-  if (containerKind(collectionPath) !== null) return null;
+  if (isContainerCollection(collectionPath)) return null;
   if (isHttpUrl(collectionPath)) return null;
   const canonical = collectionCanonicalUrl(collectionPath);
   if (!isFileUrl(canonical)) return null;
@@ -368,18 +368,18 @@ export function localSearchRoots(
 }
 
 // Can a collection's scripts ever have local stand-ins? Used only to
-// decide whether the collections page shows the per-collection toggle —
-// the real gate is `localSearchRoots`, which looks at each script's own
-// URL. Not the same question as `collectionRootUrl` above: a file
-// container supports stand-ins but contributes no root of its own.
+// decide whether the collection dialog offers the per-collection
+// option — the real gate is `localSearchRoots`, which looks at each
+// script's own URL. Not the same question as `collectionRootUrl` above:
+// a container supports stand-ins but contributes no root of its own.
 //
-// http(s) collections and the http / github containers are excluded:
-// every script under them loads over the network, so the toggle would
-// be a control that does nothing.
+// http(s) collections are excluded: every script under them loads over
+// the network, so the option would be a control that does nothing.
+// Every container qualifies — even the built-in web / GitHub defaults —
+// because a container may hold scripts from any scheme, and the option
+// applies to whichever of them came from disk.
 export function collectionSupportsLocalFiles(collectionPath: string): boolean {
-  if (isHttpUrl(collectionPath)) return false;
-  const container = containerKind(collectionPath);
-  return container !== 'http' && container !== 'github';
+  return !isHttpUrl(collectionPath);
 }
 
 // Every local file that could stand in for `declaredUrl`, in the order

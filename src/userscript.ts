@@ -28,6 +28,8 @@
 
 import {
   addCollection,
+  installScript,
+  type InstallTarget,
   buildScriptFromText,
   describeError,
   distillMatching,
@@ -50,16 +52,21 @@ import {
   findRelatedVersions,
   isRunning,
   otherRunningCopies,
+  type InstallOption,
   type RelatedScript,
   type RelatedVersions,
   type ScriptEnableChange,
 } from './script-identity.js';
 import {
+  buildInstallSelect,
   enableTitle,
   renderRelatedVersions,
+  selectedInstallChoice,
   watchSoloModifier,
+  type InstallChoice,
   type RelatedVersionsActions,
 } from './related-versions.js';
+import { openCollectionDialog } from './collection-dialog.js';
 import { computeLogIds } from './script-log-id.js';
 import {
   attachFiles,
@@ -195,9 +202,11 @@ const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInput
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 const bannerSlotEl = document.getElementById('banner-slot')!;
 const actionsEl = document.getElementById('preview-actions')!;
+const installCalloutEl = document.getElementById('install-callout') as HTMLElement;
+const installTargetLabel = document.getElementById('install-target-label') as HTMLLabelElement;
+const installTargetSlot = document.getElementById('install-target-slot') as HTMLElement;
 const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
 const openBtn = document.getElementById('open-btn') as HTMLButtonElement;
-const updateBtn = document.getElementById('update-btn') as HTMLButtonElement;
 const continueBtn = document.getElementById('continue-btn') as HTMLButtonElement;
 const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement;
 const viewSourceBtn = document.getElementById('view-source-btn') as HTMLButtonElement;
@@ -280,7 +289,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // after the gate is about the one installed script this page is
   // showing, which a preview doesn't have.
   if (areaName === 'session' && panelStatusChanged(changes)) {
-    if (lastRelatedPaint) void repaintRelatedVersions(lastRelatedPaint);
+    // Held back while the offer row's dropdown is open — see
+    // `panelPaintDeferred`. Nothing is lost: the flush repaints from
+    // the latest args once the dropdown is done with.
+    if (lastRelatedPaint) {
+      if (panelSelectIsOpen()) {
+        panelPaintDeferred = true;
+      } else {
+        panelPaintDeferred = false;
+        void repaintRelatedVersions(lastRelatedPaint);
+      }
+    }
   }
   if (!scriptId) return;
   if (areaName === 'local') {
@@ -376,6 +395,12 @@ function repaintStatusRow(script: StoredScript): void {
   prior.replaceWith(buildStatusCell(script));
 }
 
+// The viewer's not-found line: this id names no stored row. One copy,
+// because two surfaces reach it — the initial load and the storage
+// watcher — and a message that drifted between them would read as two
+// different problems.
+const SCRIPT_NOT_IN_STORAGE = 'Script not found in storage. Open it from the collections page.';
+
 async function rehydrateAfterStorageChange(): Promise<void> {
   if (!scriptId) return;
   // If THIS script was removed, drop into the not-found state.
@@ -389,7 +414,7 @@ async function rehydrateAfterStorageChange(): Promise<void> {
     showMissing(
       removedHere
         ? 'This script has been removed'
-        : 'Script not found in storage — open it from the collections page',
+        : SCRIPT_NOT_IN_STORAGE,
     );
     return;
   }
@@ -467,7 +492,7 @@ async function loadStored(): Promise<void> {
   if (!scriptId) return;
   const script = await getScript(scriptId);
   if (!script) {
-    showMissing('Script not found in storage — open it from the collections page');
+    showMissing(SCRIPT_NOT_IN_STORAGE);
     return;
   }
   cacheCollection(await getCollection(script.collectionId));
@@ -829,7 +854,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     },
     // Omitted — which is what suppresses the offer row — unless the
     // caller says installing here is a thing the user can actually do.
-    install: args.offerInstall ? (btn) => doInstall(btn) : undefined,
+    install: args.offerInstall ? (btn, choice) => doInstall(btn, choice) : undefined,
   };
 
   renderRelatedVersions(versionsEl, {
@@ -977,10 +1002,70 @@ let removedHere = false;
 // failed must not erase the report of that failure.
 let relatedVersionsMessage = '';
 
+// A repaint the panel owes to a storage echo, held back while the user
+// is working a control that a rebuild would destroy.
+//
+// The offer row's "Install into" dropdown is a native `<select>`: its
+// popup is drawn by the browser and dies with the element. A rebuild
+// while that popup is open closes it, and the mouseup that was going
+// to pick an entry lands on whatever the rebuild put underneath —
+// which reads as the dropdown selecting something on its own. Any
+// session write reaches here (the injector's rejection map, a drawn
+// copy's log level), so the window is small but real and not the
+// user's fault.
+//
+// Same principle the collections page applies to a toggle mid-write:
+// a repaint nobody asked for waits for the control being used.
+// A flag, not the captured args: `lastRelatedPaint` is what every
+// other repaint reads, and replaying a stale snapshot could let the
+// flush paint older state over a newer paint that landed meanwhile.
+let panelPaintDeferred = false;
+
+// True while a `<select>` inside the panel holds focus, which is the
+// state a popup is open in. Focus is the only signal the platform
+// gives — there is no "is the popup showing" API — and it errs the
+// safe way: a select merely tabbed to also defers, and the flush below
+// catches up the moment focus leaves.
+function panelSelectIsOpen(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLSelectElement && versionsEl.contains(active);
+}
+
+// Flush whatever was held back, once the dropdown is done with.
+//
+// Two triggers, because focus alone doesn't cover it. Picking an entry
+// closes the popup but LEAVES the select focused — Chrome fires no
+// blur — so a `focusout`-only flush would sit pending until the user
+// happened to click elsewhere, which may be never. A `change` means an
+// entry was committed, and therefore that the popup is closed, so it
+// flushes unconditionally.
+function flushDeferredPanelPaint(): void {
+  if (!panelPaintDeferred || !lastRelatedPaint) return;
+  panelPaintDeferred = false;
+  void repaintRelatedVersions(lastRelatedPaint);
+}
+
+versionsEl.addEventListener('change', () => flushDeferredPanelPaint());
+
+// `focusout` fires BEFORE focus lands on the next element, so the check
+// is deferred a task — reading `activeElement` synchronously here would
+// see `body` and repaint out from under a click still travelling to a
+// sibling control.
+versionsEl.addEventListener('focusout', () => {
+  setTimeout(() => {
+    if (panelSelectIsOpen()) return;
+    flushDeferredPanelPaint();
+  }, 0);
+});
+
 // Re-run the panel after one of its own actions. The installed viewer
 // also repaints via the `storage.onChanged` listener, but a preview has
 // no `scriptId` so that listener returns early — this is what keeps the
 // preview's panel current.
+//
+// A panel action is the user asking for this, so it repaints even with
+// the dropdown focused: by then the click that opened it has been
+// spent on the button that ran the action.
 function repaintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   return paintRelatedVersions(args).catch((err) => {
     // Emptied, not left as-is: the rows carry live buttons keyed to
@@ -1298,7 +1383,7 @@ async function loadPreview(): Promise<void> {
     showFileAccessBannerIfBlocked(previewFileUrl);
     summaryEl.replaceChildren();
     tabsView.clear();
-    installBtn.hidden = true;
+    hideInstallCallout();
     // A fetch that failed for a location we already hold a copy of is
     // exactly when the user wants to reach the copy that works. Only
     // meaningful once we know the normalized location — if
@@ -1626,8 +1711,7 @@ function locationIn(line: number | undefined): DiagnosticLocation {
 
 function renderInvalidPreview(error: PreviewWarning): void {
   renderBanner(error);
-  installBtn.hidden = true;
-  updateBtn.hidden = true;
+  hideInstallCallout();
   // Nothing to install or update, but if we already hold a copy of
   // this location the user still wants a way to reach it — a broken
   // fetch of a script you have installed is exactly when you'd want to
@@ -1811,94 +1895,81 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
 
 // Look for existing rows at this location and pick the button set.
 //
-// Install and Open/Update are not mutually exclusive any more. A
-// script can already be installed *inside a collection* the
-// user subscribes to while they still have no copy of their own — and
-// in that case both are meaningful: Open jumps to the copy that
-// exists, Install adds the standalone one that doesn't. `installTarget`
-// is precisely "a single-file install here would add something", so it
-// is what decides whether Install shows.
+// What the header offers depends only on whether ANY copy exists:
 //
-// But only while each of them HAS one target. Once the panel below
-// offers more than one, these three step aside entirely and the table
-// becomes the only place to act — every one of them exists per-row
-// down there (Install on the offer row, Update on each "This URL"
-// row, and every location is a link to that copy's page). Leaving them
-// up here would leave the user to guess which row they meant, and the
-// banner's "…below" pointing past a row of buttons that do the same
-// three things is the worst of both.
+//   - none anywhere → the install callout: "Install into [collection]",
+//     with the built-in default for this script's scheme pre-selected,
+//     so the common case is one click;
+//   - any copy, here or from a mirror → the "already installed" banner,
+//     and the table below is the only place to act. Every action
+//     exists per row down there — Open (the location link) and Update
+//     on each copy, Install with the same dropdown on the offer row —
+//     so header buttons would only leave the user guessing which row
+//     they meant.
+//
+// The one exception is a location with no single-file spelling (a
+// `foo.js`, a manifest URL): the table has no offer row to carry
+// Install, so the callout stays — without a dropdown — as long as
+// nothing is installed at this location. `addCollection` judges those.
 async function wireInstallButtons(): Promise<void> {
   // Re-runnable: `afterPanelAction` calls this again when a panel
-  // action changed what is installed. Every button it owns is reset
-  // first, or a copy that has just been removed would leave Open and
-  // Update on screen pointed at an id that no longer exists.
+  // action changed what is installed. Every control it owns is reset
+  // first, or a copy that has just been removed would leave Open on
+  // screen pointed at an id that no longer exists.
   openBtn.hidden = true;
-  updateBtn.hidden = true;
   previewInstalledStatus = null;
 
   const related = await findRelatedHere();
   const existing = related.sameLocation[0]?.script;
-  const deferToTable = choiceCount(related) > 1;
 
   // Recorded before any early return: the parse-check warning describes
   // what installing WOULD do, and that depends on the row that exists
   // here, not on which surface the user will click.
   if (existing) previewInstalledStatus = existing.status;
 
-  // Install shows when installing would add something:
-  //   - `installTarget` — a single-file location with no copy of its
-  //     own yet, INCLUDING when a collection already covers it;
-  //   - nothing installed here at all. `installTarget` only speaks for
-  //     single-file inputs (`.user.js`), but a preview accepts any
-  //     http(s)/file location, so a `foo.js` or a manifest URL would
-  //     otherwise lose its Install button with nothing said about why.
-  //     `addCollection` remains the thing that judges those.
-  //
-  // …and it only stands down for a table that actually offers an
-  // install, which is the `installTarget` offer row. Deferring on the
-  // count alone would strand the second clause above: a `foo.js` with
-  // two same-`@name` copies installed elsewhere has two rows below and
-  // no offer row, so hiding the header button would leave nowhere to
-  // install it from at all.
-  const tableOffersInstall = deferToTable && related.installTarget !== undefined;
-  if (!tableOffersInstall && (related.installTarget || !existing)) {
-    installBtn.hidden = false;
-    installBtn.disabled = false;
-    installBtn.onclick = () => void doInstall();
-  } else {
-    installBtn.hidden = true;
-  }
-
   // "Not installed" means no copy ANYWHERE, not just none at this URL:
   // a same-`@name` copy from a mirror is still this script, installed.
   if (!existing && !related.sameIdentity.length) {
-    renderBanner('This script is not installed yet', 'preview');
+    clearBanner();
+    showInstallCallout(related.installOptions);
     return;
   }
-
-  renderInstalledBanner(related, previewHeader);
-
-  // Open and Update act on a row at THIS location. With none, there is
-  // nothing for them to act on — the banner has just said the copies
-  // are elsewhere, and the panel below is where the user goes to reach
-  // them.
-  if (!existing || deferToTable) return;
-  showOpenButton(existing.id);
-  updateBtn.hidden = false;
-  updateBtn.onclick = () => void doUpdate(existing.id);
+  renderInstalledBanner();
+  if (!related.installOptions && !existing) showInstallCallout(undefined);
+  else hideInstallCallout();
 }
 
-// How many things the panel below offers to act on: every installed
-// copy, plus the "not installed here yet" offer row, which is a target
-// like any other — it is what an Install would land in.
-//
-// One shared count, because it decides two things that must not
-// disagree: whether the banner sends the user to the table, and
-// whether the header buttons stand down in its favour.
-function choiceCount(related: RelatedVersions): number {
-  return related.sameLocation.length
-    + related.sameIdentity.length
-    + (related.installTarget ? 1 : 0);
+// The callout, with the dropdown when the location can be installed as
+// a single script. Every entry, "New collection…" included, only
+// selects — Install is what acts, and for "New collection…" it opens
+// the create dialog first and installs into what that makes.
+function showInstallCallout(options: readonly InstallOption[] | undefined): void {
+  installTargetSlot.replaceChildren();
+  installTargetLabel.hidden = !options;
+  installCalloutEl.hidden = false;
+  installBtn.disabled = false;
+  if (!options) {
+    installBtn.onclick = () => void doInstall(installBtn, undefined);
+    return;
+  }
+  const select = buildInstallSelect(options, { onChange: () => sync() });
+  select.id = 'install-target';
+  // The pre-selected default can be one that already holds this
+  // script; Install then waits for a deliberate pick.
+  const sync = (): void => {
+    const chosen = selectedInstallChoice(select, options);
+    installBtn.disabled = 'option' in chosen && chosen.option.installed;
+  };
+  installTargetSlot.appendChild(select);
+  sync();
+  installBtn.onclick = () => {
+    void doInstall(installBtn, selectedInstallChoice(select, options));
+  };
+}
+
+function hideInstallCallout(): void {
+  installCalloutEl.hidden = true;
+  installBtn.onclick = null;
 }
 
 async function offerOpenExisting(): Promise<void> {
@@ -1917,13 +1988,13 @@ async function offerOpenExisting(): Promise<void> {
 // install or a refresh, which is a worse failure than a transient one
 // that the next storage change corrects.
 //
-// The header IS passed, but only the banner reads what it adds. Every
-// button decision comes from `sameLocation` / `installTarget`, which
-// the header cannot change: installing over a same-`@name` copy from
-// another URL is not a thing we can do, so letting an identity match
-// suppress Install would strand the user with no way to add the
+// The header IS passed, but only the banner and the table read what it
+// adds. The install offer comes from `sameLocation` / `installOptions`,
+// which the header cannot change: installing over a same-`@name` copy
+// from another URL is not a thing we can do, so letting an identity
+// match suppress Install would strand the user with no way to add the
 // script. What the identity match is for is telling the user WHICH
-// copies the buttons are and aren't about.
+// copies exist.
 async function findRelatedHere(): Promise<RelatedVersions> {
   const snapshot = await readStoreSnapshot();
   return findRelatedVersions({ ...snapshot, location: previewLocation, header: previewHeader });
@@ -1946,25 +2017,56 @@ function showOpenButton(id: string): void {
   };
 }
 
-// `btn` is whichever control the user actually clicked: the preview's
-// own Install, or the panel's offer-row Install. The busy state has to
+// `btn` is whichever control the user actually clicked: the callout's
+// Install, or the panel's offer-row Install. The busy state has to
 // land on that one — spinning the header button while the clicked one
-// stays live invites a second click, and a second `addCollection`.
-async function doInstall(btn: HTMLButtonElement = installBtn): Promise<void> {
+// stays live invites a second click, and a second install.
+//
+// `choice` is the dropdown's answer: a listed container (or the
+// not-yet-existing default), or "New collection…" — which asks the
+// dialog first and installs into what it made. `undefined` for a
+// location with no single-file spelling, which `addCollection` adds as
+// a whole collection.
+async function doInstall(
+  btn: HTMLButtonElement,
+  choice: InstallChoice | undefined,
+): Promise<void> {
+  let target: InstallTarget | undefined;
+  if (choice && 'newCollection' in choice) {
+    // Deliberately here rather than when the dropdown changed: a
+    // keyboard user cursoring past "New collection…" fires `change` on
+    // a closed select, and a modal opening under the arrow keys is
+    // startling. Asking at Install also makes the coupling plain —
+    // the dialog says it will create AND install, and its button
+    // agrees.
+    const outcome = await openCollectionDialog({
+      mode: 'create',
+      lockKind: 'scripts',
+      andInstall: true,
+    });
+    if (!outcome) return;
+    target = { collectionId: outcome.collection.id };
+  } else if (choice) {
+    target = choice.option.collection
+      ? { collectionId: choice.option.collection.id }
+      : { schemeDefault: true };
+  }
   const spinner = startBusy(btn);
   try {
-    // The normalized form, not the raw input: `addCollection`
-    // normalizes again internally (a no-op on an already-canonical
-    // value), and for a github blob URL the raw input would cost a
-    // second Contents-API round trip that can fail after the user has
-    // already clicked Install.
-    const result = await addCollection(previewLocation);
+    // The normalized form, not the raw input: the store normalizes
+    // again internally (a no-op on an already-canonical value), and for
+    // a github blob URL the raw input would cost a second Contents-API
+    // round trip that can fail after the user has already clicked
+    // Install.
+    const result = target
+      ? await installScript(previewLocation, target)
+      : await addCollection(previewLocation);
     if (!result) {
       // Raced another tab (or the same URL under a different spelling
-      // that normalizes to an already-installed one). Re-run the button
-      // wiring so the page converges on the Open / Update pair instead
-      // of offering an Install that can only repeat this message.
-      setMessage('This script is already installed');
+      // that normalizes to an already-installed one). Re-run the
+      // wiring so the page converges on the table instead of offering
+      // an Install that can only repeat this message.
+      setMessage('This script is already installed there');
       await wireInstallButtons();
       return;
     }
@@ -2033,18 +2135,6 @@ async function soloNewlyInstalled(newScriptId: string): Promise<void> {
     await applyEnableChanges(enableChanges(newScriptId, true, rows));
   } catch (err) {
     dlog(`[SourceMonkey] install exclusive-enable skipped: ${describeError(err)}`);
-  }
-}
-
-async function doUpdate(id: string): Promise<void> {
-  const spinner = startBusy(updateBtn);
-  try {
-    await updateScript(id, 'manual', 'force');
-    location.href = viewerUrl(id);
-  } catch (err) {
-    setMessage(`Update failed: ${describeError(err)}`, 'error');
-    spinner.remove();
-    updateBtn.disabled = false;
   }
 }
 
@@ -2257,51 +2347,23 @@ function makeBanner(content: BannerContent, extraClass = ''): HTMLElement {
   return div;
 }
 
-// What "already installed" means here, which is not one thing: the copy
-// may be this very URL, or the same script from a mirror, or several at
-// once. The Install / Open / Update buttons above act on the copy at
-// THIS URL and nothing else, so a banner that said the same sentence in
-// all three cases would leave the user guessing which copy they were
-// about to touch — which is the whole reason this splits.
-function renderInstalledBanner(related: RelatedVersions, header: ParsedHeader | null): void {
-  const here = related.sameLocation.length;
-  const elsewhere = related.sameIdentity.length;
-  let text: string;
-  if (here + elsewhere > 1) {
-    text = 'This script is already installed multiple times';
-  } else if (here === 1) {
-    text = `This script is already installed${versionGloss(related.sameLocation[0].script, header)}`;
-  } else {
-    text = 'This script is already installed from a different URL';
-  }
-  const banner = makeBanner(text, 'installed');
-  // Only where a choice actually exists — and where it does, the same
-  // count has already taken Install / Open / Update out of the header,
-  // so "below" points at the only place those actions now live.
-  //
-  // The remaining case — one target, no offer — is the one the header
-  // buttons address unambiguously, and pointing at a table to pick
-  // from would invent a decision the user doesn't have to make.
-  if (choiceCount(related) > 1) {
-    const p = document.createElement('p');
-    p.textContent = 'Select which instance to open, update or install below';
-    banner.append(p);
-  }
+// Any copy exists — here, from a mirror, or several. Which ones, and
+// what each can do, is the table's job: the banner says so and points
+// at it. It shares the panel's green ground because the two are one
+// thought.
+function renderInstalledBanner(): void {
+  const banner = makeBanner('This script is already installed', 'installed');
+  const p = document.createElement('p');
+  p.textContent = 'Select which copy to open, update, or install below';
+  banner.append(p);
   replaceBanner(banner);
 }
 
-// The version aside, for the single-copy case: which version is
-// installed, and whether the file on screen disagrees. Left off the
-// multi-copy wordings — with several rows the answer is a column in the
-// table below, not a parenthetical about one of them.
-function versionGloss(existing: StoredScript, header: ParsedHeader | null): string {
-  const installedVersion = existing.header ? getValue(existing.header, 'version') : undefined;
-  const offeredVersion = header ? getValue(header, 'version') : undefined;
-  if (!installedVersion) return '';
-  if (offeredVersion && installedVersion !== offeredVersion) {
-    return ` (version ${installedVersion}; this copy says ${offeredVersion})`;
-  }
-  return ` (version ${installedVersion})`;
+// No banner — the install callout carries the page's question — but
+// the parse check's warnings stay.
+function clearBanner(): void {
+  bannerSlotEl.replaceChildren();
+  for (const warning of previewWarnings) bannerSlotEl.append(makeBanner(warning));
 }
 
 function startBusy(btn: HTMLButtonElement): HTMLElement {

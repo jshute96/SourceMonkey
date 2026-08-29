@@ -525,7 +525,7 @@ function collectionCell(collection: StoredCollection): Node {
   nameLink.href = `collections.html#${collectionAnchorId(collection.id)}`;
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
   // the section on the collections page. Container collections have a
-  // synthetic `container:<kind>` path which would leak — skip then.
+  // synthetic `container:…` path which would leak — skip then.
   if (!isContainerCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
 

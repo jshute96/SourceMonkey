@@ -174,7 +174,7 @@ test.describe('targeted refresh triggers', () => {
     );
     const error = page.locator('#add-error');
     await expect(error).toContainText(
-      'Refresh failed: A refresh path must be a file:// URL',
+      'Refresh failed: Refresh path must be a file:// URL',
     );
     await expect(page).toHaveURL(/refresh_file=/);
     await page.close();
@@ -196,7 +196,7 @@ test.describe('targeted refresh triggers', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/collections.html?refresh_file=%2F`);
     await expect(page.locator('#add-error')).toContainText(
-      'Refresh failed: A refresh path must name something below the filesystem root',
+      'Refresh failed: Refresh path must name something below the filesystem root',
     );
     await expect(page).toHaveURL(/refresh_file=/);
 

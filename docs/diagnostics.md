@@ -319,14 +319,20 @@ One capitalization convention, with carve-outs:
   - "No period" is about a *single-sentence* message. Copy that is
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
-    it as INVALID.` Prefer an em-dash and one sentence where that works
-    (`Script not found in storage — open it from the collections page`).
+    it as INVALID.`
+  - **A statement plus a fix is two sentences**, not one joined by an
+    em-dash: `This location is a manifest. Choose Manifest as the type.`
+    The dash reads as an aside, where the fix is the half the user acts
+    on. (An em-dash still fits a genuine aside, and the
+    subject-plus-shapes messages — `Location must be a URL or absolute
+    file path` — stay one sentence with no period.) Same for `Script not found in storage.
+    Open it from the collections page.`
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
 - **The carve-out is mid-*sentence* splices, not post-colon tails.**
   `LOCATION_SHAPES` stays lowercase because it completes a sentence we
-  wrote — `A location must be an http(s):// or file:// URL…`. A capital
+  wrote — `Location must be a URL or absolute file path`. A capital
   there would land inside the sentence. A tail after `: ` is not that
   case: it starts its own clause, so it gets a capital, and if it can't
   take one grammatically it wants rewriting rather than exempting.

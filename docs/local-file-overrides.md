@@ -112,9 +112,9 @@ Which directory a collection contributes:
 - **Local directory** — itself.
 - **Manifest** — the manifest file's own directory, which is what its
   relative entries already resolve against.
-- **Containers** (`container:file` and friends) — none. Their scripts
-  are individually added absolute paths sharing no tree; each script's
-  own folder is all they have in common.
+- **Containers** (`container:*`, the scripts collections) — none.
+  Their scripts are individually installed absolute locations sharing
+  no tree; each script's own folder is all they have in common.
 - **http(s) collections** — none, and their scripts get no roots at all
   (the `file://` gate).
 
@@ -200,9 +200,9 @@ Not which tag is being resolved, but **who the host script is**:
     configured root on the options page, a collection root by adding the
     collection.
   - Both say so where they're set — the options page's note, and the
-    per-collection **Local files** toggle's tooltip.
+    collection dialog's **Allow local file overrides** hint.
   - So point either at a directory of script content, not at a home
-    directory. Turning **Local files** off for a collection takes the
+    directory. Turning that option off for a collection takes the
     whole mechanism away for it.
 - Explicit per-file overrides (a path you typed for one specific ref)
   will be allowed for any host script, because naming the file *is* the
@@ -319,15 +319,19 @@ Both `StoredRequire` and `StoredResource` gain one field:
 `StoredCollection.localFiles` — only an explicit `false` disables it, so rows
 persisted before the field existed read as enabled.
 
-- Rendered as a **Local files** checkbox in the collection's header on the
-  collections page, next to Refresh / Remove. (Distinct from the viewer's
-  **Local overrides** row below — this switches the feature on for a
-  collection, that lists what it actually substituted for one script.)
-- Shown only where it can do something: http(s) collections and the http /
-  github containers are excluded, since every script under them loads
-  over the network.
-- Toggling it refreshes the collection, because the flag only changes what
-  the *next* refresh resolves to.
+- Set from the collection dialog's **Allow local file overrides**
+  option — on Create, or via the collection's **Edit** button on the
+  collections page. (Distinct from the viewer's **Local overrides** row
+  — this switches the feature on for a collection, that lists what it
+  actually substituted for one script.)
+- Greyed out, with the reason, where it can't do anything: an http(s)
+  or GitHub directory / manifest, since every script under it loads
+  over the network. A scripts collection always offers it — even the
+  built-in web / GitHub defaults — because it may hold local scripts,
+  and the option applies to whichever of them came from disk
+  (`collectionSupportsLocalFiles`).
+- Saving a change refreshes the collection, because the flag only
+  changes what the *next* refresh resolves to.
 - Off disables **all** roots for that collection, configured ones included
   — it's the whole mechanism's off-switch, not just the implicit
   folder's.

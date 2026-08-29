@@ -455,17 +455,26 @@ what differs is the controls and where the data comes from.
 Banner (`#banner-slot`) states what this file is; the action row
 (`#preview-actions`) carries the decision.
 
-| Situation | Banner | Buttons |
-|-----------|--------|---------|
-| Not installed anywhere | "not installed yet" | **Install**, Cancel, View raw source |
-| Installed here, once, nothing else | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
-| More than one target below | see [the wordings](script-identity.md#the-previews-already-installed-banner) + "Select which instance…" | Cancel, View raw source — the table carries the rest. **Install** stays if the table has no offer row to carry it |
+| Situation | Banner slot | Buttons |
+|-----------|-------------|---------|
+| Not installed anywhere | the **install callout**: *Install into [collection ▾]* **Install** | Cancel, View raw source |
+| Any copy exists, here or elsewhere | "This script is already installed" + "Select which copy to open, update, or install below" | Cancel, View raw source — the table carries Open / Update / Install per row |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
-- **Install** → `addCollection(<input>)`, then jumps to the new script's
-  viewer. A web install is not a special kind of script: it lands in
-  the http / github container collection and picks up normal refresh and
-  update behavior.
+- **Install into** — the dropdown lists every scripts collection, the
+  built-in one for this script's scheme first (created on demand if it
+  doesn't exist), ending with *New collection…*. Every entry only
+  selects; **Install** is what acts, opening the
+  [collection dialog](storage.md#the-collection-dialog) first when
+  *New collection…* is the choice. Groups, pre-selection, and the
+  "(already installed)" / "(disabled)" markings are in
+  [script-identity.md](script-identity.md#the-install-into-dropdown).
+- **Install** → `installScript(<location>, <target>)`, then jumps to the
+  new script's viewer. A web install is not a special kind of script:
+  it lands in a scripts collection and picks up normal refresh and
+  update behavior. (A location with no single-file spelling — a
+  `foo.js`, a manifest URL — gets the callout without a dropdown and
+  goes through `addCollection`.)
   - The new copy is left as the **only** running one: installing is an
     enable, so it applies the same exclusive rule as the enable
     checkboxes. See
@@ -475,21 +484,10 @@ Banner (`#banner-slot`) states what this file is; the action row
   uses, so both apply the same rule for what counts as installed. Each
   reads storage separately, so a write landing between them can leave
   them a moment apart; the next storage change reconciles it. See
-  [script-identity.md](script-identity.md). The banner names both
-  versions when `@version` differs.
-- **The banner says WHICH copies exist**, because a header button can
-  only ever act on one of them. With more than one target below it adds
-  *Select which instance to open, update or install below* — and
-  Install / Open / Update leave the header entirely, since the table
-  carries all three per-row. Wordings and the rule in
-  [script-identity.md](script-identity.md#the-previews-already-installed-banner).
-- **Install and Open/Update are not exclusive.** A script already
-  installed inside a collection the user subscribes to is still
-  worth a copy of their own; `installTarget` — "would a standalone
-  install add anything?" — is what decides whether Install is offered.
-  When both apply, though, there are two targets, so both move into the
-  table rather than sitting side by side in the header.
-- **Update now** → `updateScript(id, 'manual')`, then the viewer.
+  [script-identity.md](script-identity.md).
+- **Once any copy exists the table is the only place to act** — the
+  header keeps nothing that acts on "the" copy. Rule and wording in
+  [script-identity.md](script-identity.md#what-the-header-offers).
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by
   script) when the preview was opened into a fresh one.

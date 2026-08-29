@@ -90,7 +90,7 @@ test.describe('options: local file overrides', () => {
     const problems = page.locator('#local-roots-problems li');
     await expect(problems).toHaveCount(1);
     await expect(problems.first()).toHaveText(
-      'Line 2: A local file root must be an absolute path starting with / or a file:// URL',
+      'Line 2: Local file root must be an absolute path starting with / or a file:// URL',
     );
     await page.close();
   });

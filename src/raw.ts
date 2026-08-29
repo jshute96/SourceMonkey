@@ -19,7 +19,7 @@ async function hydrate(): Promise<void> {
     // The row is dropped when the preview page that wrote it goes
     // away, so a reload after closing the prompt lands here.
     pre.className = 'notice';
-    pre.textContent = 'Nothing to show — reopen this from the SourceMonkey script preview.';
+    pre.textContent = 'Nothing to show. Reopen this from the SourceMonkey script preview.';
     return;
   }
   if (view.title) document.title = view.title;

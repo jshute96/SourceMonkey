@@ -217,33 +217,61 @@ test('a dangling collectionId yields a null collection rather than throwing', ()
   assert.equal(r.sameLocation[0].collection, null);
 });
 
-// ---------- installTarget ----------
+// ---------- installOptions ----------
 
-test('installTarget names the container a single-file install would land in', () => {
+// The "Install into" dropdown's entries: the built-in default for the
+// location's scheme first (existing or not), then every other
+// container, each marked when it already holds this location.
+
+test('installOptions leads with the scheme default, offered as new when it has no row', () => {
   const r = findRelatedVersions({
     scripts: [],
     collections: [],
     location: 'https://origin.example/a.user.js',
     header: NAMED,
   });
-  assert.equal(r.installTarget.kind, 'http');
-  assert.equal(r.installTarget.path, 'container:http');
-  assert.equal(r.installTarget.collection, null, 'container does not exist yet');
+  assert.equal(r.installOptions.length, 1);
+  const [def] = r.installOptions;
+  assert.equal(def.isDefault, true);
+  assert.equal(def.path, 'container:http');
+  assert.equal(def.collection, null, 'container does not exist yet');
+  assert.equal(def.label, 'Scripts from web');
+  assert.equal(def.installed, false);
 });
 
-test('installTarget resolves an existing container to its row', () => {
-  const container = collection({ id: 'c', path: 'container:http' });
+test('installOptions resolves an existing default to its row, under its own name', () => {
+  const container = collection({ id: 'c', path: 'container:http', displayName: 'Web stuff' });
   const r = findRelatedVersions({
     scripts: [],
     collections: [container],
     location: 'https://origin.example/a.user.js',
     header: NAMED,
   });
-  assert.equal(r.installTarget.collection.id, 'c');
+  assert.equal(r.installOptions[0].collection.id, 'c');
+  assert.equal(r.installOptions[0].label, 'Web stuff');
 });
 
-test('installTarget is absent once the container already holds this URL', () => {
+test('installOptions lists other containers after the default, in page order, never location collections', () => {
+  const r = findRelatedVersions({
+    scripts: [],
+    collections: [
+      collection({ id: 'mine', path: 'container:uuid-1', displayName: 'Mine' }),
+      collection({ id: 'dir', path: '/home/me/scripts' }),
+      collection({ id: 'c', path: 'container:http' }),
+      collection({ id: 'local', path: 'container:file' }),
+    ],
+    location: 'https://origin.example/a.user.js',
+    header: NAMED,
+  });
+  assert.deepEqual(
+    r.installOptions.map((o) => [o.path, o.isDefault]),
+    [['container:http', true], ['container:uuid-1', false], ['container:file', false]],
+  );
+});
+
+test('installOptions marks a container that already holds this URL, and keeps the default first', () => {
   const container = collection({ id: 'c', path: 'container:http' });
+  const other = collection({ id: 'o', path: 'container:uuid-1', displayName: 'Other' });
   const own = script({
     id: 'own',
     collectionId: 'c',
@@ -253,16 +281,20 @@ test('installTarget is absent once the container already holds this URL', () => 
   });
   const r = findRelatedVersions({
     scripts: [own],
-    collections: [container],
+    collections: [other, container],
     location: 'https://origin.example/a.user.js',
     header: NAMED,
   });
-  assert.equal(r.installTarget, undefined);
+  assert.deepEqual(
+    r.installOptions.map((o) => [o.path, o.installed]),
+    [['container:http', true], ['container:uuid-1', false]],
+  );
 });
 
-// A copy inside a repo collection is not a copy of your own, so the offer
-// stands — this is the "already covered by a collection" case.
-test('installTarget survives a copy that lives only in a collection', () => {
+// A copy inside a repo collection is not a copy of your own, so the
+// default stays installable — this is the "already covered by a
+// collection" case.
+test('installOptions ignores a copy that lives only in a location collection', () => {
   const inRepo = script({
     id: 'repo',
     collectionId: 'dir',
@@ -277,35 +309,54 @@ test('installTarget survives a copy that lives only in a collection', () => {
     header: NAMED,
   });
   assert.equal(r.sameLocation.length, 1);
-  assert.equal(r.installTarget.path, 'container:http');
+  assert.equal(r.installOptions[0].path, 'container:http');
+  assert.equal(r.installOptions[0].installed, false);
 });
 
-test('installTarget picks the github container for a github URL', () => {
+test('installOptions picks the github default for a github URL', () => {
   const r = findRelatedVersions({
     scripts: [],
     collections: [],
     location: 'https://raw.githubusercontent.com/o/r/main/a.user.js',
     header: NAMED,
   });
-  assert.equal(r.installTarget.kind, 'github');
+  assert.equal(r.installOptions[0].path, 'container:github');
+  assert.equal(r.installOptions[0].label, 'Scripts from GitHub');
 });
 
-test('installTarget picks the file container for a local path', () => {
+test('installOptions picks the file default for a local path', () => {
   const r = findRelatedVersions({
     scripts: [],
     collections: [],
     location: '/home/me/a.user.js',
     header: NAMED,
   });
-  assert.equal(r.installTarget.kind, 'file');
+  assert.equal(r.installOptions[0].path, 'container:file');
+  assert.equal(r.installOptions[0].label, 'Scripts from local disk');
 });
 
-test('no installTarget for something that is not a single-file input', () => {
+// A disabled collection is a legitimate target — the user may be about
+// to switch it back on — so it is marked, not dropped.
+test('installOptions marks a disabled collection without removing it', () => {
+  const off = collection({ id: 'off', path: 'container:uuid-1', displayName: 'Off', enabled: false });
+  const r = findRelatedVersions({
+    scripts: [],
+    collections: [off],
+    location: 'https://origin.example/a.user.js',
+    header: NAMED,
+  });
+  assert.deepEqual(
+    r.installOptions.map((o) => [o.path, o.collectionOff]),
+    [['container:http', false], ['container:uuid-1', true]],
+  );
+});
+
+test('no installOptions for something that is not a single-file input', () => {
   const r = findRelatedVersions({
     scripts: [],
     collections: [],
     location: 'https://origin.example/sourcemonkey.json',
     header: NAMED,
   });
-  assert.equal(r.installTarget, undefined);
+  assert.equal(r.installOptions, undefined);
 });

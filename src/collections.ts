@@ -1,14 +1,16 @@
 // Collections page controller. Renders one section per registered
 // collection (a local directory of userscripts, an http(s) directory or
-// JSON manifest, a GitHub tree, or one of the three built-in containers
-// that hold individually added scripts), with Refresh + Remove buttons
-// and a script table showing name, size, and parse status.
+// JSON manifest, a GitHub tree, or a "scripts" collection — a folder of
+// individually installed scripts, user-created or one of the built-in
+// defaults), with Refresh / Remove / Edit buttons and a script table
+// showing name, size, and parse status.
 //
-// Add submits the raw string; the store classifies it by shape (path vs
-// URL, suffix) and scans accordingly, loading every script it finds into
-// chrome.storage immediately so the user doesn't need to click Refresh
-// after add. A single `.user.js` input isn't a collection of its own —
-// it lands in the built-in container matching its scheme.
+// The Add field routes by what was typed: a single `.user.js` goes to
+// the install page; anything else opens the create-collection dialog
+// (src/collection-dialog.ts), prefilled from a location or a name. The
+// dialog probes a location before creating from it and loads every
+// script it finds as part of the create, so the user doesn't need to
+// click Refresh after add.
 //
 // The initial `render()` runs once at load to draw banners and seed
 // every section. After that the page keeps itself current by REPAINTING
@@ -42,8 +44,6 @@ import {
   setScriptEnabled,
   setScriptsEnabled,
   setCollectionEnabled,
-  setCollectionLocalFiles,
-  collectionUsesLocalFiles,
   localFileScope,
   STORAGE_NEARLY_FULL,
   touchesStructuralRows,
@@ -55,15 +55,16 @@ import {
   localRootsReady,
   localSearchRoots,
   type LocalFileScope,
-  collectionSupportsLocalFiles,
 } from './local-file-overrides.js';
 import {
   appendWithSlashBreaks,
   COLLECTION_OFF_TITLE,
   effectiveDisplayName,
   makeCollectionTypeBubble,
+  makeSchemeChip,
   collectionAnchorId,
 } from './collection-display.js';
+import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { getValue } from './userscript-header.js';
 import { describeDiagnostic } from './diagnostic-location.js';
 import { installDebugLoggingListener, loadDebugLoggingFlag } from './debug-log.js';
@@ -121,8 +122,6 @@ import {
 } from './refresh-targets.js';
 import {
   canonicalCollectionInput,
-  containerKindForSingleFileInput,
-  containerPath,
   isContainerCollection,
   isHttpUrl,
   isFileUrl,
@@ -168,7 +167,7 @@ const addErrorEl = document.getElementById('add-error') as HTMLParagraphElement;
 
 addForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  void onAddCollection(addInput.value);
+  void onAddViaDialog(addInput.value, true);
 });
 
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
@@ -303,7 +302,6 @@ async function refreshLogIds(): Promise<void> {
   currentLogIds = computeLogIds(all);
   applyLogIdSuffixesToDom();
 }
-
 
 // Mirror of `applyLogIdSuffixesToDom` for the Status column. After a
 // storage.session change for one or more `loglevel:` rows, walk every
@@ -481,7 +479,6 @@ function applyLogIdSuffixesToDom(): void {
 // lie about the present.
 let pageDirty = false;
 let repaintChain: Promise<void> = Promise.resolve();
-
 
 // Mark the page stale and resolve once a repaint has covered it. Passes
 // are serialized, and a burst of events collapses: the first link to run
@@ -907,11 +904,9 @@ async function bootstrap(): Promise<void> {
 
 // First-run seeding, driven from the page so the user watches the
 // familiar flow: each default collection's section appears, populated,
-// as it loads. Reuses the manual Add handler (`onAddCollection`), so
-// there's no separate code path that can drift. `addCollection` fetches
-// each collection's scripts as part of the add, so no follow-up Refresh
-// is needed. Marks first-run complete at the end (even if a collection
-// failed) so it never repeats.
+// as it loads. `addCollection` fetches each collection's scripts as
+// part of the add, so no follow-up Refresh is needed. Marks first-run
+// complete at the end (even if a collection failed) so it never repeats.
 async function seedDefaultCollectionsViaUi(): Promise<void> {
   // Best-effort + run-once: mark complete in a finally so a failure on
   // one default (network down, bad URL) neither aborts the others nor
@@ -935,13 +930,13 @@ async function seedDefaultCollectionsViaUi(): Promise<void> {
       console.log('[SourceMonkey] first run: adding collection', path);
       addInput.value = path;
       try {
-        await onAddCollection(path, { jump: false, preview: false });
+        await seedCollection(path);
       } catch (err) {
         console.info('[SourceMonkey] first-run add failed', path, err);
       }
     }
   } finally {
-    // Clear the Add field — onAddCollection clears it on success, but a
+    // Clear the Add field — seedCollection clears it on success, but a
     // failed add leaves the last attempted path sitting there.
     addInput.value = '';
     console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
@@ -959,17 +954,15 @@ function scrollToHashCollectionIfPresent(): void {
   section.scrollIntoView({ block: 'start' });
 }
 
-// Drive the Add flow from a `?add=` query param. Pre-
-// fills the form field (so the user sees what was attempted) and
-// runs the same flow as the manual Add button. The URL is scrubbed
-// once the location was accepted — success, duplicate, or a storage
-// failure that still created the row — because in all three the
-// collection now exists and re-running the param would only re-report a
-// duplicate. Only a value the validator REJECTED is left in place, so
-// the user can copy/share/edit it.
+// Drive the Add flow from a `?add=` query param. Pre-fills the form
+// field (so the user sees what was attempted) and runs the same flow
+// as the manual Add button — a `.user.js` goes to the install page,
+// anything else opens the create dialog prefilled. The URL is scrubbed
+// once the value was consumed; a cancelled dialog leaves it in place,
+// so the user can copy/share/edit it.
 async function handleAddParam(raw: string): Promise<void> {
   addInput.value = raw;
-  const ok = await onAddCollection(raw);
+  const ok = await onAddViaDialog(raw, true);
   if (ok) scrubQueryParams(['add']);
 }
 
@@ -1138,13 +1131,6 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const buttons = document.createElement('div');
   buttons.className = 'collection-buttons';
 
-  // Only where it can do something: every script under an http(s)
-  // collection loads over the network, so the control would be inert
-  // there.
-  if (collectionSupportsLocalFiles(collection.path)) {
-    buttons.appendChild(makeLocalFilesToggle(collection));
-  }
-
   buttons.appendChild(makeMoveButton('up', collection.id));
   buttons.appendChild(makeMoveButton('down', collection.id));
 
@@ -1157,6 +1143,13 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   removeBtn.textContent = 'Remove';
   removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
   buttons.appendChild(removeBtn);
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'edit-collection';
+  editBtn.textContent = 'Edit';
+  editBtn.title = 'Rename this collection or change its options';
+  editBtn.addEventListener('click', () => void onEditCollection(collection.id));
+  buttons.appendChild(editBtn);
 
   header.appendChild(buttons);
   section.appendChild(header);
@@ -1216,8 +1209,8 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
     return makeMessage(
       'empty',
       inContainer
-        ? 'No scripts here yet — add one above.'
-        : 'No *.user.js files found.',
+        ? 'No scripts added yet'
+        : 'No *.user.js files found',
     );
   }
 
@@ -1244,6 +1237,13 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
+    if (label === 'Name' && inContainer) {
+      // A scripts collection can mix local, web, and GitHub scripts,
+      // so each row says where its own script loads from.
+      const schemeTh = document.createElement('th');
+      schemeTh.setAttribute('aria-label', 'Source');
+      headRow.appendChild(schemeTh);
+    }
   }
   if (inContainer) {
     // Trailing column carries the per-row remove button. Empty text
@@ -1295,6 +1295,13 @@ function renderScriptRow(
   nameCell.classList.add('name-cell');
   fillNameCell(nameCell, script, inContainer, localFiles);
   tr.appendChild(nameCell);
+
+  if (inContainer) {
+    const schemeCell = document.createElement('td');
+    schemeCell.className = 'scheme-cell';
+    schemeCell.appendChild(makeSchemeChip(script.relativePath));
+    tr.appendChild(schemeCell);
+  }
 
   const sizeCell = document.createElement('td');
   sizeCell.className = 'size-cell';
@@ -1417,7 +1424,7 @@ async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTML
     // Hand-rolling the row removal here also meant hand-rolling the
     // "collection is now empty" message, which said "No *.user.js files
     // found." even on a container collection, whose empty state is
-    // "No scripts here yet". Only container rows have this
+    // "No scripts added yet". Only container rows have this
     // button, so that was the common case, and no later repaint would
     // correct it.
     await repaintPage();
@@ -1432,62 +1439,39 @@ async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTML
 
 // ---------- Flow handlers ----------
 
-// Returns true if the input was accepted by the validator and the
-// add flow ran (whether the collection was newly created or already
-// existed). Returns false if validation rejected the input. Used by
-// `handleAddParam` to decide whether to scrub the `add`
-// query param — invalid input keeps the URL so the user can edit
-// and retry.
-async function onAddCollection(
-  rawPath: string,
-  opts: { jump?: boolean; preview?: boolean } = {},
-): Promise<boolean> {
-  // `jump` controls the post-add smooth-scroll. On by default for the
-  // manual Add button + `?add` (the user wants to land on the new
-  // section); off for first-run seeding, which adds several in a row and
-  // would otherwise scroll-dance through them.
-  //
-  // `preview` routes a single-script input to the viewer's preview mode
-  // instead of adding it outright. Off for first-run seeding, which
-  // must not navigate away mid-loop.
-  const { jump = true, preview = true } = opts;
+// First-run seeding's add path: the `DEFAULT_COLLECTIONS` locations,
+// added without asking. Everything a user types goes through
+// `onAddViaDialog` instead — the dialog is where a location gets a
+// name, an options choice, and a readability check — so this is
+// deliberately the plainer route: no dialog, no preview hand-off, no
+// scroll (several land in a row and would scroll-dance through each).
+//
+// The caller reports failures from its own `catch`, so nothing is
+// returned; the shape checks here are belt and braces over a hardcoded
+// list.
+async function seedCollection(rawPath: string): Promise<void> {
   const path = rawPath.trim();
-  if (!path) return false;
-
+  if (!path) return;
   if (!isValidCollectionInput(path)) {
-    showPageError(`A location ${LOCATION_SHAPES}`);
-    return false;
+    showPageError(`Location ${LOCATION_SHAPES}`);
+    return;
   }
   showPageError(null);
 
-  // One script → preview it first. The viewer shows its metadata,
-  // what it asks permission to do, and its source text, then installs on
-  // confirmation (or offers Update when we already have this URL).
-  // Directory / manifest / github-dir collections still add directly:
-  // previewing a whole listing needs a different UI (see TODO.md).
-  if (preview && isSingleFileInput(path)) {
-    location.href = `userscript.html?preview=${encodeURIComponent(path)}`;
-    return true;
-  }
-
   setAddFormBusy(true);
   try {
-    // Normalize once up front so we don't burn a second GitHub API
-    // call on the duplicate-jump lookup below — and so any failure
-    // (rate limit, private repo, network down) surfaces here with a
-    // user-visible message instead of dead-ending in the page console.
-    // `addCollection` re-normalizes internally, but the second call is
-    // a no-op on already-canonical inputs (idempotent for non-github
-    // and for already-resolved github `/tree/<ref>/...` URLs).
+    // Normalize once up front so any failure (rate limit, private repo,
+    // network down) surfaces here with a user-visible message instead
+    // of dead-ending in the page console. `addCollection` re-normalizes
+    // internally, but the second call is a no-op on already-canonical
+    // inputs (idempotent for non-github and for already-resolved github
+    // `/tree/<ref>/...` URLs).
     let stored;
     try {
-      // Both canonicalizations `addCollection` will run, so the
-      // duplicate lookup below compares the same spelling the store
-      // holds.
       stored = canonicalCollectionInput(await normalizeCollectionInput(path));
     } catch (err) {
       showPageError(err instanceof Error ? err.message : String(err));
-      return false;
+      return;
     }
     // `addCollection` seeds the collection row inside its write lock and
     // then refreshes it, so a storage failure surfaces here as a throw
@@ -1499,66 +1483,81 @@ async function onAddCollection(
     // the row exists, so a second attempt is a duplicate — but painting
     // the section puts its Refresh button on screen, next to the
     // could-not-be-saved message explaining what to fix first.
-    //
-    // Returns `true` for the same reason: a row WAS created, so this is
-    // a partial success rather than the rejected-input case below, and
-    // `handleAddParam` should scrub `?add=` exactly as it would for a
-    // duplicate.
     let result;
     try {
       result = await addCollection(stored);
     } catch (err) {
       showPageError(describeError(err));
       await repaintPage();
-      return true;
+      return;
     }
     addInput.value = '';
-    if (!result) {
-      // Duplicate: either the collection path is already registered, or
-      // (for a single-file input) the matching container already
-      // contains this URL/path. Surface the message and jump to
-      // whichever section owns it.
-      const collections = await getCollections();
-      const existing = findDuplicateOwner(stored, collections)
-        ?? collections.find((s) => s.path === stored);
-      if (existing) {
-        // Name the collection rather than the internal "container"
-        // kind: it is the heading the jump below scrolls to, so the
-        // message and the destination read as the same thing.
-        showPageError(
-          isContainerCollection(existing.path)
-            ? `This script is already in ${effectiveDisplayName(existing)}`
-            : 'This collection is already registered',
-        );
-        if (jump) jumpToCollection(existing.id);
-      }
-      return true;
-    }
-    // The add wrote storage; a repaint builds the new section (or, for
-    // an existing container, folds the new row into the section already
-    // on screen) and puts everything in index order.
+    // A null result is a repeat of a location already seeded (two
+    // DEFAULT_COLLECTIONS entries spelling one collection): nothing to
+    // add, and the section is already on screen.
+    if (!result) return;
+    // The add wrote storage; a repaint builds the new section and puts
+    // everything in index order.
     await repaintPage();
-    if (jump) jumpToCollection(result.collection.id);
-    return true;
   } finally {
     setAddFormBusy(false);
   }
 }
 
-// For a duplicate add, find the section that already owns this
-// input. Single-file inputs route into a container, so the duplicate
-// is owned by the container of the matching kind; everything else
-// matches by stored collection path. Returns the collection row (or
-// undefined when nothing matches — caller surfaces no jump).
-function findDuplicateOwner(
-  normalizedInput: string,
-  collections: readonly StoredCollection[],
-): StoredCollection | undefined {
-  if (isSingleFileInput(normalizedInput)) {
-    const kind = containerKindForSingleFileInput(normalizedInput);
-    return collections.find((s) => s.path === containerPath(kind));
+// The Add field's routing, by what was typed:
+//   - a single `.user.js` (URL, `file://`, or absolute path) → the
+//     install page, which asks where to put it;
+//   - any other URL / absolute path → the create dialog, prefilled
+//     with the location (type and name inferred from it);
+//   - blank → the create dialog, empty;
+//   - anything else → the create dialog, with the text as the name of
+//     a new scripts collection.
+// The dialog does its own validation and probing, and only resolves
+// with a collection that now exists. Returns whether the input was
+// consumed — a cancelled dialog leaves the field (and a `?add=` param)
+// as it was.
+async function onAddViaDialog(rawPath: string, jump: boolean): Promise<boolean> {
+  const text = rawPath.trim();
+  showPageError(null);
+  if (text && isValidCollectionInput(text) && isSingleFileInput(text)) {
+    location.href = `userscript.html?preview=${encodeURIComponent(text)}`;
+    return true;
   }
-  return collections.find((s) => s.path === normalizedInput);
+  // Anything shaped like a location — even a bad one, such as a bare
+  // `/` or a relative path — goes in as the location, so the dialog's
+  // shape check is what says what's wrong with it. Only text with no
+  // scheme and no leading slash reads as a name.
+  let request: CollectionDialogRequest;
+  if (!text) request = { mode: 'create' };
+  else if (looksLikeLocation(text)) request = { mode: 'create', prefill: { location: text } };
+  else request = { mode: 'create', prefill: { kind: 'scripts', name: text } };
+  const outcome = await openCollectionDialog(request);
+  if (!outcome) return false;
+  addInput.value = '';
+  await repaintPage();
+  if (jump) jumpToCollection(outcome.collection.id);
+  return true;
+}
+
+// The Edit button: rename, or change the local-overrides option. A
+// changed option only affects the next refresh, so the refresh is part
+// of the save — otherwise the change would appear to do nothing until
+// something else happened to touch the collection.
+async function onEditCollection(id: string): Promise<void> {
+  // Re-read rather than trust the rendered row: the name may have been
+  // changed from another tab since this section was painted.
+  const data = await getCollectionWithScripts(id);
+  if (!data) return;
+  const outcome = await openCollectionDialog({ mode: 'edit', collection: data.collection });
+  if (!outcome) return;
+  if (outcome.localFilesChanged) await updateCollection(id, 'manual');
+  await repaintPage();
+}
+
+// What the Add field hands to the dialog as a location rather than a
+// name: any URL scheme, or a leading slash.
+function looksLikeLocation(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || value.startsWith('/');
 }
 
 // Accept three forms: an http(s):// URL, a file:// URL, or an
@@ -1821,8 +1820,8 @@ async function onRefreshAll(): Promise<void> {
 // Refresh a chosen subset — the `?refresh_local` / `?refresh_file=`
 // triggers. Collections refresh whole (a re-scan is what notices added,
 // renamed, and deleted files); individually-selected scripts refresh on
-// their own, which is the only option for the local-files container
-// since it has no directory to scan.
+// their own, which is the only option for a local script in a scripts
+// collection since it has no directory to scan.
 //
 // Bounded like the store's own fan-out so a wide target (a tree holding
 // many collections) doesn't open every collection's fetch set at once.
@@ -1937,50 +1936,6 @@ async function onToggleCollection(id: string, enabled: boolean, label: HTMLLabel
     if (section) applyCollectionEnabledToDom(section, enabled);
   } finally {
     setToggleBusy(label, false);
-  }
-}
-
-// The per-collection "Local files" switch: may a script in this
-// collection load a `@require` / `@resource` from a file on disk next
-// to it, instead of the URL the declaration names? See
-// docs/local-file-overrides.md.
-//
-// A labeled checkbox rather than the bare `makeToggle` switch used for
-// enable/disable: this one sits among named buttons, and an unlabeled
-// second switch in the header would read as a second enable control.
-//
-// Default-on, and only meaningful for local collections — which is why
-// the off position is the one worth reaching for: a directory of
-// scripts you didn't write is exactly where a file sitting next to one
-// should NOT quietly stand in for the library it names.
-function makeLocalFilesToggle(collection: StoredCollection): HTMLLabelElement {
-  const label = document.createElement('label');
-  label.className = 'local-files-toggle';
-  label.title =
-    'Load @require / @resource files from the script\'s own folder, this ' +
-    'collection\'s own directory, or the search roots configured in Options, ' +
-    'when a file there matches the end of the declared URL. Any file under ' +
-    'those directories can be read by a script in this collection';
-
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = collectionUsesLocalFiles(collection);
-  cb.addEventListener('change', () => void onToggleLocalFiles(collection.id, cb));
-  label.append(cb, document.createTextNode('Local files'));
-  return label;
-}
-
-// Writing the flag only changes what the NEXT refresh resolves to, so
-// the refresh is part of the click — otherwise the switch would appear
-// to do nothing until something else happened to touch the collection.
-async function onToggleLocalFiles(id: string, cb: HTMLInputElement): Promise<void> {
-  cb.disabled = true;
-  try {
-    await setCollectionLocalFiles(id, cb.checked);
-    await updateCollection(id, 'manual');
-    await repaintPage();
-  } finally {
-    cb.disabled = false;
   }
 }
 
@@ -2330,7 +2285,6 @@ async function buildStorageBanner(liveIds: ReadonlySet<string>): Promise<HTMLEle
 
   return div;
 }
-
 
 function renderUserScriptsBanner(error?: string): HTMLElement {
   const div = document.createElement('div');

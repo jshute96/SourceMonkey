@@ -75,8 +75,8 @@ zip or [build from source](#development).
 
 The collections page is where scripts are registered and managed. Each
 collection has a section listing its scripts, with enable toggles (per
-collection and per script), reorder buttons, and **Refresh** / **Remove**.
-**Refresh All** re-checks everything at once.
+collection and per script), reorder buttons, and **Refresh** / **Remove** /
+**Edit** (rename, options). **Refresh All** re-checks everything at once.
 
 Each script row shows a status, linking to that script's log, where there
 are usually more details:
@@ -126,10 +126,17 @@ can be:
 - A **GitHub URL**, pasted straight from the browser. A repo, a
   `/tree/…` directory, or a `/blob/…` file all work; directories are
   scanned via the GitHub API.
+- A **name**, or nothing at all, to make an empty collection for
+  scripts you install one at a time.
 
-Single scripts are grouped into one of three container collections, created
-on demand — `Scripts from local disk`, `Scripts from web`,
-`Scripts from GitHub`.
+A directory, manifest, or name opens a small dialog first, where you can
+give the collection a name and set its options; it checks that the
+location can be read before creating anything.
+
+Single scripts go into **scripts collections** — folders you create
+and name, or the defaults created on demand (`Scripts from local disk`,
+`Scripts from web`, `Scripts from GitHub`). One scripts collection can
+mix local, web, and GitHub scripts.
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
@@ -142,13 +149,14 @@ download the file.
 
 The preview shows the script's source code and some summary information,
 and validates the script and its `@require` libraries, reporting errors for
-invalid scripts.  **Install** loads the script, the same as adding its
-URL on the collections page.
+invalid scripts. Pick which collection to put it in — or make a new
+one — and **Install** loads the script, the same as adding its URL on
+the collections page.
 
-If the script is already registered, the preview allows updating the
-existing copy. A script that arrives via a collection you already
-subscribe to can still be installed as a copy of your own — the preview
-lists both and lets you pick.
+If the script is already registered, the preview lists every copy and
+lets you open or update each one, or install another copy elsewhere.
+A script that arrives via a collection you already subscribe to can
+still be installed as a copy of your own.
 
 Link capture can be turned off on the Options page if you want Chrome's
 defaults or have another userscript manager handling links.

@@ -38,19 +38,6 @@
          so heights line up with Refresh/Remove; only the horizontal
          padding is tightened so the arrow glyph isn't drowned in
          whitespace. */
-      /* The "Local files" opt-out, sitting among the header's buttons.
-         Labeled (unlike the bare enable switch on the left) because an
-         unlabeled second switch up here would read as a second
-         enable/disable control. */
-      .local-files-toggle {
-        display: flex;
-        align-items: center;
-        gap: 0.3em;
-        font-size: 0.85em;
-        color: #555;
-        cursor: pointer;
-        white-space: nowrap;
-      }
       .move-collection { padding: 4px 7px; }
       .move-collection:disabled { cursor: not-allowed; opacity: 0.35; }
       /* Whole-px vertical metrics on this page, and `separate` borders rather
@@ -61,7 +48,7 @@
       .script-table th, .script-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
       .script-table th { font-weight: 600; color: #555; font-size: 0.9em; line-height: 16px; }
       .script-table tbody tr:last-child td { border-bottom-color: transparent; }
-      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell { white-space: nowrap; width: 1%; }
+      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell, .script-table td.scheme-cell { white-space: nowrap; width: 1%; }
       /* Container-collection action column: the per-row remove button.
          Right-aligned so the trash icon hugs the table edge regardless
          of how narrow / wide the name column wants to be. */
@@ -212,7 +199,7 @@
     </div>
 
     <form id="add-form" class="add-form">
-      <input id="add-path" type="text" placeholder="Absolute path or URL, to a .user.js file, a directory, or a script_manifest.json file" required autocomplete="off" spellcheck="false" />
+      <input id="add-path" type="text" placeholder="A .user.js file, a directory, a script_manifest.json, or a name for a new collection" autocomplete="off" spellcheck="false" />
       <button type="submit">Add</button>
     </form>
     <p id="add-error" class="error" hidden></p>

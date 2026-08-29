@@ -223,7 +223,7 @@ test('parseLocalRootLines: rejects relative paths and http URLs', () => {
   for (const bad of ['dev/lib', '~/dev', 'https://example.com/lib', 'C:\\lib']) {
     const entry = parseLocalRootLines(bad).at(0);
     assert.equal(entry.url, undefined, bad);
-    assert.match(entry.error, /^A local file root must be an absolute path/, bad);
+    assert.match(entry.error, /^Local file root must be an absolute path/, bad);
   }
 });
 
@@ -420,13 +420,17 @@ test('localFileCandidates: a dotted host cannot climb or duplicate', () => {
 
 // ---------- collectionSupportsLocalFiles ----------
 
-test('collectionSupportsLocalFiles: local paths yes, http collections no', () => {
+// Every container qualifies: a scripts collection can hold local
+// scripts whatever its default scheme, and the per-script `file://`
+// gate is what actually decides.
+test('collectionSupportsLocalFiles: local paths and every container yes, http collections no', () => {
   assert.equal(collectionSupportsLocalFiles('/home/me/scripts'), true);
   assert.equal(collectionSupportsLocalFiles('file:///home/me/scripts'), true);
   assert.equal(collectionSupportsLocalFiles('container:file'), true);
   assert.equal(collectionSupportsLocalFiles('https://example.com/script_manifest.json'), false);
-  assert.equal(collectionSupportsLocalFiles('container:http'), false);
-  assert.equal(collectionSupportsLocalFiles('container:github'), false);
+  assert.equal(collectionSupportsLocalFiles('container:http'), true);
+  assert.equal(collectionSupportsLocalFiles('container:github'), true);
+  assert.equal(collectionSupportsLocalFiles('container:0d3d6b2e-1111-4222-8333-444455556666'), true);
 });
 
 // ---------- attachFiles with localRoots ----------

@@ -128,8 +128,14 @@ import {
   setScriptEnabled,
   setCollectionEnabled,
   setCollectionLocalFiles,
+  setCollectionOptions,
+  createCollection,
+  installScript,
   describeError,
   type AddCollectionResult,
+  type CollectionOptions,
+  type InstallTarget,
+  type NewCollectionSpec,
   type StoredScript,
   type StoredCollection,
   setParseChecker,
@@ -233,6 +239,9 @@ interface SourceMonkeyApi {
   // to call these. Practically callable only from DevTools on an
   // extension page or from Playwright's `serviceWorker.evaluate`.
   addCollection: (path: string) => Promise<AddCollectionResult>;
+  createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
+  installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
+  setCollectionOptions: (id: string, options: CollectionOptions) => Promise<StoredCollection | null>;
   removeCollection: (id: string) => Promise<void>;
   getCollections: () => Promise<StoredCollection[]>;
   getCollectionWithScripts: (id: string) => Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null>;
@@ -391,6 +400,9 @@ const api: SourceMonkeyApi = {
     return findMatchesForUrl(url);
   },
   addCollection,
+  createCollection,
+  installScript,
+  setCollectionOptions,
   removeCollection,
   getCollections,
   getCollectionWithScripts,
