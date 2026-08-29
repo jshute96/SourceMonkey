@@ -190,7 +190,11 @@ installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
 const params = new URLSearchParams(location.search);
-const scriptId = params.get('script');
+// Which installed script the page is showing. Not `const`: the
+// versions panel navigates between copies in place (see
+// `navigateToScript`), which reassigns this and pushes a history
+// entry rather than reloading the page.
+let scriptId = params.get('script');
 // The location to preview, exactly as it arrived: the URL the user
 // clicked (for a captured navigation) or typed into Add). See
 // the preview-mode section below for the normalized forms derived
@@ -207,6 +211,9 @@ const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElemen
 const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 const bannerSlotEl = document.getElementById('banner-slot')!;
+// Wraps the banner slot and the versions panel. Carries `merged` while
+// the two are one green box — see `renderInstalledBanner`.
+const statusBoxEl = document.getElementById('status-box')!;
 const actionsEl = document.getElementById('preview-actions')!;
 const installCalloutEl = document.getElementById('install-callout') as HTMLElement;
 const installTargetLabel = document.getElementById('install-target-label') as HTMLLabelElement;
@@ -409,8 +416,12 @@ const SCRIPT_NOT_IN_STORAGE = 'Script not found in storage. Open it from the col
 
 async function rehydrateAfterStorageChange(): Promise<void> {
   if (!scriptId) return;
+  // Same staleness rule as `loadStored`: an in-page navigation may have
+  // moved the page on while this read was in flight.
+  const wanted = scriptId;
   // If THIS script was removed, drop into the not-found state.
-  const script = await getScript(scriptId);
+  const script = await getScript(wanted);
+  if (scriptId !== wanted) return;
   if (!script) {
     // Not consumed here: this path can run more than once for a single
     // removal (our own call, then the storage event), and the second
@@ -428,8 +439,11 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   // Enable toggle and its display name shows in the Collection row, and
   // either can change from the collections page or another tab while
   // this viewer is open. render() reads these from the cached values.
-  cacheCollection(await getCollection(script.collectionId));
-  await refreshLogId();
+  const collection = await getCollection(script.collectionId);
+  if (scriptId !== wanted) return;
+  cacheCollection(collection);
+  await refreshLogId(wanted);
+  if (scriptId !== wanted) return;
   render(script);
   // render() wipes the flash overlay via `textContent =` and may
   // have clamped the tab index to 0 if a require disappeared.
@@ -496,13 +510,28 @@ let currentRejection: string | undefined;
 
 async function loadStored(): Promise<void> {
   if (!scriptId) return;
-  const script = await getScript(scriptId);
+  // Captured because in-page navigation can start a second hydrate
+  // while this one is still reading storage (two quick clicks in the
+  // panel). `scriptId` is the single source of truth for which copy the
+  // page is showing, so a hydrate that no longer matches it has lost —
+  // rendering it anyway would leave the URL naming one script and the
+  // page showing another.
+  const wanted = scriptId;
+  const script = await getScript(wanted);
+  if (scriptId !== wanted) return;
   if (!script) {
     showMissing(SCRIPT_NOT_IN_STORAGE);
     return;
   }
-  cacheCollection(await getCollection(script.collectionId));
-  await refreshLogId();
+  const collection = await getCollection(script.collectionId);
+  // Checked BEFORE the write, not after: `cacheCollection` and
+  // `refreshLogId` both set module state that the winning hydrate's
+  // later renders read, so a loser that wrote and then bailed would
+  // leave the page rendering the wrong collection.
+  if (scriptId !== wanted) return;
+  cacheCollection(collection);
+  await refreshLogId(wanted);
+  if (scriptId !== wanted) return;
   // Hydrate the max log level and any registration rejection before
   // render() so the first paint of the Status row already reflects
   // WARNING / ERROR / REJECTED. Without this the row would briefly
@@ -517,15 +546,20 @@ async function loadStored(): Promise<void> {
   tabsView.applyHash(true);
 }
 
-async function refreshLogId(): Promise<void> {
-  if (!scriptId) return;
+// Takes the id rather than reading `scriptId`: the callers work on an
+// id they captured before their first await, and an in-page navigation
+// can move `scriptId` on underneath them.
+async function refreshLogId(id: string): Promise<void> {
   const all = await getAllScripts();
   const map = computeLogIds(all);
-  currentLogId = map.get(scriptId) ?? '';
+  currentLogId = map.get(id) ?? '';
 }
 
 async function onRefresh(): Promise<void> {
   if (!scriptId) return;
+  // Same capture as `loadStored`: the user can pick another copy from
+  // the panel while the refetch is in flight.
+  const wanted = scriptId;
   refreshBtn.disabled = true;
   const prior = refreshBtn.textContent;
   refreshBtn.textContent = 'Refreshing…';
@@ -539,9 +573,9 @@ async function onRefresh(): Promise<void> {
     // instead of starting a second fetch.
     // 'force': this is a real Refresh click, so check upstream now
     // rather than waiting out the probe interval.
-    const next = await updateScript(scriptId, 'manual', 'force');
-    if (next) {
-      await refreshLogId();
+    const next = await updateScript(wanted, 'manual', 'force');
+    if (next && scriptId === wanted) {
+      await refreshLogId(wanted);
       render(next);
       // Re-anchor highlight + URL after the repaint. Scroll skipped so
       // a Refresh doesn't yank the user's scroll position.
@@ -576,7 +610,7 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
       changes = enableChanges(scriptId, enabled, allRelatedRows(related));
     } catch (err) {
       // Fails open: the copy the user actually clicked still gets
-      // written, and the panel below still shows whatever else is on.
+      // written, and the panel still shows whatever else is on.
       // Blocking the toggle on a lookup it only needs for the OTHER
       // rows would be worse than under-applying the sweep.
       dlog(`[SourceMonkey] exclusive-enable lookup skipped: ${describeError(err)}`);
@@ -724,9 +758,13 @@ function render(script: StoredScript): void {
     versionProbes: script.versionProbes,
   });
 
+  if (!panelAnchorId) panelAnchorId = script.id;
   void repaintRelatedVersions({
+    // The fallback for a paint whose anchor row can't be read — the
+    // very first one included, where the anchor IS this script.
     location: script.fileUrl,
     header: script.header,
+    anchorScriptId: panelAnchorId,
     mode: 'installed',
     currentScriptId: script.id,
   });
@@ -737,6 +775,204 @@ function render(script: StoredScript): void {
   // location can only become a link once there are tabs to resolve it
   // against, and `setTabs` is what installs them.
   paintScriptMessage(script);
+}
+
+// ---------- The panel is an index, and it holds still ----------
+//
+// The versions panel's two sections are computed from ONE script: rows
+// at the same `fileUrl` are "This URL", rows with the same
+// `@namespace` + `@name` are "a different URL". Which script that is
+// decides how every row is filed.
+//
+// Selecting another copy from the panel therefore must NOT re-anchor
+// it, or the table the user just clicked in would re-file itself
+// underneath them — the row they picked jumping from the second
+// section to the first, and the rest shuffling with it. The anchor is
+// the script the page was OPENED with, and it stays put for the life
+// of the page; navigating only moves the `is-current` highlight.
+//
+// A full page load on the new copy anchors on that copy instead —
+// which is the pre-navigation behaviour, and still what a
+// middle-click or a link from elsewhere gives.
+// The anchor is an ID, not a frozen copy of the row: the location and
+// identity behind it are re-read from the store on every paint, so a
+// Refresh or a Move of the anchor script re-files the table around what
+// it is NOW. Only *which* script the sections are computed from is
+// sticky.
+//
+// Set on the first installed render and left alone by every
+// navigation. Re-anchored only if the row disappears — see
+// `resolveAnchor`.
+let panelAnchorId = '';
+
+// Selecting a copy from the panel opens it in place rather than
+// reloading the page: same table, same order, a different script below
+// it. Two ways in — a viewer link (a row's Location, or its Status,
+// which carries `#Log`), and anywhere else in the row that isn't a
+// control of its own.
+//
+// Only plain left-clicks reach the swap. A modified click or a
+// middle-click means "that copy, but not here", and the row carries
+// that itself (`openRowInNewTab`) — its Location is plain text on this
+// page, so there is no `href` for the browser to do it with. The two
+// links that remain, Status and Collection, still ride their own.
+versionsEl.addEventListener('click', (ev: MouseEvent) => {
+  // Preview mode has no script of its own to swap out, and its panel's
+  // links are how the user leaves the preview.
+  if (!scriptId || ev.defaultPrevented || ev.button !== 0) return;
+  const from = ev.target as Element | null;
+  if (!from || !versionsEl.contains(from)) return;
+  if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) {
+    openRowInNewTab(from, ev);
+    return;
+  }
+
+  const anchor = from.closest('a');
+  if (anchor) {
+    const target = viewerLinkTarget(anchor.getAttribute('href'));
+    // Not a viewer link — the Collection cell's link to the collections
+    // page. Leave it, and don't let the row swallow it either.
+    if (!target) return;
+    // A link to the script already on screen is the current row's Status
+    // link, whose `#Log` the tab view handles as an ordinary same-document
+    // fragment navigation. Leave it to do that.
+    if (target.scriptId === scriptId) return;
+    ev.preventDefault();
+    void navigateToScript(target.scriptId, target.hash);
+    return;
+  }
+
+  // The rest of the row. `is-navigable` is on exactly the rows that
+  // lead somewhere — not the current one, and never in a preview.
+  const row = from.closest('tr.is-navigable');
+  if (!(row instanceof HTMLElement)) return;
+  const id = row.dataset.scriptId;
+  if (!id || id === scriptId) return;
+  // Every control in the row means something of its own: the enable
+  // checkbox and its label, Refresh, the trash can, the offer row's
+  // dropdown. A click that lands on one is that control's, not the
+  // row's.
+  if (from.closest('button, input, select, label')) return;
+  // A click that ends a drag-selection of the path in the Location cell
+  // is the user copying text, not picking a copy.
+  if (selectionInPanel()) return;
+  void navigateToScript(id, '');
+});
+
+// Enter or Space on a focused row, which is the keyboard half of the
+// same gesture. Only when the ROW itself has focus: a control inside it
+// is its own focus target, and Enter there belongs to the control.
+versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
+  if (!scriptId || ev.defaultPrevented) return;
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const row = ev.target;
+  if (!(row instanceof HTMLElement) || !row.classList.contains('is-navigable')) return;
+  const id = row.dataset.scriptId;
+  if (!id || id === scriptId) return;
+  // Space would scroll the page.
+  ev.preventDefault();
+  void navigateToScript(id, '');
+});
+
+// Ctrl/Cmd-click and middle-click on a row, which mean "somewhere else,
+// not here". The Location cell is plain text on this page, so there is
+// no `href` left for the browser to do this with — the row carries the
+// gesture instead, and opens the same URL the cell used to link to.
+//
+// Shift (a new window) is deliberately not covered: `window.open`
+// cannot promise one, and doing nothing is honest where guessing
+// wrong is not.
+function openRowInNewTab(from: Element, ev: MouseEvent): void {
+  if (ev.shiftKey || ev.altKey) return;
+  if (from.closest('a, button, input, select, label')) return;
+  const row = from.closest('tr.is-navigable');
+  if (!(row instanceof HTMLElement)) return;
+  const id = row.dataset.scriptId;
+  if (!id) return;
+  // Same guard as the plain click: this is one gesture with two
+  // destinations, so a drag that ended on a selection is neither.
+  if (selectionInPanel()) return;
+  ev.preventDefault();
+  window.open(viewerUrl(id), '_blank');
+}
+
+versionsEl.addEventListener('auxclick', (ev: MouseEvent) => {
+  if (!scriptId || ev.button !== 1) return;
+  const from = ev.target as Element | null;
+  if (!from || !versionsEl.contains(from)) return;
+  openRowInNewTab(from, ev);
+});
+
+// Is there a live text selection anywhere in the panel?
+//
+// Tested against the panel, not the clicked row: a drag from one row
+// into the next has the `tbody` as its common ancestor, so neither row
+// contains it and a row-level test would call it no selection at all —
+// and then navigate, wiping what the user had just selected.
+function selectionInPanel(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  return versionsEl.contains(selection.getRangeAt(0).commonAncestorContainer);
+}
+
+// The `?script=` and fragment of a viewer link, or null for anything
+// else (a collection link, an external URL).
+function viewerLinkTarget(href: string | null): { scriptId: string; hash: string } | null {
+  if (!href) return null;
+  // `URL.parse` rather than the constructor: a malformed href returns
+  // null here instead of throwing, and an uncaught throw in a click
+  // listener is not free — even though only our own hrefs reach here.
+  const url = URL.parse(href, location.href);
+  if (!url) return null;
+  if (url.origin !== location.origin || url.pathname !== location.pathname) return null;
+  const id = url.searchParams.get('script');
+  return id ? { scriptId: id, hash: url.hash } : null;
+}
+
+// Show another installed copy without a page load: one history entry,
+// then the same hydrate the initial load runs.
+async function navigateToScript(id: string, hash: string): Promise<void> {
+  scriptId = id;
+  history.pushState(null, '', `${viewerUrl(id)}${hash}`);
+  await showSelectedScript();
+}
+
+// Back / Forward across those entries. A move that changed only the
+// fragment is left to the tab view's own `hashchange` listener — it
+// owns which tab and line the fragment names.
+window.addEventListener('popstate', () => {
+  const id = new URLSearchParams(location.search).get('script');
+  if (!id || id === scriptId) return;
+  scriptId = id;
+  void showSelectedScript();
+});
+
+// Everything the page holds about the script that is leaving, dropped
+// before the next one is read. Each of these is per-script state that
+// `loadStored` either sets outright or leaves alone when it has
+// nothing to set — a stale log ID or stack layout carried across would
+// be attributed to the new script.
+async function showSelectedScript(): Promise<void> {
+  currentScript = null;
+  currentLogId = '';
+  currentLogLevel = undefined;
+  currentRejection = undefined;
+  stackSegments = [];
+  stackEntryUrl = '';
+  stackLayoutKey = '';
+  // A log read still in flight belongs to the copy being left.
+  logPaintEpoch++;
+  setMessage('');
+  // NOT `relatedVersionsMessage`: it reports what happened to one ROW
+  // ("Could not refresh <copy>"), and the table it belongs to is
+  // exactly what this navigation leaves standing.
+  tabsView.reseedFromHash();
+  await loadStored();
+  // The panel just repainted, destroying the link that was clicked, so
+  // focus would fall back to <body>. Put it on the heading instead:
+  // the title, the details and the code all changed, and a screen
+  // reader has had no document change to announce them.
+  filenameEl.focus();
 }
 
 // Paint the "Other versions" panel for whichever mode is on screen.
@@ -761,16 +997,26 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   // `script:*` change, so overlapping paints are routine.
   if (generation !== relatedVersionsGeneration) return;
 
-  const related = findRelatedVersions({
-    ...snapshot,
-    location: args.location,
-    header: args.header,
-  });
+  const anchored = resolveAnchor(args, snapshot.scripts);
+  const related = findRelatedVersions({ ...snapshot, ...anchored });
   const rows = allRelatedRows(related);
   lastRelatedIds = new Set(rows.map((r) => r.script.id));
+  // The anchor decides how the TABLE is filed, and nothing else. Two
+  // things on this page are about the copy actually on screen — the
+  // Move picker's targets and the enable toggle's sweep — and after an
+  // in-page switch to a different-URL copy that is not the anchor. Both
+  // read this second lookup, so neither can end up describing the wrong
+  // script's neighbours.
+  //
+  // The extra `findRelatedVersions` is a scan of a snapshot already in
+  // hand, not a second store read, and it is skipped in the ordinary
+  // case where the two agree.
+  const displayed = anchored.location === args.location && anchored.header === args.header
+    ? related
+    : findRelatedVersions({ ...snapshot, location: args.location, header: args.header });
   // The two inputs the Move picker needs, kept so it can open without
   // a store read of its own — see `moveTargetContext`.
-  moveTargetContext = { collections: snapshot.collections, sameLocation: related.sameLocation };
+  moveTargetContext = { collections: snapshot.collections, sameLocation: displayed.sameLocation };
   const status = await relatedStatuses(rows);
   // Same staleness check as after the store read: the session reads
   // above are two more awaits a newer paint can overtake.
@@ -867,6 +1113,13 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     install: args.offerInstall ? (btn, choice) => doInstall(btn, choice) : undefined,
   };
 
+  // Which row the keyboard was on, so the rebuild below doesn't cost
+  // the user their place. The rows are the tab stops in this table now,
+  // and the panel repaints for reasons the user didn't ask for — any
+  // `loglevel:` write for a drawn copy — so without this a keyboard
+  // walk through the table can be dumped back to <body> mid-stride.
+  const focusedRowId = focusedNavigableRowId();
+
   renderRelatedVersions(versionsEl, {
     ...related,
     actions,
@@ -875,6 +1128,8 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
     version: args.header ? getValue(args.header, 'version') : undefined,
     message: relatedVersionsMessage,
   });
+
+  restoreRowFocus(focusedRowId);
 
   // Now that we know what else is installed, the controls-row toggle
   // can say what clicking it will do. `render` sets the plain wording
@@ -886,9 +1141,50 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   // repaints that had no `render` in front of them to restore the
   // default, so a title left over from a previous state would stick.
   if (args.currentScriptId && collectionEnabled) {
-    const others = otherRunningCopies(allRelatedRows(related), args.currentScriptId);
+    const others = otherRunningCopies(allRelatedRows(displayed), args.currentScriptId);
     enableLabelEl.title = enableTitle(others.length > 0);
   }
+}
+
+// Where this paint's two sections are computed from.
+//
+// The anchor row is re-read here rather than remembered, so a Refresh
+// or Move of the anchor script re-files the table. If it has been
+// removed outright — its trash can is in this very table — the page
+// re-anchors on the copy currently on screen: a table filed under a
+// script that no longer exists would keep describing copies of a
+// deleted row, and would eventually stop containing the script the
+// page is showing.
+function resolveAnchor(
+  args: RelatedVersionsPaint,
+  scripts: readonly StoredScript[],
+): { location: string; header: ParsedHeader | null } {
+  if (!args.anchorScriptId) return { location: args.location, header: args.header };
+  const anchor = scripts.find((s) => s.id === args.anchorScriptId);
+  if (anchor) return { location: anchor.fileUrl, header: anchor.header };
+  if (args.currentScriptId) panelAnchorId = args.currentScriptId;
+  return { location: args.location, header: args.header };
+}
+
+// The script id of the navigable row holding focus, if one is.
+function focusedNavigableRowId(): string | undefined {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return undefined;
+  if (!active.classList.contains('is-navigable') || !versionsEl.contains(active)) return undefined;
+  return active.dataset.scriptId;
+}
+
+// Put focus back on the row for `id` after a rebuild. Silently does
+// nothing when that row is gone — the copy was removed, or it is now
+// the current row and no longer focusable — because there is nowhere
+// equivalent to send focus and stealing it to a neighbour would be
+// worse than letting it fall back.
+function restoreRowFocus(id: string | undefined): void {
+  if (!id) return;
+  const row = versionsEl.querySelector(
+    `tr.is-navigable[data-script-id="${CSS.escape(id)}"]`,
+  );
+  if (row instanceof HTMLElement) row.focus();
 }
 
 // The Status cell for every row the panel is about to draw.
@@ -961,8 +1257,15 @@ function describeRelatedScript(scripts: readonly StoredScript[], id: string): st
 }
 
 interface RelatedVersionsPaint {
+  // The location and identity the two sections are computed from —
+  // used as-is by a preview, and as the fallback for an installed page
+  // whose `anchorScriptId` no longer names a stored row.
   location: string;
   header: ParsedHeader | null;
+  // Installed mode only: the script the sections stay anchored to while
+  // the user switches copies in place. Resolved against the store on
+  // every paint, so the anchor's own edits are picked up.
+  anchorScriptId?: string;
   mode: 'installed' | 'preview';
   currentScriptId?: string;
   // Whether to offer a standalone install of this location. Never on
@@ -1911,11 +2214,11 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
 //     with the built-in default for this script's scheme pre-selected,
 //     so the common case is one click;
 //   - any copy, here or from a mirror → the "already installed" banner,
-//     and the table below is the only place to act. Every action
-//     exists per row down there — Open (the location link) and Update
-//     on each copy, Install with the same dropdown on the offer row —
-//     so header buttons would only leave the user guessing which row
-//     they meant.
+//     with the table in the same box as the only place to act. Every
+//     action exists per row in there — Open (the location link) and
+//     Update on each copy, Install with the same dropdown on the offer
+//     row — so header buttons would only leave the user guessing which
+//     row they meant.
 //
 // The one exception is a location with no single-file spelling (a
 // `foo.js`, a manifest URL): the table has no offer row to carry
@@ -1987,7 +2290,7 @@ async function offerOpenExisting(): Promise<void> {
 }
 
 // Stored rows at the location being previewed, via the same lookup the
-// "Existing versions" panel uses — one answer to "do we already have
+// versions panel uses — one answer to "do we already have
 // this?", so the buttons and the panel agree by construction.
 //
 // "Agree" means the RULE is shared, not the instant: this runs its own
@@ -2110,7 +2413,7 @@ async function doInstall(
 // `storage.local.get(null)`, which deserializes EVERY row — including
 // every script's full source and every `gmval:` value — to answer a
 // question about `fileUrl` and `collectionId`. That is a visible pause
-// on a click, and the panel below has already paid it. Written by every
+// on a click, and the panel has already paid it. Written by every
 // successful paint and never cleared, so after a paint that failed it
 // holds the last good answer rather than nothing — which is the right
 // trade for a list the store re-validates anyway: `moveScript` checks
@@ -2437,6 +2740,11 @@ function renderBanner(content: BannerContent, extraClass = ''): void {
 // a syntax error" warning the user is mid-way through reading. Going
 // through here means a new banner path can't reintroduce that.
 function replaceBanner(banner: HTMLElement): void {
+  // Dropped on every path, and re-set by the one banner that wants it.
+  // The merged box belongs to "this script is already installed"; a
+  // file-access or parse banner replacing it must not inherit a green
+  // card drawn around a table it says nothing about.
+  statusBoxEl.classList.remove('merged');
   bannerSlotEl.replaceChildren(banner);
   for (const warning of previewWarnings) bannerSlotEl.append(makeBanner(warning));
 }
@@ -2444,6 +2752,12 @@ function replaceBanner(banner: HTMLElement): void {
 // A banner's text, optionally with somewhere in the script to point at.
 // Plain strings stay plain strings — most banners ("already installed",
 // "not installed yet") aren't about the content at all.
+//
+// `lead` is a bold opening clause on the same line as the rest, which
+// `.banner strong` normally renders as its own line and
+// `.banner.installed strong` keeps inline. Passed as its own field
+// rather than glued onto the message so the space between the two
+// can't go missing in a literal.
 interface PreviewWarning {
   message: string;
   location?: DiagnosticLocation;
@@ -2452,6 +2766,8 @@ interface PreviewWarning {
   // sentence where it reads naturally — "…Syntax error: X (in f, line
   // 3). Installing it will store it as INVALID."
   trailing?: string;
+  // Bold opening clause, rendered before `message` on the same line.
+  lead?: string;
 }
 
 type BannerContent = string | PreviewWarning;
@@ -2463,6 +2779,11 @@ function makeBanner(content: BannerContent, extraClass = ''): HTMLElement {
   if (typeof content === 'string') {
     p.textContent = content;
   } else {
+    if (content.lead) {
+      const lead = document.createElement('strong');
+      lead.textContent = content.lead;
+      p.append(lead, ' ');
+    }
     appendDiagnostic(p, content.message, content.location);
     if (content.trailing) p.append(content.trailing);
   }
@@ -2471,20 +2792,29 @@ function makeBanner(content: BannerContent, extraClass = ''): HTMLElement {
 }
 
 // Any copy exists — here, from a mirror, or several. Which ones, and
-// what each can do, is the table's job: the banner says so and points
-// at it. It shares the panel's green ground because the two are one
-// thought.
+// what each can do, is the table's job — so the table is drawn inside
+// this banner's box rather than under it (the `merged` class), and the
+// wording names the choice without having to point anywhere.
+//
+// "instance", not "version": the table has a Version column holding
+// `@version` strings, and asking the user to pick a version next to it
+// would read as picking one of those rather than one of the rows.
 function renderInstalledBanner(): void {
-  const banner = makeBanner('This script is already installed', 'installed');
-  const p = document.createElement('p');
-  p.textContent = 'Select which copy to open, update, or install below';
-  banner.append(p);
-  replaceBanner(banner);
+  // One line: the bold statement and what to do about it, with the
+  // table of copies directly under it inside the same box. Two
+  // sentences, so unlike every other user-visible string in the
+  // extension this one is punctuated — see docs/diagnostics.md#wording.
+  replaceBanner(makeBanner({
+    lead: 'This script is already installed.',
+    message: 'Select which instance to update or install.',
+  }, 'installed'));
+  statusBoxEl.classList.add('merged');
 }
 
 // No banner — the install callout carries the page's question — but
 // the parse check's warnings stay.
 function clearBanner(): void {
+  statusBoxEl.classList.remove('merged');
   bannerSlotEl.replaceChildren();
   for (const warning of previewWarnings) bannerSlotEl.append(makeBanner(warning));
 }
@@ -2617,6 +2947,12 @@ function showMissing(message: string): void {
   // own trash can removing the row being viewed, and by another tab
   // removing it out from under us.
   versionsEl.replaceChildren();
+  // And the bookkeeping that would paint it back: a `storage.session`
+  // change matching one of the ids we just wiped would otherwise
+  // rebuild the table on top of the "not available" page.
+  lastRelatedPaint = null;
+  lastRelatedIds = new Set();
+  statusBoxEl.classList.remove('merged');
   logPaneEl.replaceChildren();
   tabsView.clear();
 }

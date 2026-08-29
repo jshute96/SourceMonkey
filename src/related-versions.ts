@@ -19,7 +19,7 @@
 //
 // See [docs/script-identity.md].
 
-import { isContainerCollection } from './directories.js';
+import { isContainerCollection, scriptAbsolutePath } from './directories.js';
 import {
   displayLocation,
   ENABLE_TITLE,
@@ -197,7 +197,7 @@ export function renderRelatedVersions(
     return;
   }
   // A panel whose only row is the script already on screen tells the
-  // user nothing they can't see above it. The current row earns its
+  // user nothing the page around it doesn't. The current row earns its
   // place only when there is something to compare it against.
   const onlySelf =
     sameIdentity.length === 0
@@ -212,10 +212,15 @@ export function renderRelatedVersions(
   // Same helper the controls-row toggle uses, so both see one list.
   const allRows = allRelatedRows(model);
 
-  const h2 = document.createElement('h2');
-  h2.textContent =
-    model.mode === 'preview' ? 'Existing versions' : 'Other versions of this script';
-  container.appendChild(h2);
+  // Installed only. A preview draws this table inside the "This script
+  // is already installed" banner, whose one line already says what the
+  // rows are and what to do with them — a heading under it would be a
+  // second, quieter statement of the same thing.
+  if (model.mode === 'installed') {
+    const h2 = document.createElement('h2');
+    h2.textContent = 'Other versions of this script';
+    container.appendChild(h2);
+  }
 
   if (model.message) {
     const p = document.createElement('p');
@@ -246,7 +251,7 @@ export function renderRelatedVersions(
     );
     for (const rel of sameLocation) {
       table.tBodies[0].appendChild(
-        versionRow(rel, model.actions, verb, allRows, model.status?.get(rel.script.id)),
+        versionRow(rel, model.actions, verb, allRows, model.status?.get(rel.script.id), model.mode),
       );
     }
     if (offer) {
@@ -263,7 +268,12 @@ export function renderRelatedVersions(
     for (const rel of sameIdentity) {
       table.tBodies[0].appendChild(
         versionRow(
-          rel, model.actions, refetchVerb(model.mode), allRows, model.status?.get(rel.script.id),
+          rel,
+          model.actions,
+          refetchVerb(model.mode),
+          allRows,
+          model.status?.get(rel.script.id),
+          model.mode,
         ),
       );
     }
@@ -417,6 +427,7 @@ function versionRow(
   verb: string,
   allRows: readonly RelatedScript[],
   status: ScriptStatusView | undefined,
+  mode: RelatedVersionsModel['mode'],
 ): HTMLTableRowElement {
   const { script } = rel;
   const isCurrent = script.id === actions.currentScriptId;
@@ -427,12 +438,36 @@ function versionRow(
     // to a screen reader it reads as more path, not as "you are here".
     // This says it as state.
     tr.setAttribute('aria-current', 'true');
+  } else if (mode === 'installed') {
+    // The whole row selects this copy — the viewer picks the click up
+    // off the row (see its `navigateToScript`). Marked here rather than
+    // assumed there so the pointer cursor and the row that acts are the
+    // same set, and so a preview — which has no script to swap and
+    // navigates for real — gets neither.
+    tr.className = 'is-navigable';
+    // The row IS the control, so it takes the tab stop its Location
+    // cell gave up when that stopped being a link: same number of stops
+    // through the table as before, with Enter / Space on the row
+    // handled by the viewer's keydown listener.
+    tr.tabIndex = 0;
+    // And it has to SAY so. A focusable element that does something
+    // nameless is worse than the link it replaced: `role` is what makes
+    // Enter an announced affordance, and the label is what says where
+    // it goes — the cells alone read as a row of values.
+    //
+    // The cost, stated plainly: this row stops being a `row` to a
+    // screen reader, so its cells lose their column associations. Only
+    // the navigable rows pay it — the current row and every preview row
+    // keep ordinary table semantics — and a row whose whole purpose is
+    // to be activated is better announced as the link it behaves like.
+    tr.setAttribute('role', 'link');
+    tr.setAttribute('aria-label', `Open ${displayLocation(script.relativePath)}`);
   }
   tr.dataset.scriptId = script.id;
 
   tr.appendChild(enabledCell(rel, actions, allRows));
   tr.appendChild(collectionCell(rel));
-  tr.appendChild(locationCell(rel, isCurrent));
+  tr.appendChild(locationCell(rel, isCurrent, mode));
   tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb));
@@ -560,30 +595,66 @@ function collectionNameLink(collection: StoredCollection): HTMLAnchorElement {
   return a;
 }
 
-// Location links to that copy's own viewer page. Display decodes,
-// the href does not — see [docs/names-and-paths.md].
-function locationCell(rel: RelatedScript, isCurrent: boolean): HTMLTableCellElement {
+// The copy's stored location. Display decodes, the href — where there
+// still is one — does not; see [docs/names-and-paths.md].
+//
+// A link only in a PREVIEW, where clicking it is the only way to reach
+// that copy. On the details page the whole row already opens the copy,
+// so a link inside it would offer the same destination twice and
+// underline one cell for no reason.
+function locationCell(
+  rel: RelatedScript,
+  isCurrent: boolean,
+  mode: RelatedVersionsModel['mode'],
+): HTMLTableCellElement {
   const td = cell('col-location');
   const text = displayLocation(rel.script.relativePath);
-  if (isCurrent) {
+  const title = locationTitle(rel, text);
+  if (isCurrent || mode === 'installed') {
     const span = document.createElement('span');
-    span.className = 'versions-current-marker';
-    span.title = rel.script.relativePath;
+    if (isCurrent) span.className = 'versions-current-marker';
+    if (title) span.title = title;
     appendWithSlashBreaks(span, text);
-    const here = document.createElement('strong');
-    here.className = 'versions-this-page';
-    here.textContent = '(this page)';
-    span.appendChild(document.createTextNode(' '));
-    span.appendChild(here);
+    if (isCurrent) {
+      const here = document.createElement('strong');
+      here.className = 'versions-this-page';
+      here.textContent = '(this page)';
+      span.appendChild(document.createTextNode(' '));
+      span.appendChild(here);
+    }
     td.appendChild(span);
     return td;
   }
   const a = document.createElement('a');
   a.href = viewerUrl(rel.script.id);
-  a.title = rel.script.relativePath;
+  if (title) a.title = title;
   appendWithSlashBreaks(a, text);
   td.appendChild(a);
   return td;
+}
+
+// What hovering the location adds to what the cell already shows: the
+// FULL location, resolved and unabridged.
+//
+// The cell shows the stored spelling, which is only ever part of the
+// answer:
+//   - a directory or manifest collection stores the path under its
+//     root, so `gm-menu/gm-menu.user.js` in the cell is
+//     `/home/…/tests/examples/gm-menu/gm-menu.user.js` on disk — and
+//     the root is over in the Collection cell, not spliced onto it;
+//   - a github row stores the raw URL and resolves to the `blob` page
+//     URL a human would open;
+//   - a percent-encoded URL displays decoded, so the tooltip is where
+//     the literal form it was installed from survives.
+//
+// Empty — and so no tooltip at all — when that resolves to exactly the
+// text already on screen, which is the common `https://…/foo.user.js`
+// case. A tooltip repeating its own cell is noise.
+function locationTitle(rel: RelatedScript, shown: string): string {
+  const full = rel.collection
+    ? scriptAbsolutePath(rel.collection.path, rel.script.relativePath)
+    : rel.script.relativePath;
+  return full === shown ? '' : full;
 }
 
 // Status, linking to that copy's Log tab. Every row links, including
@@ -595,7 +666,9 @@ function locationCell(rel: RelatedScript, isCurrent: boolean): HTMLTableCellElem
 // the ordinary hashchange listener rather than reloading. That holds
 // only while the query string matches byte-for-byte — a viewer URL
 // that grew a second parameter would silently turn this into a page
-// load.
+// load. Another row's href goes to another script, which the installed
+// viewer handles in place (`navigateToScript`), landing on that copy's
+// Log tab.
 function statusCell(scriptId: string, status: ScriptStatusView | undefined): HTMLTableCellElement {
   const td = cell('col-status');
   if (!status) {
@@ -611,8 +684,8 @@ function statusCell(scriptId: string, status: ScriptStatusView | undefined): HTM
   a.href = viewerUrl(scriptId, 'log');
   a.textContent = status.label;
   // Titled only when the verdict has something to add, exactly as the
-  // controls row does with the same view — a cell that carried a
-  // tooltip the identical verdict an inch above lacks would read as a
+  // details panel's own Status row does with the same view — a cell
+  // that carried a tooltip the identical verdict lacks would read as a
   // different measurement.
   if (status.title) a.title = status.title;
   td.appendChild(a);

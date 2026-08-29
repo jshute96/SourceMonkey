@@ -250,6 +250,12 @@ One message per problem, phrased to survive every place it lands.
     dropped onto a verb.
     - Dropping the old `could not be fetched: ` half also removed a
       second colon from a string that already lands after one.
+  - **A multi-sentence banner is the one exception**, because the rule's
+    reasons don't reach it: it lands in exactly one place, takes no
+    prefix, and carries no `(in <where>)`. Ordinary punctuation wins
+    over a rule about strings that get spliced — see the viewer's
+    *This script is already installed. Select which instance to update or install.*
+    Anything that can be spliced still takes no period.
 - **No prefix the location already carries.** The parse check says
   `Syntax error: …`, not `Script source has a syntax error: …` — the
   location names the file, which is routinely a `@require`.

@@ -12,14 +12,15 @@
 // pixel outright; the viewer's panel shares a fractional one, which is
 // equally uniform (the cards above it are still em-derived).
 
-import { test, expect, type Page } from '../fixtures/extension';
+import type { Page } from '@playwright/test';
+import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
 // Fractional part of each matched element's top edge, in CSS pixels.
 // Layout is in 1/64px, hence the rounding.
 async function offsets(page: Page, selector: string): Promise<number[]> {
   return page.evaluate(
-    (sel) =>
+    (sel: string) =>
       Array.from(document.querySelectorAll(sel)).map(
         (el) => +(el.getBoundingClientRect().top % 1).toFixed(3),
       ),

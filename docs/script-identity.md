@@ -100,16 +100,29 @@ row offers, which the caller supplies as callbacks.
 
 | | Details page | Preview |
 |---|---|---|
-| Heading | Other versions of this script | Existing versions |
+| Heading | Other versions of this script | none — the banner line above the table is the heading |
 | Current row | highlighted, **(this page)**, not a link | — |
 | Nothing installed anywhere | can't happen — its own row is always there | no panel at all |
 
 Sections: **This URL**, then **Same script from a different URL** with
 a normal-weight gloss naming the match.
 
-The panel sits on a green card rather than the grey of the details panel
-directly above it: the two stack, and this is the one carrying live
-controls, so it has to read as a different kind of thing at a glance.
+The panel sits at the top of the page, under the title and above the
+controls row — which copy you are looking at comes before anything that
+acts on it. Green card rather than the grey of the details panel
+further down: this is the one carrying live controls, so it has to read
+as a different kind of thing at a glance. On a preview whose script is
+already installed, the panel and the "already installed" banner are
+drawn as one box.
+
+On the details page, clicking a row anywhere that isn't a control opens
+that copy **in place**: new history entry, same table. The row is the
+control — `role="link"` and `tabindex="0"` with Enter / Space, and
+Ctrl/Cmd- or middle-click for a new tab. The panel is
+anchored to the script the page was opened with, so selecting a copy
+moves only the highlight and never re-files the rows; the controls-row
+toggle keeps sweeping from the copy on **screen**. See
+[script-viewer.md](script-viewer.md#switching-copies-in-place).
 
 ### Enabling is exclusive; disabling is not
 
@@ -147,7 +160,8 @@ the *other* rows.
     of one that can't run would leave nothing running at all.
   - **A duplicate Install doesn't sweep.** Nothing new landed, so
     nothing was enabled; the message says the script is already
-    installed and the panel below is where to choose between copies.
+    installed and the panel in the same box is where to choose between
+    copies.
   - **Fails open, and never blocks the navigation.** A sweep that
     can't run — or whose write fails — is not reported: the install
     itself succeeded, and the panel on the page it lands on shows the
@@ -355,8 +369,8 @@ and dies with the element.
 ### Suppression
 
 A panel whose only row is the script already on screen says nothing the
-page above it doesn't, so it renders empty and the `:empty` rule hides
-it.
+rest of the page doesn't, so it renders empty and the `:empty` rule
+hides it.
 
 ### Row layout
 
@@ -366,13 +380,21 @@ it.
   order as the details panel's Collection row and the collections page's
   headings. The bubble is fixed-width and the name is the variable
   part, so leading with it also keeps rows aligned down the left edge.
-- Location shows the row's own stored `relativePath` (relative for a
-  collection copy), with the absolute form on the tooltip.
+- **Location** shows the row's own stored `relativePath` (relative for a
+  collection copy), decoded for reading.
+  - **Plain text on the details page** — the row already opens the copy,
+    so a link inside it would offer the same destination twice. A
+    preview keeps the link: its rows are not clickable.
+  - **Tooltip: the full resolved location** — the collection root
+    spliced back on, a github row's `blob` page URL, or the literal
+    percent-encoded URL behind a decoded display. Omitted when that is
+    the string already in the cell.
 - **Status** is the same verdict the collections list and the viewer's
   own Status row show. `scriptStatusView` in `script-display.ts`
   computes label and hover text for all three.
   - Titled only where the verdict has more to say, so a cell can't
-    carry an explanation the identical verdict above it lacks.
+    carry an explanation the identical verdict in the details panel
+    lacks.
   - **Links to that copy's Log tab**, which makes the panel a route to
     each copy's diagnostics rather than only a report on them.
   - **Every row links, OK ones included.** "Why is it OK" is the same
@@ -393,7 +415,7 @@ it.
   - **The offer row has no status**, and nor does a row whose lookup
     failed: both show an em dash. Absent is not the same claim as OK.
     - A failed lookup empties the whole column, including the row for
-      the script whose own Status row above still reads normally —
+      the script whose own Status row still reads normally —
       that row's verdict comes from a separate read. The alternative,
       one column reading from two sources, is worse.
 
@@ -427,9 +449,10 @@ it.
   and location. Zeroing the `<col>` width alongside `display: none` on
   the cells is what reclaims the space — under `table-layout: fixed`
   the colgroup, not the cells, sets column width.
-- **Location does not shed**, though it used to below 460px. Its link
-  is the only way to reach another copy's page now that a preview with
-  several targets drops its header Open button in favour of this table.
+- **Location does not shed**, though it used to below 460px. It is what
+  tells two copies apart, and on a preview it carries the only link to
+  another copy's page — that preview having dropped its header Open
+  button in favour of this table when there are several targets.
   Wrapping a long path is the lesser cost.
 
 ## The "Install into" dropdown
@@ -507,7 +530,7 @@ what it adds.
 | What exists | Banner | Header | Table |
 |---|---|---|---|
 | Nothing, anywhere | none | the **install callout**: *Install into [dropdown]* + Install | none |
-| Any copy, here or from a mirror | *This script is already installed* + *Select which copy to open, update, or install below* | Cancel, View raw source | every copy, plus the offer row with the same dropdown |
+| Any copy, here or from a mirror | one line: ***This script is already installed.*** *Select which instance to update or install.* | Cancel, View raw source | every copy, plus the offer row with the same dropdown |
 | A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer row |
 
 - **"Not installed" means nowhere**, not merely not here: a same-`@name`
@@ -516,10 +539,10 @@ what it adds.
   action exists per row: Open (the location link) and Update on each
   copy, Install on the offer row. Header buttons acting on "the" copy
   would leave the user guessing which row they meant.
-- The banner shares the panel's green ground: it is about which of those
-  copies the table lists, so the two are one thought. It says the fact
-  and points at the table; which versions exist is the Version column's
-  job, where several rows can't be confused for one.
+- The banner and the panel are one green box, not two stacked cards:
+  the banner is about which of the copies the table lists, so its single
+  line reads as the table's heading. Which versions exist is the Version
+  column's job, where several rows can't be confused for one.
 - `syntaxErrorOutcome` asks `previewInstalledStatus` — the row at this
   location, recorded before the header is wired — for whether a copy
   exists here.

@@ -101,10 +101,11 @@ from the viewer's **Collection** row, keeping its log and its stored
 
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
-viewer lists the copies in an **Other versions** panel, where each one can be
-enabled, updated, opened, or removed. Enabling one copy disables the others,
-since two enabled copies of a script both run — ctrl-click a checkbox
-(cmd-click on a Mac) to override that.
+viewer lists the copies in an **Other versions** panel at the top of the page,
+where each one can be enabled, updated, opened, or removed. Clicking another
+copy's row switches the page to it in place, leaving the panel as it is. Enabling one
+copy disables the others, since two enabled copies of a script both run —
+ctrl-click a checkbox (cmd-click on a Mac) to override that.
 
 The **Options** link at the top-left covers `.user.js` link capture,
 debug logging, local file override directories, and a GitHub token (for

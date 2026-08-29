@@ -390,6 +390,19 @@ export function hasBadgeColor(snapshot: TabStateSnapshot, hex: string): boolean 
   );
 }
 
+// Every stored script, across every collection, in collection order.
+// The SW test surface exposes collections and their scripts, not a flat
+// list, so every test that wants "the row for a.user.js" walks the same
+// two calls.
+export async function allScripts(api: SmApi): Promise<StoredScriptLike[]> {
+  const out: StoredScriptLike[] = [];
+  for (const collection of await api.getCollections()) {
+    const withScripts = await api.getCollectionWithScripts(collection.id);
+    out.push(...(withScripts?.scripts ?? []));
+  }
+  return out;
+}
+
 export async function waitForTabState(
   api: SmApi,
   tabId: number,

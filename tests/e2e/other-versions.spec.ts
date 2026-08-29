@@ -1,5 +1,5 @@
-// End-to-end coverage of the "Other versions" / "Existing versions"
-// panel (`#other-versions`, src/related-versions.ts) and the lookup
+// End-to-end coverage of the "Other versions" panel (`#other-versions`,
+// src/related-versions.ts) and the lookup
 // behind it (src/script-identity.ts).
 //
 // The unit tests cover the matching rules against fabricated rows;
@@ -13,6 +13,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { allScripts } from '../fixtures/sw-api';
 
 const PANEL = '#other-versions';
 const ROWS = `${PANEL} tbody tr`;
@@ -38,22 +39,6 @@ test.describe('other-versions panel', () => {
 
   function viewer(scriptId: string): string {
     return `userscript.html?script=${encodeURIComponent(scriptId)}`;
-  }
-
-  // Every stored script, across every collection. The SW test surface
-  // exposes collections and their scripts, not a flat list.
-  async function allScripts(sm: { getCollections: () => Promise<{ id: string }[]>;
-    getCollectionWithScripts: (id: string) => Promise<{ scripts: unknown[] } | null> }):
-    Promise<{ id: string; relativePath: string; enabled?: boolean }[]> {
-    const collections = await sm.getCollections();
-    const out: { id: string; relativePath: string; enabled?: boolean }[] = [];
-    for (const src of collections) {
-      const withScripts = await sm.getCollectionWithScripts(src.id);
-      for (const script of withScripts?.scripts ?? []) {
-        out.push(script as { id: string; relativePath: string; enabled?: boolean });
-      }
-    }
-    return out;
   }
 
   // The case the whole feature exists for. The directory collection stores
@@ -116,11 +101,13 @@ test.describe('other-versions panel', () => {
     await expect(page.locator(ROWS)).toHaveCount(2);
     await expect(page.locator(PANEL)).toContainText('2.0.0');
 
-    // The other copy links to its own viewer tab.
+    // The other copy's row is what opens it — no link inside the cell,
+    // which would only offer the row's own destination twice. See
+    // versions-navigation.spec.ts for the navigation itself.
     const other = scripts.find((s) => s.relativePath === b)!;
-    await expect(
-      page.locator(`${PANEL} td.col-location a[href*="${other.id}"]`),
-    ).toHaveCount(1);
+    await expect(page.locator(`${ROWS}[data-script-id="${other.id}"]`))
+      .toHaveClass(/is-navigable/);
+    await expect(page.locator(`${PANEL} td.col-location a`)).toHaveCount(0);
 
     await page.close();
   });
@@ -871,20 +858,20 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#preview-actions')).toBeVisible();
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    // The table carries every action, so the banner points at it and
-    // the header keeps no button that acts on a copy.
+    // The table carries every action, so the banner's one line says so
+    // and the header keeps no button that acts on a copy.
     await expect(page.locator('#banner-slot'))
-      .toContainText('Select which copy to open, update, or install below');
+      .toContainText('This script is already installed. Select which instance to update or install.');
     await expect(page.locator('#install-callout')).toBeHidden();
     await expect(page.locator('#open-btn')).toBeHidden();
     // Cancel and View raw source are about the preview itself, not
     // about a copy, so they stay.
     await expect(page.locator('#cancel-btn')).toBeVisible();
 
-    // Preview heading, and the offer row with the local default — which
-    // has no row yet — pre-selected.
-    await expect(page.locator(PANEL)).toContainText('Existing versions');
-    await expect(page.locator(PANEL)).not.toContainText('Other versions of this script');
+    // No heading of its own — the banner line above the table is the
+    // heading in a preview. Then the offer row with the local default
+    // — which has no row yet — pre-selected.
+    await expect(page.locator(`${PANEL} h2`)).toHaveCount(0);
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
     await expect(page.locator(`${PANEL} tr.is-offer`)).toContainText('Not installed here yet');
     await expect(page.locator(`${PANEL} tr.is-offer select option:checked`))
@@ -895,6 +882,8 @@ test.describe('other-versions panel', () => {
     // Every action the header gave up is present in the table.
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
     await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Update');
+    // A preview's Location IS a link — its rows are not clickable, so
+    // this is the only way to reach that copy from here.
     await expect(page.locator(`${PANEL} td.col-location a`)).toHaveCount(1);
 
     await page.close();
@@ -1073,7 +1062,7 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#banner-slot'))
       .toContainText('This script is already installed');
     await expect(page.locator('#banner-slot'))
-      .toContainText('Select which copy to open, update, or install below');
+      .toContainText('Select which instance to update or install');
     // Two copies plus the offer row.
     await expect(page.locator(ROWS)).toHaveCount(3);
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
@@ -1141,7 +1130,7 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot'))
       .toContainText('This script is already installed');
-    await expect(page.locator('#banner-slot')).toContainText('Select which copy');
+    await expect(page.locator('#banner-slot')).toContainText('Select which instance to update or install');
     // Nothing installed at THIS url, so nothing for Open to act on; the
     // table carries Install on its offer row.
     await expect(page.locator('#open-btn')).toBeHidden();

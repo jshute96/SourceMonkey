@@ -16,6 +16,15 @@
         padding: 1em;
         box-sizing: border-box;
       }
+      /* No focus ring, ever. The `tabindex` in the body exists only so
+         in-page navigation can park focus here for a screen reader to
+         announce the new script from — the heading is not a control and
+         is not tabbable, so a ring around it reads as a text field.
+         `:focus-visible` is not the discriminator it looks like: Chrome
+         counts a programmatic focus as visible when the focus it
+         replaced came from the keyboard, so the ring appeared for some
+         clicks and not others. */
+      h1:focus { outline: none; }
       h1 {
         font-size: 1em;
         font-weight: 600;
@@ -92,14 +101,15 @@
       /* Preview-mode install callout, banner, and action row. With
          nothing installed, the callout IS the page's question — "Install
          into [collection]" — so it gets the box; when copies exist the
-         banner takes that spot and the table below carries the choice.
-         The row under either holds Cancel / View raw source. */
+         banner takes that spot, in one box with the table that carries
+         the choice. The row under either holds Cancel / View raw
+         source. */
       .install-callout {
         display: flex;
         align-items: center;
         gap: 0.5em;
         flex-wrap: wrap;
-        /* Same green as the "Existing versions" panel: both are about
+        /* Same green as the versions panel: both are about
            where a copy of this script lives. */
         border: 1px solid #b9d4b1;
         background: #dbecd6;
@@ -123,10 +133,45 @@
          which is also where the file-access banner comes from). Only
          the viewer's own colour variant lives here — the amber default
          is a warning, and "already installed" is not. */
-      /* Matches the "Existing versions" panel below it — this banner is
-         about which of those copies the buttons act on, so the two are
-         one thought and share a ground. */
+      /* Matches the versions panel — this banner is about which of
+         those copies to act on, so the two share a ground before the
+         `merged` rule below makes them literally one box. */
       .banner.installed { border-color: #b9d4b1; background: #dbecd6; }
+      /* One line, not the block-level heading `.banner strong` gives
+         every other banner: this one is a sentence with its follow-up
+         in the same breath, and the table under it is what needs the
+         vertical room. */
+      .banner.installed strong { display: inline; margin-bottom: 0; }
+      /* …and when both are on screen they are literally one box: the
+         wrapper takes the green card and the two children give up
+         their own borders, so "This script is already installed" and
+         the table of copies read as one statement rather than two
+         stacked cards in the same colour. Only the preview's installed
+         case sets `merged` (renderInstalledBanner); a warning banner
+         raised alongside keeps its own amber box inside. */
+      #status-box.merged {
+        border: 1px solid #b9d4b1;
+        background: #dbecd6;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 0 0 10px;
+      }
+      #status-box.merged .banner.installed {
+        border: 0;
+        background: none;
+        padding: 0;
+        margin: 0;
+        border-radius: 0;
+      }
+      /* The blank line between the banner's one line and the first row
+         of the table is this margin — a preview's panel draws no
+         heading of its own, so nothing else separates them. */
+      #status-box.merged #other-versions {
+        border: 0;
+        background: none;
+        padding: 0;
+        margin: 14px 0 0;
+      }
       @keyframes sm-spin { to { transform: rotate(360deg); } }
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
       /* @connect row: hostnames and match rules, not prose. */
@@ -248,13 +293,14 @@
          class stays as a hook for finding the cell. Wrapping comes from
          the `dd`'s own slash-aware rule. */
       /* ---- "Other versions" panel (src/related-versions.ts) ----
-         Same card shape as #header-summary, but a green ground rather
-         than the details panel's grey: the two sit directly on top of
-         each other, and the panel is the one that carries live
-         controls, so it has to read as a different kind of thing at a
-         glance. Empty when nothing relates, and hidden by the :empty
-         rule rather than a `hidden` attribute the renderer would have
-         to manage. */
+         Sits at the top of the page, under the title and above the
+         controls row: which copy you are looking at comes before
+         anything that acts on it. Same card shape as #header-summary
+         further down, but a green ground rather than that panel's
+         grey — this is the one that carries live controls, so it has
+         to read as a different kind of thing at a glance. Empty when
+         nothing relates, and hidden by the :empty rule rather than a
+         `hidden` attribute the renderer would have to manage. */
       #other-versions {
         margin: 0 0 11px;
         padding: 8px 11px;
@@ -392,6 +438,20 @@
          elsewhere for "current" — on this ground a blue row would read
          as a different kind of highlight rather than as emphasis. */
       .versions-table tr.is-current { background: #c3e0ba; }
+      /* Rows that select their copy when clicked anywhere that isn't a
+         control (installed mode only — see `versionRow`). The hover
+         tint stops short of the current row's, so "the row under the
+         pointer" and "the row you are on" stay distinguishable while
+         the pointer is over one of them. */
+      .versions-table tr.is-navigable { cursor: pointer; }
+      .versions-table tr.is-navigable:hover { background: #d3e8cb; }
+      /* The row is the tab stop the Location link used to be, so it
+         needs a ring of its own. Inset, because an outline drawn
+         outside a table row is clipped by the row above it. */
+      .versions-table tr.is-navigable:focus-visible {
+        outline: 2px solid #4a7f3d;
+        outline-offset: -2px;
+      }
       .versions-current-marker { color: #666; }
       .versions-this-page { font-weight: 700; color: #333; }
       .versions-table tr.is-offer .versions-offer-text {
@@ -759,7 +819,28 @@
     <!-- Shared globe glyph referenced by the icon slot's <use href="#sm-globe">
          (see collections.html for the rationale). -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
-    <h1 id="filename"></h1>
+    <!-- `tabindex="-1"` so in-page navigation between copies can move
+         focus here: the heading, the details, and the code all change
+         with no document load for a screen reader to announce. Not
+         reachable by Tab, and it draws no focus ring (see the h1 rule
+         in the stylesheet above). -->
+    <h1 id="filename" tabindex="-1"></h1>
+    <!-- Banner + versions panel, directly under the title and ABOVE the
+         controls row: which copies of this script exist is the first
+         thing either mode has to answer, and every control below acts
+         on the one copy this page is showing. In the preview's
+         "already installed" case the two are merged into one box (the
+         `merged` class) — see `renderInstalledBanner`. -->
+    <div id="status-box">
+      <!-- In preview mode (`?preview=<url>`) the banner says what this
+           file is relative to what's installed, and the action row asks
+           the install / update question; the action row stays hidden for
+           an installed script, which uses the controls row below. The
+           banner slot is shared with the file-access banner, which either
+           mode can raise when a local read fails. -->
+      <div id="banner-slot"></div>
+      <div id="other-versions"></div>
+    </div>
     <div id="meta-row" class="meta-row" hidden>
       <label id="enable-label" class="toggle" title="Enable this script">
         <input id="enable-checkbox" type="checkbox" />
@@ -767,13 +848,6 @@
       </label>
       <button id="refresh-btn" type="button">Refresh</button>
     </div>
-    <!-- In preview mode (`?preview=<url>`) the banner says what this
-         file is relative to what's installed, and the action row asks
-         the install / update question; the action row stays hidden for
-         an installed script, which uses the controls row above. The
-         banner slot is shared with the file-access banner, which either
-         mode can raise when a local read fails. -->
-    <div id="banner-slot"></div>
     <!-- Install stays hidden until the fetch has landed and we know
          whether this file is installable and not already installed,
          so it is never clickable without a handler behind it. The
@@ -794,7 +868,6 @@
     </div>
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
-    <div id="other-versions"></div>
     <div id="tabs" class="tabs" role="tablist" hidden></div>
     <pre id="code-pane" class="code-box line-numbers" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>
