@@ -1,59 +1,79 @@
 # Cross-manager test results
 
-What happens when the examples suite runs against Tampermonkey. The
-framework itself is documented in
+What happens when the examples suite runs against Tampermonkey (TM) and
+Violentmonkey (VM) — the two third-party userscript managers the suite
+can drive. The framework itself is documented in
 [`cross-manager-testing.md`](cross-manager-testing.md); this doc is
 a snapshot of which specs pass, which are intentionally skipped,
-and which surface real SM-vs-TM divergences.
+and which surface real divergences from SourceMonkey.
 
-Re-run the suite with:
+Re-run the suites with:
 
 ```sh
 pnpm run test:e2e:tm
+pnpm run test:e2e:vm
 # or directly:
 pnpm exec playwright test --project=tampermonkey
+pnpm exec playwright test --project=violentmonkey
 ```
 
 Update this doc when a result changes.
 
+## Status
+
+- **TM**: 28 passed, 0 failed, 6 skipped (TM 5.5.0).
+- **VM**: 29 passed, 0 failed, 5 skipped (VM 2.48.0).
+
 ## Intentional skips
 
-Specs that opt out under TM via
-`test.skip(setup.manager === 'tampermonkey', '<reason>')`:
+Specs that opt out of a manager via
+`test.skip(setup.manager === '<name>', '<reason>')`:
 
-- **`xmlhttp-denied/`** — asserts SM's exact
-  `"blocked by this script's @connect rules"` message. TM has its own
-  `@connect` UX (potentially prompting the user) and its own denial
-  message. Out of scope for cross-manager comparison.
-- **`gm-resource/`** — the example uses relative `@resource` refs
-  (`./resource.css`, etc.) resolved against the host script's URL,
-  which TM doesn't do (VM does, against the install URL). TM accepts
-  absolute URLs only, so it can't install the example cleanly. Skipped under
-  TM until we ship an absolute-URL variant. SM coverage:
-  `tests/examples/gm-resource/gm-resource.spec.ts`.
-- **`require-scope/`** — same shape, for `@require ./lib.js`. TM
-  installs these examples from a local file, so it has no base URL to
-  resolve a relative ref against even in principle, and the fixture
-  server's port is assigned per run so an absolute URL can't be baked
-  into the file. SM coverage:
+- **`xmlhttp-denied/`** — skipped under **both** TM and VM. It asserts
+  SM's exact `"blocked by this script's @connect rules"` message. Each
+  of TM and VM has its own `@connect` UX (potentially prompting the
+  user) and its own denial message. Out of scope for cross-manager
+  comparison.
+- **`gm-menu/`** (by-name test only) — skipped under **VM**. VM keys
+  menu commands by `opts.id || caption`
+  (`GM_registerMenuCommand` in its `src/injected/web/gm-api.js`), so
+  registering the same caption three times replaces one entry rather
+  than stacking three. The test is entirely about that stacking, so
+  nothing survives loosening. The by-id test still runs under VM. SM
+  coverage: `tests/examples/gm-menu/gm-menu.spec.ts`.
+- **`window-onurlchange/`** — skipped under **VM**. VM doesn't
+  implement `window.onurlchange` at all (no mention in its source),
+  and the example page duly reports the feature as unavailable. Every
+  assertion in that spec is about events only it can produce.
+- **`gm-resource/`** — skipped under **TM only**. The example uses
+  relative `@resource` refs (`./resource.css`, etc.). SM resolves those
+  against the host script's URL; VM resolves them against the URL the
+  script was installed from, which the harness makes a real fixture
+  server URL, so VM installs and fetches them for real. TM accepts
+  absolute URLs only, so it can't install the example cleanly. SM
+  coverage: `tests/examples/gm-resource/gm-resource.spec.ts`.
+- **`require-scope/`** — skipped under **TM only**, same shape, for
+  `@require ./lib.js`. TM installs these examples from a local file, so
+  it has no base URL to resolve a relative ref against even in
+  principle, and the fixture server's port is assigned per run so an
+  absolute URL can't be baked into the file. SM coverage:
   `tests/examples/require-scope/require-scope.spec.ts`.
   - Consequence worth stating plainly: **no example exercises
     `@require` under TM at all**, so the TM-compatibility claim for
     the concatenated injection arrangement rests on unit and SM-only
-    e2e coverage. See the "Cross-manager coverage" entry in
-    [TODO.md](../TODO.md) for the two ways to close it.
+    e2e coverage, plus the VM run — VM installs from the fixture
+    server's URL and resolves the relative ref against it. See the
+    "Cross-manager coverage" entry in [TODO.md](../TODO.md).
   - `test:e2e:tm` is unaffected — the skip fires before the install
     step, and that package script never invokes
-    `scripts/sync-tm-scripts.mjs`. A manual `sync-tm-scripts.mjs` run
-    *will* try to install both variants; TM prefetches `@require`
-    URLs at the install prompt, so expect that install to error or
-    stall rather than complete.
+    `scripts/sync-manager-scripts.mjs`. A manual sync run *will* try to
+    install both variants; TM prefetches `@require` URLs at the install
+    prompt, so expect that install to error or stall rather than
+    complete.
 
 ## Failing specs (untriaged divergences)
 
-Last full TM run: 23 passed, 0 failed, 6 skipped (TM 5.5.0).
-
-None outstanding.
+None outstanding under either manager.
 
 ### Duplicate installs in the profile — check this first
 
@@ -72,35 +92,42 @@ matching page and every `toHaveCount(1)` saw 2.
   all selected scripts* → **Delete** → Start, and accept the confirm.
   Keep one copy of each `@name`.
 
-## Behavior diffs (SM vs TM)
+## Behavior diffs (SM vs TM/VM)
 
-Cases where SM and TM genuinely behave differently on the same input
-— neither implementation is buggy, the API spec just doesn't pin the
-behavior down and the two managers picked different rules. The
-cross-manager assertion has been loosened to accept both; SM's
-specific rule stays enforced in an SM-only spec.
+Cases where the managers genuinely behave differently on the same
+input — none of them is buggy, the API spec just doesn't pin the
+behavior down and each picked its own rule. The cross-manager
+assertion has been loosened to accept all of them; SM's specific rule
+stays enforced in an SM-only spec.
 
 - **`headers-inject-into/`** (content-world isolation) — TM doesn't
   implement `@inject-into` at all. It's a Violentmonkey /
-  SourceMonkey header; TM's nearest equivalent is `@sandbox`.
+  SourceMonkey header; TM's nearest equivalent is `@sandbox`. VM does
+  implement it, so it is held to the same assertions SM is.
   - TM therefore ignores `@inject-into content` and honours the
     variant's `@grant none`, which by TM's own rules means "run in
     page context". The script then legitimately sees the page's
     globals — a difference in what the header *means*, not a
     world-isolation bug.
-  - The isolation assertions are skipped under TM (guarded in
+  - The isolation assertions are skipped under TM only (guarded in
     `tests/examples/headers-inject-into/headers-inject-into.spec.ts`);
     everything else in that spec, including the page-world half, still
     runs under both. SM's rule stays enforced by the same spec on the
     `sourcemonkey` project.
-- **`gm-dom/`** (default-parent `<p>`) — TM appends the no-parent
-  element to `<head>` regardless of tag; SM and VM route by tag
-  instead (SM: head for `script`/`style`/`link`/`meta`/`title`/
-  `base`, body for everything else; VM's head list stops at
-  `meta`). The TM docs don't pin the default parent down,
-  so neither rule is wrong. Cross-manager assertion: element was
-  inserted and the count of matching `<p>`s went up by one. SM rule
-  enforced strictly in `tests/e2e/gm-dom.spec.ts`.
+- **`gm-dom/`** (default parent, no-parent form) — all three managers
+  disagree, and the TM docs don't pin the default parent down, so none
+  is wrong.
+  - `<p>`: TM appends to `<head>` regardless of tag; SM and VM route
+    by tag instead. Cross-manager assertion: element was inserted and
+    the count of matching `<p>`s went up by one.
+  - `<title>`: SM sends it to `<head>` (its head list is
+    `script`/`style`/`link`/`meta`/`title`/`base`); VM's head list
+    stops at `meta`, so VM appends it to `<body>` — observed, not just
+    read off VM's source. Cross-manager assertion: the log names
+    either parent, and the document-wide `<title>` count went up by
+    one (`document.title` is unaffected either way, since it reads the
+    first `<title>` in tree order).
+  - SM's rule is enforced strictly in `tests/e2e/gm-dom.spec.ts`.
 - **`gm-notification/`** (empty-text) — TM accepts an empty `text`
   field and resolves with a notification id (or surfaces it some
   other way); SM rejects strictly. Cross-manager assertion: accepts
@@ -116,19 +143,46 @@ specific rule stays enforced in an SM-only spec.
   ordering: `tests/e2e/injection.spec.ts` ("document-start,
   document-end, document-idle inject in @run-at order").
 
-## Manager-specific setup baked into the harness
+## Harness details worth knowing
 
-Cases where TM needs something arranged for it before a spec can even
-reach its assertions.
+Cases where a manager needs something arranged for it before a spec
+can even reach its assertions, or where the spec had to accommodate
+one.
+
+- **`window-close-focus/` "close closes this tab"** — under VM the tab
+  is gone before Playwright's `click()` returns, which it reports as
+  "Target page, context or browser has been closed". That is the
+  outcome the test wants, so the click swallows exactly that error and
+  lets the `isClosed()` poll decide. Not a divergence — a race the SM
+  and TM timings happened to hide.
+- **`gm-info/` file:// case** — skipped under VM, and the reason is
+  *not* the file-access toggle.
+  - Checked with the grant live
+    (`chrome.extension.isAllowedFileSchemeAccess()` returns true), the
+    script installed and enabled with its `file:///*/…` `@match`
+    intact, and VM reloaded: a `file://` load of the example page
+    still reports no userscript.
+  - VM registers one `chrome.userScripts` entry matching `<all_urls>`
+    and does its own matching inside it, so whether the cause is VM,
+    Chrome's MV3 `userScripts` API, or the persistence of that
+    registration is unresolved.
+  - Nothing the harness can arrange — recorded as a divergence, not a
+    setup gap.
+  - TM still does need the toggle, and it's step 4 of the one-time
+    profile setup either way.
 
 - **`GM_download` needs Chrome's `downloads` permission granted to
-  TM.** It's an *optional* permission in TM's manifest, so the first
-  `GM_download` call opens TM's "Browser API Downloads — click OK"
-  page, whose OK button calls `chrome.permissions.request`. That needs
-  Chrome's native grant bubble, which a headless run can't show: the
-  click does nothing, the GM call never settles, and the spec times
-  out on an empty log.
-  - `scripts/e2e-tm-preflight.mjs` writes the grant into the test
+  TM.**
+  - `downloads` is an *optional* permission in TM's manifest, so the
+    first `GM_download` call opens TM's "Browser API Downloads — click
+    OK" page, whose OK button calls `chrome.permissions.request`.
+  - That needs Chrome's native grant bubble, which a headless run
+    can't show: the click does nothing, the GM call never settles, and
+    the spec times out on an empty log.
+  - VM needs no equivalent: it uses `chrome.downloads` only when the
+    permission is already granted and falls back to an anchor download
+    otherwise, so nothing blocks.
+  - `scripts/e2e-manager-preflight.mjs` writes the grant into the test
     profile's `Preferences` before the browser starts (browser must be
     closed — Chrome rewrites that file from memory on exit). Same
     shortcut `tests/fixtures/extension.ts` uses for
@@ -174,17 +228,18 @@ never expected to share.
   need the slow route to exhibit a clean three-state split, the
   setup is just specific to our examples server.
 
-When triaging a new TM divergence, the options are:
+When triaging a new TM or VM divergence, the options are:
 1. Loosen the assertion so both managers pass (and move any
    SM-specific invariant into a `tests/e2e/` spec).
-2. Decide it's an SM-only invariant and `test.skip` under TM with a
-   pointer to here.
-3. File the divergence upstream (TM tracker) if we think TM is wrong.
+2. Decide it's an SM-only invariant and `test.skip` under that manager
+   with a pointer to here.
+3. File the divergence upstream (the manager's tracker) if we think the
+   manager is wrong.
 
 ## Inspecting failures
 
 Failing traces land in `test-results/` after each run. The
-`--project=tampermonkey` invocation prints the failure list at the
-end; open the trace zip via
+`--project=tampermonkey` / `--project=violentmonkey` invocation prints
+the failure list at the end; open the trace zip via
 `pnpm exec playwright show-trace test-results/<dir>/trace.zip` to step
 through what the page actually saw.

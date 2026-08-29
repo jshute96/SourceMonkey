@@ -264,28 +264,27 @@ gates, or the emitted wrap — the rate is the regression signal.
   local file so there's no base URL to resolve against. Baking in an
   absolute URL doesn't work either — the fixture server's port is
   assigned per run.
-  - VM *would* resolve it, against the install URL — but VM isn't a
-    project in the suite. See the next item.
-- Closing this needs either a fixed-port fixture server for the TM
-  project, or a rewrite step that stamps the server URL into a
-  generated copy of the script before TM installs it. Until then the
-  TM-compatibility claim for `@require` — the whole premise of the
-  concatenated arrangement — rests on unit and SM-only e2e coverage.
-- **No `violentmonkey` Playwright project.** VM was a dead end on
-  Chrome under MV3 when the cross-manager harness was built; its MV3
-  build (2.41.2+, Chrome ≥ 135) removes that blocker, so a third
-  project alongside `sourcemonkey` / `tampermonkey` is now possible.
-  - Worth it because VM is the manager whose semantics we match most
-    often on purpose — `@inject-into`, the `GM_addElement` default
-    parent, relative `@require` resolution — and every one of those
-    claims currently rests on reading VM's source, not on a run.
-  - Needs a persistent VM profile the way
-    [docs/cross-manager-testing.md](docs/cross-manager-testing.md)
-    sets one up for TM, plus VM's own install flow (its confirm
-    page) in the driver.
-  - The known divergences to expect are catalogued in
-    [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
-    [docs/supported-headers.md](docs/supported-headers.md).
+  - Closing it needs either a fixed-port fixture server for the TM
+    project, or a rewrite step that stamps the server URL into a
+    generated copy of the script before TM installs it. Until then
+    the TM-compatibility claim for `@require` — the whole premise of
+    the concatenated arrangement — rests on unit and SM-only e2e
+    coverage, plus the VM project below.
+  - The `violentmonkey` project does exercise it: VM installs from
+    the fixture server's URL and resolves the relative ref against it.
+- **VM doesn't inject into `file://` pages in the test profile**, so
+  `gm-info`'s file:// case is skipped there. Verified it isn't the
+  file-access toggle: the grant is live, the script is installed with
+  its `file://` `@match`, and a reloaded VM still doesn't run it. VM
+  registers one `chrome.userScripts` entry matching `<all_urls>` and
+  matches internally, so whether the cause is VM, Chrome's MV3
+  `userScripts` API, or that registration's persistence is unresolved.
+  Worth pinning down before we claim anything about VM and local
+  files. See
+  [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
+- The known divergences to expect across managers are catalogued in
+  [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
+  [docs/supported-headers.md](docs/supported-headers.md).
 
 ## `GM_*` — deferred surface
 

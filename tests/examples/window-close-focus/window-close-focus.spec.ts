@@ -42,7 +42,14 @@ test.describe('examples / window-close-focus', () => {
     await page.goto(`${fixtureServer.baseUrl}/window-close-focus/window-close-focus.html`);
     await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
 
-    await page.locator('#btn-close').click();
+    // The click itself can lose the race: under VM the tab is gone
+    // before `click()` returns, and Playwright reports that as
+    // "Target page, context or browser has been closed" — the very
+    // outcome the test wants. Swallow that one error and let the poll
+    // below decide; anything else still fails here.
+    await page.locator('#btn-close').click().catch((err) => {
+      if (!String(err?.message ?? err).includes('has been closed')) throw err;
+    });
     // Poll rather than wait for the `close` event: the tab can be gone
     // before `click()` resolves, and a listener attached after the fact
     // never sees it.

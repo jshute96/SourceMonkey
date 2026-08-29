@@ -37,6 +37,14 @@ test.describe('examples / gm-info', () => {
     // access to file URLs" enabled on the TM card in chrome://extensions
     // — a step covered by the one-time setup in
     // docs/cross-manager-testing.md.
+    //
+    // VM doesn't inject into file:// pages here at all. Checked, not
+    // assumed: the grant is live (`isAllowedFileSchemeAccess` returns
+    // true), the script is installed and enabled with its file://
+    // `@match` intact, and the page still reports no userscript after
+    // an extension reload. See docs/cross-manager-test-results.md.
+    test.skip(setup.manager === 'violentmonkey', 'VM does not inject into file:// pages in this setup');
+
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();

@@ -94,6 +94,7 @@ user before elaborating further. Default to action over planning.
   literally):
   - `pnpm run test:e2e tests/e2e/injection.spec.ts`
   - `pnpm run test:e2e:tm tests/examples/headers-run-at/headers-run-at.spec.ts`
+    (and `test:e2e:vm` for the Violentmonkey project)
   - Playwright treats the trailing arg as a path filter; useful when
     you want the script's env/config (e.g. `--project=tampermonkey`)
     without retyping it.
@@ -131,10 +132,11 @@ user before elaborating further. Default to action over planning.
 
 ## Editing example userscripts
 - When changing the body of any `tests/examples/**/*.user.js`, bump
-  its `@version` header. `scripts/sync-tm-scripts.mjs` (and the TM
-  cross-manager spec) compares local `@version` against the TM-installed
-  copy with dotted-numeric ordering — without a bump TM keeps the old
-  body cached and `pnpm run test:e2e:tm` exercises stale code. Same goes
-  for any other manager whose update story depends on `@version`.
+  its `@version` header. `scripts/sync-manager-scripts.mjs` (and the
+  cross-manager specs) compares local `@version` against the installed
+  copy with dotted-numeric ordering — without a bump the manager keeps
+  the old body cached and `pnpm run test:e2e:tm` / `:vm` exercises
+  stale code. Same goes for any other manager whose update story
+  depends on `@version`.
 - A patch-level bump (e.g. `1.1.0` → `1.1.1`) is enough; just make sure
   the new value compares strictly greater than the installed one.

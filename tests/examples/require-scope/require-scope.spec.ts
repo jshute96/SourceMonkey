@@ -26,12 +26,14 @@ test.describe('examples / require-scope', () => {
   test('a @require\'d class/const/function reaches both the page and content worlds', async ({
     extensionContext, fixtureServer, setup,
   }) => {
-    // Relative `@require` paths resolve against the script's own URL,
-    // which is a SourceMonkey extension — TM/VM/GM take absolute URLs
-    // only. TM also installs these examples from a local file, so
-    // there's no base URL for it to resolve against even in principle,
-    // and the fixture server's port is random so an absolute URL can't
-    // be baked into the file. Same reason gm-resource skips.
+    // Relative `@require` paths resolve against the script's own URL
+    // under SM, and against the install URL under VM — the harness
+    // installs into VM from the fixture server, so VM fetches the
+    // library for real. TM takes absolute URLs only, and installs
+    // these examples from a local file, so it has no base URL to
+    // resolve against even in principle; the fixture server's port is
+    // random, so an absolute URL can't be baked into the file either.
+    // Same reason gm-resource skips under TM.
     test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @require URLs; this example uses a relative ref');
 
     await setup.installScriptsFrom(__dirname);

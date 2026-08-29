@@ -1,11 +1,15 @@
 // Manager-agnostic Playwright fixture for the examples / compliance
 // suite. Picks a backend per the active Playwright project:
 //
-//   --project=sourcemonkey  — launches Chromium with the unpacked
+//   --project=sourcemonkey   — launches Chromium with the unpacked
 //     dist/ extension, same shape as tests/fixtures/extension.ts.
-//   --project=tampermonkey  — connects via CDP (port 9223) to the
-//     browser opened by scripts/open-test-browser-with-Tampermonkey.sh.
-//     TM must be installed in that profile interactively beforehand.
+//   --project=tampermonkey   — connects to a persistent profile with
+//     Tampermonkey (TM) installed from the Chrome Web Store.
+//   --project=violentmonkey  — the same, for Violentmonkey (VM).
+//
+// The two external managers share one code path here; everything that
+// differs between them (profile directory, CDP port, env-var names) is
+// a row in tests/fixtures/managers.mjs.
 //
 // The project's `metadata.manager` field is what we read. The
 // SM_MANAGER env var is a fallback for direct `pnpm exec playwright test
@@ -13,8 +17,9 @@
 // disagree, we throw.
 //
 // Tests get a single `setup.installScriptsFrom(dir)` helper that does
-// the right thing per manager — adds a directory collection under SM, or
-// syncs each *.user.js file into TM via the dashboard.
+// the right thing per manager: a directory collection under SM, an
+// import-from-file per script under TM, and a background install
+// keyed to the fixture server's URL under VM.
 
 import { test as base, chromium, type BrowserContext } from '@playwright/test';
 import fs from 'node:fs';
@@ -33,8 +38,31 @@ import {
   getTampermonkeyExtensionId,
   syncTampermonkeyScripts,
 } from './tampermonkey-driver.mjs';
+import {
+  ViolentmonkeyDriver,
+  getViolentmonkeyExtensionId,
+  syncViolentmonkeyScripts,
+} from './violentmonkey-driver.mjs';
+import {
+  EXTERNAL_MANAGERS,
+  managerCdpPort,
+  managerConfig,
+  managerHeaded,
+} from './managers.mjs';
 
-export type ManagerName = 'sourcemonkey' | 'tampermonkey';
+/**
+ * The managers this fixture can drive. Everything but `sourcemonkey`
+ * comes from the `managers.mjs` table — adding a row there is what
+ * makes a new backend possible, and this union is the one other place
+ * that has to learn its name.
+ */
+export type ExternalManagerName = 'tampermonkey' | 'violentmonkey';
+export type ManagerName = 'sourcemonkey' | ExternalManagerName;
+
+/** Narrowing helper so the shared external-manager paths type-check. */
+function isExternal(name: ManagerName): name is ExternalManagerName {
+  return name !== 'sourcemonkey';
+}
 
 /**
  * Resolve which manager this worker is running against.
@@ -55,10 +83,13 @@ export function resolveManager(workerInfo: { project: { metadata?: { manager?: u
     );
   }
   const chosen = fromProject || fromEnv || 'sourcemonkey';
-  if (chosen !== 'sourcemonkey' && chosen !== 'tampermonkey') {
-    throw new Error(`Manager must be 'sourcemonkey' or 'tampermonkey'; got ${JSON.stringify(chosen)}`);
+  if (chosen !== 'sourcemonkey' && !EXTERNAL_MANAGERS.includes(chosen)) {
+    throw new Error(
+      `Manager must be one of sourcemonkey, ${EXTERNAL_MANAGERS.join(', ')}; `
+      + `got ${JSON.stringify(chosen)}`,
+    );
   }
-  return chosen;
+  return chosen as ManagerName;
 }
 
 function normalize(v: unknown): string | undefined {
@@ -72,16 +103,13 @@ const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
 const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
 const SOURCEMONKEY_EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
-const TM_CDP_PORT = Number(process.env.TM_CDP_PORT || 9223);
-const TM_PROFILE_DIR = path.resolve(__dirname, '../../.chrome-tampermonkey-profile');
-const TM_HEADED = process.env.TM_HEADED === '1';
 
 export interface SetupApi {
   /**
    * Install or sync every `*.user.js` in `dir` into the active manager.
    * Under SourceMonkey, registers the directory as a collection. Under
-   * Tampermonkey, installs/updates scripts via the dashboard, skipping
-   * already-installed entries at the same-or-newer version.
+   * TM and VM, installs or updates each script, skipping entries
+   * already present at the same-or-newer version.
    */
   installScriptsFrom(dir: string): Promise<void>;
   /** Which manager this run is exercising. Tests can branch on this. */
@@ -93,12 +121,13 @@ type WorkerFixtures = {
   fixtureServer: FixtureServer;
   extensionContext: BrowserContext;
   /**
-   * Worker-scoped TM driver — `null` under SM. Lives at worker scope
-   * so its dashboard-cache (`getInstalledMap`) persists across every
-   * test in the worker. Without that, every spec would re-scrape the
-   * TM dashboard on `installScriptsFrom` (slow: ~1s per call).
+   * Worker-scoped driver for the active external manager — `null`
+   * under SM. Lives at worker scope so its installed-scripts cache
+   * (`getInstalledMap`) persists across every test in the worker.
+   * Without that, every spec would re-read the manager's script list
+   * on `installScriptsFrom` (slow: ~1s per call under TM).
    */
-  tampermonkeyDriver: TampermonkeyDriver | null;
+  externalDriver: TampermonkeyDriver | ViolentmonkeyDriver | null;
 };
 
 type TestFixtures = {
@@ -108,9 +137,9 @@ type TestFixtures = {
    * test start, then closes any new ones at test end. Runs
    * automatically per test (`auto: true`).
    *
-   * Necessary under TM because the connected CDP context is the
-   * user's interactive browser; pages we open during a test (the
-   * spec's own `extensionContext.newPage()`, plus anything the TM
+   * Necessary under TM and VM because the connected CDP context is
+   * the user's interactive browser; pages we open during a test (the
+   * spec's own `extensionContext.newPage()`, plus anything a manager
    * driver might leave around) would otherwise pile up forever,
    * especially after assertion failures that skip the spec's manual
    * `page.close()`. Under SM the persistent context dies at worker
@@ -123,10 +152,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   manager: [
     async ({}, use, workerInfo) => {
       const name = resolveManager(workerInfo);
-      // The tampermonkey project drives ONE real browser over CDP, with
-      // the developer's own profile and no per-test state reset. Several
-      // workers would install and uninstall userscripts in each other's
-      // way in that single browser, and nothing would put it back.
+      // An external-manager project drives ONE real browser over CDP,
+      // with the developer's own profile and no per-test state reset.
+      // Several workers would install and uninstall userscripts in each
+      // other's way in that single browser, and nothing would put it back.
       //
       // `workers` is a global Playwright option — it cannot be set per
       // project — so the package scripts pass `--workers=1` and this catches
@@ -136,11 +165,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // `config.workers`, not `workerIndex`: this fails on the FIRST
       // worker, before anything attaches, rather than letting worker 0
       // proceed and only tripping its siblings.
-      if (name === 'tampermonkey' && workerInfo.config.workers > 1) {
+      if (isExternal(name) && workerInfo.config.workers > 1) {
         throw new Error(
-          'The tampermonkey project must run with --workers=1 (it shares one real '
-          + 'browser and does not reset state between tests). Use `pnpm run test:e2e:tm`, '
-          + 'or pass --workers=1 explicitly.',
+          `The ${name} project must run with --workers=1 (it shares one real `
+          + `browser and does not reset state between tests). Use `
+          + `\`pnpm run test:e2e:${managerConfig(name).scriptSuffix}\`, `
+          + `or pass --workers=1 explicitly.`,
         );
       }
       await use(name);
@@ -170,21 +200,25 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         return;
       }
 
-      if (TM_HEADED) {
+      const cfg = managerConfig(manager);
+      const port = managerCdpPort(manager);
+      const opener = `scripts/open-test-browser.sh ${manager}`;
+
+      if (managerHeaded(manager)) {
         // Headed (debug) mode: connect to a browser the user already
-        // opened with scripts/open-test-browser-with-Tampermonkey.sh.
-        // Don't close at teardown — it's their interactive session.
-        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${TM_CDP_PORT}`).catch((err) => {
+        // opened with the opener script. Don't close at teardown —
+        // it's their interactive session.
+        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch((err) => {
           throw new Error(
-            `Could not connect to Tampermonkey test browser at CDP port ${TM_CDP_PORT}. ` +
-            `Start it first with: scripts/open-test-browser-with-Tampermonkey.sh\n` +
+            `Could not connect to the ${cfg.label} test browser at CDP port ${port}. ` +
+            `Start it first with: ${opener}\n` +
             `Underlying error: ${err?.message ?? err}`
           );
         });
         const ctx = browser.contexts()[0];
         if (!ctx) {
           await browser.close();
-          throw new Error('Connected to TM browser but no context found.');
+          throw new Error(`Connected to the ${cfg.label} browser but no context found.`);
         }
         await use(ctx);
         // Don't close the user's browser.
@@ -192,7 +226,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
 
       // Default: headless. Launch a fresh Chromium against the
-      // persistent TM profile so the installed TM extension and the
+      // manager's persistent profile so the installed extension and the
       // user's "Allow access to file URLs" toggle come along for the
       // ride. `--headless=new` is required for extension support;
       // `headless: false` keeps Playwright from forcing the old
@@ -201,10 +235,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // Chromium locks the profile dir — if the user has the headed
       // browser open against the same profile, this throws. Surface a
       // friendly message in that case.
-      if (!fs.existsSync(TM_PROFILE_DIR)) {
+      if (!fs.existsSync(cfg.profileDir)) {
         throw new Error(
-          `TM profile not found at ${TM_PROFILE_DIR}. ` +
-          `First-time setup: run scripts/open-test-browser-with-Tampermonkey.sh and install TM ` +
+          `${cfg.label} profile not found at ${cfg.profileDir}. ` +
+          `First-time setup: run ${opener} and install ${cfg.label} ` +
           `from the Chrome Web Store, then close the browser. ` +
           `See docs/cross-manager-testing.md.`
         );
@@ -213,11 +247,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // bit: Playwright passes `--disable-extensions` by default, which
       // suppresses every extension in the profile. The SM fixture
       // sidesteps this with `--disable-extensions-except=<unpacked-path>`,
-      // but TM was CWS-installed into the profile so we have no unpacked
-      // path to point at — we have to suppress the default flag instead.
-      // Without this, TM doesn't load and the chrome-extension:// URL
-      // returns ERR_BLOCKED_BY_CLIENT.
-      const ctx = await chromium.launchPersistentContext(TM_PROFILE_DIR, {
+      // but these managers were CWS-installed into the profile so we have
+      // no unpacked path to point at — we have to suppress the default
+      // flag instead. Without this, the manager doesn't load and the
+      // chrome-extension:// URL returns ERR_BLOCKED_BY_CLIENT.
+      const ctx = await chromium.launchPersistentContext(cfg.profileDir, {
         headless: false,
         args: ['--headless=new'],
         ignoreDefaultArgs: ['--disable-extensions'],
@@ -225,8 +259,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const msg = String(err?.message ?? err);
         if (msg.includes('ProcessSingleton') || msg.includes('SingletonLock') || msg.includes('already in use')) {
           throw new Error(
-            `TM profile is locked — another Chromium is using ${TM_PROFILE_DIR}. ` +
-            `Close the headed browser (or set TM_HEADED=1 to connect to it instead). ` +
+            `The ${cfg.label} profile is locked — another Chromium is using ${cfg.profileDir}. ` +
+            `Close the headed browser (or set ${cfg.headedEnv}=1 to connect to it instead). ` +
             `Underlying error: ${msg}`
           );
         }
@@ -238,18 +272,23 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: 'worker' },
   ],
 
-  tampermonkeyDriver: [
+  externalDriver: [
     async ({ manager, extensionContext }, use) => {
-      if (manager !== 'tampermonkey') {
-        await use(null);
+      if (manager === 'tampermonkey') {
+        const driver = new TampermonkeyDriver(extensionContext, getTampermonkeyExtensionId());
+        // Nobody is watching to click "OK" on TM's GM-permission prompts
+        // (GM_download raises one), and an unanswered prompt means the GM
+        // call never settles. VM needs no equivalent — it falls back to
+        // an anchor download rather than prompting for `chrome.downloads`.
+        driver.autoApprovePermissionPrompts();
+        await use(driver);
         return;
       }
-      const driver = new TampermonkeyDriver(extensionContext, getTampermonkeyExtensionId());
-      // Nobody is watching to click "OK" on TM's GM-permission prompts
-      // (GM_download raises one), and an unanswered prompt means the GM
-      // call never settles.
-      driver.autoApprovePermissionPrompts();
-      await use(driver);
+      if (manager === 'violentmonkey') {
+        await use(new ViolentmonkeyDriver(extensionContext, getViolentmonkeyExtensionId()));
+        return;
+      }
+      await use(null);
     },
     { scope: 'worker' },
   ],
@@ -267,7 +306,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { auto: true },
   ],
 
-  setup: async ({ extensionContext, manager, tampermonkeyDriver }, use) => {
+  setup: async ({ extensionContext, fixtureServer, manager, externalDriver }, use) => {
     if (manager === 'sourcemonkey') {
       const getServiceWorker = makeGetServiceWorker(extensionContext);
       const sm = makeSwApi(getServiceWorker);
@@ -285,20 +324,55 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       return;
     }
 
-    // Tampermonkey: reuse the worker-scoped driver so the dashboard-cache
-    // is hit only once per worker. Scripts persist in the user's
-    // profile across tests AND runs; syncTampermonkeyScripts is
-    // idempotent (skip when name+version matches), so after the
-    // initial scrape the per-test cost is just a Map lookup.
-    if (!tampermonkeyDriver) throw new Error('tampermonkeyDriver missing under tampermonkey manager');
-    const driver = tampermonkeyDriver;
-    await use({
-      manager,
-      installScriptsFrom: async (dir: string) => {
-        await syncTampermonkeyScripts(driver, dir);
-      },
-    });
+    // TM / VM: reuse the worker-scoped driver so the installed-scripts
+    // list is read only once per worker. Scripts persist in the user's
+    // profile across tests AND runs, and both sync helpers are
+    // idempotent (skip when name+version matches), so after the initial
+    // read the per-test cost is just a Map lookup.
+    if (!externalDriver) throw new Error(`externalDriver missing under the ${manager} manager`);
+
+    // Dispatch on the manager name, the same way the driver fixture
+    // does, so a future backend fails here instead of silently taking
+    // whichever branch happens to be last.
+    if (manager === 'violentmonkey' && externalDriver instanceof ViolentmonkeyDriver) {
+      const driver = externalDriver;
+      await use({
+        manager,
+        installScriptsFrom: async (dir: string) => {
+          await syncViolentmonkeyScripts(driver, dir, (filepath) => exampleUrl(fixtureServer, filepath));
+        },
+      });
+      return;
+    }
+    if (manager === 'tampermonkey' && externalDriver instanceof TampermonkeyDriver) {
+      const driver = externalDriver;
+      await use({
+        manager,
+        installScriptsFrom: async (dir: string) => {
+          await syncTampermonkeyScripts(driver, dir);
+        },
+      });
+      return;
+    }
+    throw new Error(`No install path wired up for the ${manager} manager`);
   },
 });
 
 export const expect = test.expect;
+
+/**
+ * The URL this worker's fixture server serves `filepath` at.
+ *
+ * VM installs a script *from a URL* and resolves its relative
+ * `@require` / `@resource` / `@icon` refs against it, so a VM install
+ * has to name the served copy of the file rather than its path on
+ * disk. The server binds a fresh port per worker, so this is computed
+ * per run rather than baked into the example.
+ */
+function exampleUrl(server: FixtureServer, filepath: string): string {
+  const rel = path.relative(EXAMPLES_DIR, filepath).split(path.sep).join('/');
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Example script is outside ${EXAMPLES_DIR}: ${filepath}`);
+  }
+  return `${server.baseUrl}/${rel}`;
+}

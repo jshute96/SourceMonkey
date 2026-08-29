@@ -29,7 +29,8 @@ that interactively demonstrate supported `GM` APIs and other
 functionality.
 
 These also function as a **compliance test suite** for userscript managers,
-with tests that compare behavior between SourceMonkey and Tampermonkey.
+with tests that compare behavior between SourceMonkey, Tampermonkey,
+and Violentmonkey.
 
 ### Status
 
@@ -351,31 +352,34 @@ pnpm run test:e2e tests/e2e/injection.spec.ts    # For one e2e test
 ```
 
 The examples suite (`tests/examples/`) can also run against
-Tampermonkey for cross-manager compliance checks:
+Tampermonkey or Violentmonkey for cross-manager compliance checks:
 
 ```sh
-# One-off: install/update every example userscript into the running TM
-node scripts/sync-tm-scripts.mjs
+# One-off: install/update every example userscript into the running manager
+node scripts/sync-manager-scripts.mjs --manager tampermonkey
 
-# Run the examples suite against TM, headless. Headed browser must be closed.
+# Run the examples suite against a manager, headless.
+# Its headed browser must be closed.
 pnpm run test:e2e:tm
+pnpm run test:e2e:vm
 
-# Or, headed: connects via CDP to the TM browser — the script's
+# Or, headed: connects via CDP to that manager's browser — the script's
 # preflight step launches it if it isn't already running.
 pnpm run test:e2e:tm:headed
+pnpm run test:e2e:vm:headed
 ```
 
-The headed variant connects over CDP to the browser opened by
-`scripts/open-test-browser-with-Tampermonkey.sh`. The headless
-variant launches its own Chromium against the same persistent profile
-(so the same TM installation), but can't run while the headed browser
-is open against the profile.
+The headed variants connect over CDP to the browser opened by
+`scripts/open-test-browser.sh <manager>`. The headless variants launch
+their own Chromium against the same persistent profile (so the same
+manager installation), but can't run while the headed browser is open
+against that profile.
 
 See [docs/testing.md](docs/testing.md) for the harness layout,
 [docs/cross-manager-testing.md](docs/cross-manager-testing.md) for the
-one-time TM profile setup, and
+one-time profile setup each manager needs, and
 [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
-for known TM-specific divergences.
+for known per-manager divergences.
 
 ### Validate userscripts from the command line
 

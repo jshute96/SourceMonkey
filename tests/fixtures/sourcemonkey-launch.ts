@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { CONTENT_TYPES, handleSlowRoute } from './slow-route.mjs';
+import { handleSlowRoute, serveStaticFile } from './slow-route.mjs';
 
 export interface LaunchedSmContext {
   ctx: BrowserContext;
@@ -215,8 +215,8 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
         return;
       }
       const name = url.pathname.replace(/^\//, '') || 'index.html';
-      if (serveFile(res, pagesDir, name)) return;
-      if (serveFile(res, examplesDir, name)) return;
+      if (serveStaticFile(res, pagesDir, name)) return;
+      if (serveStaticFile(res, examplesDir, name)) return;
       res.statusCode = 404;
       res.end();
     } catch (err) {
@@ -237,17 +237,4 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
-}
-
-function serveFile(res: http.ServerResponse, root: string, name: string): boolean {
-  const filePath = path.join(root, name);
-  const rel = path.relative(root, filePath);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
-  if (!fs.existsSync(filePath)) return false;
-  const stat = fs.statSync(filePath);
-  if (!stat.isFile()) return false;
-  const ext = path.extname(filePath).toLowerCase();
-  res.setHeader('Content-Type', CONTENT_TYPES[ext] ?? 'application/octet-stream');
-  res.end(fs.readFileSync(filePath));
-  return true;
 }

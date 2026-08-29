@@ -17,6 +17,13 @@ test.describe('examples / gm-menu', () => {
   test('by-name pair: each Register adds a new entry; Unregister peels them off LIFO', async ({
     extensionContext, fixtureServer, setup,
   }) => {
+    // VM keys menu commands by `opts.id || caption`, so registering
+    // the same caption three times replaces one entry instead of
+    // stacking three. This test is entirely about that stacking, so
+    // there's nothing left to assert once it's gone. See
+    // docs/cross-manager-test-results.md.
+    test.skip(setup.manager === 'violentmonkey', 'VM keys menu commands by caption, so same-name registrations collapse');
+
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();

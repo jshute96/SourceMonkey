@@ -42,10 +42,11 @@ or the GreasyFork corpus. See
   `fullyParallel: true`). Each worker launches its own Chromium with its
   own `mkdtemp` profile, and the fixture HTTP server binds to port 0, so
   workers share nothing.
-  - **The `tampermonkey` project must stay serial.** It attaches over
-    CDP to one real browser with no per-test state reset, so the
-    package scripts pass `--workers=1`. Invoking `playwright test
-    --project=tampermonkey` directly skips that — pass it yourself.
+  - **The `tampermonkey` and `violentmonkey` projects must stay
+    serial.** Each attaches over CDP to one real browser with no
+    per-test state reset, so the package scripts pass `--workers=1`.
+    Invoking `playwright test --project=<name>` directly skips that —
+    pass it yourself.
 - Typecheck: `pnpm run typecheck` — `tsconfig.json` builds the extension
   and covers `src/` only, so this runs `tsconfig.tests.json` over the
   tests as well. Playwright transpiles specs without checking types, so
