@@ -36,6 +36,7 @@ import {
   collectionHasManifest,
 } from './collection-display.js';
 import { getValue } from './userscript-header.js';
+import { guardSelectOpeningClick } from './select-open-guard.js';
 import {
   allRelatedRows,
   enableChanges,
@@ -904,6 +905,9 @@ export function buildInstallSelect(
 ): HTMLSelectElement {
   const select = document.createElement('select');
   select.className = 'install-target';
+  // Opens the list on the mouse release, so the click that opens it
+  // can't also pick from it — see select-open-guard.ts.
+  guardSelectOpeningClick(select);
   select.title = config.title ?? 'Which collection to install this script into';
   // Which entry opens selected: the one the script is already in when
   // there is one (the move dropdown), else the scheme default that

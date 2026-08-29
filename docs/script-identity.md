@@ -497,6 +497,45 @@ installed yet) and the panel's offer row (some copy exists). Built by
 - Directory / manifest collections never appear: a script can't be put
   into one.
 
+### The opening click never picks
+
+Both dropdowns (and the move dialog's) run through
+`guardSelectOpeningClick` in `src/select-open-guard.ts`, which opens the
+list on the mouse *release* instead of the press.
+
+- **The hazard**: the popup is drawn by Chrome, and when the list
+  doesn't fit below the closed control — bottom of the screen, short
+  window, long list — Chrome shifts it up over the control. That puts
+  an entry under the pointer that just pressed, and Chrome's
+  press-drag-release gesture makes the release of that same click
+  commit it. The dropdown appears to open, pick at random, and close,
+  with the list never seen.
+- **Why the page has to handle it**: the popup is a browser widget, not
+  DOM. Nothing tells us it opened, we can't place it, and the gesture
+  has no opt-out.
+- **The rule**: `mousedown` is cancelled — which is what stops Chrome
+  opening the popup, and takes the focus it would have given, so focus
+  is set by hand — and the `click` that press produces calls
+  `showPicker()`. Same list, opened with the mouse already up, so
+  nothing is committed until the user presses on an entry deliberately.
+- **Only that click opens it**, tracked by a flag rather than judged
+  from the click itself. Clicks arrive with no cancelled press behind
+  them — Enter or Space on a focused select, the install page's `for=`
+  label, a programmatic `click()` — and each would otherwise open a
+  list nobody asked for, or fight one Chrome had opened already.
+- **What it costs**: press-drag-release no longer picks. That is the
+  gesture the bug rides on; press, release, click the entry still
+  works, and keyboard use never touches this code.
+- **Not undo-after-the-fact.** Letting the stray pick land and
+  reverting it was tried first: the list is torn down and re-opened
+  under the cursor, which reads as a flash over the whole popup on
+  every click.
+- If `showPicker` is missing (Chrome 120, one below where it landed)
+  or ever refuses, the takeover switches itself off and the browser's
+  press-to-open stands — bug and all, but a control that opens beats
+  one that can't. A refusal costs the click that discovered it, whose
+  press was already cancelled; the next one opens natively.
+
 ### The same dropdown, for a move
 
 The viewer's move dialog (see

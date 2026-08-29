@@ -74,6 +74,30 @@ test.describe('move a script between collections', () => {
     await page.close();
   });
 
+  // The dialog's dropdown comes from the same builder as the install
+  // page's, so it inherits the open-on-release guard
+  // (src/select-open-guard.ts). Asserted here because "same builder"
+  // is the only reason it does.
+  test('the dialog\'s dropdown refuses the press that would open it', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const def = await sm.addCollection(scriptUrl);
+    await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    const scriptId = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(viewerUrl(extensionId, scriptId));
+    await page.locator(MOVE_BTN).click();
+    await expect(page.locator(SELECT)).toBeVisible();
+    const prevented = await page.evaluate((sel) => new Promise<boolean>((done) => {
+      const select = document.querySelector(sel) as HTMLSelectElement;
+      select.addEventListener('mousedown', (e) => done(e.defaultPrevented), { once: true });
+      select.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true }));
+    }), SELECT);
+    expect(prevented).toBe(true);
+    await page.close();
+  });
+
   test('Move keeps the script id, and both collections\' lists agree', async ({
     extensionContext, extensionId, sm,
   }) => {

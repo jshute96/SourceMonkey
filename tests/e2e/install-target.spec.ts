@@ -227,6 +227,88 @@ test.describe('install target dropdown', () => {
     await page.close();
   });
 
+  // The click that opens the list must not also pick out of it. See
+  // src/select-open-guard.ts: Chrome sometimes draws the list over the
+  // control, putting an entry under the pointer that just pressed, and
+  // the release of that same click commits it. The press is therefore
+  // cancelled and the list opened from the release instead.
+  //
+  // The popup is a browser widget with no test surface, so what these
+  // check is the half that is observable: the press is refused (no
+  // popup can open under a held button) and the selection survives a
+  // full click.
+  test('the press on the dropdown is cancelled, and focus set by hand', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    const page = await extensionContext.newPage();
+    await page.goto(previewUrl(extensionId, scriptUrl));
+    const select = page.locator('#install-target');
+    await expect(select).toBeVisible();
+    const before = await select.inputValue();
+    await page.evaluate(() => {
+      (window as unknown as { prevented?: boolean }).prevented = undefined;
+      document.querySelector('#install-target')!.addEventListener('mousedown', (e) => {
+        (window as unknown as { prevented?: boolean }).prevented = e.defaultPrevented;
+      });
+    });
+
+    const box = (await select.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    // The press alone: no popup, so nothing to commit, and the control
+    // still takes focus the way a press normally gives it.
+    expect(await page.evaluate(() => (window as unknown as { prevented?: boolean }).prevented))
+      .toBe(true);
+    await expect(select).toBeFocused();
+    await page.mouse.up();
+    // Headless draws no popup, so this only says the click committed
+    // nothing on its own — the press being refused above is what
+    // carries the fix.
+    await expect(select).toHaveValue(before);
+    await page.keyboard.press('Escape');
+    await page.close();
+  });
+
+  // Only the release of a press the guard itself cancelled opens the
+  // list. A click with no such press behind it — the keyboard's Enter,
+  // the `for=` label beside the dropdown, a programmatic `click()` —
+  // must not reach `showPicker`, or it would open a list the user
+  // didn't ask for (and, where Chrome opened one already, fight it).
+  test('a click with no cancelled press behind it does not open the list', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    const page = await extensionContext.newPage();
+    await page.goto(previewUrl(extensionId, scriptUrl));
+    await expect(page.locator('#install-target')).toBeVisible();
+    const opened = await page.evaluate(() => {
+      const sel = document.querySelector('#install-target') as HTMLSelectElement;
+      let calls = 0;
+      sel.showPicker = () => { calls += 1; };
+      sel.click();
+      document.querySelector<HTMLLabelElement>('#install-target-label')!.click();
+      return calls;
+    });
+    expect(opened).toBe(0);
+    await page.close();
+  });
+
+  // The dropdown still works as a dropdown: the guard adds no `change`
+  // wiring, so a pick still reaches the Install button.
+  test('a pick still commits and lights up Install', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    const page = await extensionContext.newPage();
+    await page.goto(previewUrl(extensionId, scriptUrl));
+    await expect(page.locator('#install-target')).toBeVisible();
+    await page.locator('#install-target').selectOption({ label: 'Mine' });
+    await expect(page.locator('#install-target option:checked')).toHaveText('Mine');
+    await expect(page.locator('#install-btn')).toBeEnabled();
+    await page.close();
+  });
+
   test('cancelling the create-and-install dialog installs nothing and keeps the page usable', async ({
     extensionContext, extensionId, sm,
   }) => {
