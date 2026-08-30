@@ -114,7 +114,10 @@ keys would look like a wiped profile.
 
 - `id` — UUID, **stable across refreshes** (keyed by `relativePath`).
 - `collectionId` — back-reference so the viewer can refresh without
-  looking up the parent.
+  looking up the parent. Written only by the install / move path, so
+  both refresh entry points re-apply the persisted value over whatever
+  they built (`preserveConcurrentEdits`) rather than reverting a move
+  that landed mid-fetch.
 - `relativePath`, `fileUrl` — identity + how to refetch.
   - Directory/manifest/github-dir collection: `relativePath` is the path
     relative to the collection root; `fileUrl` is the joined absolute URL.
@@ -759,13 +762,49 @@ silently reverting the user's choice.
   the lock, then calls `refreshCollection` (which takes the lock for its own
   write) *outside* it; `refreshAllCollections` fans out `refreshCollection`
   calls that each lock independently.
-- **Residual** (narrow, pre-existing): adding a child to a container
-  (`addScriptToContainer`) concurrently with a `refreshCollection` on that
-  same container can still drop the new child from `scriptIds`, because
-  the refresh computes its child set from a snapshot taken before the
-  add. The byte-level writes are now atomic, but this logical
-  interleaving isn't reconciled. Both are user-driven from one page, so
-  it's rare in practice.
+- **Membership moves under a refresh.** The rebuilt child set comes
+  from a snapshot taken before the fetch (for a container, that
+  snapshot *is* the synthetic scan), so it can describe a membership
+  that is minutes stale. The write reconciles against the freshly
+  re-read rows instead of overwriting with it.
+  - **Joined** — an `addScriptToContainer` or `moveScript` INTO this
+    collection. Its id isn't in the rebuilt list, so it is appended
+    from the re-read collection row.
+  - **Left** — a `removeScript`, or a `moveScript` OUT. The rebuilt row
+    still claims it, so it is dropped from both the list and the row
+    write: the script row is the authority on which collection it
+    belongs to.
+  - `droppedIds` covers only ids the snapshot had and that didn't
+    depart — this refresh has no evidence about a row it never looked
+    at, and a departed row is either already deleted or now owned by
+    somewhere else.
+
+### Membership disagreements
+
+The two directions of membership are written together by every mutator,
+so a disagreement between them is a bug state, not a shape the store
+means to represent. Two kinds:
+
+- **Unlisted** — a row names a collection whose `scriptIds` omits it.
+  Half-visible: the injector and the viewer key off `collectionId`, so
+  the script still runs and still opens; the collections page and
+  refresh key off `scriptIds`, so it is absent there and never updated
+  again.
+- **Cross-listed** — a collection lists a row that names a different
+  one, so the script renders under a collection it doesn't belong to.
+
+`reconcileScriptMembership()` repairs both, taking the script row's own
+`collectionId` as the authority: append where missing, drop where stale.
+
+- Finding a row nothing points at needs a whole-storage scan, so it has
+  no schedule of its own. The collections page runs it on every full
+  render, off the `getAllScripts()` scan it already makes for log IDs —
+  no extra reads, and it repairs the profile on the page where an
+  unlisted row is missing.
+- A row whose collection is **gone** is reported, not repaired:
+  `removeCollection` drops both together, so it shouldn't arise, and
+  there is nowhere to put such a row back. (`script-identity.md` calls
+  that shape an orphan too — same word, different failure.)
 
 ## First-run seeding
 

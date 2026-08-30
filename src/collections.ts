@@ -31,6 +31,7 @@ import {
   DEFAULT_COLLECTIONS,
   describeError,
   getAllScripts,
+  reconcileScriptMembership,
   getCollectionWithScripts,
   getCollections,
   isFirstRunComplete,
@@ -296,10 +297,13 @@ let currentRejections: RejectionMap = {};
 // `chrome.storage.session.onChanged` listener above.
 let currentRefreshErrors: RefreshErrorMap = {};
 
-async function refreshLogIds(): Promise<void> {
+// Returns the rows it read, so a full render can reuse them instead of
+// scanning the store twice — `getAllScripts` is a `get(null)`.
+async function refreshLogIds(): Promise<StoredScript[]> {
   const all = await getAllScripts();
   currentLogIds = computeLogIds(all);
   applyLogIdSuffixesToDom();
+  return all;
 }
 
 // Mirror of `applyLogIdSuffixesToDom` for the Status column. After a
@@ -1068,7 +1072,18 @@ async function render(): Promise<void> {
   // that the repaint calls too.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
 
-  await refreshLogIds();
+  const allScripts = await refreshLogIds();
+  // Repair any collection whose `scriptIds` disagrees with the script
+  // rows themselves, off the scan `refreshLogIds` just made — this is
+  // the page where the damage shows (a script that runs but is listed
+  // nowhere), and the only surface that already reads every row. The
+  // sections below re-read each collection, so they paint the repaired
+  // lists; failing is not worth abandoning the render over.
+  try {
+    await reconcileScriptMembership({ collections, scripts: allScripts });
+  } catch (err) {
+    console.info('[SourceMonkey] membership reconcile failed', err);
+  }
   if (collections.length === 0) {
     collectionsEl.appendChild(emptyPlaceholder());
     return;

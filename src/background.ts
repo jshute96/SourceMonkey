@@ -133,6 +133,7 @@ import {
   installScript,
   moveScript,
   removeScript,
+  reconcileScriptMembership,
   describeError,
   type AddCollectionResult,
   type CollectionOptions,
@@ -247,6 +248,9 @@ interface SourceMonkeyApi {
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
   removeScript: (scriptId: string) => Promise<void>;
+  // Make every collection's `scriptIds` agree with the `collectionId`
+  // on each script row; returns how many listings it corrected.
+  reconcileScriptMembership: () => Promise<number>;
   setCollectionOptions: (id: string, options: CollectionOptions) => Promise<StoredCollection | null>;
   removeCollection: (id: string) => Promise<void>;
   getCollections: () => Promise<StoredCollection[]>;
@@ -410,6 +414,7 @@ const api: SourceMonkeyApi = {
   installScript,
   moveScript,
   removeScript,
+  reconcileScriptMembership,
   setCollectionOptions,
   removeCollection,
   getCollections,

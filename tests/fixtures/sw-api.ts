@@ -36,6 +36,9 @@ export interface SmApi {
   ): Promise<StoredScriptLike | null>;
   // Remove one installed script row, as the viewer's trash can does.
   removeScript(scriptId: string): Promise<void>;
+  // Make every collection's `scriptIds` agree with the `collectionId`
+  // on each script row. Resolves to how many listings it corrected.
+  reconcileScriptMembership(): Promise<number>;
   setCollectionOptions(
     id: string,
     options: { displayName?: string; localFiles?: boolean },

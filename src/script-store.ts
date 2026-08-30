@@ -1645,8 +1645,10 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
 // ---------- chrome.storage.local I/O ----------
 
 const COLLECTIONS_INDEX_KEY = 'collections';
-const collectionKey = (id: string) => `collection:${id}`;
-const scriptKey = (id: string) => `script:${id}`;
+const COLLECTION_PREFIX = 'collection:';
+const SCRIPT_PREFIX = 'script:';
+const collectionKey = (id: string) => `${COLLECTION_PREFIX}${id}`;
+const scriptKey = (id: string) => `${SCRIPT_PREFIX}${id}`;
 
 // Does a `chrome.storage.local` change touch the structural rows — the
 // collection index, a collection, or a script? Exported so pages
@@ -2472,6 +2474,137 @@ export async function removeScript(id: string): Promise<void> {
   await forgetScriptLogs([id]);
 }
 
+// ---------- Membership reconciliation ----------
+
+// The rows `reconcileScriptMembership` needs when the caller hasn't
+// already read them: every collection row (including any the index has
+// lost track of) and every script row, in one pass.
+async function scanMembershipRows(): Promise<{
+  collections: StoredCollection[]; scripts: StoredScript[];
+}> {
+  const all = await scanAllStorage('membership reconcile');
+  const collections: StoredCollection[] = [];
+  const scripts: StoredScript[] = [];
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(COLLECTION_PREFIX)) collections.push(value as StoredCollection);
+    else if (key.startsWith(SCRIPT_PREFIX)) scripts.push(value as StoredScript);
+  }
+  return { collections, scripts };
+}
+
+//
+// Make `collection.scriptIds` agree with the `collectionId` on each
+// script row. Every mutator writes both together, so a disagreement is
+// a bug state rather than a shape the store means to represent — but a
+// refresh that raced an install or a move used to overwrite the list
+// from its pre-fetch snapshot and leave one behind (both directions
+// now handled in `writeRefreshedCollection`).
+//
+// This heals profiles that already hit it. The row's own `collectionId`
+// is the authority, because that is what the injector and the viewer
+// read — a row unlisted by it is invisible on the collections page and
+// never refreshed again, and one listed by a collection it doesn't name
+// shows up under a collection it doesn't belong to.
+//
+// Finding a row nothing points at needs a whole-storage scan, so this
+// does not run on a schedule of its own. The collections page — the
+// surface where an unlisted row is missing, and the one the user is
+// looking at when they notice — already scans the whole store on every
+// full render, and hands what it read to `prescanned` so this costs it
+// no extra reads.
+//
+// A row whose collection is GONE is left alone: `removeCollection`
+// drops both together so it shouldn't arise, there is nowhere to put
+// such a row back, and quietly deleting a user's script on a hunch is
+// worse than leaving an inert row.
+export async function reconcileScriptMembership(
+  prescanned?: { collections: readonly StoredCollection[]; scripts: readonly StoredScript[] },
+): Promise<number> {
+  await ensureCollectionKeysMigrated();
+  // Only the caller that has no rows in hand pays for the scan.
+  const rows = prescanned ?? await scanMembershipRows();
+
+  // {script id → the collections currently listing it}. Built over
+  // every collection row rather than a flat "is listed" set, so a row
+  // listed by the WRONG collection is caught too.
+  const listedBy = new Map<string, string[]>();
+  const known = new Set<string>();
+  for (const collection of rows.collections) {
+    known.add(collection.id);
+    for (const sid of collection.scriptIds ?? []) {
+      const owners = listedBy.get(sid);
+      if (owners) owners.push(collection.id);
+      else listedBy.set(sid, [collection.id]);
+    }
+  }
+
+  // Per collection: ids it should list but doesn't, and ids it lists
+  // that name somewhere else.
+  const toAdd = new Map<string, string[]>();
+  const toDrop = new Map<string, string[]>();
+  const push = (map: Map<string, string[]>, cid: string, sid: string): void => {
+    const ids = map.get(cid);
+    if (ids) ids.push(sid);
+    else map.set(cid, [sid]);
+  };
+  let collectionless = 0;
+  for (const script of rows.scripts) {
+    const owners = listedBy.get(script.id) ?? [];
+    const cid = script.collectionId;
+    if (cid === undefined || !known.has(cid)) {
+      collectionless++;
+      continue;
+    }
+    if (!owners.includes(cid)) push(toAdd, cid, script.id);
+    for (const other of owners) if (other !== cid) push(toDrop, other, script.id);
+  }
+  if (collectionless > 0) {
+    console.log(
+      `[SourceMonkey] membership: ${collectionless} script row(s) name no `
+      + 'existing collection; left in place',
+    );
+  }
+  if (toAdd.size === 0 && toDrop.size === 0) return 0;
+
+  // Re-read inside the lock: the scan is stale by now, and a concurrent
+  // refresh or move may already have adopted (or legitimately removed)
+  // one of these rows. Read every row this pass touches in two batched
+  // gets rather than one per id — the mutex is held throughout, and the
+  // rest of the module keeps its critical sections short.
+  return await mutate(async () => {
+    const cids = new Set([...toAdd.keys(), ...toDrop.keys()]);
+    const sids = new Set([...toAdd.values(), ...toDrop.values()].flat());
+    const collections = await getMany([...cids].map(collectionKey));
+    const scripts = await getMany([...sids].map(scriptKey));
+    const ownerOf = (sid: string): string | undefined =>
+      (scripts[scriptKey(sid)] as StoredScript | undefined)?.collectionId;
+
+    const toSet: Record<string, unknown> = {};
+    let moved = 0;
+    for (const cid of cids) {
+      const collection = collections[collectionKey(cid)] as StoredCollection | undefined;
+      if (!collection) continue;
+      const before = collection.scriptIds ?? [];
+      const has = new Set(before);
+      // Re-checked against the row as it stands now, so a move that
+      // landed since the scan isn't undone by acting on stale reads.
+      const add = (toAdd.get(cid) ?? []).filter((sid) => !has.has(sid) && ownerOf(sid) === cid);
+      const drop = new Set((toDrop.get(cid) ?? []).filter((sid) => ownerOf(sid) !== cid));
+      const after = [...before.filter((sid) => !drop.has(sid)), ...add];
+      if (after.length === before.length && add.length === 0) continue;
+      toSet[collectionKey(cid)] = { ...collection, scriptIds: after } satisfies StoredCollection;
+      moved += add.length + drop.size;
+    }
+    if (moved === 0) return 0;
+    await chrome.storage.local.set(toSet);
+    console.log(
+      `[SourceMonkey] membership: reconciled ${moved} script listing(s) across `
+      + `${Object.keys(toSet).length} collection(s)`,
+    );
+    return moved;
+  });
+}
+
 // Rescan a collection + refetch all of its scripts. Adds new files,
 // keeps known files (status updated based on fetch result), and drops
 // the ones the scan no longer reports — except when the scan came back
@@ -2645,16 +2778,55 @@ export async function refreshCollection(
         return null;
       }
       const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
-      const finalScripts = scripts.map((s) => preserveConcurrentEdits(
+      const priorIds = new Set(existingScripts.map((s) => s.id));
+
+      // Membership moves under us in both directions, and the freshly
+      // re-read row is the authority on both. `scripts` was rebuilt
+      // from a snapshot taken before the fetch (for a container, that
+      // snapshot IS the synthetic scan), so it describes a membership
+      // that may be minutes stale.
+      //
+      // LEFT during the fetch — the row is gone (`removeScript`) or now
+      // names another collection (`moveScript`). Writing the rebuilt
+      // row back would resurrect a deleted script, or revert the move
+      // AND leave the destination still listing it, so the same script
+      // shows under two collections. `preserveConcurrentEdits` can't
+      // rescue this: it re-applies fields onto the rebuilt row, and
+      // what's wrong here is that the row belongs to someone else now.
+      const departed = new Set<string>();
+      for (const s of scripts) {
+        const cur = curScripts[scriptKey(s.id)] as StoredScript | undefined;
+        // A row the scan found for the first time has no stored
+        // counterpart yet — that's a new script, not a departure.
+        if (!cur) {
+          if (priorIds.has(s.id)) departed.add(s.id);
+        } else if (cur.collectionId !== id) {
+          departed.add(s.id);
+        }
+      }
+      const kept = scripts.filter((s) => !departed.has(s.id));
+      const finalScripts = kept.map((s) => preserveConcurrentEdits(
         s,
         priorById.get(s.id),
         curScripts[scriptKey(s.id)] as StoredScript | undefined,
       ));
 
+      // JOINED during the fetch — an `installScript` / `moveScript`
+      // into this collection that the snapshot never saw. Writing the
+      // rebuilt list verbatim would erase its id while leaving the
+      // `script:` row in storage — unlisted: still pointing here via
+      // `collectionId`, still injected, but shown by no collection and
+      // never refreshed again.
+      const rebuiltIds = finalScripts.map((s) => s.id);
+      const rebuilt = new Set(rebuiltIds);
+      const joinedDuringRefresh = curCollection.scriptIds.filter(
+        (sid) => !rebuilt.has(sid) && !priorIds.has(sid) && !departed.has(sid),
+      );
+
       const nextCollection: StoredCollection = {
         ...curCollection,
         lastRefreshedAt: now,
-        scriptIds: finalScripts.map((s) => s.id),
+        scriptIds: [...rebuiltIds, ...joinedDuringRefresh],
       };
       // Clear any scanError left by a previous failed refresh — control
       // only reaches here when the scan succeeded (the early-return above
@@ -2662,10 +2834,13 @@ export async function refreshCollection(
       delete nextCollection.scanError;
 
       // Drop rows whose IDs are no longer referenced — an entry that
-      // fell off the listing, or a manifest entry the user removed.
-      const priorIds = new Set(existingScripts.map((s) => s.id));
-      const nextIds = new Set(finalScripts.map((s) => s.id));
-      const droppedIds = [...priorIds].filter((sid) => !nextIds.has(sid));
+      // fell off the listing, or a manifest entry the user removed. Of
+      // the ids the snapshot had, since a row that joined mid-refresh
+      // was never reconciled against the scan; and never a departed
+      // one, whose row is either already deleted or now owned by the
+      // collection it moved to.
+      const droppedIds = [...priorIds]
+        .filter((sid) => !rebuilt.has(sid) && !departed.has(sid));
 
       // The collection row always goes: `lastRefreshedAt` moved, and
       // that's the record of the check having happened at all. The
@@ -3014,6 +3189,14 @@ export async function refreshScript(
 //     them. They arrive only from setVersionProbes, so whatever is
 //     persisted now is by definition newer than what the refresh
 //     started with.
+//   - `collectionId` — always, for the same reason: only `moveScript`
+//     writes it, so the stored value is a move that landed during the
+//     fetch. A refresh rebuilds the row under the collection it was
+//     asked about, and writing that back would silently revert the
+//     move and leave the two collections disagreeing about who owns
+//     the row. (The collection path drops such a row before it gets
+//     here — see `departed` in `writeRefreshedCollection`; this is
+//     what covers the single-script path.)
 function preserveConcurrentEdits(
   next: StoredScript,
   prior: StoredScript | undefined,
@@ -3022,6 +3205,7 @@ function preserveConcurrentEdits(
   if (!cur) return next;
   const out: StoredScript = { ...next };
   if (prior && cur.enabled !== prior.enabled) out.enabled = cur.enabled;
+  out.collectionId = cur.collectionId;
   if (cur.versionProbes) out.versionProbes = cur.versionProbes;
   else delete out.versionProbes;
   return out;
