@@ -1683,6 +1683,24 @@ export function touchesStructuralRows(keys: Iterable<string>): boolean {
 // so this doesn't serialize I/O. IMPORTANT: a `mutate()` block must
 // never call another mutator (refreshCollection / addCollection / a set*),
 // since this mutex is non-reentrant — keep orchestrator calls outside.
+//
+// SCOPE: `mutateChain` is module state, so the lock is PER JS CONTEXT.
+// The service worker, the collections page, and the viewer each hold
+// their own — and pages call these mutators directly (a Remove click, a
+// move, an enable toggle) while the worker refreshes in the background.
+// So a section is atomic against other mutators in the SAME context
+// only. Two rules follow:
+//
+//   - Re-read inside the lock and merge, rather than writing values
+//     captured before it. That is what actually survives a writer in
+//     another context — see `preserveConcurrentEdits` and the
+//     joined/departed reconcile in `writeRefreshedCollection`.
+//   - Keep sections short for the same reason. A wide section doesn't
+//     buy exclusion against the other context; it only widens the
+//     window in which that context can interleave.
+//
+// See docs/storage.md#write-serialization-mutate for what remains
+// unguarded across contexts.
 let mutateChain: Promise<unknown> = Promise.resolve();
 function mutate<T>(fn: () => Promise<T>): Promise<T> {
   // Run after the prior section settles, regardless of its outcome.
@@ -2477,17 +2495,39 @@ export async function removeScript(id: string): Promise<void> {
 // ---------- Membership reconciliation ----------
 
 // The rows `reconcileScriptMembership` needs when the caller hasn't
-// already read them: every collection row (including any the index has
-// lost track of) and every script row, in one pass.
+// already read them: every script row, and every collection row the
+// INDEX still lists.
+//
+// Index-filtered so this agrees with the collections page, which passes
+// what `getCollections` gave it. A `collection:` row the index has lost
+// is not somewhere a script can be put back — nothing renders or
+// refreshes it — so both callers have to treat scripts naming one as
+// collectionless rather than re-link them into a collection no surface
+// shows.
+//
+// The filter also means a de-indexed row's stale cross-listing is left
+// alone rather than dropped. That listing is invisible either way, and
+// leaving one row of garbage beats writing to a collection we've just
+// decided isn't real.
 async function scanMembershipRows(): Promise<{
   collections: StoredCollection[]; scripts: StoredScript[];
 }> {
   const all = await scanAllStorage('membership reconcile');
+  // Out of the scan rather than a second read, so the index and the rows
+  // it filters are one snapshot. `ensureCollectionKeysMigrated` already
+  // ran, so this is the post-rename spelling.
+  const index = all[COLLECTIONS_INDEX_KEY];
+  const indexed = new Set(Array.isArray(index) ? index as string[] : []);
   const collections: StoredCollection[] = [];
   const scripts: StoredScript[] = [];
   for (const [key, value] of Object.entries(all)) {
-    if (key.startsWith(COLLECTION_PREFIX)) collections.push(value as StoredCollection);
-    else if (key.startsWith(SCRIPT_PREFIX)) scripts.push(value as StoredScript);
+    if (key.startsWith(COLLECTION_PREFIX)) {
+      if (indexed.has(key.slice(COLLECTION_PREFIX.length))) {
+        collections.push(value as StoredCollection);
+      }
+    } else if (key.startsWith(SCRIPT_PREFIX)) {
+      scripts.push(value as StoredScript);
+    }
   }
   return { collections, scripts };
 }

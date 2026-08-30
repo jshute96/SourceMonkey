@@ -147,6 +147,9 @@ import {
   appendScriptLog,
   clearScriptLog,
   getScriptLog,
+  handleScriptLogWrite,
+  SCRIPT_LOG_WRITE_MESSAGE,
+  type ScriptLogWriteRequest,
   logScriptEvent,
   _flushScriptLogQueueForTests,
   type AppendLogInput,
@@ -3011,23 +3014,30 @@ function installScriptMessageListener(): void {
   });
 }
 
+// Shared by the page relays below: is this message from one of OUR
+// extension pages?
+//
+// Sender check, not decoration: the extension holds `<all_urls>`, so a
+// relay that answered anyone would be doing that caller's work with our
+// privileges. Userscript worlds are on a different event
+// (`onUserScriptMessage`) and could never reach these listeners, but the
+// guard is what keeps that true after some future context gains
+// `chrome.runtime.sendMessage`.
+function fromExtensionPage(sender: chrome.runtime.MessageSender): boolean {
+  if (sender.id !== chrome.runtime.id) return false;
+  const origin = `chrome-extension://${chrome.runtime.id}`;
+  return !!sender.url && sender.url.startsWith(`${origin}/`);
+}
+
 // Read an http(s) URL on behalf of an extension PAGE, because a page
 // that fetches for itself acts on the response's `Link: rel=preload`
 // headers and lands an uncatchable CSP refusal in the Errors panel.
 // The reasoning, and the reply shape, live in src/http-read.ts.
-//
-// Sender check, not decoration: the extension holds `<all_urls>`, so
-// answering anyone would make this an open fetch proxy. Userscript
-// worlds are on a different event (`onUserScriptMessage`) and could
-// never reach this listener, but the guard is what keeps that true
-// after some future context gains `chrome.runtime.sendMessage`.
 function installPageFetchListener(): void {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const msg = message as { type?: unknown } | null;
     if (!msg || msg.type !== HTTP_READ_MESSAGE) return undefined;
-    if (sender.id !== chrome.runtime.id) return undefined;
-    const origin = `chrome-extension://${chrome.runtime.id}`;
-    if (!sender.url || !sender.url.startsWith(`${origin}/`)) return undefined;
+    if (!fromExtensionPage(sender)) return undefined;
     void handleHttpReadRequest(msg as HttpReadRequest).then(
       (reply) => { try { sendResponse(reply); } catch { /* page gone */ } },
       (err) => {
@@ -3035,6 +3045,33 @@ function installPageFetchListener(): void {
         // dress it up as one: answering with nothing sends the page to
         // its own fallback fetch, which at worst leaks one preload hint.
         console.info('[SourceMonkey] page http-read handler threw:', describeError(err));
+        try { sendResponse(undefined); } catch { /* page gone */ }
+      },
+    );
+    // Keep the message channel open for the async reply.
+    return true;
+  });
+}
+
+// Write a per-script Log entry on behalf of an extension PAGE, so the
+// worker's per-script queue is the only one touching that key. The
+// pages share `script-store` / `script-log` with the worker, so both
+// would otherwise run their own read-modify-write chains on one
+// `log:<id>` row and drop entries — or resurrect ones the viewer's
+// Clear log button had just removed. See src/script-log.ts.
+//
+// Same sender check as the fetch relay, for the same reason.
+function installPageLogWriteListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as { type?: unknown } | null;
+    if (!msg || msg.type !== SCRIPT_LOG_WRITE_MESSAGE) return undefined;
+    if (!fromExtensionPage(sender)) return undefined;
+    void handleScriptLogWrite(msg as unknown as ScriptLogWriteRequest).then(
+      () => { try { sendResponse(true); } catch { /* page gone */ } },
+      (err) => {
+        // Anything but `true` sends the page to its own local write, so
+        // this failure costs the entry its ordering, not its existence.
+        console.info('[SourceMonkey] page log-write handler threw:', describeError(err));
         try { sendResponse(undefined); } catch { /* page gone */ }
       },
     );
@@ -3285,6 +3322,7 @@ installUserJsCapture();
 void clearStaleHeaderRules();
 installScriptMessageListener();
 installPageFetchListener();
+installPageLogWriteListener();
 installDebugLoggingListener();
 installLocalRootsListener();
 installGithubAuthListener();

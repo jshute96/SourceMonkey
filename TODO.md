@@ -695,6 +695,31 @@ during cumulative review of the GM_* phases:
   Chrome change that invalidates them fails a test rather than silently
   changing injection order or leaving a stale match set.
 
+## Concurrency — accepted races
+
+The write mutex in `script-store.ts` is per JS context. The interleaves
+that leaves are catalogued in
+[docs/storage.md](docs/storage.md#the-lock-is-per-context) rather than
+here — they are decisions, not proposals.
+
+One thing does have a concrete fix we chose not to make:
+
+- **`setRefreshError` is a lost update waiting on a rare trigger.**
+  `src/refresh-error.ts` read-modify-writes one whole map, with nothing
+  serializing it, and `refreshAllCollections` runs collections two at a
+  time. Two collections failing in one pass can drop each other's entry;
+  a healthy collection's clear can resurrect a sibling's error.
+  - The fix is to stop sharing the map: one `refresherror:<cid>` key per
+    collection, which makes every write independent and deletes the
+    read-modify-write entirely. The collections page would read them
+    with one prefix scan, as it already does for log levels.
+  - Not done because the map only ever fills when a refresh **write**
+    fails — in practice an exhausted `chrome.storage.local` quota — so
+    reaching it means the profile is already degraded, and what is lost
+    is a diagnostic message rather than any state. Worth doing if the
+    banner ever becomes load-bearing, or alongside any other change to
+    that module.
+
 ## Storage-key migration — remove after 2026-09-01
 
 - **`ensureCollectionKeysMigrated` in `src/script-store.ts` is

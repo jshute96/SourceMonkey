@@ -3779,10 +3779,12 @@ async function onClearLog(): Promise<void> {
   // buttons — a greyed-out "Copied" reads as a broken control.
   reportLogAction('save', null);
   reportLogAction('copy', null);
-  // Paint the empty state immediately for snappy click feedback; the
-  // storage.onChanged listener will fire shortly with the same empty
-  // state, so the second paint is a visual no-op. Bump the epoch so
-  // any in-flight renderLogPane() read can't undo this.
+  // Paint the empty state ourselves rather than waiting for the
+  // storage.onChanged listener, which fires shortly with the same empty
+  // state — so the second paint is a visual no-op. Not instant: the
+  // clear above is a message hop to the worker (which owns the log's
+  // writes — see script-log.ts) and may have to wake it. Bump the epoch
+  // so any in-flight renderLogPane() read can't undo this.
   logPaintEpoch++;
   paintLog([]);
 }

@@ -779,6 +779,31 @@ silently reverting the user's choice.
     at, and a departed row is either already deleted or now owned by
     somewhere else.
 
+#### The lock is per context
+
+`mutateChain` is module state, so each JS context has its own: the
+service worker, the collections page, and the viewer.
+
+- Pages call the mutators directly — a Remove click, a move, an enable
+  toggle — while the worker refreshes in the background. So a section is
+  atomic against other mutators **in the same context only**.
+- What actually survives a writer in the other context is **re-reading
+  inside the lock and merging**, not the lock itself: the
+  `preserveConcurrentEdits` fields, and the joined/departed reconcile
+  in `writeRefreshedCollection`.
+- Widening a critical section therefore buys nothing and costs
+  something — it can't exclude the other context, only give it a longer
+  window to interleave in.
+
+Still unguarded, each needing an interleave inside one storage
+round-trip. Narrow enough to leave, written down so nobody widens them:
+
+- A page's `removeCollection` racing the worker's refresh write, which
+  would leave the collection's rows behind, referenced by nothing.
+- Two contexts both passing the same `addCollection` / `installScript`
+  dedup check.
+- An enable toggle landing between a refresh's re-read and its write.
+
 ### Membership disagreements
 
 The two directions of membership are written together by every mutator,

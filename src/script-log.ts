@@ -29,6 +29,7 @@
 //     to render the Status column cheaply.
 
 import { validLocation, type DiagnosticLocation } from './diagnostic-location.js';
+import { isPageContext } from './run-context.js';
 
 export type LogLevel = 'info' | 'warning' | 'error';
 
@@ -85,6 +86,22 @@ export const LOG_LEVEL_KEY_PREFIX = 'loglevel:';
 // overwrite the first append. Chaining serializes them; the map entry
 // is dropped once its chain drains so long-running sessions don't
 // accumulate dead Promises.
+//
+// The map is module state, so the chain only orders writes made in THIS
+// context — and both contexts write: the worker logs every injection
+// and refresh event, while a page logs through the same `script-store`
+// code it shares (an install's first-load line) and clears the log from
+// the viewer's button. Two chains would interleave on one key and lose
+// entries, or resurrect ones a clear had just removed. So every MUTATION
+// from a page hops to the worker (`writeViaWorker`) and the worker's
+// chain is the only one that touches the key. Reads don't hop: they
+// aren't read-modify-write.
+//
+// What that guarantees is "the worker's chain orders everything that
+// reaches it", NOT "a page's appends are ordered": two writes from one
+// page are two messages, ordered by the IPC rather than by a chain, and
+// a write that fell back to the local chain (see `writeViaWorker`) isn't
+// ordered against the relayed ones at all.
 const queues = new Map<string, Promise<unknown>>();
 function enqueue<T>(scriptId: string, task: () => Promise<T>): Promise<T> {
   const prev = queues.get(scriptId) ?? Promise.resolve();
@@ -121,7 +138,50 @@ export async function appendScriptLog(
   scriptId: string,
   input: AppendLogInput,
 ): Promise<void> {
+  if (isPageContext()) return writeViaWorker({ op: 'append', scriptId, input });
   return enqueue(scriptId, () => writeEntry(scriptId, input));
+}
+
+// ---------- Page → worker relay ----------
+
+export const SCRIPT_LOG_WRITE_MESSAGE = 'sm:script-log-write';
+
+export type ScriptLogWriteRequest =
+  | { op: 'append'; scriptId: string; input: AppendLogInput }
+  | { op: 'clear'; scriptId: string };
+
+// Worker side. Runs the write on the worker's own per-script chain,
+// which is the point of the hop.
+export async function handleScriptLogWrite(req: ScriptLogWriteRequest): Promise<void> {
+  if (req.op === 'append') return enqueue(req.scriptId, () => writeEntry(req.scriptId, req.input));
+  return enqueue(req.scriptId, () => removeEntries(req.scriptId));
+}
+
+// Page side. Falls back to writing locally unless the worker
+// ACKNOWLEDGED the write — a log line the user can see beats a lost one,
+// and the interleaving it risks is what happened on every write before
+// this relay existed.
+//
+// The ack has to be READ, not just awaited: a message nothing handled,
+// and a handler that threw, both RESOLVE `sendMessage` (with
+// `undefined`); only an unreachable worker rejects it. So `true` — sent
+// by the listener once the write has landed — is the one answer that
+// means "don't write this yourself".
+//
+// The fallback can duplicate an entry: a port that closes after the
+// worker acted (the page navigating away mid-write) is indistinguishable
+// from one that was never there, so the write may already be persisted.
+// A doubled log line is the better failure of the two on offer.
+async function writeViaWorker(req: ScriptLogWriteRequest): Promise<void> {
+  try {
+    const ack = await chrome.runtime.sendMessage({ type: SCRIPT_LOG_WRITE_MESSAGE, ...req });
+    if (ack === true) return;
+  } catch { /* no receiving end */ }
+  if (req.op === 'append') {
+    await enqueue(req.scriptId, () => writeEntry(req.scriptId, req.input));
+    return;
+  }
+  await enqueue(req.scriptId, () => removeEntries(req.scriptId));
 }
 
 // Shared read-modify-write body. Always called from inside `enqueue`.
@@ -158,16 +218,22 @@ export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {
 }
 
 export async function clearScriptLog(scriptId: string): Promise<void> {
-  return enqueue(scriptId, async () => {
-    await chrome.storage.session.remove([logKey(scriptId), levelKey(scriptId)]);
-  });
+  if (isPageContext()) return writeViaWorker({ op: 'clear', scriptId });
+  return enqueue(scriptId, () => removeEntries(scriptId));
+}
+
+// Shared removal body, the counterpart of `writeEntry`. Always called
+// from inside `enqueue`.
+async function removeEntries(scriptId: string): Promise<void> {
+  await chrome.storage.session.remove([logKey(scriptId), levelKey(scriptId)]);
 }
 
 // Drop the logs of scripts whose rows are going away — otherwise an
 // orphaned session-storage entry would outlive the script it described
 // and confuse any later renderer that scans log levels. Goes through
-// `clearScriptLog` (and therefore the per-script queue), so an append
-// still in flight can't land after the removal and resurrect the row.
+// `clearScriptLog` (and therefore the per-script queue, in whichever
+// context owns it), so an append still in flight can't land after the
+// removal and resurrect the row.
 // Best-effort: a script whose log was never written isn't an error, and
 // nothing that deletes a row should fail because of its log.
 export async function forgetScriptLogs(scriptIds: readonly string[]): Promise<void> {

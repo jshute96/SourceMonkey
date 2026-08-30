@@ -121,6 +121,31 @@ Two naming notes worth keeping:
   LogLevel>`. Used by the collections page to drive every row's Status
   column in one storage round trip.
 
+### The worker owns the writes
+
+`log:<id>` is read-modify-written and the per-script promise chain that
+serializes those writes is module state — so it only orders the writes
+made in one JS context.
+
+- Both contexts write. The worker logs injection, refresh and probe
+  events; a page logs through the `script-store` code it shares with the
+  worker (an install's first-load line), and the viewer's Clear log
+  button removes the key.
+- Two chains on one key lose entries, and let an append that was already
+  in flight resurrect a log the user just cleared.
+- So a page hands every **mutation** to the worker
+  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`) and the
+  worker's chain is the only one that touches the key. Reads don't hop —
+  they aren't read-modify-write.
+- The page falls back to writing locally unless the worker answers
+  `true`: a visible entry is worth more than the ordering, and a handler
+  that threw resolves the message rather than rejecting it, so the ack
+  has to be read and not just awaited.
+- What the chain guarantees is that the worker's chain orders everything
+  reaching it — not that one page's appends are ordered. Two writes from
+  a page are two messages, and a write that fell back is on a different
+  chain entirely.
+
 ## Status column promotion
 
 The persisted `StoredScript.status`, the `refreshError` annotation, the
