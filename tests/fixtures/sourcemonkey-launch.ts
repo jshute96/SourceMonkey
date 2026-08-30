@@ -35,9 +35,18 @@ export interface LaunchedSmContext {
 export async function launchSourceMonkeyContext(opts: {
   extensionPath: string;
   extensionId: string;
+  // Leave downloads to Chrome itself, landing in this directory, instead
+  // of Playwright's interception. Playwright normally tells Chromium to
+  // save every download under a GUID name in its own temp dir (CDP
+  // `Browser.setDownloadBehavior: allowAndName`), which is what makes
+  // `page.waitForEvent('download')` work — but it also hides the real
+  // file name and location from `chrome.downloads`, which the local-copy
+  // feature depends on. With this set, Chrome's own download manager
+  // runs, honouring the `download.*` Preferences written here.
+  downloads?: { dir: string };
 }): Promise<LaunchedSmContext> {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sourcemonkey-test-'));
-  writeExtensionPreferences(userDataDir, opts.extensionId);
+  writeExtensionPreferences(userDataDir, opts.extensionId, opts.downloads);
 
   const ctx = await chromium.launchPersistentContext(userDataDir, {
     // Extensions require Chrome's new headless mode (--headless=new,
@@ -51,6 +60,19 @@ export async function launchSourceMonkeyContext(opts: {
       `--load-extension=${opts.extensionPath}`,
     ],
   });
+
+  if (opts.downloads) {
+    // Playwright has already told Chromium to intercept downloads
+    // (`allowAndName` into its artifacts dir) as part of creating the
+    // context, and its public options offer no way to opt out. Undo
+    // it over CDP: `default` hands download handling back to Chrome,
+    // which then follows the `download.*` Preferences written above.
+    const page = await ctx.newPage();
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Browser.setDownloadBehavior', { behavior: 'default' });
+    await cdp.detach();
+    await page.close();
+  }
 
   if (process.env.SM_FORWARD_SW_CONSOLE === '1') {
     const wireUp = (sw: Worker): void => {
@@ -150,16 +172,30 @@ export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker>
 // same Preferences file is the right place for future per-extension
 // toggles. Keys observed by reading what Chrome itself writes after
 // a user flips the toggle in the UI.
-function writeExtensionPreferences(userDataDir: string, extensionId: string): void {
+function writeExtensionPreferences(
+  userDataDir: string,
+  extensionId: string,
+  downloads?: { dir: string },
+): void {
   const defaultDir = path.join(userDataDir, 'Default');
   fs.mkdirSync(defaultDir, { recursive: true });
-  const prefs = {
+  const prefs: Record<string, unknown> = {
     extensions: {
       settings: {
         [extensionId]: { user_scripts_enabled: true },
       },
     },
   };
+  if (downloads) {
+    // The same keys Chrome writes when the download location is changed
+    // in its settings UI. `directory_upgrade` marks the directory as
+    // user-chosen, so Chrome doesn't fall back to its platform default.
+    prefs.download = {
+      default_directory: downloads.dir,
+      directory_upgrade: true,
+      prompt_for_download: false,
+    };
+  }
   fs.writeFileSync(path.join(defaultDir, 'Preferences'), JSON.stringify(prefs));
 }
 

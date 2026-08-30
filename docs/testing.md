@@ -125,6 +125,16 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionId` — the deterministic ID of the unpacked extension.
   - `sm` — typed proxy over `self.SourceMonkey`; see *SW test surface*
     below. Wipes storage and unregisters userscripts at test start.
+  - `testWithBrowserDownloads` — the same fixtures, but downloads are
+    left to Chrome's own download manager, landing in the
+    worker-scoped `downloadsDir` (a temp directory). Playwright's
+    default intercepts every download into its artifacts dir under a
+    GUID name — what `page.waitForEvent('download')` needs, but it
+    hides the real path from `chrome.downloads`, which the local-copy
+    feature reads back. The launch helper undoes the interception over
+    CDP (`Browser.setDownloadBehavior: default`) and writes the
+    `download.*` Preferences. The browser is shared across the worker's
+    tests, so a spec cleans its own files in `beforeEach`.
 - `extension-id.ts` — computes Chrome's deterministic
   unpacked-extension ID (SHA-256 of the path, first 16 bytes, mapped
   `0`–`f` → `a`–`p`). Needed because we have to write Preferences for

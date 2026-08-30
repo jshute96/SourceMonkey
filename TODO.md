@@ -712,6 +712,53 @@ during cumulative review of the GM_* phases:
   still on the old spelling by then re-adds its collections by hand,
   which is a one-time cost paid by nobody in practice.
 
+## Local copies — follow-ups
+
+See [docs/local-copy.md](docs/local-copy.md#whats-next) for the list;
+the items with a trade-off worth recording:
+
+- **Destinations outside Downloads.** The FSA directory picker is the
+  only one-dialog way to write N files anywhere, and its missing
+  absolute path is recoverable by reading the expected paths back over
+  `file://`. Costs the user one navigate-to-the-folder pick per
+  collection, and whether a stored handle's grant survives a restart on
+  an extension origin is unverified.
+- **The "Ask where to save each file" preference.** Chrome honours it
+  regardless of `saveAs: false` (verified), so those users get a Save As
+  box per file. A copy with dependencies then means N boxes; the
+  dialog could warn when the setting is on, but nothing exposes it —
+  the first cancelled download is the only signal.
+- **`@icon` beside the copy.** The cached icon is on hand; the layout
+  rule is the same. Left out until someone edits an icon.
+- **Provenance** (`copiedFrom`) needs an explicit carry through
+  `rebuildCollection`, which keeps only `enabled` from a prior row.
+- **The dialog checks the OLD copies directory after Chrome's download
+  location moves.** `OpenContext.copiesDir` comes from the stored
+  setting, which is only corrected by a completed write — so the
+  existence check, the Replace wording and the copy-of-itself guard all
+  run against the stale path, and a file already at the NEW location is
+  found only by Chrome uniquifying around it. The write reports that
+  clearly now; detecting it up front needs a way to ask where Downloads
+  is, which no API offers.
+- **Two dependency URLs can collapse onto one file.** `mirrorPath`
+  falls back to a shorter suffix when the host carries a `:`, so
+  `localhost:8080/lib/util.js` and `localhost:9090/lib/util.js` both
+  become `lib/util.js`; the second is dropped by the dedupe and both
+  `@require`s then resolve to the first one's bytes. The dialog should
+  flag the collision rather than dropping a row.
+- **A `@require` whose URL ends in `.user.js`** is written into the
+  copies collection and scanned in as a script of its own on the next
+  refresh. A dependency subdirectory the scan skips would fix it, but
+  that is exactly what the local-override suffix rule searches.
+- **Windows paths.** `downloadsDirFromSaved` and `dirKey` assume `/`
+  separators, so every copy on Windows would report "saved outside the
+  collection directory". The rest of the extension is POSIX-first too
+  (`isNonPosixFileUrl` aside), so this is a note rather than a
+  regression.
+- **The Downloads-folder field takes any absolute path**, with no
+  readability probe — unlike the search-roots box above it, which
+  checks. Same probe would do.
+
 ## Collections page — follow-ups
 
 - **No way to move a script between scripts collections.** Today it is
@@ -1141,7 +1188,9 @@ they follow are in
 
 - auto-reload any page if scripts on it have updated (maybe just for manual focused refresh, and do double-refresh if a new script is discovered but not ready)
 - relative paths for dev, absolute paths for release (for requires & resources)
-- download a script to local disk for editing / debugging
+- ~~download a script to local disk for editing / debugging~~ — shipped
+  as **Local copy…** ([docs/local-copy.md](docs/local-copy.md)); what's
+  left is destinations outside Downloads.
 - keep links between local and remote version of a script, select which
   to run. (The *reporting* half shipped — see
   [docs/updates.md](docs/updates.md); picking a different copy to run

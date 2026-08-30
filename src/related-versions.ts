@@ -199,6 +199,7 @@ export function renderRelatedVersions(
     // repeat the page's own Install callout one line lower. The
     // installed viewer never reaches this branch — its own row is
     // always in `sameLocation`.
+    panelHeadDrawn = false;
     return;
   }
   // A panel whose only row is the script already on screen tells the
@@ -209,7 +210,10 @@ export function renderRelatedVersions(
     && !offer
     && sameLocation.length === 1
     && sameLocation[0].script.id === model.actions.currentScriptId;
-  if (onlySelf) return;
+  if (onlySelf) {
+    panelHeadDrawn = false;
+    return;
+  }
 
   // Every row the panel is about to draw, in one list. Enabling a copy
   // disables the others, and "the others" spans both sections — the
@@ -227,9 +231,18 @@ export function renderRelatedVersions(
     const h2 = document.createElement('h2');
     h2.textContent = 'Other versions of this script';
     head.appendChild(h2);
+    // A panel that is only now appearing — a second copy just landed
+    // on a page that had none to show — opens, whatever a fold earlier
+    // on this page said: the new row is the thing to look at.
+    if (!panelHeadDrawn) setPanelCollapsed(false);
+    panelHeadDrawn = true;
     head.appendChild(collapseToggle(container, model));
     container.appendChild(head);
     if (isPanelCollapsed()) head.classList.add('collapsed');
+  } else {
+    // A preview draws the rows headless, so there is no headed panel
+    // now — and the flag is about the headed one.
+    panelHeadDrawn = false;
   }
 
   // Above the fold: the panel's own failure line is the one thing in
@@ -326,45 +339,25 @@ export function renderRelatedVersions(
 // draws the same rows headless inside its banner, with nothing to
 // leave behind.
 //
-// Remembered across pages, not just across repaints: selecting another
-// copy from the table reloads the viewer, and a fold that sprang open
-// on every hop would be no fold at all.
-//
-// `localStorage` rather than `chrome.storage.local`, the store
-// everything else here uses, because this one is read SYNCHRONOUSLY
-// during the first paint: an async read would draw the panel open and
-// fold it a frame later, which is a flash on every page load. The cost
-// is that the value is cached for the life of the page, so a second
-// viewer tab keeps its own fold until it reloads — which is the right
-// trade for a per-window view preference.
-//
-// A storage failure (privacy settings, quota) just means the choice
-// doesn't stick — nothing worth telling the user about.
-const COLLAPSE_KEY = 'sm.other-versions.collapsed';
+// Open by default, and a fold lasts only as long as the page: it is
+// module state, deliberately not persisted. Switching to another copy
+// from the table happens in place (`swapToScript`), so the fold
+// survives the hop without any storage; a reload or a second viewer
+// tab starts open again, which is what a view preference that nobody
+// set on purpose should do.
+let panelCollapsed = false;
 
-// Read lazily rather than at module load: this module is imported by
-// pages that may never draw the panel, and reading storage at import
-// time would make a stubbed DOM without `localStorage` fail on import.
-let panelCollapsed: boolean | undefined;
+// Whether the last paint drew a headed panel at all. A panel that
+// appears after a paint without one is opened regardless of the fold
+// — see the head-building code above.
+let panelHeadDrawn = false;
 
 function isPanelCollapsed(): boolean {
-  if (panelCollapsed === undefined) {
-    try {
-      panelCollapsed = localStorage.getItem(COLLAPSE_KEY) === '1';
-    } catch {
-      panelCollapsed = false;
-    }
-  }
   return panelCollapsed;
 }
 
 function setPanelCollapsed(next: boolean): void {
   panelCollapsed = next;
-  try {
-    localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
-  } catch {
-    // Unavailable storage costs the memory of the choice, not the fold.
-  }
 }
 
 // The fold control, in the panel's top-right corner. A triangle that

@@ -135,6 +135,10 @@ dialog.sm-dialog {
   box-sizing: border-box;
 }
 dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+/* Wider than the shared default: every row here can hold a long name
+   or path — the collection name, the file name with its subdirectory,
+   each dependency's path, the description. */
+dialog.sm-dialog.copy-dialog { width: 680px; }
 .sm-dialog .dlg-title {
   font-size: 1em;
   font-weight: 600;
@@ -157,11 +161,24 @@ dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
 .sm-dialog .dlg-slot { min-width: 0; }
 .sm-dialog .dlg-slot select { width: 100%; font: inherit; padding: 4px 7px; }
 .sm-dialog .dlg-label[hidden] { display: none; }
-.sm-dialog input[type="text"] {
+.sm-dialog input[type="text"],
+.sm-dialog textarea {
   width: 100%;
   box-sizing: border-box;
   font: inherit;
   padding: 4px 7px;
+}
+/* A one-line box that grows to fit its value — `autoGrow` sets the
+   height, these bound it. Whole-px line metrics so N lines is an exact
+   height: 19 + 8 padding + 2 border = 29px for one line, 86px for the
+   four this caps at, after which it scrolls. Not user-resizable: the
+   content already decides the height. */
+.sm-dialog textarea {
+  line-height: 19px;
+  min-height: 29px;
+  max-height: 86px;
+  resize: none;
+  overflow-y: auto;
 }
 .sm-dialog input[type="text"][hidden] { display: none; }
 .sm-dialog input[type="text"]:disabled {
@@ -204,6 +221,52 @@ dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
    the "this is a single script" verdict. */
 .sm-dialog .dlg-error-action { font: inherit; padding: 1px 8px; cursor: pointer; flex: 0 0 auto; }
 .sm-dialog .dlg-error-action[hidden] { display: none; }
+/* Copy dialog (src/copy-dialog.ts): read-only values in the body
+   grid, the dependency list under its checkbox, and the file-access
+   banner slot above the form. */
+.sm-dialog .dlg-static { padding-top: 5px; min-width: 0; overflow-wrap: anywhere; }
+.sm-dialog .dlg-target-name { font-weight: 600; }
+.sm-dialog .dlg-banner:empty { display: none; }
+.sm-dialog .dlg-banner { padding: 12px 16px 0; }
+.sm-dialog .dlg-banner > * { margin: 0; }
+.sm-dialog .dlg-deps { min-width: 0; padding-top: 3px; }
+.sm-dialog .dlg-deps .dlg-hint { margin-top: 3px; }
+.sm-dialog .dlg-deps-list {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+  font-size: 0.85em;
+  color: #444;
+  max-height: 6.5em;
+  overflow-y: auto;
+}
+.sm-dialog .dlg-deps-list:empty { display: none; }
+/* A dependency file the copy would overwrite, marked in the list. The
+   warning colour, not the error one: the same fact the line at the
+   bottom of the dialog reports, and Replace is a choice, not a fault. */
+.sm-dialog .dlg-exists { color: #92400e; }
+/* A second line under a field's label, for what it accepts that its
+   name doesn't say. */
+.sm-dialog .dlg-label-note { display: block; font-size: 0.85em; color: #666; }
+/* A heading INSIDE the body grid, spanning both its columns. */
+.sm-dialog .dlg-section { grid-column: 1 / -1; font-weight: 600; }
+/* `<original> -> [new value]` in one field row. */
+.sm-dialog .dlg-arrow { display: flex; gap: 7px; align-items: center; min-width: 0; }
+.sm-dialog .dlg-arrow input[type="text"] { flex: 1 1 auto; min-width: 0; }
+/* The old value is shown in full, never elided. It takes exactly the
+   width its text needs (`flex-shrink: 0`, so the box beside it gives
+   way first rather than the two splitting the squeeze and wrapping it
+   mid-version as `1.0.` / `6`), and stops at half the row — a version
+   longer than that wraps inside its half. */
+.sm-dialog .dlg-was {
+  flex: 0 0 auto;
+  max-width: 50%;
+  overflow-wrap: anywhere;
+}
+.sm-dialog .dlg-arrow-mark { color: #666; flex: 0 0 auto; }
+/* Copy's dependency hint + list while the box is unticked: what would
+   happen, not what will. Same dimming as the unavailable checkbox. */
+.sm-dialog .dimmed { opacity: 0.5; }
+.sm-dialog .dlg-deps-list li { overflow-wrap: anywhere; }
 .sm-dialog .dlg-actions {
   display: flex;
   justify-content: flex-end;

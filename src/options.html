@@ -91,6 +91,25 @@
       <div id="local-roots-file-access"></div>
     </div>
 
+    <div id="downloads-copies" class="settings-section">
+      <h2 class="settings-heading">Downloads folder (for local copies of scripts)</h2>
+      <p class="settings-hint">
+        <strong>Local copy…</strong> on a script's page writes an editable
+        copy into <code>SourceMonkey/</code> under the browser's Downloads
+        folder, and registers that folder as the
+        <strong>Scripts copied in Downloads</strong> collection.
+        Chrome doesn't tell extensions where Downloads is, so it is
+        learned from the first copy. Correct it here if Chrome's
+        download location has changed since.
+      </p>
+      <div class="token-row">
+        <input id="downloads-dir" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Learned from the first local copy, e.g. /home/me/Downloads" />
+        <button id="downloads-dir-save" type="button">Save</button>
+      </div>
+      <p id="downloads-dir-status" class="token-status"></p>
+    </div>
+
     <div id="github-auth" class="settings-section">
       <h2 class="settings-heading">GitHub authentication</h2>
       <p class="settings-hint">

@@ -158,8 +158,8 @@ Both name the script the same way, pivoted for where they're read.
    - A **triangle in the top-right corner folds the card** down to that
      heading line and back, for when the table is long and beside the
      point. Installed viewer only — the preview has no heading to fold
-     into — and the choice is kept in `localStorage`, so it holds across
-     the reload that opening another copy performs. See
+     into — and the fold lasts for the page only; a panel that newly
+     appears is open. See
      [script-identity.md](script-identity.md#folding-it-away).
    - Green card directly under the title, above the controls row:
      *which* copy this page is about comes before anything that acts on
@@ -416,11 +416,11 @@ load.
 
 The details panel's **Collection** row carries a **Move…** button to
 the right of the collection name, for an installed script whose parent
-is an "individual scripts" (container) collection. It sits in a grid
-column of its own, right after the name — moving out to the right
-margin only when the name is long enough to fill the row, which is
-also what keeps a wrapping name from dragging it onto the last wrapped
-line.
+is an "individual scripts" (container) collection. It shares a grid
+column with **Local copy…** (below), right after the name — the pair
+moving out to the right margin only when the name is long enough to
+fill the row, which is also what keeps a wrapping name from dragging
+them onto the last wrapped line.
 
 - No button at all for a directory or manifest script. Its
   `relativePath` is relative to its collection root, so there is
@@ -460,6 +460,21 @@ failure in its own error slot.
   nothing in its place.
 - Nothing is repainted by hand: the row's `collectionId` changed, so
   the live-sync listener below rehydrates the header.
+
+### Making a local copy
+
+The Collection row's other control, **Local copy…**, appears for every
+installed script (Move… only for container scripts; both share the
+row's control column). It opens the copy dialog (`src/copy-dialog.ts`),
+which writes an editable copy into the *Scripts copied in Downloads*
+collection under the browser's Downloads folder.
+
+- The dialog owns the write and its refusals; the caller then runs the
+  exclusive-enable sweep for the new row and switches the page to it
+  in place, exactly as an install does.
+- Everything else — where the copy goes, the header edits, the
+  dependency files, the `-local` version suffix — is in
+  [local-copy.md](local-copy.md).
 
 ### Live sync (changes from any origin)
 

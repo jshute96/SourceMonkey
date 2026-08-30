@@ -72,6 +72,7 @@ import {
 } from './related-versions.js';
 import { openCollectionDialog } from './collection-dialog.js';
 import { openMoveDialog } from './move-dialog.js';
+import { openCopyDialog } from './copy-dialog.js';
 import { computeLogIds } from './script-log-id.js';
 import {
   attachFiles,
@@ -741,7 +742,7 @@ function render(script: StoredScript): void {
     scriptUrl: script.fileUrl,
     logId: currentLogId,
     collection: collectionRow,
-    collectionTrailing: collectionRow ? makeMoveControl(script, collectionRow) : undefined,
+    collectionTrailing: collectionRow ? makeCollectionControls(script, collectionRow) : undefined,
     location: currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
@@ -2638,20 +2639,61 @@ let moveTargetContext: {
 // collection: a directory or manifest script's `relativePath` is
 // relative to its collection root, so it has no absolute spelling to
 // carry into a container. `moveScript` refuses those too.
+// The controls at the end of the Collection row: Move… for a script
+// in a container collection, and Local copy… for every script. One
+// host span so the two sit as a group in the row's control column.
+function makeCollectionControls(
+  script: StoredScript,
+  collection: StoredCollection,
+): Node {
+  const host = document.createElement('span');
+  host.className = 'collection-move';
+  const move = makeMoveControl(script, collection);
+  if (move) host.appendChild(move);
+  host.appendChild(makeLocalCopyControl(script));
+  return host;
+}
+
+// Local copy…: write an editable copy of this script into the
+// Downloads collection, switch every other copy off, and show the new
+// one. The dialog owns the write and its failures — see
+// `src/copy-dialog.ts` and docs/local-copy.md.
+function makeLocalCopyControl(script: StoredScript): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'local-copy-btn';
+  btn.textContent = 'Local copy…';
+  // An `invalid` row has no usable header — often no metadata block at
+  // all — so a copy of it would be written with none of the header
+  // edits the dialog offers and would land invalid in its turn.
+  // `missing` is allowed: the row still holds the last content that
+  // loaded, and rescuing it onto disk is a reason to be here.
+  btn.disabled = script.status === 'invalid';
+  btn.title = btn.disabled
+    ? 'This script did not load, so there is nothing to copy'
+    : 'Make an editable copy of this script on local disk';
+  btn.onclick = async () => {
+    const result = await openCopyDialog({ script });
+    if (!result) return;
+    // The copy is the version the user wants running now — the same
+    // rule an install follows.
+    await soloRunningCopy(result.script.id);
+    await swapToScript(result.script.id);
+  };
+  return btn;
+}
+
 function makeMoveControl(
   script: StoredScript,
   collection: StoredCollection,
-): Node | undefined {
+): HTMLButtonElement | undefined {
   if (!isContainerCollection(collection.path)) return undefined;
-  const host = document.createElement('span');
-  host.className = 'collection-move';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'move-collection-btn';
   btn.textContent = 'Move…';
   btn.title = 'Move this script to another collection';
   btn.onclick = () => void openMove(btn);
-  host.appendChild(btn);
 
   // Everywhere an install could land, with the collection the script
   // is in now marked as the current one — listed, disabled, and what
@@ -2712,7 +2754,7 @@ function makeMoveControl(
     // header — Collection row, Move button and all.
   };
 
-  return host;
+  return btn;
 }
 
 // A row whose stored location isn't a single-file one, which no

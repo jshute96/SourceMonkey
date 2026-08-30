@@ -128,10 +128,13 @@ drawn as one box.
 - Folded, the rows are **not drawn** rather than drawn and hidden:
   hidden rows would still be found by the keyboard walk and by the
   repaint's focus bookkeeping.
-- The choice is remembered in `localStorage` — read synchronously, so
-  the first paint can't flash open and fold a frame later, which an
-  async `chrome.storage` read would. The cost: a second viewer tab
-  keeps its own fold until it reloads.
+- **Open by default, and a fold lasts only for the page.** Module
+  state, not storage: switching copies happens in place, so the fold
+  survives that; a reload or another tab starts open. Nobody sets this
+  on purpose, so it shouldn't follow them around.
+- **A panel that appears opens**, whatever the fold said earlier on the
+  page — a local copy or an install has just given the page a second
+  row, and that row is the thing to look at.
 - The **message line stays above the fold.** A refresh that just failed
   is the one time-sensitive thing in the panel, so folding must not
   hold it back.
@@ -169,7 +172,8 @@ the *other* rows.
   should be promoted in its place.
 - **Installing counts as enabling.** A fresh install lands enabled, so
   it sweeps the other running copies off on its way to the new script's
-  page.
+  page. So does a **local copy** ([local-copy.md](local-copy.md)): the
+  copy the user just made for editing is the one they want running.
   - Both Install controls do it — the preview's header button and the
     panel's offer section.
   - And so does the collections page's **Add** field, which previews any

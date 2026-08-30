@@ -34,6 +34,8 @@ export interface SmApi {
     scriptId: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<StoredScriptLike | null>;
+  // Remove one installed script row, as the viewer's trash can does.
+  removeScript(scriptId: string): Promise<void>;
   setCollectionOptions(
     id: string,
     options: { displayName?: string; localFiles?: boolean },

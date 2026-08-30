@@ -278,6 +278,9 @@ function probeValueText(probe: VersionProbe, relation: VersionRelation): string 
   if (relation === 'newer' || relation === 'older') {
     return `${probe.version} (${relation === 'newer' ? 'Newer' : 'Older'})`;
   }
+  // Our `@version` is theirs plus a `-local` tail — a copy made for
+  // editing. Neither newer nor older: the release we started from.
+  if (relation === 'edited') return `${probe.version} (Base of this local edit)`;
   // `unknown`: we declare no `@version` and they do. No qualifier — the
   // number is all we can say, and the Version row above reads `<none>`,
   // so the contrast is on screen without us guessing at a direction.
@@ -292,7 +295,7 @@ function probeTitleText(probe: VersionProbe, relation: VersionRelation): string 
   if (!probe.error) return probe.url;
   // The value is showing a version, so the tooltip carries the failure
   // — otherwise the row reads as freshly confirmed when it isn't.
-  if (relation === 'newer' || relation === 'older' || relation === 'unknown') {
+  if (relation !== 'same') {
     return `${probe.url} — last check failed: ${probe.error}`;
   }
   // The value is showing the error, so the tooltip carries the version

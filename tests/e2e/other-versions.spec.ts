@@ -1207,10 +1207,10 @@ test.describe('other-versions panel', () => {
   });
 
   // The fold. Collapsed, the panel is its heading line and the button —
-  // no rows, no tables. The choice is kept in `localStorage`, so it
-  // survives the reload that opening another copy performs, and the
-  // test hands it back expanded (that storage outlives `resetAllState`).
-  test('the versions panel folds to its heading, and stays folded', async ({
+  // no rows, no tables. It lasts for the page only: a reload opens the
+  // panel again, and so does a panel that appears after having gone
+  // away, whatever the fold said before.
+  test('the versions panel folds to its heading for the life of the page', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
@@ -1247,18 +1247,23 @@ test.describe('other-versions panel', () => {
     await sm.syncNow();
     await expect(page.locator(`${PANEL} .versions-collapse`)).toBeFocused();
 
-    // A reload reopens the page folded.
+    // A reload opens the panel again: the fold was this page's alone.
     await page.reload();
     await expect(page.locator(`${PANEL} .versions-collapse`))
-      .toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator(ROWS)).toHaveCount(0);
-
-    await page.locator(`${PANEL} .versions-collapse`).click();
+      .toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator(ROWS)).toHaveCount(2);
-    // Explicit, not just implied by the unfold above: `resetAllState`
-    // wipes chrome.storage and nothing else, so a fold left behind here
-    // would follow the worker's profile into every later test.
-    await page.evaluate(() => localStorage.removeItem('sm.other-versions.collapsed'));
+
+    // Folded, then the panel goes away (the other copy is removed) and
+    // comes back (it is installed again): it comes back open.
+    await page.goto(`chrome-extension://${extensionId}/${viewer(other.id)}`);
+    await page.locator(`${PANEL} .versions-collapse`).click();
+    await expect(page.locator(ROWS)).toHaveCount(0);
+    await sm.removeScript(standalone.id);
+    await expect(page.locator(PANEL)).toBeHidden();
+    await sm.installScript(path, { schemeDefault: true });
+    await expect(page.locator(`${PANEL} .versions-collapse`))
+      .toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(ROWS)).toHaveCount(2);
     await page.close();
   });
 });

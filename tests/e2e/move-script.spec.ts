@@ -336,7 +336,7 @@ test.describe('move a script between collections', () => {
     await page.close();
   });
 
-  test('the Move button holds the row\'s right edge, beside a name that wraps', async ({
+  test('the row\'s controls hold its right edge, beside a name that wraps', async ({
     extensionContext, extensionId, sm,
   }) => {
     const def = await sm.addCollection(scriptUrl);
@@ -351,12 +351,16 @@ test.describe('move a script between collections', () => {
     const cell = await page.locator('.collection-cell').boundingBox();
     const name = await page.locator('.collection-cell .collection-display-name').boundingBox();
     const btn = await page.locator(MOVE_BTN).boundingBox();
+    // Move… shares its column with Local copy…; the group is what
+    // holds the edge, with Move… first.
+    const group = await page.locator('.collection-move').boundingBox();
     // The name really did wrap, or this proves nothing.
     expect(name!.height).toBeGreaterThan(btn!.height);
     // Same first line as the name, not below it.
     expect(btn!.y).toBeLessThan(name!.y + btn!.height);
+    expect(btn!.x).toBeLessThan((await page.locator('#local-copy-btn').boundingBox())!.x);
     // Flush with the row's right edge.
-    expect(Math.abs((btn!.x + btn!.width) - (cell!.x + cell!.width))).toBeLessThan(1.5);
+    expect(Math.abs((group!.x + group!.width) - (cell!.x + cell!.width))).toBeLessThan(1.5);
     await page.close();
   });
 

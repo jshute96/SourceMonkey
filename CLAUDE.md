@@ -51,6 +51,9 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
     empty`) rather than exempting it.
   - Only a splice *inside* a sentence we wrote stays lowercase —
     `LOCATION_SHAPES`, which completes `Location must be a …`.
+  - A message of two or more sentences punctuates all of them, the
+    last included: `This location is a manifest. Choose Manifest as
+    the type.`
 - **One message per problem**; wrap the shared string rather than writing a
   second copy for another surface.
   - That covers code that *recognizes* a message too: import the shared

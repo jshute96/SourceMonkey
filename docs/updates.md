@@ -190,6 +190,11 @@ Under the `Version` row, one row per probe:
   of an up-to-date script.
 - Three things each earn a row:
   - **The versions differ** (`newer` / `older`).
+  - **Ours is a local edit of theirs** (`edited`): our `@version` is
+    theirs plus a `-local` tail, the mark a local copy gets (see
+    [local-copy.md](local-copy.md#the--local-suffix)). By the
+    prerelease rule alone their release would rank *above* us and the
+    copy would read OUTDATED against the version it was copied from.
   - **Exactly one side declares a `@version`.** We can't rank them, but
     "they publish 2.0 and we declare nothing" is still a difference
     worth seeing. The `Version` row above then reads `<none>`, so both
@@ -205,6 +210,7 @@ Under the `Version` row, one row per probe:
     a good check, which is the more common way this breaks.
 - Value and tooltip split by which of the two is the news:
   - versions differ → value `2.1 (Newer)` / `1.0 (Older)`.
+  - a local edit → value `2.0 (Base of this local edit)`.
   - only they have a version → value is the bare number, no qualifier.
   - versions agree, check failed → value is the error, tooltip adds
     `last known version 2.0`.

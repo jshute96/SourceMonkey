@@ -99,6 +99,14 @@ A script that lives in a scripts collection can be moved to another one
 from the viewer's **Collection** row, keeping its log and its stored
 `GM_setValue` data.
 
+**Local copy…** on the same row writes an editable copy of any installed
+script into `SourceMonkey/` under the browser's Downloads folder, which
+becomes the **Scripts copied in Downloads** collection. The copy takes
+over as the running version, and edits made to it in any editor are
+picked up by Refresh. The dialog lets you rename the file, adjust the
+version (`-local` by default) and description, and optionally copy the
+script's `@require` / `@resource` files beside it.
+
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel at the top of the page,
@@ -108,12 +116,14 @@ copy disables the others, since two enabled copies of a script both run —
 ctrl-click a checkbox (cmd-click on a Mac) to override that.
 
 The **Options** link at the top-left covers `.user.js` link capture,
-debug logging, local file override directories, and a GitHub token (for
-private repos and a higher API rate limit).
+debug logging, local file override directories, the Downloads folder
+local copies land in, and a GitHub token (for private repos and a
+higher API rate limit).
 
 Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
 [docs/script-identity.md](docs/script-identity.md),
+[docs/local-copy.md](docs/local-copy.md),
 [docs/script-log.md](docs/script-log.md),
 [docs/diagnostics.md](docs/diagnostics.md).
 

@@ -20,10 +20,17 @@ import {
   type ParsedRoot,
 } from './local-file-overrides.js';
 import { fetchFileUrlText } from './directories.js';
-import { getCollections } from './script-store.js';
+import { describeError, getCollections } from './script-store.js';
 import { collectionSupportsLocalFiles } from './local-file-overrides.js';
 import { updateCollection } from './script-updater.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
+import {
+  DOWNLOADS_COPIES_KEY,
+  parseDownloadsCopiesSetting,
+  readDownloadsCopiesSetting,
+  writeDownloadsCopiesSetting,
+  type DownloadsCopiesSetting,
+} from './local-copy.js';
 
 const openCollectionsBtn = document.getElementById('open-collections') as HTMLButtonElement;
 openCollectionsBtn.addEventListener('click', () => {
@@ -46,6 +53,52 @@ void loadDebugLoggingFlag();
 initBooleanSetting('debug-logging', DEBUG_LOGGING_KEY, false);
 initGithubTokenControls();
 initLocalRootControls();
+initDownloadsDirControls();
+
+// The Downloads folder the local-copy feature learned (see
+// docs/local-copy.md). Editable for the one case the extension can't
+// detect on its own: Chrome's download location changed after the
+// first copy. Saving keeps the recorded collection id — the next copy
+// re-checks whether that collection still sits at the new path.
+function initDownloadsDirControls(): void {
+  const box = document.getElementById('downloads-dir') as HTMLInputElement | null;
+  const saveBtn = document.getElementById('downloads-dir-save') as HTMLButtonElement | null;
+  const status = document.getElementById('downloads-dir-status') as HTMLElement | null;
+  if (!box || !saveBtn || !status) return;
+
+  let saved: DownloadsCopiesSetting | null = null;
+  const paint = (setting: DownloadsCopiesSetting | null): void => {
+    saved = setting;
+    if (!box.matches(':focus')) box.value = setting?.downloadsDir ?? '';
+    saveBtn.disabled = box.value.trim() === (saved?.downloadsDir ?? '');
+  };
+  void readDownloadsCopiesSetting().then(paint);
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    const change = changes[DOWNLOADS_COPIES_KEY];
+    if (change) paint(parseDownloadsCopiesSetting(change.newValue));
+  });
+  box.addEventListener('input', () => {
+    saveBtn.disabled = box.value.trim() === (saved?.downloadsDir ?? '');
+    status.textContent = '';
+  });
+  saveBtn.addEventListener('click', () => {
+    const dir = box.value.trim().replace(/\/+$/, '');
+    if (!dir.startsWith('/')) {
+      status.textContent = 'The Downloads folder must be an absolute path';
+      status.className = 'token-status err';
+      return;
+    }
+    void writeDownloadsCopiesSetting({ downloadsDir: dir, collectionId: saved?.collectionId ?? null })
+      .then(() => {
+        status.textContent = 'Saved';
+        status.className = 'token-status ok';
+      }, (err: unknown) => {
+        status.textContent = `Could not save the Downloads folder: ${describeError(err)}`;
+        status.className = 'token-status err';
+      });
+  });
+}
 
 function initBooleanSetting(elementId: string, key: string, defaultValue: boolean): void {
   const cb = document.getElementById(elementId) as HTMLInputElement | null;

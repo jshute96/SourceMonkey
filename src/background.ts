@@ -132,6 +132,7 @@ import {
   createCollection,
   installScript,
   moveScript,
+  removeScript,
   describeError,
   type AddCollectionResult,
   type CollectionOptions,
@@ -243,6 +244,9 @@ interface SourceMonkeyApi {
   createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
   installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
+  // Remove one installed script row (a container copy), as the viewer's
+  // trash can does.
+  removeScript: (scriptId: string) => Promise<void>;
   setCollectionOptions: (id: string, options: CollectionOptions) => Promise<StoredCollection | null>;
   removeCollection: (id: string) => Promise<void>;
   getCollections: () => Promise<StoredCollection[]>;
@@ -405,6 +409,7 @@ const api: SourceMonkeyApi = {
   createCollection,
   installScript,
   moveScript,
+  removeScript,
   setCollectionOptions,
   removeCollection,
   getCollections,
