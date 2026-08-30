@@ -492,7 +492,10 @@ test('rebuildCollection reuses IDs for known relativePaths', async () => {
   assert.equal(result[1].id, 'id-1');
 });
 
-test('rebuildCollection flags vanished scripts as missing and keeps their content', async () => {
+test('rebuildCollection drops a vanished script when the scan still sees others', async () => {
+  // A successful scan that lists something is the directory telling us
+  // what it holds now, so a renamed or deleted file leaves rather than
+  // lingering as a `missing` row the user has to trash by hand.
   const existing = [
     await buildScriptFromText({
       id: 'a-id',
@@ -522,13 +525,45 @@ test('rebuildCollection flags vanished scripts as missing and keeps their conten
     now: 100,
     newId: fakeIdSequence(),
   });
-  assert.equal(result.length, 2);
-  // Scan-order entries come first, then missing entries trailing.
-  assert.equal(result[0].relativePath, 'a.user.js');
+  assert.deepEqual(result.map((s) => s.relativePath), ['a.user.js']);
   assert.equal(result[0].status, 'ok');
-  assert.equal(result[1].relativePath, 'b.user.js');
-  assert.equal(result[1].status, 'missing');
-  // Missing entry keeps the prior body + size so the viewer still
+});
+
+test('rebuildCollection keeps vanished scripts as missing when the scan came back empty', async () => {
+  // An empty listing is far more often a directory that moved or got
+  // replaced than every script in it being deleted at once, so the rows
+  // stay (content preserved, auto-disabled) and come back if the files do.
+  const existing = [
+    await buildScriptFromText({
+      id: 'a-id',
+      collectionId: 'src-1',
+      relativePath: 'a.user.js',
+      fileUrl: 'file:///dir/a.user.js',
+      text: VALID_SCRIPT,
+      now: 50,
+    }),
+    await buildScriptFromText({
+      id: 'b-id',
+      collectionId: 'src-1',
+      relativePath: 'b.user.js',
+      fileUrl: 'file:///dir/b.user.js',
+      text: VALID_SCRIPT,
+      now: 50,
+    }),
+  ];
+  const result = await rebuildCollection({
+    collectionId: 'src-1',
+    collectionPath: '/dir',
+    existing,
+    scan: [],
+    fetchResults: new Map(),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.equal(result.length, 2);
+  assert.deepEqual(result.map((s) => s.status), ['missing', 'missing']);
+  assert.equal(result[0].enabled, false);
+  // Missing entries keep the prior body + size so the viewer still
   // works and the Size column reflects the cached content.
   assert.equal(result[1].size, existing[1].size);
   assert.equal(result[1].bodyText, existing[1].bodyText);
@@ -536,9 +571,9 @@ test('rebuildCollection flags vanished scripts as missing and keeps their conten
 
 test('rebuildCollection drops vanished entries entirely for a manifest collection', async () => {
   // A manifest is the user's source of truth: if they remove an entry,
-  // they're explicitly removing the script. No reason to keep a
-  // tombstone row around as 'missing' the way we do for a local
-  // directory (where the file might come back).
+  // they're explicitly removing the script. Directory collections drop
+  // vanished files too; what still sets a manifest apart is that an
+  // *empty* one drops its entries rather than keeping them as 'missing'.
   const existing = [
     await buildScriptFromText({
       id: 'a-id',
@@ -577,7 +612,8 @@ test('rebuildCollection drops vanished entries entirely for a manifest collectio
 
 test('rebuildCollection drops vanished entries for a local manifest collection too', async () => {
   // Same rule applies to file:// / raw-path manifests — the manifest
-  // kind, not the scheme, decides the vanished-entry policy.
+  // kind, not the scheme, decides the vanished-entry policy. The empty
+  // scan here is the case a directory collection exempts.
   const existing = [
     await buildScriptFromText({
       id: 'b-id',

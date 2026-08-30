@@ -163,6 +163,19 @@ export async function clearScriptLog(scriptId: string): Promise<void> {
   });
 }
 
+// Drop the logs of scripts whose rows are going away — otherwise an
+// orphaned session-storage entry would outlive the script it described
+// and confuse any later renderer that scans log levels. Goes through
+// `clearScriptLog` (and therefore the per-script queue), so an append
+// still in flight can't land after the removal and resurrect the row.
+// Best-effort: a script whose log was never written isn't an error, and
+// nothing that deletes a row should fail because of its log.
+export async function forgetScriptLogs(scriptIds: readonly string[]): Promise<void> {
+  await Promise.all(scriptIds.map(
+    (id) => clearScriptLog(id).catch(() => { /* best-effort */ }),
+  ));
+}
+
 // Read the persisted "highest log level seen" sentinel for one script.
 // Returns undefined only when the log is empty (no entries have ever
 // been appended this session, or `clearScriptLog` ran). The sentinel

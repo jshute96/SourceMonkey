@@ -71,9 +71,10 @@ recognises three shapes:
 Limits:
 
 - A `.user.js` file deleted from the repo (or absent on the resolved
-  branch) is tagged `missing` and auto-disabled — same handling as a
-  local-directory collection, since the file might come back if the user
-  reverts. Use the per-row trash to clear it for good.
+  branch) drops off the collection on the next refresh — same handling
+  as a local-directory collection. Only a listing that comes back
+  *entirely* empty leaves the rows behind as `missing`; see
+  [storage.md](storage.md#vanished-entries).
 - Unauthenticated GitHub API budget is **60 requests / hour / IP**.
   Each repo-root add costs one call (metadata); each refresh costs one
   Contents-API call per walked directory. Per-script raw fetches don't
@@ -227,14 +228,15 @@ collection row is tracked in `TODO.md`.
 
 - **Detection**: if a manifest used to list a script and no longer
   does, the script row is **deleted**. The manifest is the user's
-  source of truth — removing an entry is an explicit removal, not a
-  "maybe gone" signal (unlike a local directory, where a file may
-  reappear).
+  source of truth — removing an entry is an explicit removal, and that
+  holds even when the new manifest is empty. (A directory collection
+  drops vanished files too, but keeps them as `missing` when its scan
+  comes back empty — see [storage.md](storage.md#vanished-entries).)
 - **Re-adding an entry mints a fresh row.** Identity isn't preserved
   across a delete + re-add — the new row gets a new UUID and starts
-  `enabled: true`. This is an intentional asymmetry with directory
-  collections, where a `missing` file that returns keeps its prior
-  `enabled: false` (the user has to opt back in).
+  `enabled: true`. Same for a directory file that is deleted and
+  restored across two refreshes; only a file still absent from an
+  *empty* scan keeps its row (and its `enabled: false`) across the gap.
 - **Identity is by entry text**: `relativePath` for manifest
   collections is the entry string from the JSON (the `path` value, for
   object entries), so reformatting `foo.user.js` to `./foo.user.js` is

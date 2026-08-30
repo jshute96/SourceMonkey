@@ -977,6 +977,15 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 - Editing path: if we ever want in-app edits, we'll need either FSA
   handles (re-introduces per-session re-grant) or a Native Messaging
   helper. `file://` URLs are read-only from the extension side.
+- **Identity across a file that bounces.** A refresh now drops a script
+  the scan no longer reports, and the row's UUID goes with it — so a
+  file that vanishes and comes back (branch switch, an editor that saves
+  by unlink+rename, a sync client rewriting in place) returns as a fresh
+  row: `enabled: true`, empty Log, and its `gmval:` values orphaned
+  rather than restored (`gm-values.ts` deliberately keeps them for
+  exactly that restore). Remembering `relativePath → id` for recently
+  dropped rows on the collection row would close it; the cost is a
+  tombstone list to bound and expire, which is what we just got rid of.
 
 ## Missing script functionality
 
@@ -1013,9 +1022,6 @@ Two rough edges are left:
   claims a failed collection doesn't take the rest down. `allSettled`
   would make the doc true; the updater currently compensates by
   fanning the throw out to every script.
-- **Vanished manifest entries leak their log rows.** `refreshCollection`
-  drops the `script:` key but not the `log:` / `loglevel:` session
-  rows; only `removeScript` cleans both up.
 - **The add-to-existing-container path emits no recovery rows.** It
   refreshes every sibling but only restates load failures, so a
   sibling that recovered during that refresh never logs it (and the

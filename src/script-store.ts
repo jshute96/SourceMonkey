@@ -98,7 +98,7 @@ import {
   mayUseReservedName,
   RESERVED_COLLECTION_NAME,
 } from './collection-display.js';
-import { appendScriptLog, type LogLevel } from './script-log.js';
+import { appendScriptLog, forgetScriptLogs, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
 import { setRefreshError, pruneRefreshErrors } from './refresh-error.js';
 import {
@@ -1455,13 +1455,20 @@ interface RebuildArgs {
 // fell off the listing tagged `missing`). Stable IDs come from looking
 // up by relativePath in `existing`. No I/O — easy to test.
 //
-// Vanished-entry handling depends on the collection kind:
-//   - Manifest collections: an entry that's no longer listed is treated
-//     as an explicit user removal — the row is dropped entirely (the
-//     `refreshCollection` caller then deletes the storage row).
-//   - Other collections (local directory): the prior row is tagged
-//     `missing` and auto-disabled. The file might come back; the row
-//     stays so the viewer keeps working.
+// Vanished-entry handling — an entry the scan no longer reports is
+// dropped entirely (the `refreshCollection` caller then deletes the
+// storage row), because a successful scan is the collection telling us
+// what it holds now: a renamed or deleted file would otherwise linger
+// as a `missing` row the user has to clear by hand.
+//
+// The one exception is a scan that came back completely empty for a
+// collection that used to have scripts. An empty listing is far more
+// often a directory that moved, got replaced, or listed strangely than
+// every script in it being deleted at once, so those rows are tagged
+// `missing` and auto-disabled instead: the content is preserved, and
+// the row comes back to life if the files reappear. Manifest
+// collections are exempt — the manifest is an explicit list, so an
+// empty one is an explicit "nothing here".
 export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
   const recheckFiles = args.recheckFiles ?? 'all';
@@ -1623,10 +1630,10 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   const out = await mapWithConcurrency(
     entryTasks, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, (task) => task());
 
-  // Anything in `existing` that the scan didn't see → either marked
-  // missing (directory collections: file may come back) or dropped
-  // (manifest collections: the user explicitly removed the entry).
-  const dropVanished = isManifestCollection(args.collectionPath);
+  // Anything in `existing` that the scan didn't see → dropped, unless
+  // the empty-scan guard above applies. See the header comment.
+  const dropVanished =
+    args.scan.length > 0 || isManifestCollection(args.collectionPath);
   for (const e of args.existing) {
     if (handledPaths.has(e.relativePath)) continue;
     if (dropVanished) continue;
@@ -2458,22 +2465,20 @@ export async function removeScript(id: string): Promise<void> {
     if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
     await chrome.storage.local.remove(scriptKey(id));
   });
-  // Drop the per-script Log + max-log-level sentinel along with the
-  // row itself — otherwise an orphaned session-storage entry would
-  // outlive the script it described and confuse any later renderer
-  // that happens to scan log levels.
-  try {
-    await chrome.storage.session.remove([`log:${id}`, `loglevel:${id}`]);
-  } catch { /* best-effort: a missing session row isn't an error */ }
+  // After the write, not inside it: the local write is the one that has
+  // to be atomic, and a failure here must not undo a removal that
+  // succeeded. The refresh path drops rows the same way and clears their
+  // logs the same way.
+  await forgetScriptLogs([id]);
 }
 
 // Rescan a collection + refetch all of its scripts. Adds new files,
-// keeps known files (status updated based on fetch result), and
-// reconciles vanished files per collection kind: directory collections
-// mark them `missing` (the file may come back), manifest collections
-// delete them (the user explicitly removed the entry). Persists the
-// updated collection row plus every script row that actually changed,
-// in one set call — see `changedScriptRows`.
+// keeps known files (status updated based on fetch result), and drops
+// the ones the scan no longer reports — except when the scan came back
+// empty, where they're tagged `missing` instead (see
+// `rebuildCollection`). Persists the updated collection row plus every
+// script row that actually changed, in one set call — see
+// `changedScriptRows`.
 //
 // Scan failure (unreadable directory listing, unreadable manifest, bad
 // URL) records a `scanError` on the collection and **leaves every script
@@ -2616,14 +2621,21 @@ export async function refreshCollection(
     // Clears on the way out, so a collection that recovers stops
     // reporting a failure the next refresh already fixed.
     await setRefreshError(id, null);
-    return written;
+    if (!written) return null;
+    // After the write, not inside it — same rule `removeScript` follows:
+    // the storage.local write is the one that has to be atomic, and a
+    // log we failed to clear must not undo a refresh that landed.
+    await forgetScriptLogs(written.droppedIds);
+    return { collection: written.collection, scripts: written.scripts };
   } catch (err) {
     await setRefreshError(id, describeError(err));
     throw err;
   }
 
+  // Reports `droppedIds` alongside the written state so the caller can
+  // clear those scripts' logs outside the lock.
   async function writeRefreshedCollection(): Promise<
-    { collection: StoredCollection; scripts: StoredScript[] } | null
+    { collection: StoredCollection; scripts: StoredScript[]; droppedIds: string[] } | null
   > {
     return await mutate(async () => {
       const curCollection = await getRaw<StoredCollection>(collectionKey(id));
@@ -2649,12 +2661,11 @@ export async function refreshCollection(
       // handles the failure case).
       delete nextCollection.scanError;
 
-      // Drop rows whose IDs are no longer referenced. Hit by manifest
-      // collections whose user removed an entry; also defensive against
-      // any future per-script Remove.
+      // Drop rows whose IDs are no longer referenced — an entry that
+      // fell off the listing, or a manifest entry the user removed.
       const priorIds = new Set(existingScripts.map((s) => s.id));
       const nextIds = new Set(finalScripts.map((s) => s.id));
-      const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
+      const droppedIds = [...priorIds].filter((sid) => !nextIds.has(sid));
 
       // The collection row always goes: `lastRefreshedAt` moved, and
       // that's the record of the check having happened at all. The
@@ -2669,9 +2680,11 @@ export async function refreshCollection(
       // exercises the same state the production failure produces.
       if (collectionWriteFailure !== null) throw new Error(collectionWriteFailure);
       await chrome.storage.local.set(toSet);
-      if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
+      if (droppedIds.length > 0) {
+        await chrome.storage.local.remove(droppedIds.map(scriptKey));
+      }
 
-      return { collection: nextCollection, scripts: finalScripts };
+      return { collection: nextCollection, scripts: finalScripts, droppedIds };
     });
   }
 }

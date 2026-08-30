@@ -206,7 +206,9 @@ update-probe verdict to render the Status column.
   that wouldn't load. The content-derived ones also carry an
   `errorLocation` — see [diagnostics.md](diagnostics.md).
 - `'missing'` — file was in the scan listing previously but no
-  longer is. Behavior:
+  longer is, **and** the latest scan came back completely empty (a
+  non-empty scan drops the row instead — see
+  [Vanished entries](#vanished-entries)). Behavior:
   - On the **ok → missing** transition (and only then), `enabled`
     flips to `false` so the script stops being injected by default.
   - The row stays in storage with content + last known `size`
@@ -260,8 +262,9 @@ record the reason. Triggers:
 **Recovery** is automatic: the next refresh that lands valid content
 (or a conditional-GET 304 / matching size+mtime that proves the cached
 content is current again) clears `refreshError`. If the file is later
-confirmed *vanished* from its listing, the row transitions to
-`missing` and the `refreshError` annotation is dropped.
+confirmed *vanished* from its listing, the row goes away (or, on an
+empty scan, transitions to `missing` with the `refreshError` annotation
+dropped) — see [Vanished entries](#vanished-entries).
 
 Both the failure and the recovery are copied into the script's own Log
 (warning and info respectively), so the badge is always explainable —
@@ -448,19 +451,51 @@ Every load path goes through the same pipeline:
 4. Reconcile against the prior state in `rebuildCollection`:
    - Reuse IDs by `relativePath`.
    - Mint a new UUID for any new file.
-   - Vanished-entry handling depends on the collection kind:
-     - **Directory collections** — tag the prior file `'missing'`
-       (content preserved). A vanished file may come back; the
-       row stays so the viewer keeps working.
-     - **Manifest collections** — drop the row entirely. The manifest
-       is the user's source of truth; removing an entry is an
-       explicit removal, not a "maybe gone" signal.
-     - **Container collections** — vanished is never observed, because
-       the synthetic scan is built from the existing scripts. Per-
-       script removal goes through `removeScript` instead.
+   - Reconcile entries the scan no longer reports — see
+     [Vanished entries](#vanished-entries).
 5. Persist the collection row + **every script row that actually
    changed** in a single `chrome.storage.local.set` call. See
    [Only changed rows are written](#only-changed-rows-are-written).
+
+### Vanished entries
+
+An entry in the prior state that the scan no longer reports is
+**dropped** — the row and its storage key go away, and the collection's
+`scriptIds` stops listing it.
+
+- A successful scan is the collection saying what it holds *now*, so a
+  renamed or deleted file leaves rather than lingering as a `'missing'`
+  row the user has to clear by hand.
+- A *failed* scan never gets here at all — see
+  [Scan failure](#scan-failure-leave-scripts-untouched).
+- **A drop is not reversible.** The row's UUID goes with it, so a file
+  that disappears and comes back (a branch switch, an editor that saves
+  by unlink+rename) returns as a fresh row: `enabled: true`, an empty
+  Log, and none of its `gmval:` values, which stay orphaned. That's the
+  price of not accumulating stale `MISSING` rows; preserving identity
+  across a bounce is filed in `TODO.md`.
+
+The exception: a scan that came back **completely empty** for a
+collection that had scripts.
+
+- Those rows are tagged `'missing'` (content preserved, auto-disabled)
+  instead of dropped.
+- Wholesale emptiness is far more often a directory that moved, got
+  replaced, or listed strangely than every script being deleted at once.
+- Once the collection lists something again, the normal rule applies —
+  rows still absent from that listing are dropped, **including one the
+  user re-enabled** to run from its cached body.
+- So a collection-level refresh leaves `missing` rows all-or-nothing.
+  A table can still show a mix in between: `refreshScript` refetches one
+  file without enumerating the directory, so it can flip a single row
+  back to `ok` while its siblings stay `missing` until the next
+  collection refresh reconciles them.
+- **Manifest collections are exempt.** The manifest is an explicit list,
+  so an empty one is an explicit "nothing here", and entries drop as
+  usual.
+- **Container collections** never observe a vanished entry: the
+  synthetic scan is built from the existing scripts. Per-script removal
+  goes through `removeScript` instead.
 
 ### Only changed rows are written
 
@@ -677,7 +712,8 @@ The write in step 5 is the last thing that can fail, and the one failure
 - `removeScript(id)` — drop a single script row and remove its ID
   from the parent collection's `scriptIds`. Used by the collections page's
   trash-can button on `'missing'` rows and (in container collections) on
-  every row.
+  every row. A refresh drops vanished rows the same way — both paths also
+  clear the script's session-storage Log rows.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildCollection`
   pipeline as the collection-level Refresh (so the two paths can't
@@ -1088,6 +1124,10 @@ gets a persistent background color:
   - A refresh-failed row that **recovers** (`refreshError` cleared)
     flashes green even when the body is unchanged — otherwise the red
     highlight would silently vanish with no "it came back" feedback.
+- **No highlight** for a row that was *dropped* — the classification
+  walks the rows the refresh produced, and a
+  [vanished entry](#vanished-entries) isn't one of them. Its
+  disappearance from the table is the signal.
 
 The color stays until the next refresh clears it, so the
 user can leave the page and come back without losing the

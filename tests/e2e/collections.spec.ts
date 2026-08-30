@@ -138,7 +138,7 @@ test.describe('collections', () => {
     expect(ws!.scripts[0].size).toBe(0);
   });
 
-  test('deleting a file on disk flips its row to missing', async ({ sm }) => {
+  test('deleting a file on disk drops its row while others remain', async ({ sm }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
@@ -156,10 +156,77 @@ test.describe('collections', () => {
     scriptsDir.remove('a.user.js');
     await sm.updateCollection(collection!.id, 'manual');
 
+    // The scan still listed b.user.js, so it is authoritative about
+    // a.user.js being gone — the row goes rather than lingering as
+    // `missing` for the user to trash by hand.
     const after = await sm.getCollectionWithScripts(collection!.id);
-    const byPath = Object.fromEntries(after!.scripts.map((s) => [s.relativePath, s]));
-    expect(byPath['a.user.js'].status).toBe('missing');
-    expect(byPath['b.user.js'].status).toBe('ok');
+    expect(after!.scripts.map((s) => s.relativePath)).toEqual(['b.user.js']);
+    expect(after!.scripts[0].status).toBe('ok');
+  });
+
+  test('a dropped row takes its log with it', async ({ sm }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const before = await sm.getCollectionWithScripts(collection!.id);
+    const goingAway = before!.scripts.find((s) => s.relativePath === 'b.user.js')!;
+    await sm.appendScriptLog(goingAway.id, {
+      level: 'info', source: 'test', message: 'hello',
+    });
+    expect(await sm.getScriptLog(goingAway.id)).toHaveLength(1);
+
+    scriptsDir.remove('b.user.js');
+    await sm.updateCollection(collection!.id, 'manual');
+
+    // The session-storage log goes with the row — otherwise it would
+    // outlive the script it described.
+    expect(await sm.getScriptLog(goingAway.id)).toHaveLength(0);
+  });
+
+  test('emptying the directory keeps the rows as missing', async ({ sm }) => {
+    // An empty listing reads as "the folder moved or broke", not as
+    // "the user deleted everything", so the rows survive (disabled,
+    // content preserved) and recover if the files come back.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'b.user.js',
+      meta: { name: 'B', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    expect((await sm.getCollectionWithScripts(collection!.id))!.scripts).toHaveLength(2);
+
+    scriptsDir.remove('a.user.js');
+    scriptsDir.remove('b.user.js');
+    await sm.updateCollection(collection!.id, 'manual');
+
+    const after = await sm.getCollectionWithScripts(collection!.id);
+    expect(after!.scripts).toHaveLength(2);
+    expect(after!.scripts.every((s) => s.status === 'missing')).toBe(true);
+
+    // Put one back: the directory lists again, so it refetches and the
+    // one that is still absent is now known to be gone for good.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    await sm.updateCollection(collection!.id, 'manual');
+    const back = await sm.getCollectionWithScripts(collection!.id);
+    expect(back!.scripts.map((s) => s.relativePath)).toEqual(['a.user.js']);
+    expect(back!.scripts[0].status).toBe('ok');
   });
 
   test('unreadable top-level directory preserves scripts and their enabled state', async ({ sm }) => {

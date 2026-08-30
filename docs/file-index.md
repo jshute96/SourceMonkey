@@ -180,7 +180,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |
-| `tests/e2e/collections.spec.ts` | Collection lifecycle (add/refresh/remove) via the real file:// scan pipeline |
+| `tests/e2e/collections.spec.ts` | Collection lifecycle (add/refresh/remove/vanished files) via the real file:// scan pipeline |
 | `tests/e2e/layout-metrics.spec.ts` | Guards the whole-pixel vertical metrics behind uniform checkbox rendering on collections, viewer, and Options |
 | `tests/e2e/live-updates.spec.ts` | Live watchers: collections page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
 | `tests/e2e/container-collections.spec.ts` | Container-collection lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
@@ -191,7 +191,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` override, relative-path resolution, two-tier cache, large-icon blob-URL de-dup |
-| `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaves siblings + the OK row intact |
+| `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaving siblings and other collections intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits, and only changed rows are written |
 | `tests/e2e/rejected-registration.spec.ts` | REJECTED state end to end: a `@match` Chrome refuses stays `ok` but never runs, and every retry re-reports until it's fixed |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (markup response, soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
