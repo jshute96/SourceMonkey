@@ -367,6 +367,11 @@ interface SourceMonkeyApi {
     scriptId: string,
     commandId: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // Drives the toolbar-click handler for the given window, which
+  // Playwright can't click (chrome.action has no test hook). Tests use
+  // it to verify a second click reuses the window's collections tab
+  // instead of stacking up duplicates.
+  openCollectionsPage: (windowId: number | null) => Promise<void>;
   // Test-only fault injection: when true, the check-pending handler's
   // snapshot read throws, mimicking the "SW snapshot unavailable"
   // failure mode. Used by tests/e2e/gm-storage-freshness.spec.ts to
@@ -491,6 +496,9 @@ const api: SourceMonkeyApi = {
     const record = await getTabRecord(tabId);
     const state = getCurrentState(record);
     return buildActionMenuPlan(state, tabId, await rejectedScriptIds());
+  },
+  openCollectionsPage: async (windowId) => {
+    await openCollectionsPage(windowId);
   },
   fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
     // Goes through the same dispatchActionMenuCommand helper the real
@@ -632,12 +640,56 @@ const api: SourceMonkeyApi = {
 
 // Clicking the toolbar icon opens the collections page (the extension's
 // declared `options_ui.page`). We have no popup configured, so
-// onClicked fires on every action click; openOptionsPage honors
-// `options_ui.open_in_tab` (true) and focuses an existing tab if one
-// is already open.
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
+// onClicked fires on every action click, and Chrome hands us the tab
+// the click came from.
+//
+// We do NOT use chrome.runtime.openOptionsPage() when we know that
+// window: it focuses an already-open collections tab wherever it lives.
+// With several windows open — especially across virtual desktops, where
+// the window manager may not deliver the focus changes Chrome expects —
+// that can be a window the user isn't looking at, and the click appears
+// to do nothing. The click is the one reliable statement of "this
+// window", so reuse a collections tab only inside the clicked window,
+// and otherwise open a new one there.
+chrome.action.onClicked.addListener((tab) => {
+  void openCollectionsPage(tab?.windowId ?? null);
 });
+
+async function openCollectionsPage(windowId: number | null): Promise<void> {
+  try {
+    if (windowId == null) {
+      // No gesture window to aim at (the SW console, tests): let Chrome
+      // place it, which is the old behavior.
+      await chrome.runtime.openOptionsPage();
+      return;
+    }
+    const url = chrome.runtime.getURL('collections.html');
+    // getContexts, not tabs.query({url}): filtering a query by URL needs
+    // permission for that URL, and `<all_urls>` does not cover the
+    // `chrome-extension:` scheme — the query comes back empty for our
+    // own pages and we'd open a duplicate tab on every click.
+    // getContexts needs no permission and reports tabId/windowId
+    // directly. It only sees loaded contexts, so a collections tab still
+    // navigating is missed; the cost of that is one extra tab.
+    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB] });
+    const existing = contexts.find((ctx) => (
+      ctx.windowId === windowId
+      // startsWith, so ?first_run=1 and #anchor variants match too.
+      && typeof ctx.documentUrl === 'string' && ctx.documentUrl.startsWith(url)
+    ));
+    if (existing?.tabId != null && existing.tabId >= 0) {
+      // Activating is enough: the window is the one the user just
+      // clicked in, so it is already focused.
+      await chrome.tabs.update(existing.tabId, { active: true });
+      return;
+    }
+    await chrome.tabs.create({ url, windowId });
+  } catch (err) {
+    // Caught rather than dropped: an unhandled rejection in the SW lands
+    // in chrome://extensions/?errors. Nothing the user can act on.
+    console.info('[SourceMonkey] could not open the collections page:', describeError(err));
+  }
+}
 
 // First run: open the collections page so the user lands somewhere
 // useful instead of an empty toolbar, and so the page can seed the
@@ -1072,10 +1124,16 @@ async function refreshActiveTabMenu(): Promise<void> {
 
 function installActionContextMenu(): void {
   if (!chrome.contextMenus) return;
-  chrome.contextMenus.onClicked.addListener((info) => {
+  // The `tab` argument names the tab the right-click happened on. We
+  // prefer it over our own `activeTabId` bookkeeping and over Chrome's
+  // "current window" default for tabs.create: both are derived from
+  // focus events, which can be stale when several windows (or virtual
+  // desktops) are in play, and acting on the wrong window is invisible
+  // to the user. See the action.onClicked comment above.
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
     const id = typeof info.menuItemId === 'string' ? info.menuItemId : '';
     if (id.startsWith(ACTION_MENU_CMD_PREFIX)) {
-      handleActionMenuCommandClick(id);
+      handleActionMenuCommandClick(id, tab?.id ?? null);
       return;
     }
     if (id.startsWith(ACTION_MENU_PREFIX)) {
@@ -1083,12 +1141,15 @@ function installActionContextMenu(): void {
       // Rows currently reporting per-tab injection ERROR land on the
       // Log tab so the user sees why; everything else opens on the
       // default (main script) view.
-      const tab = erroredScriptRows.has(scriptId) ? 'log' : undefined;
+      const viewerTab = erroredScriptRows.has(scriptId) ? 'log' : undefined;
       // Caught rather than dropped: an unhandled rejection in the SW
       // lands in chrome://extensions/?errors the same as one in a page.
       // The target is our own viewer page, so a failure here is not
       // something the user can act on — hence info, not a surface.
-      chrome.tabs.create({ url: viewerUrlForScript(scriptId, tab) })
+      chrome.tabs.create({
+        url: viewerUrlForScript(scriptId, viewerTab),
+        ...(tab?.windowId != null ? { windowId: tab.windowId } : {}),
+      })
         .catch((err) => console.info('[SourceMonkey] could not open the viewer:', describeError(err)));
       return;
     }
@@ -1127,12 +1188,25 @@ function installActionContextMenu(): void {
 // dispatchActionMenuCommand so the real-click path and the test
 // surface (`fireActionContextMenuItem`) validate and message
 // identically.
-function handleActionMenuCommandClick(menuItemId: string): void {
+function handleActionMenuCommandClick(menuItemId: string, gestureTabId: number | null): void {
   const mapping = menuItemToCommand.get(menuItemId);
   if (!mapping) return;
-  const tabId = activeTabId;
+  // The tab under the right-click wins; `activeTabId` (focus-event
+  // bookkeeping) is only the fallback for callers without one.
+  const tabId = gestureTabId ?? activeTabId;
   if (tabId == null) return;
-  void dispatchActionMenuCommand(tabId, mapping.scriptId, mapping.commandId);
+  void dispatchActionMenuCommand(tabId, mapping.scriptId, mapping.commandId).then((result) => {
+    // The rows are built for `activeTabId` but the click is dispatched
+    // to the tab Chrome named. When those disagree (stale focus
+    // bookkeeping) the command isn't registered on the clicked tab and
+    // this is a no-op, which is otherwise invisible — so say so in the
+    // SW console.
+    if (!result.ok) {
+      console.info(
+        `[SourceMonkey] menu command ${mapping.commandId} did not fire on tab ${tabId}: ${result.error}`,
+      );
+    }
+  });
 }
 
 // Single source of truth for "fire this menu command on this tab".

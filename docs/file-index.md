@@ -293,6 +293,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-open-in-tab.spec.ts` | E2E tests for `GM_openInTab` (URL, call shapes, onclose, gating) |
 | `tests/e2e/gm-download.spec.ts` | E2E tests for `GM_download` (http(s) transfer, in-page blob/data path, refusals + transfer failure + Log entry, abort, no `@connect` gating) |
 | `tests/e2e/gm-notification.spec.ts` | E2E tests for `GM_notification` (call shapes, Promise return, empty-text rejection, gating) |
+| `tests/e2e/toolbar-click.spec.ts` | Toolbar-click open of the collections page: a repeat click reuses the window's existing tab |
 | `tests/e2e/gm-menu.spec.ts` | SM-only E2E for `GM_registerMenuCommand` via the SW test surface, incl. the per-document clear rules |
 | `tests/unit/window-onurlchange.test.mjs` | Unit tests for the SW-side `window.onurlchange` driver (document targeting, message shape, no-receiver rejection) |
 | `tests/e2e/window-onurlchange.spec.ts` | E2E for `@grant window.onurlchange` — pushState / replaceState / fragment / back delivery, payload shape, gating, assignment form |

@@ -133,6 +133,10 @@ export interface SmApi {
     scriptId: string,
     commandId: string,
   ): Promise<{ ok: boolean; error?: string }>;
+  // Stands in for a toolbar-icon click in the given window (Playwright
+  // can't click chrome.action). Pass null for the "no gesture window"
+  // fallback path.
+  openCollectionsPage(windowId: number | null): Promise<void>;
   // Fault-injection knob used by gm-storage-freshness.spec.ts to
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.

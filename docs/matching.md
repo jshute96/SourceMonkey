@@ -308,6 +308,18 @@ For each tab we:
   every other status routes to the default (main script) tab.
   - `chrome.contextMenus` action items are global to the action, so
     we keep them synced to the active tab.
+  - **Clicks act on the tab Chrome names in `onClicked`**, not on the
+    tracked active tab, and the viewer opens in that tab's window.
+    - The tracked id comes from focus events, which can name a window
+      the user left earlier when several windows (or virtual desktops)
+      are open. The click itself can't be stale.
+    - The menu *contents* are still built for the tracked active tab.
+      When the two disagree, a clicked command isn't registered on the
+      clicked tab and does nothing; the SW console says so.
+    - Same reason a toolbar click opens the collections page in the
+      clicked window instead of letting `openOptionsPage` focus a copy
+      in whatever window Chrome last recorded. The trade is one
+      collections tab per window rather than one overall.
   - Rebuilt on `chrome.tabs.onActivated`,
     `chrome.windows.onFocusChanged`, and any `renderBadge` for the
     active tab. Also rebuilt when a userscript registers or
@@ -315,7 +327,7 @@ For each tab we:
   - **Nested menu commands** — entries created via
     `GM_registerMenuCommand` appear indented (`↳ <name>`) directly
     under their script's row. Clicking one routes
-    `sm:gm-menu-fire` to the active tab so the wrapper invokes
+    `sm:gm-menu-fire` to that tab so the wrapper invokes
     the registered callback. See [GM-APIs.md](GM-APIs.md) for the
     full lifecycle.
   - **6-item cap + "More" submenu** — Chrome skips action
