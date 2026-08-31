@@ -139,6 +139,8 @@ dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
    or path — the collection name, the file name with its subdirectory,
    each dependency's path, the description. */
 dialog.sm-dialog.copy-dialog { width: 680px; }
+/* Same reason as the copy dialog: every row holds a path. */
+dialog.sm-dialog.delete-dialog { width: 680px; }
 .sm-dialog .dlg-title {
   font-size: 1em;
   font-weight: 600;
@@ -212,6 +214,9 @@ dialog.sm-dialog.copy-dialog { width: 680px; }
 }
 .sm-dialog .dlg-error {
   color: #b00;
+  /* Messages that name a file and then say what to do put the two on
+     separate lines. Every other message is one line and unaffected. */
+  white-space: pre-line;
   margin: 0;
   min-height: 1.3em;
   line-height: 1.3;
@@ -231,6 +236,17 @@ dialog.sm-dialog.copy-dialog { width: 680px; }
 .sm-dialog .dlg-banner > * { margin: 0; }
 .sm-dialog .dlg-deps { min-width: 0; padding-top: 3px; }
 .sm-dialog .dlg-deps .dlg-hint { margin-top: 3px; }
+/* The delete dialog's headed lists (src/delete-dialog.ts): one block
+   per reason, stacked, each hidden whole when it holds no files.
+   Scoped to that dialog — the copy dialog builds its checkbox and list
+   inside a `.dlg-deps` of its own, and stacking that one would move a
+   row this feature has no business touching. */
+.delete-dialog .dlg-deps { display: flex; flex-direction: column; gap: 8px; }
+/* Beats the `display: flex` above, which would otherwise leave a script
+   with no dependency files an empty grid row and its row-gap. */
+.delete-dialog .dlg-deps[hidden] { display: none; }
+.delete-dialog .dlg-dep-group[hidden] { display: none; }
+.delete-dialog .dlg-dep-group .dlg-hint { margin-top: 0; }
 .sm-dialog .dlg-deps-list {
   margin: 4px 0 0;
   padding-left: 1.2em;
@@ -276,6 +292,10 @@ dialog.sm-dialog.copy-dialog { width: 680px; }
 }
 .sm-dialog .dlg-actions button { font: inherit; padding: 4px 11px; cursor: pointer; }
 .sm-dialog .dlg-actions button.primary { font-weight: 600; }
+/* The confirm of a dialog that destroys something (src/delete-dialog.ts).
+   Coloured, not just bold: the button is one click from files leaving
+   the disk with nothing to undo it. */
+.sm-dialog .dlg-actions button.danger { color: #b00; }
 .sm-dialog .dlg-actions button:disabled { cursor: not-allowed; opacity: 0.5; }
 @keyframes sm-dialog-spin { to { transform: rotate(360deg); } }
 .sm-dialog .busy-spinner {

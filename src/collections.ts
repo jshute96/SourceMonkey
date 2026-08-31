@@ -25,6 +25,9 @@
 // write is in flight. The repaint is careful not to overwrite a control
 // whose spinner is up.
 
+import { openDeleteDialog } from './delete-dialog.js';
+import type { DownloadsCopiesSetting } from './local-copy.js';
+import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
   addCollection,
   backfillCollectionDisplayNames,
@@ -684,6 +687,7 @@ async function syncScriptRowsFromStorage(
   for (const row of tbody.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
     if (row.dataset.scriptId) existing.set(row.dataset.scriptId, row);
   }
+  const hasActionColumn = !!tbody.parentElement?.querySelector('thead th[aria-label="Actions"]');
   const ordered: HTMLTableRowElement[] = [];
   for (const script of scripts) {
     const row = existing.get(script.id);
@@ -691,7 +695,13 @@ async function syncScriptRowsFromStorage(
       syncScriptRow(row, script, collectionOn, inContainer, localFiles);
       existing.delete(script.id);
     }
-    ordered.push(row ?? renderScriptRow(script, collectionOn, inContainer, localFiles));
+    // Whether the table has the trailing action column is settled by
+    // the header that is already on screen — a row added into it has to
+    // match, and a table whose whole point is local copies already has
+    // one from the render that built it.
+    ordered.push(row ?? renderScriptRow(
+      script, collectionOn, inContainer, localFiles, hasActionColumn,
+    ));
   }
   // Whatever is left in `existing` is a row whose script is gone. The
   // per-script bookkeeping is pruned by the caller, against the whole
@@ -729,6 +739,19 @@ function syncScriptRow(
   const wanted = statusCellKey(script.id, script.status, errorMessage, script.refreshError);
   if (cell && statusCellKeys.get(script.id) !== wanted) {
     paintStatusCell(cell, script.id, script.status, errorMessage, script.refreshError);
+  }
+
+  // The action cell moves with the row's status: a copy whose file has
+  // gone stops offering to delete that file, and `paintStatusCell` has
+  // just given the row the plain trash can that clears its record. Two
+  // trash cans on one row, one of them acting on a file that isn't
+  // there, is what leaving this cell alone looked like.
+  const actionCell = row.querySelector<HTMLTableCellElement>('td.action-cell');
+  if (actionCell && !inContainer) {
+    const wanted = isDeletableCopy(script, localFiles.collectionPath);
+    const has = actionCell.childElementCount > 0;
+    if (wanted && !has) actionCell.appendChild(makeDeleteCopyButton(script));
+    else if (!wanted && has) actionCell.replaceChildren();
   }
 
   const sizeCell = row.querySelector<HTMLTableCellElement>('td.size-cell');
@@ -1024,6 +1047,12 @@ function scrubQueryParams(names: readonly string[]): void {
   if (changed) history.replaceState(null, '', url.toString());
 }
 
+// Where local copies live, from the `smDownloadsCopies` setting. Null
+// until the first copy ever has been made, and on a page that failed to
+// read it — in both cases no row offers a file deletion, which is the
+// safe answer. Seeded by `render`.
+let currentCopiesSetting: DownloadsCopiesSetting | null = null;
+
 // ---------- Initial render ----------
 
 async function render(): Promise<void> {
@@ -1039,6 +1068,11 @@ async function render(): Promise<void> {
   currentLogLevels = await getAllMaxLogLevels();
   currentRejections = await readRejections();
   currentRefreshErrors = await readRefreshErrors();
+  // Which directory holds the local copies, so every script row can be
+  // asked — synchronously, while it is drawn — whether its file is one
+  // SourceMonkey can delete. Re-read on every render, since a copy made
+  // in another tab can be what created the setting.
+  currentCopiesSetting = await readCopiesSetting();
 
   // One-shot backfill so older collection rows (pre-displayName) pick
   // up an inferred label on first view after upgrade. Cheap no-op once
@@ -1259,10 +1293,12 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
       headRow.appendChild(schemeTh);
     }
   }
-  if (inContainer) {
-    // Trailing column carries the per-row remove button. Empty text
-    // would announce as "blank column header"; an aria-label tells
-    // screen-readers what it's for.
+  // Trailing column carries the per-row remove button: every container
+  // script has one, and outside a container a local copy has one that
+  // deletes its file too. Empty text would announce as "blank column
+  // header"; an aria-label tells screen-readers what it's for.
+  const withActions = inContainer || scripts.some((s) => isDeletableCopy(s, collection.path));
+  if (withActions) {
     const actionsTh = document.createElement('th');
     actionsTh.setAttribute('aria-label', 'Actions');
     headRow.appendChild(actionsTh);
@@ -1272,7 +1308,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
 
   const tbody = document.createElement('tbody');
   for (const script of scripts) {
-    tbody.appendChild(renderScriptRow(script, collectionOn, inContainer, localFiles));
+    tbody.appendChild(renderScriptRow(script, collectionOn, inContainer, localFiles, withActions));
   }
   table.appendChild(tbody);
   return table;
@@ -1283,6 +1319,9 @@ function renderScriptRow(
   collectionOn: boolean,
   inContainer: boolean,
   localFiles: LocalFileScope,
+  // The table has a trailing action column. Every row in such a table
+  // gets the cell, empty or not, or the columns stop lining up.
+  withActions: boolean,
 ): HTMLTableRowElement {
   const scriptOn = isScriptEnabled(script);
 
@@ -1328,21 +1367,26 @@ function renderScriptRow(
 
   // Container rows always offer a remove button (every script inside a
   // container was added one-by-one and can be taken back out the same
-  // way). Non-container rows rely on paintStatusCell's trash affordance
-  // for `missing` rows only.
-  if (inContainer) {
+  // way). A local copy offers one too, which deletes its file as well —
+  // the one place SourceMonkey can. Every other non-container row
+  // relies on paintStatusCell's trash affordance for `missing` rows.
+  if (withActions) {
     const actionCell = document.createElement('td');
     actionCell.className = 'action-cell';
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-script';
-    removeBtn.textContent = '🗑';
-    removeBtn.title = 'Remove this script';
-    removeBtn.setAttribute('aria-label', 'Remove this script');
-    removeBtn.addEventListener('click', () => {
-      void onRemoveScript(script.id, script.collectionId, removeBtn);
-    });
-    actionCell.appendChild(removeBtn);
+    if (inContainer) {
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'remove-script';
+      removeBtn.textContent = '🗑';
+      removeBtn.title = 'Remove this script';
+      removeBtn.setAttribute('aria-label', 'Remove this script');
+      removeBtn.addEventListener('click', () => {
+        void onRemoveScript(script.id, script.collectionId, removeBtn);
+      });
+      actionCell.appendChild(removeBtn);
+    } else if (isDeletableCopy(script, localFiles.collectionPath)) {
+      actionCell.appendChild(makeDeleteCopyButton(script));
+    }
     tr.appendChild(actionCell);
   }
 
@@ -1428,6 +1472,59 @@ function nameCellText(script: StoredScript, inContainer: boolean): string {
 function nameCellTooltip(script: StoredScript): string {
   const desc = script.header ? getValue(script.header, 'description') : undefined;
   return `${displayLocation(script.relativePath)}\n\n${desc?.trim() || 'No description'}`;
+}
+
+// True when this script is a local copy whose file SourceMonkey can
+// delete — which takes its collection as well as the row (see
+// `deletableCopyPath`). Reads the setting the render seeded, so it can
+// be asked while a row is being built.
+function isDeletableCopy(script: StoredScript, collectionPath: string | undefined): boolean {
+  const collection = collectionPath === undefined ? null : { path: collectionPath };
+  return deletableCopyPath(script, collection, currentCopiesSetting) !== null;
+}
+
+// The trash can on a local copy's row. Unlike the other two, this one
+// deletes the file — the dialog says so, names the path, and offers the
+// dependency files that came with it (src/delete-dialog.ts).
+function makeDeleteCopyButton(script: StoredScript): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'remove-script';
+  btn.textContent = '🗑';
+  btn.title = 'Delete local script file';
+  btn.setAttribute('aria-label', 'Delete local script file');
+  btn.addEventListener('click', () => void onDeleteCopy(script, btn));
+  return btn;
+}
+
+async function onDeleteCopy(script: StoredScript, btn: HTMLButtonElement): Promise<void> {
+  const result = await openDeleteDialog({ script });
+  if (!result) return;
+  showPageError(null);
+  btn.disabled = true;
+  // The record goes with the file. Not a refresh of the collection: a
+  // directory left EMPTY by the deletion hits `rebuildCollection`'s
+  // empty-scan guard, which marks its rows `missing` rather than
+  // dropping them — the guard is there so an unreadable directory
+  // can't wipe a collection, and here we know exactly why the file is
+  // gone.
+  //
+  // Its own handler rather than `onRemoveScript`, which reports a
+  // failure to the console: by the time this runs the FILE is already
+  // gone, so a row that stays needs to say why on the page. Both of
+  // the reports below are things only this path can produce.
+  try {
+    await removeScript(result.scriptId);
+  } catch (err) {
+    showPageError(`The file was deleted, but its record could not be removed: ${describeError(err)}`);
+    btn.disabled = false;
+    return;
+  }
+  // Files left on disk after the script itself went. The same report
+  // the viewer gives, so the two surfaces say the same thing about the
+  // same deletion.
+  if (result.dependencyErrors.length > 0) showPageError(result.dependencyErrors.join(' '));
+  await repaintPage();
 }
 
 async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTMLButtonElement): Promise<void> {
@@ -1577,8 +1674,9 @@ function looksLikeLocation(value: string): boolean {
 
 // Show or clear the page's error line, which sits below the Add form.
 // Pass null to hide it; pass a string to surface a validation failure.
-// Shared by the Add flow and the `?refresh_file=` rejections — one
-// line, so the page never has two competing error slots.
+// Shared by the Add flow, the `?refresh_file=` rejections, and what a
+// local-copy deletion could not finish — one line, so the page never
+// has two competing error slots.
 function showPageError(message: string | null): void {
   if (message === null) {
     addErrorEl.textContent = '';

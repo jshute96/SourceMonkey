@@ -107,6 +107,12 @@ picked up by Refresh. The dialog lets you rename the file, adjust the
 version (`-local` by default) and description, and optionally copy the
 script's `@require` / `@resource` files beside it.
 
+The 🗑 beside it deletes such a copy: the file on disk and its record in
+SourceMonkey, after a confirmation naming the path and every dependency
+file the copy loads, saying which of them go with it. Copies are the one
+thing SourceMonkey can delete from disk, since the browser downloaded
+them.
+
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel at the top of the page,
@@ -124,6 +130,7 @@ Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
 [docs/script-identity.md](docs/script-identity.md),
 [docs/local-copy.md](docs/local-copy.md),
+[docs/local-delete.md](docs/local-delete.md),
 [docs/script-log.md](docs/script-log.md),
 [docs/diagnostics.md](docs/diagnostics.md).
 

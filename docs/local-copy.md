@@ -11,7 +11,8 @@ result.
   [`src/userscript.ts`](../src/userscript.ts)
 - Tests: `tests/e2e/local-copy.spec.ts`, `tests/unit/local-copy.test.mjs`
 
-Related: [script-identity.md](script-identity.md) (which copies count as
+Related: [local-delete.md](local-delete.md) (taking a copy back off
+disk), [script-identity.md](script-identity.md) (which copies count as
 the same script, the exclusive-enable rule), [file-access.md](file-access.md)
 (why we read via `file://`), [local-file-overrides.md](local-file-overrides.md)
 (how a file beside a script stands in for its `@require` URL),

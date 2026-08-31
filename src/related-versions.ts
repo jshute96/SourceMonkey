@@ -164,6 +164,16 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // A row with no entry renders an em dash: absent status is not the
   // same claim as OK.
   status?: ReadonlyMap<string, ScriptStatusView>;
+  // Which rows are local copies whose FILE this page can delete — a
+  // copy in the Downloads copies directory (see docs/local-delete.md).
+  // Passed as a predicate because the answer needs a stored setting
+  // this renderer does no reading of, the same way `status` is.
+  //
+  // Those rows get a live trash can even though they came in with a
+  // directory collection: the reason that button is normally dead
+  // there is that the collection's next scan would bring the row
+  // straight back, and deleting the file is exactly what stops it.
+  canDeleteFile?: (script: StoredScript, collection: StoredCollection | null) => boolean;
   // A failure from one of the panel's own actions, shown inside the
   // panel. It cannot use the page's `#message` bar: that bar is
   // rewritten from the current script's stored state on every
@@ -283,7 +293,15 @@ export function renderRelatedVersions(
     });
     for (const rel of sameLocation) {
       table.tBodies[0].appendChild(
-        versionRow(rel, model.actions, verb, allRows, model.status?.get(rel.script.id), model.mode),
+        versionRow(
+          rel,
+          model.actions,
+          verb,
+          allRows,
+          model.status?.get(rel.script.id),
+          model.mode,
+          model.canDeleteFile?.(rel.script, rel.collection) ?? false,
+        ),
       );
     }
     container.appendChild(table);
@@ -303,6 +321,7 @@ export function renderRelatedVersions(
           allRows,
           model.status?.get(rel.script.id),
           model.mode,
+          model.canDeleteFile?.(rel.script, rel.collection) ?? false,
         ),
       );
     }
@@ -559,6 +578,9 @@ function versionRow(
   allRows: readonly RelatedScript[],
   status: ScriptStatusView | undefined,
   mode: RelatedVersionsModel['mode'],
+  // This row is a local copy whose file the page can delete — see
+  // `RelatedVersionsModel.canDeleteFile`.
+  deletesFile: boolean,
 ): HTMLTableRowElement {
   const { script } = rel;
   const isCurrent = script.id === actions.currentScriptId;
@@ -613,7 +635,7 @@ function versionRow(
   tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb));
-  tr.appendChild(removeCell(rel, actions));
+  tr.appendChild(removeCell(rel, actions, deletesFile));
   return tr;
 }
 
@@ -898,22 +920,31 @@ function collectionNoun(collection: StoredCollection | null): string {
   return collection && collectionHasManifest(collection.path) ? 'manifest' : 'directory';
 }
 
-function removeCell(rel: RelatedScript, actions: RelatedVersionsActions): HTMLTableCellElement {
+function removeCell(
+  rel: RelatedScript,
+  actions: RelatedVersionsActions,
+  deletesFile: boolean,
+): HTMLTableCellElement {
   const td = cell('col-remove');
   if (!actions.remove) return td;
   // A row whose collection dangles is an orphan — the thing a user
   // would most want to clear out, and nothing will scan it back in — so
   // it gets the live button rather than a tooltip about a collection
   // that isn't there.
-  const removable = rel.collection ? isContainerCollection(rel.collection.path) : true;
+  const removable = deletesFile
+    || (rel.collection ? isContainerCollection(rel.collection.path) : true);
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';
   b.textContent = '🗑';
-  const title = removable
-    ? 'Remove this copy of the script'
-    : `Script from ${collectionNoun(rel.collection)} collection `
-      + 'can only be removed by removing the collection';
+  // A local copy's button says what makes it different: it takes the
+  // file off the disk as well, which is why this row has one at all.
+  const title = deletesFile
+    ? 'Delete local script file'
+    : removable
+      ? 'Remove this copy of the script'
+      : `Script from ${collectionNoun(rel.collection)} collection `
+        + 'can only be removed by removing the collection';
   b.title = title;
   b.setAttribute('aria-label', title);
   if (removable) {

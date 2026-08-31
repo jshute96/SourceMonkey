@@ -784,6 +784,54 @@ the items with a trade-off worth recording:
   readability probe — unlike the search-roots box above it, which
   checks. Same probe would do.
 
+## Deleting local copies — follow-ups
+
+See [docs/local-delete.md](docs/local-delete.md#whats-next); the items
+with a trade-off worth recording:
+
+- **A copy with no download record can't be deleted.** `removeFile`
+  needs a download-history entry, which the user can clear. The way
+  round it is to `download` a one-line "deleted by SourceMonkey"
+  comment over the file with `conflictAction: 'overwrite'` and then
+  remove that download — deliberately not done yet: it destroys the
+  file's content *before* it can fail, Chrome's "Ask where to save each
+  file" turns it into a Save As box aimed at a file we are erasing, and
+  it writes to a path we only believe is the file's (see the stale
+  copies-directory item above). A comment rather than zero bytes,
+  because an empty `.user.js` reads as a broken script.
+- **Shared dependency files are never deleted**, only listed. So the
+  last copy to go leaves the library behind for whichever sibling
+  claimed it — until that one is deleted too, when the file counts as
+  its own. Cleaning up a file nothing claims needs a sweep of the
+  collection, not a per-script plan.
+- **No control over what goes.** The dialog reports three outcomes and
+  offers no choice, because each follows from a fact it can state.
+  Keeping a file that only this script uses, or deleting a shared one
+  anyway, would need a control — and a reason to want one.
+- **Empty directories are left behind.** `removeFile` deletes files;
+  nothing in the extension can remove a directory, so a mirrored
+  `cdn.example.com/lib/` outlives the file it held.
+- **Only the copies collection's own rows can be deleted.** Eligibility
+  needs the row to sit in the directory collection at
+  `<Downloads>/SourceMonkey`, not just to have its file there, because
+  the shared/own split is computed from that collection's scripts. An
+  individual-file row pointing into the directory, a second directory
+  collection overlapping it, or a manifest listing the same files would
+  each make "which scripts read this file?" a different question — and
+  getting it wrong deletes a library another copy needs. Widening this
+  means answering that question globally first.
+- **A copy Chrome has marked deleted cannot be removed at all.** The
+  file is on disk, `removeFile` refuses it, and the row has no plain
+  trash can of its own (a directory collection's rows are removed by
+  refreshing, which would scan it straight back in). The user is told
+  to delete the file by hand, and the next refresh then drops the row.
+  The overwrite trick above would close this; a record-only "forget
+  this script" would not, since the scan undoes it.
+- **`exists` is only as fresh as Chrome's last check.** A file Chrome
+  believes is there but isn't still reaches `removeFile`, which fails
+  and is reported. Nothing is erased on that path, so a later attempt
+  has the same handles it had.
+
 ## Collections page — follow-ups
 
 - **No way to move a script between scripts collections.** Today it is
