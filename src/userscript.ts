@@ -215,6 +215,7 @@ const filenameEl = document.getElementById('filename')!;
 const controlsRowEl = document.getElementById('meta-row')!;
 const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElement;
 const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
+const metaActionsEl = document.getElementById('meta-actions')!;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 const bannerSlotEl = document.getElementById('banner-slot')!;
 // Wraps the banner slot and the versions panel. Carries `merged` while
@@ -707,6 +708,10 @@ function render(script: StoredScript): void {
   );
   setPageTitle(INSTALLED_TITLE, label);
 
+  // Rebuilt per render rather than updated in place: both controls
+  // close over the script row they were built from.
+  metaActionsEl.replaceChildren(...makeScriptActions(script, collectionRow));
+
   enableCheckboxEl.checked = isScriptEnabled(script);
   enableCheckboxEl.disabled = !collectionEnabled;
   enableLabelEl.classList.toggle('toggle-disabled', !collectionEnabled);
@@ -752,7 +757,7 @@ function render(script: StoredScript): void {
     scriptUrl: script.fileUrl,
     logId: currentLogId,
     collection: collectionRow,
-    collectionTrailing: collectionRow ? makeCollectionControls(script, collectionRow) : undefined,
+    collectionTrailing: collectionRow ? makeMoveControl(script, collectionRow) : undefined,
     location: currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
@@ -2723,21 +2728,22 @@ let moveTargetContext: {
 // collection: a directory or manifest script's `relativePath` is
 // relative to its collection root, so it has no absolute spelling to
 // carry into a container. `moveScript` refuses those too.
-// The controls at the end of the Collection row: Move… for a script in
-// a container collection, Local copy… for every script, and the trash
-// can for a script that IS a local copy. One host span so they sit as a
-// group in the row's control column.
-function makeCollectionControls(
+// The controls in the row under the heading, between the Enabled box
+// and Refresh: Local copy… for every script, and the trash can for a
+// script that IS a local copy. They act on the script the page is
+// showing, which is what the rest of that row is about — the Collection
+// row below keeps only Move…, which acts on the collection membership.
+//
+// A collection row we couldn't read costs the trash can, not the whole
+// group: without it there is no way to tell a local copy from any other
+// script.
+function makeScriptActions(
   script: StoredScript,
-  collection: StoredCollection,
-): Node {
-  const host = document.createElement('span');
-  host.className = 'collection-move';
-  const move = makeMoveControl(script, collection);
-  if (move) host.appendChild(move);
-  host.appendChild(makeLocalCopyControl(script));
-  host.appendChild(makeDeleteCopyControl(script, collection));
-  return host;
+  collection: StoredCollection | null,
+): HTMLElement[] {
+  const actions = [makeLocalCopyControl(script)];
+  if (collection) actions.push(makeDeleteCopyControl(script, collection));
+  return actions;
 }
 
 // The trash can beside Local copy…, for a script that IS a local copy:
@@ -2835,6 +2841,7 @@ function makeMoveControl(
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'move-collection-btn';
+  btn.className = 'collection-move';
   btn.textContent = 'Move…';
   btn.title = 'Move this script to another collection';
   btn.onclick = () => void openMove(btn);
@@ -3408,6 +3415,9 @@ function showMissing(message: string): void {
   const focusInPanel = versionsEl.contains(document.activeElement);
   controlsRowEl.hidden = true;
   actionsEl.hidden = true;
+  // With the rest: both controls close over the row that has gone, and
+  // the row they sit in is only hidden, not emptied.
+  metaActionsEl.replaceChildren();
   bannerSlotEl.replaceChildren();
   // No script to name, but the heading keeps its product prefix so it
   // doesn't change shape between this and a script that loaded.

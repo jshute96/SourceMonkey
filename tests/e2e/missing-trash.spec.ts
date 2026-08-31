@@ -40,22 +40,22 @@ test.describe('missing-row trash-can', () => {
     await page.goto(`chrome-extension://${extensionId}/collections.html`);
     const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     await expect(section.locator('tbody tr')).toHaveCount(3);
-    await expect(section.locator('button.remove-script')).toHaveCount(3);
+    await expect(section.locator('.script-table button.remove-script')).toHaveCount(3);
 
     // Click the first trash. Two rows + two trash buttons should remain.
-    await section.locator('button.remove-script').first().click();
+    await section.locator('.script-table button.remove-script').first().click();
     await expect(section.locator('tbody tr')).toHaveCount(2);
-    await expect(section.locator('button.remove-script')).toHaveCount(2);
+    await expect(section.locator('.script-table button.remove-script')).toHaveCount(2);
 
     // Click the next one. One should remain.
-    await section.locator('button.remove-script').first().click();
+    await section.locator('.script-table button.remove-script').first().click();
     await expect(section.locator('tbody tr')).toHaveCount(1);
-    await expect(section.locator('button.remove-script')).toHaveCount(1);
+    await expect(section.locator('.script-table button.remove-script')).toHaveCount(1);
 
     // And the last.
-    await section.locator('button.remove-script').first().click();
+    await section.locator('.script-table button.remove-script').first().click();
     await expect(section.locator('tbody tr')).toHaveCount(0);
-    await expect(section.locator('button.remove-script')).toHaveCount(0);
+    await expect(section.locator('.script-table button.remove-script')).toHaveCount(0);
 
     await page.close();
   });
@@ -97,18 +97,18 @@ test.describe('missing-row trash-can', () => {
       const goneSection = page.locator(`section.collection[data-collection-id="${gone!.id}"]`);
       const keptSection = page.locator(`section.collection[data-collection-id="${kept!.id}"]`);
       await expect(goneSection.locator('tbody tr')).toHaveCount(2);
-      await expect(goneSection.locator('button.remove-script')).toHaveCount(2);
+      await expect(goneSection.locator('.script-table button.remove-script')).toHaveCount(2);
       // The ok collection's row never gets the destructive button.
-      await expect(keptSection.locator('button.remove-script')).toHaveCount(0);
+      await expect(keptSection.locator('.script-table button.remove-script')).toHaveCount(0);
 
       // Click the first trash. The other missing row keeps its trash.
-      await goneSection.locator('button.remove-script').first().click();
+      await goneSection.locator('.script-table button.remove-script').first().click();
       await expect(goneSection.locator('tbody tr')).toHaveCount(1);
-      await expect(goneSection.locator('button.remove-script')).toHaveCount(1);
+      await expect(goneSection.locator('.script-table button.remove-script')).toHaveCount(1);
 
       // Click the remaining trash. That collection empties out; the
       // other one is untouched.
-      await goneSection.locator('button.remove-script').first().click();
+      await goneSection.locator('.script-table button.remove-script').first().click();
       await expect(goneSection.locator('tbody tr')).toHaveCount(0);
       await expect(keptSection.locator('tbody tr')).toHaveCount(1);
       // Name link, not the favicon anchor (also an `<a>` in the row).

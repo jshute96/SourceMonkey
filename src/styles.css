@@ -316,9 +316,10 @@ select.install-target { font: inherit; padding: 3px 6px; max-width: 100%; }
 
 /* ---- Removal buttons (src/delete-icon.ts) ---- */
 
-/* The small trash-can button: beside the Status label on a missing row
-   and on container rows (collections page), and beside "Local copy…"
-   in the viewer. Shared because the same action must not look like two
+/* The small trash-can button: beside the Status label on a missing row,
+   on container rows, and in the collection header (collections page),
+   and beside "Local copy…" in the viewer's controls row. Shared
+   because the same action must not look like two
    different controls on two pages — the viewer's used to fall through
    to the browser's default button styling. Pages add their own
    spacing; the versions panel's `.versions-remove` is its own rule,

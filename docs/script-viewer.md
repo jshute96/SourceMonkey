@@ -166,9 +166,11 @@ Both name the script the same way, pivoted for where they're read.
      it. In a preview's already-installed case the banner and the table
      are drawn as one green box (`#status-box.merged`).
    - Full behaviour in [script-identity.md](script-identity.md).
-3. **Controls row** (`#meta-row`) — `Enabled` toggle + **Refresh**
-   button → `refreshScript(scriptId)`. Installed mode only; preview
-   shows the banner + action row in its place (see
+3. **Controls row** (`#meta-row`) — everything that acts on the
+   script itself, left to right: the `Enabled` toggle, **Local copy…**,
+   the delete trash can (a local copy only), and **Refresh** →
+   `refreshScript(scriptId)`. Installed mode only; preview shows the
+   banner + action row in its place (see
    [Preview mode](#preview-mode)).
    - The toggle is a radio button, not a plain checkbox: enabling this
      copy disables every other copy that is running, exactly as the
@@ -416,11 +418,15 @@ load.
 
 The details panel's **Collection** row carries a **Move…** button to
 the right of the collection name, for an installed script whose parent
-is an "individual scripts" (container) collection. It shares a grid
-column with **Local copy…** (below), right after the name — the pair
-moving out to the right margin only when the name is long enough to
-fill the row, which is also what keeps a wrapping name from dragging
-them onto the last wrapped line.
+is an "individual scripts" (container) collection. It sits in a grid
+column of its own, right after the name — moving out to the right
+margin only when the name is long enough to fill the row, which is also
+what keeps a wrapping name from dragging it onto the last wrapped line.
+
+- **Why this row and not the controls row above.** Move… is about where
+  the script is *filed*, which is what the Collection row says. The
+  controls that act on the script itself — Enabled, Local copy…, the
+  delete trash can, Refresh — are in the row under the heading.
 
 - No button at all for a directory or manifest script. Its
   `relativePath` is relative to its collection root, so there is
@@ -463,11 +469,16 @@ failure in its own error slot.
 
 ### Making a local copy
 
-The Collection row's other control, **Local copy…**, appears for every
-installed script (Move… only for container scripts; both share the
-row's control column). It opens the copy dialog (`src/copy-dialog.ts`),
-which writes an editable copy into the *Scripts copied in Downloads*
-collection under the browser's Downloads folder.
+**Local copy…** sits in the controls row under the heading, between the
+**Enabled** box and **Refresh**, and appears for every installed
+script. It opens the copy dialog (`src/copy-dialog.ts`), which writes an
+editable copy into the *Scripts copied in Downloads* collection under
+the browser's Downloads folder.
+
+- The delete trash can (for a script that IS a local copy) sits beside
+  it, and both are sized to **Refresh**'s height rather than to a
+  padding of their own: the trash glyph is scaled from the font, so a
+  fixed padding would drift as soon as the font did.
 
 - The dialog owns the write and its refusals; the caller then runs the
   exclusive-enable sweep for the new row and switches the page to it

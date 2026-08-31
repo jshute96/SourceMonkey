@@ -18,7 +18,7 @@ file beside a script is used at all).
 ## What it does
 
 - A trash can with a small disk badge appears on a script whose file
-  is in the copies directory — on the viewer's Collection row beside
+  is in the copies directory — in the viewer's controls row beside
   **Local copy…**, on its row in the "Other versions" panel, and on its
   row on the collections page. All three open the one dialog.
   - The badge (and a red resting colour) is what separates this button

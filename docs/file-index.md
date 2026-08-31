@@ -65,16 +65,16 @@ One-line descriptions of every source file, grouped by directory.
 | `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the viewer's preview to its raw-source tab |
 | `src/raw.html` | Raw-source page markup: a single `<pre>` styled monospace, titled with the script's filename once loaded |
 | `src/raw.ts` | Raw-source controller — reads the handed-off text by `?key=`, sets the document title, renders via `textContent` |
-| `src/collections.html` | Collections page markup: Options button, Add field, file-access banner slot, collection list |
+| `src/collections.html` | Collections page markup: Options / Refresh All bar, Add field, file-access banner slot, collection list |
 | `src/collections.ts` | Collections page controller — Add-field routing into the dialog, Edit button, render, membership repair, in-place updates, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
 | `src/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
 | `src/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
 | `src/options.html` | Options page markup: settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, collections link |
 | `src/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls |
 | `src/userscript.html` | Userscript viewer markup: title, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
-| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move / Local copy / delete-copy buttons, live `storage` watchers, log pane |
+| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
-| `src/copy-dialog.ts` | The local-copy dialog opened from the viewer's Collection row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
+| `src/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
 | `src/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
 | `src/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the three dependency lists, runs the deletion |
 | `src/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
@@ -192,12 +192,12 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/collection-dialog.spec.ts` | The collection dialog from the collections page: Add-field routing, inferred type / name, readability probe, live refusals, Edit rename and options, scheme chips |
 | `tests/e2e/install-target.spec.ts` | The install page's "Install into" dropdown: groups and order, renamed / missing default, install into a chosen or new collection, second copy of one URL |
 | `tests/e2e/move-script.spec.ts` | The move-script dialog from the viewer's Collection row: destination list, id preserved, stacked create dialog, disabled destination, button placement |
-| `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks, from every trash can that offers it |
+| `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
 | `tests/e2e/script-log-relay.spec.ts` | The page→worker Log-write relay end to end: the viewer's Clear log is performed by the worker |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
-| `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, Remove button, per-script toggle |
+| `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` override, relative-path resolution, two-tier cache, large-icon blob-URL de-dup |
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaving siblings and other collections intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits, and only changed rows are written |

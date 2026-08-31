@@ -33,11 +33,11 @@
       .collection-header h2 { flex: 1 1 auto; min-width: 0; }
       .collection-toggle { flex: 0 0 auto; }
       .collection-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
-      /* Up/Down arrow buttons that sit left of Refresh. Keep the
-         vertical padding identical to the standard button rule above
-         so heights line up with Refresh/Remove; only the horizontal
-         padding is tightened so the arrow glyph isn't drowned in
-         whitespace. */
+      /* Up/Down arrow buttons, at the left end of the header's button
+         row. Keep the vertical padding identical to the standard button
+         rule above so heights line up with the buttons beside them;
+         only the horizontal padding is tightened so the arrow glyph
+         isn't drowned in whitespace. */
       .move-collection { padding: 4px 7px; }
       .move-collection:disabled { cursor: not-allowed; opacity: 0.35; }
       /* Whole-px vertical metrics on this page, and `separate` borders rather
@@ -137,6 +137,27 @@
          into a different-looking control. Only the gap to the Status
          label it sits beside is this page's. */
       .remove-script { margin-left: 0.4em; }
+      /* In the collection header the button sits in a row of text
+         buttons, so it wears their chrome rather than the bare glyph the
+         shared rule gives it beside a table row: the UA's own button box
+         (which is also what gives it a pressed state), this page's
+         padding, and a glyph as dark as the labels beside it. The row's
+         own `gap` does the spacing, and `stretch` matches Edit and
+         Refresh exactly. The shared red hover survives — that is what
+         says this one is destructive. */
+      .collection-buttons .remove-script {
+        margin-left: 0;
+        align-self: stretch;
+        padding: 4px 8px;
+        border: revert;
+        background: revert;
+        color: inherit;
+      }
+      /* A whole-pixel glyph, not the shared rule's `1.15em`: this page's
+         vertical metrics are whole-px (see the top of this file), and an
+         18.4px icon in the header would land every card below it on a
+         different fractional offset. */
+      .collection-buttons .remove-script .delete-icon { width: 16px; height: 16px; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
       /* The banner box itself is in styles.css (shared with the
@@ -166,10 +187,16 @@
          what-changed signal. */
       .script-table tr.row-updated td { background: #cdebcf; }
       .script-table tr.row-failed  td { background: #f5c2c7; }
-      /* Top-of-page action bar — sits above the add form. The Options
-         button anchors the left edge; Refresh All anchors the right. */
-      .top-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5em; }
-      .top-actions .right-actions { display: flex; align-items: center; }
+      /* Top-of-page action bar — sits above the add form. Both buttons
+         sit at the right edge, with Refresh All rightmost: the same
+         order the collection headers use. */
+      .top-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.5em;
+        margin-bottom: 0.5em;
+      }
     </style>
   </head>
   <body>
@@ -180,9 +207,7 @@
 
     <div class="top-actions">
       <button id="open-options" type="button" title="Open the options page">Options</button>
-      <div class="right-actions">
-        <button id="refresh-all" type="button" title="Refresh every collection">Refresh All</button>
-      </div>
+      <button id="refresh-all" type="button" title="Refresh every collection">Refresh All</button>
     </div>
 
     <form id="add-form" class="add-form">

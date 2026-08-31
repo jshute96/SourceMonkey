@@ -70,13 +70,17 @@
       a.site-icon-inner:hover { color: #444; }
       h1 .site-icon img { width: 16px; height: 16px; display: block; }
       .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-      /* Controls row: per-script enable toggle + Refresh button. The
-         filename, size, and status moved into the details panel below
-         where the dl gives them aligned label/value columns. */
+      /* Controls row: everything that acts on the script itself —
+         the enable toggle, Local copy…, the delete trash can, Refresh.
+         The filename, size, and status moved into the details panel
+         below where the dl gives them aligned label/value columns. */
       .meta-row {
         display: flex;
         align-items: center;
-        gap: 1em;
+        /* One gap for the whole row, matching the one inside
+           `.meta-actions`: the controls are peers, so a wider gap on one
+           side of the trash can than the other reads as a mistake. */
+        gap: 0.5em;
         margin: 0 0 0.5em;
         font-size: 0.95em;
       }
@@ -92,6 +96,25 @@
       .meta-status[href]:hover { text-decoration: underline; }
       .meta-row button { font: inherit; padding: 0.2em 0.7em; cursor: pointer; }
       .meta-row .toggle { display: inline-flex; align-items: center; gap: 0.3em; cursor: pointer; margin-left: auto; }
+      /* The script's own actions, between the Enabled box and Refresh.
+         `stretch` rather than a padding picked to match: the trash
+         can's glyph is sized from the font, so any fixed padding would
+         drift away from Refresh's height as soon as the font did. */
+      .meta-row .meta-actions {
+        display: flex;
+        align-items: stretch;
+        align-self: stretch;
+        gap: 0.5em;
+      }
+      /* Beside Local copy… and Refresh the trash can wears their
+         chrome, for the same reason the collections page's header one
+         does: a bare glyph between two text buttons doesn't read as a
+         button at all. */
+      .meta-row .meta-actions .remove-script {
+        padding: 0.2em 0.5em;
+        border: revert;
+        background: revert;
+      }
       .meta-row .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .meta-row .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .meta-row .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
@@ -656,19 +679,16 @@
         align-items: baseline;
         min-width: 0;
       }
-      /* Move control: a column of its own, so a wrapping name never
-         drags it down onto the last wrapped line. */
-      .collection-move {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-      /* No font or padding of its own, deliberately: that is exactly
+      /* Move control: the Collection row's own button, in a column of
+         its own so a wrapping name never drags it down onto the last
+         wrapped line.
+
+         No font or padding of its own, deliberately: that is exactly
          what the versions table's row buttons get, so both land on the
          UA's default button metrics and come out the same height. The
          details rows read badly if one control stands taller than the
          rest. */
-      .collection-move button { cursor: pointer; }
+      .collection-move { cursor: pointer; }
       /* Square icon-only button. Swaps the copy icon for a checkmark
          while the .copied class is on it (set briefly after a
          successful clipboard write). */
@@ -951,6 +971,10 @@
         <input id="enable-checkbox" type="checkbox" />
         <span>Enabled</span>
       </label>
+      <!-- Local copy… and the delete trash can, filled per render
+           (`makeScriptActions`). Empty until the first one, and the
+           row it is in stays hidden until then. -->
+      <span id="meta-actions" class="meta-actions"></span>
       <button id="refresh-btn" type="button">Refresh</button>
     </div>
     <!-- Install stays hidden until the fetch has landed and we know

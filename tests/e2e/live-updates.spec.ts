@@ -449,7 +449,7 @@ test.describe('collections page live updates', () => {
     // removeCollection writes `collections: []`; that echo makes the watcher add
     // the empty placeholder. The handler must not add a second one.
     page.once('dialog', (dialog) => void dialog.accept());
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toHaveCount(1);

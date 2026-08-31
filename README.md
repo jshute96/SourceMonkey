@@ -75,8 +75,9 @@ zip or [build from source](#development).
 
 The collections page is where scripts are registered and managed. Each
 collection has a section listing its scripts, with enable toggles (per
-collection and per script), reorder buttons, and **Refresh** / **Remove** /
-**Edit** (rename, options). **Refresh All** re-checks everything at once.
+collection and per script), reorder buttons, a trash can that removes
+the collection, and **Edit** (rename, options) / **Refresh**. **Refresh
+All** re-checks everything at once.
 
 Each script row shows a status, linking to that script's log, where there
 are usually more details:
@@ -122,7 +123,7 @@ copy's row switches the page to it in place, leaving the panel as it is. Enablin
 copy disables the others, since two enabled copies of a script both run —
 ctrl-click a checkbox (cmd-click on a Mac) to override that.
 
-The **Options** link at the top-left covers `.user.js` link capture,
+The **Options** link at the top, beside Refresh All, covers `.user.js` link capture,
 debug logging, local file override directories, the Downloads folder
 local copies land in, and a GitHub token (for private repos and a
 higher API rate limit).

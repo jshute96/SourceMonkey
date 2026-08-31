@@ -21,7 +21,7 @@ linked to upstream).
 
 ## What it does
 
-- **Local copy…** on the viewer's Collection row opens a dialog; **Copy**
+- **Local copy…** in the viewer's controls row opens a dialog; **Copy**
   writes the script into `<Downloads>/SourceMonkey/` with no further
   dialog.
 - That directory is the **Scripts copied in Downloads** collection,
@@ -125,12 +125,18 @@ An extension has a few ways to put bytes on disk, and only one fits.
 
 ## The dialog
 
-Opened by **Local copy…** beside **Move…** on the details panel's
-Collection row. Unlike Move (container scripts only) it appears for
-every installed script — disabled only for an `invalid` row, which has
-no usable header to edit and would land invalid in its turn. A
-`missing` row keeps its button: the row still holds the last content
-that loaded, and rescuing that onto disk is a reason to be here. Modelled on the move dialog: it owns the
+Opened by **Local copy…**, in the controls row under the heading,
+between **Enabled** and **Refresh**.
+
+- It appears for every installed script, whether or not its collection
+  row can be read — the copy is written into the Downloads collection,
+  which does not depend on where the script came from. (Move… is on the
+  Collection row instead, and only for container scripts, because it is
+  about where the script is filed.)
+- Disabled only for an `invalid` row, which has no usable header to edit
+  and would land invalid in its turn.
+- A `missing` row keeps its button: the row still holds the last content
+  that loaded, and rescuing that onto disk is a reason to be here. Modelled on the move dialog: it owns the
 write, the refusals, and its own error slot; the caller hears only of
 a copy that landed.
 

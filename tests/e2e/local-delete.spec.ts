@@ -147,6 +147,40 @@ test.describe('deleting a local copy', () => {
     await page.close();
   });
 
+  // Both controls act on the script the page is showing, so they sit in
+  // its own controls row rather than on the Collection row, which is
+  // about where the script is filed. The trash can's glyph is sized
+  // from the font, so its height is asserted against Refresh rather
+  // than left to a padding that happens to match today.
+  test('the two controls sit between the Enabled box and Refresh', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const libUrl = `${server.baseUrl}/lib/util.js`;
+    server.setRoute('/lib/util.js', 'window.__util = 1;\n');
+    server.setRoute('/hello.user.js', scriptWith({ name: 'Hello', extra: [`// @require ${libUrl}`] }));
+    const def = await sm.addCollection(`${server.baseUrl}/hello.user.js`);
+    const originalId = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(viewerUrl(extensionId, originalId));
+    const copyId = await copyWithDeps(page, originalId);
+    await page.goto(viewerUrl(extensionId, copyId));
+    await expect(page.locator(DELETE_BTN)).toBeVisible();
+
+    await expect(page.locator(`#meta-row ${COPY_BTN}`)).toBeVisible();
+    await expect(page.locator(`#meta-row ${DELETE_BTN}`)).toBeVisible();
+    const box = async (sel: string) => (await page.locator(sel).boundingBox())!;
+    const [enabled, copy, del, refresh] = await Promise.all(
+      ['#enable-label', COPY_BTN, DELETE_BTN, '#refresh-btn'].map(box),
+    );
+    expect(enabled.x).toBeLessThan(copy.x);
+    expect(copy.x).toBeLessThan(del.x);
+    expect(del.x).toBeLessThan(refresh.x);
+    expect(Math.abs(del.height - refresh.height)).toBeLessThan(1.5);
+    expect(Math.abs(copy.height - refresh.height)).toBeLessThan(1.5);
+    await page.close();
+  });
+
   test('a dependency another copy loads is listed as kept, and stays on disk', async ({
     extensionContext, extensionId, sm, downloadsDir,
   }) => {

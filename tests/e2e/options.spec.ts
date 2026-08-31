@@ -83,7 +83,7 @@ test.describe('collections page', () => {
 
     // Collection has 1 script, so Remove now prompts a confirm.
     page.once('dialog', (dialog) => void dialog.accept());
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
@@ -235,7 +235,7 @@ test.describe('collections page', () => {
       expect(dialog.message()).toBe('Remove collection with 2 scripts?');
       await dialog.dismiss();
     });
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toBeVisible();
     expect(await sm.getCollections()).toHaveLength(1);
@@ -263,7 +263,7 @@ test.describe('collections page', () => {
       expect(dialog.message()).toBe('Remove collection with 1 script?');
       await dialog.accept();
     });
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toHaveCount(0);
     expect(await sm.getCollections()).toHaveLength(0);
@@ -289,7 +289,7 @@ test.describe('collections page', () => {
       dialogFired = true;
       await dialog.dismiss();
     });
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toHaveCount(0);
     expect(dialogFired).toBe(false);

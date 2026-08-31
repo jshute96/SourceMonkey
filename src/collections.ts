@@ -2,7 +2,7 @@
 // collection (a local directory of userscripts, an http(s) directory or
 // JSON manifest, a GitHub tree, or a "scripts" collection — a folder of
 // individually installed scripts, user-created or one of the built-in
-// defaults), with Refresh / Remove / Edit buttons and a script table
+// defaults), with Remove / Edit / Refresh buttons and a script table
 // showing name, size, and parse status.
 //
 // The Add field routes by what was typed: a single `.user.js` goes to
@@ -1183,13 +1183,16 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   buttons.appendChild(makeMoveButton('up', collection.id));
   buttons.appendChild(makeMoveButton('down', collection.id));
 
-  const refreshBtn = document.createElement('button');
-  refreshBtn.textContent = 'Refresh';
-  refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
-  buttons.appendChild(refreshBtn);
-
+  // The same trash can the script rows carry, for the same reason: one
+  // removal action must not look like two different controls on one
+  // page. `record` — a collection's removal drops SourceMonkey's rows,
+  // never the files behind them.
   const removeBtn = document.createElement('button');
-  removeBtn.textContent = 'Remove';
+  removeBtn.type = 'button';
+  removeBtn.className = 'remove-script';
+  setDeleteIcon(removeBtn, 'record');
+  removeBtn.title = 'Remove this collection';
+  removeBtn.setAttribute('aria-label', 'Remove this collection');
   removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
   buttons.appendChild(removeBtn);
 
@@ -1199,6 +1202,13 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   editBtn.title = 'Rename this collection or change its options';
   editBtn.addEventListener('click', () => void onEditCollection(collection.id));
   buttons.appendChild(editBtn);
+
+  // Rightmost, matching Refresh All at the top of the page: the same
+  // action in the same place, whichever row of the page you are on.
+  const refreshBtn = document.createElement('button');
+  refreshBtn.textContent = 'Refresh';
+  refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
+  buttons.appendChild(refreshBtn);
 
   header.appendChild(buttons);
   section.appendChild(header);

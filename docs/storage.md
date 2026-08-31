@@ -936,13 +936,17 @@ collection**:
   section; Down is disabled on the last. The DOM moves the two
   sibling sections directly instead of re-rendering, so per-section
   state (highlights, scroll) is preserved.
-- **Refresh** button → `refreshCollection`.
-- **Remove** button → `removeCollection`. If the collection owns ≥ 1 script,
+- **Remove** trash can → `removeCollection`. If the collection owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove collection with N scripts?" first;
   cancel aborts the remove. An empty collection removes silently.
+  - The plain `record` glyph of `src/delete-icon.ts`, the same one the
+    script rows carry: a collection's removal drops SourceMonkey's rows,
+    never the files behind them.
 - **Edit** button → the [collection dialog](#the-collection-dialog) in
   edit mode: rename, or change the local-overrides option (which
   refreshes the collection on save).
+- **Refresh** button → `refreshCollection`. Rightmost in the row,
+  matching Refresh All at the top of the page.
 - Table with columns **(bulk toggle) | Name | Size | Status** — plus,
   in a scripts collection, a small scheme chip (`file` / `http` /
   `github`) after the name, since one such collection can mix all
