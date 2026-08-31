@@ -245,11 +245,12 @@ full copy of each favicon — and the globe SVG — into *every* row,
 pushing the live collections-page DOM past half a megabyte (mostly
 duplicated bytes). Two measures keep it bounded:
 
-- **Shared globe glyph.** The globe is defined once per page as an SVG
-  `<symbol id="sm-globe">` (in `collections.html` / `userscript.html`);
-  each slot renders a tiny `<svg class="site-icon-globe"><use
-  href="#sm-globe">`. Stroke/fill styling lives in CSS on
-  `.site-icon-globe` so it still inherits `currentColor`.
+- **Shared globe glyph.** The globe is one `<symbol id="sm-globe">` in
+  `src/glyph-sprite.svg`, which the build inlines once per page (see
+  *Glyph sprite* in [architecture.md](architecture.md)); each slot
+  renders a tiny `<svg class="site-icon-globe"><use href="#sm-globe">`.
+  Stroke/fill styling lives in CSS on `.site-icon-globe` so it still
+  inherits `currentColor`.
 - **Deduped blob: URLs for large icons.** `iconImgSrc` converts a
   cached icon `data:` URL above `ICON_INLINE_MAX_LEN` (512 chars) into
   a `blob:` URL once — via `dataUrlToBlob` + `URL.createObjectURL` —

@@ -315,11 +315,25 @@ details live in the topic-specific docs linked below.
 - Wipes `dist/`.
 - Copies `src/icons/`, `src/manifest.json`, every top-level
   `src/*.html`, and `node_modules/prismjs/*` into `dist/`.
+- Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
+  page's `#include glyph-sprite` marker comment (see below).
 - Invokes `tsc` (optionally with `--watch`) to compile
   `src/*.ts` → `dist/*.js`.
 
 No bundler. Each TypeScript module compiles to its own `dist/*.js`
 and Chrome loads them directly as ES modules.
+
+### Glyph sprite
+
+- Every inline SVG icon (the favicon placeholder, the two removal
+  glyphs, the copy button's pair) is defined once in
+  `src/glyph-sprite.svg` and referenced by `<use href="#id">`.
+- It has to be *inlined per page*: a `<use>` pointing at another
+  document doesn't inherit `currentColor`, and would be a second fetch.
+  Keeping one copy in the source tree is what stops two pages from
+  drifting into different glyphs.
+- Only `--watch`ed TypeScript rebuilds automatically, so editing the
+  sprite (like any HTML/CSS asset) needs a fresh `pnpm run build`.
 
 ## Testing
 

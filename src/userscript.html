@@ -576,10 +576,10 @@
       .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
       /* Trash can, in its own column hard against the table's right
-         edge. Same glyph and red hover as the collections page's
-         `.remove-script`, so the two read as one control in two
-         places; the border and resting colour are the panel's own,
-         since it sits on green rather than white. Disabled (a script
+         edge. Same glyphs (src/delete-icon.ts) and red hover as the
+         collections page's `.remove-script`, so the two read as one
+         control in two places; the border and resting colour are the
+         panel's own, since it sits on green rather than white. Disabled (a script
          inside a collection) keeps the button on screen — the
          column would otherwise look ragged with no clue why — but
          drops it to a plain dimmed glyph with no border, so it doesn't
@@ -923,9 +923,7 @@
     </style>
   </head>
   <body>
-    <!-- Shared globe glyph referenced by the icon slot's <use href="#sm-globe">
-         (see collections.html for the rationale). -->
-    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
+    <!--#include glyph-sprite-->
     <!-- `tabindex="-1"` so in-page navigation between copies can move
          focus here: the heading, the details, and the code all change
          with no document load for a screen reader to announce. Not

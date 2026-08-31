@@ -17,7 +17,9 @@
      dialog (src/collection-dialog.ts) and the move-script dialog
      (src/move-dialog.ts);
    - the "Install into" dropdown (src/related-versions.ts), in the
-     install page's callout and its versions table. */
+     install page's callout and its versions table;
+   - the removal buttons' glyph sizing and destructive colour
+     (src/delete-icon.ts), on every page that has a remove button. */
 
 /* Warning banner. Pages keep their own margin and colour variants
    (`.banner.installed` on the viewer) in their
@@ -311,3 +313,52 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
 
 /* ---- "Install into" dropdown (src/related-versions.ts) ---- */
 select.install-target { font: inherit; padding: 3px 6px; max-width: 100%; }
+
+/* ---- Removal buttons (src/delete-icon.ts) ---- */
+
+/* The small trash-can button: beside the Status label on a missing row
+   and on container rows (collections page), and beside "Local copy…"
+   in the viewer. Shared because the same action must not look like two
+   different controls on two pages — the viewer's used to fall through
+   to the browser's default button styling. Pages add their own
+   spacing; the versions panel's `.versions-remove` is its own rule,
+   since it sits on green rather than white. */
+.remove-script {
+  padding: 0 0.3em;
+  font: inherit;
+  line-height: 1;
+  border: 1px solid #ddd;
+  background: transparent;
+  cursor: pointer;
+  color: #888;
+}
+.remove-script:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
+.remove-script:disabled { cursor: not-allowed; opacity: 0.5; }
+/* A bare glyph has no shape of its own to show focus with. */
+.remove-script:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+
+/* `.versions-remove` (the panel's own button, on green rather than
+   white) keeps its look in userscript.html. Shared with it here is what
+   must NOT differ between the two: how big the glyph is, and what the
+   destructive one looks like at rest. */
+
+/* The glyph is an SVG, not text, so it needs a size of its own — taken
+   from the button's font so it tracks the surrounding row. `block`
+   keeps the inline box's descender out of the button's padding, and
+   `middle` on the button then centres it against neighbouring text
+   rather than letting it hang off the bottom margin edge. */
+.remove-script,
+.versions-remove { vertical-align: middle; }
+.remove-script .delete-icon,
+.versions-remove .delete-icon {
+  width: 1.15em;
+  height: 1.15em;
+  display: block;
+}
+
+/* The buttons that delete a FILE rest in red rather than grey. Shape
+   (the disk badge on the glyph) and colour both say it, because colour
+   on its own isn't a cue every user gets. Hover still wins on both
+   pages: `:hover:not(:disabled)` outranks this by one class. */
+.remove-script.deletes-file,
+.versions-remove.deletes-file { color: #a3372c; }

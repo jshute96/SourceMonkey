@@ -107,11 +107,12 @@ picked up by Refresh. The dialog lets you rename the file, adjust the
 version (`-local` by default) and description, and optionally copy the
 script's `@require` / `@resource` files beside it.
 
-The 🗑 beside it deletes such a copy: the file on disk and its record in
-SourceMonkey, after a confirmation naming the path and every dependency
-file the copy loads, saying which of them go with it. Copies are the one
-thing SourceMonkey can delete from disk, since the browser downloaded
-them.
+The badged trash can beside it — a can with a small disk, the glyph
+reserved for deleting a file rather than just a record — deletes such a
+copy: the file on disk and its record in SourceMonkey, after a
+confirmation naming the path and every dependency file the copy loads,
+saying which of them go with it. Copies are the one thing SourceMonkey
+can delete from disk, since the browser downloaded them.
 
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the

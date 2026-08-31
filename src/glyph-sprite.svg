@@ -1,0 +1,41 @@
+<!-- Shared glyph sprite: the one copy of every inline SVG glyph in the
+     extension. scripts/build.mjs inlines it into each page wherever the
+     page writes an `#include glyph-sprite` marker comment. (Spelling
+     that marker out here would be nice, but its own closing `--` plus
+     `>` would end THIS comment and spill the rest onto the page.)
+
+     One source of truth: the markup used to be copy-pasted into each
+     page's HTML, which is how two pages end up with glyphs that have
+     quietly drifted apart.
+
+     Each symbol is defined once per page and referenced by a `use`
+     element, so a hundred rows share one copy of the path data instead
+     of inlining it per row.
+
+       #sm-globe      favicon placeholder until a site icon loads, and
+                      the permanent icon for a script with no resolvable
+                      origin (src/site-icon.ts; styling on
+                      `.site-icon-globe`).
+       #sm-trash      remove SourceMonkey's record of a script.
+       #sm-trash-file delete the script FILE from disk — the same can,
+                      badged with a disk. Both painted by
+                      src/delete-icon.ts, which explains the pair.
+                      The can is drawn ~10% smaller than #sm-trash (with
+                      its stroke width scaled back up to match) so the
+                      badge has a corner to sit in without swallowing
+                      the can. Deliberate: the two appear in the same
+                      column in the "Other versions" panel, and the
+                      badged one has to stay a can at 15px.
+       #sm-copy       the viewer's "copy this to the clipboard" button,
+       #sm-check      and the checkmark it flashes on success
+                      (src/copy-button.ts).
+
+     Colour comes from `currentColor`, so a button's own `color` (and
+     its hover) drives the glyph. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol>
+<symbol id="sm-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6h17"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M10 10.5v7"></path><path d="M14 10.5v7"></path></symbol>
+<symbol id="sm-trash-file" viewBox="0 0 24 24"><mask id="sm-trash-file-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"></rect><circle cx="19.6" cy="19.6" r="5.2" fill="#000"></circle></mask><g mask="url(#sm-trash-file-cut)" transform="translate(-.7 -1.5) scale(.9)" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6h17"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M10 10.5v7"></path><path d="M14 10.5v7"></path></g><g transform="translate(14.53 14.36) scale(.422)" fill="none" stroke="currentColor" stroke-width="4.15" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path></g></symbol>
+<symbol id="sm-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></symbol>
+<symbol id="sm-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></symbol>
+</svg>

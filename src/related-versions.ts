@@ -37,6 +37,7 @@ import {
 } from './collection-display.js';
 import { getValue } from './userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
+import { setDeleteIcon } from './delete-icon.js';
 import {
   allRelatedRows,
   enableChanges,
@@ -936,9 +937,12 @@ function removeCell(
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';
-  b.textContent = '🗑';
-  // A local copy's button says what makes it different: it takes the
-  // file off the disk as well, which is why this row has one at all.
+  // The badged can only on the row whose button takes the file with
+  // it; every other copy here is just a record.
+  setDeleteIcon(b, deletesFile ? 'file' : 'record');
+  // A local copy's button says what makes it different — in the glyph
+  // above and here again in words: it takes the file off the disk as
+  // well, which is why this row has one at all.
   const title = deletesFile
     ? 'Delete local script file'
     : removable

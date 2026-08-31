@@ -26,6 +26,7 @@
 // whose spinner is up.
 
 import { openDeleteDialog } from './delete-dialog.js';
+import { setDeleteIcon } from './delete-icon.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
@@ -435,7 +436,7 @@ function paintStatusCell(
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-script';
-    removeBtn.textContent = '🗑';
+    setDeleteIcon(removeBtn, 'record');
     removeBtn.title = 'Remove this script record';
     removeBtn.setAttribute('aria-label', 'Remove this script record');
     // Defer the row → collectionId lookup until click time.
@@ -731,7 +732,7 @@ function syncScriptRow(
 
   // Like the Name cell below, the Status cell is only rebuilt when
   // what it shows moved. `paintStatusCell` discards and recreates the
-  // `<a>` (and the 🗑 on a missing row), so repainting it
+  // `<a>` (and the trash can on a missing row), so repainting it
   // unconditionally would drop focus off it — and a repaint runs on any
   // structural write anywhere, including a background refresh of an
   // unrelated collection.
@@ -1377,7 +1378,7 @@ function renderScriptRow(
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button';
       removeBtn.className = 'remove-script';
-      removeBtn.textContent = '🗑';
+      setDeleteIcon(removeBtn, 'record');
       removeBtn.title = 'Remove this script';
       removeBtn.setAttribute('aria-label', 'Remove this script');
       removeBtn.addEventListener('click', () => {
@@ -1484,13 +1485,14 @@ function isDeletableCopy(script: StoredScript, collectionPath: string | undefine
 }
 
 // The trash can on a local copy's row. Unlike the other two, this one
-// deletes the file — the dialog says so, names the path, and offers the
-// dependency files that came with it (src/delete-dialog.ts).
+// deletes the file — hence the badged glyph and the red resting colour
+// (src/delete-icon.ts). The dialog says so too, names the path, and
+// offers the dependency files that came with it (src/delete-dialog.ts).
 function makeDeleteCopyButton(script: StoredScript): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'remove-script';
-  btn.textContent = '🗑';
+  setDeleteIcon(btn, 'file');
   btn.title = 'Delete local script file';
   btn.setAttribute('aria-label', 'Delete local script file');
   btn.addEventListener('click', () => void onDeleteCopy(script, btn));

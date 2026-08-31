@@ -17,10 +17,13 @@ file beside a script is used at all).
 
 ## What it does
 
-- A 🗑 appears on a script whose file is in the copies directory — on
-  the viewer's Collection row beside **Local copy…**, on its row in the
-  "Other versions" panel, and on its row on the collections page. All
-  three open the one dialog.
+- A trash can with a small disk badge appears on a script whose file
+  is in the copies directory — on the viewer's Collection row beside
+  **Local copy…**, on its row in the "Other versions" panel, and on its
+  row on the collections page. All three open the one dialog.
+  - The badge (and a red resting colour) is what separates this button
+    from the plain trash can that only drops SourceMonkey's record of a
+    script. Both glyphs come from `src/delete-icon.ts`.
   - The panel's button is normally dead for a script that came in with
     a directory collection, because the collection's next scan would
     bring the row straight back. Deleting the file is what stops it, so

@@ -284,8 +284,12 @@ the *other* rows.
   - an **invalid preview**, which has already said the file cannot be
     installed and hidden its own Install button.
 - **A trash can on every row**, in its own column right of the refetch
-  button — same glyph and behaviour as the collections page's per-script
-  remove.
+  button — same glyphs and behaviour as the collections page's
+  per-script remove.
+  - **Two glyphs, not one**: a plain can for a row that only drops
+    SourceMonkey's record, and a can badged with a disk (in red) for a
+    local copy, whose button deletes the file too. Both come from
+    `src/delete-icon.ts`; see [local-delete.md](local-delete.md).
   - **Live only for scripts in a container collection** (a scripts
     collection — the built-in *Scripts from …* defaults or one the user
     made), which the user installed one at a time.

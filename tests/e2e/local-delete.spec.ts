@@ -33,6 +33,21 @@ function viewerUrl(extensionId: string, scriptId: string): string {
   return `chrome-extension://${extensionId}/userscript.html?script=${scriptId}`;
 }
 
+// Which of the two trash cans a button is wearing (src/delete-icon.ts).
+// The pair is the only thing telling a record removal apart from a file
+// deletion before the user hovers, and five call sites paint it, so it
+// is asserted rather than left to the tooltip.
+async function expectGlyph(
+  btn: ReturnType<Page['locator']>,
+  kind: 'record' | 'file',
+): Promise<void> {
+  await expect(btn.locator('svg.delete-icon use')).toHaveAttribute(
+    'href', kind === 'file' ? '#sm-trash-file' : '#sm-trash',
+  );
+  if (kind === 'file') await expect(btn).toHaveClass(/\bdeletes-file\b/);
+  else await expect(btn).not.toHaveClass(/\bdeletes-file\b/);
+}
+
 function scriptWith(opts: { name: string; extra?: string[] }): string {
   return [
     '// ==UserScript==',
@@ -90,6 +105,7 @@ test.describe('deleting a local copy', () => {
     // asserting on the web original before that would pass for the
     // wrong reason. Checked after going back to it.
     await expect(page.locator(DELETE_BTN)).toBeVisible();
+    await expectGlyph(page.locator(DELETE_BTN), 'file');
     await page.goto(viewerUrl(extensionId, originalId));
     await expect(page.locator('#local-copy-btn')).toBeVisible();
     // Nothing to delete on the web original: its file is not ours.
@@ -291,6 +307,12 @@ test.describe('deleting a local copy', () => {
     const trash = copyRow.locator('button.versions-remove');
     await expect(trash).toBeEnabled();
     await expect(trash).toHaveAttribute('title', 'Delete local script file');
+    await expectGlyph(trash, 'file');
+    // The web original two rows up only drops a record, and says so.
+    await expectGlyph(
+      page.locator(`#other-versions tr[data-script-id="${originalId}"] button.versions-remove`),
+      'record',
+    );
     await trash.click();
     await expect(page.locator(DIALOG)).toBeVisible();
     await expect(page.locator(`${DIALOG} #delete-file`)).toHaveText('hello.user.js');
@@ -337,6 +359,7 @@ test.describe('deleting a local copy', () => {
     await sm.updateCollection(copies.id, 'manual');
     await expect(section.locator('td.status-cell')).toContainText('MISSING');
     await expect(section.locator('td.status-cell button.remove-script')).toHaveCount(1);
+    await expectGlyph(section.locator('td.status-cell button.remove-script'), 'record');
     await expect(section.locator('td.action-cell button')).toHaveCount(0);
     await page.close();
   });
@@ -368,9 +391,11 @@ test.describe('deleting a local copy', () => {
     // removes the record.
     const original = page.locator(`.collection[data-collection-id="${def!.id}"] td.action-cell button`);
     await expect(original).toHaveAttribute('title', 'Remove this script');
+    await expectGlyph(original, 'record');
     await expect(trash).toHaveAttribute(
       'title', 'Delete local script file',
     );
+    await expectGlyph(trash, 'file');
     await trash.click();
     await expect(page.locator(DIALOG)).toBeVisible();
     await page.locator(CONFIRM).click();

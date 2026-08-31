@@ -74,6 +74,7 @@ import { openCollectionDialog } from './collection-dialog.js';
 import { openMoveDialog } from './move-dialog.js';
 import { openCopyDialog } from './copy-dialog.js';
 import { openDeleteDialog } from './delete-dialog.js';
+import { setDeleteIcon } from './delete-icon.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import { computeLogIds } from './script-log-id.js';
@@ -2757,11 +2758,11 @@ function makeDeleteCopyControl(
   btn.type = 'button';
   btn.id = 'delete-copy-btn';
   btn.className = 'remove-script';
-  btn.textContent = '\u{1F5D1}';
+  setDeleteIcon(btn, 'file');
   btn.hidden = true;
   // Not the plain "Remove this script record" of the other trash cans:
-  // this one takes the file off the disk as well, and the difference is
-  // the whole reason to read the tooltip.
+  // this one takes the file off the disk as well. The badged glyph
+  // above says that at a glance; the tooltip spells it out.
   btn.title = 'Delete local script file';
   btn.setAttribute('aria-label', 'Delete local script file');
   void readCopiesSetting().then((setting) => {
