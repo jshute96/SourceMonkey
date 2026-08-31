@@ -76,8 +76,9 @@ zip or [build from source](#development).
 The collections page is where scripts are registered and managed. Each
 collection has a section listing its scripts, with enable toggles (per
 collection and per script), reorder buttons, a trash can that removes
-the collection, and **Edit** (rename, options) / **Refresh**. **Refresh
-All** re-checks everything at once.
+the collection, a gear that opens its rename/options dialog, and a
+circular arrow that refreshes it. **Refresh All** at the top re-checks
+everything at once.
 
 Each script row shows a status, linking to that script's log, where there
 are usually more details:

@@ -38,6 +38,7 @@ import {
 import { getValue } from './userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
 import { setDeleteIcon } from './delete-icon.js';
+import { setGlyphButton } from './glyph.js';
 import {
   allRelatedRows,
   enableChanges,
@@ -288,8 +289,15 @@ export function renderRelatedVersions(
     const table = makeTable({
       headerAction:
         updatable.length > 1 && model.actions.update
-          ? button(`${verb} all`, `${verb} every copy at this URL`, () =>
+          ? (model.mode === 'preview'
+            ? button(`${verb} all`, `${verb} every copy at this URL`, () =>
               void model.actions.update?.(updatable))
+            : glyphButton(
+              '#sm-refresh',
+              `${verb} every copy at this URL`,
+              () => void model.actions.update?.(updatable),
+              `${verb} all`,
+            ))
           : undefined,
     });
     for (const rel of sameLocation) {
@@ -478,11 +486,17 @@ function fitColumns(container: HTMLElement): void {
   }
 }
 
-// One action, two names — the same `updateScript(id, 'manual',
-// 'force')` call, labelled to match the page it appears on. The
-// installed viewer's own control says Refresh, so the panel's rows do
-// too; a preview is about bringing a copy up to what is on screen, so
-// there they say Update. A third name would read as a third operation.
+// One call, two operations as far as the user is concerned — the same
+// `updateScript(id, 'manual', 'force')`, named for the page it appears
+// on. The installed viewer's own control says Refresh, so the panel's
+// rows do too; a preview is about bringing a copy up to the file
+// already on screen, so there they say Update. A third name would read
+// as a third operation.
+//
+// The two also LOOK different, which is `actionsCell`'s business:
+// Refresh is the arrow glyph, Update stays a word. A preview fetches
+// nothing — the file is already downloaded — so the refresh arrow
+// would be a promise of a round trip that never happens.
 function refetchVerb(mode: 'installed' | 'preview'): string {
   return mode === 'installed' ? 'Refresh' : 'Update';
 }
@@ -635,7 +649,7 @@ function versionRow(
   tr.appendChild(locationCell(rel, isCurrent, mode));
   tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
-  tr.appendChild(actionsCell(rel, actions, isCurrent, verb));
+  tr.appendChild(actionsCell(rel, actions, isCurrent, verb, mode));
   tr.appendChild(removeCell(rel, actions, deletesFile));
   return tr;
 }
@@ -874,6 +888,7 @@ function actionsCell(
   actions: RelatedVersionsActions,
   isCurrent: boolean,
   verb: string,
+  mode: RelatedVersionsModel['mode'],
 ): HTMLTableCellElement {
   const td = cell('col-actions');
   // The refetch acts on a specific stored row, pulling from where that
@@ -888,7 +903,27 @@ function actionsCell(
     const title = isCurrent
       ? `${verb} this script from its collection`
       : `${verb} this copy from its collection`;
-    td.appendChild(button(verb, title, () => void actions.update?.([rel.script.id])));
+    // Two different operations, so two different-looking buttons —
+    // this is the one place the panel does NOT reuse the refresh arrow
+    // (see `refetchVerb`).
+    //
+    // Installed: the arrow, the same refetch this page's own Refresh
+    // does — go and see whether the upstream moved.
+    //
+    // Preview: a word. Nothing is fetched; the file is already
+    // downloaded and sitting on screen, and the button decides whether
+    // to write it over this copy. An arrow would promise a round trip
+    // that isn't going to happen, and would make the row look like the
+    // installed case it isn't.
+    // Bold in a preview: with the file already downloaded and copies
+    // listed here, updating one of them is the likelier thing to want,
+    // so this is the row's recommended action and the header's Install
+    // gives up its emphasis to it (`showInstallCallout`).
+    td.appendChild(
+      mode === 'preview'
+        ? button(verb, title, () => void actions.update?.([rel.script.id]), true)
+        : glyphButton('#sm-refresh', title, () => void actions.update?.([rel.script.id])),
+    );
   }
   return td;
 }
@@ -936,7 +971,7 @@ function removeCell(
     || (rel.collection ? isContainerCollection(rel.collection.path) : true);
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'versions-remove';
+  b.className = 'versions-remove';  // `.icon-btn` is added by setDeleteIcon
   // The badged can only on the row whose button takes the file with
   // it; every other copy here is just a record.
   setDeleteIcon(b, deletesFile ? 'file' : 'record');
@@ -1193,17 +1228,41 @@ function cell(cls: string): HTMLTableCellElement {
   return td;
 }
 
+// The bare button both builders below start from, so `type` and the
+// click wiring can't drift between them.
+function makeButton(title: string, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.title = title;
+  b.onclick = onClick;
+  return b;
+}
+
+// The glyph-bearing sibling of `button`. `text` is left out for an
+// icon-only button, where `title` is the whole label — the row buttons
+// — and supplied where a word carries something the arrow can't, as
+// "all" does in the header action.
+function glyphButton(
+  symbolId: string,
+  title: string,
+  onClick: () => void,
+  text?: string,
+): HTMLButtonElement {
+  const b = makeButton(title, onClick);
+  // Sets the title again, and the `aria-label` an icon-only button
+  // can't do without.
+  setGlyphButton(b, symbolId, title, text === undefined ? {} : { text });
+  return b;
+}
+
 function button(
   label: string,
   title: string,
   onClick: () => void,
   primary = false,
 ): HTMLButtonElement {
-  const b = document.createElement('button');
-  b.type = 'button';
+  const b = makeButton(title, onClick);
   b.textContent = label;
-  b.title = title;
   if (primary) b.className = 'primary';
-  b.onclick = onClick;
   return b;
 }

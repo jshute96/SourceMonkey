@@ -908,7 +908,10 @@ test.describe('other-versions panel', () => {
     await expect(page.locator(ROWS)).toHaveCount(2);
     // The viewer calls this operation Refresh, so the panel does too.
     await expect(page.locator(`${PANEL} th.col-actions button`)).toHaveText('Refresh all');
-    await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Refresh');
+    // Icon-only rows: the verb that used to be the label is now the
+    // accessible name, and it is still Refresh rather than Update.
+    await expect(page.locator(`${PANEL} td.col-actions button`).first())
+      .toHaveAttribute('aria-label', /^Refresh /);
     // Every row in this section carries its own button, the current
     // one included.
     await expect(page.locator(`${PANEL} td.col-actions button`)).toHaveCount(2);
@@ -977,6 +980,8 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#install-target')).toHaveCount(0);
     // Every action the header gave up is present in the table.
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
+    // A preview's button keeps its word: it is not the refetch the
+    // installed page does, so it does not wear the refresh arrow.
     await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Update');
     // A preview's Location IS a link — its rows are not clickable, so
     // this is the only way to reach that copy from here.
@@ -1055,7 +1060,8 @@ test.describe('other-versions panel', () => {
     await expect(tables).toHaveCount(2);
     await expect(tables.nth(1).locator('tbody tr')).toHaveCount(1);
     await expect(tables.nth(1).locator('td.col-actions button')).toHaveCount(0);
-    await expect(tables.nth(0).locator('td.col-actions button').first()).toHaveText('Refresh');
+    await expect(tables.nth(0).locator('td.col-actions button').first())
+      .toHaveAttribute('aria-label', /^Refresh /);
     await page.close();
   });
 

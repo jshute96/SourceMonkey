@@ -23,7 +23,10 @@
       /* `.collection-type-bubble` + colored `.bubble-*` variants +
          `.collection-display-name` typography are in styles.css (the
          cross-page shared stylesheet). */
-      button { font: inherit; padding: 4px 11px; cursor: pointer; }
+      /* Height, surface, hover and press are shared across the two
+         pages (styles.css); this is just this page's roomier
+         horizontal padding on text buttons. */
+      button { font: inherit; padding: 0 11px; cursor: pointer; }
       input[type="text"] { font: inherit; padding: 4px 7px; }
       .placeholder { color: #666; }
       .add-form { display: flex; gap: 0.5em; margin-bottom: 1em; align-items: center; }
@@ -33,17 +36,21 @@
       .collection-header h2 { flex: 1 1 auto; min-width: 0; }
       .collection-toggle { flex: 0 0 auto; }
       .collection-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
-      /* Up/Down arrow buttons, at the left end of the header's button
-         row. Keep the vertical padding identical to the standard button
-         rule above so heights line up with the buttons beside them;
-         only the horizontal padding is tightened so the arrow glyph
-         isn't drowned in whitespace. */
-      .move-collection { padding: 4px 7px; }
-      .move-collection:disabled { cursor: not-allowed; opacity: 0.35; }
+      /* Up/Down arrow buttons. They wear `.icon-btn` like the rest of
+         the header row, so the box and the disabled state come from
+         styles.css; the class is what the reorder code and the tests
+         address them by. */
       /* Whole-px vertical metrics on this page, and `separate` borders rather
          than `collapse` (a collapsed border is split half into each adjacent
          cell, landing rows on half pixels) — see docs/architecture.md,
          "Extension-page styling". */
+      /* A can inside a script row is a row control, not a control in a
+         button row: at the shared 26px it makes its row 7px taller than
+         the rows around it, and only SOME rows have one (a `missing`
+         row, a local copy), so the table comes out ragged. Shrinking
+         the pair here puts it back inside the row's own line box —
+         this is the escape hatch styles.css describes. */
+      .script-table { --icon-btn-size: 18px; --icon-btn-glyph: 14px; }
       .script-table { width: 100%; border-collapse: separate; border-spacing: 0; }
       .script-table th, .script-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
       .script-table th { font-weight: 600; color: #555; font-size: 0.9em; line-height: 16px; }
@@ -132,32 +139,9 @@
          Keep the link looking like status text (not blue underlined). */
       .status-cell a { text-decoration: none; color: inherit; cursor: pointer; }
       .status-cell a:hover { text-decoration: underline; }
-      /* `.remove-script` itself is in styles.css: the viewer's
-         "Local copy…" row carries the same button and must not drift
-         into a different-looking control. Only the gap to the Status
-         label it sits beside is this page's. */
-      .remove-script { margin-left: 0.4em; }
-      /* In the collection header the button sits in a row of text
-         buttons, so it wears their chrome rather than the bare glyph the
-         shared rule gives it beside a table row: the UA's own button box
-         (which is also what gives it a pressed state), this page's
-         padding, and a glyph as dark as the labels beside it. The row's
-         own `gap` does the spacing, and `stretch` matches Edit and
-         Refresh exactly. The shared red hover survives — that is what
-         says this one is destructive. */
-      .collection-buttons .remove-script {
-        margin-left: 0;
-        align-self: stretch;
-        padding: 4px 8px;
-        border: revert;
-        background: revert;
-        color: inherit;
-      }
-      /* A whole-pixel glyph, not the shared rule's `1.15em`: this page's
-         vertical metrics are whole-px (see the top of this file), and an
-         18.4px icon in the header would land every card below it on a
-         different fractional offset. */
-      .collection-buttons .remove-script .delete-icon { width: 16px; height: 16px; }
+      /* Only the gap to the Status label it sits beside is this page's;
+         the button itself is `.icon-btn` in styles.css. */
+      .status-cell .remove-script { margin-left: 0.4em; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
       /* The banner box itself is in styles.css (shared with the
@@ -166,8 +150,9 @@
          "Allow User Scripts" banner appends. */
       .banner { margin-bottom: 1em; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
-      /* Inline busy spinner for individual controls (toggles, add form). */
-      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      /* Inline busy spinner for individual controls (toggles, add form).
+         `@keyframes sm-spin` is in styles.css, shared with the dialog
+         spinner and the glyph buttons' spin state. */
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
       /* Bulk-toggle button shows its spinner in place of the +/- glyph. */
       .bulk-toggle.busy { position: relative; color: transparent; }
@@ -207,7 +192,11 @@
 
     <div class="top-actions">
       <button id="open-options" type="button" title="Open the options page">Options</button>
-      <button id="refresh-all" type="button" title="Refresh every collection">Refresh All</button>
+      <!-- The label ships in the markup so the button is never blank:
+           collections.js is a deferred module, and `setGlyphButton`
+           (src/collections.ts) replaces this text with the same word
+           beside a glyph once it runs. -->
+      <button id="refresh-all" type="button">Refresh All</button>
     </div>
 
     <form id="add-form" class="add-form">

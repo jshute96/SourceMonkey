@@ -209,7 +209,7 @@ test.describe('collections page live updates', () => {
     // Change the file, then refresh from THIS page so the row picks up
     // the green "updated" highlight.
     scriptsDir.rewriteBody('a.user.js', '/* v2 */\n');
-    await section.locator('button', { hasText: 'Refresh' }).click();
+    await section.locator('button.refresh-collection').click();
     await expect(row).toHaveClass(/row-updated/);
 
     // A second script appears elsewhere: `scriptIds` changes, which is
@@ -255,7 +255,7 @@ test.describe('collections page live updates', () => {
     const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     const rowA = page.locator(`tr[data-script-id="${a.id}"]`);
     const rowB = page.locator(`tr[data-script-id="${b.id}"]`);
-    const refresh = section.locator('button', { hasText: 'Refresh' });
+    const refresh = section.locator('button.refresh-collection');
 
     // Only a changed → only a is highlighted.
     scriptsDir.rewriteBody('a.user.js', '/* v2 */\n');

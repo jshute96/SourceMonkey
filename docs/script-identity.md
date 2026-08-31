@@ -268,6 +268,18 @@ the *other* rows.
   page's own control makes (`updateScript(id, 'manual', 'force')`):
   **Refresh** / **Refresh all** in the viewer, **Update** / **Update
   all** in a preview. A third name would read as a third operation.
+  - **The two modes look different, not just read differently.**
+    Installed rows carry the circular-arrow glyph with no text, so
+    Refresh's name lives in the tooltip; a preview's rows keep the
+    word **Update**.
+  - Why: a preview fetches nothing. The file is already downloaded and
+    on screen, and the button decides whether to write it over that
+    copy — so the refresh arrow would promise a round trip that never
+    happens, and would make the row look like the installed case it
+    isn't.
+  - The `…all` button in the header follows the same split, and in the
+    installed case keeps its words beside the glyph: "all" is the whole
+    difference from a row's button, and no arrow says it.
 - **The …all button** sits in the header row's actions column, and
   appears only when more than one row is refreshable. Same call as a
   single row's, with every id.

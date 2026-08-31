@@ -20,22 +20,47 @@
        #sm-trash-file delete the script FILE from disk — the same can,
                       badged with a disk. Both painted by
                       src/delete-icon.ts, which explains the pair.
-                      The can is drawn ~10% smaller than #sm-trash (with
-                      its stroke width scaled back up to match) so the
-                      badge has a corner to sit in without swallowing
-                      the can. Deliberate: the two appear in the same
+                      The can is drawn ~19% smaller than #sm-trash — its
+                      own inner scale(.9) inside the normalizing
+                      wrapper's scale(.9) — so the badge has a corner to
+                      sit in without swallowing the can. Deliberate: the two appear in the same
                       column in the "Other versions" panel, and the
                       badged one has to stay a can at 15px.
        #sm-copy       the viewer's "copy this to the clipboard" button,
        #sm-check      and the checkmark it flashes on success
                       (src/copy-button.ts).
+       #sm-refresh    refetch a collection, a script, or one row of the
+                      "Other versions" table. Its busy state is this
+                      same arc spinning (`.btn-glyph.spinning`), so the
+                      button never changes shape mid-refresh.
+       #sm-gear       open a collection's rename / options dialog.
 
      Colour comes from `currentColor`, so a button's own `color` (and
-     its hover) drives the glyph. -->
+     its hover) drives the glyph.
+
+     OPTICAL SIZING — read before editing a path or a stroke width.
+     Identical 16px boxes do not make icons look the same size; the ink
+     inside them has to match too. As drawn, these ranged from 18 to
+     23.3 units of 24, and the gear read ~22% larger than the arrow. So
+     a glyph that needed resizing is wrapped in
+       <g transform="translate(12 12) scale(k) translate(-12 -12)">
+     and its `stroke-width` is DIVIDED by the same k. Consequences:
+     - The number in the file is not the number that renders. Every
+       glyph here strokes at 1.75 units once its wrapper is applied
+       (1.9/... , 1.95/.9, 1.667*1.05, 1.825*.959). Change a stroke
+       width and you break that unless you change k with it.
+     - #sm-refresh translates by -13, not -12: Feather's rotate-cw is
+       drawn a unit right of centre, and this puts it back. It is not
+       a typo.
+     - #sm-copy and #sm-check are deliberately outside this: they
+       stroke at 2.0 and live alone in the 14px copy button, never
+       beside the 1.75 set. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol>
 <symbol id="sm-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6h17"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M10 10.5v7"></path><path d="M14 10.5v7"></path></symbol>
-<symbol id="sm-trash-file" viewBox="0 0 24 24"><mask id="sm-trash-file-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"></rect><circle cx="19.6" cy="19.6" r="5.2" fill="#000"></circle></mask><g mask="url(#sm-trash-file-cut)" transform="translate(-.7 -1.5) scale(.9)" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6h17"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M10 10.5v7"></path><path d="M14 10.5v7"></path></g><g transform="translate(14.53 14.36) scale(.422)" fill="none" stroke="currentColor" stroke-width="4.15" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path></g></symbol>
+<symbol id="sm-trash-file" viewBox="0 0 24 24"><g transform="translate(12 12) scale(.9) translate(-12 -12)"><mask id="sm-trash-file-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24"><rect width="24" height="24" fill="#fff"></rect><circle cx="19.6" cy="19.6" r="5.2" fill="#000"></circle></mask><g mask="url(#sm-trash-file-cut)" transform="translate(-.7 -1.5) scale(.9)" fill="none" stroke="currentColor" stroke-width="2.167" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6h17"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M10 10.5v7"></path><path d="M14 10.5v7"></path></g><g transform="translate(14.53 14.36) scale(.422)" fill="none" stroke="currentColor" stroke-width="4.611" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path></g></g></symbol>
 <symbol id="sm-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></symbol>
 <symbol id="sm-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></symbol>
+<symbol id="sm-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.667" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(1.05) translate(-13 -12)"><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path><polyline points="23 4 23 10 17 10"></polyline></g></symbol>
+<symbol id="sm-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.825" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(.959) translate(-12 -12)"><circle cx="12" cy="12" r="3.1"></circle><path d="M19.4 14.6a1.6 1.6 0 0 0 .32 1.77l.06.06a1.95 1.95 0 1 1-2.76 2.76l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a1.95 1.95 0 1 1-3.9 0v-.1a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a1.95 1.95 0 1 1-2.76-2.76l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a1.95 1.95 0 1 1 0-3.9h.1a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a1.95 1.95 0 1 1 2.76-2.76l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a1.95 1.95 0 1 1 3.9 0v.1a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a1.95 1.95 0 1 1 2.76 2.76l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a1.95 1.95 0 1 1 0 3.9h-.1a1.6 1.6 0 0 0-1.47.97z"></path></g></symbol>
 </svg>

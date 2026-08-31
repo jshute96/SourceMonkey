@@ -320,7 +320,7 @@ Both `StoredRequire` and `StoredResource` gain one field:
 persisted before the field existed read as enabled.
 
 - Set from the collection dialog's **Allow local file overrides**
-  option — on Create, or via the collection's **Edit** button on the
+  option — on Create, or via the collection's options gear on the
   collections page. (Distinct from the viewer's **Local overrides** row
   — this switches the feature on for a collection, that lists what it
   actually substituted for one script.)

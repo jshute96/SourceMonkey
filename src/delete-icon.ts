@@ -21,7 +21,7 @@
 // of the path data. Every call site goes through `setDeleteIcon` so
 // the pair can't drift apart again.
 
-const NS = 'http://www.w3.org/2000/svg';
+import { renderGlyph } from './glyph.js';
 
 export type DeleteIconKind = 'record' | 'file';
 
@@ -36,15 +36,10 @@ const SYMBOL_ID: Record<DeleteIconKind, string> = {
 // `aria-label`: the icon narrows what the tooltip has to explain, it
 // doesn't replace it.
 export function setDeleteIcon(btn: HTMLElement, kind: DeleteIconKind): void {
-  const doc = btn.ownerDocument;
   btn.textContent = '';
-  const svg = doc.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'delete-icon');
-  svg.setAttribute('aria-hidden', 'true');
-  const use = doc.createElementNS(NS, 'use');
-  use.setAttribute('href', SYMBOL_ID[kind]);
-  svg.appendChild(use);
-  btn.appendChild(svg);
+  btn.classList.add('icon-btn');
+  // Its own glyph class so the cans can be found and styled as a pair,
+  // but the same `.icon-btn` box as every other glyph button.
+  btn.appendChild(renderGlyph(btn.ownerDocument, SYMBOL_ID[kind], 'delete-icon'));
   btn.classList.toggle('deletes-file', kind === 'file');
 }

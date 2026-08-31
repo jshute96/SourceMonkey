@@ -942,11 +942,21 @@ collection**:
   - The plain `record` glyph of `src/delete-icon.ts`, the same one the
     script rows carry: a collection's removal drops SourceMonkey's rows,
     never the files behind them.
-- **Edit** button → the [collection dialog](#the-collection-dialog) in
+- **Options** gear → the [collection dialog](#the-collection-dialog) in
   edit mode: rename, or change the local-overrides option (which
   refreshes the collection on save).
-- **Refresh** button → `refreshCollection`. Rightmost in the row,
-  matching Refresh All at the top of the page.
+  - A gear rather than a pencil: the dialog is mostly options, and a
+    pencil would promise editing the scripts themselves.
+- **Refresh** circular arrow → `refreshCollection`. Rightmost in the
+  row, matching Refresh All at the top of the page.
+  - Icon-only, so the tooltip *Refresh this collection* is its whole
+    label. While it runs, the arrow spins in place instead of a label
+    changing to "Refreshing…" (`setGlyphButtonBusy`, src/glyph.ts) —
+    nothing beside it moves.
+  - Under `prefers-reduced-motion` the arrow dims rather than spins, so
+    the in-flight cue there is the dimming plus the disabled state. The
+    tooltip still says it, but only on hover — a real loss against the
+    old visible "Refreshing…", and the reason Refresh All keeps words.
 - Table with columns **(bulk toggle) | Name | Size | Status** — plus,
   in a scripts collection, a small scheme chip (`file` / `http` /
   `github`) after the name, since one such collection can mix all

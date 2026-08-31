@@ -141,9 +141,13 @@ Both name the script the same way, pivoted for where they're read.
      collections page, the copy's location as plain text (a link only in
      a preview — see [switching copies](#switching-copies-in-place)),
      status linking to that copy's Log tab, version, a refetch button —
-     **Refresh** here, **Update** in a preview, matching whichever
-     control the page already shows — and a trash can, live only for
-     single-file installs.
+     the circular arrow, called **Refresh**, matching the control the
+     page already shows. It is icon-only, so the name lives in its
+     tooltip. In a **preview** that button is the word **Update**
+     instead: nothing is being fetched there, so it does not wear the
+     refresh arrow (see
+     [script-identity.md](script-identity.md)). Then a trash can, live
+     only for single-file installs.
    - The Status column carries the same verdict as the `Status` row
      in the details panel — same helper, same wording — for every copy
      rather than only this one.
@@ -168,8 +172,8 @@ Both name the script the same way, pivoted for where they're read.
    - Full behaviour in [script-identity.md](script-identity.md).
 3. **Controls row** (`#meta-row`) — everything that acts on the
    script itself, left to right: the `Enabled` toggle, **Local copy…**,
-   the delete trash can (a local copy only), and **Refresh** →
-   `refreshScript(scriptId)`. Installed mode only; preview shows the
+   the delete trash can (a local copy only), and the **Refresh**
+   circular arrow → `refreshScript(scriptId)`. Installed mode only; preview shows the
    banner + action row in its place (see
    [Preview mode](#preview-mode)).
    - The toggle is a radio button, not a plain checkbox: enabling this
@@ -400,7 +404,12 @@ Both name the script the same way, pivoted for where they're read.
 
 Clicking Refresh:
 
-1. Disables the button + shows "Refreshing…".
+1. Disables the button and spins its glyph in place
+   (`setGlyphButtonBusy`, src/glyph.ts). The tooltip becomes
+   "Refreshing…"; the button itself neither changes size nor moves
+   what sits beside it.
+   - Under `prefers-reduced-motion` the glyph doesn't spin — it dims,
+     and the disabled state and tooltip carry the rest.
 2. Calls `refreshScript(scriptId)` from the store, which refetches
    the file, runs it through the pipeline, and rewrites just that
    one storage row.
@@ -426,7 +435,8 @@ what keeps a wrapping name from dragging it onto the last wrapped line.
 - **Why this row and not the controls row above.** Move… is about where
   the script is *filed*, which is what the Collection row says. The
   controls that act on the script itself — Enabled, Local copy…, the
-  delete trash can, Refresh — are in the row under the heading.
+  delete trash can, the Refresh arrow — are in the row under the
+  heading.
 
 - No button at all for a directory or manifest script. Its
   `relativePath` is relative to its collection root, so there is
@@ -476,9 +486,9 @@ editable copy into the *Scripts copied in Downloads* collection under
 the browser's Downloads folder.
 
 - The delete trash can (for a script that IS a local copy) sits beside
-  it, and both are sized to **Refresh**'s height rather than to a
-  padding of their own: the trash glyph is scaled from the font, so a
-  fixed padding would drift as soon as the font did.
+  it. Neither sizes itself: every button in the extension takes one
+  height and one glyph size from `styles.css`, so the row lines up by
+  construction rather than by a padding that happens to match.
 
 - The dialog owns the write and its refusals; the caller then runs the
   exclusive-enable sweep for the new row and switches the page to it

@@ -75,6 +75,7 @@ import { openMoveDialog } from './move-dialog.js';
 import { openCopyDialog } from './copy-dialog.js';
 import { openDeleteDialog } from './delete-dialog.js';
 import { setDeleteIcon } from './delete-icon.js';
+import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import { computeLogIds } from './script-log-id.js';
@@ -217,6 +218,9 @@ const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElemen
 const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
 const metaActionsEl = document.getElementById('meta-actions')!;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
+// Built once with the idle label and restored to it after every
+// refresh, so the two spellings can't drift.
+const REFRESH_LABELS = { idle: 'Refresh', busy: 'Refreshing…' };
 const bannerSlotEl = document.getElementById('banner-slot')!;
 // Wraps the banner slot and the versions panel. Carries `merged` while
 // the two are one green box — see `renderInstalledBanner`.
@@ -243,6 +247,7 @@ const tabsView = new CodeTabsView(
   { onShowLog: () => void renderLogPane() },
 );
 
+setGlyphButton(refreshBtn, '#sm-refresh', REFRESH_LABELS.idle);
 refreshBtn.addEventListener('click', () => void onRefresh());
 // Same modifier wiring as a panel row's checkbox, from the same helper:
 // ctrl/cmd-click opts out of the exclusive sweep here too.
@@ -572,9 +577,7 @@ async function onRefresh(): Promise<void> {
   // Same capture as `loadStored`: the user can pick another copy from
   // the panel while the refetch is in flight.
   const wanted = scriptId;
-  refreshBtn.disabled = true;
-  const prior = refreshBtn.textContent;
-  refreshBtn.textContent = 'Refreshing…';
+  setGlyphButtonBusy(refreshBtn, true, REFRESH_LABELS);
   try {
     // Wait for the GitHub token cache to hydrate first; otherwise a
     // very fast Refresh click can fire before chrome.storage.local
@@ -594,8 +597,7 @@ async function onRefresh(): Promise<void> {
       tabsView.applyHash(false);
     }
   } finally {
-    refreshBtn.disabled = false;
-    refreshBtn.textContent = prior ?? 'Refresh';
+    setGlyphButtonBusy(refreshBtn, false, REFRESH_LABELS);
   }
 }
 
@@ -2540,11 +2542,16 @@ async function wireInstallButtons(): Promise<void> {
   // a same-`@name` copy from a mirror is still this script, installed.
   if (!existing && !related.sameIdentity.length) {
     clearBanner();
-    showInstallCallout(related.installOptions);
+    // Nothing of this script anywhere, so Install is the only thing to
+    // do here and reads as the default.
+    showInstallCallout(related.installOptions, true);
     return;
   }
   renderInstalledBanner();
-  if (!related.installOptions && !existing) showInstallCallout(undefined);
+  // Copies are listed below, so Install is an alternative to updating
+  // one of them rather than the recommended move — see the table's own
+  // Update buttons, which take the emphasis instead.
+  if (!related.installOptions && !existing) showInstallCallout(undefined, false);
   else hideInstallCallout();
 }
 
@@ -2552,11 +2559,20 @@ async function wireInstallButtons(): Promise<void> {
 // a single script. Every entry, "New collection…" included, only
 // selects — Install is what acts, and for "New collection…" it opens
 // the create dialog first and installs into what that makes.
-function showInstallCallout(options: readonly InstallOption[] | undefined): void {
+//
+// `recommended` is what makes Install bold. It only is when this file
+// is new to SourceMonkey: with copies already listed in the table
+// below, updating one of them is the likelier thing to want, and a
+// bold Install would be pointing at the wrong default.
+function showInstallCallout(
+  options: readonly InstallOption[] | undefined,
+  recommended: boolean,
+): void {
   installTargetSlot.replaceChildren();
   installTargetLabel.hidden = !options;
   installCalloutEl.hidden = false;
   installBtn.disabled = false;
+  installBtn.classList.toggle('primary', recommended);
   if (!options) {
     installBtn.onclick = () => void doInstall(installBtn, undefined);
     return;

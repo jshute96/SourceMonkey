@@ -27,6 +27,7 @@
 
 import { openDeleteDialog } from './delete-dialog.js';
 import { setDeleteIcon } from './delete-icon.js';
+import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
@@ -174,6 +175,15 @@ addForm.addEventListener('submit', (event) => {
   void onAddViaDialog(addInput.value, true);
 });
 
+// The per-collection Refresh, in one place: `renderCollection` builds
+// the button with the idle label and `onRefreshCollection` puts it back
+// after a refresh, so the two must not drift.
+const REFRESH_COLLECTION_LABELS = {
+  idle: 'Refresh this collection',
+  busy: 'Refreshing this collection…',
+};
+
+setGlyphButton(refreshAllBtn, '#sm-refresh', 'Refresh every collection', { text: 'Refresh All' });
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 
 openOptionsBtn.addEventListener('click', () => {
@@ -1198,15 +1208,17 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
 
   const editBtn = document.createElement('button');
   editBtn.className = 'edit-collection';
-  editBtn.textContent = 'Edit';
-  editBtn.title = 'Rename this collection or change its options';
+  // A gear, not a pencil: the dialog behind it is mostly options, and
+  // a pencil would promise editing the scripts themselves.
+  setGlyphButton(editBtn, '#sm-gear', 'Rename this collection or change its options');
   editBtn.addEventListener('click', () => void onEditCollection(collection.id));
   buttons.appendChild(editBtn);
 
   // Rightmost, matching Refresh All at the top of the page: the same
   // action in the same place, whichever row of the page you are on.
   const refreshBtn = document.createElement('button');
-  refreshBtn.textContent = 'Refresh';
+  refreshBtn.className = 'refresh-collection';
+  setGlyphButton(refreshBtn, '#sm-refresh', REFRESH_COLLECTION_LABELS.idle);
   refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
   buttons.appendChild(refreshBtn);
 
@@ -1718,7 +1730,10 @@ function makeMoveButton(direction: 'up' | 'down', collectionId: string): HTMLBut
   const label = `Move collection ${direction}`;
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = `move-collection move-${direction}`;
+  // `.icon-btn` even though the arrow is a character rather than a
+  // sprite glyph: it is one of five buttons in the header row, and the
+  // row lines up because they all wear the same fixed box.
+  btn.className = `icon-btn move-collection move-${direction}`;
   btn.textContent = arrow;
   btn.title = label;
   btn.setAttribute('aria-label', label);
@@ -1891,17 +1906,14 @@ async function refreshAndHighlight(
 }
 
 async function onRefreshCollection(id: string, btn: HTMLButtonElement): Promise<void> {
-  const prevText = btn.textContent ?? 'Refresh';
-  btn.disabled = true;
-  btn.textContent = 'Refreshing…';
+  setGlyphButtonBusy(btn, true, REFRESH_COLLECTION_LABELS);
   try {
     // Goes through script-updater so a background opportunistic check
     // already in flight for this collection coalesces with our click
     // instead of doing redundant work.
     await refreshAndHighlight([id], 'collection refresh', () => updateCollection(id, 'manual'));
   } finally {
-    btn.disabled = false;
-    btn.textContent = prevText;
+    setGlyphButtonBusy(btn, false, REFRESH_COLLECTION_LABELS);
   }
 }
 
@@ -2238,8 +2250,10 @@ function setBulkBusy(btn: HTMLButtonElement, busy: boolean): void {
 }
 
 function setRefreshAllBusy(busy: boolean): void {
-  refreshAllBtn.disabled = busy;
-  refreshAllBtn.textContent = busy ? 'Refreshing…' : 'Refresh All';
+  setGlyphButtonBusy(refreshAllBtn, busy, {
+    idle: 'Refresh every collection',
+    busy: 'Refreshing every collection…',
+  });
 }
 
 function setAddFormBusy(busy: boolean): void {

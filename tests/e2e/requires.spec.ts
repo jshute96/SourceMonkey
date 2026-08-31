@@ -731,7 +731,7 @@ test.describe('@require', () => {
       await expect(card).toBeVisible();
 
       const before = server.requestLog.filter((e) => e.path === '/hop-lib.js').length;
-      await card.getByRole('button', { name: 'Refresh' }).click();
+      await card.getByRole('button', { name: 'Refresh this collection' }).click();
       await expect.poll(
         () => server.requestLog.filter((e) => e.path === '/hop-lib.js').length,
       ).toBeGreaterThan(before);

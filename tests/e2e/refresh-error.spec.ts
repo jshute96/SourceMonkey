@@ -218,7 +218,7 @@ test.describe('a refresh that cannot be saved', () => {
     // That section's Refresh is a real way out: once storage accepts
     // writes again, the same button completes what the add started.
     await sm.failCollectionWrites(null);
-    await section.getByRole('button', { name: 'Refresh' }).click();
+    await section.getByRole('button', { name: 'Refresh this collection' }).click();
     await expect(section.locator('p.error[data-message-kind="refresh"]')).toHaveCount(0);
     await expect(section.locator('tr[data-script-id]')).toHaveCount(1);
     await page.close();

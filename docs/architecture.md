@@ -232,6 +232,33 @@ details live in the topic-specific docs linked below.
 
 ## Extension-page styling
 
+### Buttons
+
+- **Every button in the extension shares one surface**, defined once in
+  `src/styles.css` as a `:where(button)` baseline: one height
+  (`--icon-btn-size`), one background/border (`--btn-*`), and a
+  rest → hover → press progression that always gets *darker*.
+- Why a baseline at all: Chrome paints no hover or press state on a
+  native button, and stops painting one entirely once any author
+  background is set. Without this, whether a button visibly reacted to
+  a click depended on whether some page had happened to style it.
+- Why `:where()`: zero specificity, so it is a baseline rather than an
+  override. Any class rule beats it — but only for what that rule
+  actually declares. A control that sets a background and no height
+  gets its own background and the shared height.
+- **Opting out is explicit.** Controls that are not part of a button
+  row pin their own height: the code tabs, the panel's fold triangle,
+  the dialog's inline error action, the copy button, the bulk toggle.
+  A dense table can shrink the whole pair by redefining
+  `--icon-btn-size` / `--icon-btn-glyph` on an ancestor — the script
+  table does, so a row's trash can fits inside its line box instead of
+  making that row taller than its neighbours.
+- **Icon buttons** add `.icon-btn` (put on by the code that paints the
+  glyph, so a glyph can't arrive without its box): a square minimum, a
+  centred glyph, and roomier padding when the button also shows a word.
+
+### Whole-pixel metrics
+
 - **Vertical metrics are whole pixels** wherever a checkbox column sits:
   the collections page, Options, and the viewer's "Other versions" panel
   (plus their shared ancestors — the banner, the collection bubble).
@@ -326,8 +353,28 @@ and Chrome loads them directly as ES modules.
 ### Glyph sprite
 
 - Every inline SVG icon (the favicon placeholder, the two removal
-  glyphs, the copy button's pair) is defined once in
-  `src/glyph-sprite.svg` and referenced by `<use href="#id">`.
+  glyphs, refresh and the options gear, the copy button's pair) is
+  defined once in `src/glyph-sprite.svg` and referenced by
+  `<use href="#id">`.
+- `src/glyph.ts` paints them into buttons: glyph, optional label, and
+  the matching `title` / `aria-label`. An icon-only button has no text
+  to fall back on, so neither is optional.
+- **The button box is set, not inferred.** Painting a glyph also puts
+  `.icon-btn` on the button, which fixes its height and the glyph's
+  size (`--icon-btn-size` / `--icon-btn-glyph` in `styles.css`).
+  - Letting each button size itself off its content is what gave five
+    identically-sized icons five different widths — three padding
+    values, a text arrow measuring differently from an SVG, and one
+    button on `align-self: stretch`.
+  - A fixed box also satisfies the whole-pixel rule below for free:
+    no `em` anywhere in an icon button.
+  - A page rule that outranks `.icon-btn` on specificity (`.meta-row
+    button`) has to exclude it with `:not(.icon-btn)`, or the box goes
+    back to being inferred.
+- A button whose action takes a while spins its own glyph
+  (`setGlyphButtonBusy`) rather than swapping its label to
+  "Refreshing…" — an icon-only button has no label to swap, and
+  spinning in place doesn't shift the buttons beside it.
 - It has to be *inlined per page*: a `<use>` pointing at another
   document doesn't inherit `currentColor`, and would be a second fetch.
   Keeping one copy in the source tree is what stops two pages from

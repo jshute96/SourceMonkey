@@ -94,26 +94,24 @@
          status text (not a default blue underline). */
       .meta-status[href] { text-decoration: none; color: inherit; cursor: pointer; }
       .meta-status[href]:hover { text-decoration: underline; }
-      .meta-row button { font: inherit; padding: 0.2em 0.7em; cursor: pointer; }
+      /* Horizontal padding only: an `.icon-btn` brings its own, and
+         this rule outranks it on specificity — without the `:not()`
+         the row's Refresh comes out wider than the trash can beside
+         it. Height, surface and hover are shared (styles.css). */
+      .meta-row button:not(.icon-btn) { padding: 0 0.7em; }
       .meta-row .toggle { display: inline-flex; align-items: center; gap: 0.3em; cursor: pointer; margin-left: auto; }
       /* The script's own actions, between the Enabled box and Refresh.
-         `stretch` rather than a padding picked to match: the trash
-         can's glyph is sized from the font, so any fixed padding would
-         drift away from Refresh's height as soon as the font did. */
+         Nothing here styles the buttons: every button in this row —
+         Local copy…, the trash can, Refresh — takes the one shared
+         surface and height from styles.css. This used to `revert` the
+         trash can's border and background to the browser's own, back
+         when the shared style gave it no chrome at all; once the
+         shared style became the chrome, that revert was what made this
+         one button look unlike everything beside it. */
       .meta-row .meta-actions {
         display: flex;
-        align-items: stretch;
-        align-self: stretch;
+        align-items: center;
         gap: 0.5em;
-      }
-      /* Beside Local copy… and Refresh the trash can wears their
-         chrome, for the same reason the collections page's header one
-         does: a bare glyph between two text buttons doesn't read as a
-         button at all. */
-      .meta-row .meta-actions .remove-script {
-        padding: 0.2em 0.5em;
-        border: revert;
-        background: revert;
       }
       .meta-row .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .meta-row .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
@@ -144,12 +142,13 @@
       .install-callout[hidden] { display: none; }
       .install-callout label { font-weight: 600; }
       .install-callout label[hidden] { display: none; }
-      .install-callout button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
-      .install-callout button:disabled { cursor: not-allowed; opacity: 0.5; }
+      /* Horizontal only: height and the disabled state are shared
+         (styles.css). */
+      .install-callout button { padding: 0 0.9em; }
       .install-callout .primary { font-weight: 600; }
       .actions { display: flex; gap: 0.5em; align-items: center; margin: 0 0 0.7em; }
       .actions[hidden] { display: none; }
-      .actions button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
+      .actions button { padding: 0 0.9em; }
       .actions button:disabled { cursor: not-allowed; opacity: 0.5; }
       .actions .primary { font-weight: 600; }
       .actions .spacer { margin-left: auto; }
@@ -196,7 +195,8 @@
         padding: 0;
         margin: 14px 0 0;
       }
-      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      /* `@keyframes sm-spin` is in styles.css, shared with the dialog
+         spinner and the glyph buttons' spin state. */
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
       /* @connect row: hostnames and match rules, not prose. */
       .host-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -361,6 +361,10 @@
          the glyph itself is a few pixels wide. */
       .versions-collapse {
         flex: none;
+        /* Its own height: this is a small inline affordance inside the
+           panel heading, not a control in a row of buttons, so the
+           shared button height would make it loom over the heading. */
+        height: 18px;
         border: 0;
         border-radius: 3px;
         background: none;
@@ -371,6 +375,9 @@
         cursor: pointer;
       }
       .versions-collapse:hover { background: #cbe3c5; color: #223; }
+      /* Pressed is a shade past hover, the same direction of travel
+         as every other button in the extension (styles.css). */
+      .versions-collapse:active { background: #b8d6b1; color: #223; }
       /* A bare glyph has no shape of its own to show focus with — and
          this is the control the fold hands focus back to. */
       .versions-collapse:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
@@ -456,7 +463,7 @@
         padding-right: 0;
         white-space: nowrap;
       }
-      .versions-table th.col-actions button { font-size: 12px; padding: 1px 8px; }
+      .versions-table th.col-actions button { font-size: 12px; }
       /* Type styling for the body cells is scoped to `td`, here and in
          the Location rule below. A column class sits on the `th` too,
          and `.versions-table .col-x` outranks `.versions-table th`, so
@@ -565,10 +572,19 @@
          `flex-wrap` above then drops it under the button when even a
          wrapped note won't fit beside one. */
       .install-offer-note { min-width: 0; }
+      /* The recommended action in a preview that already has copies:
+         update one of them rather than install another. Set here
+         because the shared `.primary` bolding is scoped to the callout
+         and the action row. */
+      .versions-table td.col-actions button.primary { font-weight: 600; }
+      /* Not bold, for the same reason the header's Install isn't once
+         copies are listed (`showInstallCallout`): this row offers
+         ANOTHER copy alongside versions the user could update instead,
+         so it is an alternative, not the recommended move. The
+         emphasis is on the rows' Update buttons. */
       .versions-table td.col-install button {
         flex: none;
         font: inherit;
-        font-weight: 600;
         padding: 0.35em 0.9em;
         cursor: pointer;
       }
@@ -599,38 +615,22 @@
       .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
       /* Trash can, in its own column hard against the table's right
-         edge. Same glyphs (src/delete-icon.ts) and red hover as the
-         collections page's `.remove-script`, so the two read as one
-         control in two places; the border and resting colour are the
-         panel's own, since it sits on green rather than white. Disabled (a script
-         inside a collection) keeps the button on screen — the
-         column would otherwise look ragged with no clue why — but
-         drops it to a plain dimmed glyph with no border, so it doesn't
-         invite a click its tooltip has to then refuse. `not-allowed`
-         to match the disabled toggle two rules up. */
+         edge. The button itself is `.icon-btn` in styles.css — the same
+         control as the refetch arrow beside it, which is what the two
+         looked like two different widgets before. Disabled (a script
+         inside a collection) keeps the button on screen, since the
+         column would otherwise look ragged with no clue why. */
       .versions-table .col-remove {
         text-align: right;
         padding-right: 0;
         white-space: nowrap;
       }
-      .versions-remove {
-        padding: 0 0.3em;
-        font: inherit;
-        line-height: 1;
-        border: 1px solid #b9d4b1;
-        border-radius: 3px;
-        background: transparent;
-        cursor: pointer;
-        color: #6a7b66;
-      }
-      .versions-remove:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
-      /* A bare glyph has no shape of its own to show focus with. */
-      .versions-remove:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
-      .versions-remove:disabled {
-        cursor: not-allowed;
-        border-color: transparent;
-        opacity: 0.35;
-      }
+      /* A disabled row button (a script inside a collection, which the
+         collection's own removal takes) stays a button — dimmed, but
+         still a box with a border. Dropping the border left a bare
+         glyph floating on the panel's green, which read as an icon
+         rather than a control that happens to be unavailable. The
+         dimming is `.icon-btn:disabled` in styles.css. */
       /* The panel reports its own action failures here rather than in
          the page's `#message` bar — see related-versions.ts. */
       .versions-message {
@@ -683,12 +683,11 @@
          its own so a wrapping name never drags it down onto the last
          wrapped line.
 
-         No font or padding of its own, deliberately: that is exactly
-         what the versions table's row buttons get, so both land on the
-         UA's default button metrics and come out the same height. The
-         details rows read badly if one control stands taller than the
-         rest. */
-      .collection-move { cursor: pointer; }
+         Its height is no longer its own business: every button takes
+         the shared height (styles.css), which is what keeps it level
+         with the versions table's row buttons now that those hold a
+         glyph. Only the padding is here. */
+      .collection-move { padding: 0 0.7em; }
       /* Square icon-only button. Swaps the copy icon for a checkmark
          while the .copied class is on it (set briefly after a
          successful clipboard write). */
@@ -707,6 +706,7 @@
         cursor: pointer;
       }
       .copy-btn:hover { background: #eee; }
+      .copy-btn:active { background: #ddd; }
       .copy-btn:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
       .copy-btn svg { width: 14px; height: 14px; display: block; }
       .copy-btn .check-icon { display: none; color: #166534; }
@@ -726,6 +726,10 @@
         overflow-x: auto;
       }
       .tab {
+        /* Its own height: a tab sizes to its label and the strip's
+           bottom edge, and the shared button height squeezes the
+           label's line box. */
+        height: auto;
         font: inherit;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 12px;
@@ -739,6 +743,9 @@
         white-space: nowrap;
       }
       .tab:hover { background: #efefef; }
+      /* Hover lightens a tab toward the selected look, so pressing
+         goes the other way to stay a press. */
+      .tab:active:not(.active) { background: #d4d4d4; }
       .tab.active {
         background: #fafafa;
         color: #222;
@@ -975,7 +982,11 @@
            (`makeScriptActions`). Empty until the first one, and the
            row it is in stays hidden until then. -->
       <span id="meta-actions" class="meta-actions"></span>
-      <button id="refresh-btn" type="button">Refresh</button>
+      <!-- Icon-only; the glyph is painted by src/userscript.ts
+           (setGlyphButton), which is safe to leave empty here
+           because #meta-row ships `hidden` and is only revealed
+           once the script has loaded. -->
+      <button id="refresh-btn" type="button"></button>
     </div>
     <!-- Install stays hidden until the fetch has landed and we know
          whether this file is installable and not already installed,

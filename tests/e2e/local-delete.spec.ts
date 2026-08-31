@@ -149,9 +149,9 @@ test.describe('deleting a local copy', () => {
 
   // Both controls act on the script the page is showing, so they sit in
   // its own controls row rather than on the Collection row, which is
-  // about where the script is filed. The trash can's glyph is sized
-  // from the font, so its height is asserted against Refresh rather
-  // than left to a padding that happens to match today.
+  // about where the script is filed. The height is asserted against
+  // Refresh because the whole row is supposed to come off one shared
+  // button size (styles.css) — a mismatch means something re-broke it.
   test('the two controls sit between the Enabled box and Refresh', async ({
     extensionContext, extensionId, sm,
   }) => {

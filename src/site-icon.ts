@@ -1,6 +1,7 @@
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from './file-loader.js';
 import { localFileCandidates } from './local-file-overrides.js';
 import { representativeMatch } from './match-targets.js';
+import { renderGlyph } from './glyph.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon next to each script.
@@ -709,13 +710,5 @@ export function dataUrlToBlob(dataUrl: string): Blob | null {
 // 100+ rows don't each inline the full circle+meridian path data. The
 // stroke/fill presentation lives in CSS on `.site-icon-globe`.
 function buildGlobeSvg(doc: Document): SVGSVGElement {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = doc.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'site-icon-globe');
-  svg.setAttribute('aria-hidden', 'true');
-  const use = doc.createElementNS(NS, 'use');
-  use.setAttribute('href', '#sm-globe');
-  svg.appendChild(use);
-  return svg;
+  return renderGlyph(doc, '#sm-globe', 'site-icon-globe');
 }
