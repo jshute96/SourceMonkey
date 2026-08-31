@@ -498,7 +498,9 @@ re-renders when:
 If the re-read finds the script gone (its collection was removed), the
 viewer drops into the not-found state — including when another tab
 deleted this copy. Only a deletion made *here*, from the versions
-panel's trash can, moves the page to another copy instead; see
+panel's trash can, moves the page to another copy instead, and that
+path suppresses this listener's not-found paint so the switch stays a
+single in-place render; see
 [script-identity.md](script-identity.md). Session-storage changes
 (`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
 repaint separately, as described above.

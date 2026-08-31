@@ -323,15 +323,28 @@ the *other* rows.
       another tab deleted it drops to the not-found state as before —
       swapping in some other version would be a page the user never
       asked for.
+    - **The swap is the only paint the user sees.** The removal's own
+      storage event lands while the viewer still points at the deleted
+      row.
+      - The listener's not-found paint would tear the whole page down —
+        heading, details, panel, title — before the swap builds it back:
+        a flash that reads as a page load, not the in-place switch every
+        other move through the table makes.
+      - A flag set *before* the removal holds that paint back once a
+        successor is picked. It is set and cleared only by the removal
+        that owns it, so a second row's trash can — the others stay
+        live — cannot re-open the flash for the first.
+    - **The successor lookup and both flags happen before the removal**,
+      not after it: its storage event can be delivered while the write
+      is still in flight, so anything set afterwards is too late for the
+      listener it is meant for. The same ordering applies to the
+      Collection row's own "Delete local script file" trash can.
   - **With no surviving row, the viewer reports "This script has been
     removed"** rather than its generic not-found message, and clears the
     panel along with the rest of the page — its heading has nothing left
     to be *other than*. A panel showing only your own row isn't drawn at
     all, so this is the race where every other copy went away between
     the paint and the click.
-    - The flag behind that wording is set before the successor lookup,
-      so a not-found state painted by the removal's own storage event
-      mid-lookup says the same thing.
     - The removed state is driven from the action, not left to the
       storage listener: `removeScript` writes nothing when the row was
       already gone, so there may be no event to wait for.

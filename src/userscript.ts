@@ -428,6 +428,8 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   const script = await getScript(wanted);
   if (scriptId !== wanted) return;
   if (!script) {
+    // A removal made here that is already on its way to another copy.
+    if (swappingAfterRemoval) return;
     // Not consumed here: this path can run more than once for a single
     // removal (our own call, then the storage event), and the second
     // pass must not downgrade the wording. `render` clears the flag
@@ -1194,33 +1196,58 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       // like any other, and refusing only where you happen to be
       // standing would be arbitrary.
       const isCurrent = id === args.currentScriptId;
+      // Deleting the copy you are standing on moves the page to the
+      // next one in the table rather than stranding it on the
+      // not-found line: the user asked to lose one copy, not to lose
+      // the script. Only for a deletion made HERE — a copy that
+      // vanishes from another tab gets the not-found state, because
+      // silently swapping in some other version would be a page the
+      // user never asked for.
+      //
+      // Both of these are decided BEFORE the removal, because the
+      // removal's own storage event can be delivered while it is still
+      // in flight — anything set afterwards is too late to be seen by
+      // the listener it is meant for.
+      const successor = isCurrent ? await survivingRowAfter(rows, id) : undefined;
+      // Says the not-found state, if one is painted at all, is the
+      // result the user asked for. `render` clears it as soon as a
+      // script is back on screen, so the successor path pays nothing.
+      if (isCurrent) removedHere = true;
+      // Holds back the not-found paint on the way to the successor. The
+      // listener sees a `scriptId` that no longer names a stored row
+      // and would tear the whole page down — heading, details, panel,
+      // title — before `swapToScript` builds it back: a full-page flash
+      // that reads as a page load rather than the in-place switch every
+      // other move through this table makes. We already know where the
+      // page is going, so there is nothing for that paint to say.
+      //
+      // Set only where it is owned, and cleared only on the paths that
+      // set it: the other rows' trash cans stay live while this one is
+      // in flight, and a second removal that reset either flag would
+      // re-open the flash for the first.
+      if (isCurrent && successor) swappingAfterRemoval = true;
       try {
         await removeScript(id);
       } catch (err) {
+        if (isCurrent) {
+          removedHere = false;
+          removedHereDetail = [];
+          swappingAfterRemoval = false;
+        }
         relatedVersionsMessage =
           `Could not remove ${describeRelatedScript(snapshot.scripts, id)}: ${describeError(err)}`;
         await afterPanelAction(args);
         return;
       }
       if (isCurrent) {
-        // Deleting the copy you are standing on moves the page to the
-        // next one in the table rather than stranding it on the
-        // not-found line: the user asked to lose one copy, not to lose
-        // the script. Only for a deletion made HERE — a copy that
-        // vanishes from another tab gets the not-found state, because
-        // silently swapping in some other version would be a page the
-        // user never asked for.
-        // Set before the lookup below, not after it: the removal's own
-        // storage event can land while we are reading, and a not-found
-        // state painted by that listener must say the result the user
-        // asked for. `render` clears it as soon as a script is back on
-        // screen, so the successor path pays nothing for it.
-        removedHere = true;
-        const successor = await survivingRowAfter(rows, id);
         if (successor) {
           // The fragment is dropped: it named a tab or line in the file
           // that just went away.
-          await swapToScript(successor, { replace: true });
+          try {
+            await swapToScript(successor, { replace: true });
+          } finally {
+            swappingAfterRemoval = false;
+          }
           return;
         }
         // Nothing left to show. Driven from here rather than left to
@@ -1228,8 +1255,8 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
         // row was already gone, so there may be no event to wait for —
         // and waiting for one that never comes would leave the page
         // sitting on a table of rows it no longer has, with the trash
-        // can stuck disabled. The flag set above makes the not-found
-        // state read as the result the user asked for.
+        // can stuck disabled. `removedHere` makes the not-found state
+        // read as the result the user asked for.
         await rehydrateAfterStorageChange();
         return;
       }
@@ -1550,6 +1577,12 @@ let copiesSetting: DownloadsCopiesSetting | null = null;
 let removedHere = false;
 
 const REMOVED_HERE = 'This script has been removed';
+
+// Set while the copy on screen is being removed and a successor is
+// already picked out: `rehydrateAfterStorageChange` skips the not-found
+// paint, because the swap that follows is the page the user is getting.
+// See the panel's `remove` for why it is a flag and not an ordering.
+let swappingAfterRemoval = false;
 
 // What that removal could not finish — today, dependency files a local
 // copy's deletion left on disk. Carried alongside `removedHere` rather
@@ -2743,16 +2776,22 @@ function makeDeleteCopyControl(
     // empty-scan guard, which marks its rows `missing` rather than
     // dropping them (an unreadable directory must not wipe the
     // collection). We know why this file is gone, so we say so.
+    //
+    // Both flags are set BEFORE the removal, not before the rehydrate:
+    // the removal's own storage event can be delivered while the write
+    // is still in flight, and a not-found state painted by that
+    // listener has to read as the result the user asked for — see
+    // `removedHere` and the panel's own `remove`.
+    removedHere = true;
+    removedHereDetail = result.dependencyErrors;
     try {
       await removeScript(result.scriptId);
     } catch (err) {
+      removedHere = false;
+      removedHereDetail = [];
       setMessage(`The file was deleted, but its record could not be removed: ${describeError(err)}`, 'error');
       return;
     }
-    // Set before the rehydrate, so the not-found state it paints reads
-    // as the result the user asked for — see `removedHere`.
-    removedHere = true;
-    removedHereDetail = result.dependencyErrors;
     await rehydrateAfterStorageChange();
   };
   return btn;

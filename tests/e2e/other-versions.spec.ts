@@ -796,6 +796,41 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
+  // The switch above has to be ONE paint. The removal's own storage
+  // event lands while the page still points at the deleted row, and the
+  // listener's not-found paint would blank the heading, the details and
+  // the panel before the swap builds them back — a flash that reads as a
+  // page load. Only a recording made across the transition can catch it:
+  // by the time the swap has landed the page looks right either way.
+  test('the switch never paints the not-found state on the way', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    const [, middle, last] = await threeCopies(sm, path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
+    await page.locator(`${PANEL} tr.is-current`).waitFor();
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { smHeadings: string[] }).smHeadings = seen;
+      const h1 = document.querySelector('h1')!;
+      new MutationObserver(() => seen.push(h1.textContent ?? '')).observe(h1, {
+        childList: true, subtree: true, characterData: true,
+      });
+    });
+
+    await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    await page.waitForURL(`**/${viewer(last)}`);
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
+
+    const headings = await page.evaluate(
+      () => (window as unknown as { smHeadings: string[] }).smHeadings,
+    );
+    expect(headings.join(' | ')).not.toContain('Not available');
+    await page.close();
+  });
+
   test('removing the last copy in the table wraps to the first', async ({
     extensionContext, extensionId, sm,
   }) => {
