@@ -639,8 +639,8 @@ between. The same shape a listbox has.
   and Tab through the controls is what it gets.
   - Landing on each row's first control instead would be the coin toss
     the row rule exists to avoid, and in the install-offer section that
-    control is the collection `<select>`: the walk would trap itself
-    there while every arrow silently re-targeted the install.
+    control is **Install** itself: every arrow would silently re-target
+    an install while focus sat on the button that performs it.
 - A modified arrow is left alone, as is one aimed at a `<select>`.
 
 #### The panel holds still
@@ -740,12 +740,13 @@ Banner (`#banner-slot`) states what this file is; the action row
 
 | Situation | Banner slot | Buttons |
 |-----------|-------------|---------|
-| Not installed anywhere | the **install callout**: *Install into [collection ▾]* **Install** | Cancel, View raw source |
+| Not installed anywhere | the **install callout**: **Install** *into [collection ▾]* | Cancel, View raw source |
 | Any copy exists, here or elsewhere | one line — **This script is already installed.** *Select which instance to update or install.* — with the versions panel under it in the same box | Cancel, View raw source — the panel carries Open / Update per copy, and an **Install another copy of this script** section |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
-- **Install into** — labelled just *Into* in the panel's install
-  section, where the heading has already said Install. The dropdown
+- **Install into** — the button leads and the dropdown follows
+  (**Install** *into [collection ▾]*), in the callout and in the
+  panel's install section alike. The dropdown
   lists every scripts collection, the
   built-in one for this script's scheme first (created on demand if it
   doesn't exist), ending with *New collection…*. Every entry only

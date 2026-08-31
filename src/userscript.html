@@ -140,8 +140,16 @@
         margin: 0 0 10px;
       }
       .install-callout[hidden] { display: none; }
-      .install-callout label { font-weight: 600; }
+      /* Unbolded on purpose, and so with no weight of its own: the
+         label is the connector in "Install into <collection>", not a
+         heading over the row — the button ahead of it is the verb, and
+         a bold word between the two controls breaks the sentence. */
       .install-callout label[hidden] { display: none; }
+      /* A collection name can be longer than the callout. The row wraps
+         first (`flex-wrap` above) and the dropdown then shrinks rather
+         than running past the edge; Chrome sizes the OPEN list to its
+         widest option, so the full name is still readable there. */
+      .install-callout select { flex: 0 1 auto; min-width: 0; }
       /* Horizontal only: height and the disabled state are shared
          (styles.css). */
       .install-callout button { padding: 0 0.9em; }
@@ -540,38 +548,25 @@
         font-style: italic;
       }
       /* The install-offer row's controls, in the one cell that spans
-         everything left of Location (see `installRow`). Stacked —
-         label, dropdown, button — so they read as the callout's one
-         question does, and so the button stays next to the dropdown
-         that decides what it will do rather than out at the table's
-         right edge. Label beside the dropdown, button under both, and
-         the disabled-button explanation beside the button. */
+         everything left of Location (see `installRow`). One line —
+         "Install into <collection>" — reading the way the header
+         callout does, with the button next to the dropdown that
+         decides what it will do rather than out at the table's right
+         edge. The disabled-button explanation sits under the line. */
       .versions-table td.col-install { padding-right: 10px; }
-      /* Label and dropdown on one line. `min-width: 0` on the select is
-         what lets it give way to the label instead of overflowing the
-         cell — a flex item's default floor is its content width, and a
-         long collection name is wider than two columns. */
+      /* Button, connector and dropdown on one line. `min-width: 0` on
+         the select is what lets it give way to them instead of
+         overflowing the cell — a flex item's default floor is its
+         content width, and a long collection name is wider than two
+         columns. Chrome sizes the open list to its widest option, so
+         a name truncated here is still readable in the list. */
       .install-offer-pick {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 6px;
       }
-      .install-offer-label { font-weight: 600; }
       .install-offer-pick select { flex: 1 1 auto; min-width: 0; }
-      /* Install, and beside it the line saying why it is off. */
-      .install-offer-go {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 9px;
-        margin-top: 5px;
-      }
-      /* Same floor as the dropdown two rules up, and for the same
-         reason: a flex item's automatic minimum is its longest word, so
-         without it the note widens the cell rather than wrapping in it.
-         `flex-wrap` above then drops it under the button when even a
-         wrapped note won't fit beside one. */
-      .install-offer-note { min-width: 0; }
+
       /* The recommended action in a preview that already has copies:
          update one of them rather than install another. Set here
          because the shared `.primary` bolding is scoped to the callout
@@ -597,8 +592,11 @@
         border-color: #c2c2c2;
         color: #999;
       }
-      /* Why Install is off. Empty — and so invisible — otherwise. */
+      /* Why Install is off: its own line under the sentence above, not
+         spliced into the middle of it. Empty — and so invisible —
+         otherwise. */
       .install-offer-note {
+        margin-top: 5px;
         font-size: 12px;
         color: #666;
         font-style: italic;
@@ -995,9 +993,9 @@
          is absent for a location with no single-file spelling, where
          Install adds a whole collection instead. -->
     <div id="install-callout" class="install-callout" hidden>
-      <label id="install-target-label" for="install-target">Install into</label>
-      <span id="install-target-slot"></span>
       <button id="install-btn" class="primary" type="button">Install</button>
+      <label id="install-target-label" for="install-target">into</label>
+      <span id="install-target-slot"></span>
     </div>
     <div id="preview-actions" class="actions" hidden>
       <button id="open-btn" type="button" hidden>Open installed script</button>

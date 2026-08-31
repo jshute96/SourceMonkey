@@ -460,6 +460,18 @@ function fitColumns(container: HTMLElement): void {
   // replace.
   const cols = [...container.querySelectorAll<HTMLElement>('.versions-table col')];
   for (const col of cols) col.style.width = 'auto';
+  // The header's Refresh all is taken out of the measurement entirely,
+  // not merely skipped when its own cell is read. It spans Actions and
+  // Remove (see `appendHeadings`), and under `auto` layout the browser
+  // pushes a spanning cell's excess width down INTO the columns it
+  // covers — so a cell we never read still widens Actions to the
+  // header button, which is the fit this whole pass exists to avoid.
+  // Left in the row but not laid out; `fitSpannedHeader` below gives
+  // it back the room it needs afterwards.
+  const spanHead = container.querySelector<HTMLTableCellElement>(
+    '.versions-table th.col-actions[colspan]',
+  );
+  if (spanHead) spanHead.style.display = 'none';
   for (const table of tables) {
     table.style.tableLayout = 'auto';
     table.style.width = 'max-content';
@@ -467,7 +479,7 @@ function fitColumns(container: HTMLElement): void {
   const widths = new Map<string, number>();
   for (const table of tables) {
     for (const cls of FITTED_COLUMNS) {
-      for (const cell of table.querySelectorAll<HTMLElement>(`td.${cls}, th.${cls}`)) {
+      for (const cell of table.querySelectorAll<HTMLTableCellElement>(`td.${cls}, th.${cls}`)) {
         widths.set(cls, Math.max(widths.get(cls) ?? 0, cell.getBoundingClientRect().width));
       }
     }
@@ -477,12 +489,42 @@ function fitColumns(container: HTMLElement): void {
     table.style.width = '';
   }
   for (const col of cols) col.style.width = '';
+  if (spanHead) spanHead.style.display = '';
   for (const cls of FITTED_COLUMNS) {
     const width = widths.get(cls);
     // A panel measured while hidden reports zero. Leaving the property
     // unset falls back to the stylesheet's worst-case width, which is
     // wrong-but-readable; a zero would collapse the column outright.
     if (width) container.style.setProperty(`--w-${cls}`, `${Math.ceil(width)}px`);
+  }
+  if (spanHead) fitSpannedHeader(container, spanHead);
+}
+
+// Widen Actions if the header button, which covers Actions and Remove,
+// would otherwise hang off the table's right edge — which it will
+// whenever its words are wider than a row's icon button plus a can.
+//
+// Everything here is read AFTER the widths above have landed, in the
+// layout the panel will keep: the button's own width (it is never
+// stretched, so its cell's width doesn't decide it) against the width
+// Remove actually rendered at. Remove is not a fitted column — it is
+// one can wide, from the stylesheet — so there is nothing measured to
+// ask instead. A second layout, still with no `await` between, so no
+// frame is painted in the middle.
+//
+// Either column can be read from any table in the panel: both are
+// container-wide, `--w-col-actions` by construction and Remove because
+// its width is a constant.
+function fitSpannedHeader(container: HTMLElement, spanHead: HTMLTableCellElement): void {
+  const action = spanHead.firstElementChild;
+  const remove = container.querySelector<HTMLElement>('.versions-table td.col-remove');
+  const actions = container.querySelector<HTMLElement>('.versions-table td.col-actions');
+  if (!action || !remove || !actions) return;
+  const need = Math.ceil(
+    action.getBoundingClientRect().width - remove.getBoundingClientRect().width,
+  );
+  if (need > actions.getBoundingClientRect().width) {
+    container.style.setProperty('--w-col-actions', `${need}px`);
   }
 }
 
@@ -577,11 +619,24 @@ function appendHeadings(
     ['', 'col-actions'],
     ['', 'col-remove'],
   ] as const) {
+    // The header action (Refresh all) is the table's own control, not
+    // the actions column's heading, so it spans that column and the
+    // removal one and sits flush with the table's right edge. Without
+    // the span it stops a can's width short of it, which reads as a
+    // button that missed its alignment rather than as a heading.
+    if (cls === 'col-remove' && headerAction) continue;
     const th = document.createElement('th');
     th.className = cls;
-    th.scope = 'col';
-    if (cls === 'col-actions' && headerAction) th.appendChild(headerAction);
-    else th.textContent = label;
+    if (cls === 'col-actions' && headerAction) {
+      // No `scope`: this cell holds the table's own control, not a
+      // heading for anything under it. (`colgroup` would be the value
+      // if it did head both columns.)
+      th.colSpan = 2;
+      th.appendChild(headerAction);
+    } else {
+      th.scope = 'col';
+      th.textContent = label;
+    }
     head.appendChild(th);
   }
 }
@@ -1013,11 +1068,10 @@ function removeCell(
 // What it does NOT keep is the columns left of Location: a copy that
 // does not exist has no enable box, and its collection is the question
 // rather than an answer. Those two cells become one, holding the same
-// "Into [dropdown]" + Install the callout asks when nothing is
-// installed anywhere — with the button on the line under the dropdown.
-// Under, because the actions column is a whole table's width away from
-// the control that decides what the button would do; the line saying
-// why Install is off sits beside the button it is about.
+// question the callout asks when nothing is installed anywhere, in the
+// same shape: Install, "into", dropdown, on one line. Here rather than
+// in the actions column, which is a whole table's width away from the
+// control that decides what the button would do.
 function installRow(
   options: readonly InstallOption[],
   model: RelatedVersionsModel,
@@ -1031,32 +1085,33 @@ function installRow(
 
   const select = buildInstallSelect(options, { onChange: () => sync() });
   select.id = OFFER_SELECT_ID;
+  // The button, the word, and the dropdown read as one sentence —
+  // "Install into <collection>" — with the button as its verb. The
+  // label is the connector in that sentence, so it is not a heading
+  // and is not bold; the select keeps the whole phrase as its
+  // accessible name, since "into" alone names nothing.
   const label = document.createElement('label');
-  label.className = 'install-offer-label';
   label.htmlFor = OFFER_SELECT_ID;
-  // Just "Into", not the callout's "Install into": the section heading
-  // above has already said Install, and this cell is only as wide as
-  // two columns — a word spent twice is a word off the dropdown.
-  label.textContent = 'Into';
-  // The pair shares a line, so the label reads as the dropdown's own
-  // rather than as a heading over it.
-  const pick = document.createElement('div');
-  pick.className = 'install-offer-pick';
-  pick.append(label, select);
+  label.textContent = 'into';
+  select.setAttribute('aria-label', 'Install into');
 
   const b = button('Install', 'Install a copy of this script into the chosen collection', () => {
     void actions.install?.(b, selectedInstallChoice(select, options));
   }, true);
 
+  const pick = document.createElement('div');
+  pick.className = 'install-offer-pick';
+  pick.append(b, label, select);
+
   // The pre-selected entry can be one that already holds this script
   // (the default stays first regardless); Install then waits for a
-  // deliberate pick, and this line — beside the button, where the
-  // button is what it explains — says why it is off.
-  const note = document.createElement('span');
+  // deliberate pick, and this line says why it is off.
+  //
+  // Under the line rather than beside the button: the button leads a
+  // sentence, and a note spliced into the middle of one breaks the
+  // reading.
+  const note = document.createElement('div');
   note.className = 'install-offer-note';
-  const go = document.createElement('div');
-  go.className = 'install-offer-go';
-  go.append(b, note);
   const sync = (): void => {
     const blocked = installChoiceBlocked(select, options);
     b.disabled = blocked;
@@ -1064,7 +1119,7 @@ function installRow(
   };
   sync();
 
-  controls.append(pick, go);
+  controls.append(pick, note);
   tr.appendChild(controls);
 
   tr.appendChild(offerLocationCell(model.location));

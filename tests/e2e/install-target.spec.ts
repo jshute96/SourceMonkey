@@ -33,6 +33,25 @@ test.describe('install target dropdown', () => {
   });
   test.afterEach(async () => { await server.stop(); });
 
+  // The callout reads as one sentence — Install into <collection> —
+  // with the button as its verb, so it comes first in the markup too.
+  // The visible label is then only the connector, which names nothing
+  // on its own; the dropdown carries the whole phrase as its name.
+  test('the callout reads Install into [collection], in that order', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    void sm;
+    const page = await extensionContext.newPage();
+    await page.goto(previewUrl(extensionId, scriptUrl));
+    await expect(page.locator('#install-target')).toBeVisible();
+    expect(await page.locator('#install-callout > *').evaluateAll(
+      (els) => els.map((el) => el.id || el.tagName.toLowerCase()),
+    )).toEqual(['install-btn', 'install-target-label', 'install-target-slot']);
+    await expect(page.locator('#install-target-label')).toHaveText('into');
+    await expect(page.locator('#install-target')).toHaveAttribute('aria-label', 'Install into');
+    await page.close();
+  });
+
   test('with no collections at all, the list is the scheme default (new) and New collection…', async ({
     extensionContext, extensionId, sm,
   }) => {

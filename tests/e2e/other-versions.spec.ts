@@ -915,6 +915,13 @@ test.describe('other-versions panel', () => {
     // Every row in this section carries its own button, the current
     // one included.
     await expect(page.locator(`${PANEL} td.col-actions button`)).toHaveCount(2);
+    // It spans the actions and removal columns, so it ends flush with
+    // the removal buttons under it — neither short of them nor hanging
+    // off the table.
+    const headRight = (await page.locator(`${PANEL} th.col-actions button`).boundingBox())!;
+    const canRight = (await page.locator(`${PANEL} td.col-remove button`).first().boundingBox())!;
+    expect(Math.abs((headRight.x + headRight.width) - (canRight.x + canRight.width)))
+      .toBeLessThanOrEqual(1);
     await page.close();
   });
 
@@ -976,7 +983,7 @@ test.describe('other-versions panel', () => {
     await expect(offerHead).not.toBeInViewport();
     // The dropdown is labelled, and the callout's own copy of it is not
     // in the document twice over.
-    await expect(page.locator('label[for="install-target-offer"]')).toHaveText('Into');
+    await expect(page.locator('label[for="install-target-offer"]')).toHaveText('into');
     await expect(page.locator('#install-target')).toHaveCount(0);
     // Every action the header gave up is present in the table.
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');

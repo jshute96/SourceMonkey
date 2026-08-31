@@ -283,6 +283,10 @@ the *other* rows.
 - **The …all button** sits in the header row's actions column, and
   appears only when more than one row is refreshable. Same call as a
   single row's, with every id.
+  - **It spans the actions and removal columns**, so it ends flush
+    with the table's right edge rather than a can's width short of it.
+    It is the table's own control, not a column heading — the removal
+    column has no heading of its own either way.
 - **No refetch on a `sameIdentity` row.** It would pull that row's own,
   different upstream — a reasonable thing to want, but not "bring this
   up to date with what you are looking at", and offering it here would
@@ -553,12 +557,22 @@ copy of the script you are looking at. Its one row is the offer.
   announce as unlabelled values. Off screen, not `display: none`, which
   would drop it from the accessibility tree too.
 - **The columns left of Location become one cell** holding the same
-  question the callout asks when nothing is installed anywhere:
-  *Into [dropdown]* on one line, **Install** on the line under it. A
-  copy that does not exist has no enable box, and its collection is the
-  question rather than an answer.
-  - ***Into*, not *Install into*** — the section heading has already
-    said Install, and the cell is only two columns wide.
+  question the callout asks when nothing is installed anywhere, in the
+  same shape: **Install** *into [dropdown]* on one line. A copy that
+  does not exist has no enable box, and its collection is the question
+  rather than an answer.
+  - **The button is the sentence's verb**, so *into* between the two
+    controls is a connector, not a heading, and is not bold. The
+    dropdown carries *Install into* as its accessible name, since
+    *into* alone names nothing.
+  - **Tab reaches Install before the dropdown**, which is the one cost
+    of reading order: acting first is a keypress away from choosing.
+    Acceptable because the opening entry is never a one-click install —
+    it is either where the script already lives (so Install is
+    disabled) or the scheme default, which is what an immediate press
+    should mean.
+  - **Why Install is off** goes on the line under, not spliced into
+    the middle of the sentence.
 - **Location** is the location the whole panel was computed for — the
   page you are on, so never a link.
   - **Absolute, which is not always how the rows above spell it**: a
@@ -624,13 +638,17 @@ takes over. Built by
 - **The first entry is pre-selected** for an install (a move opens on
   its *(current)* entry instead), even when disabled;
   Install is then disabled until the user picks another entry, and the
-  line beside the offer section's button says why. Installing a second
+  line under the offer section's button says why. Installing a second
   copy is never the one-click path.
 - On a fresh profile the list is just *Scripts from web (new)* and
   *New collection…*. No default is created up-front — only by an
   install that targets it.
 - Directory / manifest collections never appear: a script can't be put
   into one.
+- **A long collection name is ellipsised, not clipped, and never
+  widens the row.** The control gives way to the Install button beside
+  it; Chrome sizes the *open* list to its widest option, so the whole
+  name is readable there.
 
 ### The opening click never picks
 
@@ -703,7 +721,7 @@ what it adds.
 
 | What exists | Banner | Header | Table |
 |---|---|---|---|
-| Nothing, anywhere | none | the **install callout**: *Install into [dropdown]* + Install | none |
+| Nothing, anywhere | none | the **install callout**: **Install** *into [dropdown]* | none |
 | Any copy, here or from a mirror | one line: ***This script is already installed.*** *Select which instance to update or install.* | Cancel, View raw source | every copy, plus an **Install another copy of this script** section with the same dropdown |
 | A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer section |
 

@@ -2579,6 +2579,10 @@ function showInstallCallout(
   }
   const select = buildInstallSelect(options, { onChange: () => sync() });
   select.id = 'install-target';
+  // Its visible label is only the connector "into" — the phrase the
+  // row reads as is spread across the button, the word and the
+  // dropdown, so the dropdown carries the whole of it as its name.
+  select.setAttribute('aria-label', 'Install into');
   // The pre-selected default can be one that already holds this
   // script; Install then waits for a deliberate pick.
   const sync = (): void => {

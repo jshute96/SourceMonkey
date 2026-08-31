@@ -322,7 +322,16 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
 }
 
 /* ---- "Install into" dropdown (src/related-versions.ts) ---- */
-select.install-target { font: inherit; padding: 3px 6px; max-width: 100%; }
+/* Ellipsised, not clipped: the control gives way to its neighbours
+   where a collection name is longer than the row (see the install
+   callout and the panel's offer row), and Chrome sizes the OPEN list
+   to its widest option, so the full name is still readable there. */
+select.install-target {
+  font: inherit;
+  padding: 3px 6px;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
 
 /* ---- Icon buttons (src/glyph.ts, src/delete-icon.ts) ---- */
 
