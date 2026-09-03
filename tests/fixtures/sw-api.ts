@@ -63,6 +63,11 @@ export interface SmApi {
   updateAllCollections(mode: Mode): Promise<unknown>;
   getTabState(tabId: number): Promise<TabStateSnapshot>;
   resetAllState(): Promise<void>;
+  // Forget when each script was last checked, so the next
+  // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.
+  // Needed by tests that drive two checks of the same script inside
+  // that window.
+  clearUpdateRateLimit(): Promise<void>;
   // `kind` says which path the sync took — see
   // docs/injection.md#the-sync-is-incremental. Both leave the same
   // registration set behind, so it is the only way a test can pin one.

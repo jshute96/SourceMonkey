@@ -51,6 +51,10 @@
        privilege gain — the cost is attribution (errors blamed on our
        script's sourceURL) and a one-navigation delay for the real
        update.
+     - forge `sm:focus`, making the SW re-check this tab's local
+       scripts for edits. Bounded by the updater's own 10s-per-script
+       interval, reads nothing back to the page, and does the same work
+       a navigation on the tab already does.
      - forge `sm:check-pending` with `needsValues:true` and another
        script's `id`. The SW would otherwise attach that script's
        GM_setValue snapshot (`gmValues`) to the reply, which the bridge
@@ -71,7 +75,7 @@
   "use strict";
   var MARKER = "sourcemonkey-bridge";
   var REPLY_MARKER = "sourcemonkey-bridge-reply";
-  var ALLOWED = ["sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending"];
+  var ALLOWED = ["sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending", "sm:focus"];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
   /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
      the page can't pre-set it false. The SW treats __viaBridge as

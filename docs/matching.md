@@ -419,6 +419,13 @@ Refresh, a Refresh All, or a background opportunistic check (see
 [storage.md](storage.md#updater)) — every open tab whose current
 document is running the OLD version flips to PURPLE/RELOAD.
 
+For a **local** script the check that finds the change is usually the
+[focus-triggered one](updates.md#focus-triggered-refresh), which runs
+when the user switches to the tab. Persistent purple is then up
+*before* they reload, and the reload that follows is clean rather than
+a race. An http(s) script is not checked on focus, so its purple still
+arrives on the navigation that noticed the update.
+
 How it works:
 
 - All refresh paths go through `script-updater.ts`, which writes via

@@ -266,13 +266,22 @@ To generate a manifest from a directory of userscripts, run
 
 ### Keeping scripts up to date
 
-- **While you browse**, SourceMonkey checks in the background whether
-  the source files of the scripts running on the page have changed. Any
-  change is loaded immediately, and the toolbar badge turns purple with
-  a "Reload to update" tooltip.
+Nothing polls on a timer. A script's source is re-checked at these
+moments, and any change is loaded immediately — the toolbar badge then
+turns purple with a "Reload to update" tooltip.
+
+- **Loading a page** re-checks the scripts that run on it.
+- **Switching to a tab** re-checks the scripts on it that came from
+  local disk. So editing a script in your editor and switching back to
+  the browser turns the badge purple before you reload, and that reload
+  runs the new version. Scripts installed from the web are left alone
+  here, to avoid a request to their site every time you change tabs.
 - **Reloading a tab picks up edits on the same click** — SourceMonkey
   races a quick re-check against the page load, so a script you just
   saved usually runs on that very reload.
+- The same script is re-checked at most once every 10 seconds, so two
+  edits in quick succession may need a moment before the second is
+  noticed.
 - **Refresh** (per collection, or **Refresh All**) checks for updates manually.
   External tools can trigger a refresh by opening the collections page with
   one of these, where `<id>` is the extension's ID:

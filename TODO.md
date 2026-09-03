@@ -1266,6 +1266,11 @@ they follow are in
 ### Other
 
 - auto-reload any page if scripts on it have updated (maybe just for manual focused refresh, and do double-refresh if a new script is discovered but not ready)
+  - the detection half shipped: switching to a tab re-checks its local
+    scripts, so the new body is ready and the badge is purple before
+    the user reloads — see
+    [docs/updates.md](docs/updates.md#focus-triggered-refresh). What's
+    left is doing the reload for them.
 - relative paths for dev, absolute paths for release (for requires & resources)
 - ~~download a script to local disk for editing / debugging~~ — shipped
   as **Local copy…** ([docs/local-copy.md](docs/local-copy.md)); what's

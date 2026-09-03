@@ -133,6 +133,11 @@ export const SM_ABANDONED_MSG = 'sm:abandoned';
 // GM_log capture: the page-side runtime sends one of these for every
 // GM_log() call so the SW can append it to the script's Log tab.
 export const SM_GM_LOG_MSG = 'sm:gm-log';
+// The page reporting that it just came to the front, so the SW can
+// check this tab's local scripts for edits. Chrome's own focus events
+// miss the case that matters most — see
+// docs/updates.md#focus-triggered-refresh.
+export const SM_FOCUS_MSG = 'sm:focus';
 
 // Reserved registration ids. Chrome's userScripts API rejects ids
 // that start with `_`, so we use a `sourcemonkey-` prefix; stored

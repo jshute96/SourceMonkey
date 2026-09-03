@@ -21,7 +21,9 @@ import {
   debugDumpCache,
   ensureLoaded,
   findMatchesForUrl,
+  hasLocalScripts,
   installStorageListener,
+  localScriptIds,
   onCacheChanged,
   type MatchedScript,
 } from './match-index.js';
@@ -77,6 +79,7 @@ import {
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
   SM_ERROR_MSG,
+  SM_FOCUS_MSG,
   SM_GM_LOG_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
@@ -100,6 +103,7 @@ import {
   type TabRecord,
 } from './tab-status.js';
 import {
+  _resetUpdaterStateForTests,
   replayScriptLogsAtBoot,
   requestOpportunisticScriptChecks,
   updateAllCollections,
@@ -287,6 +291,11 @@ interface SourceMonkeyApi {
   // Wipe local + session storage and unregister every userscript so
   // each test starts clean.
   resetAllState: () => Promise<void>;
+  // Forget when each script/collection was last checked, so the next
+  // check isn't skipped by `UPDATE_MIN_INTERVAL_MS`. A test that drives
+  // two opportunistic checks of the same script — a navigation and then
+  // a focus switch, say — would otherwise have to sit out the interval.
+  clearUpdateRateLimit: () => void;
   // Force an immediate chrome.userScripts re-sync, bypassing the 50ms
   // debounce in scheduleSync(). Tests use this after addCollection /
   // updateScript / setCollectionEnabled so the navigation that follows
@@ -550,6 +559,7 @@ const api: SourceMonkeyApi = {
     return { registered: list.map((s) => ({ id: s.id })), kind };
   },
   replayScriptLogsAtBoot,
+  clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },
   resetAllState: async () => {
     // The parse check re-enables itself: its off-switch lives in the
     // session storage cleared below, precisely so no context has to
@@ -575,6 +585,11 @@ const api: SourceMonkeyApi = {
     // against the wrong baseline.
     resetDirectoryListingFetches();
     resetCollectionRowReads();
+    // And the update rate-limiter: it keyed the previous test's checks
+    // by script id, and ids are per-test, but a collection-level or
+    // all-collections entry would carry over and silently skip the next
+    // test's first opportunistic check.
+    _resetUpdaterStateForTests();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -1352,6 +1367,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // Drop the reload flash: there's no badge left to repaint, and its
   // backstop timer would keep the SW alive for nothing.
   dropReloadFlash(tabId);
+  // The focus-check guard releases itself in a `finally`, so this is
+  // belt-and-braces against a future path that doesn't — cheap, and
+  // the map is keyed by ids Chrome reuses.
+  focusChecksInFlight.delete(tabId);
   // Drop any reload-fast-path entries for this tab so a slow refresh
   // doesn't hold a stale closure indefinitely. Keys are `${tabId}:`
   // prefixed, so a string prefix match is enough.
@@ -1457,6 +1476,131 @@ async function refreshAllOpenTabs(): Promise<void> {
       // for every script on every open tab.
       enqueueTabWork(tabId, () => updateTabMatches(tabId, url, null, 'refresh'));
     }
+  }
+}
+
+// ---------- Focus-triggered refresh ----------
+//
+// See docs/updates.md#focus-triggered-refresh. Bringing a tab to the
+// front checks the local scripts running on it for edits, so the
+// RELOAD badge is already up — and the new body already registered —
+// before the user reaches for the reload key. Without it the first
+// thing that notices an edit is the reload itself, which then has to
+// win the 500 ms race in the reload fast path or ask for a second one.
+//
+// Three signals reach `refreshLocalScriptsOnTab`, because no one of
+// them covers every way a page comes to the front:
+//   - `tabs.onActivated`     — a different tab in this window came to
+//                              the front. Doesn't fire when Chrome
+//                              itself regains focus.
+//   - `windows.onFocusChanged` — focus moved to a different Chrome
+//                              window. Doesn't fire for a tab switch.
+//   - `sm:focus` from the page (`installFocusSignal` in
+//                              `userscript-prelude.js`, handled in
+//                              `installScriptMessageListener`) — the
+//                              document's own focus / visibilitychange.
+// The page reports because the workflow this feature exists for —
+// edit in an editor, alt-tab back to the browser — raises NEITHER
+// chrome event on some platforms. Measured on Linux/X11: coming back
+// from another application produced no chrome.* event at all. Whether
+// it does is platform- and window-manager-dependent, so the page is
+// the only signal that behaves the same everywhere.
+//
+// More than one can describe a single gesture; see the guard below.
+
+// Local scripts only. An http(s) collection would mean a conditional
+// GET to a third party on every alt-tab, for a script the user is
+// unlikely to be editing; local reads are cheap and are the case this
+// is for.
+//
+// Rate limiting is `updateScript`'s own `UPDATE_MIN_INTERVAL_MS` gate,
+// which already skips a check for a script looked at inside the last
+// 10s, and coalesces onto any check already in flight. The only thing
+// kept here is a per-tab guard against signals that OVERLAP: without
+// it each would pay for the same `storage.session` read. It is held
+// only across the reads below, so two signals a few ms apart both get
+// through — the updater's gate is what collapses their work, not this.
+// A guard rather than a time debounce on purpose — a time window would
+// also swallow a genuine second switch, and the interval that *should*
+// decide whether to re-check lives in the updater, not here.
+const focusChecksInFlight = new Set<number>();
+
+function installFocusRefresh(): void {
+  chrome.tabs.onActivated.addListener((info) => {
+    dlog(`[SourceMonkey] tab ${info.tabId} activated`);
+    void refreshLocalScriptsOnTab(info.tabId);
+  });
+  if (chrome.windows && chrome.windows.onFocusChanged) {
+    chrome.windows.onFocusChanged.addListener(async (windowId) => {
+      // Logged before the WINDOW_ID_NONE filter, and naming the id:
+      // whether this event arrives AT ALL when the user comes back
+      // from another application is platform- and window-manager-
+      // dependent, so "no line here" and "a line we filtered out" are
+      // different diagnoses and have to look different.
+      dlog(`[SourceMonkey] window focus changed to ${windowId}`);
+      // Chrome lost focus entirely — nothing came to the front.
+      if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, windowId });
+        if (tab?.id === undefined) {
+          dlog(`[SourceMonkey] window ${windowId} has no active tab to check`);
+          return;
+        }
+        await refreshLocalScriptsOnTab(tab.id);
+      } catch (err) {
+        // The window went away between the event and the query. Nothing
+        // to check, and nothing the user could act on.
+        dlog(`[SourceMonkey] could not resolve window ${windowId}: ${describeError(err)}`);
+      }
+    });
+  }
+}
+
+// Kick off update checks for the local scripts running on one tab's
+// current document.
+//
+// Fire-and-forget by design: whatever a check finds lands through the
+// paths that already exist — a changed row re-registers via the
+// injector, `installStaleScriptListener` paints the tab's badge purple,
+// and an open viewer repaints from its own storage listener.
+async function refreshLocalScriptsOnTab(tabId: number): Promise<void> {
+  if (focusChecksInFlight.has(tabId)) return;
+  focusChecksInFlight.add(tabId);
+  try {
+    // The cache is what tells local rows from remote ones, and on a cold
+    // worker the focus event can land before the initial load — without
+    // this every id would filter out and the check would silently skip.
+    await ensureLoaded();
+    // Before the session read, not after: every tab switch and window
+    // focus change reaches this, and a profile with no local scripts
+    // at all — every http collection — would otherwise pay for a
+    // `storage.session` read per switch to learn the same nothing.
+    if (!hasLocalScripts()) {
+      dlog(`[SourceMonkey] focus check on tab ${tabId}: no local scripts installed`);
+      return;
+    }
+    const record = await getTabRecord(tabId);
+    // The current document only. An older document in the same tab is
+    // no longer on screen, and the scripts we care about are the ones
+    // whose code the user is looking at.
+    const current = record?.byDoc[record.currentDocId];
+    if (!current) {
+      // Logged, because it is otherwise indistinguishable from the
+      // signal never arriving — the confusion this logging exists to
+      // prevent. A tab we hold no state for: never navigated to an
+      // injectable URL, or its record aged out.
+      dlog(`[SourceMonkey] focus check on tab ${tabId}: no state for its current document`);
+      return;
+    }
+    const ids = localScriptIds(current.matches.map((m) => m.id));
+    if (ids.length === 0) {
+      dlog(`[SourceMonkey] focus check on tab ${tabId}: no local scripts on this page`);
+      return;
+    }
+    dlog(`[SourceMonkey] focus check on tab ${tabId}: ${ids.length} local script(s)`);
+    requestOpportunisticScriptChecks(ids);
+  } finally {
+    focusChecksInFlight.delete(tabId);
   }
 }
 
@@ -2924,6 +3068,19 @@ function installScriptMessageListener(): void {
       );
       return true;
     }
+    if (type === SM_FOCUS_MSG) {
+      // The page saying it just came to the front — the third of the
+      // signals `installFocusRefresh` describes, and the only one that
+      // survives a return from another application on every platform.
+      // Logged like the other two: this is the signal hardest to
+      // confirm any other way.
+      dlog(`[SourceMonkey] page on tab ${tabId} reported focus`);
+      // No reply: the wrapper doesn't wait, and the work is the same
+      // fire-and-forget check a focus event triggers.
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      void refreshLocalScriptsOnTab(tabId);
+      return false;
+    }
     if (type === 'sm:gm-xhr-start') {
       // GM_xmlhttpRequest dispatch. Ack the start synchronously so
       // the message channel doesn't stay pinned open for the entire
@@ -3387,6 +3544,7 @@ setParseChecker(compileParseChecker);
 void ensureLogIdsLoaded();
 installStorageListener();
 installStaleScriptListener();
+installFocusRefresh();
 installNavigationListeners();
 installDeepLinkRedirect();
 installUserJsCapture();

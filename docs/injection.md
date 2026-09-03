@@ -810,6 +810,10 @@ listener that handles these wrapper-originated message types:
 - `sm:error` — synchronous or attributed-async throw.
 - `sm:abandoned` — the wrapper exited without running anything
   (SW replied `skip`). Logged only; no badge change.
+- `sm:focus` — the document came to the front. Not per-script and not
+  a report about one: one listener per world per document, and the SW
+  answers it by checking this tab's local scripts for edits. See
+  [updates.md](updates.md#focus-triggered-refresh).
 
 For the report types (start / swapped / error) the SW:
 
@@ -862,6 +866,21 @@ Without the fast-path, the flow for "edit script, reload tab" is:
 Two clicks per edit gets annoying fast. The fast-path collapses it to
 one for the common "edited file is already on disk before reload"
 case.
+
+**For a local script it is now the backstop rather than the first
+line**, because the
+[focus-triggered refresh](updates.md#focus-triggered-refresh) checks
+local scripts when the user switches to the tab:
+
+- That check usually lands first, so by reload time the new body is
+  already registered and there is no race to win.
+- What is left for the fast path is an edit that arrives while the tab
+  is already in front — no switch to trigger on.
+
+**For an http(s) script the fast path is still the only mechanism.**
+The focus check deliberately skips those (a conditional GET to a third
+party on every alt-tab), so a published update is picked up by the
+reload's own refresh, racing the same 500 ms window as before.
 
 ### Setup
 

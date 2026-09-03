@@ -105,6 +105,11 @@ export function gate<T>(
   mode: UpdateMode,
   task: () => Promise<T>,
   skipResult: T,
+  // How the rate-limit skip below names this resource. Only the caller
+  // knows whether the key is a script, a collection, or the
+  // all-collections sentinel, and only a script has a readable label —
+  // so the naming is passed in rather than guessed from the key.
+  label: string = String(key),
 ): Promise<T> {
   let slot = state.get(key);
   if (!slot) {
@@ -117,7 +122,15 @@ export function gate<T>(
   if (slot.inFlight) return slot.inFlight.promise;
   if (mode === 'opportunistic') {
     const last = slot.lastCompletedAt ?? 0;
-    if (nowMsImpl() - last < UPDATE_MIN_INTERVAL_MS) {
+    const since = nowMsImpl() - last;
+    if (since < UPDATE_MIN_INTERVAL_MS) {
+      // Logged because a rate-limited check does nothing else: no
+      // fetch, no storage write, no other log line. Without this it
+      // looks identical to a check that never started.
+      dlog(
+        `[SourceMonkey] update check skipped for ${label}: ` +
+        `checked ${Math.round(since / 1000)}s ago, interval is ${UPDATE_MIN_INTERVAL_MS / 1000}s`,
+      );
       return Promise.resolve(skipResult);
     }
   }
@@ -197,6 +210,7 @@ export function updateScript(
   return gate(
     scriptState, scriptId, mode,
     () => runScriptCheck(scriptId, mode, probe, parseCheck, batch), null,
+    getScriptLogLabel(scriptId),
   );
 }
 
@@ -206,7 +220,11 @@ export function updateCollection(
   mode: UpdateMode,
   probe: ProbePolicy = 'force',
 ): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
-  return gate(collectionState, collectionId, mode, () => runCollectionCheck(collectionId, mode, probe), null);
+  return gate(
+    collectionState, collectionId, mode,
+    () => runCollectionCheck(collectionId, mode, probe), null,
+    `collection ${collectionId}`,
+  );
 }
 
 // Only ever reached from Refresh All, so probes force by default.
@@ -223,6 +241,7 @@ export function updateAllCollections(
     mode,
     () => runAllCollectionsCheck(mode, probe) as Promise<unknown>,
     new Map(),
+    'all collections',
   ) as Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>>;
 }
 

@@ -16,6 +16,7 @@
 // collection flips every script under it in O(1) without rewalking
 // storage.
 
+import { isFileUrl } from './directories.js';
 import { scriptDisplayName } from './script-display.js';
 import { scanAllStorage } from './storage-scan.js';
 import {
@@ -41,6 +42,10 @@ const COLLECTION_PREFIX = 'collection:';
 
 interface CacheEntry extends MatchedScript {
   enabled: boolean;   // the script's own toggle (not the collection's)
+  // Loaded from disk rather than over the network. Cached here so the
+  // focus-triggered refresh can pick the local rows out of a tab's
+  // match set without reading storage — see `localScriptIds`.
+  local: boolean;
 }
 
 let cache = new Map<string, CacheEntry>();
@@ -109,6 +114,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
     matching: script.matching,
     collectionId: script.collectionId,
     enabled: isScriptEnabled(script),
+    local: isFileUrl(script.fileUrl),
   };
 }
 
@@ -277,6 +283,32 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
   // Stable display order for the tooltip.
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
+}
+
+// Narrow a set of script ids to the ones loaded from `file://`.
+//
+// Keyed on each script's own `fileUrl`, not on its collection's
+// location: a container collection holds individually-installed scripts
+// of both kinds, so the collection is the wrong unit for this question.
+// (`isLocalCollection` in refresh-targets.ts answers the collection-level
+// version, and has to special-case containers for exactly this reason.)
+//
+// Ids the cache doesn't hold — a script that isn't injectable, or one
+// deleted since the tab last matched — are dropped rather than assumed
+// local: there is nothing to refresh either way.
+export function localScriptIds(ids: readonly string[]): string[] {
+  return ids.filter((id) => cache.get(id)?.local === true);
+}
+
+// Does the profile hold ANY injectable local script?
+//
+// The cheap gate in front of the focus-triggered refresh: it runs on
+// every tab switch and window focus change, and a profile with only
+// http collections has nothing for it to do. Answering from the
+// in-memory cache keeps that case off `chrome.storage.session`.
+export function hasLocalScripts(): boolean {
+  for (const entry of cache.values()) if (entry.local) return true;
+  return false;
 }
 
 export function cacheSize(): number {

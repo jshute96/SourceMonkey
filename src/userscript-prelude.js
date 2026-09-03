@@ -253,6 +253,54 @@
       stack: stack
     });
   }
+  /* ---------- focus signal ----------
+
+     Chrome tells the service worker about tab switches
+     (`tabs.onActivated`) and about focus moving between Chrome
+     windows (`windows.onFocusChanged`), but on some platforms and
+     window managers — Linux/X11 in particular — it says nothing when
+     Chrome regains focus from ANOTHER APPLICATION. That is exactly the
+     case the focus-triggered refresh exists for: edit the script in an
+     editor, alt-tab back to the browser. So the page reports it
+     instead, which works the same everywhere.
+
+     One listener per execution world per document (the prelude IIFE is
+     idempotent), installed only once some script has matched this URL
+     — a page we run nothing on has nothing to re-check.
+
+     See docs/updates.md#focus-triggered-refresh. */
+
+  /* Floor between signals from one document. The SW-side check is
+     rate-limited far harder (10s per script) and is idempotent, so
+     this exists only to keep focus churn — clicking in and out of an
+     embedded editor, say — from waking the worker each time. Set below
+     the SW's interval so it never becomes the binding limit. */
+  var FOCUS_SIGNAL_MIN_MS = 5000;
+  var lastFocusSignalAt = 0;
+  var focusSignalInstalled = false;
+
+  function sendFocusSignal() {
+    var now = Date.now();
+    if (now - lastFocusSignalAt < FOCUS_SIGNAL_MIN_MS) return;
+    lastFocusSignalAt = now;
+    send({ type: "sm:focus", url: location.href });
+  }
+
+  function installFocusSignal() {
+    if (focusSignalInstalled) return;
+    focusSignalInstalled = true;
+    try {
+      /* `focus` is the one that fires when the window comes back from
+         another application. `visibilitychange` covers a tab switch —
+         redundant with `tabs.onActivated` on the SW side, but the two
+         are cheap together and neither alone covers both cases. */
+      window.addEventListener("focus", sendFocusSignal);
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) sendFocusSignal();
+      });
+    } catch (_e) {}
+  }
+
   function installAsyncListeners(entry) {
     if (entry.asyncListenersInstalled) return;
     entry.asyncListenersInstalled = true;
@@ -435,6 +483,9 @@
        entry (which runs BEFORE the main body's deferred callback) is
        still attributed correctly through the window error listener. */
     installAsyncListeners(entry);
+    /* Past the matcher, so only a document we actually run on reports
+       its focus. Not per-script — the flag inside is module-scoped. */
+    installFocusSignal();
     emitStartupLogs(cfg);
     /* The two gates run CONCURRENTLY and the body starts at
        max(decision, run-at) — `flushPending` is the join, and it needs

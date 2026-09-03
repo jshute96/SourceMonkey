@@ -59,7 +59,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
 | `src/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
-| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
+| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
 | `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
 | `src/raw-view.ts` | Session-storage hand-off (`rawview:` rows) that carries a fetched script from the viewer's preview to its raw-source tab |
@@ -111,7 +111,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
-| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
+| `src/match-index.ts` | In-memory cache of injectable scripts' matching info and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
 | `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
@@ -132,7 +132,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, containment |
-| `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
+| `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
@@ -183,6 +183,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
+| `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |
@@ -360,7 +361,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/file-index.md` | This file |
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
 | `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, collections-page render |
-| `docs/updates.md` | How scripts update from their install source, and why `@updateURL`/`@downloadURL` are probed but never followed |
+| `docs/updates.md` | How scripts update from their install source, the focus-triggered local check, and why `@updateURL`/`@downloadURL` are probed but never followed |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |
 | `docs/http-collections.md` | `http(s)://` script and manifest collections, container routing, GitHub handling, conditional GETs |
 | `docs/script-viewer.md` | Userscript viewer page + header parser (`splitHeaderBody`, `parseHeader`, …) |
