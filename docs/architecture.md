@@ -232,6 +232,80 @@ details live in the topic-specific docs linked below.
 
 ## Extension-page styling
 
+### The page header bar
+
+- **Every user-facing page opens with the same bar** (`.page-header` in
+  `src/styles.css`): the extension icon, the
+  `SourceMonkey | <page>` heading, and that page's cross-page
+  navigation pushed to the right edge.
+  - Collections carries Options and Refresh All; Options carries
+    Collections; the viewer and the raw view carry none.
+  - `offscreen.html` and `parse-sandbox.html` have no bar — no user
+    ever sees them.
+- **The heading is the page's `<h1>`, moved into the bar** rather than a
+  second copy of the title. On the viewer that is the live
+  `#filename` heading, script name and favicon included.
+  - The product half wears `.brand` and takes the brown; the rest of
+    the heading stays near-black. The viewer's `.heading-prefix`
+    carries both classes.
+- **Brown.** The bar sits directly above the
+  viewer's green "Other versions" card and the amber warning-banner
+  slot. A tint from either family reads as the top of that card
+  instead of as page chrome; brown is where the icon's own colours
+  live and is far enough off both.
+- **The bar is full-bleed; its contents are not.** `.page-header` paints
+  the background edge to edge, and `.page-header-inner` centres the row
+  on `--page-width` — the same column `.page-body` centres, so the
+  heading starts directly above the page's own first line.
+  - Every page's content inset is 16px, the bar's included, so the two
+    edges line up on the full-bleed pages too.
+  - Collections and Options set `--page-width: 720px`. The viewer and
+    the raw view leave it unset and run full width.
+- **The viewer keeps its flex column**, moved down one level into
+  `.page-main` (`flex: 1 1 auto; min-height: 0`) so the code box still
+  takes the leftover height under the bar.
+
+#### Naming the bar before the page loads
+
+The bar is the one thing on the page that says what the page *is*, so it
+must not be the last thing to arrive. What gets it there, in the order it
+takes effect:
+
+- **The brand run is in the markup.** `userscript.html` ships the
+  `SourceMonkey |` spans inside its `<h1>`, so the bar is never an icon
+  beside an empty line. It is byte-for-byte what
+  `headingPrefixEl(INSTALLED_HEADING)` builds, so nothing moves when the
+  real heading replaces it.
+- **A module with no static imports paints the rest.**
+  `src/page-heading.ts` is loaded ahead of `userscript.js` and imports
+  nothing at all, because a module does not evaluate until everything it
+  imports has been fetched — one small import would be enough to put its
+  first line back after the first paint.
+  - The **prefix** goes on synchronously: which of the two pages this is
+    can be read off the query string, no storage needed. This is what
+    puts `Install | ` on the install page's first paint.
+  - The **name** needs the one `script:<id>` row plus the label helpers,
+    which arrive by dynamic `import()` — after the prefix is on screen.
+    Until then the heading is the prefix and nothing else, which fills
+    in rather than being replaced.
+  - `userscript.ts` imports the module too. A module runs once, so the
+    early paint happens once and the heading constants have a single
+    home rather than a copy per entry point.
+- **Prism is deferred.** Its `<script>` tags blocked parsing, and
+  everything deferred waits for parsing to finish. Deferred scripts still
+  run in document order, so Prism is defined before `userscript.js`.
+  - They also carry `data-manual`, which stands Prism's automatic
+    `highlightAll()` down. Nothing wanted it — `code-tabs.ts` highlights
+    the code box itself — and deferring would otherwise have moved that
+    pass to a frame after `DOMContentLoaded`, where it could rebuild the
+    block and drop the links `code-links.ts` puts in.
+- **The install preview is the exception.** Its script's `@name` is inside
+  a file that hasn't been fetched.
+  - So it paints `SourceMonkey | Install | ` early and lets the name land
+    with the rest.
+  - Naming it from the URL would only move the flash: the location it
+    would show is usually not what the finished heading says.
+
 ### Buttons
 
 - **Every button in the extension shares one surface**, defined once in

@@ -63,7 +63,6 @@ import {
   type LocalFileScope,
 } from './local-file-overrides.js';
 import {
-  appendWithSlashBreaks,
   COLLECTION_OFF_TITLE,
   effectiveDisplayName,
   makeCollectionTypeBubble,
@@ -80,6 +79,7 @@ import {
   updateScript,
 } from './script-updater.js';
 import {
+  appendWithSlashBreaks,
   displayLocation,
   effectiveScriptStatus,
   ENABLE_TITLE,

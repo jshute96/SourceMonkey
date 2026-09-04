@@ -474,3 +474,93 @@ select.install-target {
 @media (prefers-reduced-motion: reduce) {
   .btn-glyph.spinning { animation: none; opacity: 0.55; }
 }
+
+/* ---- Page header bar (every extension page) ---- */
+
+/* One bar across the top of every page: the extension icon, the
+   "SourceMonkey | <page>" heading, and whatever cross-page navigation
+   that page offers, pushed to the right edge.
+
+   Brown rather than the obvious green: the bar sits directly above the
+   viewer's green "Other versions" card and the amber warning banner
+   slot, and a green bar would read as the top of that card. Brown is
+   where the monkey icon's own colours live, and it is desaturated
+   enough not to be mistaken for the amber banner. */
+:root {
+  --brand-fg: #6b4423;
+  --header-bg: #f2e9dc;
+  --header-border: #b59a78;
+  /* The content column every page centres. The bar's contents honour
+     it too, so the heading starts at the same x as the page body
+     underneath rather than at the window edge. Pages that run
+     full-bleed (the viewer, the raw view) leave it unset. */
+  --page-width: none;
+}
+
+/* Full-bleed background; the inner row is what gets constrained. The
+   16px side padding matches the page body's, so the two content edges
+   line up at every window width. */
+.page-header {
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  padding: 0 16px;
+}
+
+.page-header-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Whole pixels, like the rest of the vertical metrics — see
+     docs/architecture.md, "Extension-page styling". */
+  padding: 8px 0;
+  max-width: var(--page-width);
+  margin: 0 auto;
+}
+
+.page-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+}
+
+/* The heading takes the row's slack so the actions sit at the right
+   edge; `min-width: 0` lets a long script name wrap instead of
+   pushing them off. */
+.page-header h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.15em;
+  font-weight: 700;
+  color: #222;
+}
+
+/* The product name and the separators after it, in the brand colour —
+   the same split the icon makes visually. The page name between or after
+   them stays in the heading's own colour.
+
+   Two shapes wear it, both rendering the same thing:
+   - Collections, Options and the raw view spell it in their markup, as
+     one span around `SourceMonkey |`.
+   - The viewer builds it (`headingPrefixEl`, src/page-heading.ts), a
+     span per term, because its heading has a page name in the middle
+     ("SourceMonkey | Install | <script>"). Those spans wear
+     `.heading-prefix` as well. */
+.page-header h1 .brand { color: var(--brand-fg); }
+
+.page-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The page's own content column, under the bar. Content-box sizing so
+   `--page-width` means the text column, not the column plus padding —
+   that is what makes it line up with the bar's inner row. */
+.page-body {
+  box-sizing: content-box;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 24px 16px;
+}

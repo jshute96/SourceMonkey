@@ -5,8 +5,10 @@
     <title>SourceMonkey | Collections</title>
     <link rel="stylesheet" href="styles.css" />
     <style>
-      body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
-      h1 { margin-top: 0; margin-bottom: 19px; }
+      /* Full-bleed body; the header bar and `.page-body` (styles.css)
+         each centre their own contents on the shared `--page-width`
+         column. */
+      body { font: 14px system-ui, sans-serif; margin: 0; color: #222; --page-width: 720px; }
       /* Grid layout so a long display name that needs to wrap stays
          inside the right-hand column instead of dropping back to the
          row's left edge. Column 1 sizes to the bubble; column 2 takes
@@ -172,40 +174,36 @@
          what-changed signal. */
       .script-table tr.row-updated td { background: #cdebcf; }
       .script-table tr.row-failed  td { background: #f5c2c7; }
-      /* Top-of-page action bar — sits above the add form. Both buttons
-         sit at the right edge, with Refresh All rightmost: the same
-         order the collection headers use. */
-      .top-actions {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 0.5em;
-        margin-bottom: 0.5em;
-      }
     </style>
   </head>
   <body>
     <!--#include glyph-sprite-->
-    <h1>SourceMonkey | Collections</h1>
+    <header class="page-header">
+      <div class="page-header-inner">
+        <img class="page-icon" src="icons/icon-48.png" alt="" />
+        <h1><span class="brand">SourceMonkey |</span> Collections</h1>
+        <div class="page-header-actions">
+          <button id="open-options" type="button" title="Open the options page">Options</button>
+          <!-- The label ships in the markup so the button is never blank:
+               collections.js is a deferred module, and `setGlyphButton`
+               (src/collections.ts) replaces this text with the same word
+               beside a glyph once it runs. -->
+          <button id="refresh-all" type="button">Refresh All</button>
+        </div>
+      </div>
+    </header>
 
-    <div id="banner-slot"></div>
+    <div class="page-body">
+      <div id="banner-slot"></div>
 
-    <div class="top-actions">
-      <button id="open-options" type="button" title="Open the options page">Options</button>
-      <!-- The label ships in the markup so the button is never blank:
-           collections.js is a deferred module, and `setGlyphButton`
-           (src/collections.ts) replaces this text with the same word
-           beside a glyph once it runs. -->
-      <button id="refresh-all" type="button">Refresh All</button>
+      <form id="add-form" class="add-form">
+        <input id="add-path" type="text" placeholder="A .user.js file, a directory, a script_manifest.json, or a name for a new collection" autocomplete="off" spellcheck="false" />
+        <button type="submit">Add</button>
+      </form>
+      <p id="add-error" class="error" hidden></p>
+
+      <div id="collections"></div>
     </div>
-
-    <form id="add-form" class="add-form">
-      <input id="add-path" type="text" placeholder="A .user.js file, a directory, a script_manifest.json, or a name for a new collection" autocomplete="off" spellcheck="false" />
-      <button type="submit">Add</button>
-    </form>
-    <p id="add-error" class="error" hidden></p>
-
-    <div id="collections"></div>
 
     <script src="collections.js" type="module"></script>
   </body>

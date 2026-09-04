@@ -6,6 +6,12 @@
     <link rel="stylesheet" href="vendor/prism/prism.css" />
     <link rel="stylesheet" href="vendor/prism/prism-line-numbers.css" />
     <link rel="stylesheet" href="styles.css" />
+    <!-- Ahead of the Prism scripts and userscript.js on purpose: this
+         one paints the header bar's heading, and it has to run before
+         the browser's first paint rather than after the viewer's whole
+         module graph has loaded. Deferred like every module, so the <h1>
+         it writes into is already parsed. See src/page-heading.ts. -->
+    <script src="page-heading.js" type="module"></script>
     <style>
       html, body { height: 100%; margin: 0; }
       body {
@@ -13,7 +19,23 @@
         color: #222;
         display: flex;
         flex-direction: column;
-        padding: 1em;
+        box-sizing: border-box;
+      }
+      /* The page under the header bar. The body's flex column moves
+         down one level so the code box can still take the leftover
+         height: `min-height: 0` is what lets this column shrink below
+         its content, which is what makes the box scroll rather than
+         push the page taller. Full-bleed — the viewer has no
+         `--page-width` column, so its padding is the only inset. */
+      .page-main {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        /* 16px, matching `.page-header`'s side padding, so the heading
+           starts directly above the page's own first line. `1em` here
+           is 14px and put the two two pixels apart. */
+        padding: 16px;
         box-sizing: border-box;
       }
       /* No focus ring, ever. The `tabindex` in the body exists only so
@@ -27,24 +49,19 @@
       h1:focus { outline: none; }
       /* No hanging indent here, unlike the collections page's name cell:
          the favicon is no longer the first thing on the line (the
-         "SourceMonkey | " / "SourceMonkey | Install " prefix is), so
+         "SourceMonkey | " / "SourceMonkey | Install | " prefix is), so
          there is no single x-position for continuation lines to align
          to. */
+      /* Size, weight and colour come from `.page-header h1`
+         (styles.css) — every page's heading is the same one. Only the
+         wrap behaviour is the viewer's own, because only here is the
+         heading a filename. */
       h1 {
-        font-size: 1em;
-        font-weight: 600;
-        margin: 0 0 0.4em;
         /* Slash-aware wrap: prefer spaces / slashes (with `<wbr>`
            markers inserted by appendWithSlashBreaks), then anywhere
            inside a word only when nothing else fits. */
         overflow-wrap: anywhere;
         word-break: normal;
-      }
-      /* The product prefix is context around the script's name, not
-         part of it, so it stays out of the name's weight. */
-      h1 .heading-prefix {
-        font-weight: 400;
-        color: #555;
       }
       /* Fixed-width slot for the site favicon, sitting between the
          heading's product prefix and the script's name. Always present,
@@ -58,7 +75,13 @@
         width: 16px;
         height: 16px;
         margin-right: 0.4em;
-        vertical-align: text-bottom;
+        /* Centred on the heading's CAP band, not on its baseline or its
+           descender line. `text-bottom` sits the 16px square on the
+           font's descender, which puts its centre ~1.4px below the
+           centre of the letters beside it — visible as a favicon
+           hanging low. The heading is 16.1px with a 12px cap height, so
+           2px of the square below the baseline centres the two. */
+        vertical-align: -2px;
       }
       .site-icon-inner {
         display: block;
@@ -949,12 +972,25 @@
   </head>
   <body>
     <!--#include glyph-sprite-->
-    <!-- `tabindex="-1"` so in-page navigation between copies can move
-         focus here: the heading, the details, and the code all change
-         with no document load for a screen reader to announce. Not
-         reachable by Tab, and it draws no focus ring (see the h1 rule
-         in the stylesheet above). -->
-    <h1 id="filename" tabindex="-1"></h1>
+    <header class="page-header">
+      <div class="page-header-inner">
+        <img class="page-icon" src="icons/icon-48.png" alt="" />
+        <!-- `tabindex="-1"` so in-page navigation between copies can move
+             focus here: the heading, the details, and the code all change
+             with no document load for a screen reader to announce. Not
+             reachable by Tab, and it draws no focus ring (see the h1 rule
+             in the stylesheet above). -->
+        <!-- The brand run ships in the markup, so the bar reads
+             "SourceMonkey |" from the document's own first paint rather
+             than after any script has run. Exactly what
+             `headingPrefixEl(INSTALLED_HEADING)` builds (src/page-heading.ts),
+             so when the heading is rendered for real this part of it does
+             not move: the installed page repaints the same two spans, and
+             the install page appends its "Install |" after them. -->
+        <h1 id="filename" tabindex="-1"><span class="heading-prefix brand">SourceMonkey</span><span class="heading-prefix brand"> | </span></h1>
+      </div>
+    </header>
+    <div class="page-main">
     <!-- Banner + versions panel, directly under the title and ABOVE the
          controls row: which copies of this script exist is the first
          thing either mode has to answer, and every control below acts
@@ -1009,8 +1045,23 @@
     <div id="tabs" class="tabs" role="tablist" hidden></div>
     <pre id="code-pane" class="code-box line-numbers" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>
-    <script src="vendor/prism/prism.js"></script>
-    <script src="vendor/prism/prism-line-numbers.js"></script>
+    </div>
+    <!-- `defer`, not blocking: a synchronous script here stalls parsing,
+         and everything deferred — page-heading.js included — has to wait
+         for parsing to finish. That put the header bar's name a couple
+         of frames behind the page's first paint. Deferred scripts still
+         run in document order, so Prism is still defined before
+         userscript.js evaluates.
+
+         `data-manual` stands Prism's own automatic highlightAll() pass
+         down. Nothing wanted it — code-tabs.ts highlights the code box
+         itself, once it has code to highlight — and deferring changed
+         WHEN that pass fires (readyState is no longer `loading`, so
+         Prism schedules it on a frame instead of DOMContentLoaded). A
+         pass that rebuilt the block from its textContent would drop the
+         <a> elements code-links.ts puts in. -->
+    <script src="vendor/prism/prism.js" data-manual defer></script>
+    <script src="vendor/prism/prism-line-numbers.js" defer></script>
     <script src="userscript.js" type="module"></script>
   </body>
 </html>

@@ -36,26 +36,26 @@ function keyFrom(url) {
 }
 
 test('put returns a raw.html URL carrying the key', async () => {
-  const url = await putRawView({ title: 'foo.user.js', text: 'body' });
+  const url = await putRawView({ name: 'foo.user.js', text: 'body' });
   assert.ok(url.startsWith(`chrome-extension://${EXT_ID}/${RAW_VIEW_PAGE}?`));
   assert.ok(isRawViewKey(keyFrom(url)));
 });
 
-test('round-trips title and text', async () => {
-  const view = { title: 'foo.user.js', text: '// ==UserScript==\nline two\n' };
+test('round-trips name and text', async () => {
+  const view = { name: 'foo.user.js', text: '// ==UserScript==\nline two\n' };
   const url = await putRawView(view);
   assert.deepEqual(await getRawView(keyFrom(url)), view);
 });
 
 test('each put gets its own key', async () => {
-  const a = keyFrom(await putRawView({ title: 'a', text: 'a' }));
-  const b = keyFrom(await putRawView({ title: 'b', text: 'b' }));
+  const a = keyFrom(await putRawView({ name: 'a', text: 'a' }));
+  const b = keyFrom(await putRawView({ name: 'b', text: 'b' }));
   assert.notEqual(a, b);
   assert.equal((await getRawView(a)).text, 'a');
 });
 
 test('drop makes the view unreadable', async () => {
-  const key = keyFrom(await putRawView({ title: 'gone', text: 'gone' }));
+  const key = keyFrom(await putRawView({ name: 'gone', text: 'gone' }));
   await dropRawView(key);
   assert.equal(await getRawView(key), null);
 });
@@ -63,7 +63,7 @@ test('drop makes the view unreadable', async () => {
 test('keys we did not mint are rejected without a storage read', async () => {
   // A hand-edited `?key=` must not turn the raw page into a dumper for
   // arbitrary session rows.
-  sessionStore.set('gmval:secret:token', { title: 'x', text: 'secret' });
+  sessionStore.set('gmval:secret:token', { name: 'x', text: 'secret' });
   assert.ok(!'gmval:secret:token'.startsWith(RAW_VIEW_PREFIX));
   assert.equal(isRawViewKey('gmval:secret:token'), false);
   assert.equal(await getRawView('gmval:secret:token'), null);
@@ -72,11 +72,11 @@ test('keys we did not mint are rejected without a storage read', async () => {
 });
 
 test('malformed rows read back as null', async () => {
-  sessionStore.set('rawview:bad', { title: 'no text field' });
+  sessionStore.set('rawview:bad', { name: 'no text field' });
   assert.equal(await getRawView('rawview:bad'), null);
 });
 
-test('a missing title reads back as empty, not undefined', async () => {
+test('a missing name reads back as empty, not undefined', async () => {
   sessionStore.set('rawview:untitled', { text: 'body' });
-  assert.deepEqual(await getRawView('rawview:untitled'), { title: '', text: 'body' });
+  assert.deepEqual(await getRawView('rawview:untitled'), { name: '', text: 'body' });
 });

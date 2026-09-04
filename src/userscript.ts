@@ -114,11 +114,12 @@ import {
 } from './script-rejection.js';
 import { updateScript } from './script-updater.js';
 import {
+  appendWithSlashBreaks,
   decodeForDisplay,
+  scriptLabel,
   displayLocation,
   formatBytes,
   formatScriptSize,
-  headerDisplayName,
   leafName,
   scriptBasename,
   scriptStatusView,
@@ -147,10 +148,21 @@ import {
   isSingleFileInput,
 } from './directories.js';
 import {
-  appendWithSlashBreaks,
   COLLECTION_OFF_TITLE,
 } from './collection-display.js';
 import { renderSiteIconInto } from './site-icon.js';
+// Also the page's early heading paint — see src/page-heading.ts. The
+// module runs once, so importing it here does not repeat that.
+import {
+  headingPrefixEl,
+  INSTALLED_HEADING,
+  INSTALLED_TITLE,
+  MISSING_LABEL,
+  PREVIEW_HEADING,
+  PREVIEW_TITLE,
+  notePainted,
+  setPageTitle,
+} from './page-heading.js';
 import { MarkupResponseError } from './markup-response.js';
 import { resolveScriptResource } from './file-loader.js';
 import {
@@ -3034,7 +3046,7 @@ function openRawSource(): void {
     navigateRaw(target);
     return;
   }
-  putRawView({ title: rawViewTitle(previewLocation), text: previewText })
+  putRawView({ name: scriptBasename(previewLocation), text: previewText })
     .then((url) => {
       const key = new URL(url).searchParams.get('key');
       if (key) rawViewKeys.add(key);
@@ -3044,14 +3056,6 @@ function openRawSource(): void {
     // per-script logs, so a big script can genuinely fail here. Say so
     // rather than having the button do nothing.
     .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
-}
-
-// The raw-source tab's name, once its content lands. Same shape as
-// every other page here (see architecture.md "Page names") — the
-// basename rather than the whole location, which is all a tab strip
-// has room for.
-function rawViewTitle(location: string): string {
-  return `${scriptBasename(location)} | SourceMonkey`;
 }
 
 // Every navigation the preview initiates goes through here: stand the
@@ -3256,44 +3260,6 @@ function startBusy(btn: HTMLButtonElement): HTMLElement {
 
 // ---------- Shared rendering ----------
 
-// How the page names the script it is showing: its `@name`, or its
-// location when it declares no usable one. The location is NOT appended
-// to a name that exists — a heading carrying both runs the width of the
-// window, and the details panel's `Location` row is where a reader goes
-// for the full path.
-//
-// `headerDisplayName`, not a local read of `@name`: the viewer must not
-// disagree with the collections page about what a script is called.
-function scriptLabel(header: ParsedHeader | null | undefined, location: string): string {
-  return headerDisplayName(header) || displayLocation(location);
-}
-
-// Which page this is, said in the heading and the tab title. The two
-// modes render the same script and previously carried identical
-// headings; the prefixes are what tells them apart.
-//
-// The installed title takes no prefix — a tab strip has little room,
-// and the script's own name is what the reader is scanning for. The
-// preview spends that room: "which of my tabs is asking to install
-// something" is the question a preview tab has to answer.
-const INSTALLED_HEADING = 'SourceMonkey | ';
-const PREVIEW_HEADING = 'SourceMonkey | Install ';
-const INSTALLED_TITLE = '';
-const PREVIEW_TITLE = 'Install script: ';
-
-// Stands in for the label when there is no script to name.
-const MISSING_LABEL = 'Not available';
-
-// The heading's leading run of product text. Shared with `showMissing`,
-// which draws a heading with no script in it — the class, the constant
-// and the ordering must not be written twice and drift.
-function headingPrefixEl(prefix: string): HTMLSpanElement {
-  const el = document.createElement('span');
-  el.className = 'heading-prefix';
-  el.textContent = prefix;
-  return el;
-}
-
 // `<prefix>` `<favicon>` `<label>`. A label that fell back to the
 // location is percent-decoded — for a script installed from (or
 // previewed at) a URL the encoded form is unreadable. renderSiteIconInto
@@ -3319,6 +3285,7 @@ function renderHeading(
   // user pointed at directly has no collection row to consult.
   localFiles: LocalFileScope = { enabled: true },
 ): void {
+  notePainted();
   filenameEl.replaceChildren();
   filenameEl.appendChild(headingPrefixEl(prefix));
   const iconSlot = document.createElement('span');
@@ -3335,13 +3302,6 @@ function renderHeading(
     filenameEl.removeAttribute('aria-label');
   }
   renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
-}
-
-// `<label> | SourceMonkey`, with the preview's own prefix in front so a
-// tab strip full of viewer tabs says which is an install question and
-// which is a script already installed.
-function setPageTitle(prefix: string, label: string): void {
-  document.title = `${prefix}${label} | SourceMonkey`;
 }
 
 function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {
@@ -3442,11 +3402,11 @@ function showMissing(message: string): void {
   // No script to name, but the heading keeps its product prefix so it
   // doesn't change shape between this and a script that loaded.
   //
-  // The bare prefix in BOTH modes: the preview's ends in the verb
-  // ("SourceMonkey | Install "), and there is nothing here for it to
-  // govern — "Install Not available" reads as a broken sentence, not as
-  // a page name. With no script to install, dropping the verb also
-  // stops the heading promising an offer this page isn't making.
+  // The bare product prefix in BOTH modes: the preview's carries the
+  // verb ("SourceMonkey | Install | "), and there is nothing here for
+  // it to offer — with no script to install, dropping the verb stops
+  // the heading promising an offer this page isn't making.
+  notePainted();
   filenameEl.replaceChildren();
   filenameEl.removeAttribute('aria-label');
   filenameEl.append(headingPrefixEl(INSTALLED_HEADING), MISSING_LABEL);

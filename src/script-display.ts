@@ -116,6 +116,47 @@ export function headerDisplayName(header: ParsedHeader | null | undefined): stri
   return (header ? getValue(header, 'name')?.trim() : undefined) || '';
 }
 
+// The script's `@name`, or its location when it declares no usable one.
+// The location is NOT appended to a name that exists — a heading
+// carrying both runs the width of the window, and the details panel's
+// `Location` row is where a reader goes for the full path.
+//
+// `headerDisplayName`, not a local read of `@name`: the viewer must not
+// disagree with the collections page about what a script is called.
+export function scriptLabel(
+  header: ParsedHeader | null | undefined,
+  location: string,
+): string {
+  return headerDisplayName(header) || displayLocation(location);
+}
+
+// Lives here rather than in collection-display.ts, its first caller: this
+// module is a leaf, and page-heading.ts needs the helper on the early
+// path where dragging in collection-display's scan/network graph would
+// undo the point of loading early.
+// Append a path / URL string to an element, inserting a `<wbr>` after
+// each `/` so the browser prefers slash boundaries when wrapping a
+// long value. Combined with `overflow-wrap: anywhere` on the element,
+// the wrap order becomes: spaces first, then slashes, then anywhere
+// inside a word only when nothing else fits. The slash itself stays
+// attached to the preceding segment so it reads as `foo/` then a
+// break, not a `/bar` continuation.
+//
+// Use this for any field that may render a long path or URL: the
+// collections page display name, the viewer's Location row, the Match /
+// Exclude pattern rows, etc.
+export function appendWithSlashBreaks(el: HTMLElement, text: string): void {
+  const doc = el.ownerDocument;
+  const parts = text.split('/');
+  parts.forEach((part, i) => {
+    if (i > 0) {
+      el.appendChild(doc.createTextNode('/'));
+      el.appendChild(doc.createElement('wbr'));
+    }
+    if (part) el.appendChild(doc.createTextNode(part));
+  });
+}
+
 // Format a byte count for the size column. Returns "1.2 KB", "950 B",
 // etc. — short enough to fit comfortably alongside filename + status.
 export function formatBytes(size: number): string {

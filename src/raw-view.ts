@@ -19,7 +19,11 @@ export const RAW_VIEW_PREFIX = 'rawview:';
 export const RAW_VIEW_PAGE = 'raw.html';
 
 export interface RawView {
-  title: string;
+  // The file's name, on its own — NOT a composed page title. The raw
+  // page puts it in two places (the tab title and the header bar), and
+  // each wraps it its own way; a value that already said
+  // "… | SourceMonkey" came out saying it twice in the bar.
+  name: string;
   text: string;
 }
 
@@ -31,10 +35,18 @@ export function isRawViewKey(key: string): boolean {
 }
 
 // Stash a view and return the extension URL that renders it.
+//
+// The name rides along in the URL as well as in the row. Reading the row
+// is async, so a page that waited for it would paint its placeholder
+// heading and tab title first and swap them a frame later — a visible
+// flash on every raw tab. A query param is there synchronously, so the
+// page can name itself before its first paint. The text can't travel
+// this way (far too big); only the name.
 export async function putRawView(view: RawView): Promise<string> {
   const key = `${RAW_VIEW_PREFIX}${crypto.randomUUID()}`;
   await chrome.storage.session.set({ [key]: view });
-  return `${chrome.runtime.getURL(RAW_VIEW_PAGE)}?key=${encodeURIComponent(key)}`;
+  const params = new URLSearchParams({ key, name: view.name });
+  return `${chrome.runtime.getURL(RAW_VIEW_PAGE)}?${params}`;
 }
 
 // Read a stashed view. Returns null for a missing / malformed row —
@@ -44,7 +56,7 @@ export async function getRawView(key: string): Promise<RawView | null> {
   const got = await chrome.storage.session.get(key);
   const row = got[key] as Partial<RawView> | undefined;
   if (!row || typeof row.text !== 'string') return null;
-  return { title: typeof row.title === 'string' ? row.title : '', text: row.text };
+  return { name: typeof row.name === 'string' ? row.name : '', text: row.text };
 }
 
 export async function dropRawView(key: string): Promise<void> {

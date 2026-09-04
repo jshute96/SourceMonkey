@@ -98,13 +98,19 @@ Both name the script the same way, pivoted for where they're read.
   - `headerDisplayName` does the `@name` pick, so the viewer and the
     collections page can't disagree about what a script is called.
 - **Heading** — `<prefix><favicon> <label>`, prefixed
-  `SourceMonkey | ` installed and `SourceMonkey | Install ` in
+  `SourceMonkey | ` installed and `SourceMonkey | Install | ` in
   preview.
+  - The verb takes its own `|`: it names the page, alongside the
+    product's name — it is not a word governing the script's name.
 - **Title** — `<label> | SourceMonkey`, with `Install script: ` in
   front in preview.
 - The prefix is what tells the two modes apart at a glance; before it
-  the pages were indistinguishable from their heading alone. It renders
-  in normal weight — the name is the part being labeled.
+  the pages were indistinguishable from their heading alone.
+  - Only the `SourceMonkey | ` run wears `.brand` and takes the header
+    bar's brown — the same split every other page's heading makes. The
+    preview's `Install | ` reads in the heading's own colour, beside
+    the script's name. See
+    [architecture.md](architecture.md#the-page-header-bar).
 - **The location is announced, not drawn.** When the label came from an
   `@name`, the `<h1>` carries an `aria-label` of
   `<prefix><label>, <location>`.
@@ -127,9 +133,13 @@ Both name the script the same way, pivoted for where they're read.
 
 ### Layout
 
-1. **Heading** (`<h1>`) — the product prefix, the site favicon, and the
-   script's name. See
-   [Heading and page title](#heading-and-page-title).
+1. **Header bar** (`.page-header`) — the shared bar every extension page
+   opens with; the viewer's `<h1>` lives inside it, carrying the product
+   prefix, the site favicon, and the script's name. See
+   [Heading and page title](#heading-and-page-title) and
+   [architecture.md](architecture.md#the-page-header-bar).
+   - Its heading is painted before the rest of the page loads — see
+     [Naming the bar before the page loads](architecture.md#naming-the-bar-before-the-page-loads).
 2. **Other versions panel** (`#other-versions`) — every installed copy
    of this script, when there is more than one to talk about. Built by
    `renderRelatedVersions` in

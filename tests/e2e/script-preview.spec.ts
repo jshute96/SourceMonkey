@@ -70,7 +70,7 @@ test.describe('script preview', () => {
     );
     // Preview mode says it is the install question, in both places.
     await expect(page.locator('h1#filename'))
-      .toHaveText('SourceMonkey | Install Named Script');
+      .toHaveText('SourceMonkey | Install | Named Script');
     await expect(page).toHaveTitle('Install script: Named Script | SourceMonkey');
 
     await page.locator('#install-btn').click();
@@ -96,7 +96,7 @@ test.describe('script preview', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
     // The location stands in for the name it doesn't have.
-    await expect(page.locator('h1#filename')).toHaveText(`SourceMonkey | Install ${file}`);
+    await expect(page.locator('h1#filename')).toHaveText(`SourceMonkey | Install | ${file}`);
     await expect(page).toHaveTitle(`Install script: ${file} | SourceMonkey`);
     await page.close();
   });
@@ -198,7 +198,7 @@ test.describe('script preview', () => {
     // read a name from, so it is the raw input under the install
     // wording.
     await expect(page.locator('h1#filename'))
-      .toHaveText('SourceMonkey | Install ftp://example.com/thing.user.js');
+      .toHaveText('SourceMonkey | Install | ftp://example.com/thing.user.js');
     await expect(page)
       .toHaveTitle('Install script: ftp://example.com/thing.user.js | SourceMonkey');
     await page.close();

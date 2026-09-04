@@ -37,7 +37,7 @@ browsing session, not the user's configuration.
 | `"loglevel:<scid>"`      | `LogLevel`              | Highest level that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
-| `"rawview:<key>"`        | `string`                | Hand-off of a fetched script from the viewer's preview to its raw-source tab. |
+| `"rawview:<key>"`        | `string`                | Hand-off of a fetched script (`{name, text}`) from the viewer's preview to its raw-source tab. |
 
 ### Legacy key migration (temporary)
 

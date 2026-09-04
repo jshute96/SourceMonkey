@@ -345,14 +345,28 @@ path those differ.
 
 ### `raw.html` and the hand-off
 
-- A one-`<pre>` page (`src/raw.html` + `src/raw.ts`) that sets its
-  content with `textContent` — nothing in a fetched script is ever
-  parsed as markup.
-- Titled with the script's filename, so the tab is identifiable. That
+- The shared header bar over a single `<pre>` (`src/raw.html` +
+  `src/raw.ts`), whose content is set with `textContent` — nothing in a
+  fetched script is ever parsed as markup.
+- Named with the script's filename, so the tab is identifiable. That
   title is the reason this is a page and not a `text/plain` blob:
   a blob tab is labelled with its opaque `blob:` URL, and giving it a
   title would mean assembling HTML out of fetched script text on the
   extension's own origin.
+- The hand-off row carries the **bare filename** (`RawView.name`), not a
+  composed title. `raw.ts` wraps it twice — `<name> | SourceMonkey` for
+  the tab strip, the bare name for the header bar, which already says
+  SourceMonkey to its left.
+- **The name also rides in the URL** (`&name=`), and that is the copy the
+  page actually names itself from. Reading the row is async, so a page
+  that waited for it painted its `Raw source` placeholder and swapped it
+  a frame later — a flash on every raw tab. The param is there
+  synchronously. It is only honoured when `?key=` is one of ours, and
+  the row's copy is reapplied when it lands (normally the same value, so
+  nothing moves).
+  - The heading ships **empty**, not with a placeholder word: a name
+    there would be read as the page's, then visibly replaced. `Raw
+    source` is still the fallback, but only once no filename is coming.
 - The script text travels in a `chrome.storage.session` row
   (`rawview:<uuid>`, see `src/raw-view.ts`) — far too big for a query
   param. `raw.html` reads it by `?key=`, and rejects any key that

@@ -21,6 +21,7 @@
 
 import { isContainerCollection, scriptAbsolutePath } from './directories.js';
 import {
+  appendWithSlashBreaks,
   displayLocation,
   ENABLE_TITLE,
   viewerUrl,
@@ -28,7 +29,6 @@ import {
 } from './script-display.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
 import {
-  appendWithSlashBreaks,
   COLLECTION_OFF_TITLE,
   effectiveDisplayName,
   makeCollectionTypeBubble,

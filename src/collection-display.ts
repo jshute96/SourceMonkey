@@ -277,29 +277,6 @@ function applyFirstGithubRule(s: string): string {
   return s;
 }
 
-// Append a path / URL string to an element, inserting a `<wbr>` after
-// each `/` so the browser prefers slash boundaries when wrapping a
-// long value. Combined with `overflow-wrap: anywhere` on the element,
-// the wrap order becomes: spaces first, then slashes, then anywhere
-// inside a word only when nothing else fits. The slash itself stays
-// attached to the preceding segment so it reads as `foo/` then a
-// break, not a `/bar` continuation.
-//
-// Use this for any field that may render a long path or URL: the
-// collections page display name, the viewer's Location row, the Match /
-// Exclude pattern rows, etc.
-export function appendWithSlashBreaks(el: HTMLElement, text: string): void {
-  const doc = el.ownerDocument;
-  const parts = text.split('/');
-  parts.forEach((part, i) => {
-    if (i > 0) {
-      el.appendChild(doc.createTextNode('/'));
-      el.appendChild(doc.createElement('wbr'));
-    }
-    if (part) el.appendChild(doc.createTextNode(part));
-  });
-}
-
 // Canonical collections-page anchor for a collection. Lives here (not
 // in collections.ts) so the viewer can link back to the right `#…`
 // without reaching across pages for the helper.

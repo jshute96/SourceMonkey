@@ -68,7 +68,7 @@ test.describe('.user.js link capture', () => {
     // using the same panels an installed script gets. The heading is the
     // script's `@name`; the URL is the Location row's job.
     expect(new URL(page.url()).searchParams.get('preview')).toBe(scriptUrl);
-    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Install Hello From The Web');
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Install | Hello From The Web');
     await expect(page.locator(LOCATION_ROW)).toHaveText(scriptUrl);
     await expect(page.locator('#header-summary')).toContainText('Hello From The Web');
     await expect(page.locator('#header-summary')).toContainText('https://example.com/*');
