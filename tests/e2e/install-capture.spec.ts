@@ -267,10 +267,9 @@ test.describe('.user.js link capture', () => {
       extensionContext.waitForEvent('page'),
       page.locator('#view-source-btn').click(),
     ]);
-    await rawPage.waitForLoadState();
 
     // Chrome renders a `.user.js` response as source text itself, so
-    // the raw view navigates for real — which also proves the bypass
+    // View raw source navigates for real — which also proves the bypass
     // held and the capture didn't pull the tab back to the prompt.
     await rawPage.waitForURL(scriptUrl);
     expect(await rawPage.locator('body').innerText()).toContain('==UserScript==');

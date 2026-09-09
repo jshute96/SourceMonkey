@@ -278,67 +278,49 @@ extension page — hence the strip.
   field, not a capture — describes the real script:
   `normalizeCollectionInput` rewrites it to its raw counterpart first.
 
-### How the raw view stays readable
+### View raw source
 
-The right way to show the file depends on the scheme:
+**One behavior on every scheme: a real navigation to the file itself.**
+Chrome renders a `.user.js` as source text whether it came over http or
+off local disk, so the tab shows the actual file at its actual address.
 
-- **http(s)** — a real navigation to the URL, with a one-shot capture
-  bypass. The browser renders it as source text and the address bar
-  keeps the true URL.
-- **`file://`** — the copy the preview already fetched, rendered on
-  `raw.html`. Chrome would render the file readably too, but a titled
-  tab beats a full local path in the tab strip, and the navigation can
-  be refused outright when "Allow access to file URLs" is off.
-- **Fetch failed / still in flight** — navigate either way. There's no
-  copy to render locally, and a real navigation carries the cookies the
-  extension's own fetch doesn't, so it doubles as the retry for an
-  auth-gated URL.
+**Which address depends on whether the location could be read:**
+
+- **Read** → the canonical location, not what the user typed. A GitHub
+  blob URL is rewritten to its raw counterpart before the fetch, and
+  the raw file is the source the preview describes; the blob URL would
+  open GitHub's file browser instead.
+- **Not read** → the user's own input, when it is navigable. That is
+  the form that can carry site cookies our fetch doesn't, so the
+  failed-fetch case doubles as the retry. It matters for exactly one
+  host today: a private repo's blob page renders for a logged-in user,
+  where its `raw.githubusercontent.com` counterpart 404s without a
+  token (a personal access token is still the supported route — see
+  [http-collections.md](http-collections.md#github-authentication)).
+- The two agree except where canonicalization rewrote the URL.
+- **Nothing local is being rendered**, so the button never waits on the
+  fetch. Only a location `normalizeCollectionInput` refused outright
+  has no address to offer, and that reports instead of navigating.
+- **The `file://` tab is labelled with the path**, not the filename.
+  A bespoke extension page rendering the fetched copy used to buy a
+  `<basename> | SourceMonkey` tab title; one behavior on both schemes
+  is worth more than the nicer label.
+- **A `file://` navigation can be refused** when "Allow access to file
+  URLs" is off — but so can the fetch, for the same reason, so the
+  button is no worse off than the page it sits on. `withBypass` reports
+  the refusal through the file-access banner rather than leaving the
+  button inert.
 
 Every real navigation out of the preview sets a bypass first, `file://`
-included — otherwise the raw view would be captured straight back into
-the preview it was opened from. The bypass is keyed on the URL the
+included — otherwise View raw source would be captured straight back
+into the preview it was opened from. The bypass is keyed on the URL the
 browser will request, not on `?preview=`: for a local file opened by
 path those differ.
 
-### `raw.html` and the hand-off
-
-- The shared header bar over a single `<pre>` (`src/raw.html` +
-  `src/raw.ts`), whose content is set with `textContent` — nothing in a
-  fetched script is ever parsed as markup.
-- Named with the script's filename, so the tab is identifiable. That
-  title is the reason this is a page and not a `text/plain` blob:
-  a blob tab is labelled with its opaque `blob:` URL, and giving it a
-  title would mean assembling HTML out of fetched script text on the
-  extension's own origin.
-- The hand-off row carries the **bare filename** (`RawView.name`), not a
-  composed title. `raw.ts` wraps it twice — `<name> | SourceMonkey` for
-  the tab strip, the bare name for the header bar, which already says
-  SourceMonkey to its left.
-- **The name also rides in the URL** (`&name=`), and that is the copy the
-  page actually names itself from. Reading the row is async, so a page
-  that waited for it painted its `Raw source` placeholder and swapped it
-  a frame later — a flash on every raw tab. The param is there
-  synchronously. It is only honoured when `?key=` is one of ours, and
-  the row's copy is reapplied when it lands (normally the same value, so
-  nothing moves).
-  - The heading ships **empty**, not with a placeholder word: a name
-    there would be read as the page's, then visibly replaced. `Raw
-    source` is still the fallback, but only once no filename is coming.
-- The script text travels in a `chrome.storage.session` row
-  (`rawview:<uuid>`, see `src/raw-view.ts`) — far too big for a query
-  param. `raw.html` reads it by `?key=`, and rejects any key that
-  isn't one we minted, so a hand-edited URL can't dump an arbitrary
-  session row into the page.
-- The row is dropped when the preview page goes away. The raw tab has
-  rendered its copy by then; only a reload of that tab would notice,
-  and it says so rather than showing a blank page.
-- The tab is opened with `chrome.tabs.create`, **not** `window.open`:
-  an extension page opened via `window.open` comes up without the
-  `chrome.*` APIs, so `raw.html` would have no way to read its text.
 ## The bypass
 
 - `chrome.storage.session` row `installBypass:<url>`, holding an
-  expiry timestamp, TTL 30s. Used by the raw view whenever it
+  expiry timestamp, TTL 30s. Used by View raw source whenever it
   navigates to the real URL.
 - Written by the preview page (extension pages are trusted contexts),
   read-and-cleared by the service worker — session storage rather than

@@ -53,9 +53,8 @@ details live in the topic-specific docs linked below.
   viewer's preview mode
   (`userscript.html?preview=<url>`), which fetches, describes,
   asks which scripts collection to put it in, and — on confirmation —
-  `installScript`s it. Its "View raw
-  source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
-  through `src/raw-view.ts`. See
+  `installScript`s it. Its "View raw source" button navigates a new
+  tab to the file itself. See
   [install-capture.md](install-capture.md).
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
@@ -221,9 +220,8 @@ details live in the topic-specific docs linked below.
   `<h1>` where it has one.
   - Collections → `SourceMonkey | Collections`; Options →
     `SourceMonkey | Options`.
-  - Pages naming a script put the script first, so it survives a narrow
-    tab strip: the raw-source tab is `<basename> | SourceMonkey`, and
-    the viewer pivots the same way — see
+  - The viewer names a script, so it puts the script first — that way
+    the name survives a narrow tab strip. See
     [script-viewer.md](script-viewer.md#heading-and-page-title).
   - `offscreen.html` and `parse-sandbox.html` are exempt: no user ever
     sees them.
@@ -272,7 +270,7 @@ How one extension page opens another — the rules live in
   `SourceMonkey | <page>` heading, and that page's cross-page
   navigation pushed to the right edge.
   - Collections carries Options and Refresh All; Options carries
-    Collections; the viewer and the raw view carry none.
+    Collections; the viewer carries none.
   - The icon and the product name are a link home to the collections
     page on every page but Collections itself — see "Cross-page
     navigation" above.
@@ -295,8 +293,8 @@ How one extension page opens another — the rules live in
   heading starts directly above the page's own first line.
   - Every page's content inset is 16px, the bar's included, so the two
     edges line up on the full-bleed pages too.
-  - Collections and Options set `--page-width: 720px`. The viewer and
-    the raw view leave it unset and run full width.
+  - Collections and Options set `--page-width: 720px`. The viewer
+    leaves it unset and runs full width.
 - **The viewer keeps its flex column**, moved down one level into
   `.page-main` (`flex: 1 1 auto; min-height: 0`) so the code box still
   takes the leftover height under the bar.

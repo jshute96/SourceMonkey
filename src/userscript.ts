@@ -187,7 +187,6 @@ import {
 } from './diagnostic-location.js';
 import { buildHash } from './script-url-hash.js';
 import { dlog } from './debug-log.js';
-import { dropRawView, putRawView } from './raw-view.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
 import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
@@ -1908,8 +1907,7 @@ function buildStatusCell(script: StoredScript): Node {
 //                      resolving `@require` refs, and as link hrefs.
 let previewLocation = '';
 let previewFileUrl = '';
-// The fetched body, kept so "View raw source" can hand it to a new tab
-// without a second round-trip. Empty until the fetch lands.
+// The fetched body. Empty until the fetch lands.
 let previewText = '';
 let previewHeader: ParsedHeader | null = null;
 // Per-page cache shared by every lazily-loaded `@require` tab, so
@@ -1932,10 +1930,6 @@ const previewLocalFiles = new Map<string, string>();
 // byte total in the details panel's Size row. Empty until the check
 // lands, at which point the panel repaints — see `recordPreviewFiles`.
 let previewFiles: { requires: readonly StoredRequire[]; resources: readonly StoredResource[] } | undefined;
-// Session keys backing raw-view tabs, all dropped when this page goes
-// away. A set rather than a single key because each click opens its own
-// tab, and two clicks can be in flight at once.
-const rawViewKeys = new Set<string>();
 
 async function loadPreview(): Promise<void> {
   const input = previewInput ?? '';
@@ -3005,58 +2999,42 @@ async function soloRunningCopy(scriptId: string): Promise<void> {
 // *read* rather than install — the cost of capturing `file://` — so it
 // has to work whether or not the fetch succeeded.
 //
-// Every real navigation from here sets a one-shot capture bypass,
-// including `file://`: since the capture now covers local files, an
-// unbypassed navigation would be pulled straight back into this same
-// preview.
+// Always a real navigation, on every scheme: Chrome renders a
+// `.user.js` as source text whether it came over http or off disk, so
+// the tab shows the actual file at its actual address.
 //
-// Whether to navigate at all depends on the scheme:
+// Which address depends on whether we could read the location:
 //
-//   - http(s) — the browser renders a `.user.js` response as source
-//     text on its own, so navigate for real and the address bar keeps
-//     the true URL.
-//   - `file://` — show the copy we already fetched on `raw.html`, a
-//     real page, so the tab gets a title naming the file rather than
-//     the full local path. Chrome would render the file readably too,
-//     but the navigation can be refused outright when "Allow access to
-//     file URLs" is off, and we already hold the text.
+//   - **Read it** — the canonical location, not what the user typed.
+//     A GitHub blob URL was rewritten to its raw counterpart before we
+//     fetched it, and the raw file is the source this page describes;
+//     navigating to the blob URL would open GitHub's file browser
+//     instead.
+//   - **Couldn't** — the user's own input, when it is navigable. That
+//     is the form that can carry site cookies our fetch doesn't: a
+//     private repo's blob page renders for a logged-in user, where its
+//     `raw.githubusercontent.com` counterpart 404s without a token.
+//     So the failed-fetch case is also the retry, which is the whole
+//     reason this button has to work when nothing was fetched.
 //
-// With no fetched copy to hand over — the fetch failed, or hasn't
-// landed yet — there is nothing to render locally, so it navigates
-// either way. For http that doubles as the retry for a URL our fetch
-// couldn't read: the tab carries cookies the extension's fetch
-// doesn't. For `file://` it is the one path that can be refused
-// outright (a failed read and a refused navigation have the same
-// cause), which `withBypass` reports through the file-access banner
-// rather than leaving the button inert.
+// The two agree except where canonicalization rewrote the URL, which
+// today means GitHub blob links added through the collections page.
+//
+// `previewFileUrl` is empty until `normalizeCollectionInput` resolves
+// one, and stays empty if it threw — the only case with no address to
+// offer at all, and the only one that reports instead of navigating.
+//
+// `navigateRaw` sets a one-shot capture bypass first, `file://`
+// included: the capture covers local files, so an unbypassed
+// navigation would be pulled straight back into this same preview.
 function openRawSource(): void {
-  const target = previewInput ?? '';
-  const isHttp = isHttpUrl(target);
-  if (!previewText && !isHttp && !previewFileUrl) {
-    // Nothing fetched and nothing to navigate to —
-    // normalizeCollectionInput threw before we ever resolved a URL.
+  const typed = isHttpUrl(previewInput ?? '') ? (previewInput ?? '') : '';
+  const url = previewText ? previewFileUrl : typed || previewFileUrl;
+  if (!url) {
     setMessage('There is no source to open for this location', 'error');
     return;
   }
-  if (!previewText) {
-    // Nothing fetched to render locally, so navigate.
-    navigateRaw(isHttp ? target : previewFileUrl);
-    return;
-  }
-  if (isHttp) {
-    navigateRaw(target);
-    return;
-  }
-  putRawView({ name: scriptBasename(previewLocation), text: previewText })
-    .then((url) => {
-      const key = new URL(url).searchParams.get('key');
-      if (key) rawViewKeys.add(key);
-      return openTab(url);
-    })
-    // `chrome.storage.session` is quota-limited and shared with the
-    // per-script logs, so a big script can genuinely fail here. Say so
-    // rather than having the button do nothing.
-    .catch((err) => setMessage(`Could not open the source: ${describeError(err)}`, 'error'));
+  navigateRaw(url);
 }
 
 // Every navigation the preview initiates goes through here: stand the
@@ -3085,32 +3063,16 @@ function withBypass(url: string, go: (url: string) => void | Promise<void>): voi
 }
 
 // Open the real URL in a new tab, leaving this preview in place.
-function navigateRaw(url: string): void {
-  withBypass(url, openTab);
-}
-
-// Open a new tab beside this one. `chrome.tabs.create`, not
-// `window.open`: an extension page opened through `window.open` comes
-// up without the `chrome.*` APIs, so `raw.html` would have no way to
-// read the text handed to it.
 //
-// Returns the promise rather than dropping it. `tabs.create` rejects
-// for reasons the user can act on — a `file://` target with "Allow
-// access to file URLs" off is refused outright — and an unhandled
-// rejection in an extension page is reported into
+// The `tabs.create` promise is handed back to `withBypass` rather than
+// dropped: it rejects for reasons the user can act on — a `file://`
+// target with "Allow access to file URLs" off is refused outright —
+// and an unhandled rejection in an extension page is reported into
 // chrome://extensions/?errors, where it reads as SourceMonkey being
-// broken instead of a setting being off. Callers report it instead.
-function openTab(url: string): Promise<void> {
-  return chrome.tabs.create({ url }).then(() => undefined);
+// broken instead of a setting being off.
+function navigateRaw(url: string): void {
+  withBypass(url, (target) => chrome.tabs.create({ url: target }).then(() => undefined));
 }
-
-// The handed-off text outlives this page unless dropped. The tabs that
-// opened it have already rendered their copies by the time this fires;
-// only a reload of one would notice.
-addEventListener('pagehide', () => {
-  for (const key of rawViewKeys) void dropRawView(key);
-  rawViewKeys.clear();
-});
 
 // Cancel: back to wherever the click came from. A captured navigation
 // never committed, so the previous entry is the referring page. A tab

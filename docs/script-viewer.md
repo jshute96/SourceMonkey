@@ -789,9 +789,9 @@ Banner (`#banner-slot`) states what this file is; the action row
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by
   script) when the preview was opened into a fresh one.
-- **View raw source** opens the unprocessed file in a **new tab**,
+- **View raw source** navigates a **new tab** to the file itself,
   leaving the preview open behind it. See
-  [install-capture.md](install-capture.md#how-the-raw-view-stays-readable).
+  [install-capture.md](install-capture.md#view-raw-source).
 
 ### When a local file won't read
 

@@ -493,7 +493,7 @@ select.install-target {
   /* The content column every page centres. The bar's contents honour
      it too, so the heading starts at the same x as the page body
      underneath rather than at the window edge. Pages that run
-     full-bleed (the viewer, the raw view) leave it unset. */
+     full-bleed (the viewer) leave it unset. */
   --page-width: none;
 }
 
@@ -540,8 +540,8 @@ select.install-target {
    them stays in the heading's own colour.
 
    Two shapes wear it, both rendering the same thing:
-   - Collections, Options and the raw view spell it in their markup, as
-     one span around `SourceMonkey |`.
+   - Collections and Options spell it in their markup, as one span
+     around `SourceMonkey |`.
    - The viewer builds it (`headingPrefixEl`, src/page-heading.ts), a
      span per term, because its heading has a page name in the middle
      ("SourceMonkey | Install | <script>"). Those spans wear

@@ -67,7 +67,8 @@ export interface LocationRow {
   // use it, because a plain navigation to a `.user.js` URL — http(s)
   // or file:// — is captured straight back into a preview (see
   // install-capture.ts):
-  //   - preview mode routes the click to its raw view;
+  //   - preview mode routes the click through View raw source, which
+  //     stands the capture down first;
   //   - installed mode stands the capture down for that one
   //     navigation, so the row's link opens what it says it opens.
   // Wired for `auxclick` too, or a middle-click would take the plain

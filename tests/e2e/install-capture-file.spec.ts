@@ -127,7 +127,7 @@ test.describe('.user.js capture for local files', () => {
     await page.close();
   });
 
-  test('View raw source shows the local file without navigating', async ({
+  test('View raw source opens the local file itself, as http does', async ({
     extensionContext, sm,
   }) => {
     const { url } = writeScript('hello.user.js', 'Hello From Disk');
@@ -140,13 +140,13 @@ test.describe('.user.js capture for local files', () => {
       extensionContext.waitForEvent('page'),
       page.locator('#view-source-btn').click(),
     ]);
-    await rawPage.waitForLoadState();
 
-    // We already hold a copy, so it renders on raw.html — titled with
-    // the filename, and line-for-line rather than collapsed.
-    expect(rawPage.url()).toContain('raw.html');
-    await expect(rawPage).toHaveTitle('hello.user.js | SourceMonkey');
-    const text = await rawPage.locator('#raw').innerText();
+    // A real navigation to the `file://` URL, same as the http half of
+    // this feature — which also proves the bypass held and the capture
+    // didn't pull the new tab into a second preview. Chrome renders it
+    // line-for-line as source text.
+    await rawPage.waitForURL(url);
+    const text = await rawPage.locator('body').innerText();
     expect(text).toContain('==UserScript==');
     expect(text.split('\n').length).toBeGreaterThan(3);
     // The preview stays open behind it.
@@ -215,10 +215,11 @@ test.describe('.user.js capture for local files', () => {
   test('View raw source falls back to the file itself when the fetch failed', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Nothing to render locally, so the raw view navigates for real —
-    // the one path that reaches `navigateRaw` with a `file://` URL. It
-    // must carry a bypass, or the new tab is captured straight back
-    // into another preview.
+    // View raw source navigates whether or not the fetch landed. This
+    // is the case where there is nothing to land on either, so it
+    // proves the button doesn't quietly depend on a successful fetch —
+    // and that the navigation still carries a bypass, or the new tab
+    // is captured straight back into another preview.
     const missing = `file://${dir.path}/gone.user.js`;
     const page = await extensionContext.newPage();
     await page.goto(
