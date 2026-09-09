@@ -296,7 +296,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/gm-menu.test.mjs` | Unit tests for the `GM_registerMenuCommand` registry (declaration order, in-place update, per-document scoping of clear/unregister) |
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
 | `tests/unit/markup-response.test.mjs` | Unit tests for the markup guard: content-type families, leading-`<` body test, message wording |
-| `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, Chrome-version gate, one-shot bypass |
+| `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, one-shot bypass |
 | `tests/unit/raw-view.test.mjs` | Unit tests for the raw-view hand-off: key shape, round-trip, drop, and rejection of keys we didn't mint |
 | `tests/unit/action-menu.test.mjs` | Unit tests for the action context-menu planner: 6-item cap, More-submenu overflow, group cohesion, order preservation |
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |
@@ -393,7 +393,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey and Violentmonkey today, with triage notes for each divergence |
 | `docs/redirect-page.md` | Canonical GitHub-hosted "front door" the extension watches for; deep-link target that rewrites to `chrome-extension://...` |
 | `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
-| `docs/install-capture.md` | How `.user.js` link clicks become installs: Chrome's version-dependent handling, the capture, the prompt, the bypass |
+| `docs/install-capture.md` | How `.user.js` link clicks become installs: what Chrome does on its own, the capture, the prompt, the bypass |
 | `docs/script-identity.md` | How two rows are recognised as the same script, and the "Other versions" panel built on it |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |

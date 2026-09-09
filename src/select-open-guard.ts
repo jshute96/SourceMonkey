@@ -42,9 +42,9 @@ import { describeError } from './script-store.js';
 export function guardSelectOpeningClick(select: HTMLSelectElement): void {
   // Nothing to take over with, so the native press-to-open has to
   // stand, bug and all — a cancelled press with no replacement is a
-  // dead control. `showPicker` is Chrome 121 and the extension's floor
-  // is 120 (the `userScripts` API), so this covers exactly one
-  // version, plus any future context that withholds it.
+  // dead control. `showPicker` has been in Chrome since 121, well
+  // below the extension's floor, so this covers only a future context
+  // that withholds it.
   if (typeof select.showPicker !== 'function') return;
 
   // Cleared if `showPicker` ever refuses, which hands the control back

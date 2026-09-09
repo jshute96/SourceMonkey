@@ -25,7 +25,7 @@
     "clean": "rm -rf dist test-results playwright-report"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.0",
+    "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.0.287",
     "@types/node": "^22.10.0",
     "@types/prismjs": "^1.26.6",

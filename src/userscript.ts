@@ -176,7 +176,7 @@ import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from './github-auth.js';
-import { CAPTURED_PARAM, markInstallBypass, needsDownloadWorkaround } from './install-capture.js';
+import { CAPTURED_PARAM, markInstallBypass } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
 import {
@@ -2464,9 +2464,8 @@ function renderPreviewDetails(): void {
       href: previewFileUrl,
       trailing: filenameCopyBtn,
       // Navigating this href for real would be captured straight back
-      // into a second preview of the same script (or, on Chrome ≤ 151,
-      // land on the download-workaround's HTML-parsed render). Route
-      // it through the same path the View raw source button uses.
+      // into a second preview of the same script. Route it through the
+      // same path the View raw source button uses.
       onActivate: openRawSource,
     },
     size: formatBytes(new TextEncoder().encode(previewText).length),
@@ -3011,27 +3010,25 @@ async function soloRunningCopy(scriptId: string): Promise<void> {
 // unbypassed navigation would be pulled straight back into this same
 // preview.
 //
-// Whether to navigate at all depends on what the browser does with a
-// `.user.js` response (see install-capture.ts):
+// Whether to navigate at all depends on the scheme:
 //
-//   - http(s) on Chrome ≥ 152 — the browser renders it as source text
-//     on its own, so navigate for real and the address bar keeps the
-//     true URL.
-//   - Everything else — show the copy we already fetched on
-//     `raw.html`, a real page, so the tab gets a title naming the
-//     file. On Chrome ≤ 151 a real navigation would land on a response
-//     the download workaround rewrote to `text/html` (which HTML-parses
-//     the script into one run-on line) or, for `file://`, on the legacy
-//     download path. `file://` takes this branch on EVERY version:
-//     `raw.html` is already the better answer (titled tab, guaranteed
-//     readable) and it costs no navigation to get wrong.
+//   - http(s) — the browser renders a `.user.js` response as source
+//     text on its own, so navigate for real and the address bar keeps
+//     the true URL.
+//   - `file://` — show the copy we already fetched on `raw.html`, a
+//     real page, so the tab gets a title naming the file rather than
+//     the full local path. Chrome would render the file readably too,
+//     but the navigation can be refused outright when "Allow access to
+//     file URLs" is off, and we already hold the text.
 //
 // With no fetched copy to hand over — the fetch failed, or hasn't
-// landed yet — there is nothing to render locally, so it navigates on
-// any version. For http that doubles as the retry for a URL our fetch
+// landed yet — there is nothing to render locally, so it navigates
+// either way. For http that doubles as the retry for a URL our fetch
 // couldn't read: the tab carries cookies the extension's fetch
-// doesn't. On Chrome ≤ 151 the result is whatever the browser makes of
-// it (the run-on-line render, or a download).
+// doesn't. For `file://` it is the one path that can be refused
+// outright (a failed read and a refused navigation have the same
+// cause), which `withBypass` reports through the file-access banner
+// rather than leaving the button inert.
 function openRawSource(): void {
   const target = previewInput ?? '';
   const isHttp = isHttpUrl(target);
@@ -3046,7 +3043,7 @@ function openRawSource(): void {
     navigateRaw(isHttp ? target : previewFileUrl);
     return;
   }
-  if (isHttp && !needsDownloadWorkaround(navigator.userAgent)) {
+  if (isHttp) {
     navigateRaw(target);
     return;
   }

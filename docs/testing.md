@@ -159,13 +159,22 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 ### Chrome flags / Preferences
 
+**The bundled browser must be Chrome 152+:**
+
+- `src/manifest.json` declares `minimum_chrome_version: "152"`.
+- Below that Chrome refuses to load the extension at all, so every e2e
+  test fails at once rather than one feature failing.
+- Playwright ≥ 1.63 ships Chrome for Testing 153.
+- Symptom to recognise: the whole suite goes red right after a
+  dependency change. Check the browser version first.
+
 Two Chrome capabilities the e2e harness needs:
 
 - **`file://` access** — already granted in headless mode for
   unpacked extensions, so no extra setup. Production users still have
   to flip the per-extension toggle.
-- **User scripts** (Chrome ≥138) — `chrome.userScripts` is gated
-  behind a per-extension toggle. The harness pre-writes
+- **User scripts** — `chrome.userScripts` is gated behind a
+  per-extension toggle. The harness pre-writes
   `extensions.settings.<extensionId>.user_scripts_enabled = true`
   into `<userDataDir>/Default/Preferences` before launch so the API
   is callable without UI clicks.

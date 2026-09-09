@@ -56,9 +56,9 @@
 //     wrapper-bridge.js relays.
 //
 // Requirements: manifest must include the "userScripts" permission AND
-// the user must enable the "Allow User Scripts" toggle (Chrome ≥138) or
-// developer mode (Chrome 120–137) on chrome://extensions. If the toggle
-// is off, chrome.userScripts.register throws. The collections page
+// the user must enable the "Allow User Scripts" toggle on
+// chrome://extensions. If the toggle is off, chrome.userScripts.register
+// throws. The collections page
 // prompts for the toggle off its own probe (`probeUserScriptsApi` in
 // collections.ts) rather than anything this module records — it needs
 // an answer at render time, and an SW that has been evicted since the
@@ -788,8 +788,9 @@ export async function buildRegistrationSpec(
   //
   // Handing Chrome the globs *as well* is deliberate, and the reason is
   // that Chrome's own reading of `includeGlobs` is not what the docs for
-  // content scripts say. Measured on Chrome 151 (see the probe in
-  // tests/e2e/include-only.spec.ts): `chrome.userScripts` ORs
+  // content scripts say. Measured rather than assumed — the probe in
+  // tests/e2e/include-only.spec.ts re-checks it on whatever Chrome the
+  // suite runs: `chrome.userScripts` ORs
   // `includeGlobs` with `matches` — userscript `@include` semantics —
   // rather than filtering within them. So:
   //   - Under the OR we measured, `<all_urls>` alone already runs

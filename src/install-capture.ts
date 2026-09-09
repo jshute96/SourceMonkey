@@ -3,41 +3,21 @@
 // instead.
 //
 // Why this is needed at all: Chrome never renders a `.user.js` URL as
-// a page you can click "install" on.
-//   - Chrome ≤ 151 special-cases the suffix (`UserScript::IsURLUserScript`
-//     in `chrome_content_browser_client.cc`): the navigation is forced
-//     into a download, and the download is then handed to the extension
-//     installer, which fails now that MV2 is gone. The user sees a
-//     broken-looking download plus an install error.
-//   - Chrome ≥ 152 removes that special case (crrev 38b617ca, landed
-//     2026-06-30), so the URL is treated like any other resource — a
-//     `text/javascript` response just renders as source text.
-// Either way the user never gets an install prompt, so a script manager
-// has to intercept the navigation itself. Tampermonkey and
-// Violentmonkey do the same thing.
+// a page you can click "install" on. It is treated like any other
+// resource, so a `text/javascript` response just renders as source
+// text and a local file opens as text. The user never gets an install
+// prompt, so a script manager has to intercept the navigation itself.
+// Tampermonkey and Violentmonkey do the same thing.
 //
-// Two independent pieces, in order of importance:
+// (Chrome ≤ 151 special-cased the suffix and forced the navigation
+// into a download that was then handed to the MV2 extension
+// installer. `minimum_chrome_version` in the manifest puts the floor
+// at 152, where crrev 38b617ca removed that; nothing here works
+// around it any more.)
 //
-//   1. The capture. `webNavigation.onBeforeNavigate` fires before the
-//      request goes out; we rewrite the tab to
-//      `userscript.html?preview=…`.
-//      This is what actually delivers the install, and it works on
-//      every Chrome version.
-//
-//   2. The download workaround (Chrome < 152 only, http(s) only). The
-//      SW may be cold-starting when the navigation begins, so the
-//      response can win the race against our `tabs.update`. A DNR
-//      session rule rewrites the response `Content-Type` to
-//      `text/html`, which is the one MIME the legacy check exempted —
-//      so Chrome renders the response instead of running it through
-//      the failing installer.
-//      On Chrome ≥ 152 the rule is NOT registered: without it a
-//      not-captured `.user.js` renders as readable source text, and
-//      with it the same page would render as garbled HTML.
-//      It does nothing for `file://` and is deliberately left alone:
-//      DNR only sees network requests, and a local file has no
-//      response headers to rewrite. A `file://` capture that loses the
-//      cold-start race just gets Chrome's own handling of the file.
+// The capture itself is `webNavigation.onBeforeNavigate`, which fires
+// before the request goes out: we rewrite the tab to
+// `userscript.html?preview=…`.
 //
 // `file://` capture additionally depends on the user's per-extension
 // "Allow access to file URLs" toggle:
@@ -86,21 +66,10 @@ const BYPASS_PREFIX = 'installBypass:';
 // URL is captured normally again.
 const BYPASS_TTL_MS = 30_000;
 
-// Fixed session-rule id for the Chrome < 152 download workaround.
-// Session rules are wiped when the browser closes, which is what we
-// want: the rule is re-derived from the current option + Chrome
-// version on every SW startup.
-const DNR_DOWNLOAD_FIX_RULE_ID = 1;
-
-// The Chrome milestone that removed `.user.js` download special-casing.
-// At/after this version the workaround rule is not just unnecessary,
-// it's harmful — see the file header.
-const CHROME_USERJS_FIX_VERSION = 152;
-
 // Schemes the capture acts on. `file:` is here so that opening a
-// local `.user.js` offers the same install prompt a downloaded one
-// does — it was the one way in that still dead-ended in a browser
-// download. The cost (a local file opened *to read* gets hijacked) is
+// local `.user.js` offers the same install prompt a remote one does;
+// without it a script on disk is the one way in with no prompt at
+// all. The cost (a local file opened *to read* gets hijacked) is
 // accepted and mitigated rather than avoided; see
 // [docs/install-capture.md] "The cost, and what pays for it".
 //
@@ -111,8 +80,8 @@ const CAPTURED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 // Code-hosting sites that serve an HTML *page* — a file browser with
 // syntax highlighting, line numbers, and navigation — at a URL whose
 // path still ends in `.user.js`. Those pages are something the user
-// asked to read, Chrome renders them correctly on its own, and there
-// is no download to rescue, so the capture stays out of the way.
+// asked to read and Chrome renders them correctly on its own, so the
+// capture stays out of the way.
 //
 // Only the page-view path is listed. Each of these hosts serves the
 // real bytes from a different path (noted per entry), and those stay
@@ -197,23 +166,6 @@ export function buildPreviewPageUrl(scriptUrl: string): string {
   return `${chrome.runtime.getURL(PREVIEW_PAGE)}?${qs.toString()}`;
 }
 
-// Extract the Chrome major version from a user-agent string. Returns
-// null when the string doesn't look like Chrome at all; callers treat
-// null as "assume a version that still needs the workaround", matching
-// what Violentmonkey does — a spurious rule on a non-Chrome browser is
-// harmless because the whole module only runs where DNR exists.
-export function parseChromeMajor(ua: string): number | null {
-  const m = /Chrom(?:e|ium)\/(\d+)/.exec(ua);
-  return m ? Number(m[1]) : null;
-}
-
-// True when this browser still has the legacy `.user.js` download
-// path and therefore needs the Content-Type workaround.
-export function needsDownloadWorkaround(ua: string): boolean {
-  const major = parseChromeMajor(ua);
-  return major === null || major < CHROME_USERJS_FIX_VERSION;
-}
-
 function bypassKey(url: string): string {
   return BYPASS_PREFIX + url;
 }
@@ -252,106 +204,29 @@ let captureFlagReady: Promise<void> = Promise.resolve();
 // Bumped by every write. The initial read applies its result only if
 // nothing newer landed while it was in flight — otherwise a toggle made
 // during startup would be clobbered by the stale value, leaving the
-// mirror and the DNR rule both wrong until the next toggle.
+// mirror wrong until the next toggle.
 let captureFlagGeneration = 0;
+
+// The live mirror, not a settled answer: it reads the optimistic
+// default (on) until the startup read lands, so only a poll for
+// `false` means anything. Exposed for the e2e suite, where a test that
+// turns capture off needs to know the SW has seen the change before it
+// navigates — the storage write resolving is not the same as the
+// `onChanged` listener having run.
+export function isCaptureEnabled(): boolean {
+  return captureEnabled;
+}
 
 async function loadCaptureFlag(): Promise<void> {
   const generation = captureFlagGeneration;
   try {
     const got = await chrome.storage.local.get(INSTALL_CAPTURE_KEY);
     if (generation !== captureFlagGeneration) return;
-    await applyCaptureFlag(got[INSTALL_CAPTURE_KEY] !== false);
+    captureEnabled = got[INSTALL_CAPTURE_KEY] !== false;
   } catch (err) {
     // Leave the mirror at its default rather than taking the SW's
     // startup down; the next toggle re-syncs everything.
     console.info('[SourceMonkey] could not read the .user.js capture setting', err);
-  }
-}
-
-async function applyCaptureFlag(enabled: boolean): Promise<void> {
-  captureEnabled = enabled;
-  await syncDownloadWorkaroundRule();
-}
-
-// Response-header rule conditions landed in Chrome 128 but aren't in
-// @types/chrome 0.0.287 yet, so the condition is assembled through a
-// locally widened type. The cast is confined to this declaration
-// rather than applied to the whole rule, so everything else in the
-// literal is still type-checked.
-type ResponseHeaderCondition = chrome.declarativeNetRequest.RuleCondition & {
-  responseHeaders?: { header: string; values?: string[] }[];
-};
-type HeaderRule = Omit<chrome.declarativeNetRequest.Rule, 'condition'> & {
-  condition: ResponseHeaderCondition;
-};
-
-// Add / remove the Chrome < 152 Content-Type rule to match the current
-// capture setting. With capture off the user asked for stock browser
-// behavior, so the workaround comes off too.
-async function syncDownloadWorkaroundRule(): Promise<void> {
-  const dnr = chrome.declarativeNetRequest;
-  if (!dnr) return;
-  // Note what the rewrite means for any `.user.js` response that
-  // actually reaches the renderer (only when the capture loses the
-  // cold-start race): the browser HTML-parses the script — collapsed
-  // whitespace, and an inline `<script>` in the file would run on its
-  // host's origin. That's why the preview page's raw view never
-  // navigates to a rewritten response on these versions; it serves its
-  // own fetched copy as text/plain. See [docs/install-capture.md]
-  // before widening this rule.
-  const wanted = captureEnabled && needsDownloadWorkaround(navigator.userAgent);
-  const rules: HeaderRule[] = wanted
-    ? [
-        {
-          id: DNR_DOWNLOAD_FIX_RULE_ID,
-          // Chrome's legacy check was `filename ends with .user.js &&
-          // mime != text/html`, so setting text/html is precisely the
-          // exemption. Restricted to main-frame GETs whose response
-          // claims to be script/text: a `.user.js` fetched as a
-          // subresource, or already served as HTML, is left alone.
-          //
-          // `^[^?]*` anchors the suffix to the path, so the rule covers
-          // exactly what `isUserJsUrl` covers — without it,
-          // `…/view?f=a.user.js` would be rewritten despite the capture
-          // deliberately ignoring that shape. No `#` alternative: the
-          // fragment is never sent, so DNR never sees one.
-          //
-          // The forge page views `isUserJsUrl` excludes need no clause
-          // here: they answer `text/html`, which the content-type
-          // condition below already rules out.
-          condition: {
-            regexFilter: '^[^?]*\\.user\\.js(\\?.*)?$',
-            isUrlFilterCaseSensitive: true,
-            requestMethods: ['get' as chrome.declarativeNetRequest.RequestMethod],
-            resourceTypes: ['main_frame' as chrome.declarativeNetRequest.ResourceType],
-            responseHeaders: [{ header: 'content-type', values: ['*/javascript*', 'text/plain*'] }],
-          },
-          action: {
-            type: 'modifyHeaders' as chrome.declarativeNetRequest.RuleActionType,
-            responseHeaders: [
-              {
-                header: 'content-type',
-                // Carries a charset: replacing the header outright drops
-                // whatever the server declared, and Chrome would fall
-                // back to the locale default and mojibake a UTF-8 script.
-                value: 'text/html; charset=utf-8',
-                operation: 'set' as chrome.declarativeNetRequest.HeaderOperation,
-              },
-            ],
-          },
-        },
-      ]
-    : [];
-  try {
-    await dnr.updateSessionRules({
-      removeRuleIds: [DNR_DOWNLOAD_FIX_RULE_ID],
-      addRules: rules as chrome.declarativeNetRequest.Rule[],
-    });
-  } catch (err) {
-    // A malformed rule or a Chrome that rejects the response-header
-    // condition shouldn't take the capture down with it — the capture
-    // itself doesn't depend on this rule.
-    console.info('[SourceMonkey] could not update the .user.js download workaround rule', err);
   }
 }
 
@@ -370,10 +245,13 @@ export function installUserJsCapture(): void {
     const change = changes[INSTALL_CAPTURE_KEY];
     if (!change) return;
     captureFlagGeneration++;
-    // Keep `captureFlagReady` pointing at the newest apply so a
-    // navigation racing a toggle waits for the toggle, not for a read
-    // that has already been superseded.
-    captureFlagReady = applyCaptureFlag(change.newValue !== false);
+    // The bump above makes an in-flight initial read discard its
+    // result, so the toggle can't be clobbered by a stale value. The
+    // flag itself lands synchronously; `captureFlagReady` is reset so
+    // that a LATER navigation isn't parked behind the superseded
+    // startup read.
+    captureEnabled = change.newValue !== false;
+    captureFlagReady = Promise.resolve();
   });
 
   wn.onBeforeNavigate.addListener(

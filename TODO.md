@@ -984,11 +984,6 @@ that need doing *here* rather than describing there:
   is named properly. The `file://` leg of `fetchManifestText` has no
   such check, and a directory read there surfaces as a `JSON.parse`
   complaint about `<`.
-- **Drop the Chrome < 152 download workaround** once 152 is the
-  supported floor. The DNR session rule, `needsDownloadWorkaround`,
-  `parseChromeMajor`, and their tests go together, and the
-  `declarativeNetRequestWithHostAccess` permission can come out of the
-  manifest with them.
 
 ## Script preview — follow-ups
 

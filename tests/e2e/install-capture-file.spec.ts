@@ -19,23 +19,12 @@
 // is what runs `resetAllState()` around each test.
 
 import fs from 'node:fs';
-import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
 import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
-
-// Mirrors CHROME_USERJS_FIX_VERSION in src/install-capture.ts. Below
-// it, a `.user.js` navigation is forced into a download on every
-// scheme — including `file://` (verified on Chrome 148), which is
-// exactly why a local script needs the capture too.
-const CHROME_USERJS_FIX_VERSION = 152;
-
-function chromeMajor(page: Page): Promise<number> {
-  return page.evaluate(() => Number(/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent)?.[1] ?? 0));
-}
 
 const INSTALLED_VIEWER_URL = /userscript\.html\?script=/;
 
@@ -182,32 +171,12 @@ test.describe('.user.js capture for local files', () => {
     await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
-    // Read before the click: a lost bypass re-navigates this tab, and
-    // the resulting "execution context destroyed" would mask the real
-    // assertion.
-    const major = await chromeMajor(page);
-
-    // Stamp the document so a re-capture (which re-navigates this tab to
-    // the preview URL it is already on) is distinguishable from the
-    // browser simply handling the file itself.
-    await page.evaluate(() => { (window as Window & { __mark?: number }).__mark = 1; });
     await page.locator('#continue-btn').click();
 
-    if (major >= CHROME_USERJS_FIX_VERSION) {
-      // The browser renders the file as text, so the tab really lands
-      // on it — proof enough that the capture stood down.
-      await page.waitForURL(url);
-      expect(await page.locator('body').innerText()).toContain('not a userscript');
-    } else {
-      // The legacy path downloads the file instead, leaving this
-      // document in place. A capture would have replaced it — so a
-      // surviving stamp is what proves the bypass held.
-      await page.waitForTimeout(1500);
-      const mark = await page
-        .evaluate(() => (window as Window & { __mark?: number }).__mark)
-        .catch(() => undefined);
-      expect(mark).toBe(1);
-    }
+    // The browser renders the file as text, so the tab really lands on
+    // it — proof enough that the capture stood down.
+    await page.waitForURL(url);
+    expect(await page.locator('body').innerText()).toContain('not a userscript');
     await page.close();
   });
 
@@ -321,14 +290,8 @@ test.describe('.user.js capture for local files', () => {
     const page = await extensionContext.newPage();
     // The SW mirrors the flag through a storage.onChanged listener, so
     // the write resolving isn't the same as the mirror being updated.
-    // Below Chrome 152 the download-workaround rule is synced by that
-    // same code path, which makes its removal an observable proxy.
-    if (await chromeMajor(page) < CHROME_USERJS_FIX_VERSION) {
-      await expect.poll(async () => {
-        const worker = await getServiceWorker();
-        return worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules().then((r) => r.length));
-      }).toBe(0);
-    }
+    // Poll the mirror itself before navigating.
+    await expect.poll(() => sm.isCaptureEnabled()).toBe(false);
 
     await startCapturedNavigation(page, url);
     await page.waitForTimeout(500);

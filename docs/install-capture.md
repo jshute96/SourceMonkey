@@ -15,24 +15,24 @@ Implementation:
 
 ## What Chrome does with a `.user.js` URL
 
-- **Chrome ≤ 151** — the suffix is special-cased
-  (`UserScript::IsURLUserScript`, "get downloaded instead of viewed").
-  The navigation is forced into a download, and the download is handed
-  to the extension installer, which converts it to an MV2 extension —
-  a path that always fails now that MV2 is gone. The user sees a
-  broken download plus an install error.
-- **Chrome ≥ 152** — the special case was removed
-  ([crrev 38b617ca](https://chromiumdash.appspot.com/commit/38b617ca5ade59243d01170a8f4a744692983f19),
-  landed 2026-06-30). A `.user.js` URL becomes an ordinary resource:
-  a `text/javascript` response renders as source text; an `attachment`
-  response downloads as a plain file.
+- It is an ordinary resource: a `text/javascript` response renders as
+  source text, an `attachment` response downloads as a plain file, and
+  a local `.user.js` opens as text.
+- Chrome never offers to install anything, so the capture is needed
+  permanently. It just means the *non-captured* outcome is benign.
 
-Neither version offers to install anything, so capture is needed
-permanently — the Chrome 152 change only makes the *non-captured*
-outcome benign instead of alarming.
+### The Chrome 152 floor
 
-Both behaviors are scheme-independent: a `file://…/foo.user.js` opened
-in a tab downloads on Chrome ≤ 151 too (verified on Chrome 148).
+- Chrome ≤ 151 special-cased the suffix
+  (`UserScript::IsURLUserScript`, "get downloaded instead of viewed"):
+  the navigation was forced into a download, handed to the extension
+  installer, and converted to an MV2 extension — a path that always
+  fails now that MV2 is gone.
+- [crrev 38b617ca](https://chromiumdash.appspot.com/commit/38b617ca5ade59243d01170a8f4a744692983f19)
+  (landed 2026-06-30) removed it in Chrome 152.
+- `minimum_chrome_version: "152"` in the manifest is the floor, so
+  nothing here works around the legacy path any more. Chrome refuses
+  to load the extension below it.
 
 ## The capture
 
@@ -60,14 +60,14 @@ navigation. Capturing it hijacks a page the user opened to *read*.
   `/<o>/<r>/blob/`, gitlab.com `/-/blob/`, bitbucket.org and
   codeberg.org `/<o>/<r>/src/`. `www.` is stripped first.
 - The **raw** URL for each of those (`raw.githubusercontent.com`,
-  `/-/raw/`, `/raw/`) is still captured — that one really is the script,
-  and really does dead-end in the browser.
+  `/-/raw/`, `/raw/`) is still captured — that one really is the
+  script, and the browser offers no way to install it.
 - So is a blob URL carrying GitHub's own `?raw=true` switch. It 302s to
   the raw host, and `onBeforeNavigate` doesn't fire again for a server
   redirect, so skipping it would lose the capture rather than defer it.
   (`?plain=1` is not that switch — it's still the page.)
-- Chrome renders these pages fine on its own, so unlike a raw
-  `.user.js` there is no broken download to rescue. Not capturing is
+- These pages are already what the user wanted to see, so there is
+  nothing for the capture to improve. Not capturing is
   also what makes the behavior consistent: clicking a link *inside*
   GitHub is a same-page SPA navigation that never fires
   `onBeforeNavigate`, so it was never captured — only pasting the URL
@@ -162,43 +162,6 @@ between them is a bug, not a nuance:
   site for fingerprinting.
 - An extension-initiated navigation (`chrome.tabs.update`) has no such
   requirement, and the ID never leaves the extension.
-
-## The download workaround (Chrome < 152 only)
-
-- The service worker may be cold-starting when the navigation begins,
-  so the response can beat our `tabs.update`. On Chrome ≤ 151 that
-  means the legacy download path fires and the user gets the bogus
-  install error.
-- A DNR **session** rule rewrites the response `Content-Type` to
-  `text/html` for main-frame `GET`s of `.user.js` URLs that answer
-  with `*/javascript*` or `text/plain*`.
-- `text/html` is exactly the MIME the legacy check exempted, so Chrome
-  renders the response instead of downloading it.
-- **Not registered on Chrome ≥ 152**: there the rule would turn a
-  clean plain-text source view into garbled HTML.
-- **Nothing to do for `file://`**: DNR only sees network requests, and
-  a local file has no response headers to rewrite. A `file://` capture
-  that loses the cold-start race just gets Chrome's own handling (a
-  download, below 152).
-- The rule is a safety net, never the mechanism. The capture works
-  with the rule absent.
-
-### Cost of the rewrite
-
-- A rewritten response that actually reaches the renderer is
-  HTML-parsed: whitespace collapses onto one run-on line,
-  angle-bracketed text disappears, and an inline `<script>` in the
-  file would run on the file's host origin.
-- That only happens when the capture loses the cold-start race, which
-  is the case the rule exists to keep from being *worse* (a failed
-  download plus an install error).
-- The preview's **View raw source** deliberately does not navigate
-  into a rewritten response on these versions whenever it has a fetched
-  copy to show instead — see below.
-- The whole rule disappears on its own once Chrome 152 is the floor.
-- Requires the `declarativeNetRequestWithHostAccess` permission. It
-  adds no new install warning — the redirect-free variant rides on the
-  `<all_urls>` host access the extension already holds.
 
 ## Where the capture lands
 
@@ -299,9 +262,9 @@ extension page — hence the strip.
 - Usually that means the URL is an ordinary **web page** whose path
   happens to end in `.user.js` — the blob view of a forge not in
   `CODE_HOST_PAGE_VIEWS`, say. The capture runs before any response
-  exists, so it can't apply the `mime != text/html` half of Chrome's
-  own test the way the DNR rule can; the host list is the stand-in for
-  the hosts worth knowing about in advance.
+  exists, so it can't look at the response's MIME type at all; the
+  host list is the stand-in for the hosts worth knowing about in
+  advance.
 - **Continue to page** is the way out: it sets a bypass and loads the
   URL, so the capture doesn't pull the tab straight back. Without it
   the only escape would be turning the whole option off.
@@ -317,25 +280,19 @@ extension page — hence the strip.
 
 ### How the raw view stays readable
 
-The right way to show the file depends on what the browser would do
-with the response:
+The right way to show the file depends on the scheme:
 
-- **http(s) on Chrome ≥ 152** — a real navigation to the URL, with a
-  one-shot capture bypass. The browser renders it as source text and
-  the address bar keeps the true URL.
-- **Everything else** — the copy the preview already fetched, rendered
-  on `raw.html`. Navigating for real would land on a response the
-  download workaround has rewritten to `text/html` (http ≤ 151), or on
-  the legacy download path (`file://` ≤ 151).
-- `file://` takes the `raw.html` branch on **every** version:
-  a titled, guaranteed-readable tab is already the better answer, and
-  it costs no navigation to get wrong.
-- **Fetch failed / still in flight** — navigate regardless of
-  version. There's no copy to render locally, and a real navigation
-  carries the cookies the extension's own fetch doesn't, so it doubles
-  as the retry for an auth-gated URL. On Chrome ≤ 151 the browser then
-  does whatever it does with the (possibly rewritten) response — the
-  one case where the raw view can't promise a readable result.
+- **http(s)** — a real navigation to the URL, with a one-shot capture
+  bypass. The browser renders it as source text and the address bar
+  keeps the true URL.
+- **`file://`** — the copy the preview already fetched, rendered on
+  `raw.html`. Chrome would render the file readably too, but a titled
+  tab beats a full local path in the tab strip, and the navigation can
+  be refused outright when "Allow access to file URLs" is off.
+- **Fetch failed / still in flight** — navigate either way. There's no
+  copy to render locally, and a real navigation carries the cookies the
+  extension's own fetch doesn't, so it doubles as the retry for an
+  auth-gated URL.
 
 Every real navigation out of the preview sets a bypass first, `file://`
 included — otherwise the raw view would be captured straight back into
@@ -399,8 +356,8 @@ path those differ.
 
 - Options page: **Capture `.user.js` links**, on by default
   (`smCaptureUserJsLinks` in `chrome.storage.local`; absent means on).
-- Turning it off removes the DNR rule too — the user asked for stock
-  browser behavior, and on Chrome ≤ 151 that includes the download.
+- Turning it off leaves the URL to Chrome, which renders it as source
+  text.
 - It is the one switch that also turns off `file://` capture, for
   anyone who would rather their local scripts just open.
 - The service worker keeps an in-memory mirror of the flag, refreshed
@@ -433,12 +390,11 @@ path those differ.
   none. A hint on the options page would close the gap.
 - **Mixed-case suffixes are ignored** everywhere, by design — see
   "Every matcher has to agree" above.
-- **`Content-Disposition: attachment` responses** still download on
-  every Chrome version when the capture loses the startup race; the
-  DNR rule only rewrites `Content-Type`.
+- **`Content-Disposition: attachment` responses** still download when
+  the capture loses the startup race — the service worker may be
+  cold-starting when the navigation begins, so the response can beat
+  our `tabs.update`.
 - **No `@version` comparison logic** beyond the Version column of the
   versions table — Update always refetches, and nothing says
   which copy is newer or whether they differ at all. A comparison +
   diff view is planned; see TODO.md.
-- **Delete the DNR rule** once Chrome 152 is the supported floor
-  (`needsDownloadWorkaround` and its unit tests go with it).

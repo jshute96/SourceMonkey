@@ -683,7 +683,8 @@ list on the mouse *release* instead of the press.
   reverting it was tried first: the list is torn down and re-opened
   under the cursor, which reads as a flash over the whole popup on
   every click.
-- If `showPicker` is missing (Chrome 120, one below where it landed)
+- If `showPicker` is missing (only a future context that withholds it —
+  it has been in Chrome since 121, below the extension's floor)
   or ever refuses, the takeover switches itself off and the browser's
   press-to-open stands — bug and all, but a control that opens beats
   one that can't. A refusal costs the click that discovered it, whose

@@ -62,6 +62,11 @@ export interface SmApi {
   updateScript(id: string, mode: Mode, probe?: 'force' | 'if-stale'): Promise<unknown>;
   updateAllCollections(mode: Mode): Promise<unknown>;
   getTabState(tabId: number): Promise<TabStateSnapshot>;
+  // The SW's live view of the `.user.js` capture toggle. A test that
+  // flips the option polls this before navigating: the storage write
+  // resolving is not the same as the SW's `storage.onChanged` listener
+  // having run.
+  isCaptureEnabled(): Promise<boolean>;
   resetAllState(): Promise<void>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.

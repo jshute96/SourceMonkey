@@ -65,14 +65,14 @@ VM 2.48.0.
 ## One-time user opt-in
 
 Chrome requires an explicit user toggle before the API will execute:
+the **"Allow User Scripts"** switch on the extension's details page
+(`chrome://extensions/?id=<extId>`).
 
-- **Chrome ≥ 138**: "Allow User Scripts" toggle on the extension's
-  details page (`chrome://extensions/?id=<extId>`).
-- **Chrome 120–137**: Developer mode toggle on `chrome://extensions`.
-
-Not a SourceMonkey quirk: Violentmonkey's MV3 build splits the same
-two cases — it tells the user to enable "Allow User Scripts" on
-Chrome ≥ 138 and "Developer Mode" below that, then reload the tab.
+- Not a SourceMonkey quirk: Violentmonkey's MV3 build prompts for the
+  same toggle, then tells the user to reload the tab.
+- Chrome below 138 used the browser-wide Developer mode toggle instead.
+  That is under the extension's Chrome 152 floor, so only the one case
+  is live.
 
 Until the user flips that, **every** `register()` call throws. The
 badge logic is unaffected (it's local code, not the userScripts API),
@@ -650,8 +650,9 @@ eval's the embedded snippet to verify the regex-relevant cases.
 
 ### How Chrome reads includeGlobs
 
-Measured against real Chrome (151), not taken from the docs — the probe
-lives in `tests/e2e/include-only.spec.ts`:
+Measured against real Chrome, not taken from the docs — the probe lives
+in `tests/e2e/include-only.spec.ts` and re-checks this on whatever
+Chrome the suite runs:
 
 - `chrome.userScripts` **ORs** `includeGlobs` with `matches`: a page
   matching either one runs the script. That is userscript `@include`

@@ -47,7 +47,7 @@ import {
 import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { readRefreshErrors, type RefreshErrorMap } from './refresh-error.js';
-import { installUserJsCapture } from './install-capture.js';
+import { installUserJsCapture, isCaptureEnabled } from './install-capture.js';
 import {
   HTTP_READ_MESSAGE,
   handleHttpReadRequest,
@@ -289,6 +289,11 @@ interface SourceMonkeyApi {
     title: string;
     record: TabRecord | null;
   }>;
+  // The SW's live view of the `.user.js` capture toggle, so a test
+  // that flips the option can wait for the change to land before
+  // navigating. Optimistically `true` until the startup read finishes,
+  // so only a poll for `false` is meaningful.
+  isCaptureEnabled: () => boolean;
   // Wipe local + session storage and unregister every userscript so
   // each test starts clean.
   resetAllState: () => Promise<void>;
@@ -463,6 +468,7 @@ const api: SourceMonkeyApi = {
     ]);
     return { badgeText, badgeColor, title, record };
   },
+  isCaptureEnabled,
   // Drains this script's in-flight appends before reading. Production
   // log writes go through `logScriptEvent`, which is deliberately
   // fire-and-forget — a refresh must not wait on its own transcript —

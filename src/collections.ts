@@ -1139,10 +1139,9 @@ async function render(): Promise<void> {
   }
 
   // The User Scripts API requires the user to flip the "Allow User
-  // Scripts" toggle (Chrome ≥138) or enable developer mode (120–137)
-  // on chrome://extensions. Until they do, every registration call
-  // throws — meaning no scripts actually inject even though the badge
-  // still counts matches. Other failures (revoked permission, etc.)
+  // Scripts" toggle on chrome://extensions. Until they do, every
+  // registration call throws — meaning no scripts actually inject even
+  // though the badge still counts matches. Other failures (revoked permission, etc.)
   // surface their raw message so the user has something to grep for.
   const userScriptsState = await probeUserScriptsApi();
   if (!userScriptsState.usable) {

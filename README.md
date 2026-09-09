@@ -41,7 +41,9 @@ common headers including `@require` and `@resource` are supported. See
 [docs/supported-headers.md](docs/supported-headers.md) for details.
 
 SourceMonkey isn't in the Chrome Web Store — install it from a release
-zip or [build from source](#development).
+zip or [build from source](#development). It requires **Chrome 152 or
+newer**; the manifest declares that floor, so older Chrome refuses to
+load it.
 
 ## Getting started
 
@@ -56,9 +58,8 @@ zip or [build from source](#development).
    click **Load unpacked**, and select that directory.
 2. On `chrome://extensions`, for SourceMonkey enable:
    - **Pin to toolbar**, so the SourceMonkey icon is visible.
-   - **"Allow User Scripts"** (on Chrome 120–137, the page-wide
-     Developer mode toggle instead). Without it Chrome refuses to
-     inject anything.
+   - **"Allow User Scripts"**. Without it Chrome refuses to inject
+     anything.
    - **"Allow access to file URLs"**, if you want to load scripts from
      local disk.
 
@@ -169,8 +170,8 @@ Details: [docs/file-access.md](docs/file-access.md),
 ### Installing scripts from a `.user.js` link
 
 Click a `.user.js` raw file link anywhere — Greasy Fork, GitHub, a file on your
-own disk, etc. — and SourceMonkey previews it instead of letting Chrome
-download the file.
+own disk, etc. — and SourceMonkey previews it instead of letting Chrome show
+the bare source.
 
 The preview shows the script's source code and some summary information,
 and validates the script and its `@require` libraries, reporting errors for
