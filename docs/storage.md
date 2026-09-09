@@ -998,6 +998,10 @@ Routes by what was typed (trimmed):
 - **Ends in `.user.js`** (URL, `file://`, or absolute path) → the
   install page, `userscript.html?preview=…`, which asks where to put
   it. Nothing is written until Install.
+  - **In a new tab**, with the Add field cleared: the collections page
+    the user was adding from is still there behind the install
+    question. See
+    [architecture.md](architecture.md#cross-page-navigation).
 - **Any other URL, or anything starting with `/`** → the collection
   dialog, prefilled with the location. The dialog classifies it (see
   [what a location turns out to be](#what-a-location-turns-out-to-be)),
@@ -1170,8 +1174,8 @@ google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/
 
 - Runs the same flow as typing the value into the Add field and
   clicking Add (validation, dedup, scroll-to-section).
-- A single `.user.js` value (URL or path) hands off to the viewer's
-  preview rather than being added outright — see
+- A single `.user.js` value (URL or path) opens the viewer's preview in
+  a new tab rather than being added outright — see
   [script-viewer.md](script-viewer.md#preview-mode). Every other value
   opens the collection dialog prefilled, so a deep-linked directory
   gets a name and a readability check before it exists.

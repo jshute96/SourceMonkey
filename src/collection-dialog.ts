@@ -50,6 +50,8 @@ import {
 import { MANIFEST_FILENAME } from './collection-scan.js';
 import { collectionSupportsLocalFiles } from './local-file-overrides.js';
 import { dlog } from './debug-log.js';
+import { previewUrl } from './script-display.js';
+import { openExtensionTab } from './page-links.js';
 
 export interface CollectionDialogRequest {
   mode: 'create' | 'edit';
@@ -522,7 +524,10 @@ async function runDialog(
     setError(state.message);
     ui.errorAction.hidden = !state.scriptLocation;
     ui.errorAction.onclick = state.scriptLocation
-      ? () => { window.location.href = chrome.runtime.getURL(`userscript.html?preview=${encodeURIComponent(state.scriptLocation)}`); }
+      // A new tab: the dialog's caller (usually the collections page)
+      // stays where it was, so backing out of the install lands the
+      // user where they started.
+      ? () => { void openExtensionTab(chrome.runtime.getURL(previewUrl(state.scriptLocation))); }
       : null;
     ui.ok.disabled = !state.ready;
   };

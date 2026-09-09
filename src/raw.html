@@ -24,13 +24,17 @@
   <body>
     <header class="page-header">
       <div class="page-header-inner">
-        <img class="page-icon" src="icons/icon-48.png" alt="" />
+        <a class="page-home page-icon-link" href="collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="icons/icon-48.png" alt="" />
+        </a>
         <!-- Deliberately empty: the filename lands a frame or two later
              (raw.ts), and a placeholder word here would be read as the
              page's name and then visibly replaced. Blank simply fills
              in. `Raw source` is still the fallback, but only once we
              know no filename is coming. -->
-        <h1><span class="brand">SourceMonkey |</span> <span id="raw-title"></span></h1>
+        <h1><a class="page-home brand" href="collections.html" target="_blank" rel="noopener"
+             title="Open the collections page">SourceMonkey</a><span class="brand"> |</span> <span id="raw-title"></span></h1>
       </div>
     </header>
     <pre id="raw"></pre>

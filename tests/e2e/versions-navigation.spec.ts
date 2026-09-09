@@ -167,10 +167,17 @@ test.describe('switching copies from the versions panel', () => {
     await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
     await expect(page.locator(LOCATION_ROW)).toContainText('a.user.js');
 
-    // Nor does the Collection cell's link out to the collections page,
-    // which is a real navigation of its own. Last, because it leaves.
-    await page.locator(`${other} .versions-collection-name`).click();
-    await expect(page).toHaveURL(/collections\.html/);
+    // Nor does the Collection cell's link out to the collections page.
+    // That one opens the collections page's named tab beside this one
+    // (src/page-links.ts), so the viewer is left showing the copy it
+    // was already showing rather than the row that was clicked.
+    const [collections] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.locator(`${other} .versions-collection-name`).click(),
+    ]);
+    await collections.waitForURL(/collections\.html/);
+    await expect(page).toHaveURL(new RegExp(`script=${first.id}`));
+    await collections.close();
 
     await page.close();
   });

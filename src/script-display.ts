@@ -284,6 +284,13 @@ export function viewerUrl(scriptId: string, tab?: 'log'): string {
   return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
 }
 
+// The install-preview URL for a location the user typed or pasted.
+// Page-relative for the same reason `viewerUrl` is; callers that need
+// the absolute form wrap it in `chrome.runtime.getURL`.
+export function previewUrl(location: string): string {
+  return `userscript.html?preview=${encodeURIComponent(location)}`;
+}
+
 // Everything a Status cell shows about one stored script: the
 // effective status, the word for it, and the hover text explaining
 // whichever verdict won.

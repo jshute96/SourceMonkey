@@ -974,7 +974,10 @@
     <!--#include glyph-sprite-->
     <header class="page-header">
       <div class="page-header-inner">
-        <img class="page-icon" src="icons/icon-48.png" alt="" />
+        <a class="page-home page-icon-link" href="collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="icons/icon-48.png" alt="" />
+        </a>
         <!-- `tabindex="-1"` so in-page navigation between copies can move
              focus here: the heading, the details, and the code all change
              with no document load for a screen reader to announce. Not
@@ -985,9 +988,17 @@
              than after any script has run. Exactly what
              `headingPrefixEl(INSTALLED_HEADING)` builds (src/page-heading.ts),
              so when the heading is rendered for real this part of it does
-             not move: the installed page repaints the same two spans, and
-             the install page appends its "Install |" after them. -->
-        <h1 id="filename" tabindex="-1"><span class="heading-prefix brand">SourceMonkey</span><span class="heading-prefix brand"> | </span></h1>
+             not move: the installed page repaints the same link and
+             separator, and the install page appends its "Install |"
+             after them.
+             The product name is a link home to the collections page.
+             It carries a real href and `target` so a click before
+             `userscript.js` has run still opens a new tab; once the
+             page's delegated handler is installed (installHomeLinkHandler,
+             src/page-links.ts) the click goes to the NAMED collections
+             tab instead. -->
+        <h1 id="filename" tabindex="-1"><a class="heading-prefix brand page-home" href="collections.html"
+             target="_blank" rel="noopener" title="Open the collections page">SourceMonkey</a><span class="heading-prefix brand"> | </span></h1>
       </div>
     </header>
     <div class="page-main">

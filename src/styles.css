@@ -548,6 +548,29 @@ select.install-target {
      `.heading-prefix` as well. */
 .page-header h1 .brand { color: var(--brand-fg); }
 
+/* The icon and the product name are a link home to the collections
+   page (src/page-links.ts). Styled to look like the bar, not like a
+   link: it is chrome, and underlining it permanently would read as an
+   error. The underline on hover is what says it is clickable.
+
+   Deliberately NO colour here. The product name is `.brand` inside the
+   `<h1>`, so the rule above already paints it, and a `color` on this
+   selector would tie with that one on specificity and win on source
+   order — leaving a near-black "SourceMonkey" beside a brown `|`. */
+.page-header a.page-home { text-decoration: none; }
+.page-header a.page-home:hover { text-decoration: underline; }
+
+/* The icon's wrapper: flex so the anchor is exactly the image's box
+   with no inline-layout gap under it, and `flex: 0 0 auto` because the
+   anchor is now the row's item, not the image. It sits outside the
+   `<h1>`, so nothing else colours it and the link blue has to be
+   turned off here. */
+.page-header .page-icon-link {
+  flex: 0 0 auto;
+  display: flex;
+  color: inherit;
+}
+
 .page-header-actions {
   flex: 0 0 auto;
   display: flex;

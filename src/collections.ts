@@ -70,6 +70,7 @@ import {
   collectionAnchorId,
 } from './collection-display.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
+import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from './userscript-header.js';
 import { describeDiagnostic } from './diagnostic-location.js';
 import { installDebugLoggingListener, loadDebugLoggingFlag } from './debug-log.js';
@@ -87,6 +88,7 @@ import {
   formatScriptSize,
   formatScriptStatusLabel,
   logIdDupeSuffix,
+  previewUrl,
   scriptBasename,
   scriptDisplayName,
   scriptOutdatedProbe,
@@ -186,8 +188,11 @@ const REFRESH_COLLECTION_LABELS = {
 setGlyphButton(refreshAllBtn, '#sm-refresh', 'Refresh every collection', { text: 'Refresh All' });
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 
+// A new tab, not this one: the collections page is where the user was
+// working, and Options is a detour. `openNamedTab` reuses the one
+// Options tab if it is already open rather than stacking up copies.
 openOptionsBtn.addEventListener('click', () => {
-  location.href = 'options.html';
+  void openNamedTab('options');
 });
 
 // Resolved once the first render has finished painting, which is what
@@ -204,6 +209,17 @@ let resolveInitialRender!: () => void;
 const initialRenderDone = new Promise<void>((resolve) => {
   resolveInitialRender = resolve;
 });
+
+// A link elsewhere asking this tab to show a particular collection. The
+// tab is already loaded, so a fragment in its URL would not move it —
+// see src/page-links.ts.
+//
+// Registered below `initialRenderDone`, which the handler reads: a
+// message can only arrive in a later task, so the order is safe either
+// way, but a `const` read before its declaration throws a
+// ReferenceError inside a message listener, where nothing would report
+// it.
+onNamedTabFocus('collections', (hash) => { void focusHashTarget(hash); });
 
 installLocalRootsListener();
 void bootstrap().catch((err: unknown) => {
@@ -981,6 +997,31 @@ async function seedDefaultCollectionsViaUi(): Promise<void> {
   }
 }
 
+// Show what an incoming link asked for, in a tab that is already open
+// and already scrolled somewhere else. The empty hash is a link to the
+// page as a whole, which means the top.
+//
+// The URL is rewritten to match so a reload, a share, or the back
+// button lands where the user is now looking — the same bargain
+// `jumpToCollection` makes after an add.
+async function focusHashTarget(hash: string): Promise<void> {
+  // Both, not just the first render: a repaint empties the container
+  // and refills it across several awaits, and a message that landed
+  // mid-repaint would look for a section that is not in the document
+  // yet and silently give up.
+  await initialRenderDone;
+  await repaintChain;
+  if (!hash) {
+    history.replaceState(null, '', location.pathname + location.search);
+    scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  const section = document.getElementById(hash);
+  if (!section) return;
+  history.replaceState(null, '', `#${hash}`);
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 // If the URL hash points at a rendered collection section, scroll it
 // into view. No-op otherwise; safe to call any time after render().
 function scrollToHashCollectionIfPresent(): void {
@@ -993,8 +1034,9 @@ function scrollToHashCollectionIfPresent(): void {
 
 // Drive the Add flow from a `?add=` query param. Pre-fills the form
 // field (so the user sees what was attempted) and runs the same flow
-// as the manual Add button — a `.user.js` goes to the install page,
-// anything else opens the create dialog prefilled. The URL is scrubbed
+// as the manual Add button — a `.user.js` opens the install page in a
+// new tab, clearing the field again as it goes; anything else opens the
+// create dialog prefilled. The URL is scrubbed
 // once the value was consumed; a cancelled dialog leaves it in place,
 // so the user can copy/share/edit it.
 async function handleAddParam(raw: string): Promise<void> {
@@ -1656,7 +1698,22 @@ async function onAddViaDialog(rawPath: string, jump: boolean): Promise<boolean> 
   const text = rawPath.trim();
   showPageError(null);
   if (text && isValidLocationShape(text) && isSingleFileInput(text)) {
-    location.href = `userscript.html?preview=${encodeURIComponent(text)}`;
+    // A new tab: the install question is about one file, and answering
+    // it should not cost the user the collections page they were
+    // adding from.
+    try {
+      await openExtensionTab(chrome.runtime.getURL(previewUrl(text)));
+    } catch (err) {
+      // Reported here rather than left to reject: an unhandled
+      // rejection in an extension page lands in
+      // chrome://extensions/?errors and reads as SourceMonkey being
+      // broken. The field keeps what was typed, so the user can retry.
+      showPageError(`The install page could not be opened: ${describeError(err)}`);
+      return false;
+    }
+    // Cleared only once the tab is open — the same order the dialog
+    // path below uses, so a failure never costs the user their text.
+    addInput.value = '';
     return true;
   }
   // Anything shaped like a location — even a bad one, such as a bare

@@ -230,6 +230,39 @@ details live in the topic-specific docs linked below.
 - `|`, not an em dash: it reads as a separator at a glance in a crowded
   tab strip, where an em dash reads as punctuation inside a sentence.
 
+## Cross-page navigation
+
+How one extension page opens another — the rules live in
+`src/page-links.ts`, which every surface below goes through.
+
+- **Named tabs.** Collections and Options get at most one tab each. A
+  link to either focuses the open one rather than opening a second.
+  - Reuse prefers a tab in the current window; failing that it takes
+    whichever other window's tab Chrome reports first.
+  - A reused tab is told where to scroll: the linked collection's
+    section, or the top for a link to the page as a whole. Options has
+    no anchors, so every link to it means the top.
+  - The toolbar button is the exception: it activates a reused tab
+    without moving it, because "show me SourceMonkey" should not cost
+    the user their place.
+- **Links to a named page open a new tab, never the current one.**
+  Leaving the viewer to look at a collection used to lose the viewer.
+  - The Options button on Collections, and the Collections button on
+    Options.
+  - The viewer's Collection row and every "Other versions" row's
+    collection name.
+  - The header bar's icon and product name, on every page but
+    Collections itself (`a.page-home`, wired by one delegated listener
+    so it survives the viewer's heading repaints).
+- **The install preview opens in a new tab too**, from the Add field and
+  from the collection dialog's "this is a single script" action — the
+  page the user was adding from stays put. The preview is *not* a named
+  tab: it is per-file, and several at once is normal.
+- **Every one of these is a real anchor with a real `href`.** A
+  Ctrl/Cmd/Shift/middle click is left to the browser, and the URL is
+  copyable. Only a plain left click is reinterpreted as "the named tab".
+  - The `href` is also the behaviour before the page's scripts have run.
+
 ## Extension-page styling
 
 ### The page header bar
@@ -240,6 +273,9 @@ details live in the topic-specific docs linked below.
   navigation pushed to the right edge.
   - Collections carries Options and Refresh All; Options carries
     Collections; the viewer and the raw view carry none.
+  - The icon and the product name are a link home to the collections
+    page on every page but Collections itself — see "Cross-page
+    navigation" above.
   - `offscreen.html` and `parse-sandbox.html` have no bar — no user
     ever sees them.
 - **The heading is the page's `<h1>`, moved into the bar** rather than a

@@ -48,6 +48,7 @@ import {
   makeCollectionTypeBubble,
   collectionAnchorId,
 } from './collection-display.js';
+import { wireNamedTabLink } from './page-links.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import { versionRelation, type VersionRelation } from './version-compare.js';
 import { probeLabel, type VersionProbe } from './version-probe.js';
@@ -526,9 +527,10 @@ function collectionCell(collection: StoredCollection, trailing?: Node): Node {
   const nameLink = document.createElement('a');
   nameLink.className = 'collection-display-name';
   appendWithSlashBreaks(nameLink, effectiveDisplayName(collection));
-  // Page-relative (both pages sit at the extension root) so the href
-  // doesn't carry the `chrome-extension://<id>/` prefix.
-  nameLink.href = `collections.html#${collectionAnchorId(collection.id)}`;
+  // The collections page is a named tab: this opens it beside the
+  // viewer rather than replacing it, reusing the one that is already
+  // open and scrolling it to this collection. See src/page-links.ts.
+  wireNamedTabLink(nameLink, 'collections', collectionAnchorId(collection.id));
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
   // the section on the collections page. Container collections have a
   // synthetic `container:…` path which would leak — skip then.

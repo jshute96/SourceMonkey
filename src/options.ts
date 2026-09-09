@@ -31,10 +31,23 @@ import {
   writeDownloadsCopiesSetting,
   type DownloadsCopiesSetting,
 } from './local-copy.js';
+import { installHomeLinkHandler, onNamedTabFocus, openNamedTab } from './page-links.js';
 
 const openCollectionsBtn = document.getElementById('open-collections') as HTMLButtonElement;
+// The collections page is a named tab: focus the open one if there is
+// one, and otherwise open a new tab rather than replacing this one.
 openCollectionsBtn.addEventListener('click', () => {
-  location.href = 'collections.html';
+  void openNamedTab('collections');
+});
+
+// The header bar's icon and product name are the same link.
+installHomeLinkHandler();
+
+// A link elsewhere focusing this tab rather than opening a second one.
+// This page has no anchors of its own to land on, so the whole of it is
+// the target: back to the top. See src/page-links.ts.
+onNamedTabFocus('options', () => {
+  scrollTo({ top: 0, behavior: 'smooth' });
 });
 
 // Both boolean settings differ only in their storage key and what an

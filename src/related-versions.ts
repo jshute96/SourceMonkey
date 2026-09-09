@@ -35,6 +35,7 @@ import {
   collectionAnchorId,
   collectionHasManifest,
 } from './collection-display.js';
+import { wireNamedTabLink } from './page-links.js';
 import { getValue } from './userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
 import { setDeleteIcon } from './delete-icon.js';
@@ -823,7 +824,9 @@ function collectionCell(rel: RelatedScript): HTMLTableCellElement {
 function collectionNameLink(collection: StoredCollection): HTMLAnchorElement {
   const a = document.createElement('a');
   a.className = 'versions-collection-name';
-  a.href = `collections.html#${collectionAnchorId(collection.id)}`;
+  // Opens the collections page's named tab beside this one — see
+  // src/page-links.ts — rather than navigating the viewer away.
+  wireNamedTabLink(a, 'collections', collectionAnchorId(collection.id));
   a.title = 'Show this collection on the collections page';
   appendWithSlashBreaks(a, effectiveDisplayName(collection));
   return a;

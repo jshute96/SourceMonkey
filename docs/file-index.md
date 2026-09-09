@@ -72,6 +72,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token |
 | `src/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls |
 | `src/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
+| `src/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
@@ -201,6 +202,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
+| `tests/e2e/page-links.spec.ts` | E2E for cross-page links: new-tab-ness, named-tab reuse, and the header bar's home link |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` override, relative-path resolution, two-tier cache, large-icon blob-URL de-dup |
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaving siblings and other collections intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits, and only changed rows are written |

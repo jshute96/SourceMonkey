@@ -145,7 +145,7 @@ can be:
 - An **absolute path or `file://` URL to a directory** of userscripts.
   Scanned recursively; every `*.user.js` becomes a row.
 - A **single `.user.js`**, by local path or `http(s)://` URL. This
-  opens a preview first (see below).
+  opens a preview in a new tab first (see below).
 - A **manifest** (`script_manifest.json`) — a list of userscripts to
   load. See [Manifest files](#manifest-files-script_manifestjson).
 - A **GitHub URL**, pasted straight from the browser. A repo, a

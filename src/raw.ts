@@ -7,6 +7,10 @@
 // rather than a `text/html` blob.
 
 import { getRawView, isRawViewKey } from './raw-view.js';
+import { installHomeLinkHandler } from './page-links.js';
+
+// The header bar's icon and product name are a link home.
+installHomeLinkHandler();
 
 const pre = document.getElementById('raw') as HTMLPreElement;
 const titleEl = document.getElementById('raw-title') as HTMLSpanElement;

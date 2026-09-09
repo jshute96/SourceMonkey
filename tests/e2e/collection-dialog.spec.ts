@@ -296,8 +296,15 @@ test.describe('collection dialog', () => {
       await expect(dialog.locator('.dlg-error')).toHaveText('This is a single script, not a collection');
       await expect(dialog.locator('button.primary')).toBeDisabled();
 
-      await dialog.locator('.dlg-error-action').click();
-      await page.waitForURL(/userscript\.html\?preview=/);
+      // A new tab, so the collections page (and the dialog's work) is
+      // still there if the user backs out of the install.
+      const [preview] = await Promise.all([
+        extensionContext.waitForEvent('page'),
+        dialog.locator('.dlg-error-action').click(),
+      ]);
+      await preview.waitForURL(/userscript\.html\?preview=/);
+      await expect(page).toHaveURL(/collections\.html/);
+      await preview.close();
       await page.close();
     } finally {
       await server.stop();
@@ -324,8 +331,13 @@ test.describe('collection dialog', () => {
 
     // The dialog can't make a collection of it, but it can hand it to
     // the page that installs it.
-    await dialog.locator('.dlg-error-action').click();
-    await page.waitForURL(/userscript\.html\?preview=/);
+    const [preview] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      dialog.locator('.dlg-error-action').click(),
+    ]);
+    await preview.waitForURL(/userscript\.html\?preview=/);
+    await expect(page).toHaveURL(/collections\.html/);
+    await preview.close();
     await page.close();
   });
 

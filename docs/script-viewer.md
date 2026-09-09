@@ -147,8 +147,9 @@ Both name the script the same way, pivoted for where they're read.
    lookup in [`src/script-identity.ts`](../src/script-identity.ts).
    - Two sections: **This URL** (same absolute `fileUrl`) and **Same
      script from a different URL** (same `@namespace` + `@name`).
-   - Per row: enable toggle, type bubble + collection name linking to the
-     collections page, the copy's location as plain text (a link only in
+   - Per row: enable toggle, type bubble + collection name linking to
+     the collections page (its named tab, opened beside this one — see
+     [architecture.md](architecture.md#cross-page-navigation)), the copy's location as plain text (a link only in
      a preview — see [switching copies](#switching-copies-in-place)),
      status linking to that copy's Log tab, version, a refetch button —
      the circular arrow, called **Refresh**, matching the control the
@@ -271,8 +272,9 @@ Both name the script the same way, pivoted for where they're read.
      - `Collection` — colored type bubble (linking to the collection's
        file:// / http(s) URL) + the collection's display name (linking
        back to the parent section on the collections page via
-       `collections.html#collection-<id>`). Same bubble/name combo the collections
-       page renders. Installed mode only; row omitted if the parent
+       `collections.html#collection-<id>`, in that page's named tab —
+       see [architecture.md](architecture.md#cross-page-navigation)).
+       Same bubble/name combo the collections page renders. Installed mode only; row omitted if the parent
        collection row has vanished. See
        [`src/collection-display.ts`](../src/collection-display.ts).
      - `Location` — anchor wrapping the resolved location. Display form

@@ -65,12 +65,33 @@ export function headingPrefixEl(prefix: string): DocumentFragment {
   // A prefix always ends in a separator, so the last part is empty and
   // contributes nothing but its own `|`.
   const [product, ...rest] = prefix.split(HEADING_SEPARATOR);
-  frag.appendChild(prefixSpan(product, true));
+  frag.appendChild(brandHomeLink(product));
   for (const part of rest) {
     frag.appendChild(prefixSpan(HEADING_SEPARATOR, true));
     if (part) frag.appendChild(prefixSpan(part, false));
   }
   return frag;
+}
+
+// The product name, as a link home to the collections page — the same
+// element `userscript.html` ships in its markup, so repainting the
+// heading doesn't change what the bar's first term is.
+//
+// A plain anchor with a real href, and no listener of its own: the
+// click is caught by the page's delegated handler
+// (`installHomeLinkHandler`, src/page-links.ts), which is what makes it
+// open the NAMED collections tab. Importing that here would put this
+// module's first line behind another fetch and undo the early paint, so
+// the href + `target` are also the behaviour before it runs.
+function brandHomeLink(text: string): HTMLAnchorElement {
+  const el = document.createElement('a');
+  el.className = 'heading-prefix brand page-home';
+  el.href = 'collections.html';
+  el.target = '_blank';
+  el.rel = 'noopener';
+  el.title = 'Open the collections page';
+  el.textContent = text;
+  return el;
 }
 
 function prefixSpan(text: string, brand: boolean): HTMLSpanElement {

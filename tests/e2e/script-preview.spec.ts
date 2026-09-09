@@ -32,26 +32,34 @@ test.describe('script preview', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await page.locator('#add-path').fill(file);
-    await page.locator('#add-form button[type="submit"]').click();
+    // Nothing is added yet — the field routed the file to the preview,
+    // in a NEW tab, so the collections page the user was adding from is
+    // still there behind it.
+    const [preview] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.locator('#add-form button[type="submit"]').click(),
+    ]);
+    await preview.waitForURL(/userscript\.html\?preview=/);
+    await expect(page).toHaveURL(/collections\.html/);
+    await expect(page.locator('#add-path')).toHaveValue('');
 
-    // Nothing is added yet — the field routed us to the preview.
-    await page.waitForURL(/userscript\.html\?preview=/);
-    await expect(page.locator('#header-summary')).toContainText('Local Script');
-    await expect(page.locator('#content')).toContainText("console.log('local')");
+    await expect(preview.locator('#header-summary')).toContainText('Local Script');
+    await expect(preview.locator('#content')).toContainText("console.log('local')");
     // Nothing installed anywhere: the install callout is the page's
     // question, with the local default pre-selected.
-    await expect(page.locator('#install-callout')).toBeVisible();
-    await expect(page.locator('#install-target option:checked')).toHaveText('Scripts from local disk (new)');
+    await expect(preview.locator('#install-callout')).toBeVisible();
+    await expect(preview.locator('#install-target option:checked')).toHaveText('Scripts from local disk (new)');
     expect(await sm.getCollections()).toHaveLength(0);
 
-    await page.locator('#install-btn').click();
-    await page.waitForURL(/userscript\.html\?script=/);
+    await preview.locator('#install-btn').click();
+    await preview.waitForURL(/userscript\.html\?script=/);
 
     const collections = await sm.getCollections();
     expect(collections).toHaveLength(1);
     const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(1);
     expect(withScripts!.scripts[0].status).toBe('ok');
+    await preview.close();
     await page.close();
   });
 

@@ -212,6 +212,7 @@ import {
   type MenuCommandEntry,
 } from './gm-menu.js';
 import { installUrlChangeWatch } from './gm-url-change.js';
+import { openNamedTab } from './page-links.js';
 import {
   closeGmWindow,
   focusGmWindow,
@@ -678,27 +679,11 @@ async function openCollectionsPage(windowId: number | null): Promise<void> {
       await chrome.runtime.openOptionsPage();
       return;
     }
-    const url = chrome.runtime.getURL('collections.html');
-    // getContexts, not tabs.query({url}): filtering a query by URL needs
-    // permission for that URL, and `<all_urls>` does not cover the
-    // `chrome-extension:` scheme — the query comes back empty for our
-    // own pages and we'd open a duplicate tab on every click.
-    // getContexts needs no permission and reports tabId/windowId
-    // directly. It only sees loaded contexts, so a collections tab still
-    // navigating is missed; the cost of that is one extra tab.
-    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB] });
-    const existing = contexts.find((ctx) => (
-      ctx.windowId === windowId
-      // startsWith, so ?first_run=1 and #anchor variants match too.
-      && typeof ctx.documentUrl === 'string' && ctx.documentUrl.startsWith(url)
-    ));
-    if (existing?.tabId != null && existing.tabId >= 0) {
-      // Activating is enough: the window is the one the user just
-      // clicked in, so it is already focused.
-      await chrome.tabs.update(existing.tabId, { active: true });
-      return;
-    }
-    await chrome.tabs.create({ url, windowId });
+    // The same named-tab reuse every in-page link to the collections
+    // page uses (src/page-links.ts), narrowed to this window, and
+    // leaving a reused tab scrolled where the user left it — the
+    // toolbar means "show me SourceMonkey", not "take me to the top".
+    await openNamedTab('collections', { windowId, sameWindowOnly: true, preserveScroll: true });
   } catch (err) {
     // Caught rather than dropped: an unhandled rejection in the SW lands
     // in chrome://extensions/?errors. Nothing the user can act on.

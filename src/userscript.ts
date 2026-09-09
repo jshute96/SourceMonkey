@@ -163,6 +163,7 @@ import {
   notePainted,
   setPageTitle,
 } from './page-heading.js';
+import { installHomeLinkHandler } from './page-links.js';
 import { MarkupResponseError } from './markup-response.js';
 import { resolveScriptResource } from './file-loader.js';
 import {
@@ -295,6 +296,9 @@ const fileAccessProbe = isFileSchemeAccessAllowed();
 let fileAccessAllowed = true;
 
 installLocalRootsListener();
+// The header bar's icon and product name are a link home. Delegated, so
+// it survives the heading repaints an in-place copy switch does.
+installHomeLinkHandler();
 void load();
 
 async function load(): Promise<void> {
