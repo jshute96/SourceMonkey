@@ -1193,30 +1193,87 @@ google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/
 
 ### Row highlights after refresh
 
-After any refresh (single-directory or all), each row that changed
-gets a persistent background color:
+After any refresh (single-directory or all), each row the refresh
+touched is tagged. Two independent signals, because they answer two
+different questions:
 
-- **light green** (`row-updated`) — script newly added OR re-read
-  and now `'ok'`.
-- **light red** (`row-failed`) — script newly added with an error,
-  re-read with an error, transitioned to `'missing'`, or whose refresh
-  just failed (`refreshError` newly set, even though the cached body
-  keeps running and `status` stays `'ok'`).
-  - A refresh-failed row that **recovers** (`refreshError` cleared)
-    flashes green even when the body is unchanged — otherwise the red
-    highlight would silently vanish with no "it came back" feedback.
-- **No highlight** for a row that was *dropped* — the classification
-  walks the rows the refresh produced, and a
-  [vanished entry](#vanished-entries) isn't one of them. Its
-  disappearance from the table is the signal.
+- **What happened to it** — the wash and a chip beside the status:
+  - **green** + `New` (`row-added`) — a script this refresh saw for the
+    first time.
+  - **blue** + `Updated` (`row-updated`) — re-read, or a status change
+    without a re-read, or a `refreshError` that cleared.
+    - The recovery case flashes even when the body is unchanged (HTTP
+      304 / size+mtime skip, which preserve `loadedAt`) — otherwise the
+      red highlight would silently vanish with no "it came back"
+      feedback.
+- **How it came out** — **red** (`row-failed`), which overrides the wash
+  and is applied to:
+  - any of the above whose row isn't `'ok'`. A script that *arrived*
+    broken is still new, so it keeps its `New` chip and only loses the
+    green.
+  - a row that transitioned to `'missing'`, or whose refresh just failed
+    (`refreshError` newly set, the cached body still running, `status`
+    still `'ok'`). Neither carries a chip: nothing was re-read, so there
+    is no update to announce.
 
-The color stays until the next refresh clears it, so the
-user can leave the page and come back without losing the
-what-changed signal. Rows whose state was unchanged are not
-highlighted — this covers all three "no change" paths uniformly:
-the cheap pre-fetch skips (size+mtime, HTTP 304) and the post-fetch
-content-hash compare (manifest entries, servers without validators).
-See [change detection](#change-detection-the-last-change-token).
+Rows whose state was unchanged are not tagged — this covers all three
+"no change" paths uniformly: the cheap pre-fetch skips (size+mtime,
+HTTP 304) and the post-fetch content-hash compare (manifest entries,
+servers without validators). See
+[change detection](#change-detection-the-last-change-token).
+
+The tags stay until the next refresh **of that collection**, which
+clears the previous ones before applying its own — a single-collection
+Refresh leaves every other section's tags alone. So the user can leave
+the page and come back without losing the what-changed signal.
+
+The New / Updated chips are `::after` pseudo-elements keyed off the
+row's class, not DOM nodes: the Status cell is rebuilt from stored state
+on every repaint, which would discard a chip element, while the class
+lives on the `<tr>` a repaint preserves. (A tombstone's `Removed` chip
+is a real element — see below.)
+
+### Tombstones: rows a refresh dropped
+
+A [vanished entry](#vanished-entries) is deleted outright — row,
+storage key, Log, `gmval:` values — and the deletion can't be undone.
+Nothing else on the page would say so, so the refresh leaves a
+**tombstone** where the script used to be: the name, size and last
+enabled state, struck through and greyed, with a `Removed` chip where
+the status would be — the same chip the New / Updated rows wear, since
+a dropped row has no status of its own any more. Its favicon is painted
+too, from the snapshot, so the row is still recognizable at a glance.
+
+- **Nothing to act on.** No working link (the favicon keeps its image
+  and loses its href), a disabled checkbox, no trash can, and
+  `aria-disabled` on the `<tr>`. Deliberately NOT `inert`: an inert
+  subtree isn't hit-tested and isn't in the accessibility tree, which
+  would take away the row's own hover explanation and hide from a
+  screen-reader user the one row that reports an irreversible delete.
+- **Its `Removed` chip is a real element**, unlike the New / Updated
+  pseudo-elements. Nothing repaints a tombstone (no `data-script-id`),
+  and here the chip is the whole status — it has to be selectable and
+  announced.
+- **DOM-only.** The next refresh clears it along with the other tags,
+  and a reload never rebuilds it. Unrelated repaints keep it.
+- **Only for a refresh the page ran** — Refresh All, a collection's own
+  Refresh, a `?refresh_local` / `?refresh_file` trigger. A background
+  opportunistic refresh drops a row without a ghost, the same way it
+  changes one without a highlight.
+- **Marked `data-tombstone`, never `data-script-id`.** That is what
+  keeps every walker on the page — status repaints, log-suffix updates,
+  bulk-toggle counting, row reconciliation — away from a row with no
+  stored script behind it. The reconciler re-seats ghosts against the
+  surviving row each was recorded below (`data-tombstone-after`) after
+  it re-orders the live rows. (It also drops a ghost whose script id is
+  live again. That can't happen — a returning file gets a fresh UUID —
+  but the table must never show one id twice.)
+- **Where it doesn't reach.** A collection that loses its *last* script
+  shows the "no scripts" message, which has no table to hang ghosts off,
+  so the case that empties a whole table is the case with no explanation
+  on screen — filed in `TODO.md`. Only a manifest collection gets there:
+  a directory that scans completely empty has its rows marked `missing`
+  instead of dropped.
 
 ### In-place updates (no full re-render)
 

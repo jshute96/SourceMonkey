@@ -1310,3 +1310,15 @@ they follow are in
     `emitInitialLoadLog` over a freshly added collection
     (`src/script-store.ts`), and the boot log replay in
     `src/script-updater.ts`. Both want `mapWithConcurrency`.
+- a collection whose refresh drops its LAST script says nothing about it.
+  The tombstone rows the collections page leaves for dropped scripts
+  (`docs/storage.md`, "Tombstones") hang off the script table, and a
+  collection with no scripts left shows the "no scripts" message
+  instead — so the one case where the whole table emptied out is the one
+  case with no explanation on screen. Wants the empty message to carry
+  the reason when the refresh that emptied it is the one being shown
+  ("the last refresh removed the scripts this collection had"), which
+  means the message needs to know what the refresh just did rather than
+  only what is stored now. Only reachable for a manifest collection: a
+  directory that scans completely empty marks its rows `missing` rather
+  than dropping them.

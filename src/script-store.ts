@@ -16,11 +16,14 @@
 // A script is `ok` iff fetch succeeded AND splitHeaderBody returned no
 // error AND validateHeader returned null. Otherwise `status: 'invalid'`
 // with an `errorMessage`. On refresh, files that were known before but
-// no longer appear in the scan listing are reconciled per collection kind:
-// directory collections mark them `status: 'missing'` (file may come
-// back); manifest collections delete the row (user explicitly removed the
-// entry). In every error/missing case we preserve the previously
-// loaded content so the viewer (and the injector) keep working.
+// no longer appear in the scan listing are dropped — row and storage key
+// both — whatever kind of collection they sat in. The one exception is a
+// scan that came back completely empty for a non-manifest collection:
+// that reads as a directory that moved or listed strangely rather than
+// every file being deleted at once, so those rows are marked
+// `status: 'missing'` instead. In every error/missing case we preserve
+// the previously loaded content so the viewer (and the injector) keep
+// working.
 //
 // Refresh failures get special, gentler handling so a transient
 // outage never disables a working script. When a prior `ok` row's

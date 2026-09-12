@@ -171,9 +171,77 @@
       /* Highlight rows that changed during a refresh. The color
          persists until the next refresh clears it, so the
          user can leave the page and come back without losing the
-         what-changed signal. */
-      .script-table tr.row-updated td { background: #cdebcf; }
+         what-changed signal.
+
+         Two independent signals: `row-added` / `row-updated` say what
+         happened, `row-failed` says how it came out. `row-failed` is
+         listed after both so it wins the wash — a script that arrived
+         broken is red, and keeps its "New" chip to say it is also new.
+         (`row-removed` sits last and never shares a row with any of
+         them.) */
+      .script-table tr.row-added   td { background: #cdebcf; }
+      .script-table tr.row-updated td { background: #d7e7f7; }
       .script-table tr.row-failed  td { background: #f5c2c7; }
+      .script-table tr.row-removed td { background: #f0f0ef; }
+      /* The accent bar rides on the row's first cell as an inset
+         shadow, so it costs no column width and can't shift the table. */
+      .script-table tr.row-added   td:first-child { box-shadow: inset 3px 0 0 #166534; }
+      .script-table tr.row-updated td:first-child { box-shadow: inset 3px 0 0 #2b6cb0; }
+      .script-table tr.row-failed  td:first-child { box-shadow: inset 3px 0 0 #b00; }
+      .script-table tr.row-removed td:first-child { box-shadow: inset 3px 0 0 #9ca3af; }
+      /* What a refresh did to the row, said in words as well as colour.
+         New / Updated are pseudo-elements rather than real nodes: their
+         Status cell is rebuilt from stored state on every repaint, which
+         would discard a chip element, while the class lives on the `<tr>`
+         the repaint preserves. A tombstone's `Removed` chip IS a real
+         element (`.change-chip`) — nothing repaints that row, and there
+         the chip is the whole status, so it has to be selectable and
+         readable by a screen reader. One rule for the three, so they
+         can't drift apart. */
+      .script-table tr.row-added   td.status-cell::after,
+      .script-table tr.row-updated td.status-cell::after,
+      .script-table .change-chip {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #fff;
+        vertical-align: 1px;
+      }
+      .script-table tr.row-added   td.status-cell::after { content: 'New'; background: #166534; }
+      .script-table tr.row-updated td.status-cell::after { content: 'Updated'; background: #2b6cb0; }
+      /* A dropped row has no status of its own, so its chip stands
+         alone in the cell rather than beside a status word. */
+      .script-table .chip-removed { background: #9ca3af; margin-left: 0; }
+      /* Tombstone: the ghost of a script this refresh dropped. Struck
+         through and greyed, with nothing on it to click — the checkbox
+         is disabled and the favicon is de-linked in `renderTombstoneRow`.
+         Lives in the DOM only: the next refresh clears it and a reload
+         never rebuilds it. */
+      .script-table tr.row-removed td { color: #6b7280; }
+      /* The strike is drawn on the name and size themselves, not on the
+         cells: a decoration inherited by a cell is painted straight
+         across the favicon (an atomic inline the line can't skip), and
+         the chip and checkbox have nothing to strike through. */
+      .script-table tr.row-removed .tombstone-name,
+      .script-table tr.row-removed td.size-cell { text-decoration: line-through; }
+      /* The favicon stays — it's what the eye finds the row by — but
+         muted, so a dead row never draws attention ahead of a live one. */
+      .script-table tr.row-removed .site-icon { filter: grayscale(1); opacity: 0.55; }
+      .script-table tr.row-removed td.toggle-cell input { opacity: 0.5; }
+      /* The live rows' toggle box without the `.toggle` class the bulk
+         census counts — see `renderTombstoneRow`. Same box AND the same
+         zeroed checkbox margin: the UA's default margin on an
+         `<input type="checkbox">` is what `.toggle` above cancels, and
+         without cancelling it here too the ghost's box sits a few pixels
+         down and right of every other row's. */
+      .toggle-ghost { display: inline-flex; align-items: center; }
+      .toggle-ghost input[type="checkbox"] { margin: 0; }
+      .script-table tr.row-removed .scheme-chip { opacity: 0.55; }
     </style>
   </head>
   <body>

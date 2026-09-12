@@ -711,7 +711,7 @@ async function syncScriptRowsFromStorage(
   }
 
   const existing = new Map<string, HTMLTableRowElement>();
-  for (const row of tbody.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
+  for (const row of liveScriptRows(tbody)) {
     if (row.dataset.scriptId) existing.set(row.dataset.scriptId, row);
   }
   const hasActionColumn = !!tbody.parentElement?.querySelector('thead th[aria-label="Actions"]');
@@ -734,9 +734,15 @@ async function syncScriptRowsFromStorage(
   // per-script bookkeeping is pruned by the caller, against the whole
   // stored set.
   for (const row of existing.values()) row.remove();
-  if (!sameNodeOrder(tbody, ordered)) {
+  // Compared against the live rows only — a tombstone sitting between
+  // them would make every repaint see a mismatch and re-seat the whole
+  // table, which detaches rows and blurs anything focused inside one.
+  if (!sameNodeList(liveScriptRows(tbody), ordered)) {
     for (const row of ordered) tbody.appendChild(row);
   }
+  // Re-seating the live rows leaves the ghosts wherever they were, so
+  // they are placed again against their anchors afterwards.
+  placeTombstones(tbody);
   refreshBulkToggle(section);
 }
 
@@ -820,7 +826,10 @@ function syncScriptRow(
 
 // Are `wanted` already the container's element children, in that order?
 function sameNodeOrder(container: Element, wanted: readonly Element[]): boolean {
-  const current = [...container.children];
+  return sameNodeList([...container.children], wanted);
+}
+
+function sameNodeList(current: readonly Element[], wanted: readonly Element[]): boolean {
   return (
     current.length === wanted.length && current.every((node, i) => node === wanted[i])
   );
@@ -1413,6 +1422,10 @@ function renderScriptRow(
   fillNameCell(nameCell, script, inContainer, localFiles);
   tr.appendChild(nameCell);
 
+  // For column parity with the live table. A container collection can't
+  // actually reach here — its scan is built from the scripts it holds,
+  // so nothing in one ever reads as vanished — but a table whose rows
+  // disagree about column count stops lining up.
   if (inContainer) {
     const schemeCell = document.createElement('td');
     schemeCell.className = 'scheme-cell';
@@ -1953,7 +1966,15 @@ async function refreshAndHighlight(
       const section = findSection(id);
       if (!section) continue;
       const after = await getCollectionWithScripts(id);
-      applyChangeHighlights(section, priors.get(id) ?? [], after?.scripts ?? []);
+      applyChangeHighlights(
+        section,
+        priors.get(id) ?? [],
+        after?.scripts ?? [],
+        // A collection that has itself gone leaves no row to read the
+        // local-overrides toggle from; ghosts there resolve their icons
+        // without local stand-ins.
+        after ? localFileScope(after.collection) : { enabled: false },
+      );
     }
   } catch (err) {
     console.info(`[SourceMonkey] ${label} failed`, err);
@@ -2047,68 +2068,306 @@ async function onRefreshSubset(targets: RefreshTargets): Promise<void> {
 }
 
 // Decide per script whether it changed in a refresh and tag the
-// corresponding row with the matching highlight class. The color
-// persists on the row until the next refresh, which clears the prior
-// colors before applying its own — rows are reused across a repaint, so
-// nothing else drops them.
+// corresponding row. Two independent signals ride on the row, because
+// they answer two different questions:
+//
+//   - WHAT happened to it — `row-added` / `row-updated`, which paint
+//     the wash and put a "New" / "Updated" chip beside the status.
+//   - HOW it came out — `row-failed`, which overrides the wash with
+//     red. A script that arrived broken is still new, so it keeps its
+//     chip and only loses the green.
+//
+// Scripts the refresh DROPPED get a tombstone instead: an inert ghost
+// row in the place the script used to hold (see `addTombstones`).
+//
+// The tags persist on the row until the next refresh, which clears the
+// prior ones before applying its own — rows are reused across a
+// repaint, so nothing else drops them.
 //
 // Classification:
-//   - newly-added         → row-updated (green)  if ok; else row-failed (red)
-//   - went missing        → row-failed
-//   - re-read AND now ok  → row-updated
-//   - re-read AND errored → row-failed
-//   - status changed but no re-read (rare) → color by next.status
+//   - newly-added         → row-added (+ row-failed when it isn't ok)
+//   - dropped             → tombstone row
+//   - went missing        → row-failed, no chip (the file vanished but
+//                           the row stayed; that's a failure, not an update)
+//   - re-read             → row-updated (+ row-failed when it isn't ok)
+//   - status changed but no re-read (rare) → row-updated, likewise
 //   - refresh just failed (refreshError newly set / changed, while the
-//     cached body keeps running) → row-failed, even though status stays
-//     `ok` and loadedAt is unchanged
+//     cached body keeps running) → row-failed, no chip: nothing was
+//     re-read, so there is no update to announce
 //   - refresh recovered (refreshError cleared) → row-updated, even when
 //     the body is unchanged (304 / size+mtime skip preserve loadedAt)
-//   - otherwise           → no flash (unchanged path: cheap-skip
+//   - otherwise           → no tag (unchanged path: cheap-skip
 //                            optimization, OR genuine no-op)
 function applyChangeHighlights(
   section: HTMLElement,
   prior: StoredScript[],
   next: StoredScript[],
+  // The collection's local-file scope, so a ghost resolves its favicon
+  // exactly as the live row did — including an `@icon` that points at a
+  // file on disk.
+  localFiles: LocalFileScope,
 ): void {
-  // Clear the last refresh's colors first. Rows survive a refresh now
+  // Clear the last refresh's tags first. Rows survive a refresh now
   // (they're updated in place, not rebuilt), so without this a row that
   // changed once would stay highlighted through every later refresh.
   for (const row of section.querySelectorAll<HTMLTableRowElement>('tr[data-script-id]')) {
-    row.classList.remove('row-updated', 'row-failed');
+    row.classList.remove('row-added', 'row-updated', 'row-failed');
   }
+  removeTombstones(section);
   const priorById = new Map(prior.map((s) => [s.id, s]));
   for (const n of next) {
-    const cls = classifyChange(priorById.get(n.id), n);
-    if (!cls) continue;
+    const change = classifyChange(priorById.get(n.id), n);
+    if (!change) continue;
     const row = section.querySelector<HTMLTableRowElement>(
       `tr[data-script-id="${cssEscape(n.id)}"]`,
     );
-    if (row) row.classList.add(cls);
+    if (!row) continue;
+    if (change.kind) row.classList.add(`row-${change.kind}`);
+    if (change.failed) row.classList.add('row-failed');
   }
+  addTombstones(section, prior, new Set(next.map((s) => s.id)), localFiles);
+}
+
+interface RowChange {
+  // What to say happened, or null when the row changed without there
+  // being an update to announce (a fresh refresh failure, a file that
+  // vanished out from under a row that stayed).
+  kind: 'added' | 'updated' | null;
+  failed: boolean;
 }
 
 function classifyChange(
   prior: StoredScript | undefined,
   next: StoredScript,
-): 'row-updated' | 'row-failed' | null {
-  if (!prior) {
-    return next.status === 'ok' ? 'row-updated' : 'row-failed';
+): RowChange | null {
+  const failed = next.status !== 'ok';
+  if (!prior) return { kind: 'added', failed };
+  if (next.status === 'missing' && prior.status !== 'missing') {
+    return { kind: null, failed: true };
   }
-  if (next.status === 'missing' && prior.status !== 'missing') return 'row-failed';
   if (next.status === 'missing') return null;             // was already missing
   // A fresh refresh failure (the cached body keeps running, so status
   // stays `ok` and loadedAt doesn't move) still deserves a red flash so
   // the user notices the collection went stale.
-  if (next.refreshError && next.refreshError !== prior.refreshError) return 'row-failed';
-  // Recovery: a row that WAS refresh-failed and now isn't gets a green
-  // flash even when the body is unchanged (HTTP 304 / size+mtime skip,
+  if (next.refreshError && next.refreshError !== prior.refreshError) {
+    return { kind: null, failed: true };
+  }
+  // Recovery: a row that WAS refresh-failed and now isn't reads as an
+  // update even when the body is unchanged (HTTP 304 / size+mtime skip,
   // which preserve loadedAt) — otherwise the row would silently drop its
   // red highlight with no "it came back" confirmation.
-  if (prior.refreshError && !next.refreshError) return 'row-updated';
+  if (prior.refreshError && !next.refreshError) return { kind: 'updated', failed };
   const reread = next.loadedAt !== prior.loadedAt;
   const statusChanged = next.status !== prior.status;
   if (!reread && !statusChanged) return null;
-  return next.status === 'ok' ? 'row-updated' : 'row-failed';
+  return { kind: 'updated', failed };
+}
+
+// ---------- Tombstones (dropped scripts) ----------
+//
+// A script the scan no longer reports is DROPPED: its row, its storage
+// key, its Log and its `gmval:` values all go, and none of it comes
+// back if the file returns (see docs/storage.md, "Vanished entries").
+// Nothing else on the page would say so — the row would simply not be
+// there the next time the user looked.
+//
+// So a refresh that drops a script leaves a ghost of it in the row's
+// old place: struck through, greyed, and inert. It lives in the DOM
+// only, alongside the other refresh tags: the next refresh clears it,
+// and a reload never rebuilds it.
+//
+// The ghost carries `data-tombstone` and NOT `data-script-id`, which is
+// what keeps every walker on this page — status repaints, log-suffix
+// updates, bulk-toggle counting, row reconciliation — away from a row
+// with no stored script behind it.
+
+// `data-tombstone-after` names the surviving row a ghost sits below, so
+// it can be put back in place after a repaint re-seats the live rows.
+// Empty means "top of the table".
+//
+// The comparison is the refresh's own before/after snapshot, so a script
+// that left for another reason while the refresh ran (a trash can click
+// here, a removal in another tab) is ghosted as though the refresh
+// dropped it. A narrow window, and the row did leave — only the reason
+// on the hover text would be wrong.
+function addTombstones(
+  section: HTMLElement,
+  prior: readonly StoredScript[],
+  survivingIds: ReadonlySet<string>,
+  localFiles: LocalFileScope,
+): void {
+  // No table to hang them off: the collection lost its last script and
+  // the block was swapped for the "no scripts" message. Only a manifest
+  // collection reaches this — a directory that scans completely empty
+  // has its rows marked `missing` rather than dropped.
+  const tbody = section.querySelector<HTMLElement>(':scope > .script-block tbody');
+  if (!tbody) return;
+  const inContainer = !!section.querySelector('thead th[aria-label="Source"]');
+  const withActions = !!section.querySelector('thead th[aria-label="Actions"]');
+  let anchorId = '';
+  for (const script of prior) {
+    if (survivingIds.has(script.id)) {
+      anchorId = script.id;
+      continue;
+    }
+    tbody.appendChild(
+      renderTombstoneRow(script, anchorId, inContainer, withActions, localFiles),
+    );
+  }
+  placeTombstones(tbody);
+}
+
+function renderTombstoneRow(
+  script: StoredScript,
+  anchorId: string,
+  inContainer: boolean,
+  withActions: boolean,
+  localFiles: LocalFileScope,
+): HTMLTableRowElement {
+  const tr = document.createElement('tr');
+  tr.className = 'row-removed';
+  tr.dataset.tombstone = script.id;
+  tr.dataset.tombstoneAfter = anchorId;
+  // Announced as not-actionable rather than made `inert`: an inert
+  // subtree isn't hit-tested, which silently takes the row's own
+  // explanation (the Status cell's hover text) away with it, and hides
+  // the row from screen readers — on the one row whose whole purpose is
+  // to say something irreversible happened. Nothing here is focusable
+  // anyway: the checkbox is disabled and the favicon is de-linked below.
+  tr.setAttribute('aria-disabled', 'true');
+
+  const toggleCell = document.createElement('td');
+  toggleCell.className = 'toggle-cell';
+  // The same box a live row's toggle sits in, under a different class:
+  // the bulk toggle's census counts `.toggle` checkboxes and this one
+  // must not join it, but a bare baseline-aligned checkbox would sit a
+  // pixel or two off and make the ghost row a different height from the
+  // rows around it.
+  const toggleBox = document.createElement('span');
+  toggleBox.className = 'toggle-ghost';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = isScriptEnabled(script);
+  cb.disabled = true;
+  toggleBox.appendChild(cb);
+  toggleCell.appendChild(toggleBox);
+  tr.appendChild(toggleCell);
+
+  const nameCell = document.createElement('td');
+  nameCell.className = 'name-cell';
+  // The favicon slot is painted the same way a live row's is, from the
+  // snapshot we still hold: the icon is what the eye finds the row by,
+  // and an empty slot would leave the name hanging in the column's
+  // negative text-indent, out of line with every row around it. The
+  // fetch it starts is the one the live row just made, so it comes back
+  // from the icon cache.
+  const iconSlot = document.createElement('span');
+  iconSlot.className = 'site-icon';
+  nameCell.appendChild(iconSlot);
+  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
+  // Drop the href in place rather than replacing the anchor: the icon
+  // fetch resolves into the very element `renderSiteIconInto` built, so
+  // swapping it out would leave the favicon painting into a detached
+  // node. Without the href it is no longer a link or a tab stop, which
+  // is what a row with nothing left to open should be.
+  const iconLink = iconSlot.querySelector('a.site-icon-inner');
+  if (iconLink) {
+    iconLink.removeAttribute('href');
+    iconLink.removeAttribute('target');
+    iconLink.removeAttribute('rel');
+  }
+  // Text, not a link: the viewer has nothing to open for a script whose
+  // record is gone.
+  const name = document.createElement('span');
+  name.className = 'tombstone-name';
+  appendWithSlashBreaks(name, nameCellText(script, inContainer));
+  nameCell.appendChild(name);
+  tr.appendChild(nameCell);
+
+  // For column parity with the live table. A container collection can't
+  // actually reach here — its scan is built from the scripts it holds,
+  // so nothing in one ever reads as vanished — but a table whose rows
+  // disagree about column count stops lining up.
+  if (inContainer) {
+    const schemeCell = document.createElement('td');
+    schemeCell.className = 'scheme-cell';
+    schemeCell.appendChild(makeSchemeChip(script.relativePath));
+    tr.appendChild(schemeCell);
+  }
+
+  const sizeCell = document.createElement('td');
+  sizeCell.className = 'size-cell';
+  sizeCell.textContent = formatScriptSize(script);
+  tr.appendChild(sizeCell);
+
+  const statusCell = document.createElement('td');
+  statusCell.className = 'status-cell';
+  statusCell.title = TOMBSTONE_TITLE;
+  // A real element, unlike the New / Updated chips, which are `::after`
+  // on a cell that gets rebuilt from stored state. Nothing rebuilds this
+  // cell (no `data-script-id`, so no repaint reaches it), and this chip
+  // is the row's whole status — text a reader can select, copy, and hear
+  // read out, not a decoration layered over a status word.
+  const chip = document.createElement('span');
+  chip.className = 'change-chip chip-removed';
+  chip.textContent = 'Removed';
+  statusCell.appendChild(chip);
+  tr.appendChild(statusCell);
+
+  if (withActions) tr.appendChild(document.createElement('td'));
+  return tr;
+}
+
+const TOMBSTONE_TITLE =
+  'This script is no longer in the collection, so the last refresh removed it '
+  + 'along with its log and its stored values. This row is only a reminder: it '
+  + 'goes away on the next refresh, or when you reload the page.';
+
+// The rows a stored script stands behind, in DOM order. Every walk over
+// the table goes through one of these two: `data-script-id` is what
+// separates a real row from a tombstone, and a walk that forgets it
+// ends up toggling, counting or reordering a row with no script.
+function liveScriptRows(tbody: Element): HTMLTableRowElement[] {
+  return [...tbody.querySelectorAll<HTMLTableRowElement>(':scope > tr[data-script-id]')];
+}
+
+function sectionScriptRows(section: HTMLElement): HTMLTableRowElement[] {
+  return [...section.querySelectorAll<HTMLTableRowElement>('tbody tr[data-script-id]')];
+}
+
+function removeTombstones(root: ParentNode): void {
+  for (const row of root.querySelectorAll('tr[data-tombstone]')) row.remove();
+}
+
+// Put each ghost back below the row it was recorded against.
+//
+// The live-row check is defensive: a dropped script's UUID goes with it,
+// so a file that comes back comes back as a different row and can't
+// collide. It costs one map lookup to be sure the table never shows the
+// same id twice.
+function placeTombstones(tbody: Element): void {
+  const ghosts = [...tbody.querySelectorAll<HTMLTableRowElement>(':scope > tr[data-tombstone]')];
+  if (ghosts.length === 0) return;
+  const live = new Map(liveScriptRows(tbody).map((row) => [row.dataset.scriptId ?? '', row]));
+  // Where the next ghost for a given anchor goes. Seeded with the
+  // anchor row itself and advanced past each ghost placed against it,
+  // so a run of scripts deleted together keeps the order they had.
+  const cursors = new Map<string, Element>();
+  for (const ghost of ghosts) {
+    if (live.has(ghost.dataset.tombstone ?? '')) {
+      ghost.remove();
+      continue;
+    }
+    const anchorId = ghost.dataset.tombstoneAfter ?? '';
+    const cursor = cursors.get(anchorId) ?? live.get(anchorId);
+    // No cursor means either an empty anchor (the ghost led the table)
+    // or an anchor that has itself left the table since — a script moved
+    // to another collection, or removed by a click while the refresh ran.
+    // Both go to the top, which is what an empty anchor asks for anyway.
+    if (cursor) cursor.after(ghost);
+    else tbody.insertBefore(ghost, tbody.firstChild);
+    cursors.set(anchorId, ghost);
+  }
 }
 
 async function onToggleCollection(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
@@ -2168,7 +2427,7 @@ async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement)
 
     // Reflect the new state in every row.
     for (const cb of checkboxes) cb.checked = next;
-    for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
+    for (const row of sectionScriptRows(section)) {
       row.classList.toggle('disabled', !collectionOn || !next);
     }
   } finally {
@@ -2216,7 +2475,7 @@ function applyCollectionEnabledToDom(section: HTMLElement, enabled: boolean): vo
     collectionCb.checked = enabled;
   }
 
-  for (const row of section.querySelectorAll<HTMLTableRowElement>('tbody tr')) {
+  for (const row of sectionScriptRows(section)) {
     const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
     const lab = row.querySelector<HTMLLabelElement>('.toggle');
     if (!cb || !lab) continue;
