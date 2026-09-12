@@ -205,6 +205,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/missing-trash.spec.ts` | Per-row trash button on missing scripts: removes only the clicked row, leaving siblings and other collections intact |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits, and only changed rows are written |
 | `tests/e2e/rejected-registration.spec.ts` | REJECTED state end to end: a `@match` Chrome refuses stays `ok` but never runs, and every retry re-reports until it's fixed |
+| `tests/e2e/log-level-reset.spec.ts` | A refresh that loads new content resets the WARNING / ERROR badge, keeps the log, and lets the new version's parse diagnostics re-badge it |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (markup response, soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
 | `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, web-page auto-continue, View raw source, option off |
 | `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |

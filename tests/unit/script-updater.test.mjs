@@ -615,10 +615,11 @@ test('summarizeCollectionOutcome: a scan failure lands in every script log, not 
 });
 
 test('summarizeCollectionOutcome: a scan failure stays at info so it cannot badge every script', async () => {
-  // The `loglevel:` sentinel is monotonic within a session, so a
-  // warning here would leave every script under the collection reading
-  // WARNING for the rest of the session after one transient blip. The
-  // collection row is where a collection-level problem gets its badge.
+  // The `loglevel:` sentinel is for what the script itself did, and
+  // sticks until the log is cleared or new content loads — so a warning
+  // here would leave every script under the collection reading WARNING
+  // after one transient blip. The collection row is where a
+  // collection-level problem gets its badge.
   const script = { ...OK_ROW, id: 'sa-level' };
   const failed = { collection: { ...COLLECTION_OK, scanError: 'ENOENT' }, scripts: [script] };
   const [log] = await summarize(COLLECTION_OK, [script], failed);

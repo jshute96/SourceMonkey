@@ -22,7 +22,8 @@
 // so far — a runtime error, a refused `GM_download`, a parse-time
 // diagnostic.
 // Bumped only when an append carries a strictly higher level; cleared
-// on `clearScriptLog`. Entries that record a load-state transition
+// on `clearScriptLog` and by an entry that `resetsLogLevel` (new content
+// loaded). Entries that record a load-state transition
 // (`state` set — see `LogEntry.state`) never touch it: their badge
 // comes from the row and clears with it. It lives in session storage
 // (not on the StoredScript row) because:
@@ -63,13 +64,15 @@ export interface LogEntry {
   // Human-readable message. Multiline is fine; the log pane preserves
   // newlines.
   message: string;
-  // The display state this event moved the script into, when the entry
-  // records a load-state / registration / probe transition rather than
-  // something the script itself did: `refresh-failed`, `invalid`,
-  // `missing`, `rejected`, `outdated`, or `ok` for the matching
-  // recovery. The Log tab shows it in place of the level, in the same
-  // words as the Status badge, so "the event that put the badge there"
-  // and the badge read alike.
+  // The load state as of this event, when the entry records a
+  // load-state / registration / probe transition rather than something
+  // the script itself did: `refresh-failed`, `invalid`, `missing`,
+  // `rejected`, `outdated`, or `ok` for the matching recovery (and for
+  // new content loading cleanly). The Log tab shows it in place of the
+  // level, in the same words as the Status badge, so the event that put
+  // a badge there reads like the badge. It is what THIS event knows: an
+  // `ok` row can sit under a badge that is still REJECTED or OUTDATED
+  // for a reason this event didn't touch.
   //
   // Two separate things, deliberately: the row (`status`,
   // `refreshError`, the rejection map, the probes) is the durable
@@ -79,6 +82,12 @@ export interface LogEntry {
   // row and clears with it, so the sentinel is left to script-originated
   // warnings and errors.
   state?: LoadState;
+  // This entry marks a fresh start: the `loglevel:` sentinel is cleared
+  // as it is written, so only what happens from here on counts toward
+  // WARNING / ERROR. Earlier entries stay in the Log; only the badge
+  // resets. Set on the `Loaded new content` row — see
+  // `emitScriptOutcomeLog` for why.
+  resetsLogLevel?: boolean;
   // Where in the script's own files the entry is about, when it was
   // derived from their content (a bad header line, a syntax error).
   // The log pane renders it as a link into the matching code tab.
@@ -147,6 +156,8 @@ export interface AppendLogInput {
   location?: DiagnosticLocation;
   // See `LogEntry.state`.
   state?: LoadState;
+  // See `LogEntry.resetsLogLevel`.
+  resetsLogLevel?: boolean;
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
@@ -194,7 +205,10 @@ export async function handleScriptLogWrite(req: ScriptLogWriteRequest): Promise<
 // The fallback can duplicate an entry: a port that closes after the
 // worker acted (the page navigating away mid-write) is indistinguishable
 // from one that was never there, so the write may already be persisted.
-// A doubled log line is the better failure of the two on offer.
+// A doubled log line is the better failure of the two on offer. It can
+// also reorder: a fallen-back `resetsLogLevel` row isn't ordered against
+// relayed rows, so the reset could land after the rows it was meant to
+// precede and erase a fresh warning.
 async function writeViaWorker(req: ScriptLogWriteRequest): Promise<void> {
   try {
     const ack = await chrome.runtime.sendMessage({ type: SCRIPT_LOG_WRITE_MESSAGE, ...req });
@@ -230,15 +244,25 @@ async function writeEntry(
   // worker message boundary, and a bad value here would render an
   // empty badge.
   if (isLoadState(input.state)) entry.state = input.state;
+  if (input.resetsLogLevel === true) entry.resetsLogLevel = true;
   const next = prior.length >= LOG_CAP
     ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
     : [...prior, entry];
   const toSet: Record<string, unknown> = { [lk]: next };
   // A load-state transition is badged by the row, not the sentinel —
   // otherwise a `refresh-failed` entry would leave WARNING behind for
-  // the rest of the session after the row had already recovered.
-  if (entry.state === undefined && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+  // the rest of the session after the row had already recovered. A
+  // resetting entry doesn't count itself either: it's the boundary,
+  // not the first event past it.
+  const counts = entry.state === undefined && !entry.resetsLogLevel;
+  if (counts && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
   await chrome.storage.session.set(toSet);
+  // The reset rides on the same queued write as the entry, so it lands
+  // exactly between the rows before it and the rows after it: parse
+  // diagnostics replayed for the new version come next and bump the
+  // sentinel afresh. Skipped when there is nothing to clear — the
+  // common case, since most new content lands on a clean badge.
+  if (entry.resetsLogLevel && priorLevel !== undefined) await chrome.storage.session.remove(mk);
 }
 
 export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {
@@ -274,12 +298,12 @@ export async function forgetScriptLogs(scriptIds: readonly string[]): Promise<vo
 
 // Read the persisted "highest log level seen" sentinel for one script.
 // Returns undefined when no script-originated entry has been appended
-// this session (load-state entries don't count — see `LogEntry.state`)
-// or `clearScriptLog` ran. The sentinel
-// is monotonic within a session — LOG_CAP rotation does NOT decrease
-// it. Once a script has hit ERROR, subsequent rotation that drops the
-// only error entry leaves the badge at ERROR until the user clicks
-// "Clear log" or Chrome shuts down. We accept that drift because
+// since the last reset — a `clearScriptLog`, a `resetsLogLevel` entry
+// (new content loaded), or the start of the Chrome session. Load-state
+// entries don't count (see `LogEntry.state`). Between resets it only
+// goes up — LOG_CAP rotation does NOT decrease it. Once a script has
+// hit ERROR, rotation that drops the only error entry leaves the badge
+// at ERROR until the next reset. We accept that drift because
 // recomputing on every rotation would dominate the cost of an append
 // and the log itself is session-scoped anyway.
 export async function getMaxLogLevel(

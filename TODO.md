@@ -1067,16 +1067,23 @@ Every failure the UI surfaces now lands in the script's Log (see
 [docs/script-log.md](docs/script-log.md#every-surfaced-failure-lands-in-the-log)).
 Rough edges left:
 
-- **The `loglevel:` sentinel is monotonic.** A script whose own code
-  hit WARNING/ERROR keeps that badge for the rest of the Chrome session
-  until "Clear log".
+- **The `loglevel:` sentinel is monotonic within one version.** A
+  script whose own code hit WARNING/ERROR keeps that badge until the
+  log is cleared or a refresh loads new content.
   - Load-state transitions (REFRESH FAILED, INVALID, REJECTED,
-    OUTDATED…) no longer feed it: they carry a `state` on the log entry
-    and are badged by the row, which clears on recovery.
-  - What's left is the script's own runtime/parse entries, where
-    "sticky until cleared" is closer to the intended meaning.
-  - Recomputing the max on every append is too expensive, and there's
-    no natural "recovery" event for a runtime error to key a reset on.
+    OUTDATED…) don't feed it: they carry a `state` on the log entry and
+    are badged by the row, which clears on recovery.
+  - `Loaded new content` resets it, which covers the edit-and-retry
+    loop. What's left is a script that keeps running the same code,
+    where "sticky until cleared" is the intended meaning.
+  - A second tab still running the old version undoes the reset with
+    its next error, and reloading it doesn't reset again. Tagging
+    runtime reports with the content hash they ran under would let the
+    sentinel ignore reports from a superseded version.
+  - Siblings that changed on disk during an add-to-existing-container
+    pass get neither a `Loaded new content` row nor a reset (that path
+    bypasses `emitScriptOutcomeLog`) — same gap as the missing recovery
+    rows noted below.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
   ordinary browsing appends `Checked for updates — no change` per

@@ -774,8 +774,15 @@ export function emitScriptOutcomeLog(
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
     const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
+    // A new version is a clean slate for the WARNING / ERROR badge: the
+    // old version's runtime errors say nothing about this one, and a
+    // developer who just fixed one needs the badge to reflect only what
+    // happens next. Shown as OK in the Log's status column for the same
+    // reason. See `LogEntry.resetsLogLevel`.
     logScriptEvent(scriptId, {
       level: 'info',
+      state: 'ok',
+      resetsLogLevel: true,
       source,
       message: `Loaded new content${size}`,
     });

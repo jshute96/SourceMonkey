@@ -82,6 +82,7 @@ export interface SmApi {
     timestamp: number;
     level: 'info' | 'warning' | 'error';
     state?: LoadStateLike;
+    resetsLogLevel?: boolean;
     source: string;
     tabId?: number;
     message: string;

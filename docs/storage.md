@@ -317,7 +317,9 @@ Two families, kept apart:
   which only script-originated entries bump.
   - A refresh failure logged into the script's Log carries a `state`
     and is exempt, so it can't leave a WARNING behind after recovery.
-  - See [script-log.md](script-log.md#entry-shape).
+  - A refresh that loads **new content** resets the sentinel: the badge
+    then reflects only what the new version does. See
+    [script-log.md](script-log.md#a-new-version-starts-the-badge-over).
 
 The Status cell is a link to the script's viewer Log tab in both
 pages, and every transition into a non-OK state above appends an entry

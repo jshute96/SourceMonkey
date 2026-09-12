@@ -260,6 +260,21 @@ test('an entry carrying a state is stored but never bumps the max log level', as
   assert.equal(await getMaxLogLevel('s1'), 'warning');
 });
 
+test('an entry with resetsLogLevel clears the max log level but keeps the entries', async () => {
+  await appendScriptLog('s1', { level: 'error', source: 'script-wrapper', message: 'boom', timestamp: 1 });
+  assert.equal(await getMaxLogLevel('s1'), 'error');
+  await appendScriptLog('s1', {
+    level: 'info', state: 'ok', resetsLogLevel: true, source: 'x', message: 'Loaded new content', timestamp: 2,
+  });
+  assert.equal(await getMaxLogLevel('s1'), undefined);
+  const entries = await getScriptLog('s1');
+  assert.deepEqual(entries.map((e) => e.message), ['boom', 'Loaded new content']);
+  assert.equal(entries[1].resetsLogLevel, true);
+  // Counting starts over from here.
+  await appendScriptLog('s1', { level: 'warning', source: 'script-wrapper', message: 'w', timestamp: 3 });
+  assert.equal(await getMaxLogLevel('s1'), 'warning');
+});
+
 test('clearScriptLog wipes the max-log-level alongside the entries', async () => {
   await appendScriptLog('s1', { level: 'error', source: 'x', message: 'boom', timestamp: 1 });
   assert.equal(await getMaxLogLevel('s1'), 'error');

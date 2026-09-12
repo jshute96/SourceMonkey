@@ -19,7 +19,10 @@
   'warning' | 'error'`). Bumped on `appendScriptLog` only when the new
   entry's level is strictly higher than the stored one **and the entry
   carries no `state`** (see [Entry shape](#entry-shape)); cleared on
-  `clearScriptLog` alongside the entries. Lives next to the log
+  `clearScriptLog` alongside the entries, and by an entry with
+  `resetsLogLevel` (see
+  [A new version starts the badge over](#a-new-version-starts-the-badge-over)).
+  Lives next to the log
   (rather than on the `StoredScript` row) so its lifetime exactly
   matches the entries that back it — Chrome shutdown drops both
   together. The collections page reads every script's row in one bulk
@@ -45,7 +48,8 @@ interface LogEntry {
   tabId?: number;          // present when the event originated from injected code
   message: string;         // human-readable; multiline OK
   location?: DiagnosticLocation;  // a place in the script's own files
-  state?: DisplayStatus;   // the Status-badge state this event moved the script into
+  state?: LoadState;       // the Status-badge state this event moved the script into
+  resetsLogLevel?: boolean;  // clears `loglevel:` as it is written — a fresh start
 }
 ```
 
@@ -66,6 +70,30 @@ because they are derived *from* the sentinel. It drives two things:
     a runtime error, a parse-time diagnostic, a refused `GM_download`.
   - A transient refresh failure therefore leaves no residue once it
     recovers.
+
+### A new version starts the badge over
+
+`resetsLogLevel` is set on the `Loaded new content` row, and clearing
+`loglevel:` rides on that entry's own queued write:
+
+- The old version's runtime errors are not evidence about the new one,
+  and a developer who just fixed one needs the badge to answer "did
+  that work?", not "did it ever fail?".
+- Earlier entries stay in the Log; only the sentinel resets. The row
+  shows `OK` in the Status column, since that is what the badge reads
+  once it lands.
+- Ordering matters and is guaranteed by the queue: the new version's
+  `parser` diagnostics are appended right after and bump the sentinel
+  afresh, so a fix that introduces a header warning still reads
+  WARNING.
+- Not set on a recovery row (`Refresh succeeded again`, the rejection
+  clearing): the same code is still running there, and its errors still
+  stand.
+- A tab still running the old version keeps reporting for as long as
+  it is open, and a report landing after the reset re-badges the
+  script. Reloading that tab stops the reports but does not reset
+  again (the bytes haven't changed); the badge then stays until the
+  next new version or Clear log. Noted in TODO.md.
 
 Row vs. entry, deliberately separate:
 
@@ -140,7 +168,8 @@ Two naming notes worth keeping:
 
 - `appendScriptLog(scriptId, input)` — async write. Promise resolves
   once the entry is persisted. Also bumps `loglevel:<scriptId>` when
-  the new entry's level exceeds the stored max.
+  the new entry's level exceeds the stored max, or clears it when the
+  entry `resetsLogLevel`.
 - `logScriptEvent(scriptId, input)` — fire-and-forget convenience.
   Swallows errors because the log isn't load-bearing.
 - `getScriptLog(scriptId)` — async read.
