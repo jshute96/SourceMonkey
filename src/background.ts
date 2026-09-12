@@ -150,6 +150,7 @@ import {
 import {
   appendScriptLog,
   clearScriptLog,
+  getMaxLogLevel,
   getScriptLog,
   handleScriptLogWrite,
   SCRIPT_LOG_WRITE_MESSAGE,
@@ -157,6 +158,7 @@ import {
   logScriptEvent,
   _flushScriptLogQueueForTests,
   type AppendLogInput,
+  type LogLevel,
   type LogEntry,
 } from './script-log.js';
 import {
@@ -323,6 +325,9 @@ interface SourceMonkeyApi {
   // failures and wrapper errors are surfaced through the log pane.
   getScriptLog: (scriptId: string) => Promise<LogEntry[]>;
   appendScriptLog: (scriptId: string, input: AppendLogInput) => Promise<void>;
+  // The `loglevel:` sentinel behind the WARNING / ERROR badges; tests
+  // assert a load-state entry leaves it alone.
+  getMaxLogLevel: (scriptId: string) => Promise<LogLevel | undefined>;
   // Registrations chrome.userScripts refused on the last sync, keyed by
   // script id — the state the UI renders as REJECTED. Empty unless
   // something is broken, which is what most tests assert.
@@ -480,6 +485,10 @@ const api: SourceMonkeyApi = {
     return getScriptLog(scriptId);
   },
   appendScriptLog,
+  getMaxLogLevel: async (scriptId: string) => {
+    await _flushScriptLogQueueForTests(scriptId);
+    return getMaxLogLevel(scriptId);
+  },
   getRejections: readRejections,
   getRefreshErrors: readRefreshErrors,
   failCollectionWrites: async (message: string | null) => {

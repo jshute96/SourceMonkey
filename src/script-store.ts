@@ -94,7 +94,7 @@ import {
   validLocation,
   type DiagnosticLocation,
 } from './diagnostic-location.js';
-import { displayLocation, stripSriFragment } from './script-display.js';
+import { displayLocation, stripSriFragment, type LoadState } from './script-display.js';
 import {
   collectionNameInUse,
   inferDisplayName,
@@ -715,31 +715,34 @@ export function applyMissing(existing: StoredScript): StoredScript {
 // Single source of truth for "how do we phrase this failure in the
 // Log tab", shared by every path that can surface one: the add path
 // (script-store), the refresh outcome path and the startup replay
-// (script-updater). Sharing it means the same failure reads the same
-// way whichever path reported it, so a user comparing two rows can
-// tell "the same problem again" from "a different problem".
+// (script-updater), and the deferred parse check. Sharing it means the
+// same failure reads the same way whichever path reported it, so a
+// user comparing two rows can tell "the same problem again" from "a
+// different problem".
 //
-// Levels:
+// Each entry carries the `state` it moved the row into — the same word
+// the Status badge shows — so the Log tab's status column and the badge
+// agree (see `LogEntry.state`). Because it carries a state, the entry
+// never bumps the `loglevel:` sentinel: the badge comes from the row
+// and clears when the row recovers.
+//
+// Levels (still recorded on the entry, though the Log tab's Status
+// cell shows the `state` word instead):
 //   - `invalid` / `missing` → **error**. The script cannot run: the
 //     injector skips `invalid` rows outright, and a `missing` row is
-//     auto-disabled on the transition. That is the same severity the
-//     status badge already claims.
+//     auto-disabled on the transition.
 //   - `refreshError` → **warning**. The script IS still running, from
-//     its last-known-good copy; only the *update* failed. Calling that
-//     an error would overstate it, and would also poison the
-//     monotonic `loglevel:` sentinel so the row still read ERROR long
-//     after the collection came back. (The badge is unaffected either way:
-//     `effectiveScriptStatus` returns REFRESH FAILED before it ever
-//     consults the max log level — see src/script-display.ts.)
+//     its last-known-good copy; only the *update* failed.
 export function loadStateLogEntry(
   script: Pick<StoredScript, 'status' | 'errorMessage' | 'refreshError' | 'errorLocation'>,
-): { level: LogLevel; message: string; location?: DiagnosticLocation } | null {
+): { level: LogLevel; state: LoadState; message: string; location?: DiagnosticLocation } | null {
   if (script.status === 'invalid') {
     // The location travels as its own field rather than being baked
     // into the text, so the Log tab can link it — and so this entry
     // says exactly what the status badge's hover text says.
     return {
       level: 'error',
+      state: 'invalid',
       message: script.errorMessage ?? 'Unknown error',
       ...(script.errorLocation ? { location: script.errorLocation } : {}),
     };
@@ -747,10 +750,10 @@ export function loadStateLogEntry(
   if (script.status === 'missing') {
     // Deliberately no location: a vanished file has no content, and
     // `applyMissing` clears any location the row used to carry.
-    return { level: 'error', message: script.errorMessage ?? 'Script file is missing' };
+    return { level: 'error', state: 'missing', message: script.errorMessage ?? 'Script file is missing' };
   }
   if (script.refreshError) {
-    return { level: 'warning', message: `Refresh failed: ${script.refreshError}` };
+    return { level: 'warning', state: 'refresh-failed', message: `Refresh failed: ${script.refreshError}` };
   }
   return null;
 }

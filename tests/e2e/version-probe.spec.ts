@@ -137,6 +137,38 @@ test.describe('update probes', () => {
     expect(server.requestLog.filter((e) => e.path === '/thing.user.js').length).toBe(before + 1);
   });
 
+  test('the Log records OUTDATED and, once the copy catches up, OK', async ({ sm }) => {
+    server.setRoute('/thing.meta.js', metaBlock('2.0'));
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+
+    // The transition carries the badge's state, and — because it does —
+    // leaves the script-originated max level alone: OUTDATED is not a
+    // WARNING the user has to clear.
+    const outdated = (await sm.getScriptLog(scriptId)).filter((e) => /Newer version 2\.0/.test(e.message));
+    expect(outdated).toHaveLength(1);
+    expect(outdated[0].state).toBe('outdated');
+    expect(await sm.getMaxLogLevel(scriptId)).toBe('info');
+
+    // The collection catches up. The probe answer is unchanged (2.0);
+    // it is OUR version that moved, so the refresh outcome — not the
+    // probe — is what notices the badge going back to OK.
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '2.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    await sm.syncNow();
+    await sm.updateCollection(collection!.id, 'manual');
+    const recovered = (await sm.getScriptLog(scriptId)).filter((e) => /Up to date again/.test(e.message));
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ state: 'ok', message: 'Up to date again (running 2.0)' });
+  });
+
   test('dropping @updateURL clears a stale probe annotation', async ({ sm }) => {
     server.setRoute('/thing.meta.js', metaBlock('2.0'));
     server.setRoute('/thing.user.js', versionedScript({
@@ -155,6 +187,11 @@ test.describe('update probes', () => {
 
     expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes)
       .toBeUndefined();
+    // The badge went from OUTDATED to OK, so the Log says so.
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+    const recovered = (await sm.getScriptLog(scriptId)).filter((e) => /Up to date again/.test(e.message));
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].state).toBe('ok');
   });
 
   test('dropping one of two upstreams clears just that row', async ({ sm }) => {

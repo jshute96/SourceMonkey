@@ -81,12 +81,16 @@ export interface SmApi {
   getScriptLog(scriptId: string): Promise<{
     timestamp: number;
     level: 'info' | 'warning' | 'error';
+    state?: LoadStateLike;
     source: string;
     tabId?: number;
     message: string;
     location?: DiagnosticLocationLike;
   }[]>;
   clearScriptLog(scriptId: string): Promise<void>;
+  // The `loglevel:` sentinel behind WARNING / ERROR — only
+  // script-originated entries move it (see docs/script-log.md).
+  getMaxLogLevel(scriptId: string): Promise<'info' | 'warning' | 'error' | undefined>;
   // Every PERSISTED GM value for a script, excluding the SW's in-flight
   // overlay. The wrapper's write is batched, so this is what a test
   // waits on instead of pausing.
@@ -95,6 +99,7 @@ export interface SmApi {
   // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {
     level: 'info' | 'warning' | 'error';
+    state?: LoadStateLike;
     source: string;
     message: string;
     tabId?: number;
@@ -259,6 +264,9 @@ export interface DiagnosticLocationLike {
   line?: number;
   column?: number;
 }
+
+// `LoadState` from src/script-display.ts, same reasoning.
+export type LoadStateLike = 'ok' | 'invalid' | 'rejected' | 'missing' | 'refresh-failed' | 'outdated';
 
 // `ParseVerdict` from src/parse-check-protocol.ts, same reasoning.
 export interface ParseVerdictLike {

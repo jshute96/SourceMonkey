@@ -122,7 +122,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
 | `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the collections/viewer UI |
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
-| `src/log-format.ts` | Log cell formatting (time, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
+| `src/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
 | `src/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor, plus the same-directory fallback for site-less patterns |
 | `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the slot renderer for collections page + viewer |

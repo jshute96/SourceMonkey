@@ -92,7 +92,7 @@ are usually more details:
 | `MISSING` | The file is gone from its collection (deleted on disk, dropped from a manifest) |
 | `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
 | `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
-| `ERROR` / `WARNING` | Loaded fine, but some errors or warnings have been logged |
+| `ERROR` / `WARNING` | Loaded fine, but the script itself produced errors or warnings this session (runtime errors, parse diagnostics, a refused `GM_download`) |
 
 Clicking a script name opens the **script viewer**, which shows the script's
 headers, content (including the `@require` files it loads), status, and a

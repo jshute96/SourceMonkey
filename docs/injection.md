@@ -446,12 +446,10 @@ rules and why it carries no location.
 - **A fix needs no extra user action**, and is logged: the retry that
   succeeds drops the script from the map, so REJECTED clears, and
   `logRecoveries` writes the matching info row.
-  - The row does **not** go back to OK on its own. `loglevel:` is
-    monotonic within a session, so the refusal's error rows keep the
-    status at ERROR until the log is cleared. That is the same residual
-    badge every recovered failure leaves here — see
-    [storage.md](storage.md#displayed-status-ui-level) and the sentinel
-    note in TODO.md — not something specific to REJECTED.
+  - The row goes back to OK on its own: the refusal rows carry
+    `state: 'rejected'` and the recovery `state: 'ok'`, so neither
+    touched the `loglevel:` sentinel — see
+    [script-log.md](script-log.md#entry-shape).
 - **Every refused attempt gets a Log row**, including a re-sync that
   gets the same reason for the same content. The retry is what's being
   reported: a suppressed retry looks exactly like no retry, and a

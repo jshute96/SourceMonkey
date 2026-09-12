@@ -210,6 +210,17 @@ export type DisplayStatus =
   | 'ok' | 'invalid' | 'rejected' | 'missing'
   | 'refresh-failed' | 'outdated' | 'warning' | 'error';
 
+// The states a Log entry can record moving a script into (see
+// `LogEntry.state` in script-log.ts): everything above except
+// `warning` / `error`, which are *derived from* the Log's max level and
+// so can't be the state an entry announces.
+export type LoadState = Exclude<DisplayStatus, 'warning' | 'error'>;
+export const LOAD_STATES: readonly LoadState[] =
+  ['ok', 'invalid', 'rejected', 'missing', 'refresh-failed', 'outdated'];
+export function isLoadState(value: unknown): value is LoadState {
+  return (LOAD_STATES as readonly unknown[]).includes(value);
+}
+
 export type LogLevelForStatus = 'info' | 'warning' | 'error';
 
 // `outdated` and `rejected` come in as caller-computed flags rather

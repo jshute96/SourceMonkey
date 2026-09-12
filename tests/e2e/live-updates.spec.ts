@@ -499,13 +499,14 @@ test.describe('collections page live updates (refresh failures)', () => {
     await expect(row).not.toHaveAttribute('data-script-refresh-error');
     await expect(row.locator('td.status-cell')).not.toHaveClass(/status-refresh-failed/);
 
-    // The badge still reads WARNING, because the failure and recovery
-    // are both in the script's Log and the level promotes the cell.
-    // Clearing the log drops the promotion — and that clear goes through
-    // `applyStatusCellsToDom`, the repaint that recomputes purely from
-    // the row datasets. It's the path a stale snapshot used to poison,
-    // so this is where REFRESH FAILED would come back from the dead.
-    await expect(statusLink).toHaveText('WARNING');
+    // Straight back to OK: the failure and recovery are both in the
+    // script's Log, but as state-carrying entries they never promote
+    // the cell (see `LogEntry.state`). Clearing the log then goes
+    // through `applyStatusCellsToDom`, the repaint that recomputes
+    // purely from the row datasets. It's the path a stale snapshot used
+    // to poison, so this is where REFRESH FAILED would come back from
+    // the dead.
+    await expect(statusLink).toHaveText('OK');
     await sm.clearScriptLog(script.id);
     await expect(statusLink).toHaveText('OK');
 

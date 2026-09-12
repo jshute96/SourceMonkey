@@ -18,10 +18,14 @@
 // small enough that a runaway error loop can't fill storage.
 //
 // Alongside the log we maintain a sibling `loglevel:<scriptId>` row
-// recording the highest level any entry has carried so far. Bumped
-// only when an append carries a strictly higher level; cleared on
-// `clearScriptLog`. It lives in session storage (not on the
-// StoredScript row) because:
+// recording the highest level any SCRIPT-ORIGINATED entry has carried
+// so far — a runtime error, a refused `GM_download`, a parse-time
+// diagnostic.
+// Bumped only when an append carries a strictly higher level; cleared
+// on `clearScriptLog`. Entries that record a load-state transition
+// (`state` set — see `LogEntry.state`) never touch it: their badge
+// comes from the row and clears with it. It lives in session storage
+// (not on the StoredScript row) because:
 //   - Lifetime matches the log itself — Chrome shutdown drops both
 //     together, so a WARNING/ERROR badge can't outlive its entries.
 //   - One bulk `get(null)` yields every script's level in O(scripts)
@@ -30,6 +34,7 @@
 
 import { validLocation, type DiagnosticLocation } from './diagnostic-location.js';
 import { isPageContext } from './run-context.js';
+import { isLoadState, type LoadState } from './script-display.js';
 
 export type LogLevel = 'info' | 'warning' | 'error';
 
@@ -58,6 +63,22 @@ export interface LogEntry {
   // Human-readable message. Multiline is fine; the log pane preserves
   // newlines.
   message: string;
+  // The display state this event moved the script into, when the entry
+  // records a load-state / registration / probe transition rather than
+  // something the script itself did: `refresh-failed`, `invalid`,
+  // `missing`, `rejected`, `outdated`, or `ok` for the matching
+  // recovery. The Log tab shows it in place of the level, in the same
+  // words as the Status badge, so "the event that put the badge there"
+  // and the badge read alike.
+  //
+  // Two separate things, deliberately: the row (`status`,
+  // `refreshError`, the rejection map, the probes) is the durable
+  // truth of what state the script is in; this is the session-scoped
+  // record of when it got there. An entry with `state` never bumps the
+  // `loglevel:` sentinel — the badge it explains already comes from the
+  // row and clears with it, so the sentinel is left to script-originated
+  // warnings and errors.
+  state?: LoadState;
   // Where in the script's own files the entry is about, when it was
   // derived from their content (a bad header line, a syntax error).
   // The log pane renders it as a link into the matching code tab.
@@ -124,6 +145,8 @@ export interface AppendLogInput {
   // persisted and later turned into click targets, so a malformed line
   // number is dropped here rather than discovered at render time.
   location?: DiagnosticLocation;
+  // See `LogEntry.state`.
+  state?: LoadState;
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
@@ -203,11 +226,18 @@ async function writeEntry(
   if (input.tabId !== undefined) entry.tabId = input.tabId;
   const location = validLocation(input.location);
   if (location) entry.location = location;
+  // Checked like `location`: the input may have crossed the page →
+  // worker message boundary, and a bad value here would render an
+  // empty badge.
+  if (isLoadState(input.state)) entry.state = input.state;
   const next = prior.length >= LOG_CAP
     ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
     : [...prior, entry];
   const toSet: Record<string, unknown> = { [lk]: next };
-  if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+  // A load-state transition is badged by the row, not the sentinel —
+  // otherwise a `refresh-failed` entry would leave WARNING behind for
+  // the rest of the session after the row had already recovered.
+  if (entry.state === undefined && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
   await chrome.storage.session.set(toSet);
 }
 
@@ -243,8 +273,9 @@ export async function forgetScriptLogs(scriptIds: readonly string[]): Promise<vo
 }
 
 // Read the persisted "highest log level seen" sentinel for one script.
-// Returns undefined only when the log is empty (no entries have ever
-// been appended this session, or `clearScriptLog` ran). The sentinel
+// Returns undefined when no script-originated entry has been appended
+// this session (load-state entries don't count — see `LogEntry.state`)
+// or `clearScriptLog` ran. The sentinel
 // is monotonic within a session — LOG_CAP rotation does NOT decrease
 // it. Once a script has hit ERROR, subsequent rotation that drops the
 // only error entry leaves the badge at ERROR until the user clicks

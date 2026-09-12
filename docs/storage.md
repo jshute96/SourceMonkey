@@ -34,7 +34,7 @@ browsing session, not the user's configuration.
 | Key                      | Type                    | Purpose |
 |--------------------------|-------------------------|---------|
 | `"log:<scid>"`           | `LogEntry[]`            | Per-script event log (see [script-log.md](script-log.md)). |
-| `"loglevel:<scid>"`      | `LogLevel`              | Highest level that log has carried; drives WARNING / ERROR in the Status column. |
+| `"loglevel:<scid>"`      | `LogLevel`              | Highest level a script-originated entry in that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
 
@@ -303,16 +303,27 @@ viewer render. Priority order (highest wins):
   all subsumes "some other copy is ahead". See
   [updates.md](updates.md).
 - `ERROR` — `status === 'ok'`, no `refreshError`, but the per-script
-  log has an error entry (max log level = `error`).
-- `WARNING` — `status === 'ok'` and the per-script log has a warning
-  entry (max log level = `warning`).
+  log has a script-originated error entry (max log level = `error`).
+- `WARNING` — `status === 'ok'` and the per-script log has a
+  script-originated warning entry (max log level = `warning`).
 - `OK` — everything else (no logs, or only info-level logs).
 
+Two families, kept apart:
+
+- The states above `ERROR` come from the row (or the rejection map /
+  probes) and clear when it recovers — a network mount that comes back
+  takes REFRESH FAILED with it.
+- `WARNING` / `ERROR` come from the session log's `loglevel:` sentinel,
+  which only script-originated entries bump.
+  - A refresh failure logged into the script's Log carries a `state`
+    and is exempt, so it can't leave a WARNING behind after recovery.
+  - See [script-log.md](script-log.md#entry-shape).
+
 The Status cell is a link to the script's viewer Log tab in both
-pages, and every non-OK state above (except OUTDATED, which the probe
-logs separately) has a matching entry in that Log — INVALID / MISSING /
-REJECTED at error level, REFRESH FAILED at warning. Recoveries are logged too,
-so a badge going green has a matching line; see
+pages, and every transition into a non-OK state above appends an entry
+carrying the same `state` (OUTDATED is the one not restated after a
+browser restart). Recoveries are logged too (`state: 'ok'`), so a badge
+going green has a matching line; see
 [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 ## Change detection: the last-change token

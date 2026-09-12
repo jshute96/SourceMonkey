@@ -400,7 +400,9 @@ Both name the script the same way, pivoted for where they're read.
      place, and renders the fetch error in the pane if it fails. A
      paint epoch discards a slow load whose tab the user already left.
    - Log tab swaps in a `<table>` view of the script's event log.
-     Columns: Time / Level / Source / Message. See
+     Columns: Time / Status / Source / Message — Status is the badge
+     word for a state transition (`REFRESH FAILED`, `OK`) or the level
+     for a script-originated entry. See
      [script-log.md](script-log.md) for the data model and what gets
      logged. Sticky toolbar with **Save**, **Copy** and
      **Clear log** — see [script-log.md](script-log.md#export) for the

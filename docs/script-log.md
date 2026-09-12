@@ -15,9 +15,10 @@
 - Hard cap: `LOG_CAP` (currently 500). Oldest entries are dropped on
   overflow.
 - Sibling key `loglevel:<scriptId>` records the **highest level any
-  entry in this log has carried so far** (`'info' | 'warning' |
-  'error'`). Bumped on `appendScriptLog` only when the new entry's
-  level is strictly higher than the stored one; cleared on
+  script-originated entry in this log has carried so far** (`'info' |
+  'warning' | 'error'`). Bumped on `appendScriptLog` only when the new
+  entry's level is strictly higher than the stored one **and the entry
+  carries no `state`** (see [Entry shape](#entry-shape)); cleared on
   `clearScriptLog` alongside the entries. Lives next to the log
   (rather than on the `StoredScript` row) so its lifetime exactly
   matches the entries that back it — Chrome shutdown drops both
@@ -44,8 +45,39 @@ interface LogEntry {
   tabId?: number;          // present when the event originated from injected code
   message: string;         // human-readable; multiline OK
   location?: DiagnosticLocation;  // a place in the script's own files
+  state?: DisplayStatus;   // the Status-badge state this event moved the script into
 }
 ```
+
+`state` is set on entries that record a **state transition** rather
+than something the script did. Type `LoadState` (`script-display.ts`):
+`refresh-failed`, `invalid`, `missing`, `rejected`, `outdated`, and
+`ok` for the matching recovery — `warning` / `error` are excluded
+because they are derived *from* the sentinel. It drives two things:
+
+- The Log tab's Status column shows the badge word (`REFRESH FAILED`,
+  `OK`) instead of the level, so the entry that put a badge there reads
+  like the badge.
+- The entry never bumps `loglevel:`.
+  - The badge for a state comes from the row (`status`,
+    `refreshError`, the rejection map, the probes) and clears when the
+    row recovers.
+  - WARNING / ERROR are left to mean "the script itself did something":
+    a runtime error, a parse-time diagnostic, a refused `GM_download`.
+  - A transient refresh failure therefore leaves no residue once it
+    recovers.
+
+Row vs. entry, deliberately separate:
+
+- The row is the durable, persisted truth of what state the script is
+  in.
+- The entry is the session-scoped record of when it got there.
+- Every write that moves the row into a load state (or back) appends
+  the entry with that `state` in the same step.
+- The one gap is a restart: `replayScriptLogsAtBoot` restates `invalid`
+  / `missing` / `refreshError` rows, but not OUTDATED, whose probes
+  persist while the log doesn't — so an OUTDATED badge can outlive its
+  line.
 
 The viewer's table renders `tabId · source` together when `tabId` is
 present, and just `source` otherwise.
@@ -167,12 +199,12 @@ reason is worse than no badge.
 `loadStateLogEntry` (`src/script-store.ts`) is the single mapping from
 a row's persisted state to the entry it warrants:
 
-| Row state | Level | Message |
-| --- | --- | --- |
-| `status: 'invalid'` | error | the row's `errorMessage` |
-| `status: 'missing'` | error | `Script file is missing` |
-| `refreshError` (status still `ok`) | warning | `Refresh failed: <reason>` |
-| otherwise | — | nothing to say |
+| Row state | `state` | Level | Message |
+| --- | --- | --- | --- |
+| `status: 'invalid'` | `invalid` | error | the row's `errorMessage` |
+| `status: 'missing'` | `missing` | error | `Script file is missing` |
+| `refreshError` (status still `ok`) | `refresh-failed` | warning | `Refresh failed: <reason>` |
+| otherwise | — | — | nothing to say |
 
 Why those levels:
 
@@ -181,14 +213,10 @@ Why those levels:
   transition. Error matches what the badge already claims.
 - `refreshError` means the script **is** running, from its
   last-known-good copy; only the update failed. Warning, not error.
-- The level choice can't double-count against the badge while the
-  failure lasts: `effectiveScriptStatus` returns INVALID / MISSING /
-  REFRESH FAILED before it ever consults the max log level (see
-  [storage.md](storage.md#displayed-status-ui-level)). It only shows
-  through *after* recovery, where the `loglevel:` sentinel's
-  monotonicity leaves a residual badge. Warning is not right there
-  either — the honest answer is OK — but it is the least wrong option
-  available until the sentinel stops being monotonic (see `TODO.md`).
+- The level never reaches the badge: these entries carry a `state`, so
+  they leave the `loglevel:` sentinel alone. The badge is INVALID /
+  MISSING / REFRESH FAILED straight from the row while the failure
+  lasts, and OK the moment the row recovers.
 
 Every caller shares that mapping, so the same failure reads the same
 way whichever path reported it:
@@ -204,10 +232,14 @@ Beyond the load pipeline:
 - **Rejected registration** (`registerWithFallback` in
   `src/injector.ts`, source `chrome-injector`) — Chrome refused the
   script's spec, so it never runs even though its row loaded fine.
-  Error level. The status cell says REJECTED for as long as the
-  refusal stands; the Log is where the reason gets a timestamp and a
-  permanent home. See
+  Error level, `state: 'rejected'`. The status cell says REJECTED for
+  as long as the refusal stands; the Log is where the reason gets a
+  timestamp and a permanent home. See
   [injection.md](injection.md#rejected-registrations).
+- **Outdated** (`probeOneScript` in `src/script-updater.ts`, source
+  `version-probe`) — an upstream copy moved ahead of ours. Warning
+  level, `state: 'outdated'`; the probe going quiet again logs
+  `Up to date again` with `state: 'ok'`.
 
 ### Collection-level failures
 
@@ -217,9 +249,8 @@ collection. They are always **info**, never warning/error:
 - The badge for a collection-level problem belongs on the collection row,
   which already renders `scanError`. These entries exist so a user
   reading one script's Log can see why it wasn't checked.
-- The `loglevel:` sentinel is monotonic within a session, so anything
-  higher would leave every script under the collection badged WARNING for
-  the rest of the session after one transient listing failure.
+- WARNING / ERROR via the `loglevel:` sentinel are reserved for things
+  the script itself did; a listing failure is not that.
 
 What gets fanned out:
 
@@ -343,10 +374,10 @@ host that starts answering again clears the failure without bumping
 `loadedAt`, so there's no `Loaded new content` row to explain the
 badge going green.
 
-A recovery row does not pull the Status cell back to OK by itself:
-`loglevel:` is monotonic within a session, so the earlier error rows
-hold it at ERROR until "Clear log". That applies to every entry in the
-list above, and is tracked in TODO.md.
+Every recovery row carries `state: 'ok'`, and the failure it answers
+carried its own `state`, so neither touched the `loglevel:` sentinel:
+the Status cell reads OK again as soon as the row does, with nothing to
+clear.
 
 ## Opportunistic vs manual
 
@@ -560,11 +591,14 @@ built by `formatLogCsv` in `src/log-format.ts`.
 
 Format:
 
-- Header row `Time,Level,Source,Message`, then one row per entry.
+- Header row `Time,Status,Source,Message`, then one row per entry.
 - **Newest first**, matching the table — an export is a copy of what
   the reader is looking at.
 - Columns carry the table's cells:
   - `Time` — local wall clock, `2026-08-05 14:03:22.017`.
+  - `Status` — the badge word for a state-carrying entry
+    (`REFRESH FAILED`, `OK`), else the level (`info` / `warning` /
+    `error`).
   - `Source` — `tab 17 · script-wrapper` when the entry names a tab.
   - `Message` — as rendered, not as stored:
     - a derived `location` is flattened into the text as

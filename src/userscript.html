@@ -865,6 +865,14 @@
       .log-pane .log-level-info    { background: #e7eef7; color: #345; }
       .log-pane .log-level-warning { background: #fdf1c5; color: #6b4f00; }
       .log-pane .log-level-error   { background: #fbe2e2; color: #8a1d1d; }
+      /* State-carrying entries (see `LogEntry.state`): the same hues the
+         Status badge uses for that state, on a badge background. */
+      .log-pane .log-state-ok             { background: #dcfce7; color: #166534; }
+      .log-pane .log-state-invalid,
+      .log-pane .log-state-rejected,
+      .log-pane .log-state-missing        { background: #fbe2e2; color: #8a1d1d; }
+      .log-pane .log-state-outdated       { background: #fdf1c5; color: #6b4f00; }
+      .log-pane .log-state-refresh-failed { background: #ffedd5; color: #c2410c; }
       .log-empty {
         padding: 1em;
         color: #777;

@@ -2249,6 +2249,7 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
 function logRejection(scriptId: string, reason: string): void {
   logScriptEvent(scriptId, {
     level: 'error',
+    state: 'rejected',
     source: 'chrome-injector',
     message: describeRejection(reason),
   });
@@ -2262,15 +2263,15 @@ function logRejection(scriptId: string, reason: string): void {
 // Without it the Log's last word on a fixed script is the refusal, and
 // the user has no confirmation their fix took.
 //
-// Info level, like every other recovery row. Note this does NOT pull
-// the row's badge back to OK on its own: `loglevel:` is monotonic
-// within a session, so the earlier error rows keep it at ERROR until
-// the log is cleared. That limitation is shared with every other
-// recovered failure and is tracked in TODO.md.
+// Info level with `state: 'ok'`, like every other recovery row. The
+// badge itself comes from the rejection map, which the caller has
+// already rewritten; neither the refusal nor this row touches the
+// `loglevel:` sentinel, so nothing residual is left once the map clears.
 function logRecoveries(scriptIds: readonly string[]): void {
   for (const id of scriptIds) {
     logScriptEvent(id, {
       level: 'info',
+      state: 'ok',
       source: 'chrome-injector',
       message: 'Chrome accepted this script\'s registration — it runs again',
     });

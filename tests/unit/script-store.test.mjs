@@ -1118,6 +1118,7 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
   // the text, so the Log tab can render it as a link.
   assert.deepEqual(loadStateLogEntry(bad), {
     level: 'error',
+    state: 'invalid',
     message: NO_NAME,
     location: { file: 'a.user.js', line: 1 },
   });
@@ -1126,7 +1127,7 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
 test('loadStateLogEntry falls back to a generic message when an invalid row has none', () => {
   assert.deepEqual(
     loadStateLogEntry({ status: 'invalid' }),
-    { level: 'error', message: 'Unknown error' },
+    { level: 'error', state: 'invalid', message: 'Unknown error' },
   );
 });
 
@@ -1137,14 +1138,14 @@ test('loadStateLogEntry reports a missing row as an error', async () => {
   });
   assert.deepEqual(
     loadStateLogEntry(applyMissing(ok)),
-    { level: 'error', message: 'Script file is missing' },
+    { level: 'error', state: 'missing', message: 'Script file is missing' },
   );
 });
 
 test('loadStateLogEntry reports a refreshError as a warning: the script still runs', async () => {
   // status stays 'ok' — the cached copy is still injected — so this is
-  // a warning, not an error. It also must not poison the monotonic
-  // loglevel sentinel with ERROR for a collection that later comes back.
+  // a warning, not an error. The `state` is what the badge shows, and
+  // is also what keeps the entry off the `loglevel:` sentinel.
   const ok = await buildScriptFromText({
     id: 'a', collectionId: 's', relativePath: 'a.user.js',
     fileUrl: 'file:///a.user.js', text: VALID_SCRIPT, now: 1,
@@ -1153,7 +1154,7 @@ test('loadStateLogEntry reports a refreshError as a warning: the script still ru
   assert.equal(stale.status, 'ok');
   assert.deepEqual(
     loadStateLogEntry(stale),
-    { level: 'warning', message: 'Refresh failed: HTTP 404' },
+    { level: 'warning', state: 'refresh-failed', message: 'Refresh failed: HTTP 404' },
   );
 });
 
@@ -1164,7 +1165,7 @@ test('loadStateLogEntry ranks a broken load above a stale refresh', () => {
     loadStateLogEntry({
       status: 'invalid', errorMessage: 'no metadata block', refreshError: 'HTTP 404',
     }),
-    { level: 'error', message: 'no metadata block' },
+    { level: 'error', state: 'invalid', message: 'no metadata block' },
   );
 });
 

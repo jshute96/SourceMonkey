@@ -101,8 +101,10 @@ import {
   formatLogCsv,
   formatLogMessage,
   formatLogSource,
+  formatLogStatus,
   formatLogTimestamp,
   logFileName,
+  logStatusClass,
   LOG_COLUMNS,
 } from './log-format.js';
 import {
@@ -3482,8 +3484,8 @@ function paintLog(entries: LogEntry[]): void {
     const tdLevel = document.createElement('td');
     tdLevel.className = 'log-level';
     const badge = document.createElement('span');
-    badge.className = `log-level-badge log-level-${e.level}`;
-    badge.textContent = e.level;
+    badge.className = `log-level-badge ${logStatusClass(e)}`;
+    badge.textContent = formatLogStatus(e);
     tdLevel.appendChild(badge);
     tr.appendChild(tdLevel);
 

@@ -240,6 +240,26 @@ test('appendScriptLog only bumps the max when the new entry is strictly higher',
   assert.equal(await getMaxLogLevel('s1'), 'error');
 });
 
+test('an entry carrying a state is stored but never bumps the max log level', async () => {
+  // A load-state transition (REFRESH FAILED, INVALID, …) is badged by
+  // the row, which clears on recovery. If it also drove the sentinel,
+  // the badge would fall through to WARNING for the rest of the session
+  // after the row had recovered.
+  await appendScriptLog('s1', {
+    level: 'warning', state: 'refresh-failed', source: 'x', message: 'Refresh failed: HTTP 404', timestamp: 1,
+  });
+  assert.equal(await getMaxLogLevel('s1'), undefined);
+  await appendScriptLog('s1', {
+    level: 'error', state: 'invalid', source: 'x', message: 'bad', timestamp: 2,
+  });
+  assert.equal(await getMaxLogLevel('s1'), undefined);
+  const entries = await getScriptLog('s1');
+  assert.deepEqual(entries.map((e) => e.state), ['refresh-failed', 'invalid']);
+  // A script-originated entry still counts.
+  await appendScriptLog('s1', { level: 'warning', source: 'x', message: 'w', timestamp: 3 });
+  assert.equal(await getMaxLogLevel('s1'), 'warning');
+});
+
 test('clearScriptLog wipes the max-log-level alongside the entries', async () => {
   await appendScriptLog('s1', { level: 'error', source: 'x', message: 'boom', timestamp: 1 });
   assert.equal(await getMaxLogLevel('s1'), 'error');

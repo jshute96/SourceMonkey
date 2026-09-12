@@ -1065,18 +1065,22 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 Every failure the UI surfaces now lands in the script's Log (see
 [docs/script-log.md](docs/script-log.md#every-surfaced-failure-lands-in-the-log)).
-Two rough edges are left:
+Rough edges left:
 
-- **The `loglevel:` sentinel is monotonic.** A script that hit
-  WARNING/ERROR keeps that badge for the rest of the Chrome session
-  even after the Log's newest entry says it recovered. Now that
-  recoveries are logged, the badge is the only thing still lying.
-  - It is also why collection-level fan-out rows are logged at `info`:
-    anything higher would badge every script under a collection from one
-    transient listing failure.
-  - Recomputing the max on every append is too expensive. A recovery
-    entry could reset it — but only if the reset can tell "the failure
-    this supersedes" from an unrelated `sm:error` still in the log.
+- **The `loglevel:` sentinel is monotonic.** A script whose own code
+  hit WARNING/ERROR keeps that badge for the rest of the Chrome session
+  until "Clear log".
+  - Load-state transitions (REFRESH FAILED, INVALID, REJECTED,
+    OUTDATED…) no longer feed it: they carry a `state` on the log entry
+    and are badged by the row, which clears on recovery.
+  - What's left is the script's own runtime/parse entries, where
+    "sticky until cleared" is closer to the intended meaning.
+  - Recomputing the max on every append is too expensive, and there's
+    no natural "recovery" event for a runtime error to key a reset on.
+- **OUTDATED isn't restated after a restart.** `replayScriptLogsAtBoot`
+  replays `invalid` / `missing` / `refreshError`, but the probes persist
+  in `storage.local` while the log doesn't, so an OUTDATED badge can sit
+  over a Log with no line explaining it.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
   ordinary browsing appends `Checked for updates — no change` per
