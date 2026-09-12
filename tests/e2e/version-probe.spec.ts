@@ -14,6 +14,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { UserscriptServer } from '../fixtures/userscript-server';
+import { ScriptsDir } from '../fixtures/scripts-dir';
 
 // A userscript that declares a version and points its update/download
 // headers wherever the test needs them.
@@ -167,6 +168,66 @@ test.describe('update probes', () => {
     const recovered = (await sm.getScriptLog(scriptId)).filter((e) => /Up to date again/.test(e.message));
     expect(recovered).toHaveLength(1);
     expect(recovered[0]).toMatchObject({ state: 'ok', message: 'Up to date again (running 2.0)' });
+  });
+
+  test('a persisted OUTDATED is restated at startup, so the badge has a line', async ({ sm }) => {
+    server.setRoute('/thing.meta.js', metaBlock('2.0'));
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
+    await sm.updateCollection(collection!.id, 'manual');
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+
+    // Chrome restart: the session log is gone, the probe on the row is
+    // not. The probe only reports a transition, and re-probing finds
+    // the same 2.0, so without the replay the badge would sit over an
+    // empty Log for the whole session.
+    await sm.clearScriptLog(scriptId);
+    await sm.replayScriptLogsAtBoot();
+
+    const restated = (await sm.getScriptLog(scriptId)).filter((e) => e.source === 'extension-startup');
+    expect(restated).toHaveLength(1);
+    expect(restated[0]).toMatchObject({
+      state: 'outdated',
+      message: `Newer version 2.0 at update URL (running 1.0) — ${server.baseUrl}/thing.meta.js`,
+    });
+  });
+
+  test('the startup restatement skips a row that is not running', async ({ sm }) => {
+    // A local file rather than an http(s) route: over http a body that
+    // stops parsing is treated as a login page standing in for the
+    // script and keeps the good copy running (REFRESH FAILED), whereas a
+    // local edit that breaks the header is flagged INVALID at once.
+    const dir = ScriptsDir.create();
+    try {
+      server.setRoute('/thing.meta.js', metaBlock('2.0'));
+      dir.writeRaw('thing.user.js', versionedScript({
+        version: '1.0',
+        updateUrl: `${server.baseUrl}/thing.meta.js`,
+      }));
+      const collection = await sm.addCollection(dir.path);
+      await sm.updateCollection(collection!.id, 'manual');
+      const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+      expect((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].versionProbes).toHaveLength(1);
+
+      // The script goes bad in place. The stale probe stays on the row
+      // (INVALID outranks OUTDATED on the badge, so nothing is on screen
+      // that shouldn't be), but the replay must not restate it: the row
+      // isn't running 1.0, and the line would land after the INVALID one.
+      dir.writeRaw('thing.user.js', 'not a userscript\n');
+      await sm.updateCollection(collection!.id, 'manual');
+      const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      expect(script.status).toBe('invalid');
+
+      await sm.clearScriptLog(scriptId);
+      await sm.replayScriptLogsAtBoot();
+      const restated = (await sm.getScriptLog(scriptId)).filter((e) => e.source === 'extension-startup');
+      expect(restated.map((e) => e.state)).toEqual(['invalid']);
+    } finally {
+      dir.cleanup();
+    }
   });
 
   test('dropping @updateURL clears a stale probe annotation', async ({ sm }) => {

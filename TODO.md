@@ -1077,10 +1077,6 @@ Rough edges left:
     "sticky until cleared" is closer to the intended meaning.
   - Recomputing the max on every append is too expensive, and there's
     no natural "recovery" event for a runtime error to key a reset on.
-- **OUTDATED isn't restated after a restart.** `replayScriptLogsAtBoot`
-  replays `invalid` / `missing` / `refreshError`, but the probes persist
-  in `storage.local` while the log doesn't, so an OUTDATED badge can sit
-  over a Log with no line explaining it.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
   ordinary browsing appends `Checked for updates — no change` per

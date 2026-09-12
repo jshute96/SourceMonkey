@@ -321,9 +321,8 @@ Two families, kept apart:
 
 The Status cell is a link to the script's viewer Log tab in both
 pages, and every transition into a non-OK state above appends an entry
-carrying the same `state` (OUTDATED is the one not restated after a
-browser restart). Recoveries are logged too (`state: 'ok'`), so a badge
-going green has a matching line; see
+carrying the same `state`. Recoveries are logged too (`state: 'ok'`),
+so a badge going green has a matching line; see
 [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 ## Change detection: the last-change token

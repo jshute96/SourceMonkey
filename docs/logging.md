@@ -234,13 +234,16 @@ tab even though the state that explains it is still persisted in
 refresh, `replayScriptLogsAtBoot()` (in `src/script-updater.ts`) runs
 once at SW startup and walks every stored script, emitting:
 
-- one `parser` row per `startupLogs` diagnostic, and
-- one `boot` row for a script whose row is *currently* broken
-  (`invalid` / `missing` / carrying a `refreshError`). The refresh
-  paths only log on a state *change*, so without this a script that
-  was already broken before the restart would show a red or amber
-  badge over an empty Log. See
-  [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
+- one `parser` row per `startupLogs` diagnostic,
+- one `extension-startup` row for a script whose row is *currently*
+  broken (`invalid` / `missing` / carrying a `refreshError`), and
+- one `extension-startup` row for a script whose persisted probe still
+  puts an upstream ahead of it (OUTDATED).
+
+The refresh paths and the probe only log on a state *change*, so
+without this a script that was already broken or outdated before the
+restart would show a red or amber badge over an empty Log. See
+[script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 - Gated by a sentinel key in `chrome.storage.session`. The sentinel
   is missing on first SW boot of a Chrome session and present on
@@ -269,8 +272,14 @@ once at SW startup and walks every stored script, emitting:
   ordering: whichever path runs second states the fact again. Bounded
   to one duplicate per affected script per Chrome session, and the
   `source` column tells them apart (`extension-startup` vs a
-  `*-refresh`). Only reachable when the content changed on disk between
-  shutdown and the user's first navigation after restart.
+  `*-refresh`).
+  - For the load-state leg, only reachable when the content changed on
+    disk between shutdown and the user's first navigation after
+    restart.
+  - For the OUTDATED leg, the replay reads its snapshot before the
+    refresh lands, so a first-navigation refresh whose new content
+    catches up can be followed by a stale `OUTDATED` restatement. Same
+    bound; the `source` column is again the tell.
 
 See [script-log.md].
 

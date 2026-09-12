@@ -74,10 +74,9 @@ Row vs. entry, deliberately separate:
 - The entry is the session-scoped record of when it got there.
 - Every write that moves the row into a load state (or back) appends
   the entry with that `state` in the same step.
-- The one gap is a restart: `replayScriptLogsAtBoot` restates `invalid`
-  / `missing` / `refreshError` rows, but not OUTDATED, whose probes
-  persist while the log doesn't — so an OUTDATED badge can outlive its
-  line.
+- Across a restart, `replayScriptLogsAtBoot` restates whatever is
+  still badged — `invalid` / `missing` / `refreshError` rows and a
+  persisted OUTDATED probe — so a badge never outlives its line.
 
 The viewer's table renders `tabId · source` together when `tabId` is
 present, and just `source` otherwise.
@@ -103,7 +102,7 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | `manual-refresh` | `emitScriptOutcomeLog` | The user clicked Refresh / Refresh All. |
 | `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
 | `add` | `emitInitialLoadLog` | Failed on its first load, when the script was added. |
-| `extension-startup` | `ensureLoadStateInLogTab` | Restated after a browser restart — see below. |
+| `extension-startup` | `ensureLoadStateInLogTab`, `ensureOutdatedInLogTab` | Restated after a browser restart — see below. |
 | `parser` | `ensureStartupLogsInLogTab` | Parse-time diagnostics from `script.startupLogs`. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
 
@@ -239,7 +238,8 @@ Beyond the load pipeline:
 - **Outdated** (`probeOneScript` in `src/script-updater.ts`, source
   `version-probe`) — an upstream copy moved ahead of ours. Warning
   level, `state: 'outdated'`; the probe going quiet again logs
-  `Up to date again` with `state: 'ok'`.
+  `Up to date again` with `state: 'ok'`. Restated at boot with source
+  `extension-startup`, since the probe persists while the log doesn't.
 
 ### Collection-level failures
 
@@ -454,14 +454,15 @@ tracked in `TODO.md`.
   - The same load-failure entry, for a script that lands broken on its
     very first load. The add path bypasses the updater, so without
     this a brand-new INVALID row would have an empty Log.
-- **Boot replay** (`replayScriptLogsAtBoot`, source `boot`):
+- **Boot replay** (`replayScriptLogsAtBoot`, source `extension-startup`):
   - The same load-failure entry, restated once per Chrome session for
     any row that is *still* broken. `chrome.storage.session` is wiped
     on shutdown while the row that explains the badge is not, and the
     refresh paths only log on a state change — so without this a
     long-broken script would show a red badge over an empty Log.
-- **Update probes** (`src/script-updater.ts`, source
-  `probe-manual` / `probe-opportunistic`):
+  - The OUTDATED row too, for a row whose persisted probe is still
+    ahead of it — same reasoning, same wording as the probe's own row.
+- **Update probes** (`src/script-updater.ts`, source `version-probe`):
   - `Newer version <v> at <update|download> URL (running <v>) — <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version

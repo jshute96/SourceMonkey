@@ -57,6 +57,7 @@ import {
   probeTargets,
   probesAreFresh,
   type ProbePolicy,
+  type VersionProbe,
 } from './version-probe.js';
 import { probeVersions } from './version-probe-fetch.js';
 import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
@@ -589,15 +590,29 @@ async function probeOneScript(
     return;
   }
   if (after.version === before?.version) return;
-  const message =
-    `Newer version ${after.version} at ${probeLabel(after.kinds)} ` +
-    `(running ${loadedVersion}) — ${after.url}`;
-  console.info(`[SourceMonkey] ${getScriptLogLabel(script.id)}: ${message}`);
+  const entry = outdatedLogEntry(after, loadedVersion);
+  console.info(`[SourceMonkey] ${getScriptLogLabel(script.id)}: ${entry.message}`);
   // Not split by trigger mode like the refresh labels: this entry
   // reports a transition ("an upstream copy just moved ahead of us"),
   // and whether a click or a navigation noticed it tells the user
   // nothing they'd act on.
-  logScriptEvent(script.id, { level: 'warning', state: 'outdated', source: 'version-probe', message });
+  logScriptEvent(script.id, { ...entry, source: 'version-probe' });
+}
+
+// The OUTDATED row, minus its source: written by the probe when the
+// upstream moves ahead, and restated at boot for a probe that persisted
+// across a restart. One formatter so both read alike.
+function outdatedLogEntry(
+  probe: VersionProbe,
+  loadedVersion: string | undefined,
+): Omit<AppendLogInput, 'source'> {
+  return {
+    level: 'warning',
+    state: 'outdated',
+    message:
+      `Newer version ${probe.version} at ${probeLabel(probe.kinds)} ` +
+      `(running ${loadedVersion}) — ${probe.url}`,
+  };
 }
 
 // The OUTDATED → OK row. One message for every way the badge can go:
@@ -901,7 +916,7 @@ function startupLogEntry(sl: StartupLog): AppendLogInput {
 const BOOT_REPLAY_SENTINEL_KEY = 'sm:startup-logs-replayed-at';
 
 // Refill the Log tab from persisted state, once per Chrome session, at
-// SW startup. Two things get replayed, both for the same reason: the
+// SW startup. Everything replayed here is so for the same reason: the
 // facts live in `chrome.storage.local` and outlive the Chrome shutdown
 // that wipes the session-scoped log, so without this a fresh session
 // shows a red or amber badge over an empty Log until the user manually
@@ -911,10 +926,14 @@ const BOOT_REPLAY_SENTINEL_KEY = 'sm:startup-logs-replayed-at';
 //     carrying a `refreshError`. Nothing re-checks a script until it is
 //     refreshed or its page is visited, so without this a script broken
 //     since before the restart shows a badge over an empty Log.
+//   - **Outdated** — a row whose persisted `versionProbes` put an
+//     upstream ahead of it. The probe only logs the *transition*, and a
+//     re-probe after the restart finds the same answer, so this is the
+//     only line the OUTDATED badge would ever get.
 //   - **Parse-time diagnostics** — `script.startupLogs`.
 //
 // The sentinel makes it idempotent: SW restarts within the same Chrome
-// session bail out immediately. Both replays reuse the exact message
+// session bail out immediately. Every leg reuses the exact message
 // text the refresh paths use, so the Log tab is visually uniform.
 //
 // The sentinel is written AFTER the walk, not before: MV3 can evict the
@@ -934,6 +953,7 @@ export async function replayScriptLogsAtBoot(): Promise<void> {
   const scripts = await getAllScripts();
   await Promise.all(scripts.map(async (script) => {
     await ensureLoadStateInLogTab(script);
+    await ensureOutdatedInLogTab(script);
     await ensureStartupLogsInLogTab(script);
   }));
 
@@ -955,6 +975,22 @@ async function ensureLoadStateInLogTab(script: StoredScript): Promise<void> {
   const entry = loadStateLogEntry(script);
   if (!entry) return;
   await appendScriptLog(script.id, { ...entry, source: 'extension-startup' });
+}
+
+// Restate OUTDATED for a row whose stored probe is still ahead of it.
+// Same source and reasoning as `ensureLoadStateInLogTab`; same wording
+// as the probe's own transition row.
+//
+// `ok` rows only, mirroring `probeOneScript`: an `invalid` / `missing`
+// row keeps its stale probes but isn't running, so "(running <v>)"
+// would be false and the line would land after — and appear to
+// override — the load-state line the row actually deserves.
+async function ensureOutdatedInLogTab(script: StoredScript): Promise<void> {
+  if (script.status !== 'ok') return;
+  const probe = scriptOutdatedProbe(script);
+  if (!probe) return;
+  const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
+  await appendScriptLog(script.id, { ...outdatedLogEntry(probe, loadedVersion), source: 'extension-startup' });
 }
 
 // Replay `script.startupLogs` into the Log tab as `parser`-source rows.
