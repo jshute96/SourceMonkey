@@ -130,7 +130,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/run-context.ts` | The page-vs-service-worker test (`isPageContext`) the modules shared by both branch on |
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
-| `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, containment |
+| `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, listing-gated probing, containment |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |

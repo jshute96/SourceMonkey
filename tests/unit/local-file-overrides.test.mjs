@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import {
   _setLocalRootsForTests,
   localFileCandidates,
+  presentLocalFileCandidates,
   localSearchRoots,
   parseLocalRootLines,
   rootsFromText,
@@ -415,6 +416,97 @@ test('localFileCandidates: a dotted host cannot climb or duplicate', () => {
   assert.deepEqual(
     localFileCandidates('https://./x.js', [SCRIPT_DIR]),
     [`${SCRIPT_DIR}x.js`],
+  );
+});
+
+// ---------- presentLocalFileCandidates ----------
+
+// The gate reads each root's directory listing and drops candidates
+// whose first segment isn't in it. A pre-filled `DirectoryListingCache`
+// stands in for the read: `listDirectory` takes a cache hit without
+// touching the filesystem, which is what lets this run outside Chrome.
+const ROOT = 'file:///home/me/files/';
+function listingCache(entries) {
+  return new Map([['/home/me/files', Promise.resolve(entries)]]);
+}
+
+test('presentLocalFileCandidates: keeps only candidates whose first segment is listed', async () => {
+  const cache = listingCache([
+    { name: 'lib', isDir: true },
+    { name: 'util.js', isDir: false },
+  ]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://cdn.example.com/a/lib/util.js', [ROOT], cache),
+    [`${ROOT}lib/util.js`, `${ROOT}util.js`],
+  );
+});
+
+test('presentLocalFileCandidates: the entry kind has to match the segment', async () => {
+  // `lib` is a FILE here, so `<root>/lib/util.js` can't exist; and
+  // `util.js` is a directory, so it can't be the file itself.
+  const cache = listingCache([
+    { name: 'lib', isDir: false },
+    { name: 'util.js', isDir: true },
+  ]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://cdn.example.com/lib/util.js', [ROOT], cache),
+    [],
+  );
+});
+
+test('presentLocalFileCandidates: the listing name is the decoded segment', async () => {
+  const cache = listingCache([{ name: 'my lib', isDir: true }]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://cdn.example.com/my%20lib/util.js', [ROOT], cache),
+    [`${ROOT}my%20lib/util.js`],
+  );
+});
+
+test('presentLocalFileCandidates: a root that cannot be listed keeps every candidate', async () => {
+  const cache = listingCache([{ name: 'lib', isDir: true }]);
+  const url = 'https://cdn.example.com/lib/util.js';
+  // A cached failure for one root, an EMPTY listing for another (which
+  // is also what an unrecognized listing format parses to), and a
+  // third root with no cache entry at all — Node's fetch can't read
+  // file:// URLs, so that read fails too. All three fall through to
+  // the full candidate list, in order.
+  const rejected = Promise.reject(new Error('Could not read'));
+  rejected.catch(() => {});
+  cache.set('/home/me/other', rejected);
+  cache.set('/home/me/empty', Promise.resolve([]));
+  const roots = [ROOT, 'file:///home/me/other/', 'file:///home/me/empty/', 'file:///home/me/missing/'];
+  assert.deepEqual(
+    await presentLocalFileCandidates(url, roots, cache),
+    localFileCandidates(url, roots).filter((c) => !c.startsWith(ROOT) || c === `${ROOT}lib/util.js`),
+  );
+});
+
+// A host of `.` makes `<root>/./x.js` normalize to `<root>/x.js`; the
+// gate has to see the normalized first segment (`x.js`, a file), not
+// the `.` the listing never contains.
+test('presentLocalFileCandidates: gates on the normalized first segment', async () => {
+  const cache = listingCache([{ name: 'x.js', isDir: false }]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://./x.js', [ROOT], cache),
+    [`${ROOT}x.js`],
+  );
+});
+
+test('presentLocalFileCandidates: a failed root is listed once per cache, not once per call', async () => {
+  const cache = new Map();
+  const url = 'https://cdn.example.com/lib/util.js';
+  // No cache entry, so `listDirectory` reaches for the filesystem and
+  // Node's fetch rejects. `listDirectory` evicts that; the gate's own
+  // memo is what stops the second call from trying again.
+  const missing = 'file:///home/me/missing/';
+  await presentLocalFileCandidates(url, [missing], cache);
+  const poison = Promise.resolve([{ name: 'nothing', isDir: false }]);
+  cache.set('/home/me/missing', poison);
+  // A listing that would rule everything out is never consulted: the
+  // root is remembered as unlistable for the life of this cache.
+  assert.deepEqual(
+    await presentLocalFileCandidates(url, [missing], cache),
+    localFileCandidates(url, [missing]),
   );
 });
 

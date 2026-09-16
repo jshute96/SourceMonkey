@@ -73,6 +73,7 @@ import {
 } from './userscript-header.js';
 import {
   attachFiles,
+  bindListingCache,
   distillRequires,
   distillResources,
   type FileFetchCache,
@@ -2952,11 +2953,10 @@ export interface RefreshBatch {
 }
 
 export function createRefreshBatch(): RefreshBatch {
-  return {
-    collectionRows: new Map(),
-    listings: new Map(),
-    fileFetchCache: new Map(),
-  };
+  const listings: DirectoryListingCache = new Map();
+  const fileFetchCache: FileFetchCache = new Map();
+  bindListingCache(fileFetchCache, listings);
+  return { collectionRows: new Map(), listings, fileFetchCache };
 }
 
 // How many collection rows `refreshScript` has actually read from

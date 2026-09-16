@@ -73,10 +73,25 @@ ref   https://cdn.example.com/lib/util.js
 - **Longest first**, so a deliberate `lib/` layout beats a loose
   `util.js` in the root.
 - **First readable wins.** The probe and the real read are the same
-  fetch, so a hit costs nothing extra. A miss costs one local read *per
-  candidate*, i.e. one per path segment of the declared URL plus one for
-  the host-qualified form — a `…/npm/jquery@3.6.0/dist/jquery.min.js`
-  produces five.
+  fetch, so a hit costs nothing extra.
+- **A root's directory listing gates the probes.** Before any candidate
+  is read, the root is listed once (Chrome serves an HTML listing for a
+  `file://` directory) and a candidate whose first segment — `lib/`,
+  `cdn.example.com/`, or the bare filename — isn't in it is skipped.
+  - Why: every probe of a missing file is logged as a failed request in
+    the worker's DevTools Network panel, and the unfiltered list ran to
+    a couple of dozen per script per refresh, which reads as breakage.
+  - Only the first level is checked. `<root>/lib/` existing says nothing
+    about `<root>/lib/util.js`, so that candidate is still probed — and
+    still shows as one failed request when it misses.
+  - A root that can't be listed, or lists as empty, keeps all of its
+    candidates: "can't tell" falls through to the probe rather than
+    hiding a stand-in. (Empty is ambiguous — it is also what an
+    unrecognized listing format parses to.)
+  - Cost of a miss: one listing per root per pass, shared by every
+    dependency under that root and by the navigation batch's own stat
+    of the script folder, plus one read per surviving candidate —
+    usually none. A root that fails to list is not retried in the pass.
 - **A ref that names no file matches nothing.** A path that is empty or
   ends in `/` yields no candidates at all: the suffix would name a
   directory, and Chrome answers a directory read with a listing rather
@@ -263,6 +278,8 @@ and is memoized for the life of the page instead:
   didn't appear for a day — the same "why isn't my edit showing up" trap
   the require policy exists to avoid.
 - Cost is one local read per icon per page load; repaints are free.
+- The root listings the candidate gate reads are memoized for the page
+  too, so they hide nothing the memo doesn't already.
 - A page reload always reflects the current state of the disk.
 
 ## Refresh policy
@@ -281,15 +298,17 @@ exception:
   fast path: it describes a file that may since have been deleted, and
   keeping it would serve a stand-in that no longer exists.
 
-Cost when enabled, for scripts in a local collection only: up to one
-local read **per root** per path segment of each declared dependency's
-URL, plus one for the host-qualified form, per refresh. A nested script
-has two implicit roots (its own folder and its collection's), so a miss
-costs roughly twice what it did before the collection root existed. A
-hit short-circuits the rest, and `ensureFetch` dedups within a pass. Note that a script with local
-roots also skips the whole-list `preserve`
-shortcut, so it re-runs resolution every opportunistic refresh — that is
-the price of edits showing up without a Refresh click.
+Cost when enabled, for scripts in a local collection only:
+
+- Up to one listing **per root** per refresh, plus a read for each
+  candidate the listing doesn't rule out (see the gate under
+  [The rule](#the-rule)).
+- A nested script has two implicit roots (its own folder and its
+  collection's), so a miss lists both.
+- A hit short-circuits the rest, and `ensureFetch` dedups within a pass.
+- A script with local roots also skips the whole-list `preserve`
+  shortcut, so it re-runs resolution every opportunistic refresh — the
+  price of edits showing up without a Refresh click.
 
 ### A stand-in that appears later
 

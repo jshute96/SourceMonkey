@@ -41,7 +41,8 @@ import {
   type FetchFailure,
   type ResolveFailure,
 } from './file-loader.js';
-import { localFileCandidates } from './local-file-overrides.js';
+import { presentLocalFileCandidates } from './local-file-overrides.js';
+import type { DirectoryListingCache } from './directories.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
@@ -527,10 +528,10 @@ interface LoadedBytes {
 //
 // Candidates are tried in order and the first that READS wins — the
 // probe and the real read are the same fetch, so a hit costs nothing
-// extra. A total miss costs one local read PER CANDIDATE, i.e. one per
-// path segment of the declared URL plus one for the host-qualified
-// form, not one overall. `ensureFetch`
-// caches those for the rest of the pass, misses included.
+// extra. A total miss costs one listing per root plus one local read
+// per candidate the listing couldn't rule out (see
+// `presentLocalFileCandidates`). `ensureFetch` caches the reads for
+// the rest of the pass, misses included.
 //
 // Returns `null` when no stand-in was found, so the caller can take its
 // `recheck: 'preserve'` shortcut on the declared URL. That ordering is
@@ -548,13 +549,41 @@ async function readLocalStandIn(
   localRoots: readonly string[],
   fetchCache: FileFetchCache,
 ): Promise<LoadedBytes | null> {
-  for (const candidate of localFileCandidates(declaredUrl, localRoots)) {
+  const candidates = await presentLocalFileCandidates(declaredUrl, localRoots, listingsFor(fetchCache));
+  for (const candidate of candidates) {
     const got = await ensureFetch(fetchCache, candidate);
     // A candidate that doesn't read isn't a failure — it just isn't
     // there. Only an actual hit ends the search.
     if (!isFailure(got)) return { localUrl: candidate, got };
   }
   return null;
+}
+
+// The root-directory listings `presentLocalFileCandidates` gates on,
+// given the same lifetime as the fetch cache they sit beside: one
+// refresh pass, or the page for the install preview's page-lifetime
+// cache, which memoizes misses for that long anyway. Keyed off the fetch cache
+// rather than threaded as another parameter because every entry point
+// that builds a `FileFetchCache` would otherwise have to build this one
+// too, and the two must never outlive each other — a listing that
+// outlived its pass would hide a stand-in created after it was taken.
+const listingCaches = new WeakMap<FileFetchCache, DirectoryListingCache>();
+
+// A pass that already keeps directory listings (the navigation
+// `RefreshBatch`) registers them here, so the stat it took of the
+// script's own folder and the gate's read of that same folder are one
+// listing rather than two.
+export function bindListingCache(fetchCache: FileFetchCache, listings: DirectoryListingCache): void {
+  listingCaches.set(fetchCache, listings);
+}
+
+function listingsFor(fetchCache: FileFetchCache): DirectoryListingCache {
+  let listings = listingCaches.get(fetchCache);
+  if (!listings) {
+    listings = new Map();
+    listingCaches.set(fetchCache, listings);
+  }
+  return listings;
 }
 
 interface LoadRequireArgs {

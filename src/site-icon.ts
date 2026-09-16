@@ -1,5 +1,6 @@
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from './file-loader.js';
-import { localFileCandidates } from './local-file-overrides.js';
+import { presentLocalFileCandidates } from './local-file-overrides.js';
+import type { DirectoryListingCache } from './directories.js';
 import { representativeMatch } from './match-targets.js';
 import { renderGlyph } from './glyph.js';
 
@@ -502,7 +503,7 @@ export async function ensureIconForUrl(
   localRoots: readonly string[] = [],
 ): Promise<string | null> {
   if (url.startsWith('data:')) return usableDataUrl(url);
-  for (const candidate of localFileCandidates(url, localRoots)) {
+  for (const candidate of await presentLocalFileCandidates(url, localRoots, iconRootListings)) {
     const local = await localIconCandidate(candidate);
     if (local) return local;
   }
@@ -522,6 +523,12 @@ export async function ensureIconForUrl(
 // A candidate that isn't there, or isn't an image, just returns null and
 // the caller falls through to the declared URL.
 const localIconMemo = new Map<string, Promise<string | null>>();
+
+// Root listings for the candidate gate, memoized for the life of the
+// page for the same reason as `localIconMemo`: the page-lifetime memo
+// already means a file created after first paint waits for a reload,
+// so a listing of the same age hides nothing the memo didn't.
+const iconRootListings: DirectoryListingCache = new Map();
 
 function localIconCandidate(url: string): Promise<string | null> {
   const memo = localIconMemo.get(url);

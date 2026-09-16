@@ -749,7 +749,7 @@ export function resetDirectoryListingFetches(): void {
   listingFetches = 0;
 }
 
-async function listDirectory(
+export async function listDirectory(
   absolutePath: string,
   cache?: DirectoryListingCache,
 ): Promise<readonly ListingEntry[]> {

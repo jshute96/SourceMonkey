@@ -86,6 +86,11 @@ import {
   isManifestCollection,
   isSingleFileInput,
   collectionCanonicalUrl,
+  locationFsPath,
+  isNonPosixFileUrl,
+  listDirectory,
+  type DirectoryListingCache,
+  type ListingEntry,
 } from './directories.js';
 
 // An encoded path separator. The URL parser resolves `..` and `%2e%2e`
@@ -383,8 +388,9 @@ export function collectionSupportsLocalFiles(collectionPath: string): boolean {
 }
 
 // Every local file that could stand in for `declaredUrl`, in the order
-// they should be tried. Callers fetch each in turn and take the first
-// that reads.
+// they should be tried. Readers go through `presentLocalFileCandidates`
+// below, which drops the ones that can't exist before fetching each in
+// turn and taking the first that reads.
 //
 // Suffixes run longest-first so a deliberate layout (`lib/util.js` under
 // the root) beats an incidental basename collision (`util.js` sitting
@@ -400,6 +406,26 @@ export function localFileCandidates(
   declaredUrl: string,
   roots: readonly string[],
 ): string[] {
+  return localFileCandidatesDetailed(declaredUrl, roots).map((c) => c.url);
+}
+
+// One candidate with the pieces `presentLocalFileCandidates` gates on:
+// which root it was built under, and the first path segment beneath
+// that root — a directory name when there are more segments to come,
+// the file's own name when there aren't.
+export interface LocalFileCandidate {
+  url: string;
+  root: string;
+  // Percent-encoded, as it appears in `url`.
+  firstSegment: string;
+  // True when `firstSegment` is the whole suffix, i.e. names the file.
+  isLeaf: boolean;
+}
+
+export function localFileCandidatesDetailed(
+  declaredUrl: string,
+  roots: readonly string[],
+): LocalFileCandidate[] {
   if (roots.length === 0) return [];
   let segments: string[];
   try {
@@ -449,7 +475,7 @@ export function localFileCandidates(
   // (`…/scripts/` + `home/me/scripts/util.js`).
   if (bases.some((base) => declaredUrl.startsWith(base))) return [];
 
-  const out: string[] = [];
+  const out: LocalFileCandidate[] = [];
   const seen = new Set<string>();
   for (const base of bases) {
     for (let k = segments.length; k >= 1; k--) {
@@ -470,8 +496,90 @@ export function localFileCandidates(
       // candidate strings that name one file.
       if (seen.has(normalized)) continue;
       seen.add(normalized);
-      out.push(normalized);
+      // Taken from the NORMALIZED form, not `suffix`: a host of `.`
+      // makes `<root>/./x.js` normalize to `<root>/x.js`, and the gate
+      // has to describe the URL that is actually read.
+      const rel = normalized.slice(base.length).split('/');
+      out.push({ url: normalized, root: base, firstSegment: rel[0], isLeaf: rel.length === 1 });
     }
   }
   return out;
+}
+
+// `localFileCandidates`, minus the ones the root's directory listing
+// rules out: a candidate whose first segment under the root isn't
+// listed can't exist, so it is never probed.
+//
+// Why: each probe of a missing file is a failed request in the worker's
+// DevTools Network panel — a couple of dozen per script per refresh
+// before this, which reads like breakage. Only the first level is
+// checked; `<root>/lib/` existing says nothing about `<root>/lib/x.js`,
+// so that one is still probed. See docs/local-file-overrides.md.
+//
+// A root that can't be listed, or lists as empty, keeps every candidate
+// — "can't tell" must fall through to the probe, or a stand-in would
+// silently stop being found. (Empty is also what an unrecognized
+// listing format parses to.)
+export async function presentLocalFileCandidates(
+  declaredUrl: string,
+  roots: readonly string[],
+  listings: DirectoryListingCache,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const c of localFileCandidatesDetailed(declaredUrl, roots)) {
+    if (mayExist(c, await listRoot(c.root, listings))) out.push(c.url);
+  }
+  return out;
+}
+
+// Roots whose listing failed, per listing cache. `DirectoryListingCache`
+// deliberately forgets a failed read (see `listDirectory`), which is
+// right for the scan it was built for but wrong here: a configured root
+// that isn't on disk would be re-listed for every dependency of every
+// script in the pass, on top of the probes it can't rule out — MORE
+// failed requests than before the gate, not fewer. One attempt per root
+// per cache; the memo dies with the cache it describes.
+const failedRoots = new WeakMap<DirectoryListingCache, Set<string>>();
+
+// The root's listing, or `null` for "can't tell" — every candidate
+// under it is then kept.
+async function listRoot(
+  root: string,
+  listings: DirectoryListingCache,
+): Promise<readonly ListingEntry[] | null> {
+  // `locationFsPath` drops the host of a UNC / drive-letter URL, so the
+  // listing would describe some other directory. Those roots skip the
+  // gate rather than filter against the wrong tree.
+  if (isNonPosixFileUrl(root)) return null;
+  let failed = failedRoots.get(listings);
+  if (!failed) {
+    failed = new Set();
+    failedRoots.set(listings, failed);
+  }
+  if (failed.has(root)) return null;
+  // No trailing slash (the batch keys its listings by the bare directory
+  // path, and this has to hit the same entry), except that the
+  // filesystem root stays `/` — the batch's own convention.
+  const dir = locationFsPath(root).replace(/\/+$/, '') || '/';
+  try {
+    return await listDirectory(dir, listings);
+  } catch {
+    failed.add(root);
+    return null;
+  }
+}
+
+function mayExist(c: LocalFileCandidate, entries: readonly ListingEntry[] | null): boolean {
+  if (entries === null || entries.length === 0) return true;
+  let name: string;
+  try {
+    name = decodeURIComponent(c.firstSegment);
+  } catch {
+    return true;
+  }
+  const entry = entries.find((e) => e.name === name);
+  // A directory entry when the segment names a directory, a file entry
+  // when it names the file itself. A symlink is listed as whatever it
+  // points at, so it passes the same way the read would.
+  return entry !== undefined && entry.isDir !== c.isLeaf;
 }
