@@ -149,6 +149,9 @@ export interface SmApi {
     scriptId: string,
     commandId: string,
   ): Promise<{ ok: boolean; error?: string }>;
+  // Stands in for a click on the menu's "Reload page with no
+  // userscripts" row: reloads the tab with every wrapper told to skip.
+  reloadWithoutScripts(tabId: number): Promise<void>;
   // Stands in for a toolbar-icon click in the given window (Playwright
   // can't click chrome.action). Pass null for the "no gesture window"
   // fallback path.
@@ -189,6 +192,7 @@ export interface SmApi {
 export interface ActionMenuPlanLike {
   top: ActionMenuScriptLike[];
   more: ActionMenuScriptLike[];
+  reloadWithoutScripts: boolean;
 }
 
 export interface ActionMenuScriptLike {

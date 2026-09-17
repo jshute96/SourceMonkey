@@ -319,6 +319,11 @@ those also appear on the icon's right-click menu.
 Chrome only shows six top-level entries in that menu.  Anything past
 that goes under a `More` submenu.
 
+The menu's last row, **Reload page with no userscripts**, reloads the
+page once with every script skipped — handy for checking whether a
+script is what's breaking a page.  The next ordinary reload runs them
+again.  Skipped scripts show as **NOT LOADED** with a **grey** badge.
+
 ### Supported `GM_*` / `GM.*` APIs and headers
 
 SourceMonkey supports the standard header fields and `GM` APIs common to

@@ -837,8 +837,9 @@ Why the split:
   registered commands appended as `↳ <name>` entries.
 - **Overflow planner (`src/action-menu.ts`,
   `planActionMenu`)** — caps the top level at Chrome's 6-item limit
-  by reserving one slot for a "More" submenu when the (script row +
-  N commands) totals would exceed it. Splits happen between groups,
+  by reserving one slot for the fixed "Reload page with no
+  userscripts" row and one more for a "More" submenu when the (script
+  row + N commands) totals would exceed it. Splits happen between groups,
   never within one — see [matching.md](matching.md#per-tab-badge--tooltip) for the rules.
 - **Click routing** — `chrome.contextMenus.onClicked` for an
   `sm-menucmd:<scriptId>:<commandId>` item sends `sm:gm-menu-fire`
@@ -896,13 +897,16 @@ Why the split:
   `tests/e2e/gm-menu.spec.ts` to assert on registration state
   without driving the real Chrome UI.
 - `self.SourceMonkey.getActionContextMenuPlan(tabId)` returns the
-  planned `{ top, more }` layout the SW would hand to
+  planned `{ top, more, reloadWithoutScripts }` layout the SW would hand to
   `chrome.contextMenus`. Lets tests verify overflow packing without
   inspecting the real Chrome menu (which Playwright can't reach).
 - `self.SourceMonkey.fireActionContextMenuItem(tabId, scriptId,
   commandId)` synthesizes a click on a specific entry by sending
   the same `sm:gm-menu-fire` message the real click handler does.
   Returns `{ok:false}` for stale or unknown ids.
+- `self.SourceMonkey.reloadWithoutScripts(tabId)` stands in for a
+  click on the "Reload page with no userscripts" row — see
+  [matching.md](matching.md#reload-with-no-userscripts).
 
 ## `window.onurlchange`
 

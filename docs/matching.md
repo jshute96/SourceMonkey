@@ -279,6 +279,9 @@ For each tab we:
     this document ran. Reload the page to pick up the new version.
   - **ORANGE** (`#f57c00`) — no errors or stale rows, but the
     expected set and the actual set diverge (MISSING or UNEXPECTED).
+  - **GREY** (`#757575`) — nothing else to report, and the user loaded
+    this document with "Reload page with no userscripts" (rows show
+    NOT LOADED). Nothing is wrong; nothing ran.
   - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
     no errors.
 - **Tooltip** — `"SourceMonkey"` followed by one line per script,
@@ -292,6 +295,11 @@ For each tab we:
     is provisional (the wrapper may still be in flight) while this is
     settled, which is why it takes the error colour. Same word the
     collections page and the viewer use for the row.
+  - `NOT LOADED` — expected by the matcher, no `sm:start`, and none
+    is coming because the document was loaded with "Reload page with
+    no userscripts" (`scriptsSkipped` on the document's state). Also
+    a refinement of `MISSING`, settled by the user rather than by
+    Chrome, so it outranks `REJECTED` for the row and takes grey.
   - `MISSING` — expected by the matcher but no `sm:start` yet.
   - `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
     predict it (e.g. Chrome's matching disagrees with ours, or a race
@@ -330,19 +338,63 @@ For each tab we:
     `sm:gm-menu-fire` to that tab so the wrapper invokes
     the registered callback. See [GM-APIs.md](GM-APIs.md) for the
     full lifecycle.
+  - **"Reload page with no userscripts"** — the last row, present
+    whenever the menu has at least one script row. See
+    [Reload with no userscripts](#reload-with-no-userscripts).
   - **6-item cap + "More" submenu** — Chrome skips action
     context menus after 6 top-level rows. We pre-empt that by capping
     the top level ourselves:
     - Total rows = sum over groups of `1 (script row) + N commands`.
-    - If the total fits in 6, everything renders top-level.
-    - Otherwise we reserve one top slot for a "More" parent, pack
-      script groups into the remaining 5 in incoming order, and
+    - The reload row takes one of the 6 slots, so script groups get 5.
+    - If the total fits, everything renders top-level.
+    - Otherwise we reserve one more top slot for a "More" parent, pack
+      script groups into the remaining 4 in incoming order, and
       push any group that doesn't fit (plus every later group, to
       preserve visible order) into the submenu.
     - A script's row and its menu commands always travel as a unit —
       no group is split between the top level and "More".
     - The layout decision lives in `src/action-menu.ts` and is
       reflected by the SW test surface `getActionContextMenuPlan(tabId)`.
+
+### Reload with no userscripts
+
+The action menu's last row reloads the tab once with every script
+skipped.
+
+- Registrations are untouched — other tabs on the same site keep
+  running their scripts, and the tab's next navigation runs them again.
+- Needs `chrome.webNavigation`; the row is withheld without it.
+
+- **Mechanism** — every wrapper asks the SW `sm:check-pending` before
+  running its body, and `skip` is an answer it already honours (see
+  [injection.md](injection.md#sm-check-pending-handler)). A skip
+  reload is a per-tab marker that handler consults first, ahead of
+  the reload fast path (which isn't set up for a skip reload).
+- **Lifecycle**, keyed on main-frame commits, in `src/background.ts`:
+  - click → the tab is *armed*, then `chrome.tabs.reload`.
+  - reload commit → armed becomes *skipping* for that document. Every
+    wrapper in the tab gets `skip` — subframes too, whose documentIds
+    are their own, which is why the marker is per tab.
+  - the commit after that, or the tab closing → cleared.
+  - Only a `reload` commit within a few seconds consumes *armed*; any
+    other commit disarms. A reload the page cancels (`beforeunload`)
+    must not make the next link click skip.
+- **Timing** — the commit listener settles the marker synchronously,
+  before the queued tab work: a `document-start` wrapper's
+  check-pending can arrive before that work runs.
+- **In memory, not persisted.** The marker normally lives for the
+  milliseconds between click and commit. A reload slow enough for the
+  SW to idle out in between just runs scripts as usual; a SW restart
+  mid-document only affects subframes injected afterwards.
+- **Badge** — `updateTabMatches` stamps `scriptsSkipped` on the fresh
+  document's `TabMatchState` (persisted, so the badge survives a SW
+  restart); a bfcache return keeps it while the document is still in
+  the per-tab LRU. Rows render `NOT LOADED` in grey.
+- **Log** — each wrapper's `sm:abandoned` lands on its script's Log
+  as `info` (not `warning`, the level for any other skip) with the
+  reason `reload with no userscripts`.
+- **Click target** — the tab Chrome names in `onClicked`, like the
+  other rows.
 
 ### Actual reports from injected wrappers
 

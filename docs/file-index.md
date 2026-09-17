@@ -113,7 +113,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
 | `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
-| `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification, color, row-label formatter) and per-tab document LRU (bfcache restore) |
+| `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration paths: per-sequence phases plus cumulative fan-out totals |
 | `src/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
@@ -149,7 +149,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, document, script) command registry feeding the action menu |
 | `src/gm-url-change.ts` | SW-side `window.onurlchange` driver — forwards `webNavigation.onHistoryStateUpdated` to the changed document as `sm:url-change` |
 | `src/gm-window-control.ts` | SW-side `window.close` / `window.focus` driver — closes or fronts the sender's own tab via `chrome.tabs` / `chrome.windows` |
-| `src/action-menu.ts` | Action context-menu planner — packs script + command groups into Chrome's 6-item cap with a "More" overflow submenu |
+| `src/action-menu.ts` | Action context-menu planner — packs script + command groups and the fixed reload row into Chrome's 6-item cap with a "More" overflow submenu |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ## Tests (`tests/`)
@@ -182,6 +182,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
+| `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts": one-shot skip, grey NOT LOADED badge, info Log entry, row presence |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
@@ -296,7 +297,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
 | `tests/unit/markup-response.test.mjs` | Unit tests for the markup guard: content-type families, leading-`<` body test, message wording |
 | `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, one-shot bypass |
-| `tests/unit/action-menu.test.mjs` | Unit tests for the action context-menu planner: 6-item cap, More-submenu overflow, group cohesion, order preservation |
+| `tests/unit/action-menu.test.mjs` | Unit tests for the action context-menu planner: 6-item cap, reload row, More-submenu overflow, group cohesion, order preservation |
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |
 | `tests/e2e/gm-log.spec.ts` | E2E tests for `GM_log` (per-script prefix, GM4 alias, gating) |
 | `tests/e2e/gm-open-in-tab.spec.ts` | E2E tests for `GM_openInTab` (URL, call shapes, onclose, gating) |

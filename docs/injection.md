@@ -808,7 +808,9 @@ listener that handles these wrapper-originated message types:
   this script id.
 - `sm:error` — synchronous or attributed-async throw.
 - `sm:abandoned` — the wrapper exited without running anything
-  (SW replied `skip`). Logged only; no badge change.
+  (SW replied `skip`). Logged only; no badge change. Today `skip` comes
+  from "Reload page with no userscripts" — see
+  [matching.md](matching.md#reload-with-no-userscripts).
 - `sm:focus` — the document came to the front. Not per-script and not
   a report about one: one listener per world per document, and the SW
   answers it by checking this tab's local scripts for edits. See
@@ -901,6 +903,10 @@ it just gets the default `run` reply — the optimization is best-effort.
 
 When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 (the value baked in at registration), and `url`, the SW:
+
+Before any of this, a tab marked for "Reload page with no userscripts"
+gets `skip`, for every frame — see
+[matching.md](matching.md#reload-with-no-userscripts). Otherwise the SW:
 
 1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
    This is the common case for ordinary navigations and costs ~1–5ms

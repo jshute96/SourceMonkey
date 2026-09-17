@@ -224,6 +224,7 @@ import {
 } from './gm-window-control.js';
 import {
   ACTION_MENU_MORE_LABEL,
+  ACTION_MENU_RELOAD_LABEL,
   planActionMenu,
   type ActionMenuPlan,
   type ActionMenuScript,
@@ -387,6 +388,9 @@ interface SourceMonkeyApi {
     scriptId: string,
     commandId: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // Drives the "Reload page with no userscripts" menu row for `tabId`
+  // — the same handler the real click runs.
+  reloadWithoutScripts: (tabId: number) => Promise<void>;
   // Drives the toolbar-click handler for the given window, which
   // Playwright can't click (chrome.action has no test hook). Tests use
   // it to verify a second click reuses the window's collections tab
@@ -530,6 +534,9 @@ const api: SourceMonkeyApi = {
     // click handler uses — same validation, same message shape. Test
     // assertions can rely on the result instead of polling page state.
     return await dispatchActionMenuCommand(tabId, scriptId, commandId);
+  },
+  reloadWithoutScripts: async (tabId) => {
+    await reloadTabWithoutScripts(tabId);
   },
   debugMatchIndex: async (url: string) => {
     await ensureLoaded();
@@ -740,6 +747,100 @@ chrome.runtime.onInstalled.addListener((details) => {
   })();
 });
 
+// ---------- Reload with no userscripts ----------
+//
+// The action menu's "Reload page with no userscripts" row: a one-time
+// reload during which every wrapper on the tab is told to skip. The
+// registrations themselves are untouched — other tabs on the same site
+// keep running their scripts, and the tab's next ordinary navigation
+// runs them again.
+//
+// Mechanism: every wrapper already asks the SW `sm:check-pending`
+// before running its body (see the reload fast path), and `skip` is
+// an answer the wrapper already honours. So a skip reload is just a
+// per-tab marker the check-pending handler consults first.
+//
+// Lifecycle, keyed on main-frame commits:
+//   - click          → tab is ARMED, then `chrome.tabs.reload`.
+//   - reload commit  → armed becomes SKIPPING for the committed
+//                      document. Wrappers in that tab (subframes
+//                      included — their documentIds differ, so the
+//                      check is per tab, not per document) get `skip`
+//                      for as long as it lasts.
+//   - next commit    → cleared: a fresh document runs scripts normally.
+//   - tab closed     → cleared.
+//
+// Armed is consumed only by a *reload* commit, and only within a few
+// seconds of the click: a reload the page cancels (`beforeunload`) or
+// that never commits must not make the tab's next link click skip.
+//
+// In-memory rather than persisted. The marker normally lives for the
+// milliseconds between the click and the commit; the rare reload whose
+// first byte takes long enough for the SW to idle out in between just
+// runs scripts as usual. A SW restart mid-document only affects
+// subframes that inject afterwards. The persisted `scriptsSkipped`
+// flag on the document's TabMatchState is what keeps the badge honest
+// across a restart.
+
+// Token the check-pending `skip` reply carries as its reason. Comes
+// back verbatim on the wrapper's `sm:abandoned`, which is how the Log
+// entry tells this (expected) skip from any other.
+const SKIP_REASON_RELOAD_WITHOUT_SCRIPTS = 'reload with no userscripts';
+
+// How long an armed tab waits for its reload to commit. Well past a
+// live page's commit time, short enough that a cancelled reload can't
+// poison a Ctrl-R the user makes later.
+const SKIP_SCRIPTS_ARM_TTL_MS = 10_000;
+
+// tabId → when it was armed.
+const skipScriptsArmed = new Map<number, number>();
+const skipScriptsDocByTab = new Map<number, string>();
+
+async function reloadTabWithoutScripts(tabId: number): Promise<void> {
+  skipScriptsArmed.set(tabId, Date.now());
+  try {
+    await chrome.tabs.reload(tabId);
+  } catch (err) {
+    // The tab closed between the right-click and now, or is one Chrome
+    // won't reload for us. Disarm so a later reload of a reused tab id
+    // doesn't skip unasked.
+    skipScriptsArmed.delete(tabId);
+    console.info('[SourceMonkey] could not reload the tab:', describeError(err));
+  }
+}
+
+// Called from the main-frame `onCommitted` listener, synchronously, so
+// the marker is settled before the first wrapper can ask. Returns true
+// when the committed document is the skip reload.
+function noteCommitForSkipScripts(
+  tabId: number,
+  documentId: string,
+  transitionType: string,
+): boolean {
+  const armedAt = skipScriptsArmed.get(tabId);
+  // Any commit disarms; only a timely reload commit becomes a skip.
+  skipScriptsArmed.delete(tabId);
+  if (
+    armedAt != null
+    && transitionType === 'reload'
+    && Date.now() - armedAt <= SKIP_SCRIPTS_ARM_TTL_MS
+  ) {
+    skipScriptsDocByTab.set(tabId, documentId);
+    return true;
+  }
+  skipScriptsDocByTab.delete(tabId);
+  return false;
+}
+
+function isSkippingScripts(tabId: number, documentId: string): boolean {
+  return skipScriptsDocByTab.get(tabId) === documentId;
+}
+
+function clearSkipScripts(tabId: number): void {
+  skipScriptsArmed.delete(tabId);
+  skipScriptsDocByTab.delete(tabId);
+}
+
 // ---------- Per-tab badge + tooltip ----------
 
 // Only attempt matching for URLs we could conceivably inject into. This
@@ -899,6 +1000,12 @@ async function updateTabMatches(
   const state: TabMatchState = staleScriptIds
     ? { documentId: docId, url, matches, actual, staleScriptIds }
     : { documentId: docId, url, matches, actual };
+  // A restored document keeps whatever it had — a bfcache return to a
+  // skipped document is still that document, with nothing running.
+  // A fresh one asks the in-memory marker the commit listener set.
+  if (restored ? prev.scriptsSkipped : isSkippingScripts(tabId, docId)) {
+    state.scriptsSkipped = true;
+  }
   const nextRecord = setCurrentDoc(record, docId, state);
   await setTabRecord(tabId, nextRecord);
   if (incoming.length > 0 && trigger === 'navigation') {
@@ -980,6 +1087,9 @@ const ACTION_MENU_CMD_PREFIX = 'sm-menucmd:';
 // than generated per rebuild) so `createScriptGroupMenuItems` can
 // reference it as `parentId` without threading a value through.
 const ACTION_MENU_MORE_ID = 'sm-more';
+// chrome.contextMenus.create id for the fixed "Reload page with no
+// userscripts" row. See `reloadTabWithoutScripts`.
+const ACTION_MENU_RELOAD_ID = 'sm-reload-without-scripts';
 // Indent + glyph for nested menu-command rows. Chrome preserves the
 // leading whitespace in context-menu titles; four spaces + ↳ reads as
 // "indented under the row above" at typical zoom rather than as a
@@ -1070,7 +1180,13 @@ function buildActionMenuPlan(
       title: cmd.name,
     })),
   }));
-  return planActionMenu(groups);
+  const plan = planActionMenu(groups);
+  // The skip marker is driven by main-frame commits, which only
+  // `chrome.webNavigation` reports; without it the row would be a
+  // plain reload. (The slot it reserved stays reserved — not worth a
+  // second planner mode for a Chrome that lacks the API.)
+  if (!chrome.webNavigation) plan.reloadWithoutScripts = false;
+  return plan;
 }
 
 async function doRebuildActionContextMenu(
@@ -1100,6 +1216,15 @@ async function doRebuildActionContextMenu(
     for (const group of plan.more) {
       createScriptGroupMenuItems(group, ACTION_MENU_MORE_ID);
     }
+  }
+  // Always last, always top-level: the row is about the page, not
+  // about any one script, so it doesn't belong inside More.
+  if (plan.reloadWithoutScripts) {
+    chrome.contextMenus.create({
+      id: ACTION_MENU_RELOAD_ID,
+      title: ACTION_MENU_RELOAD_LABEL,
+      contexts: ['action'],
+    });
   }
 }
 
@@ -1147,6 +1272,12 @@ function installActionContextMenu(): void {
   // to the user. See the action.onClicked comment above.
   chrome.contextMenus.onClicked.addListener((info, tab) => {
     const id = typeof info.menuItemId === 'string' ? info.menuItemId : '';
+    if (id === ACTION_MENU_RELOAD_ID) {
+      // Reloads the tab under the right-click for the same reason the
+      // viewer opens in its window: `activeTabId` can be stale.
+      if (tab?.id != null) void reloadTabWithoutScripts(tab.id);
+      return;
+    }
     if (id.startsWith(ACTION_MENU_CMD_PREFIX)) {
       handleActionMenuCommandClick(id, tab?.id ?? null);
       return;
@@ -1302,7 +1433,12 @@ function installNavigationListeners(): void {
     // rather than waiting for the next reload. Setup is fire-and-forget
     // so the listener stays cheap; the wrapper's sm:check-pending
     // round-trip is what actually waits on the result.
-    if (d.transitionType === 'reload' && d.documentId) {
+    // Settled before anything async: a document-start wrapper's
+    // check-pending can arrive before the queued tab work runs. No
+    // fast path for a skip reload — nothing is going to run the
+    // refreshed body, and the ordinary sync still picks it up.
+    const skipping = noteCommitForSkipScripts(d.tabId, d.documentId ?? '', d.transitionType);
+    if (d.transitionType === 'reload' && d.documentId && !skipping) {
       setupReloadFastPath(d.tabId, d.documentId, d.url, batch);
     }
     enqueueTabWork(
@@ -1318,6 +1454,7 @@ function installNavigationListeners(): void {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
+  clearSkipScripts(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
   // document, so the SW-side mapping is dead weight after close. Drop
   // before the menu rebuild below so a stale list can't reappear.
@@ -1697,10 +1834,12 @@ async function applyStaleToTab(tabId: number, scriptIds: string[]): Promise<void
 //           loadedAt}                  — newer body in storage; wrapper
 //                                        evals this instead of its
 //                                        baked-in body.
-//        - {action: 'skip', reason}    — refresh-driven decision to not
-//                                        run (currently unused; held
-//                                        for future "file removed"
-//                                        semantics).
+//        - {action: 'skip', reason}    — don't run. Today only the
+//                                        "Reload page with no
+//                                        userscripts" marker produces
+//                                        it (checked ahead of the fast
+//                                        path); held for future "file
+//                                        removed" semantics too.
 //
 // We deliberately don't await chrome.userScripts re-registration here.
 // The storage write inside updateScript already triggers scheduleSync()
@@ -1907,8 +2046,15 @@ async function handleCheckPending(
   payload: CheckPendingPayload,
 ): Promise<CheckPendingReply> {
   const tabId = sender.tab?.id;
+  if (tabId == null) return { action: 'run' };
+  // "Reload page with no userscripts" — decided per tab, ahead of the
+  // fast path, and for every frame: a subframe's documentId is its
+  // own, so the tab-level marker is the only thing that covers it.
+  if (skipScriptsDocByTab.has(tabId)) {
+    return { action: 'skip', reason: SKIP_REASON_RELOAD_WITHOUT_SCRIPTS };
+  }
   const documentId = (sender as { documentId?: string }).documentId ?? '';
-  if (tabId == null || !documentId) return { action: 'run' };
+  if (!documentId) return { action: 'run' };
   const key = fastPathKey(tabId, documentId);
   const entry = fastPathByDoc.get(key);
   if (!entry) return { action: 'run' };
@@ -3404,14 +3550,16 @@ async function recordScriptReport(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
     logScriptEvent(id, {
-      level: 'warning',
+      // A skip the user asked for is information, not a warning.
+      level: payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
       source: 'script-wrapper',
       tabId,
       // `reason` is a token from the skip decision, not a sentence, so
       // it goes in parentheses as a detail rather than being read as
-      // the explanation. Today the wrapper's own fallback (`skip`) is
-      // the only value that gets here — see the `{action: 'skip'}`
-      // note on `CheckPendingReply`.
+      // the explanation. The values that get here are the user's
+      // "Reload page with no userscripts" and the wrapper's own
+      // fallback (`skip`) — see the `{action: 'skip'}` note on
+      // `CheckPendingReply`.
       message: `Did not run on this page (${payload.reason ?? 'no reason given'})`,
     });
   } else {
