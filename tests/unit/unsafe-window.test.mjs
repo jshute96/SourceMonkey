@@ -146,7 +146,7 @@ test('extractStartupLogs: warns when @grant none overrides other grants', () => 
   ]), 'x.user.js');
   assert.equal(logs.length, 1);
   assert.equal(logs[0].level, 'warn');
-  assert.match(logs[0].message, /^@grant none overrides @grant GM_setValue, unsafeWindow/);
+  assert.match(logs[0].message, /^@grant none overrides @grant GM_setValue, unsafeWindow.*\.$/);
   assert.deepEqual(extractStartupLogs(makeHeader([{ tag: 'grant', value: 'none' }]), 'x.user.js'), []);
 });
 

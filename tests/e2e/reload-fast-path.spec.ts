@@ -537,8 +537,9 @@ test.describe('reload fast-path', () => {
     // have a script granting a runtime-backed API, so a page whose
     // only script grants nothing carries no runtime. Adding the first
     // such grant produces a body whose GM_* bindings would resolve to
-    // nothing on the document already open — the wrapper reports what
-    // its world actually has, and the SW defers.
+    // nothing on the document already open — the SW marks the reply
+    // `needsRuntime`, and the wrapper, finding no runtime when the body
+    // is about to run, runs the baked-in body instead.
     //
     // `injectInto: 'content'` pins the world across both versions, so
     // this asserts the runtime check and not the world change (which

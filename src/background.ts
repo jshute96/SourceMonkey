@@ -2008,12 +2008,6 @@ interface CheckPendingPayload {
   // read for scripts that don't use GM_setValue, keeping check-pending
   // fast on multi-script pages. See `needsGmValues` in injector.ts.
   needsValues?: boolean;
-  // Whether `window.__SM_GM__` is installed in this wrapper's world on
-  // this document. The shared runtime is registered only where some
-  // active script grants a runtime-backed API, so a refresh that adds
-  // the first such grant would otherwise hot-swap in a body whose GM_*
-  // bindings have nothing to dereference. See `handleCheckPending`.
-  hasGmRuntime?: boolean;
   // Set by wrapper-bridge.js (USER_SCRIPT world) on every message it
   // relays for a MAIN-world wrapper's window.postMessage. A hostile
   // page can post a forged sm:check-pending into the bridge, so a
@@ -2042,6 +2036,17 @@ interface CheckPendingPayload {
 // in the gm prelude, which the swap path doesn't run. It describes
 // the new row, so it can be true even when the wrapper asked for no
 // snapshot (the refresh added the grant).
+//
+// `needsRuntime` says the swapped body grants some runtime-backed API,
+// so it can only run where `window.__SM_GM__` exists. The shared
+// runtime is registered only where some active script grants one, so a
+// refresh that adds the first such grant on a page produces a body
+// with nothing to dereference until the next reload registers it. The
+// wrapper checks at the moment the body is about to run — not here,
+// and not at its own start: the runtime is a separate document_start
+// registration that may sit after the wrapper in Chrome's order (an
+// updated registration moves to the end), and by run time every
+// document_start registration has executed.
 type CheckPendingReply =
   | { action: 'run'; gmValues?: Record<string, unknown> }
   | {
@@ -2049,6 +2054,7 @@ type CheckPendingReply =
       body: string;
       loadedAt: number;
       seedValues?: boolean;
+      needsRuntime?: boolean;
       gmValues?: Record<string, unknown>;
     }
   | { action: 'skip'; reason: string };
@@ -2169,22 +2175,6 @@ async function handleCheckPending(
     );
     return { action: 'run' };
   }
-  // The shared `__SM_GM__` runtime follows the scripts that need it
-  // (see `buildGmRuntimeSpecs`), so a refresh that adds the first
-  // runtime-backed grant on this page produces a body whose GM_*
-  // bindings resolve to nothing until the next reload registers it.
-  // Same remedy as the world change: defer.
-  //
-  // The wrapper reports what its own world actually has rather than us
-  // inferring it from storage — the registration set the document was
-  // built with is the only thing that matters here, and it can lag a
-  // sync by a navigation.
-  if (needsGmRuntime(refreshed.header) && payload.hasGmRuntime !== true) {
-    console.log(
-      `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} needs the GM runtime, which this document does not have yet (next reload will pick it up)`,
-    );
-    return { action: 'run' };
-  }
   // buildSwapEvalBody prepends the script's GM bindings to the
   // composed (requires + main) body so the indirect eval sees
   // `GM_info` and the rest. Without this, a script that references
@@ -2235,7 +2225,12 @@ async function handleCheckPending(
   // is the bridge — so it asks `bridgeMayActAs` rather than refusing
   // outright. The guard belongs where the values are handed out, not
   // two screens up in a check that exists for another reason.
+  // Only asked when a value read is actually in play: this handler is
+  // on the document-start critical path of every MAIN-world script,
+  // and the message handler asks the same question for its own
+  // attachment.
   const bridgeValuesOk = payload.__viaBridge !== true
+    || (!swap.needsValues && payload.needsValues !== true)
     || await bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS);
   const handlerWillAttach = payload.needsValues === true && bridgeValuesOk;
   let gmValues: Record<string, unknown> | undefined;
@@ -2268,6 +2263,9 @@ async function handleCheckPending(
     body: swap.body,
     loadedAt: refreshed.loadedAt,
     seedValues: swap.needsValues,
+    // The wrapper decides at run time whether its world has the
+    // runtime this body needs — see CheckPendingReply.
+    ...(needsGmRuntime(refreshed.header) ? { needsRuntime: true } : {}),
     // Only set on the grant-added path; otherwise the message
     // handler's enrichment supplies the same field from its own
     // concurrent read.
@@ -3249,6 +3247,14 @@ const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listene
 
 const BRIDGE_DENIED = 'This page is not allowed to act for that userscript';
 
+// The Log line for a style the page's CSP refused. The runtime prints
+// the same wording to the page console (`reportBlockedStyle`).
+function cspBlockedStyleMessage(api: 'GM_addStyle' | 'GM_addElement'): string {
+  return `The page's Content Security Policy blocked the style ${api} added, so its rules don't apply. ` +
+    'A script running in the page (unsafeWindow, @inject-into page, or @grant none) gets no CSP exemption; ' +
+    'only an isolated script does.';
+}
+
 // Which world an SW->page push is addressed to. Every `chrome.tabs
 // .sendMessage` we aim at a userscript carries this as `smWorld`.
 //
@@ -3294,9 +3300,17 @@ function guardBridgeCall(
   }
   bridgeMayActAs(scriptId, sender, subsystems).then(
     (allowed) => {
-      if (allowed) work();
+      // `work` runs inside a promise here, so a throw would otherwise
+      // be an unhandled rejection with the channel left open.
+      let ok = allowed;
+      if (allowed) {
+        try { work(); } catch (err) {
+          ok = false;
+          console.info('[SourceMonkey] bridge call failed:', err);
+        }
+      }
       try {
-        sendResponse(allowed ? { ok: true } : { ok: false, error: BRIDGE_DENIED });
+        sendResponse(ok ? { ok: true } : { ok: false, error: BRIDGE_DENIED });
       } catch { /* receiver gone */ }
     },
     (err) => {
@@ -3581,15 +3595,18 @@ function installScriptMessageListener(): void {
     if (type === SM_GM_DOM_BLOCKED_MSG) {
       // The runtime's once-per-script CSP report (see
       // `reportBlockedStyle` in wrapper-gm-runtime.js). A warning, not
-      // an error: the script ran, one of its styles didn't take.
-      const payload = msg as { scriptId?: unknown; message?: unknown };
+      // an error: the script ran, one of its styles didn't take. Worded
+      // here, not on the page: the request can come over the bridge,
+      // and a page-authored string in the Log would be a page-authored
+      // Log line.
+      const payload = msg as { scriptId?: unknown; api?: unknown };
       return guardBridgeCall(msg, payload.scriptId, ['dom'], sender, () => {
-        if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
+        if (typeof payload.scriptId === 'string' && typeof payload.api === 'string') {
           logScriptEvent(payload.scriptId, {
             level: 'warning',
             source: 'gm-dom',
             tabId,
-            message: payload.message,
+            message: cspBlockedStyleMessage(payload.api === 'GM_addElement' ? 'GM_addElement' : 'GM_addStyle'),
           });
         }
       }, sendResponse);

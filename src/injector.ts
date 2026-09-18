@@ -1835,10 +1835,10 @@ async function runFullSync(): Promise<RegistrationState> {
   timer.mark('register');
   timer.note(`full; ${specs.length} specs, ${scripts.length} stored scripts`);
   timer.done();
-  reportSyncResult(applied.placed.length, specs.length);
   const registered = placementsOf(specs, applied, active.gmRuntime);
   const gmRuntimeScopes = ownFingerprints(specs);
   await retryRefusedOwnSpecs(applied, registered, gmRuntimeScopes, present);
+  reportSyncResult(applied.placed.length, specs.length);
   return {
     registered,
     gmRuntimeScopes,
@@ -1972,7 +1972,7 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   // there needs it; a page can end up wanting the MAIN runtime and not
   // the USER_SCRIPT one.
   const ownWanted = new Set(ownSpecs.map((spec) => spec.id));
-  for (const id of [BRIDGE_SCRIPT_ID, ...GM_RUNTIME_WORLDS.map(gmRuntimeIdFor)]) {
+  for (const id of OWN_IDS) {
     if (!ownWanted.has(id) && state.registered.has(id)) removeIds.push(id);
   }
 
@@ -2012,13 +2012,13 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   reportSyncResult(applied.placed.length, specs.length);
 }
 
-// Prepend our own bridge / GM-runtime specs to the user specs, when
+// Prepend our own GM-runtime / bridge specs to the user specs, when
 // they're wanted and not already in place.
 //
-// GM runtime first so it installs window.__SM_GM__ ahead of any
-// USER_SCRIPT-world wrapper that compiles in GM_* bindings. Bridge next
-// so MAIN wrappers' postMessages have a listener. Then the user
-// scripts. (Cross-registration ordering isn't guaranteed by the
+// GM runtimes first (one per world) so each installs window.__SM_GM__
+// ahead of any wrapper in its world that compiles in GM_* bindings.
+// Bridge next so MAIN wrappers' postMessages have a listener. Then the
+// user scripts. (Cross-registration ordering isn't guaranteed by the
 // userScripts API, but in practice Chrome runs registrations in order.
 // We rely on this for the bridge: a MAIN-world wrapper's postMessage
 // queues to the message task queue, so the bridge's listener —
@@ -2034,17 +2034,22 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
 //
 // The order is honoured. Chrome moves an UPDATED registration to the
 // end of its set (verified), so grouping the placement calls by kind
-// would silently invert this — `placeSpecs` therefore places these two
-// first and individually, before any user spec.
+// would silently invert this — `placeSpecs` therefore places our own
+// specs first and individually, before any user spec.
 //
-// An incremental sync can't put a NEW user script ahead of a bridge
-// that was already registered, but it doesn't need to: the only way the
-// bridge is already there is that a MAIN-world script was already
-// active, so the ordering it exists to guarantee is already established.
+// An incremental sync that moves an own spec's pattern union UPDATES
+// it, which puts it after every user script already registered. That
+// is tolerated rather than repaired: the bridge doesn't rest on order
+// (above), and a wrapper only decides whether it can use a hot-swapped
+// body once the body is about to run, by which point every
+// document_start registration has executed — see `needsRuntime` in
+// `handleCheckPending` and `runMain` in the prelude. Re-placing the
+// world's user scripts behind the runtime would cost each of them an
+// injection gap for an ordering nothing depends on.
 //
 // `alreadyPlaced` names ids not worth re-offering — an incremental sync
 // passes what it believes is registered, so an ordinary script edit
-// doesn't churn our own two registrations. A full sync passes nothing.
+// doesn't churn our own registrations. A full sync passes nothing.
 function orderWithOwnSpecs(
   userSpecs: RegistrationSpec[],
   ownSpecs: readonly RegistrationSpec[],
@@ -2397,8 +2402,8 @@ async function replaceRegistration(spec: RegistrationSpec): Promise<void> {
 //
 // Ordering. Chrome moves an UPDATED registration to the END of its set,
 // in batch order (verified), so grouping the calls by kind reorders the
-// result. Our own two registrations have to precede every user script,
-// so they are placed first and individually; the user specs then go out
+// result. Our own registrations have to precede every user script, so
+// they are placed first and individually; the user specs then go out
 // as batches, because the relative order of two user scripts is not
 // something we promise anyway (see docs/injection.md#run-at-gating).
 async function placeSpecs(
@@ -2626,8 +2631,12 @@ export async function registerWithFallback(specs: RegistrationSpec[]): Promise<n
   return applied.placed.length;
 }
 
-// True for a stored script's registration id, false for the two
-// reserved ids we register for our own plumbing.
+// True for a stored script's registration id, false for the reserved
+// ids we register for our own plumbing: the bridge and one runtime per
+// world. Derived from the world list so a new world can't be missed —
+// every piece of own-spec bookkeeping (placement order, fingerprints,
+// the rejection map, the refusal retry, the bridge scope) turns on this.
+const OWN_IDS: ReadonlySet<string> = new Set([BRIDGE_SCRIPT_ID, ...GM_RUNTIME_WORLDS.map(gmRuntimeIdFor)]);
 function isUserScriptId(id: string): boolean {
-  return id !== BRIDGE_SCRIPT_ID && id !== GM_RUNTIME_SCRIPT_ID;
+  return !OWN_IDS.has(id);
 }

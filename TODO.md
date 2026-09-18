@@ -486,6 +486,30 @@ Adding any of these is a catalog entry + a body — nothing structural.
   takes the direct transport and every SW call throws ("must specify an
   Extension ID"). Detect the world by `chrome.runtime.id` (undefined on
   a web page) in the runtime and the prelude's `send` / `awaitDecision`.
+- **The bridge gate can lag a grant-adding edit by one navigation.**
+  `scriptGrantsSubsystem` answers from the match-index cache, which
+  learns about a refreshed row through storage's `onChanged` — after
+  the refresh that `handleCheckPending` just ran. A MAIN-world script
+  whose refresh added its first storage grant (with another
+  runtime-backed grant already there, so `needsRuntime` doesn't fall
+  back) can be refused its snapshot on that one navigation: `run-new`
+  with `seedValues` and no `gmValues`, so the previous version runs
+  with a console line. Self-heals on reload. Either await the cache's
+  own update in the handler, or pin it with an e2e in
+  `reload-fast-path.spec.ts` (the "adds a storage grant" case there is
+  USER_SCRIPT-world).
+- **The hidden-tab flush skips the confirmation check.** `flushAll`
+  passes `"pagehide"` for `visibilitychange → hidden` too, so in MAIN
+  world a merely-backgrounded tab's flush goes fire-and-forget and the
+  "storage flush not confirmed" line is never printed for it. Correct
+  (the document may be going away), just one diagnostic less; a
+  distinct reason would keep it.
+- **A failed own-spec retry leaves its fingerprint recorded.**
+  `runIncrementalSync` stores `nextScopes` before `applyPlan`; if an
+  own spec is refused and `retryRefusedOwnSpecs` can't rebuild it, the
+  fingerprint stays while `state.registered` lacks the id. Harmless
+  while `alreadyPlaced` also requires presence, which is the clause
+  carrying the invariant.
 - **Move every bridge request onto the synchronous DOM-event path.**
   The `pagehide` storage flush already goes as a `CustomEvent` the
   bridge handles in the same task (it had to: a postMessage is read

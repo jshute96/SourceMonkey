@@ -76,6 +76,7 @@ globalThis.chrome = globalThis.chrome ?? {
 import {
   BRIDGE_SCRIPT_ID,
   GM_RUNTIME_SCRIPT_ID,
+  GM_RUNTIME_MAIN_SCRIPT_ID,
   registerWithFallback,
   buildBridgeSpec,
   buildConfigBlob,
@@ -1924,7 +1925,7 @@ const {
 
 // The retry rebuilds specs from the store, so it needs a script row to
 // find. Only the fields collectActiveSpecs reads matter here.
-function seedStore(scriptId) {
+function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
   const script = {
     id: scriptId,
     collectionId: 'src-1',
@@ -1936,8 +1937,11 @@ function seedStore(scriptId) {
     bodyText: 'x',
     headerText: '',
     leadingText: '',
-    matching: { matches: ['https://e/*'], includes: [], excludes: [] },
-    header: { tags: [{ tag: 'name', value: 'Bad' }], startLine: 1 },
+    matching: { matches, includes: [], excludes: [] },
+    header: {
+      tags: [{ tag: 'name', value: 'Bad' }, ...grants.map((value) => ({ tag: 'grant', value }))],
+      startLine: 1,
+    },
   };
   localStore.set(`script:${scriptId}`, script);
   const collection = localStore.get('collection:src-1')
@@ -2273,6 +2277,87 @@ test('syncRegistrations: a scoped sync re-registers only the scripts that moved'
   assert.deepEqual(chrome_.calls, ['update:b'], 'only the edited script is re-offered');
   assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
   assert.equal(reads.full, 0, 'a scoped sync must not read every row');
+});
+
+test('syncRegistrations: our own specs go in first, runtimes before the bridge', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  seedStore('b', { matches: ['https://b.example/*'], grants: ['GM_setValue'] });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(chrome_.order(), [GM_RUNTIME_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID, BRIDGE_SCRIPT_ID, 'a', 'b']);
+  // Scoped: each own spec on the patterns of the scripts that need it.
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches, ['https://a.example/*']);
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_SCRIPT_ID).matches, ['https://b.example/*']);
+  assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches, ['https://a.example/*']);
+});
+
+test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge when their union moves', async (t) => {
+  // The MAIN runtime is registered under its own id, and every piece of
+  // own-spec bookkeeping has to know it — a predicate that only knew
+  // the USER_SCRIPT id once left this script with `GM_setValue` bound
+  // to a `window.__SM_GM__` that never reached its page.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  seedStore('b', { matches: ['https://b.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+
+  assert.deepEqual(
+    chrome_.calls.slice().sort(),
+    [`register:b`, `update:${BRIDGE_SCRIPT_ID}`, `update:${GM_RUNTIME_MAIN_SCRIPT_ID}`],
+  );
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
+  assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
+
+  // An edit that doesn't move the union re-offers neither.
+  chrome_.reset();
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls, ['update:b']);
+
+  // The last MAIN-world script leaving takes both own specs with it.
+  chrome_.reset();
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  await syncRegistrations({ scriptIds: ['a', 'b'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), []);
+});
+
+test('syncRegistrations: a refused own spec is rebuilt from what Chrome accepted, and never filed as a script', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  seedStore('bad', { matches: ['https://bad.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  const chrome_ = fakeRegistrationSet();
+  // Chrome refuses any spec carrying bad.example — the script itself,
+  // and the own specs whose union it is part of.
+  const inner = userScripts.register;
+  userScripts.register = async (batch) => {
+    for (const s of batch) {
+      if ((s.matches ?? []).includes('https://bad.example/*')) throw new Error(`bad pattern in ${s.id}`);
+    }
+    return inner(batch);
+  };
+  await syncRegistrations();
+
+  // Retried on the accepted union, and in place.
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID].sort());
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches, ['https://a.example/*']);
+  assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches, ['https://a.example/*']);
+  // Only the script is REJECTED; our own ids are not scripts.
+  const rejections = sessionStore.get('injector-rejections') ?? {};
+  assert.deepEqual(Object.keys(rejections), ['bad']);
 });
 
 test('syncRegistrations: a scoped sync unregisters only what left the set', async (t) => {

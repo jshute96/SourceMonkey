@@ -136,14 +136,16 @@
   }
 
   /* Is the shared GM runtime installed in THIS world on THIS document?
-     The SW needs the answer before it ships a hot-swap body: the
-     runtime is registered only where some active script grants a
-     runtime-backed API, so a refresh that ADDS the first such grant
-     produces a body whose GM_* bindings have no `window.__SM_GM__` to
-     dereference until the next reload re-registers it. Reported rather
-     than inferred SW-side because this is the exact question — the
-     registration set the page actually got, not the one storage now
-     describes. See handleCheckPending in background.ts. */
+     Decides whether a hot-swap body that needs it (`needsRuntime` on
+     the SW's reply) can run: the runtime is registered only where some
+     active script grants a runtime-backed API, so a refresh that ADDS
+     the first such grant produces a body whose GM_* bindings have no
+     `window.__SM_GM__` to dereference until the next reload
+     re-registers it. Asked at the moment the body is about to run (see
+     runMain), not at wrapper start: the runtime is its own
+     document_start registration and may sit after this wrapper in
+     Chrome's order — an updated registration moves to the end — but by
+     run time every document_start registration has executed. */
   function hasGmRuntime() {
     try { return !!window.__SM_GM__; } catch (_e) { return false; }
   }
@@ -173,8 +175,7 @@
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          needsValues: !!cfg.needsGmValues,
-          hasGmRuntime: hasGmRuntime()
+          needsValues: !!cfg.needsGmValues
         });
         if (p && typeof p.then === "function") {
           p.then(
@@ -209,8 +210,7 @@
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          needsValues: !!cfg.needsGmValues,
-          hasGmRuntime: hasGmRuntime()
+          needsValues: !!cfg.needsGmValues
         }
       }, "*");
     } catch (_e3) { seal({ action: "run" }); }
@@ -595,7 +595,17 @@
       var evalRefused = false;
       var evalErr = null;
       var swapReady = true;
-      if (decision.seedValues) {
+      if (decision.needsRuntime && !hasGmRuntime()) {
+        /* The new body grants a runtime-backed API and this world has
+           no runtime — the refresh added the first such grant on this
+           page, and the next reload registers it. Run the baked-in
+           (previous) body instead. */
+        swapReady = false;
+        try {
+          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran — reload the page to pick it up");
+        } catch (_smNR) {}
+      }
+      if (swapReady && decision.seedValues) {
         swapReady = false;
         var swapSnap = decision.gmValues;
         if (swapSnap && typeof swapSnap === "object") {

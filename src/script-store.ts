@@ -374,7 +374,7 @@ export function extractStartupLogs(
         level: 'warn',
         message:
           `@grant none overrides @grant ${overridden.join(', ')} — the script runs in the ` +
-          'page with no GM APIs. Remove the none line to use them',
+          'page with no GM APIs. Remove the none line to use them.',
       };
       const line = headerTagLine(header, 'grant', 'none');
       if (line !== undefined) log.location = { file: relativePath, line };

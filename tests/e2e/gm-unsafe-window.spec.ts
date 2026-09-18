@@ -152,6 +152,58 @@ test.describe('@grant unsafeWindow', () => {
     await second.close();
   });
 
+  test('a second MAIN-world GM script on a new host, added in a later sync, gets the runtime too', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The MAIN runtime is scoped to its scripts' patterns, so adding a
+    // script on a host it isn't on yet has to move the registration —
+    // an incremental sync that skipped it would leave this script's
+    // GM_setValue bound to a global that never reaches its page.
+    scriptsDir.write({
+      relativePath: 'first.user.js',
+      meta: {
+        name: 'FirstHost',
+        match: [`${fixtureServer.baseUrl}/target.html*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow', 'GM_setValue'],
+      },
+      body: `GM_setValue('first', 1);`,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const warm = await extensionContext.newPage();
+    await warm.goto(`${fixtureServer.baseUrl}/target.html`);
+    await warm.waitForTimeout(300);
+    await warm.close();
+
+    scriptsDir.write({
+      relativePath: 'second.user.js',
+      meta: {
+        name: 'SecondPage',
+        match: [`${fixtureServer.baseUrl}/${PAGE}*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow', 'GM_setValue', 'GM_getValue'],
+      },
+      body: `
+        const n = GM_getValue('visits', 0);
+        document.body.dataset.smVisits = String(n);
+        GM_setValue('visits', n + 1);
+      `,
+    });
+    await sm.updateCollection(added!.id, 'manual');
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-visits', '0');
+    await page.waitForTimeout(400);
+    await page.close();
+    const again = await extensionContext.newPage();
+    await again.goto(`${fixtureServer.baseUrl}/${PAGE}?n=2`);
+    await expect(again.locator('body')).toHaveAttribute('data-sm-visits', '1');
+    await again.close();
+  });
+
   test('GM_xmlhttpRequest works from MAIN world (request out and event back over the bridge)', async ({
     extensionContext, fixtureServer, sm,
   }) => {

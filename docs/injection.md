@@ -266,14 +266,20 @@ means "keep" no matter what the key says.
 
 ### Ordering
 
-`orderWithOwnSpecs` emits GM runtime → bridge → user scripts, and
-because `update` moves a registration to the end of the set, *how* the
-calls are grouped decides the result.
+`orderWithOwnSpecs` emits GM runtimes (one per world) → bridge → user
+scripts, and because `update` moves a registration to the end of the
+set, *how* the calls are grouped decides the result.
 
-- **Our own two registrations are placed first and individually.**
+- **Our own registrations are placed first and individually.**
   Grouping the calls by kind (one `update` batch, one `register` batch)
   would put a newly-registered bridge after already-updated user
   scripts.
+- **An incremental sync that moves an own spec's pattern union updates
+  it**, which lands it after the user scripts already registered. Not
+  repaired: nothing rests on the order once a wrapper checks for the
+  runtime lazily (see the reload fast path's `needsRuntime`), and
+  re-placing the world's scripts behind it would cost each an injection
+  gap.
 - **User specs then go out as batches**, since the relative order of two
   user scripts is not something we promise anyway — see
   [`@run-at` gating](#run-at-gating).
@@ -1481,14 +1487,19 @@ timeout remains the hard ceiling for every `@run-at`.
   A request relayed over `wrapper-bridge.js` is by definition from a
   MAIN wrapper, so that plus a USER_SCRIPT new row means "defer to
   the next reload", and vice versa.
-- **A newly-needed GM runtime defers the swap.** The shared
-  `__SM_GM__` runtime is registered only in worlds that have a script
-  granting a runtime-backed API (see [`GM_*` in MAIN world](#gm_-in-main-world)), so a page whose scripts grant nothing
-  carries none. A refresh that adds the first such grant would ship a
-  body whose GM_* bindings resolve to nothing. The wrapper reports
-  `hasGmRuntime` — what its own world actually has, rather than what
-  storage now describes — and the SW defers when the new row needs a
-  runtime the document hasn't got.
+- **A newly-needed GM runtime defers the swap — decided by the
+  wrapper, at run time.** The shared `__SM_GM__` runtime is registered
+  only in worlds that have a script granting a runtime-backed API (see
+  [`GM_*` in MAIN world](#gm_-in-main-world)), so a page whose scripts
+  grant nothing carries none. A refresh that adds the first such grant
+  would ship a body whose GM_* bindings resolve to nothing. The SW
+  marks such a reply `needsRuntime`; the wrapper checks
+  `window.__SM_GM__` at the moment the body is about to run and falls
+  back to the baked-in body if it's absent. At run time, not at
+  wrapper start: the runtime is its own `document_start` registration
+  and may sit after the wrapper in Chrome's order (an updated
+  registration moves to the end), but by run time every
+  `document_start` registration has executed.
 - **Race vs. setup.** If a wrapper fires before `setupReloadFastPath`
   finishes its `await ensureLoaded()` step, it gets `run` and the
   reload behaves like before. The opportunistic refresh kicked off by

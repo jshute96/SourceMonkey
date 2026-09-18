@@ -1252,24 +1252,24 @@
   function reportBlockedStyle(scriptId, api) {
     if (blockedStyleReported[scriptId]) return;
     blockedStyleReported[scriptId] = true;
+    /* Same wording the SW puts in the Log (`cspBlockedStyleMessage` in
+       background.ts); the SW words its own line rather than trusting
+       a page-reachable string. */
     var text = "The page's Content Security Policy blocked the style " + api +
       " added, so its rules don't apply. A script running in the page (unsafeWindow," +
       " @inject-into page, or @grant none) gets no CSP exemption; only an isolated script does.";
     try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
-    try {
-      if (window.__SM_GM__ && typeof window.__SM_GM__.sendAsync === "function") {
-        var p = window.__SM_GM__.sendAsync({ type: "sm:gm-dom-blocked", scriptId: scriptId, message: text });
-        if (p && typeof p.catch === "function") p.catch(function () {});
-      }
-    } catch (_eS) {}
+    transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api }).catch(function () {});
   }
   /* A <style> that is in the document but has no sheet was refused by
      CSP: the parser builds the sheet synchronously on insertion, so a
      null `.sheet` on a connected element is the block itself, not a
-     timing gap. Only for elements that have text — an empty <style>
-     gets an (empty) sheet too, so that read isn't distorted. */
+     timing gap (an empty <style> gets an empty sheet, not null). A
+     non-CSS `type` also yields no sheet, with no CSP involved, so that
+     one is left alone. */
   function styleWasBlocked(el) {
     try {
+      if (el.type && !/^text\/css$/i.test(el.type)) return false;
       return el.isConnected === true && el.sheet === null;
     } catch (_e) { return false; }
   }
