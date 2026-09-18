@@ -1318,7 +1318,7 @@ test('resolveWorld: @inject-into auto falls through to @grant logic', () => {
   );
 });
 
-test('resolveWorld: multi @grant — all "none" → MAIN, any real grant → USER_SCRIPT', () => {
+test('resolveWorld: multi @grant — "none" anywhere → MAIN, real grants only → USER_SCRIPT', () => {
   assert.equal(
     resolveWorld(makeHeader([
       { tag: 'grant', value: 'none' },
@@ -1326,9 +1326,17 @@ test('resolveWorld: multi @grant — all "none" → MAIN, any real grant → USE
     ])),
     'MAIN',
   );
+  // `none` wins, as it does for the bindings in resolveGrants.
   assert.equal(
     resolveWorld(makeHeader([
       { tag: 'grant', value: 'none' },
+      { tag: 'grant', value: 'GM_setValue' },
+    ])),
+    'MAIN',
+  );
+  assert.equal(
+    resolveWorld(makeHeader([
+      { tag: 'grant', value: 'GM_getValue' },
       { tag: 'grant', value: 'GM_setValue' },
     ])),
     'USER_SCRIPT',
@@ -1448,16 +1456,22 @@ test('buildBridgeSpec: returns null on an empty active set', () => {
   assert.equal(buildBridgeSpec([]), null);
 });
 
-test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-world script exists', () => {
+test('buildBridgeSpec: emits a USER_SCRIPT spec on the union of the MAIN-world scripts\' patterns', () => {
+  // Every MAIN-world script counts, granted or not (telemetry and the
+  // reload handshake ride the bridge too); USER_SCRIPT-world scripts
+  // don't, and neither does the bridge land anywhere else — a whole
+  // isolated world per document is not free.
   const specs = [
     { id: 'a', world: 'USER_SCRIPT', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' },
     { id: 'b', world: 'MAIN', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle' },
+    { id: 'c', world: 'MAIN', matches: ['https://y/*', 'https://z/*'], includeGlobs: ['*://g/*'], js: [{ code: '' }], runAt: 'document_idle' },
   ];
   const bridge = buildBridgeSpec(specs);
   assert.ok(bridge, 'expected a bridge spec');
   assert.equal(bridge.id, BRIDGE_SCRIPT_ID);
   assert.equal(bridge.world, 'USER_SCRIPT');
-  assert.deepEqual(bridge.matches, ['<all_urls>']);
+  assert.deepEqual(bridge.matches, ['https://y/*', 'https://z/*']);
+  assert.deepEqual(bridge.includeGlobs, ['*://g/*']);
   assert.equal(bridge.runAt, 'document_start');
   assert.match(bridge.js[0].code, /sourcemonkey-bridge/);
   // Tagged with a page-wide sourceURL so devtools shows it under a
@@ -1494,21 +1508,29 @@ function setupBridgeHarness() {
     },
   };
   let listener = null;
+  let syncListener = null;
   const fakeWindow = {
     addEventListener(type, fn, _capture) {
       if (type === 'message') listener = fn;
     },
   };
+  const fakeDocument = {
+    addEventListener(type, fn, _capture) {
+      if (type === 'sourcemonkey-bridge-sync') syncListener = fn;
+    },
+  };
   // eslint-disable-next-line no-new-func
-  new Function('window', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeChrome);
+  new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeDocument, fakeChrome);
   if (!listener) throw new Error('bridge did not install a message listener');
+  if (!syncListener) throw new Error('bridge did not install the synchronous DOM-event listener');
   const dispatch = (event) => listener(event);
+  const dispatchSync = (detail) => syncListener({ detail });
   const goodEvent = (overrides = {}) => ({
     source: fakeWindow,
     data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:start', id: 'x', url: 'https://e/' } },
     ...overrides,
   });
-  return { sent, dispatch, goodEvent, fakeWindow };
+  return { sent, dispatch, dispatchSync, goodEvent, fakeWindow };
 }
 
 test('wrapper-bridge: forwards well-formed sm:start events', () => {
@@ -1548,6 +1570,22 @@ test('wrapper-bridge: ignores messages whose payload is missing or non-object', 
   dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge', payload: null } }));
   dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge', payload: 'string-payload' } }));
   assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: the synchronous DOM-event path forwards an allowlisted payload, stamped', () => {
+  // What the pagehide storage flush rides. Same allowlist and stamp as
+  // the postMessage path; the difference is that the sendMessage
+  // happens inside the dispatch, before the caller returns.
+  const { sent, dispatchSync } = setupBridgeHarness();
+  dispatchSync(JSON.stringify({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [], __viaBridge: false }));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'sm:gm-batch-write');
+  assert.equal(sent[0].__viaBridge, true);
+  // Not on the allowlist, not a string, not JSON: all dropped.
+  dispatchSync(JSON.stringify({ type: 'sm:not-a-thing' }));
+  dispatchSync({ type: 'sm:gm-batch-write' });
+  dispatchSync('{not json');
+  assert.equal(sent.length, 1);
 });
 
 test('wrapper-bridge: only forwards sm:start / sm:error payload types', () => {

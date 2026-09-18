@@ -570,8 +570,8 @@ default:
 - `// @inject-into page` → MAIN.
 - `// @inject-into content` → USER_SCRIPT.
 - `// @inject-into auto` / unspecified →
-  - MAIN when there are no `@grant` entries or every `@grant` is
-    `none`,
+  - MAIN when there are no `@grant` entries or a `@grant none` line
+    is present,
   - MAIN when `unsafeWindow` is granted (see below),
   - USER_SCRIPT otherwise.
 
@@ -581,6 +581,12 @@ intend to talk to the page directly — read its globals, call its
 functions, hook its jQuery. Running them in the isolated world
 silently breaks any such script. Tampermonkey runs `@grant none`
 scripts in page context for the same reason.
+
+`none` wins over other `@grant` lines here exactly as it does for the
+bindings (`resolveGrants`): a script mixing `none` with `GM_setValue`
+is a plain `@grant none` script — MAIN world, no GM APIs — which is
+how Tampermonkey reads it. A `warning`-level startup log names the
+overridden grants so the author sees why they're missing.
 
 #### `unsafeWindow` forces MAIN world
 
@@ -707,15 +713,18 @@ whole `GM_*` surface works there too.
 - **Page CSP applies to DOM injection.** `GM_addStyle` /
   `GM_addElement` are CSP-exempt in USER_SCRIPT world but not in MAIN.
   A page whose `style-src` omits `'unsafe-inline'` will drop an
-  injected `<style>`'s rules on the floor.
+  injected `<style>`'s rules on the floor. The runtime detects that
+  (a connected `<style>` with no `.sheet`) and files one warning per
+  script per document in its Log (`source: gm-dom`), so the failure
+  is visible even though it can't be fixed from the page.
 - **The page can interfere.** It shares prototypes and globals with the
   script. The runtime's shim cache is captured at `document_start`,
   before any page script, so its own natives are pristine — but user
   code in MAIN is on its own.
-- **Storage flushes are less durable at teardown.** A MAIN-world flush
-  leaves as a postMessage the bridge picks up in a later task; during
-  `pagehide` the document may go away first. USER_SCRIPT-world scripts
-  hand theirs straight to `chrome.runtime`.
+- **Teardown flushes need the synchronous path.** A postMessage is
+  read on a later task, which a document in `pagehide` never gets; the
+  storage flush there goes as a DOM `CustomEvent` the bridge handles
+  in the same task (see the bridge mechanics below).
 - **One extra hop per call.** Every `GM_*` SW round-trip pays the
   postMessage relay, like `sm:check-pending` already did from MAIN.
 
@@ -751,11 +760,31 @@ Mechanics:
   makes the same choice.
 - The bridge validates the marker + `event.source === window`, checks
   the payload type against an allowlist per direction, and forwards.
+- A second page→SW path is synchronous: a `CustomEvent` named
+  `sourcemonkey-bridge-sync` dispatched on `document`, with the payload
+  as a JSON string in `detail` (objects don't cross realms). Event
+  dispatch runs every world's listeners in the dispatching task, so
+  the bridge's `chrome.runtime.sendMessage` happens before the caller
+  returns. Fire-and-forget only, same allowlist and stamp. Used for
+  the storage flush at `pagehide`, where a later task never comes.
+  Moving every request onto it (dropping a task hop per call) is
+  filed as follow-up work.
 - `buildBridgeSpec` (in `src/injector.ts`) emits the bridge
-  registration when at least one active script resolves to MAIN. The
-  bridge matches `<all_urls>` and runs at `document_start` so its
-  listener is installed before any wrapper's queued postMessage event
-  dispatches.
+  registration when at least one active script resolves to MAIN. It
+  runs at `document_start` so its listener is installed before any
+  wrapper's queued postMessage event dispatches.
+- The bridge is scoped like the runtime: its patterns are the union of
+  every MAIN-world script's (granted or not — telemetry and the reload
+  handshake ride it too), fingerprinted so an incremental sync
+  re-offers it when the union moves. It is not `<all_urls>`: on a page
+  with no MAIN-world script it would still cost a whole USER_SCRIPT
+  world for that document, a V8 context per navigation.
+- Our own specs go in before the user scripts (injection order), so
+  they are built from patterns Chrome hasn't ruled on. If Chrome
+  refuses one, it is rebuilt from the placements Chrome accepted —
+  which exclude the refused script, whose row reads REJECTED — and
+  offered again (`retryRefusedOwnSpecs`). Not `<all_urls>`: a bad
+  pattern in one script must not put our code on every page.
 
 Trust model:
 

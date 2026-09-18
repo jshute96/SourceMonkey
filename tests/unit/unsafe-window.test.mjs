@@ -129,17 +129,25 @@ test('resolveWorld: GM_* grants without unsafeWindow still → USER_SCRIPT', () 
   assert.equal(resolveWorld(grantHeader('GM.setValue')), 'USER_SCRIPT');
 });
 
-test('resolveWorld: mixing @grant none with unsafeWindow keeps the pre-existing USER_SCRIPT answer', () => {
-  // Documenting existing behavior, not endorsing it. `resolveGrants`
-  // says a `none` line anywhere wins (so this script gets NO bindings),
-  // but `resolveWorld` only takes the MAIN branch when EVERY line is
-  // `none` — so the script lands isolated with nothing. Deliberately
-  // left alone here: it is a pre-existing inconsistency in the
-  // `none`-plus-something case, it has its own test in
-  // injector.test.mjs, and zero of the top-2000 GreasyFork scripts
-  // pair `none` with `unsafeWindow` (4 pair it with anything at all).
-  // Called out as an open question on the PR instead.
-  assert.equal(resolveWorld(grantHeader('none', 'unsafeWindow')), 'USER_SCRIPT');
+test('resolveWorld: @grant none wins over other grants, as it does in resolveGrants', () => {
+  // One rule in both places: a `none` line anywhere means no bindings
+  // AND MAIN world — a plain `@grant none` script, which is how TM
+  // reads it. The old rule (MAIN only when every line was `none`) left
+  // a mixed script isolated with nothing.
+  assert.equal(resolveWorld(grantHeader('none', 'unsafeWindow')), 'MAIN');
+  assert.equal(resolveWorld(grantHeader('GM_setValue', 'none')), 'MAIN');
+});
+
+test('extractStartupLogs: warns when @grant none overrides other grants', () => {
+  const logs = extractStartupLogs(makeHeader([
+    { tag: 'grant', value: 'GM_setValue' },
+    { tag: 'grant', value: 'none' },
+    { tag: 'grant', value: 'unsafeWindow' },
+  ]), 'x.user.js');
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'warn');
+  assert.match(logs[0].message, /^@grant none overrides @grant GM_setValue, unsafeWindow/);
+  assert.deepEqual(extractStartupLogs(makeHeader([{ tag: 'grant', value: 'none' }]), 'x.user.js'), []);
 });
 
 // ---------- needsGmRuntime ----------
@@ -382,7 +390,7 @@ test('extractStartupLogs: silent for the combinations that do work', () => {
 // markers, since a typo in either would be a silent no-op at runtime.
 
 test('generated wrappers: runtime and bridge agree on the postMessage markers', () => {
-  for (const marker of ['sourcemonkey-bridge', 'sourcemonkey-bridge-reply', 'sourcemonkey-bridge-push']) {
+  for (const marker of ['sourcemonkey-bridge', 'sourcemonkey-bridge-reply', 'sourcemonkey-bridge-push', 'sourcemonkey-bridge-sync']) {
     assert.ok(WRAPPER_GM_RUNTIME.includes(marker), `runtime is missing ${marker}`);
     assert.ok(WRAPPER_BRIDGE.includes(marker), `bridge is missing ${marker}`);
   }

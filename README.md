@@ -347,9 +347,10 @@ Scripts run either in the page's own JavaScript world or in an isolated
 one, chosen the same way Tampermonkey and Violentmonkey choose: a
 script with no `@grant` (or `@grant none`) shares the page's world and
 can read its globals, like `window.jQuery`; anything else is isolated.
-`@grant unsafeWindow` also shares the page's world — that's what
-`unsafeWindow` means — and its `GM_*` APIs come along. Set
-`@inject-into page` or `@inject-into content` to pick explicitly.
+A script that grants `unsafeWindow` runs in the page's world too, since
+`unsafeWindow` is the page's window, and its other `GM_*` APIs still
+work there. Set `@inject-into page` or `@inject-into content` to pick
+explicitly.
 
 Whatever a script throws is caught and reported against that script —
 including failures that happen later, from timers, event listeners, and

@@ -85,6 +85,7 @@ import {
   SM_ERROR_MSG,
   SM_FOCUS_MSG,
   SM_GM_LOG_MSG,
+  SM_GM_DOM_BLOCKED_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
   type InjectionWorld,
@@ -3574,6 +3575,22 @@ function installScriptMessageListener(): void {
           // state; skip the rebuild so a noisy unregister loop doesn't
           // churn chrome.contextMenus.
           if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+        }
+      }, sendResponse);
+    }
+    if (type === SM_GM_DOM_BLOCKED_MSG) {
+      // The runtime's once-per-script CSP report (see
+      // `reportBlockedStyle` in wrapper-gm-runtime.js). A warning, not
+      // an error: the script ran, one of its styles didn't take.
+      const payload = msg as { scriptId?: unknown; message?: unknown };
+      return guardBridgeCall(msg, payload.scriptId, ['dom'], sender, () => {
+        if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
+          logScriptEvent(payload.scriptId, {
+            level: 'warning',
+            source: 'gm-dom',
+            tabId,
+            message: payload.message,
+          });
         }
       }, sendResponse);
     }

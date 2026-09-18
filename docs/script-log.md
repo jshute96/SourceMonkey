@@ -146,6 +146,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | --- | --- | --- |
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
+| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world). Once per script per document. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 

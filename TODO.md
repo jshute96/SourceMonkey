@@ -428,12 +428,14 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
   `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
   MAIN, so a `@grant unsafeWindow` script on a site with a strict
-  `style-src` inserts a `<style>` whose rules never apply. A
-  `styleEl.sheet === null` check after append is a reliable
-  blocked-detector; the fallback would be an async bridge request
-  asking the USER_SCRIPT-world runtime to insert a CSP-exempt copy,
-  at the cost of the returned element no longer being the live one.
-  TM/VM have the same limitation today.
+  `style-src` inserts a `<style>` whose rules never apply. The block
+  is detected (`el.sheet === null` once connected) and reported as a
+  Log warning; the fallback would be an async bridge request asking
+  the USER_SCRIPT-world runtime to insert a CSP-exempt copy, at the
+  cost of the returned element no longer being the live one, and of
+  registering that runtime on pages that otherwise don't need it.
+  TM/VM have the same limitation today. Build it when a real site
+  shows up where the style matters.
 - **Frame-scope the remaining SW pushes.** `sm:gm-xhr-event` now goes
   to `sender.frameId`, but `sm:gm-tab-closed`,
   `sm:gm-notification-event` and `sm:gm-menu-fire` still go tab-wide,
@@ -453,13 +455,23 @@ Adding any of these is a catalog entry + a body — nothing structural.
   off the live global, which a MAIN-world page can replace. No impact
   today (the runtime installs at `document_start`), just inconsistent
   with the file's stated discipline.
-- **Bridge gate vs. matcher divergence.** `bridgeMayActAs` decides
-  whether a MAIN-world script may act by re-running our own
-  `url-match.ts` against the sender's URL, while Chrome decided
-  whether to inject with its matcher. A disagreement refuses a
-  legitimate script — fatal for a storage-granting one. Worth a
-  cheaper, divergence-proof signal (e.g. keying off the tab's recorded
-  `expected` set, or a per-document token minted at `sm:start`).
+- **Bridge gate vs. matcher divergence.** `bridgeMayActAs` re-runs
+  our own `url-match.ts` against the sender's URL, while Chrome
+  decided whether to inject with its matcher. A disagreement refuses
+  a legitimate script — fatal for a storage-granting one — but loudly
+  (a Log line), and the badge depends on the same agreement.
+  - The recheck can't be dropped: the SW can't observe which scripts
+    Chrome injected, and a MAIN-world script's own report arrives
+    over the page-forgeable bridge. Keying off the tab's `expected`
+    set uses the same matcher; a per-document token isn't a secret in
+    MAIN world.
+  - The divergence-proof fix is a USER_SCRIPT-world *witness*
+    registered with each MAIN-world GM script's own patterns,
+    reporting "X is here" over trusted `chrome.runtime`. Costs a
+    registration per script and a document-start race the SW would
+    hold early requests for.
+  - Do it only if divergence shows up in practice; a matcher bug is
+    the cheaper fix.
 - **Bridge gate and push stamping read the stored world, not the
   live one.** `scriptWorld` / `bridgeMayActAs` answer from the current
   row, but a document that loaded before an edit flipped the script's
@@ -474,18 +486,16 @@ Adding any of these is a catalog entry + a body — nothing structural.
   takes the direct transport and every SW call throws ("must specify an
   Extension ID"). Detect the world by `chrome.runtime.id` (undefined on
   a web page) in the runtime and the prelude's `send` / `awaitDecision`.
-- **A refused runtime pattern takes GM_* down for its whole world.**
-  The runtime registers on the union of its scripts' patterns, so one
-  pattern Chrome rejects (the case the rejection map exists for) fails
-  the runtime spec itself and every GM_* call in that world with it.
-  Retry a refused runtime spec at `<all_urls>` (the pre-scoping
-  fingerprint, not an outage), or drop patterns `matchPatternProblem`
-  flags from the union.
-- **MAIN-world storage flush at teardown.** A MAIN-world
-  `GM_setValue` batch leaves as a postMessage the bridge relays in a
-  later task, so a `pagehide` flush can be dropped where a
-  USER_SCRIPT-world one wouldn't be. Options: shorten the debounce in
-  MAIN, or have the bridge hold a mirror of pending writes.
+- **Move every bridge request onto the synchronous DOM-event path.**
+  The `pagehide` storage flush already goes as a `CustomEvent` the
+  bridge handles in the same task (it had to: a postMessage is read
+  on a later task the dying document never gets, and `GM_setValue();
+  location.href = …` lost the write every time). Every other page→SW
+  request still pays that task hop, `sm:check-pending` on the
+  document-start critical path included. Switching the request
+  direction wholesale (replies can stay postMessage) removes a hop
+  per call with no change to the security model — same allowlist,
+  same stamp, same gate. Filed as issue #24.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
 - **`GM_download` follow-ups.**
@@ -670,14 +680,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Worth one line in `supported-GM-APIs.md` calling out
   `src=javascript:`, event-handler attributes, and `<script src>`
   as deliberately un-sanitized sinks.
-- **`@grant none` mixed with real grants.** `resolveGrants` says a
-  `none` line anywhere wins (so the script gets no bindings), but
-  `resolveWorld` only takes the MAIN branch when EVERY line is
-  `none` — so `@grant none` + `@grant unsafeWindow` lands isolated
-  with nothing at all. Only 4 of the top-2000 GreasyFork scripts mix
-  `none` with anything, and none of those pair it with
-  `unsafeWindow`, so this is documented rather than changed. Pick one
-  rule and apply it in both places.
 - **Listener-id contract.** `addValueChangeListener` returns the id
   as a `String(numericCounter)`. TM returns numeric IDs. Pin the
   contract in `GM-APIs.md` — id should be opaque to callers, but

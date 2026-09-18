@@ -207,6 +207,7 @@
   var BRIDGE_MARKER = "sourcemonkey-bridge";
   var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
   var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
+  var BRIDGE_SYNC_MARKER = "sourcemonkey-bridge-sync";
   /* How long a MAIN-world request waits for the bridge before we give
      up and reject. The bridge always replies (even when the SW call
      fails), so hitting this means the bridge never registered — a
@@ -276,6 +277,24 @@
         reject(e);
       }
     });
+  }
+
+  /* Fire-and-forget send that completes before this call returns.
+     `chrome.runtime.sendMessage` already does in USER_SCRIPT world; in
+     MAIN world a postMessage would not — the bridge reads it on a
+     later task — so the payload goes as a DOM event instead, which
+     runs the bridge's listener synchronously. The one caller is the
+     teardown flush, where "later" may never come. */
+  var _CustomEvent = null;
+  try { _CustomEvent = CustomEvent; } catch (_ceE) {}
+  function transportSendNow(payload) {
+    if (_sendMessage) {
+      var p = _sendMessage(payload);
+      if (p && typeof p.catch === "function") p.catch(function () {});
+      return;
+    }
+    if (!_CustomEvent) return;
+    document.dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: _JSONStringify(payload) }));
   }
 
   /* The single send primitive every subsystem uses. */
@@ -811,7 +830,15 @@
       }
     }
     try {
-      var p = transportSend({ type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites });
+      var msg = { type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites };
+      if (reason === "pagehide") {
+        /* The document is going away; there is no later task to
+           await a reply in, and in MAIN world no later task to post
+           the request in either. */
+        transportSendNow(msg);
+        return;
+      }
+      var p = transportSend(msg);
       if (p && typeof p.then === "function") {
         p.then(function (reply) {
           /* A resolved promise isn't proof the write landed. The SW
@@ -839,12 +866,11 @@
     var keys = _ObjectKeys(stores);
     for (var i = 0; i < keys.length; i++) flushStore(keys[i], "pagehide");
   }
-  /* Delivery caveat in MAIN world: the flush leaves here as a
-     postMessage, which the bridge picks up in a LATER task. During
-     `pagehide` the document may be torn down before that task runs, so
-     a MAIN-world script's last ~150ms of writes are more likely to be
-     lost than a USER_SCRIPT one's (whose sendMessage goes straight to
-     the SW). See docs/GM-APIs-storage.md and TODO.md. */
+  /* These flushes go over `transportSendNow`: in MAIN world an
+     ordinary bridge request is a postMessage the bridge reads on a
+     later task, and a document in `pagehide` doesn't get one — every
+     write still buffered would be lost. The synchronous DOM-event path
+     hands it to the bridge before this handler returns. */
   try {
     window.addEventListener("pagehide", flushAll, { capture: true });
     /* visibilitychange → hidden is a softer signal that also tends to
@@ -1163,6 +1189,14 @@
      CSP page like github.com / google.com can still inject styles
      and elements that the page itself couldn't.
 
+     In MAIN world there is no exemption: the page's CSP applies to
+     what the script inserts, so a strict `style-src` accepts the
+     <style> element and silently ignores its rules. TM and VM have
+     the same limitation in page context. We can't work around it
+     here, but we can say so: a <style> whose `.sheet` is still null
+     after it's in the document was blocked, and that is reported
+     once per script as a warning in its Log (see `reportBlockedStyle`).
+
      Both helpers return the created element so userscripts can hold a
      reference and tweak it later. */
   /* Lookup a parent fallback. `document.head` doesn't exist before
@@ -1212,17 +1246,46 @@
     }
   }
 
+  /* Once per script per document: a page with a strict CSP blocks
+     every style the script adds, and one line says it. */
+  var blockedStyleReported = {};
+  function reportBlockedStyle(scriptId, api) {
+    if (blockedStyleReported[scriptId]) return;
+    blockedStyleReported[scriptId] = true;
+    var text = "The page's Content Security Policy blocked the style " + api +
+      " added, so its rules don't apply. A script running in the page (unsafeWindow," +
+      " @inject-into page, or @grant none) gets no CSP exemption; only an isolated script does.";
+    try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
+    try {
+      if (window.__SM_GM__ && typeof window.__SM_GM__.sendAsync === "function") {
+        var p = window.__SM_GM__.sendAsync({ type: "sm:gm-dom-blocked", scriptId: scriptId, message: text });
+        if (p && typeof p.catch === "function") p.catch(function () {});
+      }
+    } catch (_eS) {}
+  }
+  /* A <style> that is in the document but has no sheet was refused by
+     CSP: the parser builds the sheet synchronously on insertion, so a
+     null `.sheet` on a connected element is the block itself, not a
+     timing gap. Only for elements that have text — an empty <style>
+     gets an (empty) sheet too, so that read isn't distorted. */
+  function styleWasBlocked(el) {
+    try {
+      return el.isConnected === true && el.sheet === null;
+    } catch (_e) { return false; }
+  }
+
   var dom = {
     /* GM_addStyle(css): create <style>, set its textContent, attach
        to (document.head || document.documentElement). Returns the
        style element. */
-    addStyle: function (css) {
+    addStyle: function (scriptId, css) {
       var el = _docCreateElement ? _docCreateElement("style") : document.createElement("style");
       el.textContent = String(css == null ? "" : css);
       var parent = defaultParent();
       if (parent) {
         if (_Node_appendChild) _Node_appendChild.call(parent, el);
         else parent.appendChild(el);
+        if (styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle");
       }
       return el;
     },
@@ -1244,7 +1307,7 @@
        checking arg1 for a `.nodeType` — DOM nodes have one, strings
        don't. `typeof === "object"` keeps strings (which have `.length`
        and look array-ish to a sloppy check) out of the parent branch. */
-    addElement: function (arg1, arg2, arg3) {
+    addElement: function (scriptId, arg1, arg2, arg3) {
       var parent, tagName, attrs;
       if (arg1 && typeof arg1 === "object" && typeof arg1.nodeType === "number") {
         parent = arg1; tagName = arg2; attrs = arg3;
@@ -1270,6 +1333,9 @@
       if (parent) {
         if (_Node_appendChild) _Node_appendChild.call(parent, el);
         else parent.appendChild(el);
+        if (String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
+          reportBlockedStyle(scriptId, "GM_addElement");
+        }
       }
       return el;
     },

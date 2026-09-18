@@ -233,9 +233,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'dom') {
     switch (spec.name) {
       case 'GM_addStyle':
-        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(css); };`;
+        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(${jsLit(scriptId)}, css); };`;
       case 'GM_addElement':
-        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(parentOrTag, tagOrAttrs, attrs); };`;
+        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(${jsLit(scriptId)}, parentOrTag, tagOrAttrs, attrs); };`;
     }
   }
   // Clipboard subsystem: navigator.clipboard.writeText via the

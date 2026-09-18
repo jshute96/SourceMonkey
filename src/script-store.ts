@@ -82,7 +82,7 @@ import {
 } from './external-files.js';
 import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
-import { resolveGrants } from './gm-api-catalog.js';
+import { canonicalizeGrant, resolveGrants } from './gm-api-catalog.js';
 import {
   ignoredMatchMessage,
   matchPatternProblem,
@@ -361,6 +361,25 @@ export function extractStartupLogs(
   const grants = getValues(header, 'grant');
   if (grants.length > 0) {
     const resolved = resolveGrants(grants);
+    // `none` wins over every other `@grant` line — no bindings, MAIN
+    // world — in both `resolveGrants` and `resolveWorld`. The author
+    // probably meant the other lines, so say what happened to them.
+    // Only the grants we'd otherwise have honored; a typo'd name gets
+    // its own "unsupported" line below and shouldn't be counted twice.
+    const overridden = grants
+      .map((g) => g.trim())
+      .filter((g) => g !== '' && g.toLowerCase() !== 'none' && canonicalizeGrant(g) !== null);
+    if (resolved.hasNone && overridden.length > 0) {
+      const log: StartupLog = {
+        level: 'warn',
+        message:
+          `@grant none overrides @grant ${overridden.join(', ')} — the script runs in the ` +
+          'page with no GM APIs. Remove the none line to use them',
+      };
+      const line = headerTagLine(header, 'grant', 'none');
+      if (line !== undefined) log.location = { file: relativePath, line };
+      logs.push(log);
+    }
     if (resolved.unknown.length > 0) {
       const log: StartupLog = {
         level: 'warn',

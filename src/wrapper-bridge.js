@@ -95,6 +95,15 @@
   var MARKER = "sourcemonkey-bridge";
   var REPLY_MARKER = "sourcemonkey-bridge-reply";
   var PUSH_MARKER = "sourcemonkey-bridge-push";
+  /* The synchronous page -> SW path. A DOM event dispatched in MAIN
+     world runs this world's listener in the SAME task (event dispatch
+     fires every world's listeners), so `chrome.runtime.sendMessage`
+     is called before the dispatching code returns — which is what a
+     `pagehide` flush needs: a postMessage would wait for a later
+     task the dying document never gets. Fire-and-forget only; the
+     payload rides in `detail` as a JSON string because objects don't
+     cross realms. Same allowlist and stamp as the postMessage path. */
+  var SYNC_MARKER = "sourcemonkey-bridge-sync";
   /* Payload types we relay page -> SW. Telemetry + the reload
      fast-path handshake, plus the SW-backed half of the GM_* surface
      that the MAIN-world runtime needs. Anything not listed is dropped,
@@ -114,7 +123,7 @@
     "sm:gm-download-start", "sm:gm-download-abort",
     "sm:gm-window-close", "sm:gm-window-focus",
     "sm:gm-resync",
-    "sm:gm-log",
+    "sm:gm-log", "sm:gm-dom-blocked",
     /* Generic envelope for async APIs that have no dedicated body yet
        (the fall-through in gm-bindings.ts). Unreachable today — every
        async catalog entry has its own message type — and listed so the
@@ -186,6 +195,17 @@
         return;
       }
       /* Fire-and-forget for the report types. */
+      var p = chrome.runtime.sendMessage(stamp(payload));
+      if (p && typeof p.catch === "function") p.catch(function () {});
+    } catch (_e) {}
+  }, true);
+
+  document.addEventListener(SYNC_MARKER, function (ev) {
+    try {
+      if (!ev || typeof ev.detail !== "string") return;
+      var payload = JSON.parse(ev.detail);
+      if (!payload || typeof payload !== "object") return;
+      if (ALLOWED.indexOf(payload.type) === -1) return;
       var p = chrome.runtime.sendMessage(stamp(payload));
       if (p && typeof p.catch === "function") p.catch(function () {});
     } catch (_e) {}

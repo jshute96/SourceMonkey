@@ -132,7 +132,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, listing-gated probing, containment |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
-| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge relaying sm:* + GM_* traffic between MAIN-world wrappers and the SW, in both directions |
+| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge relaying sm:* + GM_* traffic between MAIN-world wrappers and the SW, in both directions, plus a same-task DOM-event path for teardown flushes |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
@@ -177,6 +177,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
+| `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the MAIN-world CSP-blocked-style report |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/exclude-globs.spec.ts` | E2E for `@exclude`: excluded pages stay untouched, a later-added `@exclude` takes effect, plus a Chrome `update`-vs-globs probe |
 | `tests/e2e/include-only.spec.ts` | E2E for `@match`-less scripts: a glob-only `@include` injects and stays in its glob, plus a Chrome `includeGlobs` semantics probe |
@@ -284,6 +285,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |
 | `tests/e2e/gm-storage-types.spec.ts` | E2E: `Date`/`Map`/`Set`/`NaN`/binary/`Error` survive a reload, plain values stay untagged, pre-codec rows still read |
 | `tests/e2e/gm-storage-freshness.spec.ts` | E2E: fresh documents see the latest `GM_setValue` (same-tab nav, fresh tab, write-then-navigate race) |
+| `tests/e2e/gm-storage-teardown-main.spec.ts` | E2E: a MAIN-world `GM_setValue` right before a script-driven navigation or a tab close still reaches the next document |
 | `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
 | `tests/e2e/gm-unsafe-window.spec.ts` | E2E: `@grant unsafeWindow` reaches real page globals, GM_* works over the MAIN-world bridge (also for `@inject-into page`), and forged bridge calls are refused per world and per grant |
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
