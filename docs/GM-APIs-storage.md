@@ -142,7 +142,7 @@ When could this trigger:
   to hand the values over the bridge. See
   [MAIN-world storage](#main-world-storage) below.
 
-In every case the failure mode is a clear console error rather
+In every case the failure mode is a clear console message rather
 than a silently-misbehaving script.
 
 ## MAIN-world storage
@@ -150,14 +150,14 @@ than a silently-misbehaving script.
 A script that grants `unsafeWindow` runs in the page's own world (see
 [injection.md](injection.md#unsafewindow-forces-main-world)), and takes
 its storage grants with it. Same cache, same batching, same snapshot
-contract — only the transport differs, and that has three consequences.
+contract — only the transport differs, and that has consequences.
 
 - **The snapshot is gated.** MAIN world has no `chrome.runtime`, so
   the `sm:check-pending` request rides `wrapper-bridge.js`, where a
   hostile page could forge it. The SW hands `gmValues` back only for a
-  script that actually runs in MAIN world on the sending page — the set
-  whose values that page can already read out of the MAIN-world
-  `window.__SM_GM__`. A refusal is a missing snapshot, i.e. the hard
+  script that actually runs in MAIN world on the sending page and
+  granted a storage API — the set whose values that page can already
+  read out of the MAIN-world `window.__SM_GM__`. A refusal is a missing snapshot, i.e. the hard
   abort above.
 - **The page can read and write the cache.** `window.__SM_GM__` is a
   global in the page's realm. This is inherent to `@grant unsafeWindow`

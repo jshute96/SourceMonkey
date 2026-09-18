@@ -556,7 +556,8 @@ its own dispatch doesn't corrupt iteration.
     request carries it.
   - The check-pending handler runs every `__viaBridge` request through
     `bridgeMayActAs` before attaching `gmValues`: only a script that
-    actually runs in MAIN world on the sending page gets its snapshot.
+    actually runs in MAIN world on the sending page, with a storage
+    grant, gets its snapshot.
     That set is exactly the scripts whose values the page can already
     read out of the MAIN-world `__SM_GM__`, so the gate concedes
     nothing — and a USER_SCRIPT-world script is never in it.
@@ -1035,8 +1036,9 @@ world's `window`:
 TM lands in the same place from the other direction: it dispatches no
 real event either, so nothing outside its own sandbox `window` — not
 `unsafeWindow`, not `document` — can subscribe. Ours is a superset in
-one narrow way: `unsafeWindow` is a passthrough to the isolated
-`window`, which is the object we patch, so
+one narrow way: the runtime patches the `window` of whichever world
+the script runs in, and a script that grants `unsafeWindow` runs in
+MAIN world where `unsafeWindow === window`, so
 `unsafeWindow.addEventListener('urlchange', …)` does work here.
 `document.addEventListener('urlchange', …)` is dead in both.
 

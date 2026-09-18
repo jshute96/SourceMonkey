@@ -460,6 +460,27 @@ Adding any of these is a catalog entry + a body — nothing structural.
   legitimate script — fatal for a storage-granting one. Worth a
   cheaper, divergence-proof signal (e.g. keying off the tab's recorded
   `expected` set, or a per-document token minted at `sm:start`).
+- **Bridge gate and push stamping read the stored world, not the
+  live one.** `scriptWorld` / `bridgeMayActAs` answer from the current
+  row, but a document that loaded before an edit flipped the script's
+  world keeps running the old one until reload. USER_SCRIPT → MAIN:
+  the open isolated document's pushes are stamped MAIN and re-posted
+  into the page until reload. MAIN → USER_SCRIPT: the open MAIN
+  document's bridged calls are refused. Both self-heal on reload; the
+  per-document token above would fix both.
+- **MAIN-world transport detection keys on `chrome.runtime.sendMessage`
+  existing.** A page listed in another extension's
+  `externally_connectable` has it in MAIN world too; there the runtime
+  takes the direct transport and every SW call throws ("must specify an
+  Extension ID"). Detect the world by `chrome.runtime.id` (undefined on
+  a web page) in the runtime and the prelude's `send` / `awaitDecision`.
+- **A refused runtime pattern takes GM_* down for its whole world.**
+  The runtime registers on the union of its scripts' patterns, so one
+  pattern Chrome rejects (the case the rejection map exists for) fails
+  the runtime spec itself and every GM_* call in that world with it.
+  Retry a refused runtime spec at `<all_urls>` (the pre-scoping
+  fingerprint, not an outage), or drop patterns `matchPatternProblem`
+  flags from the union.
 - **MAIN-world storage flush at teardown.** A MAIN-world
   `GM_setValue` batch leaves as a postMessage the bridge relays in a
   later task, so a `pagehide` flush can be dropped where a

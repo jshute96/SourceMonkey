@@ -91,7 +91,7 @@ set TM's own bundled linter validates against, so anything else
 | Grant | Status | TM | VM | GM | Notes |
 |-------|:------:|:--:|:--:|:--:|-------|
 | `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script (matches TM/VM). `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
-| `unsafeWindow` | 🟡 | ✓ | ✓ |   | Emitted, but bound to the USER_SCRIPT world's own `window` — it does **not** reach the page's globals. See the row above. |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`; the grant moves the script to MAIN world to make that so. See [`unsafeWindow` and the execution world](#unsafewindow-and-the-execution-world). |
 | `window.onurlchange` | ✅ | ✓ |   |   | SPA navigation hook. `window.onurlchange === null` feature-detects; `window.addEventListener('urlchange', info => …)` and the `window.onurlchange = fn` slot both work. See below. VM has never implemented it (feature request closed unimplemented), so scripts already carry the `=== null` guard. |
 | `window.close` | ✅ | ✓ | ✓ (2.6.2+) |   | Closes the tab the script runs in, via the extension — the plain page API refuses to close a tab the script didn't open. See below. |
 | `window.focus` | ✅ | ✓ | ✓ (2.12.10+) |   | Selects this tab and raises (un-minimizing) its browser window, neither of which page JS can do. See below. |

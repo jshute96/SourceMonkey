@@ -397,4 +397,71 @@ test.describe('@grant unsafeWindow', () => {
     await expect(after.locator('body')).toHaveAttribute('data-sm-victim', 'original');
     await after.close();
   });
+
+  test('a page cannot drive an API a MAIN-world script never granted', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Being a MAIN-world script on the page is only half the gate. The
+    // "page could already call it" justification covers the bindings
+    // the script has, so a `@grant none` script matching the page must
+    // not become a handle for opening tabs, showing notifications, or
+    // starting downloads in the extension's name.
+    scriptsDir.write({
+      relativePath: 'plain.user.js',
+      meta: {
+        name: 'Plain',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['none'],
+      },
+      body: `document.documentElement.dataset.smPlain = '1';`,
+    });
+    // A script that needs the runtime + bridge in MAIN world, on a
+    // different page, so the bridge is registered on ours too.
+    scriptsDir.write({
+      relativePath: 'elsewhere.user.js',
+      meta: {
+        name: 'Elsewhere',
+        match: [`${fixtureServer.baseUrl}/${PAGE}?other`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow', 'GM_setValue'],
+      },
+      body: `GM_setValue('k', 1);`,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const detail = await sm.getCollectionWithScripts(added!.id);
+    const plainId = detail!.scripts.find((s) => s.relativePath === 'plain.user.js')!.id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(page.locator('html')).toHaveAttribute('data-sm-plain', '1');
+    const before = (await extensionContext.pages()).length;
+
+    // Forge a tab open as the @grant none script.
+    const reply = await page.evaluate(({ id, url }) => {
+      return new Promise<unknown>((resolve) => {
+        const rid = 'forge-' + Math.random().toString(36).slice(2);
+        const onMsg = (ev: MessageEvent): void => {
+          const d = ev.data as { __sm?: string; requestId?: string; reply?: unknown };
+          if (ev.source !== window || !d || d.__sm !== 'sourcemonkey-bridge-reply' || d.requestId !== rid) return;
+          window.removeEventListener('message', onMsg, true);
+          resolve(d.reply ?? null);
+        };
+        window.addEventListener('message', onMsg, true);
+        window.postMessage({
+          __sm: 'sourcemonkey-bridge',
+          requestId: rid,
+          payload: { type: 'sm:gm-tab-open', scriptId: id, requestId: rid, url, active: false },
+        }, '*');
+        setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
+      });
+    }, { id: plainId, url: `${fixtureServer.baseUrl}/${PAGE}?forged` });
+
+    expect(reply, 'bridge should reply to the forged GM call').not.toBeNull();
+    expect((reply as { ok?: unknown }).ok).toBe(false);
+    await page.waitForTimeout(300);
+    expect((await extensionContext.pages()).length).toBe(before);
+    await page.close();
+  });
 });

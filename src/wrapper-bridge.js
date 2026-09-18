@@ -7,7 +7,7 @@
    bridge runs in USER_SCRIPT world on the same page, listens for
    those messages, and forwards them to the SW.
 
-   Three flavors of traffic:
+   The traffic it carries:
      - Fire-and-forget reports (sm:start / sm:error / sm:swapped /
        sm:abandoned). The bridge calls chrome.runtime.sendMessage and
        silently swallows the returned promise.
@@ -18,9 +18,9 @@
        message keyed on the same requestId. The sender's listener
        matches on requestId and resolves its awaiter. The presence of
        `requestId` — not the payload type — is what selects this path.
-     - SW-originated pushes (sm:gm-value-update, sm:gm-xhr-event,
-       sm:gm-tab-closed, sm:gm-notification-event, sm:gm-menu-fire).
-       Those arrive on chrome.runtime.onMessage, which MAIN world
+     - SW-originated pushes (the PUSHED and PUSHED_ANY_WORLD lists
+       below: value updates, XHR / download / notification / tab
+       events, menu fires). Those arrive on chrome.runtime.onMessage, which MAIN world
        can't listen on, so we re-post them into the page as
        "sourcemonkey-bridge-push" for the MAIN runtime to dispatch.
 
@@ -69,12 +69,14 @@
        message the bridge forwards is stamped `__viaBridge:true` (see
        `stamp` below), and the SW honors a `__viaBridge` script-scoped
        request ONLY for a script that runs in MAIN world on the sending
-       page (see `bridgeMayActAs` in background.ts). Such a script's
-       GM surface is reachable from the page anyway — its
-       `window.__SM_GM__` is a global in the page's own realm — so the
-       gate hands out nothing the page couldn't already take, while
-       still refusing every USER_SCRIPT-world script and every
-       MAIN-world script that doesn't match this page.
+       page AND granted the API being exercised (see `bridgeMayActAs`
+       in background.ts). Such a script's GM surface is reachable from
+       the page anyway — its `window.__SM_GM__` is a global in the
+       page's own realm — so the gate hands out nothing the page
+       couldn't already take, while still refusing every
+       USER_SCRIPT-world script, every MAIN-world script that doesn't
+       match this page, and every API a matching script never granted
+       (a `@grant none` script has no GM surface to reach).
        The stamp is trustworthy because the page CANNOT call
        chrome.runtime.sendMessage itself (no chrome.runtime in MAIN
        world), so the only way a page-influenced message reaches the SW

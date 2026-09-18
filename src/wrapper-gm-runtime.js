@@ -1007,7 +1007,7 @@
 
   function requestResync(scriptId) {
     var s = stores[scriptId];
-    if (!s || !s.ready || s.resyncInFlight || !_sendMessage) return;
+    if (!s || !s.ready || s.resyncInFlight) return;
     var now = _now();
     /* Stamped on the attempt, not on success: a worker that is
        failing to answer shouldn't get asked once per visibility
@@ -1018,19 +1018,12 @@
     /* Captured BEFORE the send — see applyResyncSnapshot. */
     var writeSeqAt = s.writeSeq;
     var done = function () { s.resyncInFlight = false; };
-    try {
-      var p = _sendMessage({ type: "sm:gm-resync", scriptId: scriptId });
-      if (p && typeof p.then === "function") {
-        p.then(function (reply) {
-          done();
-          if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, writeSeqAt);
-        }, done);
-      } else {
-        done();
-      }
-    } catch (_rE) {
+    /* Over whichever transport this world has — a MAIN-world store
+       resyncs through the bridge like every other SW call. */
+    transportSend({ type: "sm:gm-resync", scriptId: scriptId }).then(function (reply) {
       done();
-    }
+      if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, writeSeqAt);
+    }, done);
   }
 
   function resyncListeningStores() {
@@ -1538,7 +1531,15 @@
         id: id,
         scriptId: scriptId,
         request: request,
-      }).catch(function (err) {
+      }).then(function (reply) {
+        /* Anything but an explicit ack is a refusal — the SW's bridge
+           gate replies `{ok:false, error}`, and the bridge's own
+           fallback when the SW is unreachable carries no `ok` at all.
+           Settle now rather than letting the TTL above do it. */
+        if (reply && reply.ok === true) return;
+        var why = (reply && reply.error) || "SourceMonkey did not accept the request";
+        dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] GM_xmlhttpRequest: " + why });
+      }, function (err) {
         /* The send itself failed (chrome.runtime not available).
            Synthesize an error event for the caller. */
         dispatchXhrEvent(id, { kind: "error", message: String(err && err.message || err) });
@@ -1691,11 +1692,14 @@
       }).then(function (reply) {
         if (reply && reply.ok && typeof reply.tabId === "number") {
           entry.tabId = reply.tabId;
-        } else if (reply && reply.error) {
-          /* SW couldn't create the tab — surface the error so a
-             userscript debugging an unexpected fast-close has a
-             signal, then synthesize the close so onclose fires. */
-          try { console.info("[SourceMonkey] GM_openInTab failed:", reply.error); } catch (_e) {}
+        } else {
+          /* SW couldn't create the tab, refused to, or was never
+             reached (the bridge's fallback reply carries no `ok`) —
+             surface the reason so a userscript debugging an
+             unexpected fast-close has a signal, then synthesize the
+             close so onclose fires. */
+          var why = (reply && reply.error) || "SourceMonkey did not accept the request";
+          try { console.info("[SourceMonkey] GM_openInTab failed:", why); } catch (_e) {}
           dispatchTabClose(requestId);
         }
       }, function (err) {
@@ -2002,9 +2006,17 @@
           saveAs: d.saveAs,
           timeout: d.timeout,
           wantsProgress: !!d.onprogress,
-        }).catch(function (err) {
-          /* Couldn't even reach the SW (no chrome.runtime — e.g. a
-             MAIN-world script). TM calls that `not_supported`. */
+        }).then(function (reply) {
+          /* Refused by the SW's bridge gate, or never reached it (the
+             bridge's fallback reply carries no `ok`). Settle now. */
+          if (reply && reply.ok === true) return;
+          dispatchDownloadEvent(requestId, {
+            kind: "error",
+            error: "not_supported",
+            details: { message: (reply && reply.error) || "SourceMonkey did not accept the request" },
+          });
+        }, function (err) {
+          /* Couldn't even reach the SW. TM calls that `not_supported`. */
           dispatchDownloadEvent(requestId, {
             kind: "error",
             error: "not_supported",

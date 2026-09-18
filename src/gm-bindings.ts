@@ -541,7 +541,7 @@ export function emitGmBindings(
     // @run-at callback so the user body never runs. The user can
     // recover by reloading.
     //
-    // Three ways to get here, which is why the message doesn't assert
+    // Several ways to get here, which is why the message doesn't assert
     // one cause: the SW was unreachable past the wrapper's safety
     // timeout, `handleCheckPending` errored, or — for a MAIN-world
     // script only — the SW's `bridgeMayActAs` gate refused to hand the

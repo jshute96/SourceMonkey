@@ -80,7 +80,7 @@ import {
   WRAPPER_GM_RUNTIME,
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
-import { findApi, resolveGrants } from './gm-api-catalog.js';
+import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
 import { scanAllStorage } from './storage-scan.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
@@ -262,15 +262,26 @@ export function resolveWorld(header: ParsedHeader | null | undefined): Injection
 // all) needs no runtime — which is what keeps `window.__SM_GM__` off the
 // page in the overwhelmingly common `@grant none` MAIN-world case.
 export function needsGmRuntime(header: ParsedHeader | null | undefined): boolean {
-  if (!header) return false;
+  for (const subsystem of grantedSubsystems(header)) {
+    if (subsystem !== 'info' && subsystem !== 'unsafe-window') return true;
+  }
+  return false;
+}
+
+// The catalog subsystems the script's `@grant` lines reach — the set the
+// SW's bridge gate (`bridgeMayActAs` in background.ts) checks a relayed
+// request against, so a page can only act for a script through APIs
+// that script actually has. `@grant none` and unknown names contribute
+// nothing.
+export function grantedSubsystems(header: ParsedHeader | null | undefined): Set<ApiSubsystem> {
+  const out = new Set<ApiSubsystem>();
+  if (!header) return out;
   const { granted } = resolveGrants(getValues(header, 'grant'));
   for (const name of granted) {
     const spec = findApi(name);
-    if (!spec) continue;
-    if (spec.subsystem === 'info' || spec.subsystem === 'unsafe-window') continue;
-    return true;
+    if (spec) out.add(spec.subsystem);
   }
-  return false;
+  return out;
 }
 
 function isRegexLiteral(s: string): boolean {
@@ -1923,6 +1934,8 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   const nextScopes = new Map(
     buildGmRuntimeSpecs(gmRuntimeScope).map((spec) => [spec.id, gmRuntimeFingerprint(spec)] as const),
   );
+  // The bridge has no fingerprint, so for it both `get`s are undefined
+  // and the comparison holds — presence alone decides, as intended.
   const alreadyPlaced = {
     has: (id: string) => present.has(id) && state.gmRuntimeScopes.get(id) === nextScopes.get(id),
   };

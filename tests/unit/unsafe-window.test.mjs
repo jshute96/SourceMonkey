@@ -16,6 +16,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 // Same chrome stub shape as injector.test.mjs — buildRegistrationSpec
 // reaches into chrome.storage for the per-script log.
@@ -387,27 +388,40 @@ test('generated wrappers: runtime and bridge agree on the postMessage markers', 
   }
 });
 
+// The message types each side names, pulled from the un-minified
+// sources rather than listed here — a list would go stale the moment a
+// new API landed, and a type the runtime sends but the bridge doesn't
+// allowlist fails silently in MAIN world (the bridge just drops it).
+const RUNTIME_SRC = readFileSync(new URL('../../src/wrapper-gm-runtime.js', import.meta.url), 'utf8');
+const BRIDGE_SRC = readFileSync(new URL('../../src/wrapper-bridge.js', import.meta.url), 'utf8');
+const smTypes = (src) => new Set(src.match(/"sm:[a-z-]+"/g).map((m) => JSON.parse(m)));
+// Push types are the ones the runtime compares an incoming `msg.type`
+// against; everything else it names is a request it originates.
+const runtimePushTypes = new Set(
+  [...RUNTIME_SRC.matchAll(/msg\.type\s*[!=]==\s*("sm:[a-z-]+")/g)].map((m) => JSON.parse(m[1])),
+);
+const runtimeRequestTypes = [...smTypes(RUNTIME_SRC)].filter((t) => !runtimePushTypes.has(t));
+const bridgeList = (name) => {
+  const m = BRIDGE_SRC.match(new RegExp(`var ${name} = \\[([^\\]]*)\\]`));
+  assert.ok(m, `bridge has no ${name} list`);
+  return new Set(m[1].match(/"sm:[a-z-]+"/g).map((t) => JSON.parse(t)));
+};
+
 test('generated wrappers: the bridge relays every GM_* request type the runtime sends', () => {
-  // Request types the runtime originates. If a new one is added to the
-  // runtime without being allowlisted in the bridge, MAIN-world calls
-  // fail silently — the bridge just drops them.
-  for (const type of [
-    'sm:gm-batch-write', 'sm:gm-xhr-start', 'sm:gm-xhr-abort',
-    'sm:gm-tab-open', 'sm:gm-tab-close', 'sm:gm-notification-show',
-    'sm:gm-menu-register', 'sm:gm-menu-unregister', 'sm:gm-log',
-  ]) {
-    assert.ok(WRAPPER_GM_RUNTIME.includes(type), `runtime does not send ${type}`);
-    assert.ok(WRAPPER_BRIDGE.includes(type), `bridge does not relay ${type}`);
+  const allowed = bridgeList('ALLOWED');
+  assert.ok(runtimeRequestTypes.length >= 10, 'extraction found the runtime\'s request types');
+  for (const type of runtimeRequestTypes) {
+    assert.ok(allowed.has(type), `bridge does not relay ${type}`);
+    assert.ok(WRAPPER_GM_RUNTIME.includes(type), `minified runtime lost ${type}`);
   }
 });
 
 test('generated wrappers: the bridge pushes back every SW-originated type the runtime handles', () => {
-  for (const type of [
-    'sm:gm-value-update', 'sm:gm-xhr-event', 'sm:gm-tab-closed',
-    'sm:gm-notification-event', 'sm:gm-menu-fire',
-  ]) {
-    assert.ok(WRAPPER_GM_RUNTIME.includes(type), `runtime does not handle ${type}`);
-    assert.ok(WRAPPER_BRIDGE.includes(type), `bridge does not push ${type}`);
+  const pushed = new Set([...bridgeList('PUSHED'), ...bridgeList('PUSHED_ANY_WORLD')]);
+  assert.ok(runtimePushTypes.size >= 5, 'extraction found the runtime\'s push handlers');
+  for (const type of runtimePushTypes) {
+    assert.ok(pushed.has(type), `bridge does not push ${type}`);
+    assert.ok(WRAPPER_GM_RUNTIME.includes(type), `minified runtime lost ${type}`);
   }
 });
 

@@ -655,9 +655,13 @@ whole `GM_*` surface works there too.
 - What we do bound is the **service worker** side.
   `bridgeMayActAs` in `src/background.ts` honors a bridge-relayed,
   script-scoped request only when the named script actually runs in
-  MAIN world on the sending frame's URL — i.e. only for scripts whose
-  GM surface the page could already reach directly. It fails closed on
-  an unknown id, a non-matching URL, or a missing sender URL.
+  MAIN world on the sending frame's URL **and** granted the API the
+  request exercises (in catalog-subsystem terms: `tab` for
+  `sm:gm-tab-open`, `storage` for a value read or write, …) — i.e.
+  only through GM surface the page could already reach directly. A
+  `@grant none` script matching the page is not a handle for opening
+  tabs or starting downloads. It fails closed on an unknown id, a
+  non-matching URL, a missing sender URL, or an ungranted API.
 - The **return** direction needs the same discipline. A push the bridge
   re-posts becomes readable by the page, and pushes carry real payloads
   — a script's stored values on `sm:gm-value-update`, a cross-origin
@@ -732,7 +736,8 @@ What crosses it:
   replies, even on failure, so the caller's awaiter settles instead of
   running out its timeout.
 - **SW-originated pushes** — `sm:gm-xhr-event`, `sm:gm-value-update`,
-  `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`.
+  `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
+  `sm:gm-download-event` (the bridge's `PUSHED` list is authoritative).
   Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
   world can listen on, so the bridge re-posts them into the page as
   `sourcemonkey-bridge-push`.
@@ -770,7 +775,7 @@ Trust model:
   `__viaBridge:true` on every message it relays (set last, so the page
   can't pre-set it false), and the SW's `bridgeMayActAs` honors such a
   request only for a script that runs in MAIN world on the sending
-  page. Reading a USER_SCRIPT-world script's GM values stays blocked,
+  page and granted the API being called. Reading a USER_SCRIPT-world script's GM values stays blocked,
   which is the original read-leak fix. See
   [`GM_*` in MAIN world](#gm_-in-main-world), `docs/GM-APIs.md`, and
   `tests/e2e/gm-storage-read-leak.spec.ts`.
@@ -841,7 +846,9 @@ into `dist/`). The pieces:
   relay registered separately when any MAIN-world script is active
   (see [MAIN-world telemetry — the bridge](#main-world-telemetry--the-bridge)).
 - `src/wrapper-gm-runtime.js` → `WRAPPER_GM_RUNTIME` — shared
-  USER_SCRIPT-world runtime for `GM_*` APIs. See
+  per-world runtime for `GM_*` APIs, registered in USER_SCRIPT and/or
+  MAIN world as the granting scripts need (see
+  [GM_* in MAIN world](#gm_-in-main-world)). See
   [GM-APIs.md](GM-APIs.md).
 
 Why one line per file: per-script wrap entries (the require and
