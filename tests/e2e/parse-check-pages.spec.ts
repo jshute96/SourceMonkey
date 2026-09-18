@@ -144,18 +144,18 @@ test.describe('parse check on page-driven paths', () => {
     // userscript at all" hides the button.
     await expect(page.locator('#install-btn')).toBeVisible();
     await expect(page.locator('#install-btn')).toBeEnabled();
-    // The install banner is still true and still on screen.
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    // The install callout is still on screen alongside the warning.
+    await expect(page.locator('#install-callout')).toBeVisible();
     await page.close();
   });
 
   test('the Update preview warns too, and says "updating"', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Previewing a location we already hold offers Update instead of
-    // Install, and it rebuilds the row just the same — so the same
+    // Previewing a location we already hold puts an Update on that
+    // copy's row, and it rebuilds the row just the same — so the same
     // warning is owed. The wording has to follow the button: "installing
-    // it will store it as INVALID" beside an **Update now** button reads
+    // it will store it as INVALID" beside an **Update** button reads
     // as being about some other action.
     fs.writeFileSync(path.join(scriptsDir.path, 'lib.js'), 'const greet = 1;');
     const file = scriptsDir.write({
@@ -172,7 +172,7 @@ test.describe('parse check on page-driven paths', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
-    await expect(page.locator('#update-btn')).toBeVisible();
+    await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toBeVisible();
     await expect(page.locator('#banner-slot')).toContainText('already installed');
     await expect(page.locator('#banner-slot')).toContainText('syntax error');
     await expect(page.locator('#banner-slot')).toContainText('Updating it will store it as INVALID');
@@ -200,7 +200,7 @@ test.describe('parse check on page-driven paths', () => {
       await page.goto(
         `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(url)}`,
       );
-      await expect(page.locator('#update-btn')).toBeVisible();
+      await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toBeVisible();
       await expect(page.locator('#banner-slot')).toContainText('syntax error');
       await expect(page.locator('#banner-slot')).toContainText(
         'leave the installed copy running',
@@ -231,7 +231,7 @@ test.describe('parse check on page-driven paths', () => {
       await page.goto(
         `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(url)}`,
       );
-      await expect(page.locator('#update-btn')).toBeVisible();
+      await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toBeVisible();
       await expect(page.locator('#banner-slot')).toContainText('syntax error');
       await expect(page.locator('#banner-slot')).toContainText('Updating it will store it as INVALID');
       await expect(page.locator('#banner-slot')).not.toContainText('keeps running');
@@ -383,7 +383,7 @@ test.describe('parse check on page-driven paths', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
     await expect(page.locator('#install-btn')).toBeEnabled();
     // Anchored on the check finishing, not on a guessed delay: a
     // negative assertion that runs before the fetches and the compile

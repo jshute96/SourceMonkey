@@ -14,6 +14,35 @@ export interface SmApi {
   // tests can keep using `result?.id` and `result?.path` directly.
   // Returns null on a duplicate.
   addCollection(path: string): Promise<{ id: string; path: string } | null>;
+  // The collection dialog's entry points. `createCollection` makes a
+  // named scripts collection or a location collection; `installScript`
+  // puts one `.user.js` into a specific container (or the built-in
+  // default for its scheme). Same unwrapping as `addCollection`.
+  createCollection(
+    spec:
+      | { kind: 'scripts'; name: string; localFiles?: boolean }
+      | { kind: 'location'; path: string; name?: string; localFiles?: boolean },
+  ): Promise<{ id: string; path: string } | null>;
+  installScript(
+    location: string,
+    target: { collectionId: string } | { schemeDefault: true },
+  ): Promise<{ id: string; path: string } | null>;
+  // Move an installed script from one scripts collection to another.
+  // Resolves to the moved row, or null when the destination already
+  // has it. Not unwrapped — it returns a script row, not a collection.
+  moveScript(
+    scriptId: string,
+    target: { collectionId: string } | { schemeDefault: true },
+  ): Promise<StoredScriptLike | null>;
+  // Remove one installed script row, as the viewer's trash can does.
+  removeScript(scriptId: string): Promise<void>;
+  // Make every collection's `scriptIds` agree with the `collectionId`
+  // on each script row. Resolves to how many listings it corrected.
+  reconcileScriptMembership(): Promise<number>;
+  setCollectionOptions(
+    id: string,
+    options: { displayName?: string; localFiles?: boolean },
+  ): Promise<unknown>;
   removeCollection(id: string): Promise<void>;
   getCollections(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
   getCollectionWithScripts(id: string): Promise<{
@@ -33,7 +62,17 @@ export interface SmApi {
   updateScript(id: string, mode: Mode, probe?: 'force' | 'if-stale'): Promise<unknown>;
   updateAllCollections(mode: Mode): Promise<unknown>;
   getTabState(tabId: number): Promise<TabStateSnapshot>;
+  // The SW's live view of the `.user.js` capture toggle. A test that
+  // flips the option polls this before navigating: the storage write
+  // resolving is not the same as the SW's `storage.onChanged` listener
+  // having run.
+  isCaptureEnabled(): Promise<boolean>;
   resetAllState(): Promise<void>;
+  // Forget when each script was last checked, so the next
+  // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.
+  // Needed by tests that drive two checks of the same script inside
+  // that window.
+  clearUpdateRateLimit(): Promise<void>;
   // `kind` says which path the sync took — see
   // docs/injection.md#the-sync-is-incremental. Both leave the same
   // registration set behind, so it is the only way a test can pin one.
@@ -42,12 +81,17 @@ export interface SmApi {
   getScriptLog(scriptId: string): Promise<{
     timestamp: number;
     level: 'info' | 'warning' | 'error';
+    state?: LoadStateLike;
+    resetsLogLevel?: boolean;
     source: string;
     tabId?: number;
     message: string;
     location?: DiagnosticLocationLike;
   }[]>;
   clearScriptLog(scriptId: string): Promise<void>;
+  // The `loglevel:` sentinel behind WARNING / ERROR — only
+  // script-originated entries move it (see docs/script-log.md).
+  getMaxLogLevel(scriptId: string): Promise<'info' | 'warning' | 'error' | undefined>;
   // Every PERSISTED GM value for a script, excluding the SW's in-flight
   // overlay. The wrapper's write is batched, so this is what a test
   // waits on instead of pausing.
@@ -56,6 +100,7 @@ export interface SmApi {
   // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {
     level: 'info' | 'warning' | 'error';
+    state?: LoadStateLike;
     source: string;
     message: string;
     tabId?: number;
@@ -104,6 +149,13 @@ export interface SmApi {
     scriptId: string,
     commandId: string,
   ): Promise<{ ok: boolean; error?: string }>;
+  // Stands in for a click on the menu's "Reload page with no
+  // userscripts" row: reloads the tab with every wrapper told to skip.
+  reloadWithoutScripts(tabId: number): Promise<void>;
+  // Stands in for a toolbar-icon click in the given window (Playwright
+  // can't click chrome.action). Pass null for the "no gesture window"
+  // fallback path.
+  openCollectionsPage(windowId: number | null): Promise<void>;
   // Fault-injection knob used by gm-storage-freshness.spec.ts to
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.
@@ -140,6 +192,7 @@ export interface SmApi {
 export interface ActionMenuPlanLike {
   top: ActionMenuScriptLike[];
   more: ActionMenuScriptLike[];
+  reloadWithoutScripts: boolean;
 }
 
 export interface ActionMenuScriptLike {
@@ -217,6 +270,9 @@ export interface DiagnosticLocationLike {
   column?: number;
 }
 
+// `LoadState` from src/script-display.ts, same reasoning.
+export type LoadStateLike = 'ok' | 'invalid' | 'rejected' | 'missing' | 'refresh-failed' | 'outdated';
+
 // `ParseVerdict` from src/parse-check-protocol.ts, same reasoning.
 export interface ParseVerdictLike {
   status: 'ok' | 'syntax-error' | 'unknown';
@@ -273,12 +329,12 @@ export function makeSwApi(getServiceWorker: () => Promise<Worker>): SmApi {
       // container-reuse vs new-collection distinction). Tests just want
       // the resulting collection row; unwrap here so the SmApi contract
       // stays a thin pass-through.
-      if (prop === 'addCollection') {
+      if (prop === 'addCollection' || prop === 'createCollection' || prop === 'installScript') {
         return async (...args: unknown[]) => {
           const result = await call<{
             kind: string;
             collection: { id: string; path: string };
-          } | null>('addCollection', args);
+          } | null>(prop, args);
           return result?.collection ?? null;
         };
       }
@@ -340,6 +396,45 @@ export async function waitForGmValues(
 }
 
 // Convenience: wait until a tab's badge state matches `predicate`.
+// The active tab's numeric `chrome.tabs.Tab.id` — the same ID the
+// action APIs take as `tabId`. Playwright doesn't expose it on Page,
+// so every badge-watching spec asks the SW right after opening a page.
+export async function activeTabId(
+  getServiceWorker: () => Promise<Worker>,
+): Promise<number> {
+  const sw = await getServiceWorker();
+  return sw.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id) throw new Error('no active tab');
+    return tab.id;
+  });
+}
+
+// Does the snapshot's badge carry this `#rrggbb`?
+// `chrome.action.getBadgeBackgroundColor` returns [r, g, b, a].
+export function hasBadgeColor(snapshot: TabStateSnapshot, hex: string): boolean {
+  if (!Array.isArray(snapshot.badgeColor)) return false;
+  const [r, g, b] = snapshot.badgeColor as number[];
+  return (
+    r === parseInt(hex.slice(1, 3), 16) &&
+    g === parseInt(hex.slice(3, 5), 16) &&
+    b === parseInt(hex.slice(5, 7), 16)
+  );
+}
+
+// Every stored script, across every collection, in collection order.
+// The SW test surface exposes collections and their scripts, not a flat
+// list, so every test that wants "the row for a.user.js" walks the same
+// two calls.
+export async function allScripts(api: SmApi): Promise<StoredScriptLike[]> {
+  const out: StoredScriptLike[] = [];
+  for (const collection of await api.getCollections()) {
+    const withScripts = await api.getCollectionWithScripts(collection.id);
+    out.push(...(withScripts?.scripts ?? []));
+  }
+  return out;
+}
+
 export async function waitForTabState(
   api: SmApi,
   tabId: number,

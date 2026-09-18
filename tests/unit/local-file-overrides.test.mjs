@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import {
   _setLocalRootsForTests,
   localFileCandidates,
+  presentLocalFileCandidates,
   localSearchRoots,
   parseLocalRootLines,
   rootsFromText,
@@ -43,19 +44,96 @@ function fakeFailure(errorMessage = 'The file may not exist, or may not be reada
 
 // ---------- localSearchRoots ----------
 
+// The two scopes with no collection root in play — the shape the
+// viewer's preview and a container collection's scripts get.
+const ON = { enabled: true };
+const OFF = { enabled: false };
+
+// A collection whose root is two levels above the script, the layout a
+// repo of userscripts uses: scripts under `sites/<host>/`, shared
+// libraries under `lib/`.
+const NESTED_SCRIPT_URL = 'file:///home/me/repo/sites/example.com/foo.user.js';
+const NESTED_SCRIPT_DIR = 'file:///home/me/repo/sites/example.com/';
+const REPO_ROOT = 'file:///home/me/repo/';
+
 test('localSearchRoots: a local script gets its own folder', () => {
-  assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+  assert.deepEqual(localSearchRoots(SCRIPT_URL, ON), [SCRIPT_DIR]);
 });
 
 test('localSearchRoots: disabled means no roots at all', () => {
-  assert.deepEqual(localSearchRoots(SCRIPT_URL, false), []);
+  assert.deepEqual(localSearchRoots(SCRIPT_URL, OFF), []);
 });
 
 // The load-bearing safety rule: inference is for locally-loaded scripts
 // only, so an http(s)-hosted script can never reach the filesystem.
 test('localSearchRoots: an http-loaded script never gets roots', () => {
-  assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', true), []);
-  assert.deepEqual(localSearchRoots('', true), []);
+  assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', ON), []);
+  assert.deepEqual(localSearchRoots('', ON), []);
+});
+
+// The point of the collection root: a script nested inside the tree the
+// user added can see a shared `lib/` that its own folder never would,
+// because the search never climbs.
+test('localSearchRoots: the collection root follows the script\'s own folder', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: '/home/me/repo' }),
+    [NESTED_SCRIPT_DIR, REPO_ROOT],
+  );
+});
+
+// A manifest names a file; the tree its entries resolve against is the
+// file's own directory.
+test('localSearchRoots: a manifest collection contributes its parent directory', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, {
+      enabled: true,
+      collectionPath: '/home/me/repo/script_manifest.json',
+    }),
+    [NESTED_SCRIPT_DIR, REPO_ROOT],
+  );
+});
+
+// A script at the top of its collection already HAS the root as its own
+// folder — one entry, not two.
+test('localSearchRoots: a collection root equal to the script folder is not repeated', () => {
+  assert.deepEqual(
+    localSearchRoots(SCRIPT_URL, { enabled: true, collectionPath: '/home/me/scripts' }),
+    [SCRIPT_DIR],
+  );
+});
+
+// Container collections aggregate individually added scripts that share
+// no tree, so their synthetic path contributes nothing.
+test('localSearchRoots: a container collection contributes no root', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: 'container:file' }),
+    [NESTED_SCRIPT_DIR],
+  );
+});
+
+// The `file://` gate covers the collection root too: an http(s)
+// collection is not a local tree, and its scripts aren't local either.
+test('localSearchRoots: an http collection contributes no root', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, {
+      enabled: true,
+      collectionPath: 'https://example.com/scripts/',
+    }),
+    [NESTED_SCRIPT_DIR],
+  );
+});
+
+// `StoredCollection.path` holds a `file://` URL for inputs the
+// canonicalizer leaves in URL form, so the root has to come out of
+// either spelling the same way.
+test('localSearchRoots: a file:// collection path yields the same root', () => {
+  assert.deepEqual(
+    localSearchRoots(NESTED_SCRIPT_URL, {
+      enabled: true,
+      collectionPath: 'file:///home/me/repo',
+    }),
+    [NESTED_SCRIPT_DIR, REPO_ROOT],
+  );
 });
 
 // ---------- Configured roots ----------
@@ -74,13 +152,17 @@ function withRoots(paths, fn) {
   }
 }
 
-test('localSearchRoots: configured roots follow the script\'s own folder', () => {
+test('localSearchRoots: configured roots follow the collection root', () => {
   withRoots(['/home/me/dev/lib', '/opt/shared'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [
-      SCRIPT_DIR,
-      'file:///home/me/dev/lib/',
-      'file:///opt/shared/',
-    ]);
+    assert.deepEqual(
+      localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: '/home/me/repo' }),
+      [
+        NESTED_SCRIPT_DIR,
+        REPO_ROOT,
+        'file:///home/me/dev/lib/',
+        'file:///opt/shared/',
+      ],
+    );
   });
 });
 
@@ -88,7 +170,18 @@ test('localSearchRoots: configured roots follow the script\'s own folder', () =>
 // too should not produce a duplicate (and a duplicated probe).
 test('localSearchRoots: a configured root equal to the script folder is not repeated', () => {
   withRoots(['/home/me/scripts'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, ON), [SCRIPT_DIR]);
+  });
+});
+
+// The collection root is already in the list by the time configured
+// roots are appended, so listing it globally too must not duplicate it.
+test('localSearchRoots: a configured root equal to the collection root is not repeated', () => {
+  withRoots(['/home/me/repo'], () => {
+    assert.deepEqual(
+      localSearchRoots(NESTED_SCRIPT_URL, { enabled: true, collectionPath: '/home/me/repo' }),
+      [NESTED_SCRIPT_DIR, REPO_ROOT],
+    );
   });
 });
 
@@ -96,13 +189,13 @@ test('localSearchRoots: a configured root equal to the script folder is not repe
 // nothing, however many roots are set.
 test('localSearchRoots: configured roots do not apply to an http-loaded script', () => {
   withRoots(['/home/me/dev/lib'], () => {
-    assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', true), []);
+    assert.deepEqual(localSearchRoots('https://example.com/foo.user.js', ON), []);
   });
 });
 
 test('localSearchRoots: the per-collection opt-out also disables configured roots', () => {
   withRoots(['/home/me/dev/lib'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, false), []);
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, OFF), []);
   });
 });
 
@@ -131,7 +224,7 @@ test('parseLocalRootLines: rejects relative paths and http URLs', () => {
   for (const bad of ['dev/lib', '~/dev', 'https://example.com/lib', 'C:\\lib']) {
     const entry = parseLocalRootLines(bad).at(0);
     assert.equal(entry.url, undefined, bad);
-    assert.match(entry.error, /^A local file root must be an absolute path/, bad);
+    assert.match(entry.error, /^Local file root must be an absolute path/, bad);
   }
 });
 
@@ -173,7 +266,7 @@ test('parseLocalRootLines: a typed path containing %2f is escaped, not rejected'
 // nothing may be generated under a root that never parsed.
 test('localSearchRoots: a rejected root never reaches the search list', () => {
   withRoots(['file:///a/b#frag'], () => {
-    assert.deepEqual(localSearchRoots(SCRIPT_URL, true), [SCRIPT_DIR]);
+    assert.deepEqual(localSearchRoots(SCRIPT_URL, ON), [SCRIPT_DIR]);
   });
 });
 
@@ -326,15 +419,110 @@ test('localFileCandidates: a dotted host cannot climb or duplicate', () => {
   );
 });
 
+// ---------- presentLocalFileCandidates ----------
+
+// The gate reads each root's directory listing and drops candidates
+// whose first segment isn't in it. A pre-filled `DirectoryListingCache`
+// stands in for the read: `listDirectory` takes a cache hit without
+// touching the filesystem, which is what lets this run outside Chrome.
+const ROOT = 'file:///home/me/files/';
+function listingCache(entries) {
+  return new Map([['/home/me/files', Promise.resolve(entries)]]);
+}
+
+test('presentLocalFileCandidates: keeps only candidates whose first segment is listed', async () => {
+  const cache = listingCache([
+    { name: 'lib', isDir: true },
+    { name: 'util.js', isDir: false },
+  ]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://cdn.example.com/a/lib/util.js', [ROOT], cache),
+    [`${ROOT}lib/util.js`, `${ROOT}util.js`],
+  );
+});
+
+test('presentLocalFileCandidates: the entry kind has to match the segment', async () => {
+  // `lib` is a FILE here, so `<root>/lib/util.js` can't exist; and
+  // `util.js` is a directory, so it can't be the file itself.
+  const cache = listingCache([
+    { name: 'lib', isDir: false },
+    { name: 'util.js', isDir: true },
+  ]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://cdn.example.com/lib/util.js', [ROOT], cache),
+    [],
+  );
+});
+
+test('presentLocalFileCandidates: the listing name is the decoded segment', async () => {
+  const cache = listingCache([{ name: 'my lib', isDir: true }]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://cdn.example.com/my%20lib/util.js', [ROOT], cache),
+    [`${ROOT}my%20lib/util.js`],
+  );
+});
+
+test('presentLocalFileCandidates: a root that cannot be listed keeps every candidate', async () => {
+  const cache = listingCache([{ name: 'lib', isDir: true }]);
+  const url = 'https://cdn.example.com/lib/util.js';
+  // A cached failure for one root, an EMPTY listing for another (which
+  // is also what an unrecognized listing format parses to), and a
+  // third root with no cache entry at all — Node's fetch can't read
+  // file:// URLs, so that read fails too. All three fall through to
+  // the full candidate list, in order.
+  const rejected = Promise.reject(new Error('Could not read'));
+  rejected.catch(() => {});
+  cache.set('/home/me/other', rejected);
+  cache.set('/home/me/empty', Promise.resolve([]));
+  const roots = [ROOT, 'file:///home/me/other/', 'file:///home/me/empty/', 'file:///home/me/missing/'];
+  assert.deepEqual(
+    await presentLocalFileCandidates(url, roots, cache),
+    localFileCandidates(url, roots).filter((c) => !c.startsWith(ROOT) || c === `${ROOT}lib/util.js`),
+  );
+});
+
+// A host of `.` makes `<root>/./x.js` normalize to `<root>/x.js`; the
+// gate has to see the normalized first segment (`x.js`, a file), not
+// the `.` the listing never contains.
+test('presentLocalFileCandidates: gates on the normalized first segment', async () => {
+  const cache = listingCache([{ name: 'x.js', isDir: false }]);
+  assert.deepEqual(
+    await presentLocalFileCandidates('https://./x.js', [ROOT], cache),
+    [`${ROOT}x.js`],
+  );
+});
+
+test('presentLocalFileCandidates: a failed root is listed once per cache, not once per call', async () => {
+  const cache = new Map();
+  const url = 'https://cdn.example.com/lib/util.js';
+  // No cache entry, so `listDirectory` reaches for the filesystem and
+  // Node's fetch rejects. `listDirectory` evicts that; the gate's own
+  // memo is what stops the second call from trying again.
+  const missing = 'file:///home/me/missing/';
+  await presentLocalFileCandidates(url, [missing], cache);
+  const poison = Promise.resolve([{ name: 'nothing', isDir: false }]);
+  cache.set('/home/me/missing', poison);
+  // A listing that would rule everything out is never consulted: the
+  // root is remembered as unlistable for the life of this cache.
+  assert.deepEqual(
+    await presentLocalFileCandidates(url, [missing], cache),
+    localFileCandidates(url, [missing]),
+  );
+});
+
 // ---------- collectionSupportsLocalFiles ----------
 
-test('collectionSupportsLocalFiles: local paths yes, http collections no', () => {
+// Every container qualifies: a scripts collection can hold local
+// scripts whatever its default scheme, and the per-script `file://`
+// gate is what actually decides.
+test('collectionSupportsLocalFiles: local paths and every container yes, http collections no', () => {
   assert.equal(collectionSupportsLocalFiles('/home/me/scripts'), true);
   assert.equal(collectionSupportsLocalFiles('file:///home/me/scripts'), true);
   assert.equal(collectionSupportsLocalFiles('container:file'), true);
   assert.equal(collectionSupportsLocalFiles('https://example.com/script_manifest.json'), false);
-  assert.equal(collectionSupportsLocalFiles('container:http'), false);
-  assert.equal(collectionSupportsLocalFiles('container:github'), false);
+  assert.equal(collectionSupportsLocalFiles('container:http'), true);
+  assert.equal(collectionSupportsLocalFiles('container:github'), true);
+  assert.equal(collectionSupportsLocalFiles('container:0d3d6b2e-1111-4222-8333-444455556666'), true);
 });
 
 // ---------- attachFiles with localRoots ----------

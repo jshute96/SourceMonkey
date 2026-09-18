@@ -137,9 +137,11 @@ test('resolveScriptResource: rejects percent-encoded `..` (containment-based)', 
     resolveScriptResource('%2e%2e/icon.png', 'file:///home/me/scripts/foo.user.js'),
     null,
   );
-  assert.equal(
+  // Against a remote script it normalizes the same way, but climbing
+  // is allowed there, so it simply resolves to the parent directory.
+  assert.deepEqual(
     resolveScriptResource('%2e%2e/icon.png', 'https://example.com/scripts/foo.user.js'),
-    null,
+    { kind: 'http', url: 'https://example.com/icon.png' },
   );
   // Mixed case + nested: `a/%2E%2e` normalizes to `a/..` which net-
   // resolves back into the parent dir — still confined, so allowed.
@@ -182,12 +184,13 @@ test('resolveScriptResource: deeply-nested encoded escape is rejected', () => {
   );
 });
 
-test('resolveScriptResource: rejects host-absolute paths', () => {
-  // Leading `/` would resolve to the host root for http and to the
-  // filesystem root for file:// — both escape the script's parent.
-  assert.equal(
+test('resolveScriptResource: a host-absolute path is the host root remotely, rejected locally', () => {
+  // Leading `/` resolves to the host root for http — a fine thing for a
+  // published script to name — and to the filesystem root for file://,
+  // which is exactly what containment exists to stop.
+  assert.deepEqual(
     resolveScriptResource('/icon.png', 'https://example.com/scripts/foo.user.js'),
-    null,
+    { kind: 'http', url: 'https://example.com/icon.png' },
   );
   assert.equal(
     resolveScriptResource('/etc/passwd', 'file:///home/me/scripts/foo.user.js'),
@@ -262,6 +265,40 @@ test('resolveScriptResourceDetailed: an escaping relative path and a bad scheme 
   // The scheme travels with the reason so the message can name what
   // the author actually wrote.
   assert.equal(scheme.scheme, 'ftp:');
+});
+
+test('resolveScriptResourceDetailed: a remote script may climb out of its own directory', () => {
+  // Containment exists to keep a local script inside its own tree. A
+  // script served over http(s) can already name any absolute URL, so
+  // the same rule bought nothing there and broke the ordinary
+  // `scripts/foo.user.js` + `lib/util.js` repo layout that
+  // Violentmonkey resolves fine.
+  const base = 'https://example.com/scripts/foo.user.js';
+  assert.deepEqual(resolveScriptResourceDetailed('../lib/util.js', base), {
+    kind: 'http',
+    url: 'https://example.com/lib/util.js',
+  });
+  // Root-relative and protocol-relative refs are the same rule.
+  assert.deepEqual(resolveScriptResourceDetailed('/lib/util.js', base), {
+    kind: 'http',
+    url: 'https://example.com/lib/util.js',
+  });
+  assert.deepEqual(resolveScriptResourceDetailed('//cdn.example.com/util.js', base), {
+    kind: 'http',
+    url: 'https://cdn.example.com/util.js',
+  });
+});
+
+test('resolveScriptResourceDetailed: a local script still may not climb', () => {
+  // The half of the rule that carries the risk: a `file://` script
+  // reaching out of its own folder would read the rest of the disk.
+  for (const ref of ['../secret.js', '/etc/passwd.js', '//host/x.js']) {
+    assert.deepEqual(
+      resolveScriptResourceDetailed(ref, SCRIPT_URL_FILE),
+      { failed: true, reason: 'outside-script-folder' },
+      `should be contained: ${ref}`,
+    );
+  }
 });
 
 test('resolveScriptResourceDetailed: absolute file:// is a scheme rejection, not a containment one', () => {

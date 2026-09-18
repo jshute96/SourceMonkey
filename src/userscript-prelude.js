@@ -268,6 +268,54 @@
       stack: stack
     });
   }
+  /* ---------- focus signal ----------
+
+     Chrome tells the service worker about tab switches
+     (`tabs.onActivated`) and about focus moving between Chrome
+     windows (`windows.onFocusChanged`), but on some platforms and
+     window managers — Linux/X11 in particular — it says nothing when
+     Chrome regains focus from ANOTHER APPLICATION. That is exactly the
+     case the focus-triggered refresh exists for: edit the script in an
+     editor, alt-tab back to the browser. So the page reports it
+     instead, which works the same everywhere.
+
+     One listener per execution world per document (the prelude IIFE is
+     idempotent), installed only once some script has matched this URL
+     — a page we run nothing on has nothing to re-check.
+
+     See docs/updates.md#focus-triggered-refresh. */
+
+  /* Floor between signals from one document. The SW-side check is
+     rate-limited far harder (10s per script) and is idempotent, so
+     this exists only to keep focus churn — clicking in and out of an
+     embedded editor, say — from waking the worker each time. Set below
+     the SW's interval so it never becomes the binding limit. */
+  var FOCUS_SIGNAL_MIN_MS = 5000;
+  var lastFocusSignalAt = 0;
+  var focusSignalInstalled = false;
+
+  function sendFocusSignal() {
+    var now = Date.now();
+    if (now - lastFocusSignalAt < FOCUS_SIGNAL_MIN_MS) return;
+    lastFocusSignalAt = now;
+    send({ type: "sm:focus", url: location.href });
+  }
+
+  function installFocusSignal() {
+    if (focusSignalInstalled) return;
+    focusSignalInstalled = true;
+    try {
+      /* `focus` is the one that fires when the window comes back from
+         another application. `visibilitychange` covers a tab switch —
+         redundant with `tabs.onActivated` on the SW side, but the two
+         are cheap together and neither alone covers both cases. */
+      window.addEventListener("focus", sendFocusSignal);
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) sendFocusSignal();
+      });
+    } catch (_e) {}
+  }
+
   function installAsyncListeners(entry) {
     if (entry.asyncListenersInstalled) return;
     entry.asyncListenersInstalled = true;
@@ -317,10 +365,12 @@
   /* ---------- matcher (regex-aware URL recheck) ---------- */
 
   /* Mirrors the algorithm in src/url-match.ts. Inlined here so a
-     regex-using script doesn't need a separate matcher entry; the
-     prelude is on every script's js[] and the algorithm is tiny.
-     The matcher block is only consulted when cfg.matching is
-     present — pure @match / glob scripts skip it. */
+     script needing the recheck doesn't need a separate matcher entry;
+     the prelude is on every script's js[] and the algorithm is tiny.
+     The matcher block is only consulted when cfg.matching is present:
+     scripts with a regex @include/@exclude, and scripts with no
+     @match at all (registered <all_urls>). A script whose @match
+     patterns carry the whole registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
@@ -383,9 +433,9 @@
     /* Split off a trailing `:port` so a port-pinned pattern matches the
        way Chrome's matcher (and src/url-match.ts) does — without this
        the whole `host:port` was compared against u.hostname (no port)
-       and a script declaring both a port-pinned @match and a regex
-       @include/@exclude (the only case cfg.matching ships) was wrongly
-       rejected in-page even though Chrome injected it. A pattern host
+       and a script declaring a port-pinned @match alongside anything
+       that makes cfg.matching ship was wrongly rejected in-page even
+       though Chrome injected it. A pattern host
        with no port matches any port. Keep this in lockstep with
        url-match.ts. */
     var colon = host.lastIndexOf(":");
@@ -448,6 +498,9 @@
        entry (which runs BEFORE the main body's deferred callback) is
        still attributed correctly through the window error listener. */
     installAsyncListeners(entry);
+    /* Past the matcher, so only a document we actually run on reports
+       its focus. Not per-script — the flag inside is module-scoped. */
+    installFocusSignal();
     emitStartupLogs(cfg);
     /* The two gates run CONCURRENTLY and the body starts at
        max(decision, run-at) — `flushPending` is the join, and it needs
@@ -680,9 +733,9 @@
        from its absence — and initScript stores the entry BEFORE
        running the matcher, so on a page the script doesn't match the
        entry exists with runRegistered false and nothing wrong. Without
-       this check a script with a regex @include (registered at
-       <all_urls>, filtered in-page) would log an error and turn the
-       badge red on every page the user visits. */
+       this check a script registered at <all_urls> and filtered
+       in-page would log an error and turn the badge red on every page
+       the user visits. */
     if (!entry.matched) return;
     var msg = "Script source failed to parse (a @require or the script body has a syntax error); nothing was run";
     try { console.info("[SourceMonkey]", entry.cfg.name + ":", msg); } catch (_e) {}

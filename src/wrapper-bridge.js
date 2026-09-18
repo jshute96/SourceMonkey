@@ -58,6 +58,10 @@
        privilege gain — the cost is attribution (errors blamed on our
        script's sourceURL) and a one-navigation delay for the real
        update.
+     - forge `sm:focus`, making the SW re-check this tab's local
+       scripts for edits. Bounded by the updater's own 10s-per-script
+       interval, reads nothing back to the page, and does the same work
+       a navigation on the tab already does.
      - forge a script-scoped request (`sm:check-pending` with
        `needsValues:true`, or any `sm:gm-*` call) carrying another
        script's id, to read that script's GM_setValue snapshot back out
@@ -99,6 +103,7 @@
      works in USER_SCRIPT world and hangs until its timeout in MAIN. */
   var ALLOWED = [
     "sm:start", "sm:error", "sm:swapped", "sm:abandoned", "sm:check-pending",
+    "sm:focus",
     "sm:gm-batch-write",
     "sm:gm-xhr-start", "sm:gm-xhr-abort",
     "sm:gm-tab-open", "sm:gm-tab-close",

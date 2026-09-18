@@ -13,12 +13,39 @@ rest of the loading pipelines.
 
 ## The problem
 
-- SourceMonkey accepts **relative** `@require` paths. Nothing else does
-  — not Tampermonkey, not Violentmonkey, not Greasemonkey.
+- SourceMonkey accepts **relative** `@require` paths, resolved against
+  the script's own URL — including a `file://` one.
+  - Violentmonkey resolves relative `@require` / `@resource` / `@icon`
+    too, against the URL the script was *installed from*
+    (`buildPathMap` in `src/background/utils/db.js`). For a remote
+    install that is the same directory we use.
+  - The remaining difference is the *local* script: VM only keeps an
+    install URL for http(s) ones, so a script it holds on disk resolves
+    a relative ref nowhere.
+  - Tampermonkey and Greasemonkey want an absolute URL.
 - So a script meant to run anywhere has to write the published absolute
   URL.
 - But while you are *writing* that library, the published copy is stale,
   or doesn't exist yet.
+
+### Relative paths and containment
+
+- A relative ref from an **HTTP-loaded** script may climb out of the
+  script's own directory — `../lib/util.js`, `/lib/util.js`,
+  `//cdn.example.com/util.js` — which is the ordinary layout of a
+  userscript repo published to a web server, and what VM does.
+  - It grants nothing new: that script may already name an absolute URL
+    on any origin.
+- A relative ref from a **local** (`file://`) script stays at or under
+  the script's own folder. There the same move would reach into the
+  rest of the disk, which is what the rule exists to stop.
+  - The sanctioned way to reach a sibling `lib/` from a local script is
+    a search root the user named — the collection root or a configured
+    one, below.
+- Enforced in
+  [`src/file-loader.ts`](../src/file-loader.ts)'s
+  `resolveScriptResourceDetailed`, on the resolved URL rather than on
+  the ref's text.
 
 ## The rule
 
@@ -46,10 +73,25 @@ ref   https://cdn.example.com/lib/util.js
 - **Longest first**, so a deliberate `lib/` layout beats a loose
   `util.js` in the root.
 - **First readable wins.** The probe and the real read are the same
-  fetch, so a hit costs nothing extra. A miss costs one local read *per
-  candidate*, i.e. one per path segment of the declared URL plus one for
-  the host-qualified form — a `…/npm/jquery@3.6.0/dist/jquery.min.js`
-  produces five.
+  fetch, so a hit costs nothing extra.
+- **A root's directory listing gates the probes.** Before any candidate
+  is read, the root is listed once (Chrome serves an HTML listing for a
+  `file://` directory) and a candidate whose first segment — `lib/`,
+  `cdn.example.com/`, or the bare filename — isn't in it is skipped.
+  - Why: every probe of a missing file is logged as a failed request in
+    the worker's DevTools Network panel, and the unfiltered list ran to
+    a couple of dozen per script per refresh, which reads as breakage.
+  - Only the first level is checked. `<root>/lib/` existing says nothing
+    about `<root>/lib/util.js`, so that candidate is still probed — and
+    still shows as one failed request when it misses.
+  - A root that can't be listed, or lists as empty, keeps all of its
+    candidates: "can't tell" falls through to the probe rather than
+    hiding a stand-in. (Empty is ambiguous — it is also what an
+    unrecognized listing format parses to.)
+  - Cost of a miss: one listing per root per pass, shared by every
+    dependency under that root and by the navigation batch's own stat
+    of the script folder, plus one read per surviving candidate —
+    usually none. A root that fails to list is not retried in the pass.
 - **A ref that names no file matches nothing.** A path that is empty or
   ends in `/` yields no candidates at all: the suffix would name a
   directory, and Chrome answers a directory read with a listing rather
@@ -69,15 +111,33 @@ In search order:
 1. **The host script's own folder.** Implicit, always first, always
    present. A file sitting next to the script is the least surprising
    answer, so it wins over anything configured.
-2. **Configured global roots.** The search-paths box on the options
+2. **The collection's own root.** Implicit too, for a local directory or
+   manifest collection — the tree the user named, which the collection's
+   scripts already sit at relative paths inside.
+3. **Configured global roots.** The search-paths box on the options
    page, in the order typed.
 
-A configured root that duplicates the script's own folder is dropped,
-so the list reads as what it claims to be — the *additional* places
+Why the collection root: a repo of userscripts keeps its scripts nested
+(`sites/example.com/foo.user.js`) and its libraries shared (`lib/util.js`
+at the top). A root is a floor and the search never climbs, so without
+it a nested script could never see the `lib/` its own repo ships.
+
+Which directory a collection contributes:
+
+- **Local directory** — itself.
+- **Manifest** — the manifest file's own directory, which is what its
+  relative entries already resolve against.
+- **Containers** (`container:*`, the scripts collections) — none.
+  Their scripts are individually installed absolute locations sharing
+  no tree; each script's own folder is all they have in common.
+- **http(s) collections** — none, and their scripts get no roots at all
+  (the `file://` gate).
+
+A root that duplicates one already in the list is dropped — a script at
+the top of its collection has its own folder *as* the collection root —
+so the list reads as what it claims to be: the *additional* places
 searched, each appearing once. (Duplicate candidates would be collapsed
 anyway; the de-dupe is about the list, not the probing.)
-
-Per-collection roots are a planned follow-on — see [TODO.md](../TODO.md).
 
 ### Configured roots
 
@@ -138,20 +198,27 @@ How the existence test works:
 Not which tag is being resolved, but **who the host script is**:
 
 - **Inferred** substitution applies only when the host script's own URL
-  is `file://`. Such a script already has ambient reach over its own
-  folder — a relative `@require ./util.js` resolves there today — so a
-  stand-in from that folder grants nothing new.
+  is `file://`. Its **own folder** grants nothing new: a relative
+  `@require ./util.js` resolves there today, and `file-loader.ts`
+  confines a relative ref to exactly that folder.
 - An **http(s)-loaded script never gets inference**. That is the case
   where a hostile `@resource file:///home/you/.ssh/id_rsa` followed by
-  `GM_getResourceText` would actually matter. The gate covers configured
-  roots too — a script installed from the web resolves nothing out of a
-  development directory.
-- A **configured root is reach the script didn't otherwise have**, and
-  the script picks the path suffix it looks for. So every file under a
-  root is readable by any locally-loaded script, `@resource` +
-  `GM_getResourceText` included. That is a property of the setting,
-  stated on the options page where it's configured: roots name
-  directories of script content, not home directories.
+  `GM_getResourceText` would actually matter. The gate covers the
+  collection root and configured roots too — a script installed from the
+  web resolves nothing out of a development directory.
+- The **collection root and a configured root are reach the script
+  didn't otherwise have** — a relative ref cannot climb into either —
+  and the script picks the path suffix it looks for. So every file under
+  one is readable by any locally-loaded script in it, `@resource` +
+  `GM_getResourceText` included.
+  - What justifies each is that the user named that directory: a
+    configured root on the options page, a collection root by adding the
+    collection.
+  - Both say so where they're set — the options page's note, and the
+    collection dialog's **Allow local file overrides** hint.
+  - So point either at a directory of script content, not at a home
+    directory. Turning that option off for a collection takes the
+    whole mechanism away for it.
 - Explicit per-file overrides (a path you typed for one specific ref)
   will be allowed for any host script, because naming the file *is* the
   authorization. Not built yet — see [TODO.md](../TODO.md).
@@ -211,6 +278,8 @@ and is memoized for the life of the page instead:
   didn't appear for a day — the same "why isn't my edit showing up" trap
   the require policy exists to avoid.
 - Cost is one local read per icon per page load; repaints are free.
+- The root listings the candidate gate reads are memoized for the page
+  too, so they hide nothing the memo doesn't already.
 - A page reload always reflects the current state of the disk.
 
 ## Refresh policy
@@ -229,13 +298,17 @@ exception:
   fast path: it describes a file that may since have been deleted, and
   keeping it would serve a stand-in that no longer exists.
 
-Cost when enabled, for scripts in a local collection only: up to one
-local read per path segment of each declared dependency's URL, plus one
-for the host-qualified form, per refresh. A hit short-circuits the rest,
-and `ensureFetch` dedups within a pass. Note that a script with local
-roots also skips the whole-list `preserve`
-shortcut, so it re-runs resolution every opportunistic refresh — that is
-the price of edits showing up without a Refresh click.
+Cost when enabled, for scripts in a local collection only:
+
+- Up to one listing **per root** per refresh, plus a read for each
+  candidate the listing doesn't rule out (see the gate under
+  [The rule](#the-rule)).
+- A nested script has two implicit roots (its own folder and its
+  collection's), so a miss lists both.
+- A hit short-circuits the rest, and `ensureFetch` dedups within a pass.
+- A script with local roots also skips the whole-list `preserve`
+  shortcut, so it re-runs resolution every opportunistic refresh — the
+  price of edits showing up without a Refresh click.
 
 ### A stand-in that appears later
 
@@ -265,15 +338,19 @@ Both `StoredRequire` and `StoredResource` gain one field:
 `StoredCollection.localFiles` — only an explicit `false` disables it, so rows
 persisted before the field existed read as enabled.
 
-- Rendered as a **Local files** checkbox in the collection's header on the
-  collections page, next to Refresh / Remove. (Distinct from the viewer's
-  **Local overrides** row below — this switches the feature on for a
-  collection, that lists what it actually substituted for one script.)
-- Shown only where it can do something: http(s) collections and the http /
-  github containers are excluded, since every script under them loads
-  over the network.
-- Toggling it refreshes the collection, because the flag only changes what
-  the *next* refresh resolves to.
+- Set from the collection dialog's **Allow local file overrides**
+  option — on Create, or via the collection's options gear on the
+  collections page. (Distinct from the viewer's **Local overrides** row
+  — this switches the feature on for a collection, that lists what it
+  actually substituted for one script.)
+- Greyed out, with the reason, where it can't do anything: an http(s)
+  or GitHub directory / manifest, since every script under it loads
+  over the network. A scripts collection always offers it — even the
+  built-in web / GitHub defaults — because it may hold local scripts,
+  and the option applies to whichever of them came from disk
+  (`collectionSupportsLocalFiles`).
+- Saving a change refreshes the collection, because the flag only
+  changes what the *next* refresh resolves to.
 - Off disables **all** roots for that collection, configured ones included
   — it's the whole mechanism's off-switch, not just the implicit
   folder's.

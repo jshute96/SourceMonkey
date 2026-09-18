@@ -212,8 +212,10 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   one without stays behind until its next document.
 - **`GM_info.script.grant` is the canonicalized set, not the raw
   `@grant` lines.** `@grant GM.setValue` shows up as `GM_setValue` in
-  `GM_info.script.grant`. Matches VM; TM exposes the raw declared
-  form. Worth revisiting if any real compat reports come in.
+  `GM_info.script.grant`. TM and VM both report the raw declared form
+  instead (VM's `GM_info.script` is its parsed metadata object —
+  deduped, not rewritten). Worth revisiting if any real compat
+  reports come in.
 - **Unknown `@grant` names log a console warning.** A typo like
   `@grant GM_setvalue` (lowercase) is dropped from the binding set
   and the script gets a `ReferenceError` at call time. The injector
@@ -355,16 +357,30 @@ base64 + `responseMimeType`. The page-side runtime decodes:
   read the raw text.
 
 No offscreen document is involved — the SW serializes response bytes
-and the page rebuilds them. TM uses an offscreen doc to get a real
-`Blob` constructor; we don't need one because USER_SCRIPT world has
-`new Blob(...)` directly. The base64 round-trip costs ~33% wire
-overhead vs raw bytes but is robust across the SW/page boundary.
+and the page rebuilds them.
+
+- TM uses an offscreen doc to get a real `Blob` constructor, and
+  VM's MV3 build does too: its `XMLHttpRequest` runs there and
+  leases blob URLs, falling back to base64 chunks in incognito,
+  where Chrome won't fetch a blob URL.
+- We don't need one because USER_SCRIPT world has `new Blob(...)`
+  directly.
+- The base64 round-trip costs ~33% wire overhead vs raw bytes but is
+  robust across the SW/page boundary.
 
 ## `@connect` URL gating (Phase 10)
 
-VM-style strict-by-default: a script with no `@connect` lines
-in its header is **blocked** from every `GM_xmlhttpRequest`. Scripts
-must declare the hosts they intend to reach.
+Strict-by-default: a script with no `@connect` lines in its header
+is **blocked** from every `GM_xmlhttpRequest`. Scripts must declare
+the hosts they intend to reach.
+
+Stricter than either reference manager:
+
+- TM prompts the user when a script reaches an undeclared host.
+- VM doesn't enforce `@connect` at all — its install-confirm page
+  lists the declared hosts, and nothing checks them at request time.
+- The cost is that a VM script which omitted `@connect` has to gain
+  one here; the benefit is that the header means what it says.
 
 Grammar (lower-case before matching):
 
@@ -502,6 +518,12 @@ its own dispatch doesn't corrupt iteration.
   userscript B's data", not a privilege escalation against the
   user — and it matches what TM/VM actually provide (same-world
   userscripts aren't isolated from each other).
+  - VM raises the bar a little without changing the model: each
+    script gets its own bound `GM` wrapper, and the script id lives
+    in that closure inside VM's injected bundle — the content side
+    neither binds nor checks it. A sibling has to reach the wrapper
+    (or the module-scoped bridge) rather than just name another id in
+    a message. Sharing a realm still means sharing everything else.
   - Why it has no cheap fix: every USER_SCRIPT-world script shares
     ONE world per frame (one `configureWorld`, no per-script
     `worldId`) and can read sibling ids straight from
@@ -567,9 +589,11 @@ Known limitations:
   on documents that lack focus / transient activation. Most user-
   initiated GM_setClipboard calls (button click, keyboard shortcut)
   have transient activation; idle-timer scripts may need to wait
-  for an interaction. TM/VM use an offscreen-doc + `execCommand
-  ('copy')` workaround that doesn't require focus — we may revisit
-  if real reports come in.
+  for an interaction. TM and VM both use an offscreen-doc +
+  `execCommand('copy')` workaround that doesn't require focus (VM's
+  is `src/common/clipboard.js`, run in its MV3 offscreen document,
+  and it honors the `type` argument through
+  `clipboardData.setData`) — we may revisit if real reports come in.
 
 ## `GM_log`
 
@@ -835,8 +859,9 @@ Why the split:
   registered commands appended as `↳ <name>` entries.
 - **Overflow planner (`src/action-menu.ts`,
   `planActionMenu`)** — caps the top level at Chrome's 6-item limit
-  by reserving one slot for a "More" submenu when the (script row +
-  N commands) totals would exceed it. Splits happen between groups,
+  by reserving one slot for the fixed "Reload page with no
+  userscripts" row and one more for a "More" submenu when the (script
+  row + N commands) totals would exceed it. Splits happen between groups,
   never within one — see [matching.md](matching.md#per-tab-badge--tooltip) for the rules.
 - **Click routing** — `chrome.contextMenus.onClicked` for an
   `sm-menucmd:<scriptId>:<commandId>` item sends `sm:gm-menu-fire`
@@ -894,13 +919,16 @@ Why the split:
   `tests/e2e/gm-menu.spec.ts` to assert on registration state
   without driving the real Chrome UI.
 - `self.SourceMonkey.getActionContextMenuPlan(tabId)` returns the
-  planned `{ top, more }` layout the SW would hand to
+  planned `{ top, more, reloadWithoutScripts }` layout the SW would hand to
   `chrome.contextMenus`. Lets tests verify overflow packing without
   inspecting the real Chrome menu (which Playwright can't reach).
 - `self.SourceMonkey.fireActionContextMenuItem(tabId, scriptId,
   commandId)` synthesizes a click on a specific entry by sending
   the same `sm:gm-menu-fire` message the real click handler does.
   Returns `{ok:false}` for stale or unknown ids.
+- `self.SourceMonkey.reloadWithoutScripts(tabId)` stands in for a
+  click on the "Reload page with no userscripts" row — see
+  [matching.md](matching.md#reload-with-no-userscripts).
 
 ## `window.onurlchange`
 
@@ -1201,9 +1229,11 @@ into pages that ship strict `Content-Security-Policy: script-src
   the element.
 - `GM_addElement(tagName, attrs?)` — tag-aware default parent:
   `<head>` for `script`/`style`/`link`/`meta`/`title`/`base`,
-  `<body>` for everything else (matches TM/VM). Falls back through
-  head / documentElement when body doesn't exist yet (very-early
-  `runAt`). Returns the element.
+  `<body>` for everything else. VM routes by tag the same way with a
+  shorter head list (`script`/`style`/`link`/`meta`), so `title` and
+  `base` differ; TM always uses `<head>`. Falls back through head /
+  documentElement when body doesn't exist yet (very-early `runAt`).
+  Returns the element.
 - `GM_addElement(parent, tagName, attrs?)` — appends to the given
   parent node. Two-arg vs three-arg signatures are distinguished by
   whether `arg1` has a `.nodeType`.

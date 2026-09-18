@@ -42,10 +42,11 @@ or the GreasyFork corpus. See
   `fullyParallel: true`). Each worker launches its own Chromium with its
   own `mkdtemp` profile, and the fixture HTTP server binds to port 0, so
   workers share nothing.
-  - **The `tampermonkey` project must stay serial.** It attaches over
-    CDP to one real browser with no per-test state reset, so the
-    package scripts pass `--workers=1`. Invoking `playwright test
-    --project=tampermonkey` directly skips that — pass it yourself.
+  - **The `tampermonkey` and `violentmonkey` projects must stay
+    serial.** Each attaches over CDP to one real browser with no
+    per-test state reset, so the package scripts pass `--workers=1`.
+    Invoking `playwright test --project=<name>` directly skips that —
+    pass it yourself.
 - Typecheck: `pnpm run typecheck` — `tsconfig.json` builds the extension
   and covers `src/` only, so this runs `tsconfig.tests.json` over the
   tests as well. Playwright transpiles specs without checking types, so
@@ -124,6 +125,16 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionId` — the deterministic ID of the unpacked extension.
   - `sm` — typed proxy over `self.SourceMonkey`; see *SW test surface*
     below. Wipes storage and unregisters userscripts at test start.
+  - `testWithBrowserDownloads` — the same fixtures, but downloads are
+    left to Chrome's own download manager, landing in the
+    worker-scoped `downloadsDir` (a temp directory). Playwright's
+    default intercepts every download into its artifacts dir under a
+    GUID name — what `page.waitForEvent('download')` needs, but it
+    hides the real path from `chrome.downloads`, which the local-copy
+    feature reads back. The launch helper undoes the interception over
+    CDP (`Browser.setDownloadBehavior: default`) and writes the
+    `download.*` Preferences. The browser is shared across the worker's
+    tests, so a spec cleans its own files in `beforeEach`.
 - `extension-id.ts` — computes Chrome's deterministic
   unpacked-extension ID (SHA-256 of the path, first 16 bytes, mapped
   `0`–`f` → `a`–`p`). Needed because we have to write Preferences for
@@ -148,13 +159,22 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 ### Chrome flags / Preferences
 
+**The bundled browser must be Chrome 152+:**
+
+- `src/manifest.json` declares `minimum_chrome_version: "152"`.
+- Below that Chrome refuses to load the extension at all, so every e2e
+  test fails at once rather than one feature failing.
+- Playwright ≥ 1.63 ships Chrome for Testing 153.
+- Symptom to recognise: the whole suite goes red right after a
+  dependency change. Check the browser version first.
+
 Two Chrome capabilities the e2e harness needs:
 
 - **`file://` access** — already granted in headless mode for
   unpacked extensions, so no extra setup. Production users still have
   to flip the per-extension toggle.
-- **User scripts** (Chrome ≥138) — `chrome.userScripts` is gated
-  behind a per-extension toggle. The harness pre-writes
+- **User scripts** — `chrome.userScripts` is gated behind a
+  per-extension toggle. The harness pre-writes
   `extensions.settings.<extensionId>.user_scripts_enabled = true`
   into `<userDataDir>/Default/Preferences` before launch so the API
   is callable without UI clicks.

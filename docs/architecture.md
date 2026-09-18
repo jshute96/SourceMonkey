@@ -38,9 +38,12 @@ details live in the topic-specific docs linked below.
   and surfaces per-tab match counts via the action badge. See
   [matching.md](matching.md).
 - **Collections page** (`src/collections.html` + `src/collections.ts`) — manage
-  collections (directory, manifest, github-dir, or one of the three
-  per-kind containers that hold individually added `.user.js` URLs /
-  paths) and inspect per-script status. See [storage.md](storage.md).
+  collections (directory, manifest, github-dir, or a "scripts"
+  collection holding individually installed scripts — user-created, or
+  one of the built-in per-scheme defaults) and inspect per-script
+  status. Collections are created and edited through the shared
+  **collection dialog** (`src/collection-dialog.ts`). See
+  [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/options.ts`) — small
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
   local-file-override search roots, and GitHub auth token entry.
@@ -49,9 +52,9 @@ details live in the topic-specific docs linked below.
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode
   (`userscript.html?preview=<url>`), which fetches, describes,
-  and — on confirmation — `addCollection`s the script. Its "View raw
-  source" tab is a separate page (`src/raw.html` + `src/raw.ts`) fed
-  through `src/raw-view.ts`. See
+  asks which scripts collection to put it in, and — on confirmation —
+  `installScript`s it. Its "View raw source" button navigates a new
+  tab to the file itself. See
   [install-capture.md](install-capture.md).
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
@@ -87,7 +90,8 @@ details live in the topic-specific docs linked below.
   [http-collections.md](http-collections.md).
 - **File loader** (`src/file-loader.ts`) — resolves header references
   (`@icon`, `@require`, `@resource`) into absolute URLs against the
-  script's parent dir (rejecting `..` and host-absolute paths), and
+  script's own URL (a local script's refs stay inside its folder;
+  a remote one's may climb, as in Violentmonkey), and
   exposes scheme-aware bounded byte + text fetchers used by the icon,
   require, and resource pipelines.
 - **External files** (`src/external-files.ts`) — `@require` +
@@ -213,6 +217,176 @@ details live in the topic-specific docs linked below.
   which is what makes them work where the page's own calls are
   refused.
 
+## Page names
+
+- Every user-visible extension page is named
+  `SourceMonkey | <what this page is>` in its `<title>`, and in its
+  `<h1>` where it has one.
+  - Collections → `SourceMonkey | Collections`; Options →
+    `SourceMonkey | Options`.
+  - The viewer names a script, so it puts the script first — that way
+    the name survives a narrow tab strip. See
+    [script-viewer.md](script-viewer.md#heading-and-page-title).
+  - `offscreen.html` and `parse-sandbox.html` are exempt: no user ever
+    sees them.
+- `|`, not an em dash: it reads as a separator at a glance in a crowded
+  tab strip, where an em dash reads as punctuation inside a sentence.
+
+## Cross-page navigation
+
+How one extension page opens another — the rules live in
+`src/page-links.ts`, which every surface below goes through.
+
+- **Named tabs.** Collections and Options get at most one tab each. A
+  link to either focuses the open one rather than opening a second.
+  - Reuse prefers a tab in the current window; failing that it takes
+    whichever other window's tab Chrome reports first.
+  - A reused tab is told where to scroll: the linked collection's
+    section, or the top for a link to the page as a whole. Options has
+    no anchors, so every link to it means the top.
+  - The toolbar button is the exception: it activates a reused tab
+    without moving it, because "show me SourceMonkey" should not cost
+    the user their place.
+- **Links to a named page open a new tab, never the current one.**
+  Leaving the viewer to look at a collection used to lose the viewer.
+  - The Options button on Collections, and the Collections button on
+    Options.
+  - The viewer's Collection row and every "Other versions" row's
+    collection name.
+  - The header bar's icon and product name, on every page but
+    Collections itself (`a.page-home`, wired by one delegated listener
+    so it survives the viewer's heading repaints).
+- **The install preview opens in a new tab too**, from the Add field and
+  from the collection dialog's "this is a single script" action — the
+  page the user was adding from stays put. The preview is *not* a named
+  tab: it is per-file, and several at once is normal.
+- **Every one of these is a real anchor with a real `href`.** A
+  Ctrl/Cmd/Shift/middle click is left to the browser, and the URL is
+  copyable. Only a plain left click is reinterpreted as "the named tab".
+  - The `href` is also the behaviour before the page's scripts have run.
+
+## Extension-page styling
+
+### The page header bar
+
+- **Every user-facing page opens with the same bar** (`.page-header` in
+  `src/styles.css`): the extension icon, the
+  `SourceMonkey | <page>` heading, and that page's cross-page
+  navigation pushed to the right edge.
+  - Collections carries Options and Refresh All; Options carries
+    Collections; the viewer carries none.
+  - The icon and the product name are a link home to the collections
+    page on every page but Collections itself — see "Cross-page
+    navigation" above.
+  - `offscreen.html` and `parse-sandbox.html` have no bar — no user
+    ever sees them.
+- **The heading is the page's `<h1>`, moved into the bar** rather than a
+  second copy of the title. On the viewer that is the live
+  `#filename` heading, script name and favicon included.
+  - The product half wears `.brand` and takes the brown; the rest of
+    the heading stays near-black. The viewer's `.heading-prefix`
+    carries both classes.
+- **Brown.** The bar sits directly above the
+  viewer's green "Other versions" card and the amber warning-banner
+  slot. A tint from either family reads as the top of that card
+  instead of as page chrome; brown is where the icon's own colours
+  live and is far enough off both.
+- **The bar is full-bleed; its contents are not.** `.page-header` paints
+  the background edge to edge, and `.page-header-inner` centres the row
+  on `--page-width` — the same column `.page-body` centres, so the
+  heading starts directly above the page's own first line.
+  - Every page's content inset is 16px, the bar's included, so the two
+    edges line up on the full-bleed pages too.
+  - Collections and Options set `--page-width: 720px`. The viewer
+    leaves it unset and runs full width.
+- **The viewer keeps its flex column**, moved down one level into
+  `.page-main` (`flex: 1 1 auto; min-height: 0`) so the code box still
+  takes the leftover height under the bar.
+
+#### Naming the bar before the page loads
+
+The bar is the one thing on the page that says what the page *is*, so it
+must not be the last thing to arrive. What gets it there, in the order it
+takes effect:
+
+- **The brand run is in the markup.** `userscript.html` ships the
+  `SourceMonkey |` spans inside its `<h1>`, so the bar is never an icon
+  beside an empty line. It is byte-for-byte what
+  `headingPrefixEl(INSTALLED_HEADING)` builds, so nothing moves when the
+  real heading replaces it.
+- **A module with no static imports paints the rest.**
+  `src/page-heading.ts` is loaded ahead of `userscript.js` and imports
+  nothing at all, because a module does not evaluate until everything it
+  imports has been fetched — one small import would be enough to put its
+  first line back after the first paint.
+  - The **prefix** goes on synchronously: which of the two pages this is
+    can be read off the query string, no storage needed. This is what
+    puts `Install | ` on the install page's first paint.
+  - The **name** needs the one `script:<id>` row plus the label helpers,
+    which arrive by dynamic `import()` — after the prefix is on screen.
+    Until then the heading is the prefix and nothing else, which fills
+    in rather than being replaced.
+  - `userscript.ts` imports the module too. A module runs once, so the
+    early paint happens once and the heading constants have a single
+    home rather than a copy per entry point.
+- **Prism is deferred.** Its `<script>` tags blocked parsing, and
+  everything deferred waits for parsing to finish. Deferred scripts still
+  run in document order, so Prism is defined before `userscript.js`.
+  - They also carry `data-manual`, which stands Prism's automatic
+    `highlightAll()` down. Nothing wanted it — `code-tabs.ts` highlights
+    the code box itself — and deferring would otherwise have moved that
+    pass to a frame after `DOMContentLoaded`, where it could rebuild the
+    block and drop the links `code-links.ts` puts in.
+- **The install preview is the exception.** Its script's `@name` is inside
+  a file that hasn't been fetched.
+  - So it paints `SourceMonkey | Install | ` early and lets the name land
+    with the rest.
+  - Naming it from the URL would only move the flash: the location it
+    would show is usually not what the finished heading says.
+
+### Buttons
+
+- **Every button in the extension shares one surface**, defined once in
+  `src/styles.css` as a `:where(button)` baseline: one height
+  (`--icon-btn-size`), one background/border (`--btn-*`), and a
+  rest → hover → press progression that always gets *darker*.
+- Why a baseline at all: Chrome paints no hover or press state on a
+  native button, and stops painting one entirely once any author
+  background is set. Without this, whether a button visibly reacted to
+  a click depended on whether some page had happened to style it.
+- Why `:where()`: zero specificity, so it is a baseline rather than an
+  override. Any class rule beats it — but only for what that rule
+  actually declares. A control that sets a background and no height
+  gets its own background and the shared height.
+- **Opting out is explicit.** Controls that are not part of a button
+  row pin their own height: the code tabs, the panel's fold triangle,
+  the dialog's inline error action, the copy button, the bulk toggle.
+  A dense table can shrink the whole pair by redefining
+  `--icon-btn-size` / `--icon-btn-glyph` on an ancestor — the script
+  table does, so a row's trash can fits inside its line box instead of
+  making that row taller than its neighbours.
+- **Icon buttons** add `.icon-btn` (put on by the code that paints the
+  glyph, so a glyph can't arrive without its box): a square minimum, a
+  centred glyph, and roomier padding when the button also shows a word.
+
+### Whole-pixel metrics
+
+- **Vertical metrics are whole pixels** wherever a checkbox column sits:
+  the collections page, Options, and the viewer's "Other versions" panel
+  (plus their shared ancestors — the banner, the collection bubble).
+  They are written in `px`, not `em`.
+- Why: an em value at the 14px base font (`0.3em` = 4.2px) puts every
+  row and card at a different fractional offset.
+  - A 13px checkbox then rasterizes a device pixel larger or smaller
+    depending on which row it landed in.
+  - That reads as a column of not-quite-equal checkboxes, and as rows
+    shifting whenever something above them resizes.
+- The rest of the viewer is still em-derived, so its panel settles on a
+  shared *fractional* offset. Uniform is what matters — every checkbox
+  in one column rasterizing alike — not whole-pixel specifically.
+- `tests/e2e/layout-metrics.spec.ts` measures each checkbox column and
+  fails if one stops agreeing with itself.
+
 ## Cross-cutting docs
 
 - [storage.md](storage.md) — `chrome.storage.local` schema, status
@@ -280,11 +454,45 @@ details live in the topic-specific docs linked below.
 - Wipes `dist/`.
 - Copies `src/icons/`, `src/manifest.json`, every top-level
   `src/*.html`, and `node_modules/prismjs/*` into `dist/`.
+- Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
+  page's `#include glyph-sprite` marker comment (see below).
 - Invokes `tsc` (optionally with `--watch`) to compile
   `src/*.ts` → `dist/*.js`.
 
 No bundler. Each TypeScript module compiles to its own `dist/*.js`
 and Chrome loads them directly as ES modules.
+
+### Glyph sprite
+
+- Every inline SVG icon (the favicon placeholder, the two removal
+  glyphs, refresh and the options gear, the copy button's pair) is
+  defined once in `src/glyph-sprite.svg` and referenced by
+  `<use href="#id">`.
+- `src/glyph.ts` paints them into buttons: glyph, optional label, and
+  the matching `title` / `aria-label`. An icon-only button has no text
+  to fall back on, so neither is optional.
+- **The button box is set, not inferred.** Painting a glyph also puts
+  `.icon-btn` on the button, which fixes its height and the glyph's
+  size (`--icon-btn-size` / `--icon-btn-glyph` in `styles.css`).
+  - Letting each button size itself off its content is what gave five
+    identically-sized icons five different widths — three padding
+    values, a text arrow measuring differently from an SVG, and one
+    button on `align-self: stretch`.
+  - A fixed box also satisfies the whole-pixel rule below for free:
+    no `em` anywhere in an icon button.
+  - A page rule that outranks `.icon-btn` on specificity (`.meta-row
+    button`) has to exclude it with `:not(.icon-btn)`, or the box goes
+    back to being inferred.
+- A button whose action takes a while spins its own glyph
+  (`setGlyphButtonBusy`) rather than swapping its label to
+  "Refreshing…" — an icon-only button has no label to swap, and
+  spinning in place doesn't shift the buttons beside it.
+- It has to be *inlined per page*: a `<use>` pointing at another
+  document doesn't inherit `currentColor`, and would be a second fetch.
+  Keeping one copy in the source tree is what stops two pages from
+  drifting into different glyphs.
+- Only `--watch`ed TypeScript rebuilds automatically, so editing the
+  sprite (like any HTML/CSS asset) needs a fresh `pnpm run build`.
 
 ## Testing
 

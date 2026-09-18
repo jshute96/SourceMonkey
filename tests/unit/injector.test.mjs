@@ -764,9 +764,62 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
       includes: ['*://example.com/*', '/^https:\\/\\/foo\\..*$/'],
     },
   }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   // The regex pattern travels through the config blob into the
   // prelude's runtime matcher.
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: glob-only @include still gets a matches pattern', async () => {
+  // Chrome refuses a registration without `matches`, so an
+  // `@include`-only script rides in on `<all_urls>`.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: [], excludes: [], includes: ['*://example.com/*'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
+  // Chrome ORs includeGlobs with matches, so `<all_urls>` runs the
+  // script everywhere — the wrapper's matcher is what holds it to the
+  // glob. Its block has to be in the config blob.
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: @match beside a glob @include leaves matching to Chrome', async () => {
+  // Chrome ORs includeGlobs with matches (measured — see
+  // tests/e2e/include-only.spec.ts), which is what the header means,
+  // so this shape needs no wrapper-side matcher.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*'],
+      excludes: [],
+      includes: ['*://other.example/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.deepEqual(spec.includeGlobs, ['*://other.example/*']);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.doesNotMatch(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: all @match patterns refused + glob @include falls back to <all_urls>', async () => {
+  // `https://example.com` (no path) is a pattern Chrome's grammar
+  // refuses, so it never reaches the spec — leaving the script with
+  // globs only, which is the fallback case.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com'],
+      excludes: [],
+      includes: ['*://example.com/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);
@@ -2077,16 +2130,20 @@ test('syncRegistrations: a batch unregister that fails drops the ids one at a ti
 // a test can assert on the ORDER of operations — which is where the
 // unregistered window lived.
 //
-// Faithful to the two behaviours of the real API that the sync design
-// turns on, both verified against Chrome:
+// Faithful to the behaviours of the real API that the sync design turns
+// on, each verified against Chrome:
 //
 //   - **`update` MERGES.** A pattern field the new spec omits keeps its
 //     previous value, and an explicit `[]` counts as omitted. Modelling
 //     `update` as "replace" would make the fake agree with the
 //     assumption the production code must NOT make.
+//   - **`update` ignores `includeGlobs` / `excludeGlobs` entirely.** It
+//     cannot add, change, or clear them; the call still succeeds and
+//     `getScripts` keeps reporting the registered values. Only
+//     `matches` really updates.
 //   - **`update` moves a registration to the END of the set**, in batch
 //     order. That is what makes placement order observable here.
-const PATTERN_FIELDS = ['matches', 'includeGlobs', 'excludeGlobs'];
+const GLOB_FIELDS = ['includeGlobs', 'excludeGlobs'];
 
 function fakeRegistrationSet(initial = []) {
   const seed = { matches: ['https://seed/*'] };
@@ -2094,11 +2151,11 @@ function fakeRegistrationSet(initial = []) {
   const calls = [];
   const merge = (prior, spec) => {
     const next = { ...prior, ...spec };
-    for (const f of PATTERN_FIELDS) {
-      // An empty array is "unspecified" to Chrome, so the old value
-      // survives it.
-      if (!spec[f] || spec[f].length === 0) next[f] = prior[f];
-    }
+    // An empty array is "unspecified" to Chrome, so the old value
+    // survives it.
+    if (!spec.matches || spec.matches.length === 0) next.matches = prior.matches;
+    // Globs don't update at all, whatever the spec says.
+    for (const f of GLOB_FIELDS) next[f] = prior[f];
     return next;
   };
   userScripts.getScripts = async (filter) => {
@@ -2288,6 +2345,41 @@ test('syncRegistrations: a scoped sync rebuilds scripts a new dupe renamed', asy
     chrome_.calls.sort(), ['register:b', 'update:a'],
     'the script that was renumbered is re-registered too',
   );
+});
+
+test('syncRegistrations: adding an @exclude really adds it', async (t) => {
+  // `chrome.userScripts.update` ignores `excludeGlobs` outright — it
+  // cannot add one to a registration that has none (verified against
+  // Chrome; see tests/e2e/exclude-globs.spec.ts). A plain `update`
+  // would leave the script still injecting on the page its header now
+  // excludes, with the badge reporting UNEXPECTED and no way to act on
+  // it.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  localStore.set('script:a', {
+    ...localStore.get('script:a'),
+    matching: { matches: ['https://e/*'], includes: [], excludes: [] },
+  });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.ok(!chrome_.spec('a').excludeGlobs?.length);
+  chrome_.reset();
+
+  // The user adds an `@exclude` line.
+  localStore.set('script:a', {
+    ...localStore.get('script:a'),
+    matching: { matches: ['https://e/*'], includes: [], excludes: ['https://e/no/*'] },
+  });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+
+  assert.deepEqual(
+    chrome_.spec('a').excludeGlobs, ['https://e/no/*'],
+    'the exclusion the header now declares must be on the registration',
+  );
+  assert.deepEqual(chrome_.calls, ['unregister:a', 'register:a']);
 });
 
 test('syncRegistrations: dropping the last @exclude really drops it', async (t) => {

@@ -46,6 +46,10 @@
 export type { FoundScript } from './collection-scan.js';
 import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from './collection-scan.js';
 import { mapWithConcurrency, SCAN_DIRS_CONCURRENCY } from './concurrency.js';
+// Page-only API under the hood, but the wrapper answers "allowed" from
+// any context that can't ask — and only `classifyLocation`, which is
+// page-only anyway, calls it.
+import { isFileSchemeAccessAllowed } from './file-access.js';
 export { MAX_SCAN_DEPTH } from './collection-scan.js';
 
 // ---------- Collection-kind detection ----------
@@ -57,12 +61,12 @@ export { MAX_SCAN_DEPTH } from './collection-scan.js';
 // still classifies as a single-file URL.
 
 // The shapes a user may type as a location, as a sentence fragment.
-// Shared because two validators reject on it — the collections page's
-// Add field (`isValidCollectionInput`) and the viewer's preview
-// (`isPreviewableInput`) — and their messages had already drifted into
-// two different descriptions of one rule.
+// Shared because two validators reject on it — `isValidLocationShape`
+// below and the viewer's preview (`isPreviewableInput`) — and their
+// messages had already drifted into two different descriptions of one
+// rule.
 export const LOCATION_SHAPES =
-  'must be an http(s):// or file:// URL, or an absolute path starting with /';
+  'must be a URL or absolute file path';
 
 export function isHttpUrl(input: string): boolean {
   return /^https?:\/\//i.test(input);
@@ -72,29 +76,58 @@ export function isFileUrl(input: string): boolean {
   return /^file:\/\//i.test(input);
 }
 
-// Container collections aggregate individually-added scripts of one
-// kind (local files, web URLs, GitHub URLs). Their stored `path` is one
-// of the synthetic identifiers below — not a real URL — and per-script
-// `relativePath` carries the full URL/path the user added. There is no
-// scan step for a container collection; refresh iterates the explicit
-// scriptIds list and refetches each entry.
+// Container collections hold individually-installed scripts — the
+// folder-like collections the user creates and names, plus the three
+// built-in defaults. Their stored `path` is a synthetic
+// `container:<…>` identifier — not a real URL — and per-script
+// `relativePath` carries the full URL/path the user installed. A
+// container can mix local, web, and GitHub scripts: there is no scan
+// step, refresh iterates the explicit scriptIds list and refetches each
+// entry from its own location.
+//
+// Two spellings of the identifier:
+//   - `container:file` / `container:http` / `container:github` — the
+//     built-in default for each scheme ("Scripts from local disk" /
+//     "…from web" / "…from GitHub"). Created on demand by an install
+//     that targets it; recognised by this fixed path, never by name,
+//     so a rename doesn't stop it being the default.
+//   - `container:<uuid>` — a collection the user created.
 export type ContainerKind = 'file' | 'http' | 'github';
 
 const CONTAINER_PATH_PREFIX = 'container:';
 
+// The fixed path of the built-in default container for a scheme.
 export function containerPath(kind: ContainerKind): string {
   return CONTAINER_PATH_PREFIX + kind;
 }
 
-export function isContainerCollection(input: string): boolean {
-  return containerKind(input) !== null;
+// A fresh path for a user-created container.
+export function newContainerPath(): string {
+  return CONTAINER_PATH_PREFIX + crypto.randomUUID();
 }
 
+export function isContainerCollection(input: string): boolean {
+  return input.startsWith(CONTAINER_PATH_PREFIX);
+}
+
+// Which scheme this container is the built-in default for — or null
+// for a user-created container (and for anything that isn't a
+// container). NOT a restriction on what the container may hold.
 export function containerKind(input: string): ContainerKind | null {
   if (input === 'container:file') return 'file';
   if (input === 'container:http') return 'http';
   if (input === 'container:github') return 'github';
   return null;
+}
+
+// The three shapes a collection row can take. Derived from the stored
+// path rather than persisted, so a row can't disagree with itself.
+export type CollectionKind = 'scripts' | 'directory' | 'manifest';
+
+export function collectionKind(path: string): CollectionKind {
+  if (isContainerCollection(path)) return 'scripts';
+  if (isManifestCollection(path)) return 'manifest';
+  return 'directory';
 }
 
 // Pathname of an http(s) or file:// URL, sans query and fragment.
@@ -147,7 +180,10 @@ export function locationFsPath(input: string): string {
 // as URLs rather than producing a path that points somewhere else.
 // The rest of the module is POSIX-only by design (see `pathToFileUrl`,
 // `parentDir`), so this is containment, not Windows support.
-function isNonPosixFileUrl(input: string): boolean {
+// Exported because the collections page's `?refresh_file=` validator
+// has to refuse the same two shapes before comparing paths — a mangled
+// path there would silently match the wrong local collection.
+export function isNonPosixFileUrl(input: string): boolean {
   let u: URL;
   try {
     u = new URL(input);
@@ -173,9 +209,9 @@ export function canonicalCollectionInput(input: string): string {
 
 // True for any input pointing at an individual `.user.js` script —
 // http(s):// URL, file:// URL, or absolute local path — based on the
-// pathname suffix. Single-script inputs no longer get their own
-// collection row; the add flow routes them into the matching container
-// collection (see `containerKindForSingleFileInput`).
+// pathname suffix. Single-script inputs don't get their own collection
+// row; the install flow puts them into a container collection (by
+// default the one for their scheme — see `containerKindForSingleFileInput`).
 export function isSingleFileInput(input: string): boolean {
   return locationPathname(input).endsWith('.user.js');
 }
@@ -191,13 +227,140 @@ export function isManifestCollection(input: string): boolean {
     || p.endsWith('/' + MANIFEST_FILENAME);
 }
 
-// Classify a single-file input string by container kind. Callers that
-// have already verified the input passes `isSingleFileInput` use this
-// to pick which container collection the script gets added to. github
-// URLs here mean both the human-facing `github.com/...` form and the
-// already-normalized `raw.githubusercontent.com/...` form, since
-// `normalizeCollectionInput` may have rewritten the input before this
-// runs.
+// ---------- What a typed location turns out to be ----------
+
+// The verdict `classifyLocation` reaches about one location string.
+// `script` is a single `.user.js`: a real thing to install, but not a
+// collection — the caller decides whether to offer the install route or
+// refuse.
+export type LocationVerdict =
+  | { kind: 'directory' | 'manifest' | 'script' }
+  | { kind: 'invalid'; message: string };
+
+// A single script typed where a collection was expected. Two spellings
+// of one message: the bare sentence for a surface that offers the
+// install route itself (the collection dialog puts a button under it),
+// and the sentence plus the fix for surfaces that can only refuse.
+export const SINGLE_SCRIPT_NOT_A_COLLECTION = 'This is a single script, not a collection';
+export const SINGLE_SCRIPT_USE_ADD_FIELD =
+  `${SINGLE_SCRIPT_NOT_A_COLLECTION}. To install it, paste it in the Add field instead.`;
+
+// A readable local file of a shape no collection can be built from.
+// Says what would work rather than what didn't, per the "name the fix"
+// rule.
+export const UNSUPPORTED_LOCATION_FILE =
+  `File must be a script (.user.js) or a manifest (${MANIFEST_FILENAME})`;
+
+// An http(s) URL that names no collection we recognise. GitHub is the
+// only folder we can scan over http — a plain web directory has no
+// listing to read — so naming it is not an example but the whole rule.
+// Deliberately shaped like `UNSUPPORTED_LOCATION_FILE`: one sentence
+// saying what would work.
+export const HTTP_URL_NOT_A_COLLECTION =
+  `URL must be a GitHub folder or a manifest (${MANIFEST_FILENAME})`;
+
+// A local path nothing could be read from. A file:// read fails
+// identically for "not there" and "not allowed", so the caller passes
+// in the answer to the second (`isFileSchemeAccessAllowed`) and the
+// message names one cause rather than listing both.
+//
+// The off case opens on the same words as the file-access banner
+// (`renderFileAccessBanner`) so the two read as one story, and points
+// at the settings without repeating the banner's link: the banner is
+// already on the page behind this dialog.
+export function locationNotReadableMessage(location: string, fileAccess: boolean): string {
+  // `Could not read …` matches the wording every other read failure in
+  // this module uses, so one session can't show two names for one
+  // failure.
+  //
+  // Ends with a period, unlike the single-sentence messages above: the
+  // no-trailing-period rule is there so a message can take a `(in
+  // <where>)` suffix, which these never do — they render alone in the
+  // dialog's error slot — and a run of sentences whose last one is the
+  // only bare one reads as a typo. Same shape as the other multi-
+  // sentence messages here (`SINGLE_SCRIPT_USE_ADD_FIELD`).
+  return fileAccess
+    ? `Could not read ${location}. Check that the path exists.`
+    : `Could not read ${location}. File access is disabled for this extension. Enable in extension settings.`;
+}
+
+// The shapes a location may be typed in: an http(s) URL, a file:// URL,
+// or an absolute POSIX path that isn't the filesystem root. Shared by
+// every surface that accepts one, so the rule and the message
+// (`LOCATION_SHAPES`) can't drift apart.
+export function isValidLocationShape(input: string): boolean {
+  if (isHttpUrl(input)) return true;
+  if (isFileUrl(input)) return !isFilesystemRoot(locationFsPath(input));
+  return input.startsWith('/') && !isFilesystemRoot(input);
+}
+
+// Whether a POSIX path names the filesystem root, however it is
+// spelled. Scanning `/` would walk the whole disk, so every spelling
+// has to be refused — not just the bare one: `//`, `/.` and `/../..`
+// all land in the same place, and a length test (what this used to be)
+// lets each of them through. A path built only from separators and
+// dots can't name anything else.
+function isFilesystemRoot(path: string): boolean {
+  return /^[/.]*$/.test(path.trim());
+}
+
+// Decide what a location IS, reading it where we can rather than
+// guessing from its name. Local paths get probed — a directory listing
+// first, then a plain file read — so a path that doesn't exist says so
+// instead of being filed as a directory and failing later in a scan.
+//
+// http(s) URLs are classified by shape alone: there is no remote
+// listing, and a keystroke-rate classifier must not fire network reads
+// at arbitrary origins. Their readability is checked when the
+// collection is created.
+//
+// Only for page contexts (the collection dialog). A service worker has
+// no XMLHttpRequest, and its `fetch` of a file:// directory answers
+// opaquely — see the module header.
+export async function classifyLocation(input: string): Promise<LocationVerdict> {
+  const value = input.trim();
+  if (!isValidLocationShape(value)) {
+    return { kind: 'invalid', message: `Location ${LOCATION_SHAPES}` };
+  }
+  if (isHttpUrl(value)) {
+    if (isSingleFileInput(value)) return { kind: 'script' };
+    if (isManifestCollection(value)) return { kind: 'manifest' };
+    if (isGithubDirInput(value)) return { kind: 'directory' };
+    return { kind: 'invalid', message: HTTP_URL_NOT_A_COLLECTION };
+  }
+  // Local. Probe through the canonical URL rather than a filesystem
+  // path: `locationFsPath` mangles the Windows shapes `pathToFileUrl`
+  // can't rebuild, and a URL the user typed is already in the form the
+  // read wants.
+  // Safe to strip: the shape check above refused everything that
+  // collapses to `/`, so this can't eat `file://`'s own slashes.
+  const url = collectionCanonicalUrl(value).replace(/\/+$/, '');
+  // Directory first: Chrome serves a listing for a directory URL with
+  // OR without the trailing slash, so a plain read can't tell the two
+  // apart — but only a directory answers the slashed form at all.
+  if (await canReadFileUrl(url + '/')) return { kind: 'directory' };
+  if (await canReadFileUrl(url)) {
+    if (isSingleFileInput(value)) return { kind: 'script' };
+    if (isManifestCollection(value)) return { kind: 'manifest' };
+    return { kind: 'invalid', message: UNSUPPORTED_LOCATION_FILE };
+  }
+  // Which of the two reasons it is IS knowable, so the message says
+  // which rather than listing both: with file access off, every local
+  // path reads as missing, and "check that the path exists" would send
+  // the user hunting for a file that is sitting right there.
+  const fileAccess = await isFileSchemeAccessAllowed();
+  return {
+    kind: 'invalid',
+    message: locationNotReadableMessage(canonicalCollectionInput(value), fileAccess),
+  };
+}
+
+// Classify a script location by scheme: which built-in default
+// container it would install into, and which scheme chip its row wears
+// inside a container. github URLs here mean both the human-facing
+// `github.com/...` form and the already-normalized
+// `raw.githubusercontent.com/...` form, since `normalizeCollectionInput`
+// may have rewritten the input before this runs.
 export function containerKindForSingleFileInput(input: string): ContainerKind {
   if (/^https?:\/\/(www\.)?github\.com\//i.test(input)) return 'github';
   if (/^https?:\/\/raw\.githubusercontent\.com\//i.test(input)) return 'github';
@@ -218,6 +381,7 @@ import {
   githubDirScriptDisplayUrl,
   githubRawToBlobUrl,
   isGithubDirCollection,
+  isGithubDirInput,
   scanGithubDir,
 } from './github-provider.js';
 export { githubRawToBlobUrl } from './github-provider.js';
@@ -351,18 +515,24 @@ export async function fetchScriptFileUrlText(url: string): Promise<string> {
   return text;
 }
 
-// Best-effort "does the path point to a readable file" probe. Used to
-// turn the otherwise-cryptic "Could not read …/" message into a
-// clearer one when the user types a path to an existing non-userscript
-// file. Returns false on any error (including non-existence and
-// permission failures) — callers should only rely on a true result.
-async function isReadableFile(absolutePath: string): Promise<boolean> {
+// Best-effort "can this file:// URL be read" probe. Returns false on
+// any error (including non-existence and permission failures) —
+// callers should only rely on a true result.
+async function canReadFileUrl(url: string): Promise<boolean> {
   try {
-    await fetchFileUrlText(pathToFileUrl(absolutePath));
+    await fetchFileUrlText(url);
     return true;
   } catch {
     return false;
   }
+}
+
+// Best-effort "does the path point to a readable file" probe. Used to
+// turn the otherwise-cryptic "Could not read …/" message into a
+// clearer one when the user types a path to an existing non-userscript
+// file.
+async function isReadableFile(absolutePath: string): Promise<boolean> {
+  return await canReadFileUrl(pathToFileUrl(absolutePath));
 }
 
 // ---------- HTTP fetch (with conditional GETs) ----------
@@ -579,7 +749,7 @@ export function resetDirectoryListingFetches(): void {
   listingFetches = 0;
 }
 
-async function listDirectory(
+export async function listDirectory(
   absolutePath: string,
   cache?: DirectoryListingCache,
 ): Promise<readonly ListingEntry[]> {
@@ -715,12 +885,7 @@ export async function scanForUserScripts(
       // No mention of "container collections": that's how we store a
       // stand-alone script, and the reader adding a URL has no name for
       // it — from the page it just looks like adding the script itself.
-      // Ends with what to do, per the "name the fix" rule; the reader
-      // is standing at the Add field that produced this.
-      throw new Error(
-        `This URL is neither a folder (use a github tree URL) nor a ${MANIFEST_FILENAME} — ` +
-        'to install a single script, paste the URL of the .user.js file itself',
-      );
+      throw new Error(HTTP_URL_NOT_A_COLLECTION);
     }
     // Local-directory only. Normalise file:// → raw path once so the
     // downstream listing + recursion all see a single form.

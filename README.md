@@ -29,7 +29,8 @@ that interactively demonstrate supported `GM` APIs and other
 functionality.
 
 These also function as a **compliance test suite** for userscript managers,
-with tests that compare behavior between SourceMonkey and Tampermonkey.
+with tests that compare behavior between SourceMonkey, Tampermonkey,
+and Violentmonkey.
 
 ### Status
 
@@ -40,7 +41,9 @@ common headers including `@require` and `@resource` are supported. See
 [docs/supported-headers.md](docs/supported-headers.md) for details.
 
 SourceMonkey isn't in the Chrome Web Store — install it from a release
-zip or [build from source](#development).
+zip or [build from source](#development). It requires **Chrome 152 or
+newer**; the manifest declares that floor, so older Chrome refuses to
+load it.
 
 ## Getting started
 
@@ -55,9 +58,8 @@ zip or [build from source](#development).
    click **Load unpacked**, and select that directory.
 2. On `chrome://extensions`, for SourceMonkey enable:
    - **Pin to toolbar**, so the SourceMonkey icon is visible.
-   - **"Allow User Scripts"** (on Chrome 120–137, the page-wide
-     Developer mode toggle instead). Without it Chrome refuses to
-     inject anything.
+   - **"Allow User Scripts"**. Without it Chrome refuses to inject
+     anything.
    - **"Allow access to file URLs"**, if you want to load scripts from
      local disk.
 
@@ -74,8 +76,10 @@ zip or [build from source](#development).
 
 The collections page is where scripts are registered and managed. Each
 collection has a section listing its scripts, with enable toggles (per
-collection and per script), reorder buttons, and **Refresh** / **Remove**.
-**Refresh All** re-checks everything at once.
+collection and per script), reorder buttons, a trash can that removes
+the collection, a gear that opens its rename/options dialog, and a
+circular arrow that refreshes it. **Refresh All**, in the header bar at
+the top of the page, re-checks everything at once.
 
 Each script row shows a status, linking to that script's log, where there
 are usually more details:
@@ -88,26 +92,49 @@ are usually more details:
 | `MISSING` | The file is gone from its collection (deleted on disk, dropped from a manifest) |
 | `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
 | `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
-| `ERROR` / `WARNING` | Loaded fine, but some errors or warnings have been logged |
+| `ERROR` / `WARNING` | Loaded fine, but this script has produced errors or warnings this session |
 
 Clicking a script name opens the **script viewer**, which shows the script's
 headers, content (including the `@require` files it loads), status, and a
 **Log** tab showing errors and other log messages.
 
+A script that lives in a scripts collection can be moved to another one
+from the viewer's **Collection** row, keeping its log and its stored
+`GM_setValue` data.
+
+**Local copy…** on the same row writes an editable copy of any installed
+script into `SourceMonkey/` under the browser's Downloads folder, which
+becomes the **Scripts copied in Downloads** collection. The copy takes
+over as the running version, and edits made to it in any editor are
+picked up by Refresh. The dialog lets you rename the file, adjust the
+version (`-local` by default) and description, and optionally copy the
+script's `@require` / `@resource` files beside it.
+
+The badged trash can beside it — a can with a small disk, the glyph
+reserved for deleting a file rather than just a record — deletes such a
+copy: the file on disk and its record in SourceMonkey, after a
+confirmation naming the path and every dependency file the copy loads,
+saying which of them go with it. Copies are the one thing SourceMonkey
+can delete from disk, since the browser downloaded them.
+
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
-viewer lists the copies in an **Other versions** panel, where each one can be
-enabled, updated, opened, or removed. Enabling one copy disables the others,
-since two enabled copies of a script both run — ctrl-click a checkbox
-(cmd-click on a Mac) to override that.
+viewer lists the copies in an **Other versions** panel at the top of the page,
+where each one can be enabled, updated, opened, or removed. Clicking another
+copy's row switches the page to it in place, leaving the panel as it is. Enabling one
+copy disables the others, since two enabled copies of a script both run —
+ctrl-click a checkbox (cmd-click on a Mac) to override that.
 
-The **Options** link at the top-left covers `.user.js` link capture,
-debug logging, local file override directories, and a GitHub token (for
-private repos and a higher API rate limit).
+The **Options** link at the top, beside Refresh All, covers `.user.js` link capture,
+debug logging, local file override directories, the Downloads folder
+local copies land in, and a GitHub token (for private repos and a
+higher API rate limit).
 
 Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
 [docs/script-identity.md](docs/script-identity.md),
+[docs/local-copy.md](docs/local-copy.md),
+[docs/local-delete.md](docs/local-delete.md),
 [docs/script-log.md](docs/script-log.md),
 [docs/diagnostics.md](docs/diagnostics.md).
 
@@ -119,16 +146,23 @@ can be:
 - An **absolute path or `file://` URL to a directory** of userscripts.
   Scanned recursively; every `*.user.js` becomes a row.
 - A **single `.user.js`**, by local path or `http(s)://` URL. This
-  opens a preview first (see below).
+  opens a preview in a new tab first (see below).
 - A **manifest** (`script_manifest.json`) — a list of userscripts to
   load. See [Manifest files](#manifest-files-script_manifestjson).
 - A **GitHub URL**, pasted straight from the browser. A repo, a
   `/tree/…` directory, or a `/blob/…` file all work; directories are
   scanned via the GitHub API.
+- A **name**, or nothing at all, to make an empty collection for
+  scripts you install one at a time.
 
-Single scripts are grouped into one of three container collections, created
-on demand — `Scripts from local disk`, `Scripts from web`,
-`Scripts from GitHub`.
+A directory, manifest, or name opens a small dialog first, where you can
+give the collection a name and set its options; it checks that the
+location can be read before creating anything.
+
+Single scripts go into **scripts collections** — folders you create
+and name, or the defaults created on demand (`Scripts from local disk`,
+`Scripts from web`, `Scripts from GitHub`). One scripts collection can
+mix local, web, and GitHub scripts.
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
@@ -136,18 +170,19 @@ Details: [docs/file-access.md](docs/file-access.md),
 ### Installing scripts from a `.user.js` link
 
 Click a `.user.js` raw file link anywhere — Greasy Fork, GitHub, a file on your
-own disk, etc. — and SourceMonkey previews it instead of letting Chrome
-download the file.
+own disk, etc. — and SourceMonkey previews it instead of letting Chrome show
+the bare source.
 
 The preview shows the script's source code and some summary information,
 and validates the script and its `@require` libraries, reporting errors for
-invalid scripts.  **Install** loads the script, the same as adding its
-URL on the collections page.
+invalid scripts. Pick which collection to put it in — or make a new
+one — and **Install** loads the script, the same as adding its URL on
+the collections page.
 
-If the script is already registered, the preview allows updating the
-existing copy. A script that arrives via a collection you already
-subscribe to can still be installed as a copy of your own — the preview
-lists both and lets you pick.
+If the script is already registered, the preview lists every copy and
+lets you open or update each one, or install another copy elsewhere.
+A script that arrives via a collection you already subscribe to can
+still be installed as a copy of your own.
 
 Link capture can be turned off on the Options page if you want Chrome's
 defaults or have another userscript manager handling links.
@@ -158,18 +193,23 @@ Details: [docs/install-capture.md](docs/install-capture.md),
 ### Local development vs deployed scripts
 
 Scripts can reference and load other files with `@require`, `@resource` and `@icon` headers.
-Tampermonkey and other managers require absolute paths.
+Tampermonkey and Greasemonkey require absolute paths.
 
 To make local development on disk easier, SourceMonkey also allows relative
-paths, under the same directory holding the script.
-This is convenient, but makes scripts incompatible with other managers.
+paths, resolved against the script's own location. A script loaded over
+http(s) may point anywhere it could already name with an absolute URL
+(`../lib/util.js`, `//cdn.example.com/util.js`), matching Violentmonkey;
+a script loaded from disk is confined to its own directory.
+Tampermonkey resolves neither, so relative paths still cost portability.
 
 Therefore, when publishing a script, absolute http paths are preferred.
 
 SourceMonkey enables local development on these scripts by **reading local files
 in place of http references**. For scripts run from local files, if there's
-a file under the script's directory matching any suffix of the requested host and path,
-the local file will be read instead.
+a file under the script's directory — or under the directory of the collection
+it came from — matching any suffix of the requested host and path, the local
+file will be read instead. So a shared `lib/` at the top of a scripts
+directory is reachable from a script nested inside it.
 
 Additional local directories can be added to the search path on the Options page.
 
@@ -227,16 +267,31 @@ To generate a manifest from a directory of userscripts, run
 
 ### Keeping scripts up to date
 
-- **While you browse**, SourceMonkey checks in the background whether
-  the source files of the scripts running on the page have changed. Any
-  change is loaded immediately, and the toolbar badge turns purple with
-  a "Reload to update" tooltip.
+Nothing polls on a timer. A script's source is re-checked at these
+moments, and any change is loaded immediately — the toolbar badge then
+turns purple with a "Reload to update" tooltip.
+
+- **Loading a page** re-checks the scripts that run on it.
+- **Switching to a tab** re-checks the scripts on it that came from
+  local disk. So editing a script in your editor and switching back to
+  the browser turns the badge purple before you reload, and that reload
+  runs the new version. Scripts installed from the web are left alone
+  here, to avoid a request to their site every time you change tabs.
 - **Reloading a tab picks up edits on the same click** — SourceMonkey
   races a quick re-check against the page load, so a script you just
   saved usually runs on that very reload.
+- The same script is re-checked at most once every 10 seconds, so two
+  edits in quick succession may need a moment before the second is
+  noticed.
 - **Refresh** (per collection, or **Refresh All**) checks for updates manually.
-  External tools can trigger it by opening
-  `chrome-extension://<extension-id>/collections.html?refresh`.
+  External tools can trigger a refresh by opening the collections page with
+  one of these, where `<id>` is the extension's ID:
+  - `chrome-extension://<id>/collections.html?refresh` — every collection.
+  - `chrome-extension://<id>/collections.html?refresh_local` — only the
+    collections that live on local disk, skipping the web ones.
+  - `chrome-extension://<id>/collections.html?refresh_file=<path>` — only
+    what covers that file or directory, including the collections that
+    scan it, so a file you added, renamed, or deleted is noticed too.
 - Re-fetches are cheap: HTTP collections use conditional GETs, local files
   compare size + mtime, and unchanged content is detected by hash.
 - Every script updates from the place you installed it. A declared
@@ -263,6 +318,11 @@ those also appear on the icon's right-click menu.
 
 Chrome only shows six top-level entries in that menu.  Anything past
 that goes under a `More` submenu.
+
+The menu's last row, **Reload page with no userscripts**, reloads the
+page once with every script skipped — handy for checking whether a
+script is what's breaking a page.  The next ordinary reload runs them
+again.  Skipped scripts show as **NOT LOADED** with a **grey** badge.
 
 ### Supported `GM_*` / `GM.*` APIs and headers
 
@@ -342,31 +402,34 @@ pnpm run test:e2e tests/e2e/injection.spec.ts    # For one e2e test
 ```
 
 The examples suite (`tests/examples/`) can also run against
-Tampermonkey for cross-manager compliance checks:
+Tampermonkey or Violentmonkey for cross-manager compliance checks:
 
 ```sh
-# One-off: install/update every example userscript into the running TM
-node scripts/sync-tm-scripts.mjs
+# One-off: install/update every example userscript into the running manager
+node scripts/sync-manager-scripts.mjs --manager tampermonkey
 
-# Run the examples suite against TM, headless. Headed browser must be closed.
+# Run the examples suite against a manager, headless.
+# Its headed browser must be closed.
 pnpm run test:e2e:tm
+pnpm run test:e2e:vm
 
-# Or, headed: connects via CDP to the TM browser — the script's
+# Or, headed: connects via CDP to that manager's browser — the script's
 # preflight step launches it if it isn't already running.
 pnpm run test:e2e:tm:headed
+pnpm run test:e2e:vm:headed
 ```
 
-The headed variant connects over CDP to the browser opened by
-`scripts/open-test-browser-with-Tampermonkey.sh`. The headless
-variant launches its own Chromium against the same persistent profile
-(so the same TM installation), but can't run while the headed browser
-is open against the profile.
+The headed variants connect over CDP to the browser opened by
+`scripts/open-test-browser.sh <manager>`. The headless variants launch
+their own Chromium against the same persistent profile (so the same
+manager installation), but can't run while the headed browser is open
+against that profile.
 
 See [docs/testing.md](docs/testing.md) for the harness layout,
 [docs/cross-manager-testing.md](docs/cross-manager-testing.md) for the
-one-time TM profile setup, and
+one-time profile setup each manager needs, and
 [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
-for known TM-specific divergences.
+for known per-manager divergences.
 
 ### Validate userscripts from the command line
 

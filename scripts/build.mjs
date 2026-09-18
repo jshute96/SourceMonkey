@@ -7,14 +7,16 @@
 //   3. Copies src/manifest.json -> dist/manifest.json verbatim. Chrome loads
 //      the unpacked extension from dist/, so the manifest must live there.
 //   4. Copies src/*.html -> dist/*.html (extension pages such as
-//      collections.html).
+//      collections.html), inlining the shared glyph sprite where a page
+//      writes `<!--#include glyph-sprite-->`.
 //   5. Runs the TypeScript compiler (tsc) to compile src/*.ts -> dist/*.js.
 //      With --watch, tsc keeps running and rebuilds on change.
 //
 // Run with `pnpm run build`. Pass --watch to keep tsc running.
 //
 // Note on watch mode: only TypeScript is watched. If you edit
-// src/manifest.json or any HTML/CSS asset, re-run `pnpm run build`.
+// src/manifest.json, src/glyph-sprite.svg, or any HTML/CSS asset,
+// re-run `pnpm run build`.
 
 import { rm, mkdir, cp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
@@ -61,11 +63,49 @@ await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
 // 4. Copy every top-level HTML / CSS asset (collections.html, etc., plus
 //    any shared *.css the pages <link> in). Iterate so new pages and
 //    stylesheets get picked up automatically without editing this script.
+//
+//    HTML gets one substitution on the way through: `<!--#include
+//    glyph-sprite-->` is replaced with src/glyph-sprite.svg. The sprite
+//    has to be inlined per page (a `<use href="other.svg#id">` across
+//    documents doesn't inherit `currentColor`, and would be a second
+//    fetch), but keeping one copy in the source tree is what stops two
+//    pages from drifting into different glyphs. A page that doesn't
+//    write the marker simply gets no sprite.
+const SPRITE_MARKER = '<!--#include glyph-sprite-->';
+const sprite = (await readFile(resolve(src, 'glyph-sprite.svg'), 'utf8')).trim();
+
+// The sprite's header comment must contain no comment terminator of
+// its own: anything ending in `--` + `>` before the root element closes
+// that comment early and spills the remainder onto every page as
+// visible text. Spelling the include marker out in the comment is how
+// this happened once; any other stray terminator does the same, so the
+// check is on the class, not that one phrase.
+const rootAt = sprite.indexOf('<svg');
+if (rootAt < 0) {
+  throw new Error('src/glyph-sprite.svg has no <svg> root element.');
+}
+if (sprite.slice(0, rootAt).split('-->').length > 2) {
+  throw new Error(
+    'src/glyph-sprite.svg closes its header comment more than once before the'
+    + ' <svg> root. The text after the first close leaks into every page.',
+  );
+}
+
 for (const entry of await readdir(src, { withFileTypes: true })) {
   if (!entry.isFile()) continue;
   const ext = extname(entry.name);
-  if (ext === '.html' || ext === '.css') {
+  if (ext === '.css') {
     await cp(resolve(src, entry.name), resolve(dist, entry.name));
+  } else if (ext === '.html') {
+    const html = await readFile(resolve(src, entry.name), 'utf8');
+    // One marker per page at most: a second would emit a second copy of
+    // every symbol id, and `<use>` / `url(#…)` would silently bind to
+    // whichever came first.
+    const parts = html.split(SPRITE_MARKER);
+    if (parts.length > 2) {
+      throw new Error(`${entry.name} writes the glyph-sprite marker more than once.`);
+    }
+    await writeFile(resolve(dist, entry.name), parts.join(sprite));
   }
 }
 

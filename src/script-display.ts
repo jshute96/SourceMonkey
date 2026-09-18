@@ -9,8 +9,9 @@
 // `version-probe-fetch.js` and is deliberately not reachable here.)
 
 import type { StoredScript } from './script-store.js';
-import { getValue } from './userscript-header.js';
-import { outdatedProbe, type VersionProbe } from './version-probe.js';
+import { getValue, type ParsedHeader } from './userscript-header.js';
+import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
+import { describeDiagnostic } from './diagnostic-location.js';
 
 // ---------- Names and paths ----------
 
@@ -104,8 +105,56 @@ export function scriptDisplayName(
   script: Pick<StoredScript, 'header' | 'relativePath'>,
   fallback?: string,
 ): string {
-  const name = script.header ? getValue(script.header, 'name')?.trim() : undefined;
-  return name || fallback || displayLocation(script.relativePath);
+  return headerDisplayName(script.header) || fallback || displayLocation(script.relativePath);
+}
+
+// The `@name` a header declares, or '' when it declares none usable.
+// Split out so the viewer's heading label and every other surface agree
+// on what counts as a name — a future change to the rule (a localized
+// `@name:en`, different trimming) must not land in only one of them.
+export function headerDisplayName(header: ParsedHeader | null | undefined): string {
+  return (header ? getValue(header, 'name')?.trim() : undefined) || '';
+}
+
+// The script's `@name`, or its location when it declares no usable one.
+// The location is NOT appended to a name that exists — a heading
+// carrying both runs the width of the window, and the details panel's
+// `Location` row is where a reader goes for the full path.
+//
+// `headerDisplayName`, not a local read of `@name`: the viewer must not
+// disagree with the collections page about what a script is called.
+export function scriptLabel(
+  header: ParsedHeader | null | undefined,
+  location: string,
+): string {
+  return headerDisplayName(header) || displayLocation(location);
+}
+
+// Lives here rather than in collection-display.ts, its first caller: this
+// module is a leaf, and page-heading.ts needs the helper on the early
+// path where dragging in collection-display's scan/network graph would
+// undo the point of loading early.
+// Append a path / URL string to an element, inserting a `<wbr>` after
+// each `/` so the browser prefers slash boundaries when wrapping a
+// long value. Combined with `overflow-wrap: anywhere` on the element,
+// the wrap order becomes: spaces first, then slashes, then anywhere
+// inside a word only when nothing else fits. The slash itself stays
+// attached to the preceding segment so it reads as `foo/` then a
+// break, not a `/bar` continuation.
+//
+// Use this for any field that may render a long path or URL: the
+// collections page display name, the viewer's Location row, the Match /
+// Exclude pattern rows, etc.
+export function appendWithSlashBreaks(el: HTMLElement, text: string): void {
+  const doc = el.ownerDocument;
+  const parts = text.split('/');
+  parts.forEach((part, i) => {
+    if (i > 0) {
+      el.appendChild(doc.createTextNode('/'));
+      el.appendChild(doc.createElement('wbr'));
+    }
+    if (part) el.appendChild(doc.createTextNode(part));
+  });
 }
 
 // Format a byte count for the size column. Returns "1.2 KB", "950 B",
@@ -161,6 +210,17 @@ export type DisplayStatus =
   | 'ok' | 'invalid' | 'rejected' | 'missing'
   | 'refresh-failed' | 'outdated' | 'warning' | 'error';
 
+// The states a Log entry can record moving a script into (see
+// `LogEntry.state` in script-log.ts): everything above except
+// `warning` / `error`, which are *derived from* the Log's max level and
+// so can't be the state an entry announces.
+export type LoadState = Exclude<DisplayStatus, 'warning' | 'error'>;
+export const LOAD_STATES: readonly LoadState[] =
+  ['ok', 'invalid', 'rejected', 'missing', 'refresh-failed', 'outdated'];
+export function isLoadState(value: unknown): value is LoadState {
+  return (LOAD_STATES as readonly unknown[]).includes(value);
+}
+
 export type LogLevelForStatus = 'info' | 'warning' | 'error';
 
 // `outdated` and `rejected` come in as caller-computed flags rather
@@ -215,6 +275,76 @@ export function formatScriptStatusLabel(status: DisplayStatus): string {
     case 'outdated': return 'OUTDATED';
     case 'warning': return 'WARNING';
     case 'error': return 'ERROR';
+  }
+}
+
+// The viewer URL for a stored script, optionally landing on its Log
+// pane. Shared by every in-page surface that links to or navigates to
+// a script, so none of them can drift on how the tab is addressed.
+//
+// Page-relative, not the absolute `chrome.runtime.getURL(...)` form:
+// every extension page lives at the extension root, so the browser
+// resolves it against the current page, and the long
+// `chrome-extension://<id>/` prefix stays out of a table that can hold
+// hundreds of rows with two links each. The service worker builds the
+// absolute form instead (`viewerUrlForScript` in background.ts)
+// because it has no page to be relative to.
+export function viewerUrl(scriptId: string, tab?: 'log'): string {
+  const params = new URLSearchParams({ script: scriptId });
+  // The viewer parses `#Log` via parseHash and lands on the Log pane.
+  return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
+}
+
+// The install-preview URL for a location the user typed or pasted.
+// Page-relative for the same reason `viewerUrl` is; callers that need
+// the absolute form wrap it in `chrome.runtime.getURL`.
+export function previewUrl(location: string): string {
+  return `userscript.html?preview=${encodeURIComponent(location)}`;
+}
+
+// Everything a Status cell shows about one stored script: the
+// effective status, the word for it, and the hover text explaining
+// whichever verdict won.
+export interface ScriptStatusView {
+  status: DisplayStatus;
+  label: string;
+  // Absent when there is nothing to add — an OK script with no logs
+  // has no explanation to give.
+  title?: string;
+}
+
+// What a script's Status cell should say. The label follows
+// `effectiveScriptStatus`; the hover text follows whatever the cell is
+// actually showing — Chrome's rejection reason, the refresh-failure
+// reason, the newer version found upstream, or the load error.
+//
+// Shared by the viewer's own Status row and the "Other versions"
+// panel's Status column, which would otherwise explain the same
+// verdict two ways. The collections page keeps its own copy of this
+// logic: its repaint path rebuilds status cells from DOM datasets with
+// no script row in hand, which is exactly what this takes.
+export function scriptStatusView(
+  script: Pick<
+    StoredScript,
+    'status' | 'refreshError' | 'errorMessage' | 'errorLocation' | 'header' | 'versionProbes'
+  >,
+  maxLogLevel: LogLevelForStatus | undefined,
+  rejection: string | undefined,
+): ScriptStatusView {
+  const outdated = scriptOutdatedProbe(script);
+  const status = effectiveScriptStatus(
+    script, maxLogLevel, outdated !== null, rejection !== undefined,
+  );
+  return { status, label: formatScriptStatusLabel(status), title: statusTitle() };
+
+  function statusTitle(): string | undefined {
+    if (status === 'rejected' && rejection) return rejection;
+    if (status === 'refresh-failed') return script.refreshError;
+    if (status === 'outdated' && outdated) {
+      return `Version ${outdated.version} at ${probeLabel(outdated.kinds)}: ${outdated.url}`;
+    }
+    if (script.errorMessage) return describeDiagnostic(script.errorMessage, script.errorLocation);
+    return undefined;
   }
 }
 

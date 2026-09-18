@@ -57,11 +57,13 @@ import {
   probeTargets,
   probesAreFresh,
   type ProbePolicy,
+  type VersionProbe,
 } from './version-probe.js';
 import { probeVersions } from './version-probe-fetch.js';
 import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
 import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
 import { getValue } from './userscript-header.js';
+import { scriptOutdatedProbe } from './script-display.js';
 import { dlog } from './debug-log.js';
 import { startPhaseTimer, resetPhaseTotals, reportPhaseTotals } from './phase-timing.js';
 import { githubTokenLogSuffix } from './github-auth.js';
@@ -105,6 +107,11 @@ export function gate<T>(
   mode: UpdateMode,
   task: () => Promise<T>,
   skipResult: T,
+  // How the rate-limit skip below names this resource. Only the caller
+  // knows whether the key is a script, a collection, or the
+  // all-collections sentinel, and only a script has a readable label —
+  // so the naming is passed in rather than guessed from the key.
+  label: string = String(key),
 ): Promise<T> {
   let slot = state.get(key);
   if (!slot) {
@@ -117,7 +124,15 @@ export function gate<T>(
   if (slot.inFlight) return slot.inFlight.promise;
   if (mode === 'opportunistic') {
     const last = slot.lastCompletedAt ?? 0;
-    if (nowMsImpl() - last < UPDATE_MIN_INTERVAL_MS) {
+    const since = nowMsImpl() - last;
+    if (since < UPDATE_MIN_INTERVAL_MS) {
+      // Logged because a rate-limited check does nothing else: no
+      // fetch, no storage write, no other log line. Without this it
+      // looks identical to a check that never started.
+      dlog(
+        `[SourceMonkey] update check skipped for ${label}: ` +
+        `checked ${Math.round(since / 1000)}s ago, interval is ${UPDATE_MIN_INTERVAL_MS / 1000}s`,
+      );
       return Promise.resolve(skipResult);
     }
   }
@@ -197,6 +212,7 @@ export function updateScript(
   return gate(
     scriptState, scriptId, mode,
     () => runScriptCheck(scriptId, mode, probe, parseCheck, batch), null,
+    getScriptLogLabel(scriptId),
   );
 }
 
@@ -206,7 +222,11 @@ export function updateCollection(
   mode: UpdateMode,
   probe: ProbePolicy = 'force',
 ): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
-  return gate(collectionState, collectionId, mode, () => runCollectionCheck(collectionId, mode, probe), null);
+  return gate(
+    collectionState, collectionId, mode,
+    () => runCollectionCheck(collectionId, mode, probe), null,
+    `collection ${collectionId}`,
+  );
 }
 
 // Only ever reached from Refresh All, so probes force by default.
@@ -223,6 +243,7 @@ export function updateAllCollections(
     mode,
     () => runAllCollectionsCheck(mode, probe) as Promise<unknown>,
     new Map(),
+    'all collections',
   ) as Promise<Map<string, { collection: StoredCollection; scripts: StoredScript[] }>>;
 }
 
@@ -279,8 +300,16 @@ async function runScriptCheck(
     console.info(`[SourceMonkey] update check failed: ${label}: ${msg}`);
     // Stands alone — it names the check and its failure in one line,
     // so it needs no preamble.
+    //
+    // `state: 'refresh-failed'` even though the row carries no
+    // `refreshError` (the throw came from before the row was written):
+    // the meaning is the same — this check didn't complete and the
+    // cached copy keeps running — and a bare `error` would bump the
+    // `loglevel:` sentinel and leave the script badged ERROR for the
+    // rest of the session over a failure the next check may not repeat.
     logScriptEvent(scriptId, {
       level: 'error',
+      state: 'refresh-failed',
       source: refreshLogSource(mode),
       message: `Could not check for updates: ${msg}`,
     });
@@ -521,12 +550,17 @@ async function probeOneScript(
   // INVALID both outrank OUTDATED so nothing stale is on screen, and a
   // row that recovers gets its annotation back without a refetch.
   if (script.status !== 'ok') return;
+  const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
   const targets = probeTargets(script.header, script.fileUrl);
   if (targets.length === 0) {
     // The script no longer names an upstream we don't already fetch
     // from (or never did). Clear any annotation left from when it did,
     // so a removed `@updateURL` doesn't strand an OUTDATED badge.
-    if (script.versionProbes) await setVersionProbes(script.id, []);
+    if (script.versionProbes) {
+      const wasOutdated = outdatedProbe(loadedVersion, script.versionProbes);
+      await setVersionProbes(script.id, []);
+      if (wasOutdated) logUpToDateAgain(script.id, loadedVersion);
+    }
     return;
   }
   const now = nowMsImpl();
@@ -535,24 +569,61 @@ async function probeOneScript(
   // every tab reload.
   if (policy === 'if-stale' && probesAreFresh(script.versionProbes, targets, now)) return;
 
-  const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
   const before = outdatedProbe(loadedVersion, script.versionProbes);
   const probes = await probeVersions(targets, now, script.versionProbes);
   await setVersionProbes(script.id, probes);
 
   // Report the transition, not the state: an upstream that has been
   // ahead of us for a month shouldn't add a Log entry every interval.
+  // Both directions carry the `state` they leave the badge in, so the
+  // Log's status column reads OUTDATED / OK exactly where the badge
+  // changed.
+  //
+  // `before` is computed against the row this probe was handed, which
+  // is the freshly refreshed one — so "our copy caught up" is already
+  // not outdated here. That transition is reported by
+  // `emitScriptOutcomeLog`, which has the prior row; this one only sees
+  // the upstream side moving (a version rolled back).
   const after = outdatedProbe(loadedVersion, probes);
-  if (!after || after.version === before?.version) return;
-  const message =
-    `Newer version ${after.version} at ${probeLabel(after.kinds)} ` +
-    `(running ${loadedVersion}) — ${after.url}`;
-  console.info(`[SourceMonkey] ${getScriptLogLabel(script.id)}: ${message}`);
+  if (!after) {
+    if (before) logUpToDateAgain(script.id, loadedVersion);
+    return;
+  }
+  if (after.version === before?.version) return;
+  const entry = outdatedLogEntry(after, loadedVersion);
+  console.info(`[SourceMonkey] ${getScriptLogLabel(script.id)}: ${entry.message}`);
   // Not split by trigger mode like the refresh labels: this entry
   // reports a transition ("an upstream copy just moved ahead of us"),
   // and whether a click or a navigation noticed it tells the user
   // nothing they'd act on.
-  logScriptEvent(script.id, { level: 'warning', source: 'version-probe', message });
+  logScriptEvent(script.id, { ...entry, source: 'version-probe' });
+}
+
+// The OUTDATED row, minus its source: written by the probe when the
+// upstream moves ahead, and restated at boot for a probe that persisted
+// across a restart. One formatter so both read alike.
+function outdatedLogEntry(
+  probe: VersionProbe,
+  loadedVersion: string | undefined,
+): Omit<AppendLogInput, 'source'> {
+  return {
+    level: 'warning',
+    state: 'outdated',
+    message:
+      `Newer version ${probe.version} at ${probeLabel(probe.kinds)} ` +
+      `(running ${loadedVersion}) — ${probe.url}`,
+  };
+}
+
+// The OUTDATED → OK row. One message for every way the badge can go:
+// our copy caught up (seen by the refresh outcome), the upstream rolled
+// back (seen by the probe), or the header stopped naming an upstream
+// (the probe's clear path).
+function logUpToDateAgain(scriptId: string, loadedVersion: string | undefined): void {
+  logScriptEvent(scriptId, {
+    level: 'info', state: 'ok', source: 'version-probe',
+    message: `Up to date again (running ${loadedVersion ?? '<none>'})`,
+  });
 }
 
 interface SourceSnapshot {
@@ -620,9 +691,10 @@ function logScriptOutcome(
 // via dlog.
 //
 // Every failure the UI surfaces on a script row also lands here, so
-// clicking a red/amber badge always leads to an explanation:
-// `invalid` and `missing` (error), and `refreshError` (warning) — see
-// `loadStateLogEntry` for the phrasing and the level rationale.
+// clicking a red/amber badge always leads to an explanation: the entry
+// carries the `state` the badge shows (INVALID / MISSING / REFRESH
+// FAILED, and OK for the recovery) — see `loadStateLogEntry` for the
+// phrasing.
 //
 // **One row per uneventful check, two when there's news.** A check
 // that finds nothing writes a single `Checked for updates — no change`
@@ -692,7 +764,7 @@ export function emitScriptOutcomeLog(
     // The row is healthy again. Log the recovery so the Log explains
     // why the badge went back to OK — without this the last word on the
     // script would be a failure that is no longer true.
-    logScriptEvent(scriptId, { level: 'info', source, message: recoveryMessage(prior) });
+    logScriptEvent(scriptId, { level: 'info', state: 'ok', source, message: recoveryMessage(prior) });
     // Recovering IS the outcome of this check. Falling through to the
     // uneventful line below would read as a contradiction when the
     // recovery didn't come with new bytes (a dependency host that
@@ -702,11 +774,25 @@ export function emitScriptOutcomeLog(
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
     const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
+    // A new version is a clean slate for the WARNING / ERROR badge: the
+    // old version's runtime errors say nothing about this one, and a
+    // developer who just fixed one needs the badge to reflect only what
+    // happens next. Shown as OK in the Log's status column for the same
+    // reason. See `LogEntry.resetsLogLevel`.
     logScriptEvent(scriptId, {
       level: 'info',
+      state: 'ok',
+      resetsLogLevel: true,
       source,
       message: `Loaded new content${size}`,
     });
+    // The new content's `@version` caught up with a probe that had been
+    // ahead of us. The probes ride along unchanged on the refreshed row
+    // (see `preserveConcurrentEdits` in script-store.ts), so the comparison is
+    // between the old and new header against the same stored answer.
+    if (prior && scriptOutdatedProbe(prior) && !scriptOutdatedProbe(next)) {
+      logUpToDateAgain(scriptId, next.header ? getValue(next.header, 'version') : undefined);
+    }
     // Replay parse-time diagnostics whenever a new version lands. They
     // appear AFTER the "Loaded new content" line so it's clear which
     // version the warning belongs to. One entry per content version —
@@ -730,11 +816,9 @@ export function emitScriptOutcomeLog(
 // reading one script's Log can see why it wasn't checked — the badge
 // for a collection-level problem belongs on the collection row, which
 // already renders `scanError` (see `renderCollectionSection` in
-// collections.ts). Logging them higher would promote every script under
-// a collection to WARNING via the `loglevel:` sentinel, which is
-// monotonic within a session: one transient listing failure would leave
-// N rows badged WARNING for the rest of the session, long after the
-// collection came back.
+// collections.ts). Logging them higher would badge every script under
+// the collection WARNING via the `loglevel:` sentinel, which is for
+// things the script itself did.
 //
 // Plain append. A collection that stays unreadable re-logs on each pass,
 // which is honest — every one of those passes really did try to read
@@ -839,7 +923,7 @@ function startupLogEntry(sl: StartupLog): AppendLogInput {
 const BOOT_REPLAY_SENTINEL_KEY = 'sm:startup-logs-replayed-at';
 
 // Refill the Log tab from persisted state, once per Chrome session, at
-// SW startup. Two things get replayed, both for the same reason: the
+// SW startup. Everything replayed here is so for the same reason: the
 // facts live in `chrome.storage.local` and outlive the Chrome shutdown
 // that wipes the session-scoped log, so without this a fresh session
 // shows a red or amber badge over an empty Log until the user manually
@@ -849,10 +933,14 @@ const BOOT_REPLAY_SENTINEL_KEY = 'sm:startup-logs-replayed-at';
 //     carrying a `refreshError`. Nothing re-checks a script until it is
 //     refreshed or its page is visited, so without this a script broken
 //     since before the restart shows a badge over an empty Log.
+//   - **Outdated** — a row whose persisted `versionProbes` put an
+//     upstream ahead of it. The probe only logs the *transition*, and a
+//     re-probe after the restart finds the same answer, so this is the
+//     only line the OUTDATED badge would ever get.
 //   - **Parse-time diagnostics** — `script.startupLogs`.
 //
 // The sentinel makes it idempotent: SW restarts within the same Chrome
-// session bail out immediately. Both replays reuse the exact message
+// session bail out immediately. Every leg reuses the exact message
 // text the refresh paths use, so the Log tab is visually uniform.
 //
 // The sentinel is written AFTER the walk, not before: MV3 can evict the
@@ -872,6 +960,7 @@ export async function replayScriptLogsAtBoot(): Promise<void> {
   const scripts = await getAllScripts();
   await Promise.all(scripts.map(async (script) => {
     await ensureLoadStateInLogTab(script);
+    await ensureOutdatedInLogTab(script);
     await ensureStartupLogsInLogTab(script);
   }));
 
@@ -893,6 +982,22 @@ async function ensureLoadStateInLogTab(script: StoredScript): Promise<void> {
   const entry = loadStateLogEntry(script);
   if (!entry) return;
   await appendScriptLog(script.id, { ...entry, source: 'extension-startup' });
+}
+
+// Restate OUTDATED for a row whose stored probe is still ahead of it.
+// Same source and reasoning as `ensureLoadStateInLogTab`; same wording
+// as the probe's own transition row.
+//
+// `ok` rows only, mirroring `probeOneScript`: an `invalid` / `missing`
+// row keeps its stale probes but isn't running, so "(running <v>)"
+// would be false and the line would land after — and appear to
+// override — the load-state line the row actually deserves.
+async function ensureOutdatedInLogTab(script: StoredScript): Promise<void> {
+  if (script.status !== 'ok') return;
+  const probe = scriptOutdatedProbe(script);
+  if (!probe) return;
+  const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
+  await appendScriptLog(script.id, { ...outdatedLogEntry(probe, loadedVersion), source: 'extension-startup' });
 }
 
 // Replay `script.startupLogs` into the Log tab as `parser`-source rows.

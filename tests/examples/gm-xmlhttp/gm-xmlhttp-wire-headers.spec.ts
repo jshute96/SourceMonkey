@@ -1,9 +1,10 @@
 // What a manager actually puts on the wire for a GM_xmlhttpRequest.
 //
-// Runs under both the `sourcemonkey` and `tampermonkey` projects, so
-// the same request is measured against both. The page can't see any of
-// this: Origin, Referer and the `Sec-Fetch-*` set are forbidden to JS,
-// so the fixture server's `/__echo` route reports them instead.
+// Runs under the `sourcemonkey`, `tampermonkey`, and `violentmonkey`
+// projects, so the same request is measured against each. The page
+// can't see any of this: Origin, Referer and the `Sec-Fetch-*` set are
+// forbidden to JS, so the fixture server's `/__echo` route reports
+// them instead.
 //
 // This is the measurement behind issue #21 — endpoints that gate on
 // `Sec-Fetch-Site` refuse anything a service worker sends, and the

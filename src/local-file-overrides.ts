@@ -26,25 +26,36 @@
 // sitting next to the script is the suffix that usually matches. One
 // code path, so the implicit and configured forms can't drift.
 //
+// The COLLECTION's own root is an implicit root too, and for the same
+// reason: a local directory (or manifest) collection is a tree the user
+// named, its scripts sit at relative paths inside it, and a shared
+// `lib/` next to those scripts is where a repo of userscripts actually
+// keeps its libraries. Without it a script two levels down
+// (`sites/example.com/foo.user.js`) could never see `lib/util.js`,
+// because a root is a floor and the search never climbs.
+//
 // ## What keeps this safe
 //
 // Not which tag is being resolved (`@require` vs `@resource`), but WHO
 // the host script is:
 //
 //   - Inferred substitution (this module) only applies when the host
-//     script's own URL is `file://`. A script loaded from a local
-//     directory the user added by absolute path already has ambient
-//     reach over that tree — a relative `@require ./util.js` resolves
-//     there today. Giving it `<its own dir>/util.js` grants nothing new.
+//     script's own URL is `file://`. Its OWN folder grants nothing new:
+//     a relative `@require ./util.js` already resolves there today, and
+//     `file-loader.ts` confines a relative ref to exactly that folder.
 //   - An http(s)-loaded script never gets inference. That is the case
 //     where a hostile `@resource file:///home/you/.ssh/id_rsa` followed
 //     by `GM_getResourceText` would actually matter.
-//   - A configured root IS reach the script didn't otherwise have, and
-//     a script picks the path suffix it looks for, so everything under
-//     a root is readable by any local script — including via
-//     `@resource` + `GM_getResourceText`. That's a property of the
-//     setting, stated where it's configured; roots are meant to name
-//     directories of script content, not home directories.
+//   - The collection root and a configured root ARE reach the script
+//     didn't otherwise have — a relative ref cannot climb into either —
+//     and a script picks the path suffix it looks for, so everything
+//     under one is readable by any local script in it, including via
+//     `@resource` + `GM_getResourceText`. What justifies each is that
+//     the user named that directory: a configured root on the options
+//     page, a collection root by adding the collection. Both say so
+//     where they're set (the options page's note, the collection
+//     dialog's local-overrides option) — so point a collection at a directory of
+//     script content, not at a home directory.
 //
 // On top of that:
 //
@@ -67,7 +78,20 @@
 // ref) are a separate, later mechanism: those are allowed for any host
 // script, because naming the file IS the authorization. See TODO.md.
 
-import { isHttpUrl, isFileUrl, containerKind, pathToFileUrl } from './directories.js';
+import {
+  isHttpUrl,
+  isFileUrl,
+  isContainerCollection,
+  pathToFileUrl,
+  isManifestCollection,
+  isSingleFileInput,
+  collectionCanonicalUrl,
+  locationFsPath,
+  isNonPosixFileUrl,
+  listDirectory,
+  type DirectoryListingCache,
+  type ListingEntry,
+} from './directories.js';
 
 // An encoded path separator. The URL parser resolves `..` and `%2e%2e`
 // but deliberately leaves these alone inside a segment, while Chrome's
@@ -112,7 +136,7 @@ export function parseLocalRootLines(text: string): ParsedRoot[] {
     const entry: ParsedRoot = { lineNumber: i + 1, text: trimmed };
     const url = canonicalRootUrl(trimmed);
     if (url) entry.url = url;
-    else entry.error = `A local file root ${ROOT_SHAPES}`;
+    else entry.error = `Local file root ${ROOT_SHAPES}`;
     out.push(entry);
   }
   return out;
@@ -246,25 +270,81 @@ export function _setLocalRootsForTests(roots: readonly string[]): void {
   loadOnce = Promise.resolve();
 }
 
+// What a script's collection says about local stand-ins: whether they
+// are allowed at all (the per-collection toggle), and which directory
+// the collection itself is rooted at. Passed as one value because every
+// caller has both facts from the same collection row, and a caller that
+// knew only the toggle would silently search one root too few.
+export interface LocalFileScope {
+  enabled: boolean;
+  // The collection's stored `path`. Optional: the viewer's preview has
+  // no collection row at all, and neither does the offline validator.
+  collectionPath?: string;
+}
+
+// The directory a collection is rooted at, as a search root — or null
+// when it has no single tree to search:
+//
+//   - Container collections (`container:file` and friends) aggregate
+//     individually added scripts that share no directory. Each script's
+//     own folder, which `localSearchRoots` adds anyway, is the whole of
+//     what they have in common. (So this is a narrower question than
+//     `collectionSupportsLocalFiles` below, which says yes to a file
+//     container — its scripts do get their own folders.)
+//   - http(s) collections aren't local. (Their scripts can't get roots
+//     either — see the `file://` gate below — so this is belt and
+//     braces.)
+//
+// A manifest names a FILE, and its relative entries resolve against that
+// file's own directory, so the root is the parent. (Only *relative*
+// ones: `resolveManifestEntryUrl` applies no containment, so an entry
+// may name a script outside the tree. Such a script still gets the
+// manifest's directory as a root — the user wrote the manifest, which
+// is the same authorization the directory case rests on.) Legacy
+// single-file collection rows (`*.user.js` as the path) take the parent
+// too, which is always the script's own folder and so always deduped
+// away; the branch exists so the classification reads completely.
+// Everything else is a local directory: itself.
+function collectionRootUrl(collectionPath: string): string | null {
+  if (!collectionPath) return null;
+  if (isContainerCollection(collectionPath)) return null;
+  if (isHttpUrl(collectionPath)) return null;
+  const canonical = collectionCanonicalUrl(collectionPath);
+  if (!isFileUrl(canonical)) return null;
+  if (isManifestCollection(collectionPath) || isSingleFileInput(collectionPath)) {
+    try {
+      return canonicalRootUrl(new URL('./', canonical).toString());
+    } catch {
+      return null;
+    }
+  }
+  // Same validation a configured root gets — a collection path is user
+  // input too, and it becomes a floor here exactly as one does.
+  return canonicalRootUrl(canonical);
+}
+
 // Ordered local directories to search for a stand-in, most specific
 // first. Empty means "no substitution" — every caller short-circuits on
 // that, so a script with no local roots costs exactly what it did
 // before this feature existed.
 //
-// The host script's own folder comes first and always wins, because the
-// file sitting next to the script is the least surprising answer.
-// Configured roots (options page, in the order typed) follow it.
+// The order, most specific first:
+//   1. The host script's own folder — the file sitting next to the
+//      script is the least surprising answer.
+//   2. The collection's own root, so a repo-wide `lib/` is reachable
+//      from a script nested inside the tree the user added.
+//   3. Configured roots (options page, in the order typed).
 //
-// The `file://`-host gate covers the configured roots too. A global
-// root is a development directory; a script you installed from the web
-// has no business resolving its dependencies out of it, and the
-// intended answer for that case is an explicit per-file override — one
-// path, named by the user, for one ref. See TODO.md.
+// The `file://`-host gate covers the collection root and the configured
+// roots too. A global root is a development directory; a script you
+// installed from the web has no business resolving its dependencies out
+// of it, and the intended answer for that case is an explicit per-file
+// override — one path, named by the user, for one ref. See TODO.md.
 export function localSearchRoots(
   scriptFileUrl: string,
-  enabled: boolean,
+  scope: LocalFileScope,
 ): string[] {
-  if (!enabled) return [];
+  if (!scope.enabled) return [];
   // The gate: inference is for locally-loaded scripts only.
   if (!isFileUrl(scriptFileUrl)) return [];
   let parent: string;
@@ -276,31 +356,41 @@ export function localSearchRoots(
     // gate's premise, so nothing is searched.
     return [];
   }
-  // De-dupe: the script's own folder is a perfectly reasonable thing to
-  // ALSO list as a global root. `localFileCandidates` would already
+  const collectionRoot = scope.collectionPath
+    ? collectionRootUrl(scope.collectionPath)
+    : null;
+  // De-dupe: a script at the top of its collection has its own folder
+  // AS the collection root, and either is a perfectly reasonable thing
+  // to ALSO list as a global root. `localFileCandidates` would already
   // collapse the duplicate candidates, so this is about the list
   // reading as what it claims to be — the *additional* places searched,
   // each appearing once.
-  return [parent, ...configuredRoots.filter((r) => r !== parent)];
+  const roots = [parent];
+  for (const root of [collectionRoot, ...configuredRoots]) {
+    if (root && !roots.includes(root)) roots.push(root);
+  }
+  return roots;
 }
 
 // Can a collection's scripts ever have local stand-ins? Used only to
-// decide whether the collections page shows the per-collection toggle —
-// the real gate is `localSearchRoots`, which looks at each script's own
-// URL.
+// decide whether the collection dialog offers the per-collection
+// option — the real gate is `localSearchRoots`, which looks at each
+// script's own URL. Not the same question as `collectionRootUrl` above:
+// a container supports stand-ins but contributes no root of its own.
 //
-// http(s) collections and the http / github containers are excluded:
-// every script under them loads over the network, so the toggle would
-// be a control that does nothing.
+// http(s) collections are excluded: every script under them loads over
+// the network, so the option would be a control that does nothing.
+// Every container qualifies — even the built-in web / GitHub defaults —
+// because a container may hold scripts from any scheme, and the option
+// applies to whichever of them came from disk.
 export function collectionSupportsLocalFiles(collectionPath: string): boolean {
-  if (isHttpUrl(collectionPath)) return false;
-  const container = containerKind(collectionPath);
-  return container !== 'http' && container !== 'github';
+  return !isHttpUrl(collectionPath);
 }
 
 // Every local file that could stand in for `declaredUrl`, in the order
-// they should be tried. Callers fetch each in turn and take the first
-// that reads.
+// they should be tried. Readers go through `presentLocalFileCandidates`
+// below, which drops the ones that can't exist before fetching each in
+// turn and taking the first that reads.
 //
 // Suffixes run longest-first so a deliberate layout (`lib/util.js` under
 // the root) beats an incidental basename collision (`util.js` sitting
@@ -316,6 +406,26 @@ export function localFileCandidates(
   declaredUrl: string,
   roots: readonly string[],
 ): string[] {
+  return localFileCandidatesDetailed(declaredUrl, roots).map((c) => c.url);
+}
+
+// One candidate with the pieces `presentLocalFileCandidates` gates on:
+// which root it was built under, and the first path segment beneath
+// that root — a directory name when there are more segments to come,
+// the file's own name when there aren't.
+export interface LocalFileCandidate {
+  url: string;
+  root: string;
+  // Percent-encoded, as it appears in `url`.
+  firstSegment: string;
+  // True when `firstSegment` is the whole suffix, i.e. names the file.
+  isLeaf: boolean;
+}
+
+export function localFileCandidatesDetailed(
+  declaredUrl: string,
+  roots: readonly string[],
+): LocalFileCandidate[] {
   if (roots.length === 0) return [];
   let segments: string[];
   try {
@@ -365,7 +475,7 @@ export function localFileCandidates(
   // (`…/scripts/` + `home/me/scripts/util.js`).
   if (bases.some((base) => declaredUrl.startsWith(base))) return [];
 
-  const out: string[] = [];
+  const out: LocalFileCandidate[] = [];
   const seen = new Set<string>();
   for (const base of bases) {
     for (let k = segments.length; k >= 1; k--) {
@@ -386,8 +496,90 @@ export function localFileCandidates(
       // candidate strings that name one file.
       if (seen.has(normalized)) continue;
       seen.add(normalized);
-      out.push(normalized);
+      // Taken from the NORMALIZED form, not `suffix`: a host of `.`
+      // makes `<root>/./x.js` normalize to `<root>/x.js`, and the gate
+      // has to describe the URL that is actually read.
+      const rel = normalized.slice(base.length).split('/');
+      out.push({ url: normalized, root: base, firstSegment: rel[0], isLeaf: rel.length === 1 });
     }
   }
   return out;
+}
+
+// `localFileCandidates`, minus the ones the root's directory listing
+// rules out: a candidate whose first segment under the root isn't
+// listed can't exist, so it is never probed.
+//
+// Why: each probe of a missing file is a failed request in the worker's
+// DevTools Network panel — a couple of dozen per script per refresh
+// before this, which reads like breakage. Only the first level is
+// checked; `<root>/lib/` existing says nothing about `<root>/lib/x.js`,
+// so that one is still probed. See docs/local-file-overrides.md.
+//
+// A root that can't be listed, or lists as empty, keeps every candidate
+// — "can't tell" must fall through to the probe, or a stand-in would
+// silently stop being found. (Empty is also what an unrecognized
+// listing format parses to.)
+export async function presentLocalFileCandidates(
+  declaredUrl: string,
+  roots: readonly string[],
+  listings: DirectoryListingCache,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const c of localFileCandidatesDetailed(declaredUrl, roots)) {
+    if (mayExist(c, await listRoot(c.root, listings))) out.push(c.url);
+  }
+  return out;
+}
+
+// Roots whose listing failed, per listing cache. `DirectoryListingCache`
+// deliberately forgets a failed read (see `listDirectory`), which is
+// right for the scan it was built for but wrong here: a configured root
+// that isn't on disk would be re-listed for every dependency of every
+// script in the pass, on top of the probes it can't rule out — MORE
+// failed requests than before the gate, not fewer. One attempt per root
+// per cache; the memo dies with the cache it describes.
+const failedRoots = new WeakMap<DirectoryListingCache, Set<string>>();
+
+// The root's listing, or `null` for "can't tell" — every candidate
+// under it is then kept.
+async function listRoot(
+  root: string,
+  listings: DirectoryListingCache,
+): Promise<readonly ListingEntry[] | null> {
+  // `locationFsPath` drops the host of a UNC / drive-letter URL, so the
+  // listing would describe some other directory. Those roots skip the
+  // gate rather than filter against the wrong tree.
+  if (isNonPosixFileUrl(root)) return null;
+  let failed = failedRoots.get(listings);
+  if (!failed) {
+    failed = new Set();
+    failedRoots.set(listings, failed);
+  }
+  if (failed.has(root)) return null;
+  // No trailing slash (the batch keys its listings by the bare directory
+  // path, and this has to hit the same entry), except that the
+  // filesystem root stays `/` — the batch's own convention.
+  const dir = locationFsPath(root).replace(/\/+$/, '') || '/';
+  try {
+    return await listDirectory(dir, listings);
+  } catch {
+    failed.add(root);
+    return null;
+  }
+}
+
+function mayExist(c: LocalFileCandidate, entries: readonly ListingEntry[] | null): boolean {
+  if (entries === null || entries.length === 0) return true;
+  let name: string;
+  try {
+    name = decodeURIComponent(c.firstSegment);
+  } catch {
+    return true;
+  }
+  const entry = entries.find((e) => e.name === name);
+  // A directory entry when the segment names a directory, a file entry
+  // when it names the file itself. A symlink is listed as whatever it
+  // points at, so it passes the same way the read would.
+  return entry !== undefined && entry.isDir !== c.isLeaf;
 }

@@ -78,26 +78,120 @@ One page, one set of panels, two query strings:
 - **Installed** hydrates from the [script store](storage.md) — it does
   **not** re-fetch from disk on open, so what the user sees matches
   what the collections page table reports.
-- **Preview** fetches the URL itself and shows the same heading,
-  details panel, and code tabs for a script that isn't in the store.
+- **Preview** fetches the URL itself and shows the same panels for a
+  script that isn't in the store, under an install-flavored heading.
   Nothing is written until the user says Install.
 - The differences are listed per-section below and gathered in
   [Preview mode](#preview-mode).
 
+### Heading and page title
+
+Both name the script the same way, pivoted for where they're read.
+
+- **Label** (`scriptLabel`) — the script's `@name`, or its location
+  (percent-decoded per [names-and-paths.md](names-and-paths.md)) when it
+  declares no usable one.
+  - The location is **not** appended to a name that exists: a heading
+    carrying both runs the width of the window, and a tab strip shows
+    almost none of it. The details panel's `Location` row is where a
+    reader goes for the full path.
+  - `headerDisplayName` does the `@name` pick, so the viewer and the
+    collections page can't disagree about what a script is called.
+- **Heading** — `<prefix><favicon> <label>`, prefixed
+  `SourceMonkey | ` installed and `SourceMonkey | Install | ` in
+  preview.
+  - The verb takes its own `|`: it names the page, alongside the
+    product's name — it is not a word governing the script's name.
+- **Title** — `<label> | SourceMonkey`, with `Install script: ` in
+  front in preview.
+- The prefix is what tells the two modes apart at a glance; before it
+  the pages were indistinguishable from their heading alone.
+  - Only the `SourceMonkey | ` run wears `.brand` and takes the header
+    bar's brown — the same split every other page's heading makes. The
+    preview's `Install | ` reads in the heading's own colour, beside
+    the script's name. See
+    [architecture.md](architecture.md#the-page-header-bar).
+- **The location is announced, not drawn.** When the label came from an
+  `@name`, the `<h1>` carries an `aria-label` of
+  `<prefix><label>, <location>`.
+  - Why: switching copies from the versions panel repaints in place,
+    parking focus on the `<h1>` whenever the switch didn't come from
+    the table itself (see
+    [switching copies](#switching-copies-in-place)) — but two copies of
+    one script share an `@name`, so without the location a screen
+    reader hears the same heading before and after.
+  - An `aria-label`, not a clipped span: the location must stay out of
+    `textContent`, which is what a copy/paste of the heading reads.
+- **No script to name** (`showMissing`) — `SourceMonkey | Not
+  available`, and `Not available | SourceMonkey` in the tab.
+  - No favicon slot, no label, no `aria-label`, and the bare prefix in
+    both modes: the preview's prefix ends in a verb with nothing here to
+    govern, and "Install Not available" is not a page name.
+  - The title is set here too. This state is reached by removing the
+    script an open viewer is showing, not only by opening a bad URL — a
+    stale title would keep advertising a script that is gone.
+
 ### Layout
 
-1. **Filename** (`<h1>`) — the script's `relativePath`, decoded for
-   reading when it's a URL (also the page `<title>`). See
-   [names-and-paths.md](names-and-paths.md).
-2. **Controls row** (`#meta-row`) — `Enabled` toggle + **Refresh**
-   button → `refreshScript(scriptId)`. Installed mode only; preview
-   shows the banner + action row in its place (see
+1. **Header bar** (`.page-header`) — the shared bar every extension page
+   opens with; the viewer's `<h1>` lives inside it, carrying the product
+   prefix, the site favicon, and the script's name. See
+   [Heading and page title](#heading-and-page-title) and
+   [architecture.md](architecture.md#the-page-header-bar).
+   - Its heading is painted before the rest of the page loads — see
+     [Naming the bar before the page loads](architecture.md#naming-the-bar-before-the-page-loads).
+2. **Other versions panel** (`#other-versions`) — every installed copy
+   of this script, when there is more than one to talk about. Built by
+   `renderRelatedVersions` in
+   [`src/related-versions.ts`](../src/related-versions.ts) over the
+   lookup in [`src/script-identity.ts`](../src/script-identity.ts).
+   - Two sections: **This URL** (same absolute `fileUrl`) and **Same
+     script from a different URL** (same `@namespace` + `@name`).
+   - Per row: enable toggle, type bubble + collection name linking to
+     the collections page (its named tab, opened beside this one — see
+     [architecture.md](architecture.md#cross-page-navigation)), the copy's location as plain text (a link only in
+     a preview — see [switching copies](#switching-copies-in-place)),
+     status linking to that copy's Log tab, version, a refetch button —
+     the circular arrow, called **Refresh**, matching the control the
+     page already shows. It is icon-only, so the name lives in its
+     tooltip. In a **preview** that button is the word **Update**
+     instead: nothing is being fetched there, so it does not wear the
+     refresh arrow (see
+     [script-identity.md](script-identity.md)). Then a trash can, live
+     only for single-file installs.
+   - The Status column carries the same verdict as the `Status` row
+     in the details panel — same helper, same wording — for every copy
+     rather than only this one.
+   - Enabling a copy disables the others, since two enabled copies both
+     run; ctrl/cmd-click opts out. Same rule on the controls-row
+     toggle, and the whole set flips on screen before the writes land.
+   - Headed *Other versions of this script* when installed. A preview
+     draws no heading: the banner line the table sits under is the
+     heading. Empty — and so hidden — when the only row would be the
+     script already on screen, or, in a preview, when nothing is
+     installed anywhere.
+   - A **triangle in the top-right corner folds the card** down to that
+     heading line and back, for when the table is long and beside the
+     point. Installed viewer only — the preview has no heading to fold
+     into — and the fold lasts for the page only; a panel that newly
+     appears is open. See
+     [script-identity.md](script-identity.md#folding-it-away).
+   - Green card directly under the title, above the controls row:
+     *which* copy this page is about comes before anything that acts on
+     it. In a preview's already-installed case the banner and the table
+     are drawn as one green box (`#status-box.merged`).
+   - Full behaviour in [script-identity.md](script-identity.md).
+3. **Controls row** (`#meta-row`) — everything that acts on the
+   script itself, left to right: the `Enabled` toggle, **Local copy…**,
+   the delete trash can (a local copy only), and the **Refresh**
+   circular arrow → `refreshScript(scriptId)`. Installed mode only; preview shows the
+   banner + action row in its place (see
    [Preview mode](#preview-mode)).
    - The toggle is a radio button, not a plain checkbox: enabling this
      copy disables every other copy that is running, exactly as the
      panel's own rows do. Ctrl/cmd-click opts out. See
      [script-identity.md](script-identity.md#enabling-is-exclusive-disabling-is-not).
-3. **Error message** (`<p class="message …">`) — visible when the
+4. **Error message** (`<p class="message …">`) — visible when the
    script is flagged. Shows `errorMessage` (red, `.error`) for an
    `invalid` row, or `Refresh failed: <reason>` (amber,
    `.refresh-failed`) for a still-running `refresh-failed` row
@@ -112,7 +206,7 @@ One page, one set of panels, two query strings:
      against.
    - `refreshError` never gets one — the fetch failed, so there is no
      new content to point into.
-4. **Details panel** (`#header-summary` → `<dl>`) — built by
+5. **Details panel** (`#header-summary` → `<dl>`) — built by
    `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
    the panel doesn't reshuffle between modes.
@@ -178,8 +272,9 @@ One page, one set of panels, two query strings:
      - `Collection` — colored type bubble (linking to the collection's
        file:// / http(s) URL) + the collection's display name (linking
        back to the parent section on the collections page via
-       `collections.html#collection-<id>`). Same bubble/name combo the collections
-       page renders. Installed mode only; row omitted if the parent
+       `collections.html#collection-<id>`, in that page's named tab —
+       see [architecture.md](architecture.md#cross-page-navigation)).
+       Same bubble/name combo the collections page renders. Installed mode only; row omitted if the parent
        collection row has vanished. See
        [`src/collection-display.ts`](../src/collection-display.ts).
      - `Location` — anchor wrapping the resolved location. Display form
@@ -222,10 +317,9 @@ One page, one set of panels, two query strings:
    - `Log ID` — short file-derived handle used in every SW log line.
      See [logging.md](logging.md). Installed mode only.
      - **Only when it carries a `#N` dupe suffix.** Without one the log
-       ID is the script's own basename, which the heading and the
-       `Location` row already say. The `#N` is the part written nowhere
-       in the file, and it's what a stack trace or `//# sourceURL=`
-       names — so a reader holding a `foo.user.js#2` can ask whether
+       ID is the script's own basename, which the `Location` row already
+       says. The `#N` is the part written nowhere in the file, and it's
+       what a stack trace or `//# sourceURL=` names — so a reader holding a `foo.user.js#2` can ask whether
        that's this one.
      - A script added by URL shows its decoded filename — see
        [names-and-paths.md](names-and-paths.md).
@@ -275,33 +369,14 @@ One page, one set of panels, two query strings:
        `errorMessage` when present.
      - Rendered as an `<a href="#Log">` so clicking switches to the Log
        tab via the same hashchange listener as a manual tab click.
+     - Label and `title` come from `scriptStatusView`
+       (`script-display.ts`), shared with the Other-versions panel's
+       Status column.
      - The level promotes live as new log entries arrive — the
        `storage.session.onChanged` listener for `loglevel:<scriptId>`
        repaints just this row, and the same listener repaints it (plus
        the message bar) when the injector's `injector-rejections` map
        changes.
-5. **Other versions panel** (`#other-versions`) — every installed copy
-   of this script, when there is more than one to talk about. Built by
-   `renderRelatedVersions` in
-   [`src/related-versions.ts`](../src/related-versions.ts) over the
-   lookup in [`src/script-identity.ts`](../src/script-identity.ts).
-   - Two sections: **This URL** (same absolute `fileUrl`) and **Same
-     script from a different URL** (same `@namespace` + `@name`).
-   - Per row: enable toggle, type bubble + collection name linking to the
-     collections page, location linking to that copy's own viewer tab,
-     version, a refetch button — **Refresh** here, **Update** in a
-     preview, matching whichever control the page already shows — and a
-     trash can, live only for single-file installs.
-   - Enabling a copy disables the others, since two enabled copies both
-     run; ctrl/cmd-click opts out. Same rule on the controls-row
-     toggle, and the whole set flips on screen before the writes land.
-   - Headed *Other versions of this script* installed, *Existing
-     versions* in preview. Empty — and so hidden — when the only row
-     would be the script already on screen, or, in a preview, when
-     nothing is installed anywhere.
-   - Green card, so it doesn't read as more of the grey details panel
-     it sits under.
-   - Full behaviour in [script-identity.md](script-identity.md).
 6. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
    Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`
@@ -325,7 +400,9 @@ One page, one set of panels, two query strings:
      place, and renders the fetch error in the pane if it fails. A
      paint epoch discards a slow load whose tab the user already left.
    - Log tab swaps in a `<table>` view of the script's event log.
-     Columns: Time / Level / Source / Message. See
+     Columns: Time / Status / Source / Message — Status is the badge
+     word for a state transition (`REFRESH FAILED`, `OK`) or the level
+     for a script-originated entry. See
      [script-log.md](script-log.md) for the data model and what gets
      logged. Sticky toolbar with **Save**, **Copy** and
      **Clear log** — see [script-log.md](script-log.md#export) for the
@@ -341,7 +418,12 @@ One page, one set of panels, two query strings:
 
 Clicking Refresh:
 
-1. Disables the button + shows "Refreshing…".
+1. Disables the button and spins its glyph in place
+   (`setGlyphButtonBusy`, src/glyph.ts). The tooltip becomes
+   "Refreshing…"; the button itself neither changes size nor moves
+   what sits beside it.
+   - Under `prefers-reduced-motion` the glyph doesn't spin — it dims,
+     and the disabled state and tooltip carry the rest.
 2. Calls `refreshScript(scriptId)` from the store, which refetches
    the file, runs it through the pipeline, and rewrites just that
    one storage row.
@@ -354,6 +436,80 @@ gains an error-level entry carrying the same message (see
 [script-log.md](script-log.md#status-column-promotion)). The prior
 content stays visible so the user can still read the last successful
 load.
+
+### Moving to another collection
+
+The details panel's **Collection** row carries a **Move…** button to
+the right of the collection name, for an installed script whose parent
+is an "individual scripts" (container) collection. It sits in a grid
+column of its own, right after the name — moving out to the right
+margin only when the name is long enough to fill the row, which is also
+what keeps a wrapping name from dragging it onto the last wrapped line.
+
+- **Why this row and not the controls row above.** Move… is about where
+  the script is *filed*, which is what the Collection row says. The
+  controls that act on the script itself — Enabled, Local copy…, the
+  delete trash can, the Refresh arrow — are in the row under the
+  heading.
+
+- No button at all for a directory or manifest script. Its
+  `relativePath` is relative to its collection root, so there is
+  nothing to move.
+
+Clicking it opens the **move dialog** (`src/move-dialog.ts`), which
+owns the whole action the way the collection dialog owns Create: the
+destination dropdown, the refusals, the `moveScript` call, and any
+failure in its own error slot.
+
+- **Why a dialog** rather than the dropdown inline in the row: the
+  control is a select plus two buttons, more than that row can hold
+  beside a collection name without crowding it — and a modal can't be
+  swept away by the header repaint a background refresh of any sibling
+  script triggers.
+- **The list** is the same one the install page uses, with the
+  script's own collection marked *(current)*, disabled and
+  pre-selected, so Move is greyed until a destination is picked — see
+  [script-identity.md](script-identity.md#the-same-dropdown-for-a-move).
+  It comes from the last "Other versions" paint, not a fresh store
+  read: `readStoreSnapshot` is a `storage.local.get(null)` over every
+  row in the store, which is a visible pause on a click, and the panel
+  below has already paid it. `moveScript` re-checks under the write
+  lock, so a stale entry costs a message, never a bad move.
+- **A destination that already holds this script** is disabled too,
+  marked *(already installed)*. No message goes with either case: the
+  labels and the greyed button carry it, where red error text on open
+  would read as a failure.
+- **New collection…** renames the confirm button to **Create and
+  move**, then stacks the collection dialog on top of this one, titled
+  *Create new collection and move script*. Cancelling that returns to
+  the move dialog with the choice intact, rather than abandoning the
+  move.
+- After a move the caller re-runs the exclusive-enable sweep — a move
+  out of a disabled collection makes this the copy that runs, so the
+  others are switched off. A move that *stops* the script enables
+  nothing in its place.
+- Nothing is repainted by hand: the row's `collectionId` changed, so
+  the live-sync listener below rehydrates the header.
+
+### Making a local copy
+
+**Local copy…** sits in the controls row under the heading, between the
+**Enabled** box and **Refresh**, and appears for every installed
+script. It opens the copy dialog (`src/copy-dialog.ts`), which writes an
+editable copy into the *Scripts copied in Downloads* collection under
+the browser's Downloads folder.
+
+- The delete trash can (for a script that IS a local copy) sits beside
+  it. Neither sizes itself: every button in the extension takes one
+  height and one glyph size from `styles.css`, so the row lines up by
+  construction rather than by a padding that happens to match.
+
+- The dialog owns the write and its refusals; the caller then runs the
+  exclusive-enable sweep for the new row and switches the page to it
+  in place, exactly as an install does.
+- Everything else — where the copy goes, the header edits, the
+  dependency files, the `-local` version suffix — is in
+  [local-copy.md](local-copy.md).
 
 ### Live sync (changes from any origin)
 
@@ -375,7 +531,12 @@ re-renders when:
     otherwise re-render every viewer open on it, on every retry.
 
 If the re-read finds the script gone (its collection was removed), the
-viewer drops into the not-found state. Session-storage changes
+viewer drops into the not-found state — including when another tab
+deleted this copy. Only a deletion made *here*, from the versions
+panel's trash can, moves the page to another copy instead, and that
+path suppresses this listener's not-found paint so the switch stays a
+single in-place render; see
+[script-identity.md](script-identity.md). Session-storage changes
 (`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
 repaint separately, as described above.
 
@@ -384,6 +545,148 @@ repaint separately, as described above.
 If the URL has neither a `script` nor a `preview` param, or the ID
 doesn't resolve in the store, the viewer renders a "not available"
 message instead of crashing. The Refresh button is hidden.
+
+### Switching copies in place
+
+Selecting another copy from the versions panel swaps the script *below*
+the panel without reloading the page. Two ways in:
+
+- a viewer link in the row — its **Location**, or its **Status** (which
+  carries `#Log`);
+- **anywhere else in the row.** Rows that lead somewhere carry
+  `is-navigable` (installed mode, not the current row) for the pointer
+  cursor and hover tint. The row's own controls win — the enable
+  checkbox and its label, the refetch button, the trash can, a
+  dropdown — as does the Collection cell's link to the collections
+  page, and so does a click that ends a text selection inside the row.
+
+Because the row already opens the copy, its **Location is plain text**
+here rather than a link to the same place — and the row takes over the
+two things that link used to provide:
+
+- **`tabindex="0"`**, with Enter / Space activating it. Same number of
+  tab stops through the table as the link gave.
+  - It also carries `role="link"` and an `aria-label` — a focusable
+    thing that acts has to say what it does. The cost is that a
+    navigable row stops being a `row` to a screen reader and its cells
+    lose their column associations; the current row and every preview
+    row keep ordinary table semantics.
+  - A repaint rebuilds the rows, so the panel **restores focus** to the
+    same copy's row afterwards (`focusedPanelRowId` /
+    `restoreRowFocus`) — repaints happen for reasons the user didn't
+    ask for, and a keyboard walk shouldn't be dumped back to `<body>`
+    mid-stride.
+- **Ctrl/Cmd-click and middle-click open the copy in a new tab**
+  (`openRowInNewTab`), since there is no `href` for the browser to do it
+  with. Shift is not covered: `window.open` cannot promise a window.
+
+A **preview** keeps the link — its rows are not clickable, so the link
+is the only way to reach that copy.
+
+- `history.pushState` writes the new `?script=` (plus the link's
+  fragment); `popstate` moves back and forward through those entries.
+- Everything from the controls row down is re-hydrated by the same
+  `loadStored` the initial load runs. Per-script state (log ID, max log
+  level, rejection, stack layout) is dropped first, and the tab strip
+  re-seeds from the fragment rather than keeping the tab index — tab 3
+  of the script being left is nothing in particular in the new one.
+- **Only plain left-clicks** swap the script here; see the row's other
+  gestures below.
+- **Focus follows the user.** The repaint destroys whatever was clicked
+  or arrowed to, so something has to claim it.
+  - From the table, the **row for the copy now shown** — which is the
+    same row, turned into the current row. `pendingRowFocusId` carries
+    the intent across to the paint that draws it, since the paint is
+    fire-and-forget and finishes after the navigation returns.
+    - A row the user has since arrowed to wins over it — that is the
+      newer answer — and it is dropped altogether if they reached
+      something outside the panel in the gap (`focusIsUnclaimed`): the
+      restore is for focus that fell to `<body>` when the old row was
+      destroyed, not a licence to take it back off whatever they just
+      tabbed to.
+  - **The `<h1>` when the row never arrives** (`claimPendingRowFocus`),
+    same fallback under two shapes: the repaint failed, or the table
+    came back without that row — removed meanwhile, or collapsed to
+    nothing worth showing.
+  - **The `<h1>` when the panel goes away**, which `showMissing` does
+    for itself: the script was removed out from under the page, focus
+    may have been standing in the table, and no paint will run to place
+    it.
+  - From anywhere else (Back / Forward, mostly), the **`<h1>`**
+    (`tabindex="-1"`, no focus ring): there is no document load for a
+    screen reader to announce the new script from.
+- A link to the script already on screen is left alone: that is the
+  current row's own Status link, and its `#Log` is an ordinary
+  same-document fragment navigation.
+- **Deleting the copy on screen** switches the same way, to the next
+  row in the table (wrapping to the first) — but with
+  `history.replaceState`, since the entry being left names a script
+  that no longer exists, and without the fragment, which named a place
+  in the file that just went away.
+- Preview mode does not do this. It has no installed script to swap,
+  and its panel's links are how the user leaves the preview.
+
+#### Walking the table
+
+On the details page every body row is a tab stop, and **Up / Down** move
+between rows from anywhere in the panel — so reaching a copy three rows
+down doesn't mean counting Tabs through the controls of the two rows in
+between. The same shape a listbox has.
+
+- **They land on the row**, wherever they were pressed from — never on
+  a control inside it. The columns don't line up as controls: the
+  Collection cell holds two links (the type bubble and the name), a
+  same-identity row has no Refresh, a disabled collection's checkbox is
+  disabled. "The corresponding one" would be a guess, and a predictable
+  rule beats one. Tab still walks the controls within a row.
+- **The current row is focusable too** even though activating it does
+  nothing: a row that can't take focus would be a hole in the walk, and
+  it is where focus lands after a selection. No `role`/`aria-label` with
+  it — it goes nowhere, so it stays an ordinary `row`; `aria-current`
+  names it. Enter and Space are swallowed there rather than left to
+  scroll the page.
+- The walk **crosses the two sections**, which are separate tables but
+  one list to the user.
+- **Only rows that can be stood on take part** (`walkableRows`), which
+  in practice means installed mode. A **preview's** rows are not
+  focusable — nothing there selects a copy — so a preview has no walk
+  and Tab through the controls is what it gets.
+  - Landing on each row's first control instead would be the coin toss
+    the row rule exists to avoid, and in the install-offer section that
+    control is **Install** itself: every arrow would silently re-target
+    an install while focus sat on the button that performs it.
+- A modified arrow is left alone, as is one aimed at a `<select>`.
+
+#### The panel holds still
+
+The panel's two sections are computed from **one** script — same
+`fileUrl` is *This URL*, same `@namespace` + `@name` is *a different
+URL* — so re-anchoring it on the newly selected copy would re-file
+every row underneath the click that selected it.
+
+- The anchor is the script the page was **opened** with, and it stays
+  put for the life of the page (`panelAnchorId` in `userscript.ts`).
+  Navigating moves the `is-current` highlight and nothing else.
+- It is an **id**. The location and identity behind it are re-read from
+  the store on every paint (`resolveAnchor`), so a Refresh that rewrites
+  the anchor's `@name`, or a Move that changes its URL, re-files the
+  table around what it is now.
+- **Removed anchor** — its trash can is in this very table — re-anchors
+  on the copy currently on screen, rather than going on describing
+  copies of a row that no longer exists.
+- A full page load on another copy anchors on that copy — the
+  pre-navigation behaviour, and still what a middle-click or a link
+  from elsewhere gives.
+- **The anchor files the table and nothing else.** Everything that is
+  about the copy on screen — the Move picker's targets, the Enabled
+  toggle's sweep and the hint on its tooltip — comes from a second
+  lookup keyed on the displayed script (`displayed` in
+  `paintRelatedVersions`), which is skipped in the ordinary case where
+  the two agree.
+- One consequence worth knowing: a Refresh that changes the
+  **displayed** script's `@name` can drop it out of a table that is
+  still on screen — no highlight, no *(this page)*. Reload to
+  re-anchor.
 
 ### URL fragment navigation
 
@@ -424,8 +727,9 @@ Behaviour:
 ## Preview mode
 
 `userscript.html?preview=<url>` renders a script that isn't installed.
-Same heading, details panel, and code tabs as an installed script —
-what differs is the controls and where the data comes from.
+Same details panel and code tabs as an installed script, and the same
+heading shape under its own install wording — what differs is the
+controls and where the data comes from.
 
 ### Getting the script
 
@@ -448,43 +752,48 @@ what differs is the controls and where the data comes from.
 Banner (`#banner-slot`) states what this file is; the action row
 (`#preview-actions`) carries the decision.
 
-| Situation | Banner | Buttons |
-|-----------|--------|---------|
-| Not installed anywhere | "not installed yet" | **Install**, Cancel, View raw source |
-| Installed here, once, nothing else | version(s), see below | **Open installed script**, **Update now**, Cancel, View raw source |
-| More than one target below | see [the wordings](script-identity.md#the-previews-already-installed-banner) + "Select which instance…" | Cancel, View raw source — the table carries the rest. **Install** stays if the table has no offer row to carry it |
+| Situation | Banner slot | Buttons |
+|-----------|-------------|---------|
+| Not installed anywhere | the **install callout**: **Install** *into [collection ▾]* | Cancel, View raw source |
+| Any copy exists, here or elsewhere | one line — **This script is already installed.** *Select which instance to update or install.* — with the versions panel under it in the same box | Cancel, View raw source — the panel carries Open / Update per copy, and an **Install another copy of this script** section |
 | Not installable | the parse / validation error | **Continue to page** / **Continue to file**, Cancel, View raw source |
 
-- **Install** → `addCollection(<input>)`, then jumps to the new script's
-  viewer. A web install is not a special kind of script: it lands in
-  the http / github container collection and picks up normal refresh and
-  update behavior.
+- **Install into** — the button leads and the dropdown follows
+  (**Install** *into [collection ▾]*), in the callout and in the
+  panel's install section alike. The dropdown
+  lists every scripts collection, the
+  built-in one for this script's scheme first (created on demand if it
+  doesn't exist), ending with *New collection…*. Every entry only
+  selects; **Install** is what acts, opening the
+  [collection dialog](storage.md#the-collection-dialog) first when
+  *New collection…* is the choice. Groups, pre-selection, and the
+  "(already installed)" / "(disabled)" markings are in
+  [script-identity.md](script-identity.md#the-install-into-dropdown).
+- **Install** → `installScript(<location>, <target>)`, then jumps to the
+  new script's viewer. A web install is not a special kind of script:
+  it lands in a scripts collection and picks up normal refresh and
+  update behavior. (A location with no single-file spelling — a
+  `foo.js`, a manifest URL — gets the callout without a dropdown and
+  goes through `addCollection`.)
+  - The new copy is left as the **only** running one: installing is an
+    enable, so it applies the same exclusive rule as the enable
+    checkboxes. See
+    [script-identity.md](script-identity.md#enabling-is-exclusive-disabling-is-not).
 - Already-installed rows come from `findRelatedVersions`, matched on
-  the absolute `fileUrl` — the same lookup the Existing versions panel
+  the absolute `fileUrl` — the same lookup the versions panel
   uses, so both apply the same rule for what counts as installed. Each
   reads storage separately, so a write landing between them can leave
   them a moment apart; the next storage change reconciles it. See
-  [script-identity.md](script-identity.md). The banner names both
-  versions when `@version` differs.
-- **The banner says WHICH copies exist**, because a header button can
-  only ever act on one of them. With more than one target below it adds
-  *Select which instance to open, update or install below* — and
-  Install / Open / Update leave the header entirely, since the table
-  carries all three per-row. Wordings and the rule in
-  [script-identity.md](script-identity.md#the-previews-already-installed-banner).
-- **Install and Open/Update are not exclusive.** A script already
-  installed inside a collection the user subscribes to is still
-  worth a copy of their own; `installTarget` — "would a standalone
-  install add anything?" — is what decides whether Install is offered.
-  When both apply, though, there are two targets, so both move into the
-  table rather than sitting side by side in the header.
-- **Update now** → `updateScript(id, 'manual')`, then the viewer.
+  [script-identity.md](script-identity.md).
+- **Once any copy exists the table is the only place to act** — the
+  header keeps nothing that acts on "the" copy. Rule and wording in
+  [script-identity.md](script-identity.md#what-the-header-offers).
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by
   script) when the preview was opened into a fresh one.
-- **View raw source** opens the unprocessed file in a **new tab**,
+- **View raw source** navigates a **new tab** to the file itself,
   leaving the preview open behind it. See
-  [install-capture.md](install-capture.md#how-the-raw-view-stays-readable).
+  [install-capture.md](install-capture.md#view-raw-source).
 
 ### When a local file won't read
 
@@ -891,8 +1200,9 @@ pure rewrite — no network call, no stored field.
     `@icon64`, `@icon64URL`, `@require`, `@updateURL`,
     `@downloadURL`, `@homepage`, `@homepageURL`, `@website`,
     `@source`, `@supportURL`) → resolved against the tab's
-    `fileUrl` via `resolveScriptResource`. A `..`-bearing ref,
-    unknown-scheme ref, or `data:` URL falls back to plain text.
+    `fileUrl` via `resolveScriptResource`. A ref that escapes a
+    *local* script's folder, an unknown-scheme ref, or a `data:`
+    URL falls back to plain text.
   - `@resource` carve-out: the value has shape `<name> <url>` (two
     whitespace-separated tokens; the `<name>` token has no internal
     whitespace by Tampermonkey's grammar). The `<name>` plus the

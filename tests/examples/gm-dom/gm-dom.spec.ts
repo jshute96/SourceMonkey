@@ -91,22 +91,24 @@ test.describe('examples / gm-dom', () => {
     const originalTitle = await page.title();
     expect(originalTitle).toBe('Userscript examples for DOM injection');
 
-    // Each click appends a new <title> to head. document.title
-    // stays as the page's original title because the spec reads
-    // from the FIRST <title> in tree order, not the last.
+    // Each click appends a new <title>. document.title stays as the
+    // page's original title because the spec reads from the FIRST
+    // <title> in tree order, not the last — true wherever the new
+    // ones land.
+    //
+    // WHICH parent they land in is a manager difference, so the
+    // assertion accepts either: SM routes `title` to <head>, VM's
+    // head list stops at `meta` so it appends to <body>. SM's rule is
+    // enforced strictly in tests/e2e/gm-dom.spec.ts.
     await page.locator('#btn-title').click();
-    await expect(page.locator('#log')).toContainText(/appended to <HEAD>/);
+    await expect(page.locator('#log')).toContainText(/appended to <(HEAD|BODY)>/);
     await page.locator('#btn-title').click();
     await page.locator('#btn-title').click();
 
-    const titlesInHead = await page.evaluate(
-      () => document.head.querySelectorAll('title').length,
+    const titles = await page.evaluate(
+      () => document.querySelectorAll('title').length,
     );
-    expect(titlesInHead).toBe(4); // 1 original + 3 appended
-    const titlesInBody = await page.evaluate(
-      () => document.body.querySelectorAll('title').length,
-    );
-    expect(titlesInBody).toBe(0);
+    expect(titles).toBe(4); // 1 original + 3 appended
     expect(await page.title()).toBe(originalTitle);
 
     await page.close();
@@ -129,8 +131,10 @@ test.describe('examples / gm-dom', () => {
       page.locator('#playground').evaluate((el) => getComputedStyle(el).borderColor),
     ).toMatch(/rgb\(220,\s*20,\s*60\)/);
     await expect(page.locator('#playground span')).toHaveCount(1);
+    // Document-wide, not head-only: managers disagree on where a
+    // parentless <title> goes (see the default-form test above).
     expect(
-      await page.evaluate(() => document.head.querySelectorAll('title').length),
+      await page.evaluate(() => document.querySelectorAll('title').length),
     ).toBe(2); // original + 1 appended
 
     await page.locator('#btn-reset').click();
@@ -147,9 +151,9 @@ test.describe('examples / gm-dom', () => {
     expect(stillInBody).toBe(false);
     // Parent-form <span> gone.
     await expect(page.locator('#playground span')).toHaveCount(0);
-    // Appended <title> gone (head is back to just the original).
+    // Appended <title> gone (the document is back to just the original).
     expect(
-      await page.evaluate(() => document.head.querySelectorAll('title').length),
+      await page.evaluate(() => document.querySelectorAll('title').length),
     ).toBe(1);
 
     await page.close();

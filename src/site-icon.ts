@@ -1,6 +1,8 @@
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from './file-loader.js';
-import { localFileCandidates } from './local-file-overrides.js';
+import { presentLocalFileCandidates } from './local-file-overrides.js';
+import type { DirectoryListingCache } from './directories.js';
 import { representativeMatch } from './match-targets.js';
+import { renderGlyph } from './glyph.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon next to each script.
@@ -501,7 +503,7 @@ export async function ensureIconForUrl(
   localRoots: readonly string[] = [],
 ): Promise<string | null> {
   if (url.startsWith('data:')) return usableDataUrl(url);
-  for (const candidate of localFileCandidates(url, localRoots)) {
+  for (const candidate of await presentLocalFileCandidates(url, localRoots, iconRootListings)) {
     const local = await localIconCandidate(candidate);
     if (local) return local;
   }
@@ -521,6 +523,12 @@ export async function ensureIconForUrl(
 // A candidate that isn't there, or isn't an image, just returns null and
 // the caller falls through to the declared URL.
 const localIconMemo = new Map<string, Promise<string | null>>();
+
+// Root listings for the candidate gate, memoized for the life of the
+// page for the same reason as `localIconMemo`: the page-lifetime memo
+// already means a file created after first paint waits for a reload,
+// so a listing of the same age hides nothing the memo didn't.
+const iconRootListings: DirectoryListingCache = new Map();
 
 function localIconCandidate(url: string): Promise<string | null> {
   const memo = localIconMemo.get(url);
@@ -558,7 +566,7 @@ async function ensureIconAt(url: string): Promise<string | null> {
 // header is consulted for `@icon` / `@iconURL` / etc. — when set, that
 // URL takes priority over origin-based favicon discovery. `fileUrl` is
 // the script's canonical fetchable URL, used as the base for resolving
-// relative `@icon` paths against the script's parent directory.
+// relative `@icon` paths.
 // Declared locally so this module stays free of a dependency on
 // script-store.
 interface ScriptWithMatching {
@@ -591,8 +599,9 @@ export function renderSiteIconInto(
   const target = representativeMatch(script.matching);
   // The header value is raw (URL, data:, or relative path). Resolve it
   // against the script's own URL so `@icon foo.png` reaches the
-  // sibling file alongside the script — and a `..`-bearing or
-  // host-absolute ref drops back to origin discovery.
+  // sibling file alongside the script. A ref that climbs out of a
+  // LOCAL script's folder is rejected and drops back to origin
+  // discovery; from a remote script it resolves like any other URL.
   const iconRef = iconRefFromHeader(script.header ?? null);
   const resolvedIcon = iconRef
     ? resolveScriptResource(iconRef, script.fileUrl)
@@ -708,13 +717,5 @@ export function dataUrlToBlob(dataUrl: string): Blob | null {
 // 100+ rows don't each inline the full circle+meridian path data. The
 // stroke/fill presentation lives in CSS on `.site-icon-globe`.
 function buildGlobeSvg(doc: Document): SVGSVGElement {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = doc.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'site-icon-globe');
-  svg.setAttribute('aria-hidden', 'true');
-  const use = doc.createElementNS(NS, 'use');
-  use.setAttribute('href', '#sm-globe');
-  svg.appendChild(use);
-  return svg;
+  return renderGlyph(doc, '#sm-globe', 'site-icon-globe');
 }

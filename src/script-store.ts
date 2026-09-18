@@ -16,11 +16,14 @@
 // A script is `ok` iff fetch succeeded AND splitHeaderBody returned no
 // error AND validateHeader returned null. Otherwise `status: 'invalid'`
 // with an `errorMessage`. On refresh, files that were known before but
-// no longer appear in the scan listing are reconciled per collection kind:
-// directory collections mark them `status: 'missing'` (file may come
-// back); manifest collections delete the row (user explicitly removed the
-// entry). In every error/missing case we preserve the previously
-// loaded content so the viewer (and the injector) keep working.
+// no longer appear in the scan listing are dropped — row and storage key
+// both — whatever kind of collection they sat in. The one exception is a
+// scan that came back completely empty for a non-manifest collection:
+// that reads as a directory that moved or listed strangely rather than
+// every file being deleted at once, so those rows are marked
+// `status: 'missing'` instead. In every error/missing case we preserve
+// the previously loaded content so the viewer (and the injector) keep
+// working.
 //
 // Refresh failures get special, gentler handling so a transient
 // outage never disables a working script. When a prior `ok` row's
@@ -50,7 +53,9 @@ import {
   isManifestCollection,
   isSingleFileInput,
   joinPath,
+  newContainerPath,
   normalizeCollectionInput,
+  SINGLE_SCRIPT_USE_ADD_FIELD,
   scanForUserScripts,
   scriptFileUrl,
   locationFsPath,
@@ -68,13 +73,14 @@ import {
 } from './userscript-header.js';
 import {
   attachFiles,
+  bindListingCache,
   distillRequires,
   distillResources,
   type FileFetchCache,
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
-import { localSearchRoots, localRootsReady } from './local-file-overrides.js';
+import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
 import { resolveGrants } from './gm-api-catalog.js';
 import {
@@ -89,9 +95,14 @@ import {
   validLocation,
   type DiagnosticLocation,
 } from './diagnostic-location.js';
-import { displayLocation, stripSriFragment } from './script-display.js';
-import { inferDisplayName } from './collection-display.js';
-import { appendScriptLog, type LogLevel } from './script-log.js';
+import { displayLocation, stripSriFragment, type LoadState } from './script-display.js';
+import {
+  collectionNameInUse,
+  inferDisplayName,
+  mayUseReservedName,
+  RESERVED_COLLECTION_NAME,
+} from './collection-display.js';
+import { appendScriptLog, forgetScriptLogs, type LogLevel } from './script-log.js';
 import { sha256Hex } from './bytes.js';
 import { setRefreshError, pruneRefreshErrors } from './refresh-error.js';
 import {
@@ -280,6 +291,12 @@ export interface StoredCollection {
 // `isCollectionEnabled` treats `enabled`.
 export function collectionUsesLocalFiles(collection: StoredCollection): boolean {
   return collection.localFiles !== false;
+}
+
+// Everything the local-stand-in resolver needs from a collection row,
+// in one value — so no caller can pass the toggle and forget the root.
+export function localFileScope(collection: StoredCollection): LocalFileScope {
+  return { enabled: collectionUsesLocalFiles(collection), collectionPath: collection.path };
 }
 
 // Treat any pre-`enabled`-era stored entry as enabled. The schema now
@@ -719,31 +736,34 @@ export function applyMissing(existing: StoredScript): StoredScript {
 // Single source of truth for "how do we phrase this failure in the
 // Log tab", shared by every path that can surface one: the add path
 // (script-store), the refresh outcome path and the startup replay
-// (script-updater). Sharing it means the same failure reads the same
-// way whichever path reported it, so a user comparing two rows can
-// tell "the same problem again" from "a different problem".
+// (script-updater), and the deferred parse check. Sharing it means the
+// same failure reads the same way whichever path reported it, so a
+// user comparing two rows can tell "the same problem again" from "a
+// different problem".
 //
-// Levels:
+// Each entry carries the `state` it moved the row into — the same word
+// the Status badge shows — so the Log tab's status column and the badge
+// agree (see `LogEntry.state`). Because it carries a state, the entry
+// never bumps the `loglevel:` sentinel: the badge comes from the row
+// and clears when the row recovers.
+//
+// Levels (still recorded on the entry, though the Log tab's Status
+// cell shows the `state` word instead):
 //   - `invalid` / `missing` → **error**. The script cannot run: the
 //     injector skips `invalid` rows outright, and a `missing` row is
-//     auto-disabled on the transition. That is the same severity the
-//     status badge already claims.
+//     auto-disabled on the transition.
 //   - `refreshError` → **warning**. The script IS still running, from
-//     its last-known-good copy; only the *update* failed. Calling that
-//     an error would overstate it, and would also poison the
-//     monotonic `loglevel:` sentinel so the row still read ERROR long
-//     after the collection came back. (The badge is unaffected either way:
-//     `effectiveScriptStatus` returns REFRESH FAILED before it ever
-//     consults the max log level — see src/script-display.ts.)
+//     its last-known-good copy; only the *update* failed.
 export function loadStateLogEntry(
   script: Pick<StoredScript, 'status' | 'errorMessage' | 'refreshError' | 'errorLocation'>,
-): { level: LogLevel; message: string; location?: DiagnosticLocation } | null {
+): { level: LogLevel; state: LoadState; message: string; location?: DiagnosticLocation } | null {
   if (script.status === 'invalid') {
     // The location travels as its own field rather than being baked
     // into the text, so the Log tab can link it — and so this entry
     // says exactly what the status badge's hover text says.
     return {
       level: 'error',
+      state: 'invalid',
       message: script.errorMessage ?? 'Unknown error',
       ...(script.errorLocation ? { location: script.errorLocation } : {}),
     };
@@ -751,10 +771,10 @@ export function loadStateLogEntry(
   if (script.status === 'missing') {
     // Deliberately no location: a vanished file has no content, and
     // `applyMissing` clears any location the row used to carry.
-    return { level: 'error', message: script.errorMessage ?? 'Script file is missing' };
+    return { level: 'error', state: 'missing', message: script.errorMessage ?? 'Script file is missing' };
   }
   if (script.refreshError) {
-    return { level: 'warning', message: `Refresh failed: ${script.refreshError}` };
+    return { level: 'warning', state: 'refresh-failed', message: `Refresh failed: ${script.refreshError}` };
   }
   return null;
 }
@@ -851,10 +871,11 @@ export async function applyFiles(
   recheck: 'all' | 'preserve',
   fetchCache: FileFetchCache,
   now: number,
-  // Whether this script's collection allows local stand-ins. Defaults
-  // to false so the offline validator (and any other caller outside the
+  // What this script's collection says about local stand-ins — whether
+  // they're allowed, and the collection's own root. Defaults to
+  // disabled so the offline validator (and any other caller outside the
   // extension) keeps the plain declared-URL behavior.
-  useLocalFiles = false,
+  localFiles: LocalFileScope = { enabled: false },
   // Whether to wait for the parse verdict before returning. Defaults to
   // 'await' so every caller that hasn't thought about it keeps today's
   // behavior; see `ParseCheckMode`.
@@ -865,8 +886,8 @@ export async function applyFiles(
   // Configured roots come from storage, so make sure that read has
   // landed before asking — a refresh racing SW startup would otherwise
   // resolve as if none were set and persist that.
-  if (useLocalFiles) await localRootsReady();
-  const localRoots = localSearchRoots(built.fileUrl, useLocalFiles);
+  if (localFiles.enabled) await localRootsReady();
+  const localRoots = localSearchRoots(built.fileUrl, localFiles);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.
@@ -1442,12 +1463,13 @@ interface RebuildArgs {
   // refreshAllCollections); rebuildCollection itself never mutates the
   // entry semantics, just hands the cache to attachFiles.
   fileFetchCache?: FileFetchCache;
-  // Does this collection allow local stand-ins for the files its scripts
-  // declare (`StoredCollection.localFiles`)? Passed as a plain flag rather
-  // than the whole collection row because the roots are derived per script,
-  // from each script's own `fileUrl`. Defaults to false so a caller that
-  // hasn't thought about it gets the declared-URL-only behavior.
-  useLocalFiles?: boolean;
+  // What this collection says about local stand-ins for the files its
+  // scripts declare — the `StoredCollection.localFiles` toggle plus the
+  // root to search. One value rather than the whole collection row, and
+  // `localFileScope` is the one thing that builds it. Defaults to
+  // disabled so a caller that hasn't thought about it gets the
+  // declared-URL-only behavior.
+  localFiles?: LocalFileScope;
   // Whether the rows this returns carry a parse verdict. Defaults to
   // 'await'; see `ParseCheckMode`. A 'defer' caller owes the rows a
   // `checkParsesInBackground` after it has written them.
@@ -1460,18 +1482,25 @@ interface RebuildArgs {
 // fell off the listing tagged `missing`). Stable IDs come from looking
 // up by relativePath in `existing`. No I/O — easy to test.
 //
-// Vanished-entry handling depends on the collection kind:
-//   - Manifest collections: an entry that's no longer listed is treated
-//     as an explicit user removal — the row is dropped entirely (the
-//     `refreshCollection` caller then deletes the storage row).
-//   - Other collections (local directory): the prior row is tagged
-//     `missing` and auto-disabled. The file might come back; the row
-//     stays so the viewer keeps working.
+// Vanished-entry handling — an entry the scan no longer reports is
+// dropped entirely (the `refreshCollection` caller then deletes the
+// storage row), because a successful scan is the collection telling us
+// what it holds now: a renamed or deleted file would otherwise linger
+// as a `missing` row the user has to clear by hand.
+//
+// The one exception is a scan that came back completely empty for a
+// collection that used to have scripts. An empty listing is far more
+// often a directory that moved, got replaced, or listed strangely than
+// every script in it being deleted at once, so those rows are tagged
+// `missing` and auto-disabled instead: the content is preserved, and
+// the row comes back to life if the files reappear. Manifest
+// collections are exempt — the manifest is an explicit list, so an
+// empty one is an explicit "nothing here".
 export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
   const recheckFiles = args.recheckFiles ?? 'all';
   const fileFetchCache: FileFetchCache = args.fileFetchCache ?? new Map();
-  const useLocalFiles = args.useLocalFiles ?? false;
+  const localFiles: LocalFileScope = args.localFiles ?? { enabled: false };
   const parseCheck = args.parseCheck ?? 'await';
   // Deferring is only safe where the deferred verdict does exactly what
   // an awaited one would have done — and where `keepsPriorOnInvalid`
@@ -1528,7 +1557,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // skip a refetch.
         if (found.mtime !== undefined) built.fsMtime = found.mtime;
         const withFiles = await applyFiles(
-          built, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles,
+          built, prior, recheckFiles, fileFetchCache, args.now, localFiles,
           parseCheckFor(fileUrl, prior));
         // Soft-failure preservation — see `keepsPriorOnInvalid`. Keep
         // the prior good body running and annotate `refreshError`
@@ -1580,7 +1609,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
         // short-circuits.
         entryTasks.push(
           () => applyFiles(
-            next, prior, recheckFiles, fileFetchCache, args.now, useLocalFiles,
+            next, prior, recheckFiles, fileFetchCache, args.now, localFiles,
             parseCheckFor(fileUrl, prior)),
         );
       } else {
@@ -1628,10 +1657,10 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   const out = await mapWithConcurrency(
     entryTasks, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, (task) => task());
 
-  // Anything in `existing` that the scan didn't see → either marked
-  // missing (directory collections: file may come back) or dropped
-  // (manifest collections: the user explicitly removed the entry).
-  const dropVanished = isManifestCollection(args.collectionPath);
+  // Anything in `existing` that the scan didn't see → dropped, unless
+  // the empty-scan guard above applies. See the header comment.
+  const dropVanished =
+    args.scan.length > 0 || isManifestCollection(args.collectionPath);
   for (const e of args.existing) {
     if (handledPaths.has(e.relativePath)) continue;
     if (dropVanished) continue;
@@ -1643,8 +1672,10 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
 // ---------- chrome.storage.local I/O ----------
 
 const COLLECTIONS_INDEX_KEY = 'collections';
-const collectionKey = (id: string) => `collection:${id}`;
-const scriptKey = (id: string) => `script:${id}`;
+const COLLECTION_PREFIX = 'collection:';
+const SCRIPT_PREFIX = 'script:';
+const collectionKey = (id: string) => `${COLLECTION_PREFIX}${id}`;
+const scriptKey = (id: string) => `${SCRIPT_PREFIX}${id}`;
 
 // Does a `chrome.storage.local` change touch the structural rows — the
 // collection index, a collection, or a script? Exported so pages
@@ -1679,6 +1710,24 @@ export function touchesStructuralRows(keys: Iterable<string>): boolean {
 // so this doesn't serialize I/O. IMPORTANT: a `mutate()` block must
 // never call another mutator (refreshCollection / addCollection / a set*),
 // since this mutex is non-reentrant — keep orchestrator calls outside.
+//
+// SCOPE: `mutateChain` is module state, so the lock is PER JS CONTEXT.
+// The service worker, the collections page, and the viewer each hold
+// their own — and pages call these mutators directly (a Remove click, a
+// move, an enable toggle) while the worker refreshes in the background.
+// So a section is atomic against other mutators in the SAME context
+// only. Two rules follow:
+//
+//   - Re-read inside the lock and merge, rather than writing values
+//     captured before it. That is what actually survives a writer in
+//     another context — see `preserveConcurrentEdits` and the
+//     joined/departed reconcile in `writeRefreshedCollection`.
+//   - Keep sections short for the same reason. A wide section doesn't
+//     buy exclusion against the other context; it only widens the
+//     window in which that context can interleave.
+//
+// See docs/storage.md#write-serialization-mutate for what remains
+// unguarded across contexts.
 let mutateChain: Promise<unknown> = Promise.resolve();
 function mutate<T>(fn: () => Promise<T>): Promise<T> {
   // Run after the prior section settles, regardless of its outcome.
@@ -1913,33 +1962,61 @@ export async function getCollection(id: string): Promise<StoredCollection | unde
   return await getRaw<StoredCollection>(collectionKey(id));
 }
 
-// Result of `addCollection`. Three outcomes:
+// Result of `addCollection` / `createCollection` / `installScript`.
+// Three outcomes:
 //   - newCollection: a brand-new collection row was created (a directory /
-//     manifest / github-dir collection, or a never-before-seen container
-//     auto-created for the first single-file add of its kind). The
-//     caller appends a fresh section to the DOM.
-//   - existingContainer: the input was a single-file URL/path added
-//     into a container that already existed. The caller re-renders
-//     that container's section in place.
+//     manifest / github-dir collection, a user-created scripts
+//     collection, or a built-in default container auto-created by the
+//     first install that targeted it). The caller appends a fresh
+//     section to the DOM.
+//   - existingContainer: a single script was installed into a container
+//     that already existed. The caller re-renders that container's
+//     section in place.
 //   - null: the input was a duplicate (an already-registered collection
-//     path, or a script URL/path already present in its container).
-//     The caller surfaces the duplicate message and jumps to the
-//     existing section.
+//     path, or a script URL/path already present in the target
+//     container). The caller surfaces the duplicate message and jumps
+//     to the existing section.
 export type AddCollectionResult =
   | { kind: 'newCollection'; collection: StoredCollection }
   | { kind: 'existingContainer'; collection: StoredCollection; scriptId: string }
   | null;
 
-// Register a new collection from a raw user input. Dispatches by input
-// shape:
-//   - single-file `.user.js` URL/path → folded into the matching
-//     container collection (created on demand if none exists). The script
+// Messages shared by the store's collection-shape checks and the
+// collection dialog's live validation, so the dialog can't say one
+// thing and the store another.
+export const COLLECTION_ALREADY_REGISTERED = 'This collection is already registered';
+export const COLLECTION_NAME_REQUIRED = 'Name is required for scripts collections';
+export const COLLECTION_GONE = 'This collection no longer exists';
+export function collectionNameInUseMessage(name: string): string {
+  return `Collection named "${name.trim()}" already exists`;
+}
+
+// What `createCollection` is asked to make.
+export type NewCollectionSpec =
+  | {
+      // A folder of individually installed scripts. Named by the user.
+      kind: 'scripts';
+      name: string;
+      localFiles?: boolean;
+    }
+  | {
+      // A scanned directory, a GitHub tree, or a `script_manifest.json`.
+      kind: 'location';
+      path: string;
+      // Blank → inferred from the path, as the Add field always did.
+      name?: string;
+      localFiles?: boolean;
+    };
+
+// Register a new collection from a raw user input — the Add field's
+// one-string entry point. Dispatches by input shape:
+//   - single-file `.user.js` URL/path → installed into the built-in
+//     default container for its scheme (created on demand). The script
 //     is added to the container's `scriptIds` and its initial fetch
 //     runs immediately so the table populates without a manual
 //     Refresh.
-//   - everything else (directory, manifest, github-dir URL) → mints a
-//     UUID, persists an empty collection row, then refreshes to populate
-//     the scripts.
+//   - everything else (directory, manifest, github-dir URL) → a new
+//     location-backed collection, as `createCollection` would make.
 //
 // `normalizeCollectionInput` runs first so a github.com
 // `/blob/.../foo.user.js` (or `/blob/.../script_manifest.json`) URL
@@ -1948,17 +2025,87 @@ export type AddCollectionResult =
 // verbatim would silently load the page chrome instead of the script —
 // see [docs/http-collections.md].
 export async function addCollection(rawPath: string): Promise<AddCollectionResult> {
-  // Two canonicalizations, in order: provider rewriting (github blob →
-  // raw), then the one-spelling-per-location rule. The second is what
-  // keeps `/x/a.user.js` typed into the collections page and
-  // `file:///x/a.user.js` arriving from a captured navigation from
-  // becoming two rows for one file — see `canonicalCollectionInput`.
-  const path = canonicalCollectionInput(await normalizeCollectionInput(rawPath));
-
+  const path = await canonicalLocation(rawPath);
   if (isSingleFileInput(path)) {
-    return await addScriptToContainer(path);
+    return await addScriptToContainer(path, { schemeDefault: true });
   }
+  return await createLocationCollection(path, {});
+}
 
+// Two canonicalizations, in order: provider rewriting (github blob →
+// raw), then the one-spelling-per-location rule. The second is what
+// keeps `/x/a.user.js` typed into the collections page and
+// `file:///x/a.user.js` arriving from a captured navigation from
+// becoming two rows for one file — see `canonicalCollectionInput`.
+async function canonicalLocation(rawPath: string): Promise<string> {
+  return canonicalCollectionInput(await normalizeCollectionInput(rawPath));
+}
+
+// Create a collection the collection dialog described. A scripts
+// collection is an empty container row with the user's name; a
+// location collection is what `addCollection` makes, plus the name and
+// local-files choice from the dialog.
+export async function createCollection(spec: NewCollectionSpec): Promise<AddCollectionResult> {
+  if (spec.kind === 'scripts') {
+    const name = spec.name.trim();
+    if (!name) throw new Error(COLLECTION_NAME_REQUIRED);
+    const created = await mutate(async () => {
+      const collections = await getCollections();
+      if (!mayUseReservedName(name, null)) throw new Error(RESERVED_COLLECTION_NAME);
+      if (collectionNameInUse(name, collections)) {
+        throw new Error(collectionNameInUseMessage(name));
+      }
+      const id = crypto.randomUUID();
+      const seed: StoredCollection = {
+        id,
+        path: newContainerPath(),
+        lastRefreshedAt: 0,
+        scriptIds: [],
+        enabled: true,
+        displayName: name,
+      };
+      if (spec.localFiles === false) seed.localFiles = false;
+      await chrome.storage.local.set({
+        [COLLECTIONS_INDEX_KEY]: [...collections.map((s) => s.id), id],
+        [collectionKey(id)]: seed,
+      });
+      return seed;
+    });
+    return { kind: 'newCollection', collection: created };
+  }
+  const path = await canonicalLocation(spec.path);
+  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_USE_ADD_FIELD);
+  return await createLocationCollection(path, spec);
+}
+
+// What the collection dialog runs before creating a location-backed
+// collection: the same listing / manifest fetch / GitHub lookup a
+// refresh does, so a location that can't be read is refused in the
+// dialog instead of landing as a collection stuck in a scan error.
+// Nothing is written. The count lets the dialog warn about an empty
+// directory without refusing it — a directory can fill up later.
+export async function probeCollectionLocation(
+  rawPath: string,
+): Promise<{ path: string; scriptCount: number }> {
+  const path = await canonicalLocation(rawPath);
+  if (isSingleFileInput(path)) throw new Error(SINGLE_SCRIPT_USE_ADD_FIELD);
+  const found = await scanForUserScripts(path);
+  return { path, scriptCount: found.length };
+}
+
+// Mint a UUID, persist an empty collection row for an already-canonical
+// location, then refresh to populate the scripts.
+async function createLocationCollection(
+  path: string,
+  opts: { name?: string; localFiles?: boolean },
+): Promise<AddCollectionResult> {
+  // Only a name the user actually chose is held to the uniqueness rule.
+  // Inferred names can legitimately collide — two refs of one GitHub
+  // tree both read as `<owner>/<repo>/<path>` — and refusing those
+  // would block adding a real, distinct collection.
+  const inferred = inferDisplayName(path);
+  const chosen = opts.name?.trim() || '';
+  const explicitName = chosen && chosen !== inferred ? chosen : '';
   // Dedup-and-register atomically so two concurrent adds of the same
   // path can't both create a collection (and so this index write can't
   // lose a race with another index mutator). The refresh runs OUTSIDE
@@ -1970,6 +2117,12 @@ export async function addCollection(rawPath: string): Promise<AddCollectionResul
     // `addCollection` collapsed `file://` inputs still carries the URL
     // spelling.
     if (collections.some((s) => canonicalCollectionInput(s.path) === path)) return null;
+    if (explicitName) {
+      if (!mayUseReservedName(explicitName, null)) throw new Error(RESERVED_COLLECTION_NAME);
+      if (collectionNameInUse(explicitName, collections)) {
+        throw new Error(collectionNameInUseMessage(explicitName));
+      }
+    }
     const id = crypto.randomUUID();
     const seed: StoredCollection = {
       id,
@@ -1977,11 +2130,12 @@ export async function addCollection(rawPath: string): Promise<AddCollectionResul
       lastRefreshedAt: 0,
       scriptIds: [],
       enabled: true,
-      // Seed an inferred displayName at add-time so a viewer opened
-      // mid-add (or any other reader) doesn't briefly see a row whose
-      // name only materialises on the next backfill pass.
-      displayName: inferDisplayName(path),
+      // Seed a displayName at add-time so a viewer opened mid-add (or
+      // any other reader) doesn't briefly see a row whose name only
+      // materialises on the next backfill pass.
+      displayName: explicitName || inferred,
     };
+    if (opts.localFiles === false) seed.localFiles = false;
     const nextIndex = [...collections.map((s) => s.id), id];
     await chrome.storage.local.set({
       [COLLECTIONS_INDEX_KEY]: nextIndex,
@@ -2024,36 +2178,98 @@ export async function markFirstRunComplete(): Promise<void> {
   await chrome.storage.local.set({ [FIRST_RUN_DONE_KEY]: true });
 }
 
-// Add a single-file input to the matching container collection. Creates
-// the container row if this is the first script of its kind. Returns
-// null if the URL/path is already registered as a script under its
-// container. The fetch runs as part of `refreshCollection` so the new
-// row lands populated.
-async function addScriptToContainer(path: string): Promise<AddCollectionResult> {
-  const kind = containerKindForSingleFileInput(path);
-  const cPath = containerPath(kind);
+// Where a single script should be installed: a specific container by
+// id, or the built-in default container for the script's own scheme
+// (created if it doesn't exist).
+export type InstallTarget = { collectionId: string } | { schemeDefault: true };
 
+// Install one `.user.js` location into a container collection. Returns
+// null if the location is already a script in THAT container — the
+// same location may be installed into several containers, which is
+// what the "Other versions" panel and its exclusive-enable rule exist
+// for. The fetch runs as part of `refreshCollection` so the new row
+// lands populated.
+export async function installScript(
+  rawLocation: string,
+  target: InstallTarget,
+): Promise<AddCollectionResult> {
+  const path = await canonicalLocation(rawLocation);
+  if (!isSingleFileInput(path)) {
+    throw new Error('Internal error: only a .user.js location can be installed into a collection');
+  }
+  return await addScriptToContainer(path, target);
+}
+
+// Does this container already hold `canonicalPath`?
+//
+// A container holds one row per location, and both the install and the
+// move path have to agree on what "the same location" means — so the
+// rule lives here rather than being spelled twice. The STORED value is
+// canonicalized too: rows written before `addCollection` started
+// collapsing `file://` inputs still carry the URL spelling, and
+// comparing raw would offer a second copy of a file we already have.
+//
+// `canonicalPath` must already be through `canonicalCollectionInput`.
+// Caller-side, because both callers have it in hand.
+async function containerHoldsLocation(
+  container: StoredCollection,
+  canonicalPath: string,
+): Promise<boolean> {
+  const rows = await getMany(container.scriptIds.map(scriptKey));
+  for (const sid of container.scriptIds) {
+    const s = rows[scriptKey(sid)] as StoredScript | undefined;
+    if (s && canonicalCollectionInput(s.relativePath) === canonicalPath) return true;
+  }
+  return false;
+}
+
+// A brand-new container row. One spelling of the default field values,
+// so an install-created container and a move-created one can't drift
+// apart on `enabled`, the inferred name, or the never-refreshed marker.
+function newContainerRow(
+  id: string,
+  path: string,
+  scriptIds: string[],
+): StoredCollection {
+  return {
+    id,
+    path,
+    lastRefreshedAt: 0,
+    scriptIds,
+    enabled: true,
+    displayName: inferDisplayName(path),
+  };
+}
+
+async function addScriptToContainer(
+  path: string,
+  target: InstallTarget,
+): Promise<AddCollectionResult> {
   // Dedup-check and seed the container + script atomically so a
-  // concurrent add (or index mutator) can't lose this scriptIds/index
+  // concurrent install (or index mutator) can't lose this scriptIds/index
   // write. The refresh runs OUTSIDE the lock. Returns null on duplicate.
   const seeded = await mutate(async () => {
     const collections = await getCollections();
-    const existingContainer = collections.find((s) => s.path === cPath);
-    const isNew = !existingContainer;
-    if (existingContainer) {
-      // Each container script's `relativePath` is the full URL/path the
-      // user added; any prior row with the same value is a duplicate.
-      const existingScripts = await getMany(existingContainer.scriptIds.map(scriptKey));
-      for (const sid of existingContainer.scriptIds) {
-        const s = existingScripts[scriptKey(sid)] as StoredScript | undefined;
-        if (s === undefined) continue;
-        // Canonicalize the STORED value too: rows written before
-        // `addCollection` started collapsing `file://` inputs still
-        // carry the URL spelling, and comparing raw would offer to
-        // install a second copy of a file we already have.
-        if (canonicalCollectionInput(s.relativePath) === path) return null;
+    let existingContainer: StoredCollection | undefined;
+    let cPath: string;
+    if ('collectionId' in target) {
+      existingContainer = collections.find((s) => s.id === target.collectionId);
+      // The dropdown was built from a snapshot; the row can have been
+      // removed from another tab since.
+      if (!existingContainer) throw new Error(COLLECTION_GONE);
+      if (!isContainerCollection(existingContainer.path)) {
+        throw new Error('Internal error: scripts can only be installed into a scripts collection');
       }
+      cPath = existingContainer.path;
+    } else {
+      cPath = containerPath(containerKindForSingleFileInput(path));
+      existingContainer = collections.find((s) => s.path === cPath);
     }
+    const isNew = !existingContainer;
+    // Each container script's `relativePath` is the full URL/path the
+    // user added; any prior row with the same value is a duplicate.
+    // `path` arrived canonical (see `installScript`).
+    if (existingContainer && await containerHoldsLocation(existingContainer, path)) return null;
 
     const now = Date.now();
     const containerId = existingContainer?.id ?? crypto.randomUUID();
@@ -2061,14 +2277,7 @@ async function addScriptToContainer(path: string): Promise<AddCollectionResult> 
     const priorScriptIds = existingContainer?.scriptIds ?? [];
     const nextContainer: StoredCollection = existingContainer
       ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
-      : {
-          id: containerId,
-          path: cPath,
-          lastRefreshedAt: 0,
-          scriptIds: [scriptId],
-          enabled: true,
-          displayName: inferDisplayName(cPath),
-        };
+      : newContainerRow(containerId, cPath, [scriptId]);
     const seedScript = buildInitialInvalidEntry({
       id: scriptId,
       collectionId: containerId,
@@ -2102,6 +2311,102 @@ async function addScriptToContainer(path: string): Promise<AddCollectionResult> 
   const finalCollection = refreshed?.collection ?? nextContainer;
   if (isNew) return { kind: 'newCollection', collection: finalCollection };
   return { kind: 'existingContainer', collection: finalCollection, scriptId };
+}
+
+export const SCRIPT_GONE = 'This script no longer exists';
+
+// The one thing both `installScript` and `moveScript` decline: the
+// target container already holds this location. Shared, so the install
+// callout and the viewer's Move picker can't word the same refusal two
+// ways.
+export const ALREADY_INSTALLED_IN_TARGET = 'This script is already installed there';
+
+// Both ends of a move have to be container collections. A directory or
+// manifest script's `relativePath` is relative to its collection root,
+// so moving it would mean rewriting it to an absolute location — a
+// different feature. The UI never offers the button in that case, so
+// this is a wiring error, not something the user can act on.
+export const NOT_A_MOVABLE_SCRIPT =
+  'Internal error: only a script in an individual scripts collection can be moved';
+
+// Move one already-installed script from its container collection into
+// another. The stored row keeps its `id`, so its Chrome registration,
+// its `gmval:` rows, and its Log all follow it untouched — only the
+// `collectionId` and the two `scriptIds` lists change.
+//
+// Returns null when the destination already holds this location (the
+// same case `installScript` returns null for) or is the collection the
+// script is already in.
+//
+// What DOES change with the parent: whether the script runs at all
+// (`isRegistrationCandidate` requires the collection to be enabled
+// too), and the local-stand-in policy — so a move between collections
+// that disagree about `localFiles` ends with a refresh, because the
+// `@require` / `@resource` bodies were resolved under the old rule.
+export async function moveScript(
+  scriptId: string,
+  target: InstallTarget,
+): Promise<StoredScript | null> {
+  const moved = await mutate(async () => {
+    const script = await getRaw<StoredScript>(scriptKey(scriptId));
+    if (!script) throw new Error(SCRIPT_GONE);
+    const source = await getRaw<StoredCollection>(collectionKey(script.collectionId));
+    if (!source || !isContainerCollection(source.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
+    const collections = await getCollections();
+    let dest: StoredCollection | undefined;
+    let destPath: string;
+    if ('collectionId' in target) {
+      dest = collections.find((c) => c.id === target.collectionId);
+      // The dropdown was built from a snapshot; the row can have been
+      // removed from another tab since.
+      if (!dest) throw new Error(COLLECTION_GONE);
+      if (!isContainerCollection(dest.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
+      destPath = dest.path;
+    } else {
+      destPath = containerPath(containerKindForSingleFileInput(script.relativePath));
+      dest = collections.find((c) => c.path === destPath);
+    }
+    if (dest?.id === source.id) return null;
+    // Same dedup rule as an install, via the same helper — the stored
+    // `relativePath` needs canonicalizing here because it may predate
+    // the store doing so on the way in.
+    const here = canonicalCollectionInput(script.relativePath);
+    if (dest && await containerHoldsLocation(dest, here)) return null;
+
+    const destId = dest?.id ?? crypto.randomUUID();
+    const nextDest: StoredCollection = dest
+      ? { ...dest, scriptIds: [...dest.scriptIds, scriptId] }
+      : newContainerRow(destId, destPath, [scriptId]);
+    const nextScript: StoredScript = { ...script, collectionId: destId };
+    // One set call: a SW restart between writes must never leave the
+    // row listed by both collections, or by neither.
+    const toSet: Record<string, unknown> = {
+      [collectionKey(source.id)]: {
+        ...source,
+        scriptIds: source.scriptIds.filter((id) => id !== scriptId),
+      } satisfies StoredCollection,
+      [collectionKey(destId)]: nextDest,
+      [scriptKey(scriptId)]: nextScript,
+    };
+    if (!dest) toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((c) => c.id), destId];
+    await chrome.storage.local.set(toSet);
+    return {
+      script: nextScript,
+      localFilesChanged: collectionUsesLocalFiles(source) !== collectionUsesLocalFiles(nextDest),
+    };
+  });
+  if (!moved) return null;
+  if (!moved.localFilesChanged) return moved.script;
+  try {
+    // Outside the lock: `refreshScript` takes it itself.
+    return (await refreshScript(scriptId)) ?? moved.script;
+  } catch (err) {
+    // The move itself landed and is what the caller asked for; only the
+    // re-resolve of the declared files failed. Reporting it as a failed
+    // move would be wrong, and the user can click Refresh.
+    dlog(`[SourceMonkey] refresh after move failed: ${describeError(err)}`);
+    return moved.script;
+  }
 }
 
 // Copy a freshly-added script's load failure — and any local stand-in
@@ -2207,22 +2512,173 @@ export async function removeScript(id: string): Promise<void> {
     if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
     await chrome.storage.local.remove(scriptKey(id));
   });
-  // Drop the per-script Log + max-log-level sentinel along with the
-  // row itself — otherwise an orphaned session-storage entry would
-  // outlive the script it described and confuse any later renderer
-  // that happens to scan log levels.
-  try {
-    await chrome.storage.session.remove([`log:${id}`, `loglevel:${id}`]);
-  } catch { /* best-effort: a missing session row isn't an error */ }
+  // After the write, not inside it: the local write is the one that has
+  // to be atomic, and a failure here must not undo a removal that
+  // succeeded. The refresh path drops rows the same way and clears their
+  // logs the same way.
+  await forgetScriptLogs([id]);
+}
+
+// ---------- Membership reconciliation ----------
+
+// The rows `reconcileScriptMembership` needs when the caller hasn't
+// already read them: every script row, and every collection row the
+// INDEX still lists.
+//
+// Index-filtered so this agrees with the collections page, which passes
+// what `getCollections` gave it. A `collection:` row the index has lost
+// is not somewhere a script can be put back — nothing renders or
+// refreshes it — so both callers have to treat scripts naming one as
+// collectionless rather than re-link them into a collection no surface
+// shows.
+//
+// The filter also means a de-indexed row's stale cross-listing is left
+// alone rather than dropped. That listing is invisible either way, and
+// leaving one row of garbage beats writing to a collection we've just
+// decided isn't real.
+async function scanMembershipRows(): Promise<{
+  collections: StoredCollection[]; scripts: StoredScript[];
+}> {
+  const all = await scanAllStorage('membership reconcile');
+  // Out of the scan rather than a second read, so the index and the rows
+  // it filters are one snapshot. `ensureCollectionKeysMigrated` already
+  // ran, so this is the post-rename spelling.
+  const index = all[COLLECTIONS_INDEX_KEY];
+  const indexed = new Set(Array.isArray(index) ? index as string[] : []);
+  const collections: StoredCollection[] = [];
+  const scripts: StoredScript[] = [];
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(COLLECTION_PREFIX)) {
+      if (indexed.has(key.slice(COLLECTION_PREFIX.length))) {
+        collections.push(value as StoredCollection);
+      }
+    } else if (key.startsWith(SCRIPT_PREFIX)) {
+      scripts.push(value as StoredScript);
+    }
+  }
+  return { collections, scripts };
+}
+
+//
+// Make `collection.scriptIds` agree with the `collectionId` on each
+// script row. Every mutator writes both together, so a disagreement is
+// a bug state rather than a shape the store means to represent — but a
+// refresh that raced an install or a move used to overwrite the list
+// from its pre-fetch snapshot and leave one behind (both directions
+// now handled in `writeRefreshedCollection`).
+//
+// This heals profiles that already hit it. The row's own `collectionId`
+// is the authority, because that is what the injector and the viewer
+// read — a row unlisted by it is invisible on the collections page and
+// never refreshed again, and one listed by a collection it doesn't name
+// shows up under a collection it doesn't belong to.
+//
+// Finding a row nothing points at needs a whole-storage scan, so this
+// does not run on a schedule of its own. The collections page — the
+// surface where an unlisted row is missing, and the one the user is
+// looking at when they notice — already scans the whole store on every
+// full render, and hands what it read to `prescanned` so this costs it
+// no extra reads.
+//
+// A row whose collection is GONE is left alone: `removeCollection`
+// drops both together so it shouldn't arise, there is nowhere to put
+// such a row back, and quietly deleting a user's script on a hunch is
+// worse than leaving an inert row.
+export async function reconcileScriptMembership(
+  prescanned?: { collections: readonly StoredCollection[]; scripts: readonly StoredScript[] },
+): Promise<number> {
+  await ensureCollectionKeysMigrated();
+  // Only the caller that has no rows in hand pays for the scan.
+  const rows = prescanned ?? await scanMembershipRows();
+
+  // {script id → the collections currently listing it}. Built over
+  // every collection row rather than a flat "is listed" set, so a row
+  // listed by the WRONG collection is caught too.
+  const listedBy = new Map<string, string[]>();
+  const known = new Set<string>();
+  for (const collection of rows.collections) {
+    known.add(collection.id);
+    for (const sid of collection.scriptIds ?? []) {
+      const owners = listedBy.get(sid);
+      if (owners) owners.push(collection.id);
+      else listedBy.set(sid, [collection.id]);
+    }
+  }
+
+  // Per collection: ids it should list but doesn't, and ids it lists
+  // that name somewhere else.
+  const toAdd = new Map<string, string[]>();
+  const toDrop = new Map<string, string[]>();
+  const push = (map: Map<string, string[]>, cid: string, sid: string): void => {
+    const ids = map.get(cid);
+    if (ids) ids.push(sid);
+    else map.set(cid, [sid]);
+  };
+  let collectionless = 0;
+  for (const script of rows.scripts) {
+    const owners = listedBy.get(script.id) ?? [];
+    const cid = script.collectionId;
+    if (cid === undefined || !known.has(cid)) {
+      collectionless++;
+      continue;
+    }
+    if (!owners.includes(cid)) push(toAdd, cid, script.id);
+    for (const other of owners) if (other !== cid) push(toDrop, other, script.id);
+  }
+  if (collectionless > 0) {
+    console.log(
+      `[SourceMonkey] membership: ${collectionless} script row(s) name no `
+      + 'existing collection; left in place',
+    );
+  }
+  if (toAdd.size === 0 && toDrop.size === 0) return 0;
+
+  // Re-read inside the lock: the scan is stale by now, and a concurrent
+  // refresh or move may already have adopted (or legitimately removed)
+  // one of these rows. Read every row this pass touches in two batched
+  // gets rather than one per id — the mutex is held throughout, and the
+  // rest of the module keeps its critical sections short.
+  return await mutate(async () => {
+    const cids = new Set([...toAdd.keys(), ...toDrop.keys()]);
+    const sids = new Set([...toAdd.values(), ...toDrop.values()].flat());
+    const collections = await getMany([...cids].map(collectionKey));
+    const scripts = await getMany([...sids].map(scriptKey));
+    const ownerOf = (sid: string): string | undefined =>
+      (scripts[scriptKey(sid)] as StoredScript | undefined)?.collectionId;
+
+    const toSet: Record<string, unknown> = {};
+    let moved = 0;
+    for (const cid of cids) {
+      const collection = collections[collectionKey(cid)] as StoredCollection | undefined;
+      if (!collection) continue;
+      const before = collection.scriptIds ?? [];
+      const has = new Set(before);
+      // Re-checked against the row as it stands now, so a move that
+      // landed since the scan isn't undone by acting on stale reads.
+      const add = (toAdd.get(cid) ?? []).filter((sid) => !has.has(sid) && ownerOf(sid) === cid);
+      const drop = new Set((toDrop.get(cid) ?? []).filter((sid) => ownerOf(sid) !== cid));
+      const after = [...before.filter((sid) => !drop.has(sid)), ...add];
+      if (after.length === before.length && add.length === 0) continue;
+      toSet[collectionKey(cid)] = { ...collection, scriptIds: after } satisfies StoredCollection;
+      moved += add.length + drop.size;
+    }
+    if (moved === 0) return 0;
+    await chrome.storage.local.set(toSet);
+    console.log(
+      `[SourceMonkey] membership: reconciled ${moved} script listing(s) across `
+      + `${Object.keys(toSet).length} collection(s)`,
+    );
+    return moved;
+  });
 }
 
 // Rescan a collection + refetch all of its scripts. Adds new files,
-// keeps known files (status updated based on fetch result), and
-// reconciles vanished files per collection kind: directory collections
-// mark them `missing` (the file may come back), manifest collections
-// delete them (the user explicitly removed the entry). Persists the
-// updated collection row plus every script row that actually changed,
-// in one set call — see `changedScriptRows`.
+// keeps known files (status updated based on fetch result), and drops
+// the ones the scan no longer reports — except when the scan came back
+// empty, where they're tagged `missing` instead (see
+// `rebuildCollection`). Persists the updated collection row plus every
+// script row that actually changed, in one set call — see
+// `changedScriptRows`.
 //
 // Scan failure (unreadable directory listing, unreadable manifest, bad
 // URL) records a `scanError` on the collection and **leaves every script
@@ -2331,7 +2787,7 @@ export async function refreshCollection(
     now,
     recheckFiles: opts.recheckFiles,
     fileFetchCache: opts.fileFetchCache,
-    useLocalFiles: collectionUsesLocalFiles(collection),
+    localFiles: localFileScope(collection),
   });
   timer.mark('rebuild');
   // Thunked: counting the skips walks every fetch result, which a
@@ -2365,14 +2821,21 @@ export async function refreshCollection(
     // Clears on the way out, so a collection that recovers stops
     // reporting a failure the next refresh already fixed.
     await setRefreshError(id, null);
-    return written;
+    if (!written) return null;
+    // After the write, not inside it — same rule `removeScript` follows:
+    // the storage.local write is the one that has to be atomic, and a
+    // log we failed to clear must not undo a refresh that landed.
+    await forgetScriptLogs(written.droppedIds);
+    return { collection: written.collection, scripts: written.scripts };
   } catch (err) {
     await setRefreshError(id, describeError(err));
     throw err;
   }
 
+  // Reports `droppedIds` alongside the written state so the caller can
+  // clear those scripts' logs outside the lock.
   async function writeRefreshedCollection(): Promise<
-    { collection: StoredCollection; scripts: StoredScript[] } | null
+    { collection: StoredCollection; scripts: StoredScript[]; droppedIds: string[] } | null
   > {
     return await mutate(async () => {
       const curCollection = await getRaw<StoredCollection>(collectionKey(id));
@@ -2382,28 +2845,69 @@ export async function refreshCollection(
         return null;
       }
       const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
-      const finalScripts = scripts.map((s) => preserveConcurrentEdits(
+      const priorIds = new Set(existingScripts.map((s) => s.id));
+
+      // Membership moves under us in both directions, and the freshly
+      // re-read row is the authority on both. `scripts` was rebuilt
+      // from a snapshot taken before the fetch (for a container, that
+      // snapshot IS the synthetic scan), so it describes a membership
+      // that may be minutes stale.
+      //
+      // LEFT during the fetch — the row is gone (`removeScript`) or now
+      // names another collection (`moveScript`). Writing the rebuilt
+      // row back would resurrect a deleted script, or revert the move
+      // AND leave the destination still listing it, so the same script
+      // shows under two collections. `preserveConcurrentEdits` can't
+      // rescue this: it re-applies fields onto the rebuilt row, and
+      // what's wrong here is that the row belongs to someone else now.
+      const departed = new Set<string>();
+      for (const s of scripts) {
+        const cur = curScripts[scriptKey(s.id)] as StoredScript | undefined;
+        // A row the scan found for the first time has no stored
+        // counterpart yet — that's a new script, not a departure.
+        if (!cur) {
+          if (priorIds.has(s.id)) departed.add(s.id);
+        } else if (cur.collectionId !== id) {
+          departed.add(s.id);
+        }
+      }
+      const kept = scripts.filter((s) => !departed.has(s.id));
+      const finalScripts = kept.map((s) => preserveConcurrentEdits(
         s,
         priorById.get(s.id),
         curScripts[scriptKey(s.id)] as StoredScript | undefined,
       ));
 
+      // JOINED during the fetch — an `installScript` / `moveScript`
+      // into this collection that the snapshot never saw. Writing the
+      // rebuilt list verbatim would erase its id while leaving the
+      // `script:` row in storage — unlisted: still pointing here via
+      // `collectionId`, still injected, but shown by no collection and
+      // never refreshed again.
+      const rebuiltIds = finalScripts.map((s) => s.id);
+      const rebuilt = new Set(rebuiltIds);
+      const joinedDuringRefresh = curCollection.scriptIds.filter(
+        (sid) => !rebuilt.has(sid) && !priorIds.has(sid) && !departed.has(sid),
+      );
+
       const nextCollection: StoredCollection = {
         ...curCollection,
         lastRefreshedAt: now,
-        scriptIds: finalScripts.map((s) => s.id),
+        scriptIds: [...rebuiltIds, ...joinedDuringRefresh],
       };
       // Clear any scanError left by a previous failed refresh — control
       // only reaches here when the scan succeeded (the early-return above
       // handles the failure case).
       delete nextCollection.scanError;
 
-      // Drop rows whose IDs are no longer referenced. Hit by manifest
-      // collections whose user removed an entry; also defensive against
-      // any future per-script Remove.
-      const priorIds = new Set(existingScripts.map((s) => s.id));
-      const nextIds = new Set(finalScripts.map((s) => s.id));
-      const toRemove = [...priorIds].filter((sid) => !nextIds.has(sid)).map(scriptKey);
+      // Drop rows whose IDs are no longer referenced — an entry that
+      // fell off the listing, or a manifest entry the user removed. Of
+      // the ids the snapshot had, since a row that joined mid-refresh
+      // was never reconciled against the scan; and never a departed
+      // one, whose row is either already deleted or now owned by the
+      // collection it moved to.
+      const droppedIds = [...priorIds]
+        .filter((sid) => !rebuilt.has(sid) && !departed.has(sid));
 
       // The collection row always goes: `lastRefreshedAt` moved, and
       // that's the record of the check having happened at all. The
@@ -2418,9 +2922,11 @@ export async function refreshCollection(
       // exercises the same state the production failure produces.
       if (collectionWriteFailure !== null) throw new Error(collectionWriteFailure);
       await chrome.storage.local.set(toSet);
-      if (toRemove.length > 0) await chrome.storage.local.remove(toRemove);
+      if (droppedIds.length > 0) {
+        await chrome.storage.local.remove(droppedIds.map(scriptKey));
+      }
 
-      return { collection: nextCollection, scripts: finalScripts };
+      return { collection: nextCollection, scripts: finalScripts, droppedIds };
     });
   }
 }
@@ -2467,11 +2973,10 @@ export interface RefreshBatch {
 }
 
 export function createRefreshBatch(): RefreshBatch {
-  return {
-    collectionRows: new Map(),
-    listings: new Map(),
-    fileFetchCache: new Map(),
-  };
+  const listings: DirectoryListingCache = new Map();
+  const fileFetchCache: FileFetchCache = new Map();
+  bindListingCache(fileFetchCache, listings);
+  return { collectionRows: new Map(), listings, fileFetchCache };
 }
 
 // How many collection rows `refreshScript` has actually read from
@@ -2675,7 +3180,7 @@ export async function refreshScript(
     // only reflects that `fileFetchCache` is part of the inherited
     // `RefreshOptions`; no caller of `refreshScript` sets it today.
     fileFetchCache: opts.fileFetchCache ?? opts.batch?.fileFetchCache,
-    useLocalFiles: collectionUsesLocalFiles(collectionRow),
+    localFiles: localFileScope(collectionRow),
     parseCheck: opts.parseCheck,
   });
   const next = result[0];
@@ -2750,6 +3255,14 @@ export async function refreshScript(
 //     them. They arrive only from setVersionProbes, so whatever is
 //     persisted now is by definition newer than what the refresh
 //     started with.
+//   - `collectionId` — always, for the same reason: only `moveScript`
+//     writes it, so the stored value is a move that landed during the
+//     fetch. A refresh rebuilds the row under the collection it was
+//     asked about, and writing that back would silently revert the
+//     move and leave the two collections disagreeing about who owns
+//     the row. (The collection path drops such a row before it gets
+//     here — see `departed` in `writeRefreshedCollection`; this is
+//     what covers the single-script path.)
 function preserveConcurrentEdits(
   next: StoredScript,
   prior: StoredScript | undefined,
@@ -2758,6 +3271,7 @@ function preserveConcurrentEdits(
   if (!cur) return next;
   const out: StoredScript = { ...next };
   if (prior && cur.enabled !== prior.enabled) out.enabled = cur.enabled;
+  out.collectionId = cur.collectionId;
   if (cur.versionProbes) out.versionProbes = cur.versionProbes;
   else delete out.versionProbes;
   return out;
@@ -2981,21 +3495,54 @@ export async function setCollectionEnabled(
   });
 }
 
-// Per-collection opt-out of local stand-ins. Writing the field only —
-// nothing is refetched here, because the flag changes what the NEXT
-// refresh resolves to, and the collections page follows this with its
-// own Refresh so the user sees the effect immediately.
-export async function setCollectionLocalFiles(
+// The per-collection settings the collection dialog edits.
+export interface CollectionOptions {
+  // The name shown everywhere. For a scripts collection it is required
+  // and must be unique; for a location collection blank means "back to
+  // the name inferred from the path".
+  displayName?: string;
+  // Per-collection opt-out of local stand-ins. Writing the field only —
+  // nothing is refetched here, because the flag changes what the NEXT
+  // refresh resolves to, and the collections page follows a change with
+  // its own Refresh so the user sees the effect immediately.
+  localFiles?: boolean;
+}
+
+export async function setCollectionOptions(
   id: string,
-  localFiles: boolean,
+  options: CollectionOptions,
 ): Promise<StoredCollection | null> {
   return mutate(async () => {
     const collection = await getRaw<StoredCollection>(collectionKey(id));
     if (!collection) return null;
-    const next: StoredCollection = { ...collection, localFiles };
+    const next: StoredCollection = { ...collection };
+    if (options.displayName !== undefined) {
+      const name = options.displayName.trim();
+      const inferred = inferDisplayName(collection.path);
+      if (!name && !inferred) throw new Error(COLLECTION_NAME_REQUIRED);
+      // Same rule as `createLocationCollection`: only a name the user
+      // chose is held unique; the inferred one may collide.
+      if (name && name !== inferred) {
+        // The default that already owns a reserved name is exempt — it
+        // keeps it — but nothing else may take it.
+        if (!mayUseReservedName(name, collection.path)) throw new Error(RESERVED_COLLECTION_NAME);
+        const all = await getCollections();
+        if (collectionNameInUse(name, all, id)) throw new Error(collectionNameInUseMessage(name));
+      }
+      next.displayName = name || inferred;
+    }
+    if (options.localFiles !== undefined) next.localFiles = options.localFiles;
     await chrome.storage.local.set({ [collectionKey(id)]: next });
     return next;
   });
+}
+
+// Test-surface convenience; the dialog goes through `setCollectionOptions`.
+export async function setCollectionLocalFiles(
+  id: string,
+  localFiles: boolean,
+): Promise<StoredCollection | null> {
+  return setCollectionOptions(id, { localFiles });
 }
 
 // Record what a script's upstream `@updateURL` / `@downloadURL` last

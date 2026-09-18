@@ -41,14 +41,14 @@ import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
 import { isContainerCollection, locationFsPath } from './directories.js';
-import { displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
+import { appendWithSlashBreaks, displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {
-  appendWithSlashBreaks,
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
 } from './collection-display.js';
+import { wireNamedTabLink } from './page-links.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import { versionRelation, type VersionRelation } from './version-compare.js';
 import { probeLabel, type VersionProbe } from './version-probe.js';
@@ -67,7 +67,8 @@ export interface LocationRow {
   // use it, because a plain navigation to a `.user.js` URL — http(s)
   // or file:// — is captured straight back into a preview (see
   // install-capture.ts):
-  //   - preview mode routes the click to its raw view;
+  //   - preview mode routes the click through View raw source, which
+  //     stands the capture down first;
   //   - installed mode stands the capture down for that one
   //     navigation, so the row's link opens what it says it opens.
   // Wired for `auxclick` too, or a middle-click would take the plain
@@ -103,6 +104,10 @@ export interface DetailsModel {
   // Installed scripts only.
   logId?: string;
   collection?: StoredCollection | null;
+  // Appended to the right of the Collection row's display name — the
+  // viewer's Move control. A node rather than a flag so the details
+  // renderer stays free of store calls; the caller owns the behavior.
+  collectionTrailing?: Node;
   status?: Node;
   location?: LocationRow;
   size?: string;
@@ -143,7 +148,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   // section). Above Location so the "where did this come from" rows are
   // grouped.
   if (model.collection) {
-    appendRow(dl, 'Collection', collectionCell(model.collection));
+    appendRow(dl, 'Collection', collectionCell(model.collection, model.collectionTrailing));
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
@@ -274,6 +279,9 @@ function probeValueText(probe: VersionProbe, relation: VersionRelation): string 
   if (relation === 'newer' || relation === 'older') {
     return `${probe.version} (${relation === 'newer' ? 'Newer' : 'Older'})`;
   }
+  // Our `@version` is theirs plus a `-local` tail — a copy made for
+  // editing. Neither newer nor older: the release we started from.
+  if (relation === 'edited') return `${probe.version} (Base of this local edit)`;
   // `unknown`: we declare no `@version` and they do. No qualifier — the
   // number is all we can say, and the Version row above reads `<none>`,
   // so the contrast is on screen without us guessing at a direction.
@@ -288,7 +296,7 @@ function probeTitleText(probe: VersionProbe, relation: VersionRelation): string 
   if (!probe.error) return probe.url;
   // The value is showing a version, so the tooltip carries the failure
   // — otherwise the row reads as freshly confirmed when it isn't.
-  if (relation === 'newer' || relation === 'older' || relation === 'unknown') {
+  if (relation !== 'same') {
     return `${probe.url} — last check failed: ${probe.error}`;
   }
   // The value is showing the error, so the tooltip carries the version
@@ -511,7 +519,7 @@ function logIdCell(logId: string): Node {
 // the underlying file:// / http(s):// URL), followed by the
 // collection's display name as a back-link to the collections page
 // anchored at this collection's section.
-function collectionCell(collection: StoredCollection): Node {
+function collectionCell(collection: StoredCollection, trailing?: Node): Node {
   const cell = document.createElement('span');
   cell.className = 'collection-cell';
 
@@ -520,14 +528,16 @@ function collectionCell(collection: StoredCollection): Node {
   const nameLink = document.createElement('a');
   nameLink.className = 'collection-display-name';
   appendWithSlashBreaks(nameLink, effectiveDisplayName(collection));
-  // Page-relative (both pages sit at the extension root) so the href
-  // doesn't carry the `chrome-extension://<id>/` prefix.
-  nameLink.href = `collections.html#${collectionAnchorId(collection.id)}`;
+  // The collections page is a named tab: this opens it beside the
+  // viewer rather than replacing it, reusing the one that is already
+  // open and scrolling it to this collection. See src/page-links.ts.
+  wireNamedTabLink(nameLink, 'collections', collectionAnchorId(collection.id));
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
   // the section on the collections page. Container collections have a
-  // synthetic `container:<kind>` path which would leak — skip then.
+  // synthetic `container:…` path which would leak — skip then.
   if (!isContainerCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
+  if (trailing) cell.appendChild(trailing);
 
   return cell;
 }

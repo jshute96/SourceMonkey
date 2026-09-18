@@ -1,8 +1,8 @@
 // Tests for src/install-capture.ts (compiled to dist/install-capture.js).
 //
 // Covers the pure pieces of the `.user.js` capture: which URLs it acts
-// on, the install-page URL it builds, the Chrome-version gate on the
-// download workaround, and the one-shot bypass round-trip.
+// on, the install-page URL it builds, and the one-shot bypass
+// round-trip.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,8 +36,6 @@ const {
   consumeInstallBypass,
   isUserJsUrl,
   markInstallBypass,
-  needsDownloadWorkaround,
-  parseChromeMajor,
 } = await import('../../dist/install-capture.js');
 
 test('captures http(s) URLs whose path ends in .user.js', () => {
@@ -55,8 +53,7 @@ test('query strings and fragments do not defeat the suffix check', () => {
 
 test('captures file:// URLs whose path ends in .user.js', () => {
   // Opening a local script in a tab offers the same install prompt a
-  // downloaded one does; without this it dead-ends in a browser
-  // download on Chrome ≤ 151.
+  // remote one does; without this it just renders as text.
   assert.equal(isUserJsUrl('file:///home/me/foo.user.js'), true);
   assert.equal(isUserJsUrl('file:///home/me/my%20scripts/foo.user.js'), true);
   assert.equal(isUserJsUrl('file:///C:/Users/me/foo.user.js'), true);
@@ -139,28 +136,6 @@ test('preview page URL carries the script URL encoded, marked as captured', () =
   // The viewer only lets a CAPTURED preview navigate away on its own
   // when the location turns out to be a web page.
   assert.equal(new URL(out).searchParams.get('captured'), '1');
-});
-
-test('parseChromeMajor reads the major version', () => {
-  assert.equal(
-    parseChromeMajor('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'),
-    150,
-  );
-  assert.equal(parseChromeMajor('… Chromium/152.0.7000.0 …'), 152);
-  assert.equal(parseChromeMajor('Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0'), null);
-});
-
-test('download workaround applies below Chrome 152 only', () => {
-  // Chrome 152 removed the `.user.js` download special case, which the
-  // Content-Type rewrite exists to defuse. Applying it after that
-  // would turn a clean source view into garbled HTML.
-  assert.equal(needsDownloadWorkaround('… Chrome/150.0.0.0 …'), true);
-  assert.equal(needsDownloadWorkaround('… Chrome/151.0.0.0 …'), true);
-  assert.equal(needsDownloadWorkaround('… Chrome/152.0.0.0 …'), false);
-  assert.equal(needsDownloadWorkaround('… Chrome/160.0.0.0 …'), false);
-  // Unrecognisable UA: assume the workaround is needed, matching the
-  // conservative choice other managers make.
-  assert.equal(needsDownloadWorkaround('something else entirely'), true);
 });
 
 test('bypass is one-shot', async () => {

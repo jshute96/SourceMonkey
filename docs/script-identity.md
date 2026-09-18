@@ -49,7 +49,10 @@ A script can be all three at once, or only one.
 - This is the convention, not our invention:
   - Greasemonkey documents `@namespace` as the value that, combined
     with the name, forms a unique identifier.
-  - Violentmonkey derives an internal `uri` from the pair.
+  - Violentmonkey derives an internal `uri` from the pair —
+    `<namespace>\n<name>\n` with a custom `-<hex>` escape (not
+    percent-encoding), and it appends its own generated id when both
+    parts are empty (`getNameURI`, `src/background/utils/script.js`).
   - Tampermonkey mints a UUID per installed entry, but decides
     install-vs-update on the pair. `docs/cross-manager-testing.md`
     relies on exactly this to find existing TM scripts.
@@ -78,11 +81,14 @@ Returns three things.
   **Disjoint** from `sameLocation`: a row matching both is listed once,
   under location, the stronger claim. Its `sameIdentity` flag still
   reports the second relationship.
-- **`installTarget`** — where a standalone install would land, present
-  only when it would actually add something:
-  - the location is a single-file input, **and**
-  - no `sameLocation` row already sits in that container.
-  - `collection: null` means the container does not exist yet.
+- **`installOptions`** — the entries of the install page's dropdown,
+  present only when the location is a single-file input:
+  - the built-in default for the location's scheme first, then every
+    other container in page order — see
+    [The "Install into" dropdown](#the-install-into-dropdown);
+  - each marked `installed` when a `sameLocation` row already sits in
+    it;
+  - `collection: null` on the default means it does not exist yet.
 
 Both lists sort by collection display name, then location, so the panel is
 stable across renders.
@@ -94,16 +100,56 @@ row offers, which the caller supplies as callbacks.
 
 | | Details page | Preview |
 |---|---|---|
-| Heading | Other versions of this script | Existing versions |
+| Heading | Other versions of this script | none — the banner line above the table is the heading |
 | Current row | highlighted, **(this page)**, not a link | — |
 | Nothing installed anywhere | can't happen — its own row is always there | no panel at all |
 
-Sections: **This URL**, then **Same script from a different URL** with
-a normal-weight gloss naming the match.
+Sections, each its own `<table>` under a bold heading:
 
-The panel sits on a green card rather than the grey of the details panel
-directly above it: the two stack, and this is the one carrying live
-controls, so it has to read as a different kind of thing at a glance.
+- **This URL** — copies installed from the location on screen.
+- **Same script from a different URL**, with a normal-weight gloss
+  naming the match.
+- **Install another copy of this script** — the install offer, preview
+  only. See [the offer section](#the-install-offer-section).
+
+The panel sits at the top of the page, under the title and above the
+controls row — which copy you are looking at comes before anything that
+acts on it. Green card rather than the grey of the details panel
+further down: this is the one carrying live controls, so it has to read
+as a different kind of thing at a glance. On a preview whose script is
+already installed, the panel and the "already installed" banner are
+drawn as one box.
+
+### Folding it away
+
+- A **triangle in the panel's top-right corner** folds the whole green
+  box down to its heading line, and back.
+- Details page only — the preview has no heading to fold into.
+- Folded, the rows are **not drawn** rather than drawn and hidden:
+  hidden rows would still be found by the keyboard walk and by the
+  repaint's focus bookkeeping.
+- **Open by default, and a fold lasts only for the page.** Module
+  state, not storage: switching copies happens in place, so the fold
+  survives that; a reload or another tab starts open. Nobody sets this
+  on purpose, so it shouldn't follow them around.
+- **A panel that appears opens**, whatever the fold said earlier on the
+  page — a local copy or an install has just given the page a second
+  row, and that row is the thing to look at.
+- The **message line stays above the fold.** A refresh that just failed
+  is the one time-sensitive thing in the panel, so folding must not
+  hold it back.
+- The toggle is restored after an unasked-for repaint, the same way a
+  focused row is — it is where a fold parks focus.
+
+On the details page, clicking a row anywhere that isn't a control opens
+that copy **in place**: new history entry, same table. The row is the
+control — `role="link"` and `tabindex="0"` with Enter / Space, and
+Ctrl/Cmd- or middle-click for a new tab. Up / Down walk the table row by
+row, and focus stays on the row you selected. The panel is anchored to
+the script the page was opened with, so selecting a copy moves only the
+highlight and never re-files the rows; the controls-row toggle keeps
+sweeping from the copy on **screen**. See
+[script-viewer.md](script-viewer.md#switching-copies-in-place).
 
 ### Enabling is exclusive; disabling is not
 
@@ -124,6 +170,34 @@ the *other* rows.
 - **Clicking a checked box just disables it.** That leaves none running,
   which is an ordinary thing to want, and there is no other copy that
   should be promoted in its place.
+- **Installing counts as enabling.** A fresh install lands enabled, so
+  it sweeps the other running copies off on its way to the new script's
+  page. So does a **local copy** ([local-copy.md](local-copy.md)): the
+  copy the user just made for editing is the one they want running.
+  - Both Install controls do it — the preview's header button and the
+    panel's offer section.
+  - And so does the collections page's **Add** field, which previews any
+    single-file location the user types rather than adding it directly.
+    (First-run seeding bypasses the preview, so it never sweeps.)
+  - **Single-file installs only.** The preview keeps an Install button
+    for other shapes too, and those add a whole collection — no one
+    script for the rule to be about.
+  - **Only when the new copy will actually run.** It must have landed
+    `ok` — a row stored `invalid` can't run — and its container
+    collection must be enabled. Switching a working copy off in favour
+    of one that can't run would leave nothing running at all.
+  - **A duplicate Install doesn't sweep.** Nothing new landed, so
+    nothing was enabled; the message says the script is already
+    installed and the panel in the same box is where to choose between
+    copies.
+  - **Fails open, and never blocks the navigation.** A sweep that
+    can't run — or whose write fails — is not reported: the install
+    itself succeeded, and the panel on the page it lands on shows the
+    real enable state.
+  - No ctrl/cmd opt-out here: the modifier belongs to the checkboxes,
+    where the sweep is the whole effect of the click. Two copies that
+    really are meant to run together are one checkbox away on the page
+    Install lands on.
 - **A copy under a disabled collection is spared.** It isn't running, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it
@@ -194,26 +268,47 @@ the *other* rows.
   page's own control makes (`updateScript(id, 'manual', 'force')`):
   **Refresh** / **Refresh all** in the viewer, **Update** / **Update
   all** in a preview. A third name would read as a third operation.
+  - **The two modes look different, not just read differently.**
+    Installed rows carry the circular-arrow glyph with no text, so
+    Refresh's name lives in the tooltip; a preview's rows keep the
+    word **Update**.
+  - Why: a preview fetches nothing. The file is already downloaded and
+    on screen, and the button decides whether to write it over that
+    copy — so the refresh arrow would promise a round trip that never
+    happens, and would make the row look like the installed case it
+    isn't.
+  - The `…all` button in the header follows the same split, and in the
+    installed case keeps its words beside the glyph: "all" is the whole
+    difference from a row's button, and no arrow says it.
 - **The …all button** sits in the header row's actions column, and
   appears only when more than one row is refreshable. Same call as a
   single row's, with every id.
+  - **It spans the actions and removal columns**, so it ends flush
+    with the table's right edge rather than a can's width short of it.
+    It is the table's own control, not a column heading — the removal
+    column has no heading of its own either way.
 - **No refetch on a `sameIdentity` row.** It would pull that row's own,
   different upstream — a reasonable thing to want, but not "bring this
   up to date with what you are looking at", and offering it here would
   read as though it were.
-- **Install**, only on the `installTarget` row — and only when the
-  caller passes an `install` action. Two callers decline:
+- **Install**, only in the offer section — with the dropdown that picks
+  where — and only when the caller passes an `install` action. Two
+  callers decline:
   - the **installed page**, where an Install would add a second row for
     a file already installed, and two enabled rows at one URL inject
     the script twice;
   - an **invalid preview**, which has already said the file cannot be
     installed and hidden its own Install button.
 - **A trash can on every row**, in its own column right of the refetch
-  button — same glyph and behaviour as the collections page's per-script
-  remove.
-  - **Live only for scripts in a container collection** (the *Scripts from
-    local disk* / *…from web* / *…from GitHub* buckets), which the user
-    added one at a time.
+  button — same glyphs and behaviour as the collections page's
+  per-script remove.
+  - **Two glyphs, not one**: a plain can for a row that only drops
+    SourceMonkey's record, and a can badged with a disk (in red) for a
+    local copy, whose button deletes the file too. Both come from
+    `src/delete-icon.ts`; see [local-delete.md](local-delete.md).
+  - **Live only for scripts in a container collection** (a scripts
+    collection — the built-in *Scripts from …* defaults or one the user
+    made), which the user installed one at a time.
   - **Disabled elsewhere**, with the tooltip *Script from **directory**
     collection can only be removed by removing the collection* — or
     ***manifest** collection*, per `collectionHasManifest`.
@@ -231,10 +326,45 @@ the *other* rows.
     the thing a user would most want to clear out, and nothing will
     scan it back in.
   - **Removing the row you are looking at is allowed.** Refusing only
-    where the user happens to be standing would be arbitrary. The viewer
-    then reports "This script has been removed" rather than its generic
-    not-found message, and clears the panel along with the rest of the
-    page — its heading has nothing left to be *other than*.
+    where the user happens to be standing would be arbitrary.
+  - **The page then moves to the next row in the table**, wrapping to
+    the first. The user asked to lose one copy, not to lose the script,
+    and the table is right there to say which copy comes next.
+    - Each candidate is re-read from the store first. The row list is
+      the table as it was *painted*, and another tab may have deleted
+      copies since; landing on one of those would answer a deliberate
+      deletion with a not-found page for a script the user never picked.
+    - The fragment is dropped — it named a tab or a line in the file
+      that just went away.
+    - `replaceState`, not a new history entry: the entry being left
+      names a script that no longer exists, so keeping it would give
+      Back a not-found page.
+    - **Only for a removal made here.** A copy that disappears because
+      another tab deleted it drops to the not-found state as before —
+      swapping in some other version would be a page the user never
+      asked for.
+    - **The swap is the only paint the user sees.** The removal's own
+      storage event lands while the viewer still points at the deleted
+      row.
+      - The listener's not-found paint would tear the whole page down —
+        heading, details, panel, title — before the swap builds it back:
+        a flash that reads as a page load, not the in-place switch every
+        other move through the table makes.
+      - A flag set *before* the removal holds that paint back once a
+        successor is picked. It is set and cleared only by the removal
+        that owns it, so a second row's trash can — the others stay
+        live — cannot re-open the flash for the first.
+    - **The successor lookup and both flags happen before the removal**,
+      not after it: its storage event can be delivered while the write
+      is still in flight, so anything set afterwards is too late for the
+      listener it is meant for. The same ordering applies to the
+      Collection row's own "Delete local script file" trash can.
+  - **With no surviving row, the viewer reports "This script has been
+    removed"** rather than its generic not-found message, and clears the
+    panel along with the rest of the page — its heading has nothing left
+    to be *other than*. A panel showing only your own row isn't drawn at
+    all, so this is the race where every other copy went away between
+    the paint and the click.
     - The removed state is driven from the action, not left to the
       storage listener: `removeScript` writes nothing when the row was
       already gone, so there may be no event to wait for.
@@ -261,6 +391,35 @@ the *other* rows.
   - **Not on an invalid preview**, which has deliberately hidden those
     buttons; re-running the wiring would put them back on a file the
     page has said cannot be installed.
+
+### A repaint waits for an open dropdown
+
+The panel rebuilds by `replaceChildren`, and the offer section's
+collection dropdown is a native `<select>` whose popup is drawn by the
+browser and dies with the element.
+
+- **The hazard**: a `storage.session` write — the injector's rejection
+  map, or any drawn copy's log level — repaints the panel. If that
+  lands while the popup is open, the popup closes and the mouseup that
+  was going to pick an entry falls on whatever the rebuild put there.
+  It reads as the dropdown choosing something by itself.
+- **The rule**: an *echo-driven* repaint is held (`panelPaintDeferred`)
+  while a `<select>` inside the panel has focus. Focus is the only
+  signal the platform offers — there is no "is the popup showing" API —
+  so it errs wide: a select merely tabbed to also defers.
+- **Flushed on `change` or `focusout`.** Both, because picking an entry
+  closes the popup but leaves the select focused, so a `focusout`-only
+  flush could sit pending until the user happened to click elsewhere. A
+  `change` proves the popup closed, so it flushes without re-checking
+  focus.
+- **The flush repaints from `lastRelatedPaint`**, not from args captured
+  when it deferred — otherwise a paint that landed in between could be
+  overwritten with older state.
+- **A panel action still repaints immediately.** The user asked for it,
+  and by then the click that opened the popup has been spent on the
+  button that ran the action.
+- Same principle as the collections page's busy affordances: a repaint
+  nobody asked for waits for the control being used.
 
 ### Failures
 
@@ -293,119 +452,297 @@ the *other* rows.
 ### Suppression
 
 A panel whose only row is the script already on screen says nothing the
-page above it doesn't, so it renders empty and the `:empty` rule hides
-it.
+rest of the page doesn't, so it renders empty and the `:empty` rule
+hides it.
 
 ### Row layout
 
-- Columns: enable toggle, collection, location, version, actions, remove.
+- Columns: enable toggle, collection, location, status, version,
+  actions, remove.
 - **Collection cell leads with the type bubble**, then the name — the same
   order as the details panel's Collection row and the collections page's
   headings. The bubble is fixed-width and the name is the variable
   part, so leading with it also keeps rows aligned down the left edge.
-- Location shows the row's own stored `relativePath` (relative for a
-  collection copy), with the absolute form on the tooltip.
+- **Location** shows the row's own stored `relativePath` (relative for a
+  collection copy), decoded for reading.
+  - **Plain text on the details page** — the row already opens the copy,
+    so a link inside it would offer the same destination twice. A
+    preview keeps the link: its rows are not clickable.
+  - **Tooltip: the full resolved location** — the collection root
+    spliced back on, a github row's `blob` page URL, or the literal
+    percent-encoded URL behind a decoded display. Omitted when that is
+    the string already in the cell.
+- **Status** is the same verdict the collections list and the viewer's
+  own Status row show. `scriptStatusView` in `script-display.ts`
+  computes label and hover text for all three.
+  - Titled only where the verdict has more to say, so a cell can't
+    carry an explanation the identical verdict in the details panel
+    lacks.
+  - **Links to that copy's Log tab**, which makes the panel a route to
+    each copy's diagnostics rather than only a report on them.
+  - **Every row links, OK ones included.** "Why is it OK" is the same
+    pane as "why is it ERROR", and a column where only broken rows
+    respond teaches the user to stop clicking.
+  - **No `target="_blank"`**, unlike the collections page's status
+    cell. That page is a list you come back to; this panel is already
+    inside the viewer, a tab away from the Log.
+  - **Coloured**, unlike the controls row's status link, which inherits
+    its colour to read as one line of text. Down a column the colour is
+    what finds the broken copy among five.
+  - **Live for every row it draws**, on the preview as well as the
+    viewer — that listener branch runs before the installed-script
+    gate. A sibling that starts erroring while you sit here says so.
+    - Repaints on a `loglevel:` write for a **drawn** id, or on any
+      write to the shared rejection map. A dozen unrelated scripts
+      failing on some page must not rebuild this table a dozen times.
+  - **The offer section's row has no status**, and nor does a row whose lookup
+    failed: both show an em dash. Absent is not the same claim as OK.
+    - A failed lookup empties the whole column, including the row for
+      the script whose own Status row still reads normally —
+      that row's verdict comes from a separate read. The alternative,
+      one column reading from two sources, is worse.
 
 ### Layout
 
-- Two `<table>`s, not one, but a shared `<colgroup>` plus
-  `table-layout: fixed` pins their columns to the same widths — without
-  it each table sizes its own and the panel reads as two unrelated
-  grids.
+- One `<table>` per section, not one for the panel, but a shared
+  `<colgroup>` plus `table-layout: fixed` pins their columns to the
+  same widths — without it each table sizes its own and the panel reads
+  as unrelated grids.
+- **Status does not shed** either: it says whether a copy works, and
+  its link is the only route from here to that copy's log.
+- **Status, Version, and the actions column are measured, not
+  guessed.** `fitColumns` sizes each to its own widest cell across every
+  section table and writes the result to the panel as custom properties;
+  Location absorbs everything left over.
+  - Under `table-layout: fixed` a column cannot shrink to its content,
+    so a fixed width has to cover the worst case (`REFRESH FAILED`, a
+    date-shaped `2026.08.19`) — which left a short `1.2.0` stranded a
+    column's breadth from the button beside it.
+  - Measured by switching the tables to `auto` layout at `max-content`
+    width, with the `<col>` widths taken off (under `auto` they are
+    still honoured, so leaving them on measures the guess). Restored in
+    the same task, so no frame paints mid-measurement.
+  - Custom properties rather than inline `<col>` widths, which would
+    beat the narrow-window rule that zeroes Version.
+  - The stylesheet's widths remain as fallbacks, for the first paint
+    and for a panel measured while hidden (which reports zero).
 - Narrow windows shed **Version** below 640px rather than wrapping
   every cell to a ribbon. It is the least load-bearing: nothing acts on
   it, and the copies it distinguishes are still told apart by collection
   and location. Zeroing the `<col>` width alongside `display: none` on
   the cells is what reclaims the space — under `table-layout: fixed`
   the colgroup, not the cells, sets column width.
-- **Location does not shed**, though it used to below 460px. Its link
-  is the only way to reach another copy's page now that a preview with
-  several targets drops its header Open button in favour of this table.
+- **Location does not shed**, though it used to below 460px. It is what
+  tells two copies apart, and on a preview it carries the only link to
+  another copy's page — that preview having dropped its header Open
+  button in favour of this table when there are several targets.
   Wrapping a long path is the lesser cost.
 
-## What this changed
+### The install offer section
 
-- **Install and Open/Update are no longer exclusive.** A script can be
-  installed inside a collection collection while the user still has no copy
-  of their own. `installTarget` — "would a standalone install add
-  anything?" — is what decides whether Install shows.
-- **The preview's already-installed check now uses this lookup**, so
-  the buttons and the panel apply the same rule for what counts as
-  installed. Each reads storage separately, so they can sit a moment
-  apart; sharing a cached snapshot would be worse, handing the buttons
-  a stale answer right after an install.
-  - The header **is** passed, but only the banner reads what it adds.
-    Every button decision comes from `sameLocation` / `installTarget`,
-    which the header cannot change: letting an identity match suppress
-    Install would strand the user with no way to add the script, since
-    installing one location over another is not a thing we can do.
+The panel's third and last section, on a preview only: where to put a
+copy of the script you are looking at. Its one row is the offer.
 
-### The preview's already-installed banner
+- **A section of its own, not a row appended to This URL.** It is an
+  offer, not an inventory entry. Inside the inventory its dropdown read
+  as one more cell of data, and its Install button sat in the actions
+  column at the far right of the table — a table's width from the
+  control that decides what it would install.
+- **Still a table row**, so the Location and Version of the copy you
+  would be adding line up under the copies you already have. That
+  comparison is why it isn't a callout of its own.
+- **Its heading row is there but off screen.** The section above has
+  already shown the reader those labels — but a screen reader has no
+  link between two tables, and cells with no `<th>` of their own
+  announce as unlabelled values. Off screen, not `display: none`, which
+  would drop it from the accessibility tree too.
+- **The columns left of Location become one cell** holding the same
+  question the callout asks when nothing is installed anywhere, in the
+  same shape: **Install** *into [dropdown]* on one line. A copy that
+  does not exist has no enable box, and its collection is the question
+  rather than an answer.
+  - **The button is the sentence's verb**, so *into* between the two
+    controls is a connector, not a heading, and is not bold. The
+    dropdown carries *Install into* as its accessible name, since
+    *into* alone names nothing.
+  - **Tab reaches Install before the dropdown**, which is the one cost
+    of reading order: acting first is a keypress away from choosing.
+    Acceptable because the opening entry is never a one-click install —
+    it is either where the script already lives (so Install is
+    disabled) or the scheme default, which is what an immediate press
+    should mean.
+  - **Why Install is off** goes on the line under, not spliced into
+    the middle of the sentence.
+- **Location** is the location the whole panel was computed for — the
+  page you are on, so never a link.
+  - **Absolute, which is not always how the rows above spell it**: a
+    copy inside a directory or manifest collection stores its path
+    under that collection's root and prints the short form. Absolute
+    anyway, because it is what installing from here would store — only
+    a scripts collection can take an individually installed script, and
+    those keep the location whole. The column lines the two up; it does
+    not claim they are spelled alike.
+- **Status is an em dash**: the file has never been loaded, registered
+  or logged against. **Version** is the `@version` of the file on
+  screen, so the row isn't version-less beside copies that all show one.
+- **Actions and remove are empty**, not disabled controls, which would
+  imply a copy already exists.
+- **Why Install is off** — the pre-selected entry already holds this
+  script — is said in words *beside* the button, which is what the
+  sentence is about (`CHOOSE_ANOTHER_COLLECTION`).
+- **The disabled button is greyed by explicit colours**, not by
+  `opacity`: translucent on this panel's green ground it takes the
+  green on and stops reading as a disabled control.
+- **Suppressed entirely** when nothing is installed anywhere: the page's
+  own install callout is the question then, and the panel does not draw.
+- **Nothing is installed at this URL** → there is simply no *This URL*
+  section. The old offer row said so in words (*Not installed here
+  yet*) because it sat in that section; now that section only ever
+  lists copies, and its absence is the statement. What the user came
+  for — where a copy could go — is the section below it either way.
 
-Install / Open / Update act on the copy at **this URL** and nothing
-else, so one sentence for every situation would leave the user guessing
-which copy they were about to touch. The banner splits by what exists:
+## The "Install into" dropdown
 
-| What exists | Banner |
-|---|---|
-| One copy, at this URL | This script is already installed *(version …)* |
-| One copy, elsewhere | This script is already installed from a different URL |
-| More than one | This script is already installed multiple times |
-| None anywhere | This script is not installed yet |
+Where a single-file install lands is the user's choice, made in one
+dropdown that appears in two places: the install callout (nothing
+installed yet) and the panel's offer section (some copy exists). The
+two carry different ids — `install-target` and `install-target-offer` —
+because the callout is hidden rather than emptied when the section
+takes over. Built by
+`buildInstallSelect` in `src/related-versions.ts` from `installOptions`.
 
-- A second line — *Select which instance to open, update or install
-  below* — appears wherever a choice actually exists: more than one
-  **row in the table below**, counting the install-offer row. That is
-  `choiceCount`, and it decides two things at once.
+- **Three groups**, separated by rules:
+  1. the **built-in default** for the script's scheme — `Scripts from
+     web` / `…GitHub` / `…local disk` — matched by its stored path
+     (`container:http` etc.), never by name. Listed as-is if it
+     exists, as *… (new)* if not; the install creates it;
+  2. every other scripts collection, in page order (including the
+     other two defaults, if they exist);
+  3. **New collection…**, which is an ordinary entry: picking it only
+     selects it. The collection dialog opens when **Install** is
+     clicked, with no location on offer (only a scripts collection
+     can take an individually installed script), titled *Create new
+     collection and install script* with a **Create and install**
+     button — so the dialog's confirm doesn't quietly install too.
+     Cancelling it installs nothing and leaves the page as it was.
+     - Why not on selection: Chrome fires `change` on every arrow key
+       over a *closed* select, so a keyboard user cursoring past the
+       entry would get a modal without asking for one.
+- **Already holds this script** → the entry is disabled and marked
+  *(already installed)*.
+- **Switched off** → marked *(disabled)*, but still selectable: a
+  script installed there won't run, and the user may be about to turn
+  the collection back on. At most one suffix per entry, in the order
+  *(already installed)* → *(new)* → *(disabled)* — a move's list adds
+  *(current)* ahead of all three, see below.
+- **The first entry is pre-selected** for an install (a move opens on
+  its *(current)* entry instead), even when disabled;
+  Install is then disabled until the user picks another entry, and the
+  line under the offer section's button says why. Installing a second
+  copy is never the one-click path.
+- On a fresh profile the list is just *Scripts from web (new)* and
+  *New collection…*. No default is created up-front — only by an
+  install that targets it.
+- Directory / manifest collections never appear: a script can't be put
+  into one.
+- **A long collection name is ellipsised, not clipped, and never
+  widens the row.** The control gives way to the Install button beside
+  it; Chrome sizes the *open* list to its widest option, so the whole
+  name is readable there.
 
-### When there is more than one target, the header buttons stand down
+### The opening click never picks
 
-- **Install / Open / Update disappear** and the table becomes the only
-  place to act. Every one of them exists per-row down there: Install on
-  the offer row, Update on each *This URL* row, and every location is a
-  link to that copy's page.
-- Leaving them up would leave the user to guess which row they meant —
-  and the banner's *…below* would be pointing past a row of buttons
-  doing the same three things.
-- **Cancel and View raw source stay.** They are about the preview
-  itself, not about any one copy.
-- **Install only stands down for a table that offers one**, i.e. one
-  with the `installTarget` offer row. A previewable location with no
-  single-file spelling (a `foo.js`, a manifest URL) never gets that
-  row, so with two same-`@name` copies installed elsewhere the count
-  would say "defer" while the table had nowhere to install from —
-  leaving no way to install it at all.
-- One count drives both the banner line and the buttons, so they cannot
-  disagree about whether a choice exists.
-- The offer row counts as a target because it is what an Install would
-  land in. A collection collection holding this URL while the user has no
-  copy of their own is the case that motivated this: two rows below,
-  four buttons above, nothing tying them together — even though only
-  one copy is installed.
-- The single-target case is unchanged: one copy at this URL, no offer,
-  nothing elsewhere, and the header buttons act directly.
-- `syntaxErrorOutcome` asks `previewInstalledStatus`, not
-  `updateBtn.hidden`, for whether a row exists here. The two came apart
-  when the buttons started standing down — a copy can exist while
-  Update is deliberately hidden, and calling that an install would be
-  wrong.
-- The version aside is single-copy only. With several rows the answer is
-  the table's Version column, not a parenthetical about one of them.
+Both dropdowns (and the move dialog's) run through
+`guardSelectOpeningClick` in `src/select-open-guard.ts`, which opens the
+list on the mouse *release* instead of the press.
+
+- **The hazard**: the popup is drawn by Chrome, and when the list
+  doesn't fit below the closed control — bottom of the screen, short
+  window, long list — Chrome shifts it up over the control. That puts
+  an entry under the pointer that just pressed, and Chrome's
+  press-drag-release gesture makes the release of that same click
+  commit it. The dropdown appears to open, pick at random, and close,
+  with the list never seen.
+- **Why the page has to handle it**: the popup is a browser widget, not
+  DOM. Nothing tells us it opened, we can't place it, and the gesture
+  has no opt-out.
+- **The rule**: `mousedown` is cancelled — which is what stops Chrome
+  opening the popup, and takes the focus it would have given, so focus
+  is set by hand — and the `click` that press produces calls
+  `showPicker()`. Same list, opened with the mouse already up, so
+  nothing is committed until the user presses on an entry deliberately.
+- **Only that click opens it**, tracked by a flag rather than judged
+  from the click itself. Clicks arrive with no cancelled press behind
+  them — Enter or Space on a focused select, the install page's `for=`
+  label, a programmatic `click()` — and each would otherwise open a
+  list nobody asked for, or fight one Chrome had opened already.
+- **What it costs**: press-drag-release no longer picks. That is the
+  gesture the bug rides on; press, release, click the entry still
+  works, and keyboard use never touches this code.
+- **Not undo-after-the-fact.** Letting the stray pick land and
+  reverting it was tried first: the list is torn down and re-opened
+  under the cursor, which reads as a flash over the whole popup on
+  every click.
+- If `showPicker` is missing (only a future context that withholds it —
+  it has been in Chrome since 121, below the extension's floor)
+  or ever refuses, the takeover switches itself off and the browser's
+  press-to-open stands — bug and all, but a control that opens beats
+  one that can't. A refusal costs the click that discovered it, whose
+  press was already cancelled; the next one opens natively.
+
+### The same dropdown, for a move
+
+The viewer's move dialog (see
+[script-viewer.md](script-viewer.md#moving-to-another-collection))
+builds the same list through `installOptionsFor`, with one addition:
+`current` marks the collection the script is in now.
+
+- **The current collection is listed, not hidden** — marked
+  *(current)*, disabled, and pre-selected. Two things follow: every
+  script's list has the same shape and ordering regardless of where it
+  lives, and the dialog opens on somewhere the script already is, so
+  nothing moves without a deliberate pick. Move is greyed until one is
+  made.
+- Entries that already hold this location stay listed and disabled,
+  marked *(already installed)*, exactly as for an install.
+- Suffix order is *(current)* → *(already installed)* → *(new)* →
+  *(disabled)*, at most one per entry.
+- **New collection…** works the same way, and for the same reason
+  (`change` fires on arrow keys over a closed select): picking it only
+  selects. Selecting it renames the dialog's confirm button to
+  **Create and move**, since that entry creates before it moves; the
+  collection dialog then opens on click, titled *Create new collection
+  and move script*.
+
+## What the header offers
+
+Every decision comes from `sameLocation` / `sameIdentity` /
+`installOptions`; the header is passed too, but only the banner reads
+what it adds.
+
+| What exists | Banner | Header | Table |
+|---|---|---|---|
+| Nothing, anywhere | none | the **install callout**: **Install** *into [dropdown]* | none |
+| Any copy, here or from a mirror | one line: ***This script is already installed.*** *Select which instance to update or install.* | Cancel, View raw source | every copy, plus an **Install another copy of this script** section with the same dropdown |
+| A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer section |
+
 - **"Not installed" means nowhere**, not merely not here: a same-`@name`
   copy from a mirror is still this script, installed.
-- With no copy at this URL, **Open and Update stay hidden** — there is
-  no row for them to act on, and the panel below is the way across.
-- The banner shares the panel's green ground: it is about which of those
-  copies the buttons act on, so the two are one thought.
-- **A script inside a directory or repo collection is now recognized** when
-  the same URL is opened directly — previously it wasn't, and installing
-  by URL made a second copy.
-- **Install shows when installing would add something**: an
-  `installTarget`, *or* nothing installed at this location at all. The
-  second clause matters because a preview accepts any http(s)/file
-  location while `installTarget` only speaks for `.user.js` ones —
-  without it a `foo.js` or manifest URL would lose its Install button
-  with nothing said about why. `addCollection` remains what judges those.
+- **Once any copy exists the table is the only place to act.** Every
+  action exists in the table: Open (the location link) and Update on
+  each copy, Install in the offer section. Header buttons acting on "the" copy
+  would leave the user guessing which row they meant.
+- The banner and the panel are one green box, not two stacked cards:
+  the banner is about which of the copies the table lists, so its single
+  line reads as the table's heading. Which versions exist is the Version
+  column's job, where several rows can't be confused for one.
+- `syntaxErrorOutcome` asks `previewInstalledStatus` — the row at this
+  location, recorded before the header is wired — for whether a copy
+  exists here.
+- **A script inside a directory or repo collection is recognized** when
+  the same URL is opened directly, and installing by URL then makes a
+  deliberate second copy of the user's own — the offer stays live
+  because no *container* holds it.
 
 ## Known limitations
 

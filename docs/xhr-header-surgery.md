@@ -123,6 +123,15 @@ Prior art: Violentmonkey's MV3 path keys its XHR rule the same way
 (`<url>#<request id>`, with `tabIds` alone), and its Firefox path
 correlates `webRequest` callbacks by the same fragment.
 
+- VM discriminates by `tabIds: [-1]` rather than `initiatorDomains`
+  because its request comes from its offscreen document, not the
+  worker — the offscreen `XMLHttpRequest` is how VM gets binary
+  responses under MV3.
+- Same session-rule shape otherwise: one rule per in-flight request,
+  `modifyHeaders` for the forbidden and UA headers, removed in the
+  request's cleanup path. VM also uses it for `anonymous`, dropping
+  `Cookie` on the way out and `Set-Cookie` on the way back.
+
 ### Canonicalization
 
 - `fetch` rewrites the URL before requesting it: a space becomes

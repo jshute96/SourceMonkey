@@ -250,6 +250,12 @@ One message per problem, phrased to survive every place it lands.
     dropped onto a verb.
     - Dropping the old `could not be fetched: ` half also removed a
       second colon from a string that already lands after one.
+  - **A multi-sentence banner is the one exception**, because the rule's
+    reasons don't reach it: it lands in exactly one place, takes no
+    prefix, and carries no `(in <where>)`. Ordinary punctuation wins
+    over a rule about strings that get spliced — see the viewer's
+    *This script is already installed. Select which instance to update or install.*
+    Anything that can be spliced still takes no period.
 - **No prefix the location already carries.** The parse check says
   `Syntax error: …`, not `Script source has a syntax error: …` — the
   location names the file, which is routinely a `@require`.
@@ -319,14 +325,20 @@ One capitalization convention, with carve-outs:
   - "No period" is about a *single-sentence* message. Copy that is
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
-    it as INVALID.` Prefer an em-dash and one sentence where that works
-    (`Script not found in storage — open it from the collections page`).
+    it as INVALID.`
+  - **A statement plus a fix is two sentences**, not one joined by an
+    em-dash: `This location is a manifest. Choose Manifest as the type.`
+    The dash reads as an aside, where the fix is the half the user acts
+    on. (An em-dash still fits a genuine aside, and the
+    subject-plus-shapes messages — `Location must be a URL or absolute
+    file path` — stay one sentence with no period.) Same for `Script not found in storage.
+    Open it from the collections page.`
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
 - **The carve-out is mid-*sentence* splices, not post-colon tails.**
   `LOCATION_SHAPES` stays lowercase because it completes a sentence we
-  wrote — `A location must be an http(s):// or file:// URL…`. A capital
+  wrote — `Location must be a URL or absolute file path`. A capital
   there would land inside the sentence. A tail after `: ` is not that
   case: it starts its own clause, so it gets a capital, and if it can't
   take one grammatically it wants rewriting rather than exempting.

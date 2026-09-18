@@ -50,6 +50,9 @@ export class UserscriptServer {
   private readonly routes = new Map<string, Route>();
   private readonly log: RequestLogEntry[] = [];
   private _baseUrl = '';
+  // {path → resolvers waiting for the next GET of it}. See
+  // `waitForRequest`.
+  private readonly watchers = new Map<string, (() => void)[]>();
 
   static async start(): Promise<UserscriptServer> {
     const s = new UserscriptServer();
@@ -131,6 +134,20 @@ export class UserscriptServer {
     this.routes.delete(this.normalize(path));
   }
 
+  // Resolves when the next GET of `path` ARRIVES — before a `delayMs`
+  // route answers it. A test that has to land a mutation while a fetch
+  // is in flight awaits this instead of assuming its own call loses the
+  // race: once the request is here, whatever read the fetch was going
+  // to do has already happened.
+  waitForRequest(path: string): Promise<void> {
+    const key = this.normalize(path);
+    return new Promise<void>((resolve) => {
+      const waiting = this.watchers.get(key);
+      if (waiting) waiting.push(resolve);
+      else this.watchers.set(key, [resolve]);
+    });
+  }
+
   async stop(): Promise<void> {
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
@@ -145,6 +162,13 @@ export class UserscriptServer {
   // request before it was answered.
   private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    // Before the delay, so a waiter is released by the request landing
+    // rather than by the response going out.
+    const waiting = this.watchers.get(url.pathname);
+    if (waiting) {
+      this.watchers.delete(url.pathname);
+      for (const resolve of waiting) resolve();
+    }
     const delayMs = this.routes.get(url.pathname)?.delayMs ?? 0;
     if (delayMs > 0) {
       setTimeout(() => this.respond(url, req, res), delayMs);

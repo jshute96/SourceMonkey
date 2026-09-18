@@ -32,13 +32,47 @@ Tampermonkey / Violentmonkey use in MV3. We picked it over
   page and our content-script world (we currently use no content
   scripts).
 
+### How Violentmonkey uses the same API
+
+Worth knowing when comparing behavior, since "both use
+`chrome.userScripts`" hides the interesting part. Verified against
+VM 2.48.0.
+
+- **VM registers its own injector, not your scripts.** One
+  registration for `<all_urls>` carries VM's content bundle; VM keeps
+  its own URL matcher and decides what to run. We hand Chrome one
+  registration per script and let Chrome match.
+- **VM's content-realm userscripts run via
+  `chrome.userScripts.execute`** — a per-navigation call, which is
+  why its MV3 build needs Chrome ≥ 135. Ours are declarative, so no
+  worker wake-up sits on the injection path.
+- **VM's page-realm scripts don't use `world: 'MAIN'`** — they go in
+  through a `<script>` element appended from the content realm, so a
+  page CSP can block them and VM falls back to running them in the
+  content realm. Our MAIN-world registration isn't subject to page
+  CSP, so `@inject-into page` means what it says.
+- **VM registers a second script per URL to carry its data.** The
+  payload for one page is `JSON.stringify`d into a
+  `chrome.userScripts.register` whose `matches` is that exact URL,
+  registered ahead of the injector. We bake each script's data into
+  that script's own registration instead, so nothing is keyed by URL.
+- **VM has an opt-in path that beats the parser.** With "synchronous
+  page mode" on (`xhrInject`, off by default), a DNR rule appends a
+  `Set-Cookie` naming a blob and the content script reads it with a
+  *synchronous* XHR at `document_start` — for scripts that would
+  otherwise run too late. We have no equivalent.
+
 ## One-time user opt-in
 
 Chrome requires an explicit user toggle before the API will execute:
+the **"Allow User Scripts"** switch on the extension's details page
+(`chrome://extensions/?id=<extId>`).
 
-- **Chrome ≥ 138**: "Allow User Scripts" toggle on the extension's
-  details page (`chrome://extensions/?id=<extId>`).
-- **Chrome 120–137**: Developer mode toggle on `chrome://extensions`.
+- Not a SourceMonkey quirk: Violentmonkey's MV3 build prompts for the
+  same toggle, then tells the user to reload the tab.
+- Chrome below 138 used the browser-wide Developer mode toggle instead.
+  That is under the extension's Chrome 152 floor, so only the one case
+  is live.
 
 Until the user flips that, **every** `register()` call throws. The
 badge logic is unaffected (it's local code, not the userScripts API),
@@ -189,26 +223,41 @@ against and a pure diff would strand stale registrations.
 property is only updated for the existing script if it is specified" —
 and testing against real Chrome adds the part the contract doesn't say.
 
-- **An explicit empty array counts as unspecified.** `excludeGlobs: []`
-  leaves the old exclusions in place, exactly as omitting the key does.
-- **`matches: []` is refused outright** — *"must specify at least one
-  match"*. So there is no way at all to clear a pattern field through
-  `update`.
+- **`includeGlobs` / `excludeGlobs` are ignored entirely.** `update`
+  cannot add them, change them, or clear them. The call succeeds and
+  `getScripts` keeps reporting whatever was registered, so nothing
+  surfaces the loss. Only `matches` really updates.
+- **An explicit empty array counts as unspecified.** `matches: []` is
+  refused outright — *"must specify at least one match"* — so `matches`
+  can be changed but never cleared.
 - **An updated registration moves to the END** of Chrome's set, in
   batch order. See [Ordering](#ordering).
+
+Only the glob behaviour has a live probe
+(`tests/e2e/exclude-globs.spec.ts`). The `matches` and ordering
+behaviours were measured against Chrome when they were first relied on,
+and today are only *modelled* by the fake in
+`tests/unit/injector.test.mjs` — a fake encodes the assumption, it does
+not re-establish it. Probes for those two are filed in
+[TODO.md](../TODO.md).
 
 Why this bites: `buildRegistrationSpec` emits `matches` / `includeGlobs`
 / `excludeGlobs` only when non-empty. Under wipe-and-replace every
 placement was a `register` onto an empty set, so an absent key meant
-"unset"; on the update path it means "keep".
+"unset"; on the update path it means "keep" — and for the globs, it
+means "keep" no matter what the key says.
 
-- A user deleting their last `@exclude` would get a registration still
-  carrying it. The script keeps not running on a site its header no
-  longer excludes, our own matcher (badge, tab status) says otherwise,
-  and nothing in the UI explains the difference.
-- So the injector records which pattern fields each registration
-  carries, and a spec that drops one is placed by `replaceRegistration`
-  — `unregister` then `register`.
+- A user **adding** an `@exclude` would get a registration without it.
+  The script keeps running on the site its header now excludes, our own
+  matcher (badge, tab status) says it shouldn't, and the row reads
+  UNEXPECTED with nothing the user can do about it.
+- A user **deleting** their last `@exclude` is the mirror case: a
+  registration still carrying an exclusion the header no longer
+  declares.
+- So the injector records the pattern fields each registration carries —
+  the glob **values**, since those never update, and presence only for
+  `matches` — and any spec `update` would not faithfully apply is placed
+  by `replaceRegistration` — `unregister` then `register`.
 - **That is the one place the closed window reopens**, for one script,
   for the length of one call pair. The trade is narrow and in the right
   direction: a gap costs that script one navigation, and only a script
@@ -258,14 +307,15 @@ A registration that is *staying* is replaced with
     registration that was working — and filed our own sequencing
     against the script as Chrome's reason.
   - Asking also yields the registration's real *shape*, which is what
-    says whether an `update` would silently keep a pattern field.
+    says whether an `update` would silently keep the pattern fields it
+    already holds.
 - **The reported reason is the real refusal**, never the second call's.
 - **A refused spec for an id Chrome already holds IS unregistered.**
   Otherwise the previous version keeps injecting while the row reads
   REJECTED — and REJECTED says the script will not run.
 - **The remaining `unregister` calls are all for scripts that are
   genuinely going away**: disabled, deleted, newly INVALID, the one case
-  above, or a pattern field being cleared.
+  above, or a pattern field `update` cannot apply.
 - **Removals do not consult our record of the set.** Every affected
   script that no longer wants a registration is dropped, whether or not
   this context believes it has one — the collections page and the viewer
@@ -396,12 +446,10 @@ rules and why it carries no location.
 - **A fix needs no extra user action**, and is logged: the retry that
   succeeds drops the script from the map, so REJECTED clears, and
   `logRecoveries` writes the matching info row.
-  - The row does **not** go back to OK on its own. `loglevel:` is
-    monotonic within a session, so the refusal's error rows keep the
-    status at ERROR until the log is cleared. That is the same residual
-    badge every recovered failure leaves here — see
-    [storage.md](storage.md#displayed-status-ui-level) and the sentinel
-    note in TODO.md — not something specific to REJECTED.
+  - The row goes back to OK on its own: the refusal rows carry
+    `state: 'rejected'` and the recovery `state: 'ok'`, so neither
+    touched the `loglevel:` sentinel — see
+    [script-log.md](script-log.md#entry-shape).
 - **Every refused attempt gets a Log row**, including a re-sync that
   gets the same reason for the same content. The retry is what's being
   reported: a suppressed retry looks exactly like no retry, and a
@@ -442,7 +490,9 @@ collection's `enabled` flag are both true, we build a
   one pattern can expand to more than one), minus any Chrome's grammar
   would still refuse — one of those would take the whole registration
   down.
-- `includeGlobs` — `@include` glob patterns.
+- `includeGlobs` — `@include` glob patterns. Chrome ORs these with
+  `matches` rather than filtering within them (see
+  [How Chrome reads includeGlobs](#how-chrome-reads-includeglobs)).
 - `excludeGlobs` — `@exclude` glob patterns.
 - `js` — the per-script config blob, the inlined prelude, the user
   program (every `@require` concatenated ahead of the script's own
@@ -732,9 +782,11 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
   `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`. If a
-  script's *only* includes are regexes (no `@match`, no glob
-  `@include`), we register with `matches: ['<all_urls>']` so Chrome
-  hands us every page.
+  script has no `@match` at all — only `@include`, in either form — we
+  register with `matches: ['<all_urls>']` so Chrome hands us every
+  page, and let the wrapper narrow it. Chrome refuses a registration
+  with no `matches` (*"must specify 'matches'"*), so there is nothing
+  else to give it.
 - **Wrapper layer.** When a script has any regex pattern, the wrapper
   embeds the full `{matches, includes, excludes}` object and a small
   self-contained matcher equivalent to `urlMatchesScript()`. Before
@@ -744,6 +796,30 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test
 eval's the embedded snippet to verify the regex-relevant cases.
+
+### How Chrome reads includeGlobs
+
+Measured against real Chrome, not taken from the docs — the probe lives
+in `tests/e2e/include-only.spec.ts` and re-checks this on whatever
+Chrome the suite runs:
+
+- `chrome.userScripts` **ORs** `includeGlobs` with `matches`: a page
+  matching either one runs the script. That is userscript `@include`
+  semantics, and it differs from the content-script API, whose
+  `include_globs` filters *within* `matches`.
+- So a script declaring both `@match` and `@include` runs on the union,
+  which is what its header says and what the badge predicts. No
+  divergence to fix.
+- `excludeGlobs` subtracts under either reading, so it needs no care.
+
+Consequences for the `<all_urls>` fallback:
+
+- It cannot be narrowed by handing Chrome the globs alongside it —
+  `<all_urls>` OR anything is still every page.
+- So every no-`@match` script carries the wrapper-side matcher, glob
+  includes included.
+- The globs go to Chrome anyway, so the registration stays correct if
+  Chrome ever moves to the documented AND.
 
 ## The activation / error wrapper
 
@@ -883,7 +959,13 @@ listener that handles these wrapper-originated message types:
   this script id.
 - `sm:error` — synchronous or attributed-async throw.
 - `sm:abandoned` — the wrapper exited without running anything
-  (SW replied `skip`). Logged only; no badge change.
+  (SW replied `skip`). Logged only; no badge change. Today `skip` comes
+  from "Reload page with no userscripts" — see
+  [matching.md](matching.md#reload-with-no-userscripts).
+- `sm:focus` — the document came to the front. Not per-script and not
+  a report about one: one listener per world per document, and the SW
+  answers it by checking this tab's local scripts for edits. See
+  [updates.md](updates.md#focus-triggered-refresh).
 
 For the report types (start / swapped / error) the SW:
 
@@ -937,6 +1019,21 @@ Two clicks per edit gets annoying fast. The fast-path collapses it to
 one for the common "edited file is already on disk before reload"
 case.
 
+**For a local script it is now the backstop rather than the first
+line**, because the
+[focus-triggered refresh](updates.md#focus-triggered-refresh) checks
+local scripts when the user switches to the tab:
+
+- That check usually lands first, so by reload time the new body is
+  already registered and there is no race to win.
+- What is left for the fast path is an edit that arrives while the tab
+  is already in front — no switch to trigger on.
+
+**For an http(s) script the fast path is still the only mechanism.**
+The focus check deliberately skips those (a conditional GET to a third
+party on every alt-tab), so a published update is picked up by the
+reload's own refresh, racing the same 500 ms window as before.
+
 ### Setup
 
 `onCommitted` with `transitionType === 'reload'` calls
@@ -957,6 +1054,10 @@ it just gets the default `run` reply — the optimization is best-effort.
 
 When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 (the value baked in at registration), and `url`, the SW:
+
+Before any of this, a tab marked for "Reload page with no userscripts"
+gets `skip`, for every frame — see
+[matching.md](matching.md#reload-with-no-userscripts). Otherwise the SW:
 
 1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
    This is the common case for ordinary navigations and costs ~1–5ms

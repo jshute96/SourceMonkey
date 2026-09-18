@@ -39,6 +39,87 @@
   var _now = Date.now.bind(Date);
   var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
+  var _isArray = Array.isArray;
+  /* Captured for the stored-value codec below. `_objToString` is how
+     it brand-checks Date / RegExp / Map / Set: `instanceof` misses a
+     value that came from another realm (an <iframe>'s `Date`), and a
+     userscript can reassign the globals. */
+  var _objToString = Object.prototype.toString;
+  var _Date = Date;
+  var _DateGetTime = Date.prototype.getTime;
+  var _RegExp = RegExp;
+  var _Map = (typeof Map === "function") ? Map : null;
+  var _MapForEach = _Map ? Map.prototype.forEach : null;
+  var _Set = (typeof Set === "function") ? Set : null;
+  var _SetForEach = _Set ? Set.prototype.forEach : null;
+  var _BigInt = (typeof BigInt === "function") ? BigInt : null;
+  var _Uint8Array = (typeof Uint8Array === "function") ? Uint8Array : null;
+  var _DataViewCtor = (typeof DataView === "function") ? DataView : null;
+  var _fromCharCode = String.fromCharCode;
+  var _btoa = (typeof btoa === "function") ? btoa : null;
+  var _atob = (typeof atob === "function") ? atob : null;
+  var _ObjectGetPrototypeOf = Object.getPrototypeOf;
+  /* Native accessors off the prototypes, used by the codec BOTH to
+     read a value and to brand-check it: each one throws a TypeError
+     when called on something that lacks the internal slot, which is
+     the only reliable test — `Object.prototype.toString` reports
+     whatever `Symbol.toStringTag` says. */
+  var _RegExpSourceGet = null;
+  var _RegExpFlagsGet = null;
+  var _ArrayBufferByteLengthGet = null;
+  var _DataViewByteLengthGet = null;
+  var _TypedArrayLengthGet = null;
+  (function () {
+    function getter(obj, name) {
+      var d = Object.getOwnPropertyDescriptor(obj, name);
+      return (d && typeof d.get === "function") ? d.get : null;
+    }
+    try {
+      _RegExpSourceGet = getter(RegExp.prototype, "source");
+      _RegExpFlagsGet = getter(RegExp.prototype, "flags");
+    } catch (_reE) {}
+    try {
+      _ArrayBufferByteLengthGet = getter(ArrayBuffer.prototype, "byteLength");
+      _DataViewByteLengthGet = getter(DataView.prototype, "byteLength");
+      /* %TypedArray%.prototype is the shared prototype ABOVE
+         Uint8Array.prototype; its `length` getter accepts any typed
+         array and rejects everything else. */
+      _TypedArrayLengthGet = getter(_ObjectGetPrototypeOf(Uint8Array.prototype), "length");
+    } catch (_binE) {}
+  })();
+  /* Constructor tables for the codec's brand-keyed revival. Built from
+     the globals at init time for the same reason as the other shim
+     captures, and `typeof`-guarded per name so a browser missing one
+     (Float16Array is recent) just doesn't offer that entry. */
+  var TYPED_ARRAYS = {};
+  var ERROR_TYPES = {};
+  (function () {
+    var i;
+    var taNames = [
+      "Int8Array", "Uint8Array", "Uint8ClampedArray",
+      "Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
+      "Float16Array", "Float32Array", "Float64Array",
+      "BigInt64Array", "BigUint64Array",
+    ];
+    for (i = 0; i < taNames.length; i++) {
+      try {
+        if (typeof window[taNames[i]] === "function") TYPED_ARRAYS[taNames[i]] = window[taNames[i]];
+      } catch (_taE) {}
+    }
+    /* AggregateError is left out on purpose: its constructor takes
+       (errors, message), so reviving one through the shared
+       `new C(message)` path would throw. It comes back as an Error
+       carrying the name instead. */
+    var errNames = [
+      "Error", "EvalError", "RangeError", "ReferenceError",
+      "SyntaxError", "TypeError", "URIError",
+    ];
+    for (i = 0; i < errNames.length; i++) {
+      try {
+        if (typeof window[errNames[i]] === "function") ERROR_TYPES[errNames[i]] = window[errNames[i]];
+      } catch (_erE) {}
+    }
+  })();
   var _ObjectCreate = Object.create;
   /* Captured for the window.onurlchange surface, which defines an
      accessor on the world's own `window`. */
@@ -259,6 +340,383 @@
      DELETED_SENTINEL. Compared by reference. */
   var DELETED_SENTINEL = {};
 
+  /* ---------- Stored-value codec ----------
+
+     Everything a value passes through on its way to disk serializes
+     JSON-style: chrome.runtime.sendMessage on the hop to the worker,
+     then chrome.storage.local itself. JSON silently rewrites values a
+     userscript is entitled to store — a Date reads back as an ISO
+     string, NaN and Infinity as null, a Map as {} — and the script
+     has no way to notice. TM and VM both tag the stored form to get
+     around this; so do we, under two rules:
+
+       - A value JSON already round-trips exactly is stored RAW,
+         unchanged from what older builds wrote. That is what makes
+         this backwards compatible: for such values the new encoder
+         emits the identical bytes, so old rows and new rows are the
+         same thing.
+       - Anything else is wrapped in one envelope object,
+         `{ __smv__: 1, v: <node> }`. `decodeValue` hands back
+         anything WITHOUT that own marker untouched, so a row written
+         before this existed decodes to itself.
+
+     Inside the envelope every node is a `[tag, ...payload]` array;
+     the full tag grammar is tabulated in
+     docs/GM-APIs-storage.md#node-tags. Tags therefore live in array
+     position 0, never in an object key,
+     so a userscript object with a key called `__smv__` (or `$`, or
+     any other name we might have picked) can't be mistaken for one.
+     The remaining ambiguity — a RAW value that itself contains the
+     `__smv__` marker — is closed from the other side: such a value
+     is deliberately treated as not-plain and wrapped.
+
+     Binary values (typed arrays, ArrayBuffer, DataView) carry their
+     bytes as base64 — JSON has no better option, and the ~33% growth
+     beats the ~4x of an array of decimal numbers.
+
+     Deliberately NOT represented:
+       - Class instances keep their own enumerable properties but
+         lose their prototype. Nothing else is possible: the class
+         isn't reachable from here at decode time. Structured clone
+         has the same limit.
+       - Blob / File would need an async read, and GM_setValue is
+         synchronous.
+       - Object identity is not preserved — two references to one
+         object decode as two objects, and two typed arrays over one
+         ArrayBuffer decode over two buffers. Circular references,
+         which are the case where that actually breaks a value
+         rather than just copying it twice, throw instead. */
+  var VALUE_ENVELOPE = "__smv__";
+  var VALUE_FORMAT = 1;
+
+  /* Returned by encodeNode for a value JSON would drop entirely
+     (function / symbol). The callers reproduce JSON's own handling:
+     omit the property, or write null into an array slot. */
+  var OMIT = {};
+
+  /* Returned by encodeBranded when the value isn't one of the types
+     it handles (or turned out not to really be one). */
+  var MISS = {};
+
+  /* Base64 for the binary branches. `apply` is chunked because one
+     call with a very large argument list overflows the argument
+     stack — 32k elements is the usual safe ceiling. */
+  var B64_CHUNK = 0x8000;
+
+  function bytesToBase64(bytes) {
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += B64_CHUNK) {
+      parts.push(_fromCharCode.apply(null, bytes.subarray(i, i + B64_CHUNK)));
+    }
+    return _btoa(parts.join(""));
+  }
+
+  function base64ToBytes(b64) {
+    var bin = _atob(b64);
+    var out = new _Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  /* True when the binary branches can run at all. Everything they
+     need is standard in a page, but the codec falls back to the
+     generic object walk rather than throwing if something is
+     missing. */
+  var canEncodeBinary = !!(
+    _btoa && _atob && _Uint8Array &&
+    _ArrayBufferByteLengthGet && _DataViewByteLengthGet && _TypedArrayLengthGet
+  );
+
+  /* Encode one of the types we tag by brand, or MISS if `value`
+     isn't one. Split out from encodeNode so the caller can treat a
+     throw here as "not actually that type" — see the call site.
+     Sets `state.plain` on a hit; the caller undoes that on a miss. */
+  function encodeBranded(value, seen, state) {
+    var brand = _objToString.call(value);
+    if (brand === "[object Date]") {
+      state.plain = false;
+      var ms = _DateGetTime.call(value);
+      /* An Invalid Date's time is NaN, which JSON can't carry —
+         send the marker string and rebuild it on the way back. */
+      return ["d", ms === ms ? ms : "nan"];
+    }
+    if (brand === "[object RegExp]" && _RegExpSourceGet && _RegExpFlagsGet) {
+      /* These throw for anything that only claims to be a RegExp. */
+      var reSource = _RegExpSourceGet.call(value);
+      var reFlags = _RegExpFlagsGet.call(value);
+      state.plain = false;
+      return ["re", String(reSource), String(reFlags)];
+    }
+    if (canEncodeBinary && brand === "[object ArrayBuffer]") {
+      /* `new Uint8Array(notABuffer)` quietly yields an EMPTY array
+         rather than throwing, so the impostor has to be rejected
+         before we read any bytes. */
+      _ArrayBufferByteLengthGet.call(value);
+      state.plain = false;
+      return ["ab", bytesToBase64(new _Uint8Array(value))];
+    }
+    if (canEncodeBinary && brand === "[object DataView]") {
+      _DataViewByteLengthGet.call(value);
+      state.plain = false;
+      return ["dv", bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
+    }
+    if (canEncodeBinary) {
+      /* "[object Uint8Array]" -> "Uint8Array". A non-typed-array
+         wearing that tag fails on `.buffer` and the caller falls
+         through to the object walk. */
+      var taName = brand.slice(8, brand.length - 1);
+      if (_hasOwn.call(TYPED_ARRAYS, taName)) {
+        _TypedArrayLengthGet.call(value);
+        state.plain = false;
+        return ["ta", taName, bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
+      }
+    }
+    /* Error has no internal slot to probe, and reading `.name` /
+       `.message` off an impostor succeeds. The prototype is the
+       cheap discriminator that still works cross-realm: a real Error
+       (from any realm) inherits from an Error.prototype, never
+       straight from Object.prototype, which is what a
+       `{[Symbol.toStringTag]: "Error"}` literal has. */
+    if (brand === "[object Error]" && _ObjectGetPrototypeOf(value) !== Object.prototype) {
+      state.plain = false;
+      /* `message` and `stack` are non-enumerable own properties, so
+         Object.keys picks up only what the script attached itself
+         (`err.code = 42`) — worth carrying, and cheap. */
+      var errExtra = [];
+      var errKeys = _ObjectKeys(value);
+      for (var e = 0; e < errKeys.length; e++) {
+        var en = encodeNode(value[errKeys[e]], seen, state);
+        if (en !== OMIT) errExtra.push([errKeys[e], en]);
+      }
+      return [
+        "err",
+        String(value.name),
+        String(value.message),
+        value.stack === undefined ? null : String(value.stack),
+        errExtra,
+      ];
+    }
+    if (_Map && brand === "[object Map]") {
+      state.plain = false;
+      var mEntries = [];
+      _MapForEach.call(value, function (mv, mk) {
+        var kn = encodeNode(mk, seen, state);
+        var vn = encodeNode(mv, seen, state);
+        /* A Map key or value JSON would drop still has to occupy
+           its slot — dropping the entry would change the size. */
+        mEntries.push([kn === OMIT ? ["u"] : kn, vn === OMIT ? ["u"] : vn]);
+      });
+      return ["m", mEntries];
+    }
+    if (_Set && brand === "[object Set]") {
+      state.plain = false;
+      var sItems = [];
+      _SetForEach.call(value, function (sv) {
+        var sn = encodeNode(sv, seen, state);
+        sItems.push(sn === OMIT ? ["u"] : sn);
+      });
+      return ["s", sItems];
+    }
+
+    return MISS;
+  }
+
+  /* Walk `value`, building its node form and recording in
+     `state.plain` whether the raw value would have survived JSON
+     unchanged. `seen` is the ancestor chain, for cycle detection —
+     an array rather than a Set because it is only ever a few deep
+     and `indexOf` avoids depending on Set being unmolested. */
+  function encodeNode(value, seen, state) {
+    var t = typeof value;
+    if (value === null) return ["p", null];
+    if (t === "string" || t === "boolean") return ["p", value];
+    if (t === "number") {
+      /* NaN and the infinities all JSON to null; -0 JSONs to 0. */
+      if (value !== value) { state.plain = false; return ["nan"]; }
+      if (value === Infinity) { state.plain = false; return ["inf"]; }
+      if (value === -Infinity) { state.plain = false; return ["-inf"]; }
+      if (value === 0 && 1 / value === -Infinity) { state.plain = false; return ["-0"]; }
+      return ["p", value];
+    }
+    if (t === "undefined") { state.plain = false; return ["u"]; }
+    if (t === "bigint") { state.plain = false; return ["big", String(value)]; }
+    if (t === "function" || t === "symbol") return OMIT;
+    if (t !== "object") return OMIT;
+
+    for (var d = 0; d < seen.length; d++) {
+      if (seen[d] === value) {
+        throw new _Error("[SourceMonkey] GM_setValue: a stored value cannot contain a circular reference");
+      }
+    }
+    seen.push(value);
+    try {
+      if (_isArray(value)) {
+        var arr = [];
+        for (var i = 0; i < value.length; i++) {
+          var an = encodeNode(value[i], seen, state);
+          /* JSON writes null for an unserializable array slot. */
+          arr.push(an === OMIT ? ["p", null] : an);
+        }
+        return ["a", arr];
+      }
+
+      /* Brand checks read `Symbol.toStringTag`, which any object can
+         set: `{[Symbol.toStringTag]: "Map"}` reports "[object Map]"
+         without being one, and a Proxy over a real Map refuses the
+         internal slot its forEach needs. So a branded encoder is
+         allowed to FAIL — a throw drops through to the generic object
+         walk below, which is what such a value got before the codec
+         existed. `state.plain` rolls back with it, so a branch that
+         got halfway can't leave the value wrapped for no reason. */
+      var plainBefore = state.plain;
+      var branded;
+      try {
+        branded = encodeBranded(value, seen, state);
+      } catch (_brE) {
+        branded = MISS;
+      }
+      if (branded !== MISS) return branded;
+      state.plain = plainBefore;
+
+      /* `toJSON` before the generic object walk, because that is the
+         order JSON.stringify uses and some userscripts rely on it.
+         Date defines one too, which is why the brand checks come
+         first. Reading the property can throw on a Proxy; let that
+         surface the same way JSON.stringify would. */
+      var toJson = value.toJSON;
+      if (typeof toJson === "function") {
+        var replaced = encodeNode(toJson.call(value), seen, state);
+        return replaced === OMIT ? ["u"] : replaced;
+      }
+
+      var keys = _ObjectKeys(value);
+      var entries = [];
+      for (var k = 0; k < keys.length; k++) {
+        var pn = encodeNode(value[keys[k]], seen, state);
+        if (pn === OMIT) continue; /* JSON omits the property */
+        /* A raw value carrying our marker would decode as an
+           envelope, so force it through the wrapped path. */
+        if (keys[k] === VALUE_ENVELOPE) state.plain = false;
+        entries.push([keys[k], pn]);
+      }
+      return ["o", entries];
+    } finally {
+      seen.pop();
+    }
+  }
+
+  /* Public encoder: the raw value when JSON already round-trips it
+     (the common case, and the backwards-compatible one), otherwise
+     the envelope. */
+  function encodeValue(value) {
+    var state = { plain: true };
+    var node = encodeNode(value, [], state);
+    if (node === OMIT) { state.plain = false; node = ["u"]; }
+    if (state.plain) return value;
+    var env = {};
+    env[VALUE_ENVELOPE] = VALUE_FORMAT;
+    env.v = node;
+    return env;
+  }
+
+  /* Assign a decoded property. A stored own `__proto__` key would
+     otherwise set the decoded object's PROTOTYPE instead of becoming
+     a property of it — and an own `__proto__` key is reachable in
+     practice, since that is exactly what `JSON.parse` produces. */
+  function setDecoded(obj, key, value) {
+    if (key === "__proto__") {
+      _ObjectDefineProperty(obj, key, {
+        value: value, writable: true, enumerable: true, configurable: true,
+      });
+    } else {
+      obj[key] = value;
+    }
+  }
+
+  function decodeNode(n) {
+    if (!_isArray(n)) return undefined;
+    var i;
+    switch (n[0]) {
+      case "p": return n[1];
+      case "u": return undefined;
+      case "nan": return NaN;
+      case "inf": return Infinity;
+      case "-inf": return -Infinity;
+      case "-0": return -0;
+      case "big": return _BigInt ? _BigInt(n[1]) : n[1];
+      case "d": return new _Date(typeof n[1] === "number" ? n[1] : NaN);
+      case "re": return new _RegExp(n[1], n[2]);
+      case "ab": return base64ToBytes(n[1]).buffer;
+      case "dv": return new _DataViewCtor(base64ToBytes(n[1]).buffer);
+      case "ta": {
+        var bytes = base64ToBytes(n[2]);
+        /* An unknown constructor name means this row was written by a
+           build (or browser) that had a typed array this one doesn't.
+           Hand back the raw bytes rather than nothing. */
+        if (!_hasOwn.call(TYPED_ARRAYS, n[1])) return bytes;
+        return new TYPED_ARRAYS[n[1]](bytes.buffer);
+      }
+      case "err": {
+        var Ctor = _hasOwn.call(ERROR_TYPES, n[1]) ? ERROR_TYPES[n[1]] : _Error;
+        var err = new Ctor(n[2]);
+        /* A subclass name (or AggregateError) has no constructor in
+           the table; preserve the name on a plain Error instead. */
+        if (err.name !== n[1]) err.name = n[1];
+        if (n[3] !== null && n[3] !== undefined) {
+          try { err.stack = n[3]; } catch (_stE) {}
+        }
+        var extra = n[4];
+        if (_isArray(extra)) {
+          for (i = 0; i < extra.length; i++) setDecoded(err, extra[i][0], decodeNode(extra[i][1]));
+        }
+        return err;
+      }
+      case "a": {
+        var arr = [];
+        for (i = 0; i < n[1].length; i++) arr.push(decodeNode(n[1][i]));
+        return arr;
+      }
+      case "o": {
+        var obj = {};
+        for (i = 0; i < n[1].length; i++) setDecoded(obj, n[1][i][0], decodeNode(n[1][i][1]));
+        return obj;
+      }
+      case "m": {
+        var m = new _Map();
+        for (i = 0; i < n[1].length; i++) m.set(decodeNode(n[1][i][0]), decodeNode(n[1][i][1]));
+        return m;
+      }
+      case "s": {
+        var st = new _Set();
+        for (i = 0; i < n[1].length; i++) st.add(decodeNode(n[1][i]));
+        return st;
+      }
+      default: return undefined;
+    }
+  }
+
+  /* Public decoder. Anything that isn't one of our envelopes is
+     already the value: that covers every row written before the
+     codec existed AND every plain value written since. An envelope
+     stamped with a format we don't know comes back as-is too — a
+     downgrade should hand the script something inspectable rather
+     than throw inside its GM_getValue. */
+  function decodeValue(value) {
+    if (!value || typeof value !== "object" || _isArray(value)) return value;
+    if (!_hasOwn.call(value, VALUE_ENVELOPE)) return value;
+    if (value[VALUE_ENVELOPE] !== VALUE_FORMAT) return value;
+    try {
+      return decodeNode(value.v);
+    } catch (e) {
+      try { console.info("[SourceMonkey] stored value could not be decoded:", e); } catch (_dE) {}
+      /* Same reasoning as the unknown-format branch above: hand the
+         script something it can inspect. Returning undefined would
+         also defeat the caller's GM_getValue default, because the
+         key IS present. */
+      return value;
+    }
+  }
+
   function ensureStore(scriptId) {
     var s = stores[scriptId];
     if (s) return s;
@@ -338,7 +796,11 @@
     /* Wire format: each entry is {key, value}. value === DELETED_SENTINEL
        (compared by reference on this side) marks a delete. We encode
        deletes as {key, deleted: true} for the SW because the wire is
-       JSON and the sentinel can't survive postMessage. */
+       JSON and the sentinel can't survive postMessage.
+
+       `value` is already in codec wire form — `storage.set` encoded
+       it — so nothing here has to know about tagged types. The SW
+       and chrome.storage.local both treat it as opaque JSON. */
     var wireWrites = [];
     for (var i = 0; i < batch.length; i++) {
       var w = batch[i];
@@ -424,8 +886,9 @@
         delete s.cache[w.key];
         fireListeners(scriptId, w.key, oldValue, undefined, true);
       } else {
-        s.cache[w.key] = w.value;
-        fireListeners(scriptId, w.key, oldValue, w.value, true);
+        var newValue = decodeValue(w.value);
+        s.cache[w.key] = newValue;
+        fireListeners(scriptId, w.key, oldValue, newValue, true);
       }
     }
   }
@@ -456,6 +919,11 @@
      value as the cache already holds doesn't fire listeners: the
      snapshot arrives freshly deserialized, so `===` would report
      every object-valued key as changed on every resync.
+
+     Both sides are passed in WIRE form (what the codec would store),
+     not as live values. That is what makes the comparison exact for
+     the tagged types: two different Maps both serialize to `{}` as
+     raw values, but to distinct envelopes once encoded.
 
      Key-order sensitive, because it compares serializations. A
      value that round-trips through storage keeps its order, so
@@ -505,9 +973,25 @@
       if (stale(k)) continue;
       var had = _hasOwn.call(s.cache, k);
       var oldValue = had ? s.cache[k] : undefined;
-      if (had && sameStoredValue(oldValue, values[k])) continue;
-      s.cache[k] = values[k];
-      fireListeners(scriptId, k, oldValue, values[k], true);
+      /* `values[k]` is already wire form; encode the cached side to
+         match rather than decoding the snapshot for every key.
+         Encoding can throw — GM_getValue hands back the live cached
+         object, so a script is free to make it circular — and a
+         throw escaping here would abandon every remaining key AND
+         the deleted-key sweep below. An uncomparable cached value
+         counts as changed. */
+      var comparable = false;
+      var encodedOld = null;
+      if (had) {
+        try {
+          encodedOld = encodeValue(oldValue);
+          comparable = true;
+        } catch (_cmpE) {}
+      }
+      if (comparable && sameStoredValue(encodedOld, values[k])) continue;
+      var fresh = decodeValue(values[k]);
+      s.cache[k] = fresh;
+      fireListeners(scriptId, k, oldValue, fresh, true);
     }
     /* Anything the cache still holds that the worker doesn't was
        deleted by another tab in a broadcast we didn't get. */
@@ -589,7 +1073,12 @@
          keys via inherited properties. */
       var copy = _ObjectCreate(null);
       var keys = _ObjectKeys(values || {});
-      for (var i = 0; i < keys.length; i++) copy[keys[i]] = values[keys[i]];
+      /* The snapshot is in wire form (see the stored-value codec):
+         values that needed tagging arrive as envelopes and are
+         revived here, so the cache always holds what the userscript
+         stored. Rows written before the codec existed are plain and
+         pass through decodeValue unchanged. */
+      for (var i = 0; i < keys.length; i++) copy[keys[i]] = decodeValue(values[keys[i]]);
       s.cache = copy;
       s.ready = true;
     },
@@ -606,10 +1095,23 @@
        value-change listeners synchronously with remote=false. */
     set: function (scriptId, key, value) {
       var s = ensureStore(scriptId);
+      /* Encode BEFORE touching the cache, so a value we can't store
+         (a circular reference) throws at the GM_setValue call site
+         with nothing half-applied, rather than being swallowed by
+         the async flush.
+
+         Note what this does NOT fix: a JSON-clean value encodes to
+         ITSELF, so the pending write still holds the live object and
+         a later mutation of it does reach disk, exactly as before.
+         Only a tagged value (Date, Map, binary, ...) is snapshotted
+         here. Mutating the object you stored was already unsupported
+         — see sameStoredValue — and which of the two behaviours you
+         get now depends on the value's type. */
+      var encoded = encodeValue(value);
       var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       s.cache[key] = value;
       s.writeSeqByKey[key] = ++s.writeSeq;
-      s.pending.push({ key: key, value: value });
+      s.pending.push({ key: key, value: encoded });
       scheduleFlush(scriptId);
       fireListeners(scriptId, key, oldValue, value, false);
     },
@@ -648,6 +1150,11 @@
       s.listeners[id] = { key: String(key), callback: callback };
       return id;
     },
+    /* Codec access, for tests and for anything that needs to reason
+       about the stored form of a value without going through a
+       write. Not part of the GM_* API surface. */
+    encodeValue: encodeValue,
+    decodeValue: decodeValue,
     removeValueChangeListener: function (scriptId, listenerId) {
       var s = stores[scriptId];
       if (!s || !s.listeners) return;
