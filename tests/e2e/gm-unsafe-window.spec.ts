@@ -112,6 +112,46 @@ test.describe('@grant unsafeWindow', () => {
     await second.close();
   });
 
+  test('@inject-into page gets the same GM_* surface, without granting unsafeWindow', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The runtime follows the resolved WORLD, not the unsafeWindow
+    // grant: any MAIN-world script that grants a runtime-backed API
+    // gets it. Before GM_* ran in MAIN at all, this combination broke
+    // the same way unsafeWindow did.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'InjectIntoPageStorage',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        injectInto: 'page',
+        grant: ['GM_setValue', 'GM_getValue'],
+      },
+      body: `
+        const b = document.body.dataset;
+        b.smAppName = String(window.__PAGE_APP__ && window.__PAGE_APP__.name);
+        const seen = GM_getValue('visits', 0);
+        b.smVisits = String(seen);
+        GM_setValue('visits', seen + 1);
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const first = await extensionContext.newPage();
+    await first.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(first.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
+    await expect(first.locator('body')).toHaveAttribute('data-sm-visits', '0');
+    await first.waitForTimeout(500);
+    await first.close();
+
+    const second = await extensionContext.newPage();
+    await second.goto(`${fixtureServer.baseUrl}/${PAGE}?n=2`);
+    await expect(second.locator('body')).toHaveAttribute('data-sm-visits', '1');
+    await second.close();
+  });
+
   test('GM_xmlhttpRequest works from MAIN world (request out and event back over the bridge)', async ({
     extensionContext, fixtureServer, sm,
   }) => {
