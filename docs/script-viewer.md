@@ -408,6 +408,15 @@ Both name the script the same way, pivoted for where they're read.
      **Clear log** — see [script-log.md](script-log.md#export) for the
      exported format.
    - Clicking a tab swaps panes (and re-runs Prism on code tabs).
+   - Both panes take the viewport height left under the details panel
+     and scroll inside it, but never less than 20 lines of code
+     (`--code-box-min` in `userscript.html`, at Prism's line height).
+     A details panel tall enough to leave less — dozens of `@match`
+     rows — makes the page itself scroll instead, the one case the
+     viewer accepts a page-level scroll bar. The body grows with the
+     page (`min-height: 100%`, not `height`) so the inset below the
+     box survives; the panes have `flex-basis: 0` so their own content
+     never sizes the page.
    - Selected index is preserved across re-renders when the new tab
      list still has an entry at that position.
    - The Log pane subscribes to `chrome.storage.session` changes for

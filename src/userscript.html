@@ -13,8 +13,15 @@
          it writes into is already parsed. See src/page-heading.ts. -->
     <script src="page-heading.js" type="module"></script>
     <style>
-      html, body { height: 100%; margin: 0; }
+      /* The body is at least the viewport and grows past it only when
+         the code box's minimum height (`--code-box-min`) no longer
+         fits under the details panel — then the page scrolls, padding
+         and all. `height: 100%` instead would fix the body at the
+         viewport and let that overflow spill out of it. */
+      html { height: 100%; margin: 0; }
       body {
+        min-height: 100%;
+        margin: 0;
         font: 14px system-ui, sans-serif;
         color: #222;
         display: flex;
@@ -784,9 +791,24 @@
          top-left rounding is dropped so the active tab meets the box
          cleanly along that edge. margin-top:-1px lets the active tab's
          transparent bottom border merge with the code box's top
-         border so the active tab visually "opens into" the box. */
+         border so the active tab visually "opens into" the box.
+
+         A tall details panel (a script with dozens of @match lines) would
+         otherwise squeeze the box to nothing. `--code-box-min` keeps a
+         useful number of lines visible and lets the PAGE scroll instead
+         — the one case where the viewer accepts a page-level scroll bar.
+         20 lines at Prism's line-height (1.5, set on the <code> by
+         vendor/prism/prism.css, so not ours to pin here) and this box's
+         13px font, plus its padding and border: the box is border-box
+         so the minimum is its outer height, and the Log pane below
+         shares it so switching tabs doesn't reflow. */
+      .page-main { --code-box-min: calc(20 * 1.5 * 13px + 2 * 0.8 * 13px + 2px); }
       pre.code-box {
-        flex: 1 1 auto;
+        /* Basis 0: the box's own content must never size the page —
+           it scrolls inside the box. Its floor is the minimum below. */
+        flex: 1 1 0;
+        min-height: var(--code-box-min);
+        box-sizing: border-box;
         margin: -1px 0 0;
         overflow: auto;
         border: 1px solid #ccc;
@@ -823,7 +845,9 @@
          Same border/margin trick as .code-box so the active Log tab's
          bottom border merges with the pane's top border. */
       .log-pane {
-        flex: 1 1 auto;
+        flex: 1 1 0;
+        min-height: var(--code-box-min);
+        box-sizing: border-box;
         margin: -1px 0 0;
         overflow: auto;
         border: 1px solid #ccc;
