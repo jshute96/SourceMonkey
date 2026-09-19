@@ -597,69 +597,8 @@ async function onRefresh(): Promise<void> {
   const wanted = scriptId;
   setGlyphButtonBusy(refreshBtn, true, REFRESH_LABELS);
   try {
-    // Wait for the GitHub token cache to hydrate first; otherwise a
-    // very fast Refresh click can fire before chrome.storage.local
-    // has resolved and the fetch goes out unauthenticated.
-    await githubTokenReady;
-    // Routed through the shared updater: if a background opportunistic
-    // check is already in flight for this script, we wait for it
-    // instead of starting a second fetch.
-    // 'force': this is a real Refresh click, so check upstream now
-    // rather than waiting out the probe interval.
-    // A local script's check can find its file gone and drop the row
-    // itself (docs/file-changes.md) — the outcome the `deleted`
-    // chip's tooltip promised. The storage event for that removal
-    // reaches `rehydrateAfterStorageChange` before `updateScript`
-    // returns, so the wording it should paint is set in advance rather
-    // than after: otherwise the generic not-found line lands first,
-    // and reads as a storage fault. `render` clears it again the
-    // moment the check comes back with a row, which is the usual case.
-    //
-    // Set only when the file IS gone right now (the same probe the
-    // chip uses), so a row that goes away for some other reason during
-    // the check — removed from another tab, say — isn't blamed on its
-    // file.
-    const local = !!currentScript && isFileUrl(currentScript.fileUrl)
-      && (await missingFiles([currentFilenamePath])).has(currentFilenamePath);
-    if (local) removedHereMessage = REMOVED_FILE_GONE;
-    // And where the page goes if the row does get dropped: the next
-    // copy in the versions table, the same way the panel's trash can
-    // moves on rather than stranding the page on the not-found line.
-    // Picked before the check, for the reason the trash can gives —
-    // the removal's storage event reaches the listener first, and the
-    // flag is what holds back its not-found paint.
-    const successor = local ? await survivingRowAfter(lastRelatedRows, wanted) : undefined;
-    if (successor) swappingAfterRemoval = true;
-    let next: StoredScript | null;
-    try {
-      next = await updateScript(wanted, 'manual', 'force');
-    } catch (err) {
-      // No verdict, so no claim: a later removal by someone else must
-      // not be painted as this refresh's doing.
-      // Only our own claim: a trash can may have set its own meanwhile.
-      if (local && removedHereMessage === REMOVED_FILE_GONE) removedHereMessage = null;
-      if (successor) swappingAfterRemoval = false;
-      throw err;
-    }
-    if (scriptId !== wanted) {
-      if (successor) swappingAfterRemoval = false;
-      return;
-    }
-    if (!next) {
-      if (successor) {
-        try {
-          await swapToScript(successor, { replace: true });
-        } finally {
-          swappingAfterRemoval = false;
-        }
-        return;
-      }
-      // Driven from here too: `removeScript` writes nothing when the
-      // row was already gone, so there may be no event to wait for.
-      await rehydrateAfterStorageChange();
-      return;
-    }
-    if (successor) swappingAfterRemoval = false;
+    const next = await refreshShownScript(wanted);
+    if (!next) return;
     await refreshLogId(wanted);
     render(next);
     // Re-anchor highlight + URL after the repaint. Scroll skipped so
@@ -668,6 +607,88 @@ async function onRefresh(): Promise<void> {
   } finally {
     setGlyphButtonBusy(refreshBtn, false, REFRESH_LABELS);
   }
+}
+
+// Refresh `wanted`, the copy this page is showing. Shared by the page's
+// own Refresh button and the versions panel's row buttons (its row for
+// this copy, and "Refresh all"), so both handle the row being dropped
+// the same way.
+//
+// Returns the refreshed row for the caller to paint, or null when
+// there is nothing left for it to do: the page has moved on to another
+// copy (the user picked one meanwhile, or the check dropped this one
+// and the page swapped to its successor), or has been rehydrated into
+// the not-found state.
+async function refreshShownScript(wanted: string): Promise<StoredScript | null> {
+  // Wait for the GitHub token cache to hydrate first; otherwise a
+  // very fast Refresh click can fire before chrome.storage.local
+  // has resolved and the fetch goes out unauthenticated.
+  await githubTokenReady;
+  // Routed through the shared updater: if a background opportunistic
+  // check is already in flight for this script, we wait for it
+  // instead of starting a second fetch.
+  // 'force': this is a real Refresh click, so check upstream now
+  // rather than waiting out the probe interval.
+  // A local script's check can find its file gone and drop the row
+  // itself (docs/file-changes.md) — the outcome the `deleted`
+  // chip's tooltip promised. The storage event for that removal
+  // reaches `rehydrateAfterStorageChange` before `updateScript`
+  // returns, so the wording it should paint is set in advance rather
+  // than after: otherwise the generic not-found line lands first,
+  // and reads as a storage fault. `render` clears it again the
+  // moment the check comes back with a row, which is the usual case.
+  //
+  // Set only when the file IS gone right now (the same probe the
+  // chip uses), so a row that goes away for some other reason during
+  // the check — removed from another tab, say — isn't blamed on its
+  // file.
+  const local = !!currentScript && isFileUrl(currentScript.fileUrl)
+    && (await missingFiles([currentFilenamePath])).has(currentFilenamePath);
+  if (local) removedHereMessage = REMOVED_FILE_GONE;
+  // And where the page goes if the row does get dropped: the next
+  // copy in the versions table, the same way the panel's trash can
+  // moves on rather than stranding the page on the not-found line.
+  // Picked before the check, for the reason the trash can gives —
+  // the removal's storage event reaches the listener first, and the
+  // flag is what holds back its not-found paint.
+  const successor = local ? await survivingRowAfter(lastRelatedRows, wanted) : undefined;
+  if (successor) swappingAfterRemoval = true;
+  let next: StoredScript | null;
+  try {
+    next = await updateScript(wanted, 'manual', 'force');
+  } catch (err) {
+    // No verdict, so no claim: a later removal by someone else must
+    // not be painted as this refresh's doing.
+    // Only our own claim: a trash can may have set its own meanwhile.
+    if (local && removedHereMessage === REMOVED_FILE_GONE) removedHereMessage = null;
+    if (successor) swappingAfterRemoval = false;
+    throw err;
+  }
+  if (scriptId !== wanted) {
+    if (successor) swappingAfterRemoval = false;
+    return null;
+  }
+  if (!next) {
+    if (successor) {
+      try {
+        await swapToScript(successor, { replace: true });
+      } finally {
+        swappingAfterRemoval = false;
+      }
+      return null;
+    }
+    // Driven from here too: `removeScript` writes nothing when the
+    // row was already gone, so there may be no event to wait for.
+    await rehydrateAfterStorageChange();
+    return null;
+  }
+  // The row is back, so the claim is withdrawn here and not left to
+  // `render`: the panel's caller paints nothing itself, and a check
+  // that found nothing to write leaves the storage listener with no
+  // paint to clear it with either.
+  if (local && removedHereMessage === REMOVED_FILE_GONE) removedHereMessage = null;
+  if (successor) swappingAfterRemoval = false;
+  return next;
 }
 
 // The controls-row toggle. Same radio-button rule as the panel's rows:
@@ -1355,9 +1376,23 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       // The try is INSIDE the loop. Wrapping the whole loop would let
       // one unreachable host abandon every copy after it, silently —
       // the user asked for all of them.
+      //
+      // The row for the copy on screen goes through the page's own
+      // refresh path (`refreshShownScript`): a local file the check
+      // finds gone drops the row, and that path is what moves the page
+      // to the next copy instead of leaving it on the not-found line.
+      // The other rows' refreshes never touch what this page shows.
+      //
+      // Captured once: a drop moves `scriptId` to the successor, which
+      // is the next row in table order — and so, in a Refresh all, the
+      // next id in this loop. Read live, it would be taken for the
+      // shown copy in its turn. (A preview has no `scriptId`, so the
+      // mode test only says so in words.)
+      const shown = args.mode === 'installed' ? scriptId : null;
       for (const id of ids) {
         try {
-          await updateScript(id, 'manual', 'force');
+          if (id === shown) await refreshShownScript(id);
+          else await updateScript(id, 'manual', 'force');
         } catch (err) {
           failures.push(`${describeRelatedScript(snapshot.scripts, id)}: ${describeError(err)}`);
         }
@@ -1369,6 +1404,16 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
         relatedVersionsMessage = `Could not refresh ${failures[0]}`;
       } else if (failures.length > 1) {
         relatedVersionsMessage = `Could not refresh ${failures.length} copies — ${failures.join('; ')}`;
+      }
+      // The page moved — a swap to the successor, the not-found state,
+      // or a row the user picked mid-refresh: the paint it made on the
+      // way is the current one, and `args` describes the copy that is
+      // no longer here. A refreshed row needs nothing more from here —
+      // the storage listener repaints the page from it, as it always
+      // did for this button.
+      if (shown !== null && scriptId !== shown) {
+        if (lastRelatedPaint) await afterPanelAction(lastRelatedPaint);
+        return;
       }
       await afterPanelAction(args);
     },

@@ -159,6 +159,16 @@ Both name the script the same way, pivoted for where they're read.
      refresh arrow (see
      [script-identity.md](script-identity.md)). Then a trash can, live
      only for single-file installs.
+   - **Every row refreshes** in the installed viewer, both sections:
+     the refetch re-reads that copy from its own collection, so a
+     different-URL copy is as refreshable as a same-URL one — and a row
+     wearing a `modified` chip ([file-changes.md](file-changes.md))
+     always has the button that acts on it, wherever the anchor filed
+     it. **Refresh all**, in the first table's header, covers the whole
+     panel. A preview offers **Update** (and *Update all*) on same-URL
+     rows only: the same per-row refetch, but a preview is about the
+     URL on screen, and a different-URL row would refetch something
+     else ([script-identity.md](script-identity.md)).
    - The Status column carries the same verdict as the `Status` row
      in the details panel — same helper, same wording — for every copy
      rather than only this one.
@@ -661,8 +671,8 @@ between. The same shape a listbox has.
 - **They land on the row**, wherever they were pressed from — never on
   a control inside it. The columns don't line up as controls: the
   Collection cell holds two links (the type bubble and the name), a
-  same-identity row has no Refresh, a disabled collection's checkbox is
-  disabled. "The corresponding one" would be a guess, and a predictable
+  single-file install's trash can is live where a directory row's is
+  not, a disabled collection's checkbox is disabled. "The corresponding one" would be a guess, and a predictable
   rule beats one. Tab still walks the controls within a row.
 - **The current row is focusable too** even though activating it does
   nothing: a row that can't take focus would be a hole in the walk, and
@@ -691,7 +701,9 @@ every row underneath the click that selected it.
 
 - The anchor is the script the page was **opened** with, and it stays
   put for the life of the page (`panelAnchorId` in `userscript.ts`).
-  Navigating moves the `is-current` highlight and nothing else.
+  Navigating moves the `is-current` highlight and nothing else — which
+  costs nothing, since every row has the same controls whichever
+  section it sits in.
 - It is an **id**. The location and identity behind it are re-read from
   the store on every paint (`resolveAnchor`), so a Refresh that rewrites
   the anchor's `@name`, or a Move that changes its URL, re-files the

@@ -258,12 +258,20 @@ the *other* rows.
 
 ### Which actions each section gets
 
-- **A refetch button on every `sameLocation` row** — they all load from
-  the same place, so it means the same thing on all of them, the
-  current script's own row included. That duplicates the control at the
-  top of the page, which is fine: a table where one row lacks the
-  control its neighbours have reads as though that row could not be
-  refreshed.
+- **A refetch button on every row in the installed viewer**, both
+  sections, the current script's own row included. The refetch is
+  per row — each copy re-reads from its own collection — so a
+  `sameIdentity` row refreshes as well as a `sameLocation` one, and a
+  row the page marks `modified` always has the button that acts on
+  it. Duplicating the control at the top of the page is fine: a table
+  where one row lacks the control its neighbours have reads as though
+  that row could not be refreshed.
+  - **A preview offers Update on `sameLocation` rows only.** Each
+    button is the same per-row refetch, but a preview is about the URL
+    on screen, so Update means "bring this copy up to what you are
+    looking at" — a `sameIdentity` row would refetch its own, different
+    upstream, and offering that here would read as though it were the
+    same thing.
 - **The label follows the page**, because the call is the same one the
   page's own control makes (`updateScript(id, 'manual', 'force')`):
   **Refresh** / **Refresh all** in the viewer, **Update** / **Update
@@ -280,17 +288,14 @@ the *other* rows.
   - The `…all` button in the header follows the same split, and in the
     installed case keeps its words beside the glyph: "all" is the whole
     difference from a row's button, and no arrow says it.
-- **The …all button** sits in the header row's actions column, and
-  appears only when more than one row is refreshable. Same call as a
-  single row's, with every id.
+- **The …all button** sits in the first table's header row, in the
+  actions column, and appears only when more than one row is
+  refreshable. Same call as a single row's, with every refreshable id
+  — the whole panel in the viewer, the same-URL rows in a preview.
   - **It spans the actions and removal columns**, so it ends flush
     with the table's right edge rather than a can's width short of it.
     It is the table's own control, not a column heading — the removal
     column has no heading of its own either way.
-- **No refetch on a `sameIdentity` row.** It would pull that row's own,
-  different upstream — a reasonable thing to want, but not "bring this
-  up to date with what you are looking at", and offering it here would
-  read as though it were.
 - **Install**, only in the offer section — with the dropdown that picks
   where — and only when the caller passes an `install` action. Two
   callers decline:

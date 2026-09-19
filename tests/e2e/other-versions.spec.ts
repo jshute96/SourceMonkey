@@ -1044,14 +1044,16 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // The deliberate asymmetry: a copy at a different URL is a different
-  // subscription, so refetching it is not "bring this up to date".
-  test('a different-URL copy gets no refresh button', async ({
+  // The refetch is per row — each copy re-reads from its own
+  // collection — so a different-URL copy gets the button too, and
+  // Refresh all covers both sections. (Not in a preview, which offers
+  // Update on same-URL rows only.)
+  test('a different-URL copy gets a refresh button, and Refresh all reaches it', async ({
     extensionContext, extensionId, sm,
   }) => {
     const ns = 'https://example.com/ns';
-    const a = write('a.user.js', 'Twin Script', { namespace: ns });
-    write('b.user.js', 'Twin Script', { namespace: ns });
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
     await sm.addCollection(a);
     await sm.addCollection(dir.path);
     await sm.syncNow();
@@ -1061,14 +1063,29 @@ test.describe('other-versions panel', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
 
-    // Rows under "This URL" carry Refresh; the different-URL row does
-    // not. Two tables, so index the second one's body.
+    // Two tables; the different-URL row in the second carries Refresh
+    // like the rows in the first.
     const tables = page.locator(`${PANEL} table`);
     await expect(tables).toHaveCount(2);
     await expect(tables.nth(1).locator('tbody tr')).toHaveCount(1);
-    await expect(tables.nth(1).locator('td.col-actions button')).toHaveCount(0);
-    await expect(tables.nth(0).locator('td.col-actions button').first())
-      .toHaveAttribute('aria-label', /^Refresh /);
+    await expect(tables.nth(1).locator('td.col-actions button'))
+      .toHaveAttribute('aria-label', 'Refresh this copy from its collection');
+    // Two refreshable rows across the two sections, so Refresh all
+    // appears, scoped to the whole panel.
+    const all = page.locator(`${PANEL} th.col-actions button`);
+    await expect(all).toHaveText('Refresh all');
+    await expect(all).toHaveAttribute('title', 'Refresh every copy of this script');
+
+    // It really does refresh the different-URL row: bump its file and
+    // watch the stored version follow. A longer version, so the file's
+    // size changes — a same-size edit inside the listing's one-second
+    // mtime granularity is one the refresh is allowed to skip.
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.1' });
+    await all.click();
+    await expect.poll(async () => {
+      const b = (await allScripts(sm)).find((s) => s.relativePath === 'b.user.js');
+      return /@version\s+(\S+)/.exec(b?.headerText ?? '')?.[1];
+    }).toBe('2.0.1');
     await page.close();
   });
 

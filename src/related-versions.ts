@@ -119,11 +119,11 @@ export interface RelatedVersionsActions {
   // showing stored state, so it must not keep a value the store
   // refused.
   setEnabled(changes: readonly ScriptEnableChange[]): Promise<void>;
-  // Refetch same-location rows from their own collections. Passed every
-  // id in the section at once, so the "…all" control is the same call
-  // as a single row's — one refresh pass, one place for the caller to
-  // report a failure. Omitted by callers that have nowhere to report
-  // one.
+  // Refetch rows from their own collections. Installed: any row in the
+  // panel; preview: same-location rows only (see `actionsCell`). Passed
+  // every id at once by the "…all" control, so it is the same call as a
+  // single row's — one refresh pass, one place for the caller to report
+  // a failure. Omitted by callers that have nowhere to report one.
   update?(scriptIds: readonly string[]): void | Promise<void>;
   // Install a single-file copy of this location where the offer
   // section's dropdown says. Only ever offered there. Receives the row's
@@ -277,6 +277,9 @@ export function renderRelatedVersions(
   // controls nobody can reach.
   if (model.mode === 'installed' && isPanelCollapsed()) return;
 
+  // Installed, this section is never empty: the page's own row is a
+  // same-location row of the anchor, or the panel re-anchors on it —
+  // so the "…all" control built here is always built.
   if (sameLocation.length) {
     // "This URL" rather than "Same URL": the section also covers the
     // row the user is looking at, so it isn't "same as" anything.
@@ -286,17 +289,23 @@ export function renderRelatedVersions(
     // own row. That duplicates the button at the top of the viewer,
     // which is fine: a table where one row is missing the control its
     // neighbours have reads as though that row couldn't be refreshed.
-    const updatable = sameLocation.map((r) => r.script.id);
+    //
+    // The "…all" control sits in this first table's header but is the
+    // PANEL's: it covers every row `actionsCell` gives a button to —
+    // in the installed viewer, the different-URL section too, since a
+    // refresh there is the same per-row refetch (`updatableRows`).
     const verb = refetchVerb(model.mode);
+    const updatable = updatableRows(model).map((r) => r.script.id);
+    const scope = model.mode === 'preview' ? 'every copy at this URL' : 'every copy of this script';
     const table = makeTable({
       headerAction:
         updatable.length > 1 && model.actions.update
           ? (model.mode === 'preview'
-            ? button(`${verb} all`, `${verb} every copy at this URL`, () =>
+            ? button(`${verb} all`, `${verb} ${scope}`, () =>
               void model.actions.update?.(updatable))
             : glyphButton(
               '#sm-refresh',
-              `${verb} every copy at this URL`,
+              `${verb} ${scope}`,
               () => void model.actions.update?.(updatable),
               `${verb} all`,
             ))
@@ -547,6 +556,27 @@ function fitSpannedHeader(container: HTMLElement, spanHead: HTMLTableCellElement
 // would be a promise of a round trip that never happens.
 function refetchVerb(mode: 'installed' | 'preview'): string {
   return mode === 'installed' ? 'Refresh' : 'Update';
+}
+
+// Which rows get the refetch button, and so which ones "…all" covers.
+//
+// Installed: every row. The refetch is per row — each copy is re-read
+// from its own collection — so a different-URL copy refreshes as well
+// as a same-URL one, and a row wearing a `modified` chip always has
+// the button that acts on it. (The panel files its sections by the
+// script the page was opened with, so after an in-page switch the copy
+// on screen may well sit in the different-URL section.)
+//
+// Preview: same-location rows only. The call is the same per-row
+// refetch, but a preview is about the URL on screen, and Update there
+// means "bring this copy up to what you are looking at" — which a
+// different-URL row, refetching its own upstream, would not be.
+function updatableRows(model: RelatedVersionsModel): readonly RelatedScript[] {
+  return model.mode === 'preview' ? model.sameLocation : allRelatedRows(model);
+}
+
+function rowUpdatable(rel: RelatedScript, mode: RelatedVersionsModel['mode']): boolean {
+  return mode === 'preview' ? rel.sameLocation : true;
 }
 
 // A section heading with an optional parenthesized gloss. The gloss
@@ -962,15 +992,9 @@ function actionsCell(
   mode: RelatedVersionsModel['mode'],
 ): HTMLTableCellElement {
   const td = cell('col-actions');
-  // The refetch acts on a specific stored row, pulling from where that
-  // row loads from — so it only means anything when the row loads from
-  // the same place as the script on screen. A same-identity row would
-  // refetch its own, different upstream: a fine thing to want, but not
-  // "bring this up to date with what you are looking at", and offering
-  // it here would read as though it were.
-  //
-  // The current script's own row is NOT excluded: see the call site.
-  if (rel.sameLocation && actions.update) {
+  // Which rows get the button is `updatableRows`'s call. The current
+  // script's own row is NOT excluded: see the call site.
+  if (rowUpdatable(rel, mode) && actions.update) {
     const title = isCurrent
       ? `${verb} this script from its collection`
       : `${verb} this copy from its collection`;

@@ -317,4 +317,58 @@ test.describe('file-change chips', () => {
     );
     await page.close();
   });
+
+  // The versions panel's own buttons — the row for the copy on screen,
+  // and Refresh all — take the same path as the page's Refresh when
+  // the check drops that row: on to the next copy, not the not-found
+  // line.
+  for (const control of ['row button', 'Refresh all'] as const) {
+    test(`the panel's ${control} on a deleted copy moves the page to the next copy`, async ({
+      extensionContext, extensionId, sm,
+    }) => {
+      scriptsDir.write({
+        relativePath: 'twin.user.js',
+        meta: { name: 'Twin', match: ['https://example.com/*'] },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+      const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+      // Two more copies, so the panel is still drawn after the local
+      // one is dropped (with one copy left it would hide itself).
+      const text = fs.readFileSync(path.join(scriptsDir.path, 'twin.user.js'), 'utf8');
+      server.setRoute('/twin.user.js', text);
+      server.setRoute('/other/twin.user.js', text);
+      // Both land in the one "Scripts from web" container.
+      await sm.addCollection(`${server.baseUrl}/twin.user.js`);
+      const web = await sm.addCollection(`${server.baseUrl}/other/twin.user.js`);
+      const survivors = (await sm.getCollectionWithScripts(web!.id))!.scripts.map((s) => s.id);
+      expect(survivors).toHaveLength(2);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
+      await expect(page.locator('.filename-cell')).toContainText('twin.user.js');
+      scriptsDir.remove('twin.user.js');
+      await page.reload();
+      await expect(page.locator('.filename-cell ' + CHIP)).toHaveText('deleted');
+
+      const button = control === 'row button'
+        ? page.locator('#other-versions tr.is-current td.col-actions button')
+        : page.locator('#other-versions th.col-actions button');
+      await button.click();
+      // On to the next copy in the table — whichever of the two web
+      // copies that is.
+      await expect(page).toHaveURL(new RegExp(`script=(${survivors.join('|')})`));
+      const shown = new URL(page.url()).searchParams.get('script')!;
+      await expect(page.locator('.filename-cell')).toContainText('twin.user.js');
+      await expect(page.locator('#message')).toBeEmpty();
+      // The panel followed the page: its current row is the copy now
+      // shown, not a repaint from the dropped copy's point of view —
+      // and the dropped row is gone from it.
+      await expect(page.locator('#other-versions tr.is-current'))
+        .toHaveAttribute('data-script-id', shown);
+      await expect(page.locator('#other-versions tbody tr')).toHaveCount(2);
+      expect((await sm.getCollectionWithScripts(collection!.id))!.scripts).toHaveLength(0);
+      await page.close();
+    });
+  }
 });

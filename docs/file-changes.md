@@ -44,11 +44,13 @@ SourceMonkey), [local-file-overrides.md](local-file-overrides.md)
     lacked but the read found is mid-save (an editor that writes by
     unlink and rename), and this path runs often enough to land in
     that gap.
-- The viewer's own Refresh button, when it is the one to drop the row,
-  moves the page to the next copy in the versions table (as the
-  panel's trash can does); with no other copy it says *This script has
-  been removed because its file was deleted*, in place of the generic
-  not-found wording.
+- The viewer's Refresh — its own button, or the versions panel's
+  button on the row for the copy on screen, Refresh all included —
+  when it is the one to drop the row, moves the page to the next copy
+  in the versions table (as the panel's trash can does); with no other
+  copy it says *This script has been removed because its file was
+  deleted*, in place of the generic not-found wording
+  (`refreshShownScript` in `userscript.ts`).
 
 ## The `deleted` and `modified` chips
 
