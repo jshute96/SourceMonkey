@@ -229,7 +229,7 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
     {
       level: 'warn',
       message: 'Ignoring @match https://bare.example — it has no path; '
-        + 'add a trailing "/*" to match every page on that host',
+        + 'add a trailing "/*" to match all pages on that host',
       location: { file: 'x.user.js', line: 4 },
     },
     {

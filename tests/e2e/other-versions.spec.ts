@@ -1074,7 +1074,7 @@ test.describe('other-versions panel', () => {
     // appears, scoped to the whole panel.
     const all = page.locator(`${PANEL} th.col-actions button`);
     await expect(all).toHaveText('Refresh all');
-    await expect(all).toHaveAttribute('title', 'Refresh every copy of this script');
+    await expect(all).toHaveAttribute('title', 'Refresh all copies of this script');
 
     // It really does refresh the different-URL row: bump its file and
     // watch the stored version follow. A longer version, so the file's

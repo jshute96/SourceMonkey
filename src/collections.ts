@@ -199,7 +199,7 @@ const REFRESH_COLLECTION_LABELS = {
   busy: 'Refreshing this collection…',
 };
 
-setGlyphButton(refreshAllBtn, '#sm-refresh', 'Refresh every collection', { text: 'Refresh All' });
+setGlyphButton(refreshAllBtn, '#sm-refresh', 'Refresh all collections', { text: 'Refresh All' });
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 
 // A new tab, not this one: the collections page is where the user was
@@ -2701,8 +2701,8 @@ function setBulkBusy(btn: HTMLButtonElement, busy: boolean): void {
 
 function setRefreshAllBusy(busy: boolean): void {
   setGlyphButtonBusy(refreshAllBtn, busy, {
-    idle: 'Refresh every collection',
-    busy: 'Refreshing every collection…',
+    idle: 'Refresh all collections',
+    busy: 'Refreshing all collections…',
   });
 }
 

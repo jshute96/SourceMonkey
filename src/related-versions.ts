@@ -296,7 +296,7 @@ export function renderRelatedVersions(
     // refresh there is the same per-row refetch (`updatableRows`).
     const verb = refetchVerb(model.mode);
     const updatable = updatableRows(model).map((r) => r.script.id);
-    const scope = model.mode === 'preview' ? 'every copy at this URL' : 'every copy of this script';
+    const scope = model.mode === 'preview' ? 'all copies at this URL' : 'all copies of this script';
     const table = makeTable({
       headerAction:
         updatable.length > 1 && model.actions.update
