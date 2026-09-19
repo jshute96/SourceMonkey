@@ -121,10 +121,24 @@
 
   /* Dual transport: chrome.runtime.sendMessage in USER_SCRIPT world,
      window.postMessage bridge in MAIN world. The bridge listener
-     lives in wrapper-bridge.js (registered separately). */
+     lives in wrapper-bridge.js (registered separately).
+
+     "Are we in the isolated world?" is `chrome.runtime.id` being a
+     string. A web page listed in some extension's
+     `externally_connectable` has `chrome.runtime.sendMessage` in MAIN
+     world too (for talking to that extension), and calling it without
+     an extension id throws — so the presence of `sendMessage` alone is
+     the wrong test. Same rule in wrapper-gm-runtime.js. */
+  function hasOwnRuntimeChannel() {
+    try {
+      return typeof chrome !== "undefined" && !!chrome.runtime &&
+        typeof chrome.runtime.id === "string" &&
+        typeof chrome.runtime.sendMessage === "function";
+    } catch (_e) { return false; }
+  }
   function send(payload) {
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage(payload);
         if (p && typeof p.catch === "function") p.catch(function () {});
         return;
@@ -168,7 +182,7 @@
       finish(decision);
     };
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage({
           type: "sm:check-pending",
           id: cfg.id,

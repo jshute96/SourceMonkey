@@ -759,11 +759,16 @@ What crosses it:
 
 Mechanics:
 
-- `send` in `userscript-prelude.js` feature-detects
-  `chrome.runtime.sendMessage`. In USER_SCRIPT world it calls it
-  directly; in MAIN world it falls back to `window.postMessage({ __sm:
+- `send` in `userscript-prelude.js` asks whether `chrome.runtime.id`
+  is a string — true only in a real extension context. In USER_SCRIPT
+  world it then calls `chrome.runtime.sendMessage` directly; in MAIN
+  world it falls back to `window.postMessage({ __sm:
   "sourcemonkey-bridge", payload })`. The GM runtime's `transportSend`
-  makes the same choice.
+  makes the same choice. Not keyed on `sendMessage` existing: a web
+  page listed in another extension's `externally_connectable` has a
+  partial `chrome.runtime` (`sendMessage` and `connect`) in MAIN world
+  for talking to that extension, and calling it without an extension
+  id throws.
 - The bridge validates the marker + `event.source === window`, checks
   the payload type against an allowlist per direction, and forwards.
 - A second page→SW path is synchronous: a `CustomEvent` named

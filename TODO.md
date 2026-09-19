@@ -480,12 +480,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   into the page until reload. MAIN → USER_SCRIPT: the open MAIN
   document's bridged calls are refused. Both self-heal on reload; the
   per-document token above would fix both.
-- **MAIN-world transport detection keys on `chrome.runtime.sendMessage`
-  existing.** A page listed in another extension's
-  `externally_connectable` has it in MAIN world too; there the runtime
-  takes the direct transport and every SW call throws ("must specify an
-  Extension ID"). Detect the world by `chrome.runtime.id` (undefined on
-  a web page) in the runtime and the prelude's `send` / `awaitDecision`.
 - **The bridge gate can lag a grant-adding edit by one navigation.**
   `scriptGrantsSubsystem` answers from the match-index cache, which
   learns about a refreshed row through storage's `onChanged` — after

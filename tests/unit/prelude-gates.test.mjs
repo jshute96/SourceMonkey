@@ -46,6 +46,9 @@ function makeEnv({ readyState = 'loading' } = {}) {
     },
     chrome: {
       runtime: {
+        // A real extension context — the prelude takes the direct
+        // channel only when `id` is a string.
+        id: 'abcdefghijklmnopabcdefghijklmnop',
         sendMessage(msg) {
           sent.push(msg);
           // Only the check-pending round-trip is answered late; the

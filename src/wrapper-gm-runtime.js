@@ -159,16 +159,23 @@
   } catch (_urlE) {}
   /* Capture chrome.runtime.sendMessage now so an ASYNC API body still
      reaches a sane reference even if a sibling userscript reassigns
-     window.chrome or chrome.runtime later. We only do this when
-     chrome.runtime exists (true for USER_SCRIPT world; falsy in MAIN). */
+     window.chrome or chrome.runtime later.
+
+     Keyed on `chrome.runtime.id`, not on `sendMessage` existing: a web
+     page listed in some installed extension's `externally_connectable`
+     gets a partial `chrome.runtime` in MAIN world — `sendMessage` and
+     `connect`, nothing else — for talking to THAT extension. Taking it
+     for our own channel would throw "must specify an Extension ID" on
+     every call and leave no `onMessage` to hear replies on. `id` is a
+     string only in a real extension context (our USER_SCRIPT world). */
+  var _extensionId = null;
+  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
   var _sendMessage = null;
   try {
-    if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+    if (typeof _extensionId === "string" && typeof chrome.runtime.sendMessage === "function") {
       _sendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
     }
   } catch (_e) {}
-  var _extensionId = null;
-  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
 
   /* ---------- transport ----------
 
