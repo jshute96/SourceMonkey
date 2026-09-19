@@ -163,15 +163,20 @@ contract — only the transport differs, and that has consequences.
   global in the page's realm. This is inherent to `@grant unsafeWindow`
   and matches TM/VM; it is also why the gate can concede the snapshot
   without conceding anything new.
-- **Teardown flushes take the synchronous path.** An ordinary bridge
-  request is a `postMessage` the bridge reads on a later task, and a
-  document in `pagehide` never gets one — `GM_setValue(); location.href
-  = …` would lose the write every time. So the `pagehide` /
-  `visibilitychange → hidden` flush is dispatched as a DOM
-  `CustomEvent` (`sourcemonkey-bridge-sync`, JSON in `detail`), which
-  runs the bridge's listener in the same task; the bridge's
-  `chrome.runtime.sendMessage` is then as durable as a USER_SCRIPT
-  script's own. Pinned by `tests/e2e/gm-storage-teardown-main.spec.ts`.
+- **Teardown flushes survive because the bridge path is synchronous.**
+  - Every page→SW request is a DOM `CustomEvent`
+    (`sourcemonkey-bridge-sync`, JSON in `detail`), whose listeners all
+    run in the dispatching task — so the bridge's
+    `chrome.runtime.sendMessage` is as durable as a USER_SCRIPT
+    script's own.
+  - With the `postMessage` this replaced, the bridge read the request
+    on a later task that a document in `pagehide` never gets:
+    `GM_setValue(); location.href = …` lost the write every time.
+  - The `pagehide` / `visibilitychange → hidden` flush additionally
+    skips the reply (`transportSendNow`), since nothing would be left
+    to read it.
+  - Pinned by `tests/e2e/gm-storage-teardown-main.spec.ts`; deferring
+    the flush to a later task fails both of its tests.
 
 Cross-tab broadcasts reach MAIN-world scripts too: the SW stamps each
 push with the destination script's world and the bridge re-posts only

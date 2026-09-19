@@ -186,10 +186,16 @@
 
        transportSend(payload) -> Promise<reply>
          USER_SCRIPT: chrome.runtime.sendMessage, straight to the SW.
-         MAIN:        window.postMessage to wrapper-bridge.js (which
-                      runs in USER_SCRIPT world on the same document),
-                      keyed on a per-call requestId nonce so concurrent
-                      calls don't cross replies.
+         MAIN:        a DOM CustomEvent on `document` that
+                      wrapper-bridge.js (USER_SCRIPT world, same
+                      document) hears and forwards, keyed on a per-call
+                      requestId nonce so concurrent calls don't cross
+                      replies. The reply comes back as a postMessage.
+                      An event, not a postMessage, because every
+                      world's listeners run in the DISPATCHING task:
+                      the bridge's sendMessage happens before we
+                      return, so a write issued while the document is
+                      tearing down still leaves. See wrapper-bridge.js.
 
        onPush(handler)  — SW-originated messages we didn't ask for
                           (value-update broadcasts, XHR events, tab /
@@ -205,13 +211,12 @@
      a MAIN transport, fixing unsafeWindow would break everything else
      they use.
 
-     Trust: in MAIN world the page can both READ our postMessages and
+     Trust: in MAIN world the page can both READ our messages and
      FORGE both directions. That is inherent — the page shares the realm
      with the script and with this runtime. The SW-side gate is what
      bounds the damage: it honors bridge-relayed, script-scoped requests
      only for scripts that actually run in MAIN world on the sending
      page. See docs/injection.md#gm_-in-main-world. */
-  var BRIDGE_MARKER = "sourcemonkey-bridge";
   var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
   var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
   var BRIDGE_SYNC_MARKER = "sourcemonkey-bridge-sync";
@@ -265,6 +270,48 @@
   }
   if (!_sendMessage) installBridgeListener();
 
+  /* The page -> SW leg in MAIN world. Both natives are captured at
+     init — this runs at document_start, before any page script — so a
+     page that later replaces CustomEvent or document.dispatchEvent
+     can't silently swallow our traffic.
+
+     `detail` carries {requestId, payload} as a JSON string: event
+     details don't cross realms as objects, and JSON costs us nothing
+     the wire didn't already — chrome.runtime.sendMessage
+     JSON-serializes on the far side of the bridge regardless, so a
+     value that survives JSON.stringify here is exactly a value the SW
+     could have received. `requestId` is left off entirely (JSON drops
+     `undefined`) for fire-and-forget sends, which is what the bridge
+     reads to pick its path. */
+  var _CustomEvent = null;
+  var _dispatchEvent = null;
+  try { _CustomEvent = CustomEvent; } catch (_ceE) {}
+  try {
+    if (document && typeof document.dispatchEvent === "function") {
+      _dispatchEvent = document.dispatchEvent.bind(document);
+    }
+  } catch (_deE) {}
+  function bridgeDispatch(payload, requestId) {
+    if (!_CustomEvent || !_dispatchEvent) {
+      throw new _Error("[SourceMonkey] GM bridge unavailable");
+    }
+    var detail;
+    try {
+      detail = _JSONStringify({ requestId: requestId, payload: payload });
+    } catch (_jE) {
+      /* Circular structures, BigInt, a getter that throws. The raw V8
+         text ("Converting circular structure to JSON --> ...") ends up
+         in a userscript's onerror or rejected promise, so say what the
+         caller can act on instead. The USER_SCRIPT-world path fails on
+         the same values one step later, inside
+         chrome.runtime.sendMessage, so this is not a MAIN-world-only
+         restriction — just the only place we get to word it. */
+      throw new _Error("[SourceMonkey] This call carries a value SourceMonkey cannot send. "
+        + "Pass data that survives JSON: no circular references, functions, or BigInt");
+    }
+    _dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: detail }));
+  }
+
   function bridgeSend(payload) {
     if (!_bridgePending) {
       return _Promise.reject(new _Error("[SourceMonkey] GM bridge unavailable"));
@@ -276,8 +323,11 @@
         reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
       }, BRIDGE_TIMEOUT_MS);
       _bridgePending[requestId] = { resolve: resolve, timer: timer };
+      /* Registered before dispatching: the bridge's listener runs
+         inside this dispatch, so by the time it can post a reply the
+         entry it will be matched against already exists. */
       try {
-        window.postMessage({ __sm: BRIDGE_MARKER, requestId: requestId, payload: payload }, "*");
+        bridgeDispatch(payload, requestId);
       } catch (e) {
         delete _bridgePending[requestId];
         try { clearTimeout(timer); } catch (_tE2) {}
@@ -286,22 +336,18 @@
     });
   }
 
-  /* Fire-and-forget send that completes before this call returns.
-     `chrome.runtime.sendMessage` already does in USER_SCRIPT world; in
-     MAIN world a postMessage would not — the bridge reads it on a
-     later task — so the payload goes as a DOM event instead, which
-     runs the bridge's listener synchronously. The one caller is the
-     teardown flush, where "later" may never come. */
-  var _CustomEvent = null;
-  try { _CustomEvent = CustomEvent; } catch (_ceE) {}
+  /* Fire-and-forget send that completes before this call returns —
+     what `chrome.runtime.sendMessage` already does in USER_SCRIPT
+     world, and what the DOM-event dispatch does in MAIN. The one
+     caller is the teardown flush, where the reply would never be
+     read and a later task may never come. */
   function transportSendNow(payload) {
     if (_sendMessage) {
       var p = _sendMessage(payload);
       if (p && typeof p.catch === "function") p.catch(function () {});
       return;
     }
-    if (!_CustomEvent) return;
-    document.dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: _JSONStringify(payload) }));
+    try { bridgeDispatch(payload); } catch (_snE) {}
   }
 
   /* The single send primitive every subsystem uses. */
@@ -822,7 +868,7 @@
     /* Wire format: each entry is {key, value}. value === DELETED_SENTINEL
        (compared by reference on this side) marks a delete. We encode
        deletes as {key, deleted: true} for the SW because the wire is
-       JSON and the sentinel can't survive postMessage.
+       JSON and the sentinel can't survive the wire.
 
        `value` is already in codec wire form — `storage.set` encoded
        it — so nothing here has to know about tagged types. The SW
@@ -840,8 +886,7 @@
       var msg = { type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites };
       if (reason === "pagehide") {
         /* The document is going away; there is no later task to
-           await a reply in, and in MAIN world no later task to post
-           the request in either. */
+           await a reply in, so skip the request/reply path. */
         transportSendNow(msg);
         return;
       }
@@ -873,11 +918,10 @@
     var keys = _ObjectKeys(stores);
     for (var i = 0; i < keys.length; i++) flushStore(keys[i], "pagehide");
   }
-  /* These flushes go over `transportSendNow`: in MAIN world an
-     ordinary bridge request is a postMessage the bridge reads on a
-     later task, and a document in `pagehide` doesn't get one — every
-     write still buffered would be lost. The synchronous DOM-event path
-     hands it to the bridge before this handler returns. */
+  /* These flushes go over `transportSendNow`, which drops the reply
+     rather than parking a Promise a dying document will never settle.
+     Delivery itself is synchronous in both worlds — see the transport
+     section — so the write leaves before this handler returns. */
   try {
     window.addEventListener("pagehide", flushAll, { capture: true });
     /* visibilitychange → hidden is a softer signal that also tends to
@@ -1552,7 +1596,7 @@
     /* GM_xmlhttpRequest(details) — kicks off the request, returns
        `{abort}` immediately. The user's onload/onerror/ontimeout/
        onabort callbacks come from `details` and are stored locally
-       (callbacks aren't serializable across postMessage). */
+       (callbacks aren't serializable across the bridge). */
     start: function (scriptId, details) {
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
@@ -1692,7 +1736,7 @@
         try { _consoleLog.apply(null, arr); } catch (_e) {}
       }
       /* SW fan-out (text-only). __SM_GM__.sendAsync is the
-         chrome.runtime.sendMessage / bridge-postMessage helper the
+         chrome.runtime.sendMessage / bridge-event helper the
          async APIs use; here we fire-and-forget so the script's GM_log
          call stays sync. */
       try {
@@ -2598,7 +2642,7 @@
     /* Exposed for compile-in async bindings to route through. Returns
        a Promise that resolves with the SW's reply (or rejects if the
        transport is unavailable). Picks chrome.runtime.sendMessage or
-       the postMessage bridge depending on the world — see the
+       the DOM-event bridge depending on the world — see the
        transport section at the top of this file. */
     sendAsync: function (payload) {
       return transportSend(payload);

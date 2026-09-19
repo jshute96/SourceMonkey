@@ -387,9 +387,11 @@ test('extractStartupLogs: silent for the combinations that do work', () => {
 // The MAIN-world runtime is useless without the bridge carrying its
 // traffic both ways. These assert the two halves agree on the wire
 // markers, since a typo in either would be a silent no-op at runtime.
+// One per direction: the request event, and the reply / push
+// postMessages coming back.
 
-test('generated wrappers: runtime and bridge agree on the postMessage markers', () => {
-  for (const marker of ['sourcemonkey-bridge', 'sourcemonkey-bridge-reply', 'sourcemonkey-bridge-push', 'sourcemonkey-bridge-sync']) {
+test('generated wrappers: runtime and bridge agree on the wire markers', () => {
+  for (const marker of ['sourcemonkey-bridge-sync', 'sourcemonkey-bridge-reply', 'sourcemonkey-bridge-push']) {
     assert.ok(WRAPPER_GM_RUNTIME.includes(marker), `runtime is missing ${marker}`);
     assert.ok(WRAPPER_BRIDGE.includes(marker), `bridge is missing ${marker}`);
   }

@@ -1474,7 +1474,7 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec on the union of the MAIN-world s
   assert.deepEqual(bridge.matches, ['https://y/*', 'https://z/*']);
   assert.deepEqual(bridge.includeGlobs, ['*://g/*']);
   assert.equal(bridge.runAt, 'document_start');
-  assert.match(bridge.js[0].code, /sourcemonkey-bridge/);
+  assert.match(bridge.js[0].code, /sourcemonkey-bridge-sync/);
   // Tagged with a page-wide sourceURL so devtools shows it under a
   // friendly name rather than a UUID.
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
@@ -1494,26 +1494,32 @@ test('wrapPreludeEntry: appends the page-wide prelude sourceURL', () => {
 // ---------- wrapper-bridge: filter behavior ----------
 
 // Eval the bridge source inside a fake DOM harness. The bridge is an
-// IIFE that closes over global `window` + `chrome`; passing those as
-// parameters to a wrapping Function constructor lets us drive
-// synthetic `message` events through it and observe what reaches the
-// SW.
-function setupBridgeHarness() {
+// IIFE that closes over global `window` / `document` / `chrome`;
+// passing those as parameters to a wrapping Function constructor lets
+// us drive synthetic events through it and observe what reaches the SW
+// and what it posts back.
+//
+// Page -> SW is a `sourcemonkey-bridge-sync` CustomEvent on
+// `document`; SW -> page (replies, pushes) is window.postMessage.
+function setupBridgeHarness(opts = {}) {
   const sent = [];
+  const posted = [];
   const fakeChrome = {
     runtime: {
       sendMessage(payload) {
         sent.push(payload);
-        return Promise.resolve();
+        if (opts.sendMessage) return opts.sendMessage(payload);
+        return Promise.resolve({ ok: true });
       },
     },
   };
-  let listener = null;
   let syncListener = null;
+  let messageListener = null;
   const fakeWindow = {
     addEventListener(type, fn, _capture) {
-      if (type === 'message') listener = fn;
+      if (type === 'message') messageListener = fn;
     },
+    postMessage(msg) { posted.push(msg); },
   };
   const fakeDocument = {
     addEventListener(type, fn, _capture) {
@@ -1522,92 +1528,146 @@ function setupBridgeHarness() {
   };
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeDocument, fakeChrome);
-  if (!listener) throw new Error('bridge did not install a message listener');
-  if (!syncListener) throw new Error('bridge did not install the synchronous DOM-event listener');
-  const dispatch = (event) => listener(event);
-  const dispatchSync = (detail) => syncListener({ detail });
-  const goodEvent = (overrides = {}) => ({
-    source: fakeWindow,
-    data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:start', id: 'x', url: 'https://e/' } },
-    ...overrides,
-  });
-  return { sent, dispatch, dispatchSync, goodEvent, fakeWindow };
+  if (!syncListener) throw new Error('bridge did not install the DOM-event listener');
+  // Raw `detail`, for the malformed cases.
+  const dispatchRaw = (detail) => syncListener({ detail });
+  // The shape every page-side sender builds: {requestId?, payload}.
+  const dispatch = (payload, requestId) => dispatchRaw(JSON.stringify({ requestId, payload }));
+  return { sent, posted, dispatch, dispatchRaw, messageListener, fakeWindow };
 }
 
-test('wrapper-bridge: forwards well-formed sm:start events', () => {
-  const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent());
+test('wrapper-bridge: forwards a well-formed sm:start event, stamped', () => {
+  const { sent, dispatch } = setupBridgeHarness();
+  dispatch({ type: 'sm:start', id: 'x', url: 'https://e/' });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].type, 'sm:start');
   assert.equal(sent[0].id, 'x');
-});
-
-test('wrapper-bridge: forwards well-formed sm:error events', () => {
-  const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({
-    data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:error', id: 'x', message: 'boom' } },
-  }));
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].type, 'sm:error');
-  assert.equal(sent[0].message, 'boom');
-});
-
-test('wrapper-bridge: ignores messages from a different source window', () => {
-  const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({ source: { not: 'our window' } }));
-  assert.equal(sent.length, 0);
-});
-
-test('wrapper-bridge: ignores messages without the SourceMonkey marker', () => {
-  const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({ data: { payload: { type: 'sm:start', id: 'x' } } }));
-  dispatch(goodEvent({ data: { __sm: 'something-else', payload: { type: 'sm:start', id: 'x' } } }));
-  assert.equal(sent.length, 0);
-});
-
-test('wrapper-bridge: ignores messages whose payload is missing or non-object', () => {
-  const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge' } }));
-  dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge', payload: null } }));
-  dispatch(goodEvent({ data: { __sm: 'sourcemonkey-bridge', payload: 'string-payload' } }));
-  assert.equal(sent.length, 0);
-});
-
-test('wrapper-bridge: the synchronous DOM-event path forwards an allowlisted payload, stamped', () => {
-  // What the pagehide storage flush rides. Same allowlist and stamp as
-  // the postMessage path; the difference is that the sendMessage
-  // happens inside the dispatch, before the caller returns.
-  const { sent, dispatchSync } = setupBridgeHarness();
-  dispatchSync(JSON.stringify({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [], __viaBridge: false }));
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].type, 'sm:gm-batch-write');
+  // Every relayed payload carries the "may be page-forged" stamp, and
+  // a page-supplied `__viaBridge:false` can't suppress it.
   assert.equal(sent[0].__viaBridge, true);
-  // Not on the allowlist, not a string, not JSON: all dropped.
-  dispatchSync(JSON.stringify({ type: 'sm:not-a-thing' }));
-  dispatchSync({ type: 'sm:gm-batch-write' });
-  dispatchSync('{not json');
-  assert.equal(sent.length, 1);
 });
 
-test('wrapper-bridge: only forwards sm:start / sm:error payload types', () => {
-  const { sent, dispatch, goodEvent } = setupBridgeHarness();
-  dispatch(goodEvent({
-    data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:exec', code: 'evil' } },
-  }));
-  dispatch(goodEvent({
-    data: { __sm: 'sourcemonkey-bridge', payload: { type: '', id: 'x' } },
-  }));
+test('wrapper-bridge: a page-supplied __viaBridge is overwritten, not honoured', () => {
+  const { sent, dispatch } = setupBridgeHarness();
+  dispatch({ type: 'sm:error', id: 'x', message: 'boom', __viaBridge: false });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].message, 'boom');
+  assert.equal(sent[0].__viaBridge, true);
+});
+
+test('wrapper-bridge: page -> SW no longer listens on postMessage', () => {
+  // The whole request direction moved onto the DOM event, so a page
+  // (or a stale wrapper) posting the old envelope reaches nothing.
+  const { sent, messageListener } = setupBridgeHarness();
+  assert.equal(messageListener, null, 'no message listener should be installed');
   assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: ignores a detail that is not a JSON envelope', () => {
+  const { sent, dispatch, dispatchRaw } = setupBridgeHarness();
+  dispatchRaw({ type: 'sm:start', id: 'x' });   // object, not a string
+  dispatchRaw('{not json');
+  dispatchRaw(JSON.stringify('a string'));
+  dispatchRaw(JSON.stringify(null));
+  dispatch(undefined);                          // envelope with no payload
+  dispatch('string-payload');
+  assert.equal(sent.length, 0);
+});
+
+test('wrapper-bridge: only forwards allowlisted payload types', () => {
+  const { sent, posted, dispatch } = setupBridgeHarness();
+  dispatch({ type: 'sm:exec', code: 'evil' });
+  dispatch({ type: '', id: 'x' });
+  // Not even a reply: a refused type never reached the SW, and staying
+  // silent keeps the bridge from answering "is this type relayed?".
+  dispatch({ type: 'sm:exec', code: 'evil' }, 'req-1');
+  assert.equal(sent.length, 0);
+  assert.equal(posted.length, 0);
+});
+
+test('wrapper-bridge: a requestId selects request/reply and posts the SW answer back', async () => {
+  const { sent, posted, dispatch } = setupBridgeHarness({
+    sendMessage: () => Promise.resolve({ action: 'run-new', body: 'x' }),
+  });
+  dispatch({ type: 'sm:check-pending', id: 's1', url: 'https://e/' }, 'req-7');
+  // The forward is synchronous — that is the point of the event path.
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'sm:check-pending');
+  assert.equal(sent[0].__viaBridge, true);
+  await Promise.resolve();
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].__sm, 'sourcemonkey-bridge-reply');
+  assert.equal(posted[0].requestId, 'req-7');
+  assert.deepEqual(posted[0].reply, { action: 'run-new', body: 'x' });
+});
+
+test("wrapper-bridge: the reply is keyed on the envelope's id, not the payload's own", () => {
+  // Several payloads carry a `requestId` of their own — sm:gm-tab-open
+  // names the tab it is tracking, sm:gm-download-abort the download.
+  // That collision is why the envelope nests the payload instead of
+  // sitting beside `type`.
+  const { sent, posted, dispatch } = setupBridgeHarness({
+    sendMessage: () => ({ ok: true }),   // non-promise: replies synchronously
+  });
+  dispatch({ type: 'sm:gm-tab-open', scriptId: 's1', requestId: 'tab-1', url: 'https://e/' }, 'env-1');
+  assert.equal(sent[0].requestId, 'tab-1', "the payload keeps its own id");
+  assert.equal(posted[0].requestId, 'env-1', 'the reply is addressed to the caller');
+});
+
+test('wrapper-bridge: a failed SW call still answers the requestId', async () => {
+  // The awaiter has to settle on something; `{action:"run"}` is the
+  // reading every caller wants (run normally / treat as not-ok).
+  const { posted, dispatch } = setupBridgeHarness({
+    sendMessage: () => Promise.reject(new Error('worker gone')),
+  });
+  dispatch({ type: 'sm:check-pending', id: 's1' }, 'req-8');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].requestId, 'req-8');
+  assert.deepEqual(posted[0].reply, { action: 'run' });
+});
+
+test('wrapper-bridge: a sendMessage that throws still answers the requestId', async () => {
+  const { posted, dispatch } = setupBridgeHarness({
+    sendMessage: () => { throw new Error('extension context invalidated'); },
+  });
+  dispatch({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [] }, 'req-9');
+  assert.equal(posted.length, 1, 'replied synchronously');
+  assert.deepEqual(posted[0].reply, { action: 'run' });
+});
+
+test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async () => {
+  // No requestId means nobody is listening for an answer, so the bridge
+  // has to attach its own `.catch` — an unhandled rejection would
+  // surface in the page console as SourceMonkey's fault. Watched for
+  // real rather than assumed: without that `.catch` the process hook
+  // fires and this fails.
+  const seen = [];
+  const onUnhandled = (err) => { seen.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const { sent, posted, dispatch } = setupBridgeHarness({
+      sendMessage: () => Promise.reject(new Error('worker gone')),
+    });
+    dispatch({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [] });
+    assert.equal(sent.length, 1);
+    assert.equal(posted.length, 0);
+    await new Promise((resolve) => { setImmediate(resolve); });
+    assert.deepEqual(seen, [], 'the bridge must swallow the rejection itself');
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });
 
 test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () => {
-  let listener = null;
-  const fakeWindow = {
-    addEventListener(type, fn) { if (type === 'message') listener = fn; },
+  let syncListener = null;
+  const fakeDocument = {
+    addEventListener(type, fn) { if (type === 'sourcemonkey-bridge-sync') syncListener = fn; },
   };
   // eslint-disable-next-line no-new-func
-  new Function('window', 'chrome', WRAPPER_BRIDGE)(fakeWindow, {});
-  assert.equal(listener, null);
+  new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)({ addEventListener() {} }, fakeDocument, {});
+  assert.equal(syncListener, null);
 });
 
 // ---------- collectActiveSpecs ----------

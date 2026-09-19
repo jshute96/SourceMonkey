@@ -385,6 +385,20 @@ fetch via the SW). Highlights:
     `sm:gm-notification-event` (no way to click a Chrome notification)
     and `sm:gm-download-event` (needs a real download).
 
+The other direction — page→SW requests, which ride a
+`sourcemonkey-bridge-sync` DOM event — is pinned in two places:
+
+- `tests/unit/injector.test.mjs` drives the bridge source in a fake DOM
+  and covers the reply path (the SW's answer relayed back on the
+  matching `requestId`; a rejected, a throwing and an unallowlisted
+  call), plus that no `message` listener is installed any more.
+- The MAIN-world e2e specs above exercise it end to end. Making the
+  bridge treat every request as fire-and-forget fails three of those
+  unit tests and nine of the e2e ones, which is how that was checked.
+- `tests/e2e/gm-storage-teardown-main.spec.ts` covers the property the
+  event path exists for: a write issued as the document tears down
+  still reaches the SW.
+
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints
 because they need mutable per-test routes that the shared

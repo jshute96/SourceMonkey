@@ -55,6 +55,9 @@ test('sentinel tokens survive minification', () => {
   assert.match(WRAPPER_PRELUDE, /__smPrelude/);
   // The port-aware matcher's digit test (see the @match :port handling).
   assert.ok(WRAPPER_PRELUDE.includes('\\d+'), 'prelude port regex should survive');
-  assert.match(WRAPPER_BRIDGE, /sourcemonkey-bridge/);
+  // A full marker, not the shared `sourcemonkey-bridge` prefix: that
+  // prefix matches all three live markers, so it would pass even if the
+  // one the request path needs were mistyped.
+  assert.match(WRAPPER_BRIDGE, /sourcemonkey-bridge-sync/);
   assert.match(WRAPPER_GM_RUNTIME, /__SM_GM__/);
 });

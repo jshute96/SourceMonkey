@@ -65,7 +65,7 @@ the script sees a `ReferenceError` at call time, and the SW logs a
   Tampermonkey and Violentmonkey make the same trade.
 - The rest of the script's `@grant`s follow it there. The shared
   `__SM_GM__` runtime is registered in MAIN as well, and routes its
-  service-worker traffic over the existing postMessage bridge.
+  service-worker traffic over the existing bridge.
 - `@inject-into content` still wins — it's an explicit request for
   isolation. The binding stays (matching VM's content mode) but every
   page global reads as `undefined`, so SourceMonkey emits a

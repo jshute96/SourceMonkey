@@ -23,15 +23,16 @@ SourceMonkey actually does today.
 - **`src/wrapper-gm-runtime.js`** — shared runtime (`window.__SM_GM__`),
   registered once per page **per execution world** at `document_start`.
   The same source runs in USER_SCRIPT and in MAIN; it picks its
-  transport at init (direct `chrome.runtime` vs. the postMessage
+  transport at init (direct `chrome.runtime` vs. the DOM-event
   bridge). Provides:
   - Shim cache of native references (Promise, Error, JSON.parse/
     stringify, etc.) — defends against sibling userscripts that
     monkey-patch builtins.
   - `sendAsync(payload)` — SW round-trip helper. In USER_SCRIPT world
     it routes through a captured `bind`-ed
-    `chrome.runtime.sendMessage`; in MAIN world it posts to
-    `wrapper-bridge.js` keyed on a per-call `requestId`.
+    `chrome.runtime.sendMessage`; in MAIN world it dispatches a
+    `sourcemonkey-bridge-sync` event that `wrapper-bridge.js` forwards,
+    keyed on a per-call `requestId`.
   - `onPush(handler)` — SW-originated events (XHR settling, value
     broadcasts, menu fires). `chrome.runtime.onMessage` in USER_SCRIPT
     world; `sourcemonkey-bridge-push` postMessages in MAIN.
@@ -261,7 +262,7 @@ Architecture:
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
   (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
-  request id (callbacks aren't serializable across postMessage), and
+  request id (callbacks aren't serializable across the bridge), and
   ships a `sm:gm-xhr-start` envelope to the SW with the serializable
   request fields.
 - SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an

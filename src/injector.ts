@@ -52,7 +52,7 @@
 //     we don't inherit Chrome's batching of document_end into the
 //     post-load burst.
 //   - MAIN-world wrappers can't call chrome.runtime directly; the
-//     prelude's send() falls back to window.postMessage which
+//     prelude's send() falls back to a DOM event which
 //     wrapper-bridge.js relays.
 //
 // Requirements: manifest must include the "userScripts" permission AND
@@ -1066,10 +1066,19 @@ export async function collectActiveSpecs(
 //
 // Why we need this: MAIN-world wrappers can't call
 // chrome.runtime.sendMessage (chrome.runtime is undefined there), so
-// the prelude's send() falls back to window.postMessage with a
-// "sourcemonkey-bridge" marker. The bridge runs in USER_SCRIPT world
-// on the same page, listens for those postMessages, and forwards them
-// to the SW.
+// the prelude's send() falls back to dispatching a
+// "sourcemonkey-bridge-sync" DOM event. The bridge runs in USER_SCRIPT
+// world on the same page, hears the event in the same task, and
+// forwards the payload to the SW.
+//
+// Ordering matters here. The request path is a synchronous dispatch,
+// not a queued message, so an event dispatched before this spec's
+// listener exists is dropped rather than delivered later. We emit our
+// own specs ahead of the user scripts' for that reason (see
+// `orderWithOwnSpecs`); the fallback when it still races is
+// the prelude's 2s safety timer, which seals check-pending with
+// {action: "run"} — the script runs, just without the reload
+// fast-path swap.
 //
 // Scoping. The bridge registers on the union of every MAIN-world
 // script's patterns — the same rule as the GM runtime, and for the
@@ -1123,7 +1132,7 @@ function applyScope(spec: RegistrationSpec, scope: GmRuntimeScope): void {
 // The SAME source is registered in both worlds; the runtime detects at
 // init time whether `chrome.runtime` is reachable and picks its
 // transport accordingly (direct `sendMessage` in USER_SCRIPT, the
-// postMessage bridge in MAIN). One implementation, two transports —
+// DOM-event bridge in MAIN). One implementation, two transports —
 // rather than a second MAIN-only copy that would drift.
 //
 // Registration ids differ per world because `chrome.userScripts`
@@ -2017,13 +2026,16 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
 //
 // GM runtimes first (one per world) so each installs window.__SM_GM__
 // ahead of any wrapper in its world that compiles in GM_* bindings.
-// Bridge next so MAIN wrappers' postMessages have a listener. Then the
-// user scripts. (Cross-registration ordering isn't guaranteed by the
-// userScripts API, but in practice Chrome runs registrations in order.
-// We rely on this for the bridge: a MAIN-world wrapper's postMessage
-// queues to the message task queue, so the bridge's listener —
-// installed during its IIFE at document_start — is in place by the time
-// delivery happens. For GM_*: everything gm-bindings.ts emits — both
+// Bridge next so MAIN wrappers have a listener for their requests.
+// Then the user scripts. (Cross-registration ordering isn't guaranteed
+// by the userScripts API, but in practice Chrome runs registrations in
+// order. The bridge relies on this: a request is a synchronous DOM
+// event, so one dispatched before the bridge's IIFE installed its
+// listener is dropped, not queued — unlike the postMessage this
+// replaced, which the bridge would have picked up on a later task. The
+// exposure is one message, `sm:check-pending`, and the prelude's 2s
+// safety timer seals it; every other request originates from code that
+// runs only after that handshake settles. For GM_*: everything gm-bindings.ts emits — both
 // the `const GM_x` declarations and the eager calls (`storage.init`,
 // `urlchange.enable`) — is spliced INSIDE the main-body wrap function,
 // which the prelude only invokes after its awaitDecision + run-at gates

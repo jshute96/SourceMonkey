@@ -3,14 +3,32 @@
    MAIN-world userscript wrappers can't call chrome.runtime.sendMessage
    (chrome.runtime is undefined in MAIN). To still get sm:* telemetry
    AND to let the reload-fast-path's sm:check-pending round-trip work
-   from MAIN, the MAIN wrapper falls back to window.postMessage; this
-   bridge runs in USER_SCRIPT world on the same page, listens for
-   those messages, and forwards them to the SW.
+   from MAIN, the MAIN wrapper dispatches a DOM event; this bridge runs
+   in USER_SCRIPT world on the same page, listens for it, and forwards
+   the payload to the SW.
+
+   Directions and their carriers:
+     - page -> SW: a CustomEvent named "sourcemonkey-bridge-sync"
+       dispatched on `document`, carrying {requestId, payload} as a
+       JSON string in `detail` (objects don't cross realms). Event
+       dispatch runs every world's listeners in the DISPATCHING task,
+       so our chrome.runtime.sendMessage happens before the caller
+       returns. That is why this direction is an event and not a
+       postMessage: a document in `pagehide` never gets the later task
+       a postMessage would be delivered on, so a GM_setValue() before
+       `location.href = ...` used to lose the write. It also saves a
+       task hop on sm:check-pending, which every MAIN-world script
+       waits on at document_start.
+     - SW -> page: window.postMessage, both for replies and for pushes.
+       No durability concern (the document is alive, since it just
+       asked), and the bridge originates them in USER_SCRIPT world
+       where postMessage is the only channel into MAIN.
 
    The traffic it carries:
      - Fire-and-forget reports (sm:start / sm:error / sm:swapped /
-       sm:abandoned). The bridge calls chrome.runtime.sendMessage and
-       silently swallows the returned promise.
+       sm:abandoned), and the storage flush at teardown. The bridge
+       calls chrome.runtime.sendMessage and silently swallows the
+       returned promise.
      - Request/reply, used by sm:check-pending and by every GM_* call
        the MAIN-world copy of wrapper-gm-runtime.js makes. The sender
        attaches a requestId; the bridge forwards to the SW, awaits the
@@ -30,23 +48,30 @@
 
    Timing vs. MAIN-world preludes. The bridge is a separate
    chrome.userScripts registration from the per-script wrappers;
-   their relative injection order isn't guaranteed by the API. The
-   MAIN-world prelude's first sm:check-pending posts via
-   window.postMessage, which queues to the message task queue —
-   delivery happens in a later task. By then the bridge IIFE (also
-   document_start) has had time to install its addEventListener. If
-   ordering ever shifts, the bridge falls back to "reply with
-   {action: run}" via the prelude's own 2s safety timer; nothing
-   breaks, scripts just don't get the reload fast-path swap on
-   that one navigation.
+   their relative injection order isn't guaranteed by the API, and
+   the page -> SW direction is now synchronous — a request dispatched
+   before this IIFE ran finds no listener and is simply dropped. The
+   prelude's own 2s safety timer then seals its check-pending with
+   "{action: run}"; nothing breaks, scripts just don't get the reload
+   fast-path swap on that one navigation. The script's own GM_* calls
+   are not exposed to the same race: the body doesn't run until that
+   handshake settles, and by then every document_start registration has
+   executed. We still emit the bridge spec ahead of the wrapper specs
+   (see buildBridgeSpec in injector.ts) so the handshake usually wins.
 
-   Trust model. postMessage is observable by the page, so the page
-   can both read our sm:* events and forge them. We require
-   event.source === window (no cross-frame relay), data.__sm ===
-   MARKER, and a small allowlist of payload types. That's enough to
-   keep cross-origin frames out; it does NOT stop the host page from
-   sending fakes. Active attacks the page can mount once the bridge
-   is in place:
+   Trust model. Everything here is observable by the page and
+   forgeable by it: MAIN world can dispatch our event as easily as it
+   could post a message, and it can read the replies and pushes we
+   post. What we do check is the payload type, against a small
+   allowlist per direction. Cross-frame relay isn't a concern on the
+   request side at all — a DOM event on `document` only reaches
+   listeners in that same document, so a frame can only ever reach the
+   bridge instance injected into it, and that one is already scoped to
+   the frame's own URL. (The MAIN-world receivers of our replies and
+   pushes do check event.source === window; see
+   installBridgeListener in wrapper-gm-runtime.js.) None of this stops
+   the host page from sending fakes. Active attacks the page can mount
+   once the bridge is in place:
      - forge `sm:start` to flip a script's badge from MISSING to OK,
      - forge `sm:error` with an attacker-chosen `message`, which the
        SW logs via console.info (kept out of chrome://extensions/?errors),
@@ -92,17 +117,11 @@
    already has. */
 (function () {
   "use strict";
-  var MARKER = "sourcemonkey-bridge";
   var REPLY_MARKER = "sourcemonkey-bridge-reply";
   var PUSH_MARKER = "sourcemonkey-bridge-push";
-  /* The synchronous page -> SW path. A DOM event dispatched in MAIN
-     world runs this world's listener in the SAME task (event dispatch
-     fires every world's listeners), so `chrome.runtime.sendMessage`
-     is called before the dispatching code returns — which is what a
-     `pagehide` flush needs: a postMessage would wait for a later
-     task the dying document never gets. Fire-and-forget only; the
-     payload rides in `detail` as a JSON string because objects don't
-     cross realms. Same allowlist and stamp as the postMessage path. */
+  /* The page -> SW path: see the header. Named "sync" for the property
+     it is chosen for — our sendMessage runs inside the dispatch, before
+     the caller returns. */
   var SYNC_MARKER = "sourcemonkey-bridge-sync";
   /* Payload types we relay page -> SW. Telemetry + the reload
      fast-path handshake, plus the SW-backed half of the GM_* surface
@@ -160,54 +179,48 @@
     fwd.__viaBridge = true;
     return fwd;
   }
-  window.addEventListener("message", function (ev) {
-    try {
-      if (!ev || ev.source !== window) return;
-      var data = ev.data;
-      if (!data || data.__sm !== MARKER) return;
-      var payload = data.payload;
-      if (!payload || typeof payload !== "object") return;
-      if (ALLOWED.indexOf(payload.type) === -1) return;
-      var requestId = data.requestId;
-      if (typeof requestId === "string") {
-        /* Request/reply path — selected by the presence of a
-           requestId, so both sm:check-pending and every GM_* call use
-           it. The sender expects a postMessage back with the matching
-           requestId. We always reply, even on SW failure, so the
-           awaiter resolves quickly rather than running out its own
-           timeout. The fallback reply is `{action:"run"}` because the
-           only caller that acts on the reply's SHAPE is the prelude's
-           check-pending awaiter; GM_* callers treat any reply without
-           `ok:true` as a failure, which is the right reading here. */
-        var post = function (reply) {
-          try {
-            window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { action: "run" } }, "*");
-          } catch (_e1) {}
-        };
-        try {
-          var pr = chrome.runtime.sendMessage(stamp(payload));
-          if (pr && typeof pr.then === "function") {
-            pr.then(post, function () { post({ action: "run" }); });
-          } else {
-            post({ action: "run" });
-          }
-        } catch (_e2) { post({ action: "run" }); }
-        return;
-      }
-      /* Fire-and-forget for the report types. */
+  /* Forward one page-originated payload to the SW. A string
+     `requestId` selects the request/reply path — the presence of the
+     id, not the payload type, so both sm:check-pending and every GM_*
+     call use it; anything else is fire-and-forget.
+
+     We always reply, even on SW failure, so the awaiter settles
+     quickly rather than running out its own timeout. The fallback
+     reply is `{action:"run"}` because the only caller that acts on the
+     reply's SHAPE is the prelude's check-pending awaiter; GM_* callers
+     treat any reply without `ok:true` as a failure, which is the right
+     reading here. A payload that isn't on the allowlist gets no reply
+     at all — it never reached the SW, and staying silent keeps a page
+     from using the bridge as an "is this type relayed?" oracle. */
+  function relay(payload, requestId) {
+    if (!payload || typeof payload !== "object") return;
+    if (ALLOWED.indexOf(payload.type) === -1) return;
+    if (typeof requestId !== "string") {
       var p = chrome.runtime.sendMessage(stamp(payload));
       if (p && typeof p.catch === "function") p.catch(function () {});
-    } catch (_e) {}
-  }, true);
+      return;
+    }
+    var post = function (reply) {
+      try {
+        window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { action: "run" } }, "*");
+      } catch (_e1) {}
+    };
+    try {
+      var pr = chrome.runtime.sendMessage(stamp(payload));
+      if (pr && typeof pr.then === "function") {
+        pr.then(post, function () { post({ action: "run" }); });
+      } else {
+        post({ action: "run" });
+      }
+    } catch (_e2) { post({ action: "run" }); }
+  }
 
   document.addEventListener(SYNC_MARKER, function (ev) {
     try {
       if (!ev || typeof ev.detail !== "string") return;
-      var payload = JSON.parse(ev.detail);
-      if (!payload || typeof payload !== "object") return;
-      if (ALLOWED.indexOf(payload.type) === -1) return;
-      var p = chrome.runtime.sendMessage(stamp(payload));
-      if (p && typeof p.catch === "function") p.catch(function () {});
+      var env = JSON.parse(ev.detail);
+      if (!env || typeof env !== "object") return;
+      relay(env.payload, env.requestId);
     } catch (_e) {}
   }, true);
 

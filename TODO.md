@@ -504,16 +504,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   fingerprint stays while `state.registered` lacks the id. Harmless
   while `alreadyPlaced` also requires presence, which is the clause
   carrying the invariant.
-- **Move every bridge request onto the synchronous DOM-event path.**
-  The `pagehide` storage flush already goes as a `CustomEvent` the
-  bridge handles in the same task (it had to: a postMessage is read
-  on a later task the dying document never gets, and `GM_setValue();
-  location.href = …` lost the write every time). Every other page→SW
-  request still pays that task hop, `sm:check-pending` on the
-  document-start critical path included. Switching the request
-  direction wholesale (replies can stay postMessage) removes a hop
-  per call with no change to the security model — same allowlist,
-  same stamp, same gate. Filed as issue #24.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
 - **`GM_download` follow-ups.**

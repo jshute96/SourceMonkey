@@ -60,7 +60,7 @@ recommends a path.
   `chrome.runtime.sendMessage` directly (after
   `configureWorld({messaging: true})`); MAIN world goes through
   `wrapper-bridge.js`, a small USER_SCRIPT-world content script that
-  relays `window.postMessage` traffic.
+  relays the traffic.
 - No `GM_*` yet. Scripts that touch GM globals throw on first call.
 
 ### Violentmonkey (MIT, OSS, copy-able)
@@ -323,7 +323,7 @@ before *any* userscript runs). TM's vault, ditto.
 `@grant none` scripts run in MAIN and we don't give them any GM_*
 surface — so there's nothing to vault. Our wrapper itself runs
 there, but it only uses `chrome.runtime` (unreachable in MAIN, so
-we fall back to `postMessage`), `setTimeout`, `addEventListener`,
+we fall back to a DOM event), `setTimeout`, `addEventListener`,
 and `String.indexOf`. All of those touch prototypes the page could
 have poisoned by `document_start`-after-first-inline-script time.
 That's an existing concern with the current `userscript-prelude.js`,

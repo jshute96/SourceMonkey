@@ -2009,9 +2009,9 @@ interface CheckPendingPayload {
   // fast on multi-script pages. See `needsGmValues` in injector.ts.
   needsValues?: boolean;
   // Set by wrapper-bridge.js (USER_SCRIPT world) on every message it
-  // relays for a MAIN-world wrapper's window.postMessage. A hostile
-  // page can post a forged sm:check-pending into the bridge, so a
-  // request carrying this flag is potentially page-forged. The page
+  // relays for a MAIN-world wrapper's request event. A hostile page can
+  // dispatch a forged sm:check-pending into the bridge, so a request
+  // carrying this flag is potentially page-forged. The page
   // cannot call chrome.runtime.sendMessage itself, so the only way it
   // reaches us is through the bridge — meaning a request WITHOUT this
   // flag came over a USER_SCRIPT-world script's own direct channel and
@@ -3196,7 +3196,8 @@ async function nudgeGmResyncAfterWorkerStart(): Promise<void> {
 // `wrapper-bridge.js` stamps `__viaBridge: true` on everything it
 // relays for a MAIN-world wrapper. MAIN world shares its realm with the
 // page, so any such message MAY have been forged by the page: it can
-// see our postMessages, learn script ids, and post its own.
+// read the replies and pushes we post into its window, learn script
+// ids, and dispatch its own requests.
 //
 // The gate: a bridge-relayed, script-scoped request is honored only
 // when that script actually runs in MAIN world on the sending frame's

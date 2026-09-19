@@ -284,12 +284,17 @@ set, *how* the calls are grouped decides the result.
   user scripts is not something we promise anyway — see
   [`@run-at` gating](#run-at-gating).
 - Cross-registration ordering isn't guaranteed by the API; in practice
-  Chrome runs registrations in order. The bridge doesn't actually rest
-  on it (a MAIN wrapper's postMessage queues to the message task queue,
-  so the listener is installed before delivery), and neither does the GM
-  runtime (its bindings are spliced inside the wrap function the prelude
-  invokes only after its gates resolve). Keeping the order is
-  belt-and-braces — but cheap, so we keep it.
+  Chrome runs registrations in order.
+  - The GM runtime doesn't rest on it: its bindings are spliced inside
+    the wrap function the prelude invokes only after its gates resolve.
+  - The bridge does. A request is a synchronous event dispatch, so a
+    bridge that hasn't installed its listener yet misses it rather than
+    picking it up from a queue.
+  - Bounded: the only request exposed is `sm:check-pending`, and the
+    prelude's 2s safety timer seals it (the script runs, without the
+    reload fast-path swap).
+  - So keeping our specs first is load-bearing for the bridge, not just
+    belt-and-braces.
 
 ### Update, never unregister-then-register
 
@@ -644,7 +649,7 @@ whole `GM_*` surface works there too.
   accordingly. One implementation, two transports; no second copy to
   drift.
 - Page → SW requests go out over `wrapper-bridge.js` as
-  `sourcemonkey-bridge` postMessages with a `requestId`, the same
+  `sourcemonkey-bridge-sync` DOM events with a `requestId`, the same
   request/reply shape `sm:check-pending` already used.
 - SW → page pushes (XHR events, cross-tab value updates, menu fires)
   arrive at the bridge on `chrome.runtime.onMessage`, which MAIN world
@@ -733,12 +738,10 @@ whole `GM_*` surface works there too.
   script. The runtime's shim cache is captured at `document_start`,
   before any page script, so its own natives are pristine — but user
   code in MAIN is on its own.
-- **Teardown flushes need the synchronous path.** A postMessage is
-  read on a later task, which a document in `pagehide` never gets; the
-  storage flush there goes as a DOM `CustomEvent` the bridge handles
-  in the same task (see the bridge mechanics below).
 - **One extra hop per call.** Every `GM_*` SW round-trip pays the
-  postMessage relay, like `sm:check-pending` already did from MAIN.
+  bridge relay, like `sm:check-pending` already did from MAIN. The
+  request leg costs no task hop (it is a synchronous event dispatch);
+  the reply comes back as a postMessage.
 
 #### MAIN-world traffic — the bridge
 
@@ -750,8 +753,9 @@ is the relay.
 What crosses it:
 
 - **Fire-and-forget reports** — `sm:start` / `sm:error` / `sm:swapped` /
-  `sm:abandoned` from `send` in `userscript-prelude.js`.
-- **Request/reply** — anything posted with a `requestId`:
+  `sm:abandoned` from `send` in `userscript-prelude.js`, and the
+  storage flush at teardown.
+- **Request/reply** — anything sent with a `requestId`:
   `sm:check-pending` from the prelude, and every SW-backed `GM_*` call
   from the MAIN copy of `wrapper-gm-runtime.js`. The bridge always
   replies, even on failure, so the caller's awaiter settles instead of
@@ -768,28 +772,56 @@ Mechanics:
 - `send` in `userscript-prelude.js` asks whether `chrome.runtime.id`
   is a string — true only in a real extension context. In USER_SCRIPT
   world it then calls `chrome.runtime.sendMessage` directly; in MAIN
-  world it falls back to `window.postMessage({ __sm:
-  "sourcemonkey-bridge", payload })`. The GM runtime's `transportSend`
-  makes the same choice. Not keyed on `sendMessage` existing: a web
+  world it falls back to the bridge event. The GM runtime's
+  `transportSend` makes the same choice. Not keyed on `sendMessage` existing: a web
   page listed in another extension's `externally_connectable` has a
   partial `chrome.runtime` (`sendMessage` and `connect`) in MAIN world
   for talking to that extension, and calling it without an extension
   id throws.
-- The bridge validates the marker + `event.source === window`, checks
-  the payload type against an allowlist per direction, and forwards.
-- A second page→SW path is synchronous: a `CustomEvent` named
-  `sourcemonkey-bridge-sync` dispatched on `document`, with the payload
-  as a JSON string in `detail` (objects don't cross realms). Event
-  dispatch runs every world's listeners in the dispatching task, so
-  the bridge's `chrome.runtime.sendMessage` happens before the caller
-  returns. Fire-and-forget only, same allowlist and stamp. Used for
-  the storage flush at `pagehide`, where a later task never comes.
-  Moving every request onto it (dropping a task hop per call) is
-  filed as follow-up work.
+- **Page → SW is a DOM event**, not a postMessage: a `CustomEvent`
+  named `sourcemonkey-bridge-sync` dispatched on `document`, carrying
+  `{requestId, payload}` as a JSON string in `detail` (objects don't
+  cross realms).
+  - Event dispatch runs *every* world's listeners in the **dispatching
+    task**, so the bridge's `chrome.runtime.sendMessage` happens before
+    the caller returns. A postMessage is delivered on a later task, and
+    a document in `pagehide` never gets one — `GM_setValue()` before
+    `location.href = …` or a tab close lost the write every time.
+  - It also saves a task hop on `sm:check-pending`, which every
+    MAIN-world script waits on at `document_start`. The hop is small at
+    rest — a `postMessage` to one's own window round-trips in well under
+    a millisecond on an idle page, against roughly a millisecond for the
+    whole SW round-trip — but it is a *queued task*, so it grows with
+    whatever else the page has pending, which at `document_start` is the
+    page's own boot.
+  - JSON costs nothing the wire didn't already: the bridge's
+    `chrome.runtime.sendMessage` JSON-serializes regardless, so a value
+    that survives `JSON.stringify` here is exactly a value the SW could
+    have received.
+  - `requestId` is omitted for fire-and-forget sends, and that absence
+    is what selects the bridge's reply-less path.
+- **SW → page stays postMessage** — replies and pushes both. There is
+  no durability concern (the document just asked), and the bridge
+  originates them in USER_SCRIPT world, where postMessage is the only
+  channel into MAIN.
+- The bridge checks the payload type against an allowlist per
+  direction and forwards. An unallowlisted request gets no reply at
+  all, so the bridge can't be used as an "is this type relayed?"
+  oracle. Cross-frame relay is not a concern on the request side: a DOM
+  event on `document` only reaches listeners in that same document, so
+  a frame can only reach the bridge instance injected into it, already
+  scoped to that frame's URL. The MAIN-world receivers of our replies
+  and pushes still check `event.source === window`.
 - `buildBridgeSpec` (in `src/injector.ts`) emits the bridge
   registration when at least one active script resolves to MAIN. It
-  runs at `document_start` so its listener is installed before any
-  wrapper's queued postMessage event dispatches.
+  runs at `document_start`, ahead of the wrapper specs, because the
+  request path is synchronous now: an event dispatched before the
+  bridge's listener exists is dropped, not queued. Only the
+  `sm:check-pending` handshake is exposed to that race, and the
+  prelude's 2s safety timer covers it (the script runs, just without
+  the reload fast-path swap). The script's own `GM_*` calls aren't: the
+  body doesn't run until the handshake settles, by which point every
+  `document_start` registration has executed.
 - The bridge is scoped like the runtime: its patterns are the union of
   every MAIN-world script's (granted or not — telemetry and the reload
   handshake ride it too), fingerprinted so an incremental sync
@@ -805,13 +837,13 @@ Mechanics:
 
 Trust model:
 
-- The bridge requires `event.source === window` plus the marker, so
-  cross-origin frames can't reach it.
-- It does **not** stop the host page from forging messages. Once any
-  MAIN-world wrapper runs, the page can observe our postMessage
-  payloads on its own window and learn the stored script `id` and any
-  `sm:error` `message` text, then send fakes with whatever marker /
-  ids it just saw.
+- Cross-origin frames can't reach a bridge instance that isn't theirs:
+  the request is a DOM event, which stays inside its own document.
+- It does **not** stop the host page from forging traffic. Once any
+  MAIN-world wrapper runs, the page can observe our replies and pushes
+  on its own window and learn the stored script `id` and any `sm:error`
+  `message` text, then dispatch fakes with whatever ids it just saw —
+  the request event is as available to the page as a postMessage was.
 - A forged `sm:start` flips a script's badge entry from MISSING to OK
   on that document; a forged `sm:error` writes an attacker-controlled
   string into the SW console and per-tab session record. Neither
@@ -890,7 +922,7 @@ into `dist/`). The pieces:
   `js[]` array — see [injection-modes.md](injection-modes.md).
 - `src/wrapper-bridge.js` → `WRAPPER_BRIDGE` — USER_SCRIPT-world
   relay registered separately when any MAIN-world script is active
-  (see [MAIN-world telemetry — the bridge](#main-world-telemetry--the-bridge)).
+  (see [MAIN-world traffic — the bridge](#main-world-traffic--the-bridge)).
 - `src/wrapper-gm-runtime.js` → `WRAPPER_GM_RUNTIME` — shared
   per-world runtime for `GM_*` APIs, registered in USER_SCRIPT and/or
   MAIN world as the granting scripts need (see
@@ -948,9 +980,9 @@ When the body fires (inside the prelude's `runMain`), the prelude:
   USER_SCRIPT world it uses `chrome.runtime.sendMessage` (silencing
   the returned Promise so an unreachable SW doesn't surface as
   `Uncaught (in promise)`). In MAIN world (where `chrome.runtime`
-  is undefined) it falls back to `window.postMessage` with a
-  marker the bridge picks up — see [MAIN-world telemetry — the
-  bridge](#main-world-telemetry--the-bridge).
+  is undefined) it falls back to a `sourcemonkey-bridge-sync` DOM
+  event the bridge picks up — see [MAIN-world traffic — the
+  bridge](#main-world-traffic--the-bridge).
 
 ### Async-error attribution
 
@@ -1476,10 +1508,11 @@ timeout remains the hard ceiling for every `@run-at`.
 
 - **MAIN-world scripts** can't call `chrome.runtime.sendMessage`
   directly, so they round-trip `sm:check-pending` via
-  `wrapper-bridge.js` using a `sourcemonkey-bridge-reply` postMessage
-  keyed on a per-request nonce. The page can observe and forge these
-  postMessages — the threat model is unchanged from the existing
-  bridge (the page already runs arbitrary code in MAIN world). Where
+  `wrapper-bridge.js`: the request as a `sourcemonkey-bridge-sync`
+  event, the answer as a `sourcemonkey-bridge-reply` postMessage keyed
+  on a per-request nonce. The page can observe and forge both — the
+  threat model is unchanged from the existing bridge (the page already
+  runs arbitrary code in MAIN world). Where
   the page's CSP forbids `unsafe-eval`, the swap eval throws; the
   prelude detects the CSP marker in the error message and falls
   through to running the baked-in main body, matching pre-fast-path
@@ -1488,8 +1521,9 @@ timeout remains the hard ceiling for every `@run-at`.
   round-trips `sm:check-pending` regardless of `transitionType` — the
   SW just replies `run` faster when there's no fast-path entry. For
   USER_SCRIPT-world scripts that's ~1–5ms on the document-start
-  critical path; for MAIN-world (which routes through `wrapper-bridge.js`
-  via postMessage) it's roughly 2–3x that.
+  critical path; for MAIN-world (which routes through
+  `wrapper-bridge.js`) it's more, though the request leg itself is a
+  synchronous event dispatch rather than a task hop.
 - **World changes defer the swap.** Adding a script's first real
   `@grant` moves it MAIN → USER_SCRIPT, but the running wrapper is
   stuck in the world Chrome injected it into — a body that expects

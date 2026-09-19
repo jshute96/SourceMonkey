@@ -78,7 +78,9 @@ test.describe('GM_* surfaces in MAIN world', () => {
     // MAIN-world exposure (TODO.md, "`window.*` grant scope is
     // per-document-and-world"), pinned here so a change to it is a test
     // failure rather than a surprise.
-    expect(await page.evaluate(() => window.onurlchange)).toBeNull();
+    // Cast: `onurlchange` is ours, not a DOM standard, so it isn't on
+    // lib.dom's Window.
+    expect(await page.evaluate(() => (window as unknown as { onurlchange: unknown }).onurlchange)).toBeNull();
 
     await page.close();
   });

@@ -120,8 +120,8 @@
   /* ---------- telemetry transport ---------- */
 
   /* Dual transport: chrome.runtime.sendMessage in USER_SCRIPT world,
-     window.postMessage bridge in MAIN world. The bridge listener
-     lives in wrapper-bridge.js (registered separately).
+     the DOM-event bridge in MAIN world. The bridge listener lives in
+     wrapper-bridge.js (registered separately).
 
      "Are we in the isolated world?" is `chrome.runtime.id` being a
      string. A web page listed in some extension's
@@ -136,6 +136,41 @@
         typeof chrome.runtime.sendMessage === "function";
     } catch (_e) { return false; }
   }
+  /* MAIN world's leg of the transport: a CustomEvent on `document`
+     carrying {requestId, payload} as JSON in `detail`. All three
+     primitives are captured at init — this file runs at
+     document_start, before any page script — because `send` also
+     carries `sm:error` reports raised arbitrarily late, by which point
+     a page could have replaced any of them and silently swallowed the
+     report. Same reasoning as the GM runtime's transport section. The bridge runs
+     in USER_SCRIPT world on this same document, and event dispatch
+     runs every world's listeners in the dispatching task — so its
+     chrome.runtime.sendMessage happens before this returns, which a
+     postMessage (delivered on a later task) could not promise a
+     document that is tearing down. Replies come back the other way, as
+     a `sourcemonkey-bridge-reply` postMessage keyed on requestId.
+     Returns false if the dispatch could not happen at all; a dropped
+     payload (no bridge listening, unallowlisted type) looks the same
+     as a delivered one from here. */
+  var _CustomEvent = null;
+  var _dispatchEvent = null;
+  var _stringify = null;
+  try { _CustomEvent = CustomEvent; } catch (_ceE) {}
+  try { _stringify = JSON.stringify; } catch (_jsE) {}
+  try {
+    if (document && typeof document.dispatchEvent === "function") {
+      _dispatchEvent = document.dispatchEvent.bind(document);
+    }
+  } catch (_deE) {}
+  function bridgeDispatch(payload, requestId) {
+    try {
+      if (!_CustomEvent || !_dispatchEvent || !_stringify) return false;
+      _dispatchEvent(new _CustomEvent("sourcemonkey-bridge-sync", {
+        detail: _stringify({ requestId: requestId == null ? undefined : requestId, payload: payload }),
+      }));
+      return true;
+    } catch (_e) { return false; }
+  }
   function send(payload) {
     try {
       if (hasOwnRuntimeChannel()) {
@@ -144,9 +179,7 @@
         return;
       }
     } catch (_e) {}
-    try {
-      window.postMessage({ __sm: "sourcemonkey-bridge", payload: payload }, "*");
-    } catch (_e2) {}
+    bridgeDispatch(payload, null);
   }
 
   /* Is the shared GM runtime installed in THIS world on THIS document?
@@ -202,7 +235,9 @@
         return;
       }
       /* MAIN world: bridge request/reply protocol with a requestId
-         nonce so concurrent userscripts each get their own reply. */
+         nonce so concurrent userscripts each get their own reply. The
+         listener goes on before the dispatch, because the bridge's
+         sendMessage runs inside it. */
       var requestId = "sm-" + Math.random().toString(36).slice(2) + "-" + Date.now();
       var listener = function (ev) {
         try {
@@ -215,18 +250,17 @@
       };
       window.addEventListener("message", listener, true);
       cleanup = function () { try { window.removeEventListener("message", listener, true); } catch (_e) {} };
-      window.postMessage({
-        __sm: "sourcemonkey-bridge",
-        requestId: requestId,
-        payload: {
-          type: "sm:check-pending",
-          id: cfg.id,
-          name: cfg.name,
-          loadedAt: cfg.loadedAt,
-          url: location.href,
-          needsValues: !!cfg.needsGmValues
-        }
-      }, "*");
+      var dispatched = bridgeDispatch({
+        type: "sm:check-pending",
+        id: cfg.id,
+        name: cfg.name,
+        loadedAt: cfg.loadedAt,
+        url: location.href,
+        needsValues: !!cfg.needsGmValues
+      }, requestId);
+      /* Nothing left the page, so no reply is coming. Seal now rather
+         than costing this script the full 2s safety timeout. */
+      if (!dispatched) seal({ action: "run" });
     } catch (_e3) { seal({ action: "run" }); }
   }
 

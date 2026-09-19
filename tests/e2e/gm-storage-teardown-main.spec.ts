@@ -3,11 +3,14 @@
 //
 // In USER_SCRIPT world a flush leaves over `chrome.runtime.sendMessage`,
 // which is handed to the browser synchronously and survives teardown.
-// In MAIN world an ordinary bridge request is a `window.postMessage`
-// the bridge only sees on a LATER task — which a document in
-// `pagehide` never gets. Both shapes below lost the write every time
-// until the teardown flush moved to the synchronous DOM-event path
-// (`sourcemonkey-bridge-sync`); these pin that it stays there.
+// MAIN world has to reach the bridge first, and the only way that
+// survives is a DOM event (`sourcemonkey-bridge-sync`): its listeners
+// run in the DISPATCHING task, so the bridge's own sendMessage happens
+// before the caller returns. Both shapes below lost the write every
+// time when that hop was a `window.postMessage`, which the bridge sees
+// only on a LATER task — one a document in `pagehide` never gets.
+// These pin that the hop stays synchronous. Deferring the flush to a
+// later task (a `setTimeout` around the dispatch) fails both.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';

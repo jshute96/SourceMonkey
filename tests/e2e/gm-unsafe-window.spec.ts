@@ -463,15 +463,18 @@ test.describe('@grant unsafeWindow', () => {
           resolve(d.reply ?? null);
         };
         window.addEventListener('message', onMsg, true);
-        window.postMessage({
-          __sm: 'sourcemonkey-bridge',
-          requestId: rid,
-          payload: {
-            type: 'sm:gm-batch-write',
-            scriptId: id,
-            writes: [{ key: 'secret', value: 'pwned' }],
-          },
-        }, '*');
+        // Page -> SW is a DOM event (replies stay postMessages), and
+        // the page can dispatch it just as freely.
+        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
+          detail: JSON.stringify({
+            requestId: rid,
+            payload: {
+              type: 'sm:gm-batch-write',
+              scriptId: id,
+              writes: [{ key: 'secret', value: 'pwned' }],
+            },
+          }),
+        }));
         setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
       });
     }, victimId);
@@ -541,11 +544,12 @@ test.describe('@grant unsafeWindow', () => {
           resolve(d.reply ?? null);
         };
         window.addEventListener('message', onMsg, true);
-        window.postMessage({
-          __sm: 'sourcemonkey-bridge',
-          requestId: rid,
-          payload: { type: 'sm:gm-tab-open', scriptId: id, requestId: rid, url, active: false },
-        }, '*');
+        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
+          detail: JSON.stringify({
+            requestId: rid,
+            payload: { type: 'sm:gm-tab-open', scriptId: id, requestId: rid, url, active: false },
+          }),
+        }));
         setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
       });
     }, { id: plainId, url: `${fixtureServer.baseUrl}/${PAGE}?forged` });
