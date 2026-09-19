@@ -63,16 +63,19 @@
         overflow-wrap: anywhere;
         word-break: normal;
       }
-      /* Fixed-width slot for the site favicon, sitting between the
-         heading's product prefix and the script's name. Always present,
-         so the name starts at the same offset past the prefix whether
-         or not a favicon resolves. Holds a clickable <a> when the
-         script's @match yields an origin, or an inert <span>
-         otherwise. Inner content is a globe placeholder until the real
-         favicon loads. */
+      /* Slot for the site favicons, sitting between the heading's
+         product prefix and the script's name. Always present, and at
+         least one icon wide, so the name starts at the same offset past
+         the prefix whether or not a favicon resolves. Holds one
+         clickable <a> per distinct site the script's @match names
+         (side by side, 2px gap), or one inert <span> when it names
+         none.
+         Inner content is a globe placeholder until the real favicon
+         loads. */
       h1 .site-icon {
-        display: inline-block;
-        width: 16px;
+        display: inline-flex;
+        gap: 2px;
+        min-width: 16px;
         height: 16px;
         margin-right: 0.4em;
         /* Centred on the heading's CAP band, not on its baseline or its
@@ -87,11 +90,12 @@
         display: block;
         width: 16px;
         height: 16px;
+        flex: 0 0 auto;
         color: #888;
       }
       a.site-icon-inner { text-decoration: none; }
       a.site-icon-inner:hover { color: #444; }
-      h1 .site-icon img { width: 16px; height: 16px; display: block; }
+      .site-icon img { width: 16px; height: 16px; display: block; }
       .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
       /* Controls row: everything that acts on the script itself —
          the enable toggle, Local copy…, the delete trash can, Refresh.
@@ -229,8 +233,6 @@
       /* `@keyframes sm-spin` is in styles.css, shared with the dialog
          spinner and the glyph buttons' spin state. */
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
-      /* @connect row: hostnames and match rules, not prose. */
-      .host-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       /* The "loaded from local disk" chip, worn by a code tab whose
          body came off local disk rather than from the URL its
          declaration names. Loud enough to notice without hovering,
@@ -287,6 +289,28 @@
       #header-summary ul {
         margin: 0;
         padding-left: 1.1em;
+      }
+      /* Match row: each pattern is led by its site's favicon (a globe
+         when the pattern names no site), between the bullet and the
+         URL. The slot is a flex item so a wrapping pattern's
+         continuation lines don't tuck under the icon. */
+      .pattern-cell {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 0.4em;
+        max-width: 100%;
+      }
+      /* The text is the flex item that shrinks; without this a long
+         pattern would push the cell wider instead of wrapping. */
+      .pattern-cell > :not(.pattern-icon) { min-width: 0; }
+      .pattern-icon {
+        display: inline-flex;
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        /* Centred on the line rather than sat on the baseline, which
+           left the square hanging low beside the pattern text. */
+        align-self: center;
       }
       /* Location row: path text + a square copy-icon button to its
          right. min-width:0 lets long paths shrink and wrap rather

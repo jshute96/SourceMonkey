@@ -60,6 +60,150 @@ test.describe('site-icon slot', () => {
     await page.close();
   });
 
+  test('sites with no favicon collapse to one globe; the column re-fits', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'one.user.js',
+      meta: { name: 'One', match: ['https://a.example/*'] },
+      body: '',
+    });
+    scriptsDir.write({
+      relativePath: 'two.user.js',
+      meta: {
+        name: 'Two',
+        // www./scheme variants of a.example collapse into one site;
+        // b.example is the second.
+        match: ['https://www.a.example/x/*', 'http://a.example/*', 'https://b.example/*'],
+      },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
+    const rowFor = (name: string) =>
+      section.locator('tbody tr', { has: page.locator('td.name-cell', { hasText: name }) });
+
+    // Neither `.example` host resolves, so both of Two's icons end on
+    // the globe — and two globes fold into one that names both sites,
+    // linked to the first. (The pre-collapse state is a race against
+    // the failing fetches; the real-icon collapse test below pins the
+    // estimate → re-fit sequence.)
+    const twoIcon = rowFor('Two').locator('.site-icon a.site-icon-inner');
+    await expect(twoIcon).toHaveCount(1);
+    await expect(twoIcon).toHaveAttribute('href', 'https://www.a.example/x/');
+    await expect(twoIcon).toHaveAttribute(
+      'title', 'https://www.a.example/x/\nhttps://b.example/',
+    );
+    await expect(rowFor('One').locator('.site-icon a.site-icon-inner')).toHaveCount(1);
+
+    // Once settled the column re-fits to one icon, and both slots are
+    // the same width so the names share a left edge.
+    await expect(section.locator('table.script-table')).toHaveCSS('--icon-cols', '1');
+    const width = async (name: string) =>
+      (await rowFor(name).locator('.site-icon').boundingBox())!.width;
+    expect(await width('One')).toBe(await width('Two'));
+    await page.close();
+  });
+
+  test('sites sharing one favicon collapse to a single icon; the column re-fits', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Two hosts serving the same icon bytes (think maps.google.com and
+    // www.google.com), plus a third with its own. Same `context.route`
+    // interception the two-tier test below relies on.
+    const SAME = 'data:image/png;base64,SAMESAME';
+    const OTHER = 'data:image/png;base64,OTHER000';
+    const html = (icon: string) =>
+      `<html><head><link rel="icon" href="${icon}"></head></html>`;
+    await extensionContext.route('https://*.sm-dupe.invalid/**', async (route) => {
+      const host = new URL(route.request().url()).host;
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: html(host.startsWith('other.') ? OTHER : SAME),
+      });
+    });
+    try {
+      scriptsDir.write({
+        relativePath: 'dupe.user.js',
+        meta: {
+          name: 'Dupe',
+          match: [
+            'https://maps.sm-dupe.invalid/*',
+            'https://www.sm-dupe.invalid/maps*',
+            'https://other.sm-dupe.invalid/*',
+          ],
+        },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
+      const icons = section.locator('tbody tr .site-icon a.site-icon-inner');
+      // Three sites → three slots at first; the two identical favicons
+      // then fold into one, whose tooltip names both sites.
+      await expect(icons).toHaveCount(2);
+      await expect(icons.nth(0).locator('img')).toHaveAttribute('src', SAME);
+      await expect(icons.nth(0)).toHaveAttribute(
+        'title', 'https://maps.sm-dupe.invalid/\nhttps://www.sm-dupe.invalid/maps',
+      );
+      await expect(icons.nth(0)).toHaveAttribute('href', 'https://maps.sm-dupe.invalid/');
+      await expect(icons.nth(1).locator('img')).toHaveAttribute('src', OTHER);
+      // The column was sized for three and re-fits to two once the
+      // favicons have settled.
+      await expect(section.locator('table.script-table')).toHaveCSS('--icon-cols', '2');
+      await page.close();
+    } finally {
+      await extensionContext.unroute('https://*.sm-dupe.invalid/**');
+    }
+  });
+
+  test('the viewer heading shows more sites than a collections row', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Distinct icons per host so nothing collapses and the counts are
+    // the steady state, not a snapshot taken before failing fetches
+    // fold every globe into one.
+    await extensionContext.route('https://*.sm-many.invalid/**', async (route) => {
+      const host = new URL(route.request().url()).host;
+      const icon = `data:image/png;base64,${host.split('.')[0].toUpperCase()}0000`;
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: `<html><head><link rel="icon" href="${icon}"></head></html>`,
+      });
+    });
+    try {
+      const hosts = Array.from({ length: 5 }, (_, i) => `https://h${i}.sm-many.invalid/*`);
+      scriptsDir.write({
+        relativePath: 'many.user.js',
+        meta: { name: 'Many', match: hosts },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+      const withScripts = await sm.getCollectionWithScripts(collection!.id);
+      const scriptId = withScripts!.scripts[0].id;
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const rowIcons = page.locator(
+        `section.collection[data-collection-id="${collection!.id}"] tbody tr .site-icon a.site-icon-inner`,
+      );
+      await expect(rowIcons).toHaveCount(3);
+      await expect(rowIcons.locator('img')).toHaveCount(3);
+      await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}`);
+      const headingIcons = page.locator('h1 .site-icon a.site-icon-inner');
+      await expect(headingIcons).toHaveCount(5);
+      await expect(headingIcons.locator('img')).toHaveCount(5);
+      await page.close();
+    } finally {
+      await extensionContext.unroute('https://*.sm-many.invalid/**');
+    }
+  });
+
   test('@icon header takes priority over origin-discovered favicon', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -87,6 +231,10 @@ test.describe('site-icon slot', () => {
     // header is a visual override only.
     await expect(slot.locator('a.site-icon-inner'))
       .toHaveAttribute('href', 'https://example.com/');
+    // The tooltip says whose icon this is — the script's — before the
+    // site it opens.
+    await expect(slot.locator('a.site-icon-inner'))
+      .toHaveAttribute('title', 'Pinned\nhttps://example.com/');
     // The img inside the anchor gets the data: URL from @icon, not a
     // network-discovered favicon. The expect-poll waits for the async
     // swap to complete.

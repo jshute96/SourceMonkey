@@ -126,8 +126,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
 | `src/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
 | `src/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
-| `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor, plus the same-directory fallback for site-less patterns |
-| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the slot renderer for collections page + viewer |
+| `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor, the first-few-distinct-sites list behind multi-icon rows, and the same-directory fallback for site-less patterns |
+| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the one-icon-per-site slot renderer for collections page + viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's own URL, containing a local script to its folder; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
 | `src/run-context.ts` | The page-vs-service-worker test (`isPageContext`) the modules shared by both branch on |
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
@@ -207,7 +207,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
 | `tests/e2e/page-links.spec.ts` | E2E for cross-page links: new-tab-ness, named-tab reuse, and the header bar's home link |
-| `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, `@icon` override, relative-path resolution, two-tier cache, large-icon blob-URL de-dup |
+| `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, one icon per site + collapse + column fit, `@icon` override, relative paths, two-tier cache, blob-URL de-dup |
 | `tests/e2e/change-detection.spec.ts` | Unified change-detection: each collection/scheme combo preserves loadedAt on identical content and bumps it on edits, and only changed rows are written |
 | `tests/e2e/rejected-registration.spec.ts` | REJECTED state end to end: a `@match` Chrome refuses stays `ok` but never runs, and every retry re-reports until it's fixed |
 | `tests/e2e/log-level-reset.spec.ts` | A refresh that loads new content resets the WARNING / ERROR badge, keeps the log, and lets the new version's parse diagnostics re-badge it |
@@ -248,7 +248,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/match-index.test.mjs` | `onlyProbesChanged` — which `script:*` writes may skip a re-registration, and the many that may not |
 | `tests/unit/log-format.test.mjs` | Unit tests for the log cell strings, the CSV rendering (quoting, order), and the export filename |
 | `tests/unit/url-match.test.mjs` | Unit tests for `@match` / `@include` / `@exclude` URL matching |
-| `tests/unit/match-targets.test.mjs` | Unit tests for `@match` pattern parsing: origin / linkUrl extraction, wildcard-trim path rule, same-dir fallback |
+| `tests/unit/match-targets.test.mjs` | Unit tests for `@match` pattern parsing: origin / linkUrl extraction, distinct-site de-dup, wildcard-trim path rule, same-dir fallback |
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache-hit rules, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |

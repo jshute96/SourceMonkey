@@ -711,19 +711,27 @@ async function syncScriptRowsFromStorage(
   }
   const hasActionColumn = !!tbody.parentElement?.querySelector('thead th[aria-label="Actions"]');
   const ordered: HTMLTableRowElement[] = [];
+  // Rows whose icon slot was (re)built in this pass; their favicons are
+  // still loading, and the column is fitted again once they settle.
+  const settling: Promise<unknown>[] = [];
   for (const script of scripts) {
     const row = existing.get(script.id);
     if (row) {
-      syncScriptRow(row, script, collectionOn, collection.path, localFiles);
+      const repainted = syncScriptRow(row, script, collectionOn, collection.path, localFiles);
+      if (repainted) settling.push(repainted);
       existing.delete(script.id);
     }
     // Whether the table has the trailing action column is settled by
     // the header that is already on screen — a row added into it has to
     // match, and a table whose whole point is local copies already has
     // one from the render that built it.
-    ordered.push(row ?? renderScriptRow(
-      script, collectionOn, collection.path, localFiles, hasActionColumn,
-    ));
+    if (row) {
+      ordered.push(row);
+      continue;
+    }
+    const made = renderScriptRow(script, collectionOn, collection.path, localFiles, hasActionColumn);
+    ordered.push(made.row);
+    settling.push(made.iconCount);
   }
   // Whatever is left in `existing` is a row whose script is gone. The
   // per-script bookkeeping is pruned by the caller, against the whole
@@ -738,6 +746,9 @@ async function syncScriptRowsFromStorage(
   // Re-seating the live rows leaves the ghosts wherever they were, so
   // they are placed again against their anchors afterwards.
   placeTombstones(tbody);
+  // Rows came and went, so the icon column is fitted again: a row that
+  // left may have been the wide one, a row that arrived may need more.
+  fitIconColumns(tbody.parentElement as HTMLTableElement, settling);
   refreshBulkToggle(section);
 }
 
@@ -754,7 +765,9 @@ function syncScriptRow(
   collectionOn: boolean,
   collectionPath: string,
   localFiles: LocalFileScope,
-): void {
+  // The Name cell's settle promise when it was rebuilt (see
+  // `fillNameCell`), null when it was left alone.
+): Promise<number> | null {
   const inContainer = isContainerCollection(collectionPath);
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
@@ -791,8 +804,11 @@ function syncScriptRow(
   // moved. Rebuilding unconditionally would re-run the favicon fetch and
   // flash the globe placeholder on every unrelated repaint.
   const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
+  let repainted: Promise<number> | null = null;
   if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script, localFiles)) {
-    fillNameCell(nameCell, script, collectionPath, localFiles);
+    // A refresh that changed `@match` may need a different icon
+    // column; the caller re-fits the table once it has seen every row.
+    repainted = fillNameCell(nameCell, script, collectionPath, localFiles);
   }
 
   const scriptOn = isScriptEnabled(script);
@@ -818,6 +834,7 @@ function syncScriptRow(
     label.title = collectionOn ? ENABLE_TITLE : COLLECTION_OFF_TITLE;
   }
   row.classList.toggle('disabled', !collectionOn || !scriptOn);
+  return repainted;
 }
 
 // Are `wanted` already the container's element children, in that order?
@@ -1377,10 +1394,14 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
+  const settled: Promise<number>[] = [];
   for (const script of scripts) {
-    tbody.appendChild(renderScriptRow(script, collectionOn, collection.path, localFiles, withActions));
+    const { row, iconCount } = renderScriptRow(script, collectionOn, collection.path, localFiles, withActions);
+    tbody.appendChild(row);
+    settled.push(iconCount);
   }
   table.appendChild(tbody);
+  fitIconColumns(table, settled);
   return table;
 }
 
@@ -1392,7 +1413,7 @@ function renderScriptRow(
   // The table has a trailing action column. Every row in such a table
   // gets the cell, empty or not, or the columns stop lining up.
   withActions: boolean,
-): HTMLTableRowElement {
+): { row: HTMLTableRowElement; iconCount: Promise<number> } {
   const inContainer = isContainerCollection(collectionPath);
   const scriptOn = isScriptEnabled(script);
 
@@ -1417,7 +1438,7 @@ function renderScriptRow(
 
   const nameCell = document.createElement('td');
   nameCell.classList.add('name-cell');
-  fillNameCell(nameCell, script, collectionPath, localFiles);
+  const iconCount = fillNameCell(nameCell, script, collectionPath, localFiles);
   tr.appendChild(nameCell);
 
   // For column parity with the live table. A container collection can't
@@ -1465,7 +1486,43 @@ function renderScriptRow(
     tr.appendChild(actionCell);
   }
 
-  return tr;
+  return { row: tr, iconCount };
+}
+
+// The icon column of a script table is as wide as its widest row —
+// the number of site icons that row shows. Stored as a CSS custom
+// property the stylesheet's slot width and hanging indent both read.
+function setIconColumns(table: HTMLTableElement, count: number): void {
+  table.style.setProperty('--icon-cols', String(count));
+}
+
+// The most icons any slot in this table currently holds. A slot whose
+// favicons are still loading counts at its estimate — its icons are
+// already there as globes.
+function widestIconSlot(table: HTMLTableElement): number {
+  let widest = 1;
+  for (const slot of table.querySelectorAll('td.name-cell .site-icon')) {
+    widest = Math.max(widest, slot.childElementCount);
+  }
+  return widest;
+}
+
+// Fit the icon column to the rows now in the table, twice: right away,
+// from the header-derived estimates the fresh slots hold, so nothing
+// overflows while favicons load; and again once `settling` (the
+// rebuilt slots' promises) has resolved, because sites sharing one
+// favicon collapse to a single icon and the column may narrow. One
+// shift per pass, not one per row. Measured from the rows on screen
+// rather than from what the promises carry, so rows that came or went
+// in another pass meanwhile are counted too.
+function fitIconColumns(table: HTMLTableElement, settling: readonly Promise<unknown>[]): void {
+  setIconColumns(table, widestIconSlot(table));
+  if (settling.length === 0) return;
+  // No isConnected guard: a section is built detached and attached
+  // later, and a table whose favicons all came from cache can settle
+  // before that. Styling a detached table is harmless. `allSettled` so
+  // one slot's failure can't skip the fit for the rest.
+  void Promise.allSettled(settling).then(() => setIconColumns(table, widestIconSlot(table)));
 }
 
 // Build (or rebuild) the Name cell's contents: favicon slot, the
@@ -1483,18 +1540,20 @@ function fillNameCell(
   // the row needs and neither is worth re-loading the collection row
   // for.
   localFiles: LocalFileScope,
-): void {
+  // Resolves with how many icons the slot holds once its favicons have
+  // loaded — see `renderSiteIconInto`.
+): Promise<number> {
   const inContainer = isContainerCollection(collectionPath);
   nameCell.textContent = '';
-  // Slot for the favicon: a fixed-width container so the name
+  // Slot for the favicons: a fixed-width container so the name
   // text always starts at the same x-position. renderSiteIconInto
-  // synchronously paints a globe placeholder (clickable when the
-  // script's @match yields a usable origin) and swaps it for the real
-  // favicon once the fetch resolves.
+  // synchronously paints a globe placeholder per site (clickable when
+  // the script's @match yields a usable origin) and swaps each for the
+  // real favicon once its fetch resolves.
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
-  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
+  const iconCount = renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
   const a = document.createElement('a');
   // Slash-aware appender (not textContent) so a long name wraps at `/`
   // boundaries before breaking mid-segment, matching the collection
@@ -1528,6 +1587,7 @@ function fillNameCell(
   // Record what this cell was drawn from, so the next repaint can skip
   // it unless one of those inputs moved.
   nameCellKeys.set(script.id, nameCellKey(script, localFiles));
+  return iconCount;
 }
 
 // Text in the Name column: the script's own `@name`, falling back to
@@ -2212,6 +2272,9 @@ function addTombstones(
     );
   }
   placeTombstones(tbody);
+  // A ghost keeps its icons, and the wide row that just left may have
+  // been the one the column was fitted to.
+  fitIconColumns(tbody.parentElement as HTMLTableElement, []);
 }
 
 function renderTombstoneRow(
@@ -2261,14 +2324,13 @@ function renderTombstoneRow(
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
-  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
+  void renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
   // Drop the href in place rather than replacing the anchor: the icon
   // fetch resolves into the very element `renderSiteIconInto` built, so
   // swapping it out would leave the favicon painting into a detached
   // node. Without the href it is no longer a link or a tab stop, which
   // is what a row with nothing left to open should be.
-  const iconLink = iconSlot.querySelector('a.site-icon-inner');
-  if (iconLink) {
+  for (const iconLink of iconSlot.querySelectorAll('a.site-icon-inner')) {
     iconLink.removeAttribute('href');
     iconLink.removeAttribute('target');
     iconLink.removeAttribute('rel');

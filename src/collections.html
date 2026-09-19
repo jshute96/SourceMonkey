@@ -90,15 +90,21 @@
          line, but never splits into `#` + `2`. */
       .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; white-space: nowrap; }
       .log-id-suffix:not(:empty)::before { content: ' '; }
-      /* Fixed-width slot for the site favicon to the left of the
-         name link. Always present so the name column has a
-         stable left edge. Holds either a clickable <a class="site-icon-inner">
-         (when the script's @match yields a usable origin) or an inert
-         <span class="site-icon-inner">. Inside is a globe placeholder
-         that gets swapped for the real favicon once it loads. */
+      /* Column of site favicons to the left of the name link. One
+         16px icon per distinct site the script targets (see
+         `MAX_SITE_ICONS`), side by side with a 2px gap. Each icon is
+         a clickable <a class="site-icon-inner"> when its @match yields
+         a usable origin; a script with no site holds one inert
+         <span class="site-icon-inner">. Every inner starts as a globe
+         placeholder that is swapped for the real favicon on load.
+         The slot is as wide as this table's widest row needs
+         (`--icon-cols`, set per table by collections.ts), so the
+         names in one collection share a straight left edge. */
+      .script-table { --icon-cols: 1; --icon-gap: 2px; }
       .site-icon {
-        display: inline-block;
-        width: 16px;
+        display: inline-flex;
+        gap: var(--icon-gap);
+        width: calc(var(--icon-cols) * 16px + (var(--icon-cols) - 1) * var(--icon-gap));
         height: 16px;
         margin-right: 0.4em;
         vertical-align: text-bottom;
@@ -113,6 +119,7 @@
         display: block;
         width: 16px;
         height: 16px;
+        flex: 0 0 auto;
         color: #888;
       }
       a.site-icon-inner { text-decoration: none; }
@@ -130,8 +137,12 @@
       .script-table td.name-cell {
         overflow-wrap: anywhere;
         word-break: normal;
-        padding-left: calc(8px + 16px + 0.4em);
-        text-indent: calc(-16px - 0.4em);
+        /* `--icon-w` is the slot's width incl. its right margin; the
+           hanging indent must track the icon column so wrapped lines
+           still align under the first line's text. */
+        --icon-w: calc(var(--icon-cols) * 16px + (var(--icon-cols) - 1) * var(--icon-gap) + 0.4em);
+        padding-left: calc(8px + var(--icon-w));
+        text-indent: calc(-1 * var(--icon-w));
       }
       .status-ok { color: #166534; }
       .status-invalid, .status-rejected, .status-error { color: #b00; }

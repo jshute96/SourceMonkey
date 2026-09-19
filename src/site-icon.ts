@@ -1,11 +1,13 @@
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from './file-loader.js';
 import { presentLocalFileCandidates } from './local-file-overrides.js';
 import type { DirectoryListingCache } from './directories.js';
-import { representativeMatch } from './match-targets.js';
+import { MAX_SITE_ICONS, representativeMatches, type MatchTarget } from './match-targets.js';
 import { renderGlyph } from './glyph.js';
+import { getValue } from './userscript-header.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
-// and userscript viewer to show a 16x16 icon next to each script.
+// and userscript viewer to show a 16x16 icon per targeted site (up to
+// MAX_SITE_ICONS distinct sites) next to each script.
 //
 // Two-tier lookup, so deep-targeted scripts (e.g. one userscript per
 // section of a big site) each get their own icon instead of sharing
@@ -13,8 +15,8 @@ import { renderGlyph } from './glyph.js';
 //   1. page URL → HTML discovery there (cached per page URL).
 //   2. origin fallback → origin-root HTML → /favicon.ico → Google S2
 //      (cached per origin, shared across every script on that host).
-// The page URL is the script's `representativeMatch.linkUrl` — the
-// same URL the favicon click-through navigates to.
+// The page URL is each site's `linkUrl` from `representativeMatches` —
+// the same URL that site's favicon click-through navigates to.
 //
 // Caches in chrome.storage.local:
 //   `pathIcon:<pageUrl>`  — HTML-discovery result for that specific
@@ -576,17 +578,30 @@ interface ScriptWithMatching {
 }
 
 // Build the favicon slot for a script row / viewer header. Always
-// renders something synchronously: when the script's @match yields a
-// usable origin, the slot becomes a clickable `<a>` opening linkUrl
-// in a new tab; otherwise it holds an inert `<span>` (file:// scripts,
-// `<all_urls>`, etc.). Either wrapper starts with a globe placeholder,
-// swapped for the real favicon once it loads.
+// renders something synchronously: one clickable `<a>` per distinct
+// site the script's @match set names (opening that site's linkUrl in
+// a new tab, at most `limit` of them — a table row has less room than
+// a heading), or a single inert `<span>` when no pattern yields a
+// usable origin (file:// scripts, `<all_urls>`, etc.). Every wrapper
+// starts with a globe placeholder, swapped for the real favicon once
+// it loads.
+//
+// Two sites that turn out to share one favicon image (maps.google.com
+// and www.google.com, say) — or that both came up empty and show the
+// globe — collapse to the first icon once both have loaded: the
+// duplicate is removed and the survivor's tooltip lists every site it
+// now stands for. Compared by the resolved data URL, which is the only
+// way to know — the hosts differ.
 //
 // Icon collection priority: a script-declared `@icon` (or its aliases)
-// wins outright over the origin-discovered favicon. The click-through
-// link is always the site's linkUrl regardless — the @icon header is
-// only a visual override.
-export function renderSiteIconInto(
+// wins outright over the origin-discovered favicons and collapses the
+// slot to that one icon — a script that pins its icon has said what
+// it wants to look like. Its click-through link is still the first
+// site's linkUrl — the @icon header is only a visual override.
+//
+// Resolves, once every fetch has settled, with the number of icons the
+// slot ended up holding.
+export async function renderSiteIconInto(
   slot: HTMLElement,
   script: ScriptWithMatching,
   // Local override roots for a script-declared `@icon`, from the
@@ -595,8 +610,9 @@ export function renderSiteIconInto(
   // which this module has no reason to load. Omitted → no overrides, no
   // local reads.
   localRoots: readonly string[] = [],
-): void {
-  const target = representativeMatch(script.matching);
+  limit: number = MAX_SITE_ICONS,
+): Promise<number> {
+  const targets = representativeMatches(script.matching, limit);
   // The header value is raw (URL, data:, or relative path). Resolve it
   // against the script's own URL so `@icon foo.png` reaches the
   // sibling file alongside the script. A ref that climbs out of a
@@ -606,44 +622,129 @@ export function renderSiteIconInto(
   const resolvedIcon = iconRef
     ? resolveScriptResource(iconRef, script.fileUrl)
     : null;
-  const inner = slot.ownerDocument.createElement(target ? 'a' : 'span');
-  inner.className = 'site-icon-inner';
-  inner.appendChild(buildGlobeSvg(slot.ownerDocument));
-  if (target) {
-    const a = inner as HTMLAnchorElement;
-    a.href = target.linkUrl;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.title = target.linkUrl;
-  } else {
+
+  if (targets.length === 0) {
     // No usable target URL for this script's @match set (file://,
     // `<all_urls>`, malformed pattern, …). Surface that explicitly so
     // hovering the inert globe isn't silent.
+    const inner = buildInner(slot, null);
+    slot.replaceChildren(inner);
+    if (resolvedIcon) await paintIcon(inner, ensureIconForUrl(resolvedIcon.url, localRoots));
+    return 1;
+  }
+
+  if (resolvedIcon) {
+    // This is the script's own icon, not a site's, so the tooltip leads
+    // with the script's name; every site it names follows — all of
+    // them, not just the `limit` a row would show.
+    const inner = buildInner(slot, targets[0]);
+    const sites = representativeMatches(script.matching, Infinity).map((t) => t.linkUrl);
+    const name = script.header ? getValue(script.header, 'name')?.trim() : undefined;
+    inner.title = name ? `${name}\n${sitesTooltip(sites)}` : sitesTooltip(sites);
+    slot.replaceChildren(inner);
+    await paintIcon(inner, ensureIconForUrl(resolvedIcon.url, localRoots));
+    return 1;
+  }
+
+  const inners = targets.map((t) => buildInner(slot, t));
+  slot.replaceChildren(...inners);
+  const painted = await Promise.all(
+    targets.map((t, i) => paintIcon(inners[i], ensureSiteIcon(t.origin, t.linkUrl))),
+  );
+
+  // Collapse sites whose favicon came back byte-identical — and sites
+  // that all ended on the globe, which look identical too; a row of
+  // three globes says nothing three times.
+  const firstByIcon = new Map<string, number>();
+  const mergedInto: string[][] = targets.map((t) => [t.linkUrl]);
+  for (let i = 0; i < inners.length; i++) {
+    const icon = painted[i] ?? '';
+    const first = firstByIcon.get(icon);
+    if (first === undefined) {
+      firstByIcon.set(icon, i);
+      continue;
+    }
+    inners[i].remove();
+    mergedInto[first].push(targets[i].linkUrl);
+    inners[first].title = sitesTooltip(mergedInto[first]);
+  }
+  // Real favicons before the globe: a globe says only "a site", so it
+  // goes last where it isn't in the way. The first site stays first
+  // even as a globe — it is the script's primary site, and the header
+  // order is what the reader expects to find there.
+  for (let i = 1; i < inners.length; i++) {
+    if (inners[i].isConnected && painted[i] === null) slot.appendChild(inners[i]);
+  }
+  return slot.childElementCount;
+}
+
+// Lines a merged icon's tooltip can show before it turns into a count.
+const TOOLTIP_SITES_MAX = 10;
+
+// Tooltip for an icon standing for several sites: one URL per line,
+// then `(and N more)` once the list runs long — a fifty-site tooltip
+// is a wall, not a hint.
+export function sitesTooltip(urls: readonly string[]): string {
+  if (urls.length <= TOOLTIP_SITES_MAX) return urls.join('\n');
+  const shown = urls.slice(0, TOOLTIP_SITES_MAX);
+  return `${shown.join('\n')}\n(and ${urls.length - TOOLTIP_SITES_MAX} more)`;
+}
+
+// The icon for ONE `@match` pattern, as the viewer's Match rows show
+// beside each entry. Linked to `linkUrl` when the pattern gave us one
+// (the site, or the same-directory fallback for a site-less pattern),
+// inert otherwise. The favicon comes from `target`'s site; a linkable
+// pattern that names no site (`*://*/x/page.html`) keeps the globe.
+export function renderPatternIconInto(
+  slot: HTMLElement,
+  target: MatchTarget | null,
+  linkUrl: string | null,
+): void {
+  const inner = buildInner(slot, linkUrl);
+  slot.replaceChildren(inner);
+  if (target) void paintIcon(inner, ensureSiteIcon(target.origin, target.linkUrl));
+}
+
+// One icon's wrapper: a link when there is a URL to open, an inert
+// span otherwise. Starts out holding the globe placeholder.
+function buildInner(slot: HTMLElement, target: MatchTarget | string | null): HTMLElement {
+  const linkUrl = typeof target === 'string' ? target : target?.linkUrl ?? null;
+  const inner = slot.ownerDocument.createElement(linkUrl ? 'a' : 'span');
+  inner.className = 'site-icon-inner';
+  inner.appendChild(buildGlobeSvg(slot.ownerDocument));
+  if (linkUrl) {
+    const a = inner as HTMLAnchorElement;
+    a.href = linkUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.title = linkUrl;
+  } else {
     inner.title = 'Unable to extract link to target site';
   }
-  slot.replaceChildren(inner);
-  if (!target && !resolvedIcon) return;
+  return inner;
+}
 
-  void (async () => {
-    let dataUrl: string | null;
-    try {
-      // Header-declared icon wins. Origin-based discovery only runs
-      // when the script doesn't pin its own icon.
-      dataUrl = resolvedIcon
-        ? await ensureIconForUrl(resolvedIcon.url, localRoots)
-        : await ensureSiteIcon(target!.origin, target!.linkUrl);
-    } catch {
-      return;
-    }
-    if (!dataUrl) return;
-    // No isConnected guard: a re-render replaces the whole slot, so
-    // any paint into an orphaned `inner` decorates a subtree the user
-    // never sees.
-    const img = slot.ownerDocument.createElement('img');
-    img.src = iconImgSrc(dataUrl);
-    img.alt = '';
-    inner.replaceChildren(img);
-  })();
+// Swap the globe inside `inner` for the icon `pending` resolves to,
+// and hand back that icon's data URL (null when there is none, or the
+// fetch failed — the globe stays). No isConnected guard: a re-render
+// replaces the whole slot, so any paint into an orphaned `inner`
+// decorates a subtree the user never sees.
+async function paintIcon(
+  inner: HTMLElement,
+  pending: Promise<string | null>,
+): Promise<string | null> {
+  let dataUrl: string | null;
+  try {
+    dataUrl = await pending;
+  } catch {
+    return null;
+  }
+  if (!dataUrl) return null;
+  const img = inner.ownerDocument.createElement('img');
+  img.src = iconImgSrc(dataUrl);
+  img.alt = '';
+  inner.replaceChildren(img);
+  return dataUrl;
 }
 
 // Per-document registry: one blob: URL per distinct large icon. With

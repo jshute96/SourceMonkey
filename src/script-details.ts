@@ -39,6 +39,7 @@ import { makeCopyButton } from './copy-button.js';
 import { STAND_IN_MISSING_HINT, tagLocalFile } from './missing-files.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
 import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
+import { renderPatternIconInto } from './site-icon.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
 import { isContainerCollection, locationFsPath } from './directories.js';
@@ -340,18 +341,16 @@ function addText(dl: HTMLDListElement, label: string, value: string | undefined)
   appendRow(dl, label, document.createTextNode(value));
 }
 
-// `@connect` row: hosts and the wildcard/`self` forms, so monospace —
-// these are hostnames, not prose, and `*.example.com` vs
-// `*.example.com.evil.net` is a difference the reader has to be able
-// to see. Rendered as plain text, deliberately unlinked: a `@connect`
-// value is a matching rule (`self`, `*`, `*.example.com`), not an
-// address, and linkifying it would invite a click that means nothing.
+// `@connect` row: hosts and the wildcard/`self` forms, in the same
+// face as the Match patterns above it — it was the panel's one
+// monospace row, and its bullets sat a different size from its
+// neighbours'. Rendered as plain text, deliberately unlinked: a
+// `@connect` value is a matching rule (`self`, `*`, `*.example.com`),
+// not an address, and linkifying it would invite a click that means
+// nothing.
 function addConnect(dl: HTMLDListElement, values: string[]): void {
   if (values.length === 0) return;
-  const dd = appendRow(
-    dl, 'Network access', listNode(values, (v) => document.createTextNode(v)),
-  );
-  dd.className = 'host-list';
+  appendRow(dl, 'Network access', listNode(values, (v) => document.createTextNode(v)));
 }
 
 function addLink(dl: HTMLDListElement, label: string, value: string | undefined): void {
@@ -473,11 +472,16 @@ interface LoadedFile {
 
 // `@match` / `@include` / `@exclude` row: each pattern that resolves to
 // a usable linkUrl via the same wildcard-trim rule as the site favicon
-// becomes a clickable open-in-new-tab anchor. A pattern naming no site
-// gets a second chance against the script's own directory. Patterns we
-// can't linkify either way (`<all_urls>`, regex literals, a host
-// wildcard with nothing to anchor on) render as plain text so the row
-// still shows every entry.
+// becomes a clickable open-in-new-tab anchor, led by that site's
+// favicon (the globe when the pattern names no site). A pattern naming
+// no site gets a second chance against the script's own directory.
+// Patterns we can't linkify either way (`<all_urls>`, regex literals,
+// a host wildcard with nothing to anchor on) render as plain text so
+// the row still shows every entry.
+//
+// Always a bulleted list, even for one pattern: these rows sit
+// together and an icon-led inline value beside an icon-led list read
+// as two different things.
 function addPatterns(
   dl: HTMLDListElement,
   label: string,
@@ -485,7 +489,13 @@ function addPatterns(
   scriptUrl: string | undefined,
 ): void {
   if (values.length === 0) return;
-  appendRow(dl, label, listNode(values, (p) => patternValueNode(p, scriptUrl)));
+  const ul = document.createElement('ul');
+  for (const p of values) {
+    const li = document.createElement('li');
+    li.appendChild(patternValueNode(p, scriptUrl));
+    ul.appendChild(li);
+  }
+  appendRow(dl, label, ul);
 }
 
 // One value renders inline; several render as a `<ul>`. Generic in the
@@ -504,16 +514,27 @@ function listNode<T>(values: readonly T[], make: (v: T) => Node): Node {
 }
 
 function patternValueNode(pattern: string, scriptUrl: string | undefined): Node {
-  const linkUrl = matchTargetInfo(pattern)?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl);
+  const target = matchTargetInfo(pattern);
+  const linkUrl = target?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl);
+  let text: Node;
   if (!linkUrl) {
     // Non-linkable pattern (`<all_urls>`, regex literal, etc.); render
     // as plain text but still allow slash-aware wrapping in case the
     // pattern is long.
     const span = document.createElement('span');
     appendWithSlashBreaks(span, pattern);
-    return span;
+    text = span;
+  } else {
+    text = openInNewTabAnchor(linkUrl, pattern);
   }
-  return openInNewTabAnchor(linkUrl, pattern);
+  // Icon first, then the pattern; both open the same URL.
+  const cell = document.createElement('span');
+  cell.className = 'pattern-cell';
+  const slot = document.createElement('span');
+  slot.className = 'site-icon pattern-icon';
+  renderPatternIconInto(slot, target, linkUrl);
+  cell.append(slot, text);
+  return cell;
 }
 
 function logIdCell(logId: string): Node {

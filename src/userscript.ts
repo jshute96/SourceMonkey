@@ -3309,8 +3309,15 @@ function renderHeading(
   } else {
     filenameEl.removeAttribute('aria-label');
   }
-  renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
+  void renderSiteIconInto(
+    iconSlot, script, localSearchRoots(script.fileUrl, localFiles), HEADING_SITE_ICONS,
+  );
 }
+
+// The heading shows more sites than a collections row: it is the one
+// place a script's whole target list is worth a glance, and nothing
+// beside it needs to line up.
+const HEADING_SITE_ICONS = 10;
 
 function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {
   messageEl.textContent = text;

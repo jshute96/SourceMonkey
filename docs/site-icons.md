@@ -1,11 +1,13 @@
 # Site icons
 
 - Each row in the collections page (and the H1 of the script viewer)
-  shows a small favicon next to the script name.
+  shows a small favicon per site the script targets, next to the
+  script name.
 - Collection priority:
   - A script-declared `@icon` (or its TM aliases — see below) wins
-    outright when set.
-  - Otherwise the icon is discovered from the matched site itself.
+    outright when set, and collapses the slot to that one icon.
+  - Otherwise one icon per distinct site is discovered from the
+    matched sites themselves (see [Multiple sites](#multiple-sites)).
 - Implemented in [`src/site-icon.ts`](../src/site-icon.ts).
 
 ## Header override (`@icon`)
@@ -61,6 +63,76 @@
   `@icon` is purely a visual override — it doesn't change which site
   the favicon links to.
 
+## Multiple sites
+
+- A script whose `@match` set names several sites gets one icon per
+  site, in header order, up to a cap. Sites past the cap are not shown.
+  - Collections table: `MAX_SITE_ICONS` (`match-targets.ts`). Small —
+    the slot sits in a column beside the name.
+  - Viewer heading: `HEADING_SITE_ICONS` (`userscript.ts`). Higher —
+    the heading has room, and it is the one place the whole target
+    list is worth a glance.
+- "Same site" means the same `host[:port]` after dropping a leading
+  `www.`; the scheme is ignored. `http://www.example.com/*` and
+  `https://example.com/*` are one icon (the first pattern's link).
+  `localhost:3000` and `localhost:8080` are two.
+- `representativeMatches(matching, limit)` returns that list;
+  `representativeMatch` is just its first entry.
+- Each icon is its own link to its site's `linkUrl` and runs its own
+  discovery — so a script's second site shares cache rows with every
+  other script on that site.
+
+### Identical favicons collapse
+
+- Different hosts can serve the same favicon (`maps.google.com` and
+  `www.google.com`). Once every icon in a slot has loaded, icons whose
+  resolved `data:` URL is byte-identical fold into the first one.
+  - The survivor keeps its link; its tooltip lists every site it now
+    stands for, one per line — the first 10, then `(and N more)`
+    (`sitesTooltip`).
+  - An `@icon`-declared icon is the script's, not a site's: its
+    tooltip leads with the script's `@name`, then lists every site the
+    script names, uncapped by the row's icon limit.
+  - Globes collapse too: sites that all came up without an icon fold
+    into one globe, with the same multi-line tooltip.
+  - The globe then moves after the real favicons — unless it is the
+    first site's, which keeps its place as the primary site.
+  - Identity is the resolved bytes. Two hosts serving the same picture
+    in different files (another size, another encoding) do not merge.
+- Only the resolved bytes can tell — the hosts differ — so this
+  happens after the fetches, not at first paint. `renderSiteIconInto`
+  resolves with the final icon count for callers that care.
+
+### Layout
+
+- **Collections table**: icons sit side by side with a 2px gap. The
+  slot is a fixed width per table — wide enough for the widest row in
+  that collection — so all names in one collection start at the same
+  x position. `collections.ts` sets `--icon-cols` on the `<table>`
+  (`fitIconColumns`) and the stylesheet derives the slot width and the
+  name cell's hanging indent from it.
+  - Fitted from the slots on screen: first from the header-derived
+    estimates (every site starts as a globe), then again once the
+    rebuilt slots' favicons have settled and identical ones collapsed
+    — one shift per pass, not one per row.
+  - Every live sync (a refresh that changed `@match`, a script that
+    arrived or left) runs the same fit, so the column narrows as well
+    as widens.
+- **Viewer heading**: same, but the slot grows with the count
+  (nothing to align against).
+
+### Per-pattern icons in the viewer
+
+- The viewer's `Match` / `Include` / `Exclude` rows lead every pattern
+  with one icon (`renderPatternIconInto`): that pattern's site favicon
+  via the same discovery + cache, or the globe when it names no site.
+- No de-dup or collapse here — the row lists patterns, so each gets
+  its own icon even when two share a site.
+- Cost: opening the viewer probes one page per pattern (cache rows
+  under `pathIcon:` / `siteIcon:` as usual), including the sites an
+  `@exclude` names. A deliberate choice — the row is there to show
+  which sites those are.
+
 ## How an origin and link URL are picked
 
 Pure transforms over a `@match` pattern; live in
@@ -68,9 +140,10 @@ Pure transforms over a `@match` pattern; live in
 consumed by the userscript-viewer linkifier for
 `@match`/`@exclude`/`@include` rows — see
 [script-viewer.md](script-viewer.md#link-rendering). The icon module
-picks the first `@match` whose pattern yields a usable origin via
-`representativeMatch`; it then uses the same `linkUrl` for both
-HTML icon discovery and the favicon click-through. The viewer's
+takes the `@match` patterns that yield a usable origin via
+`representativeMatches`, one per distinct site, and uses each site's
+`linkUrl` for both HTML icon discovery and the favicon click-through.
+The viewer's
 [same-directory fallback](script-viewer.md#same-directory-fallback)
 for site-less patterns is not used here — it points at a page beside
 the script, which is not a site to take an icon from.
@@ -102,9 +175,10 @@ A host slot that isn't a host we could navigate to yields no target.
 ## Fetch + cache
 
 - `ensureSiteIcon(origin, pageUrl)` is called from each row's render
-  path. `pageUrl` (e.g. `https://connect.garmin.com/app/home`) comes
-  from `representativeMatch` and points at a page closer to what the
-  script actually targets — many sites only ship the proper
+  path, once per site. `pageUrl` (e.g.
+  `https://connect.garmin.com/app/home`) is that site's
+  `representativeMatches` entry and points at a page closer to what
+  the script actually targets — many sites only ship the proper
   `<link rel="icon">` on authed/deep pages and serve a barebones SSO
   stub at `/`.
 
@@ -222,21 +296,26 @@ just trigger a fresh fetch if the user re-adds the collection.
 
 ## Display
 
-- A 16×16 `<span class="site-icon">` slot sits before the name
-  link in each row. The viewer page mirrors the same slot inside its
-  `<h1>`.
+- A `<span class="site-icon">` slot of 16×16 icons sits before the
+  name link in each row. The viewer page mirrors the same slot inside
+  its `<h1>`. Widths are in [Layout](#layout) above.
 - `renderSiteIconInto` paints the slot synchronously:
-  - When the script has a representative origin, the slot contains an `<a class="site-icon-inner" target="_blank">` pointing at `linkUrl`.
-  - Otherwise it contains an inert `<span class="site-icon-inner">` — file:// scripts, `<all_urls>`, host-of-`*`, etc.
-- The inner element always starts with a muted globe placeholder so
-  users see *something* immediately and rows missing an origin still
-  show a consistent placeholder.
+  - One `<a class="site-icon-inner" target="_blank">` per distinct
+    site, pointing at that site's `linkUrl`.
+  - A script that declares an `@icon` gets a single `<a>` (first
+    site's link) painted with that icon.
+  - A script with no usable site gets one inert
+    `<span class="site-icon-inner">` — file:// scripts, `<all_urls>`,
+    host-of-`*`, etc.
+- Every inner element starts with a muted globe placeholder so users
+  see *something* immediately and rows missing an origin still show a
+  consistent placeholder.
 - The async swap picks its collection by header priority: if the script
   declares an `@icon`, `ensureIconForUrl` runs; otherwise
-  `ensureSiteIcon` runs the origin-discovery pipeline. The resolved
-  icon is wrapped in an `<img>` that replaces the globe inside
-  the inner element. No `isConnected` guard — orphan paints from
-  re-renders are cheap and unobservable.
+  `ensureSiteIcon` runs the origin-discovery pipeline once per icon.
+  The resolved icon is wrapped in an `<img>` that replaces the globe
+  inside its inner element. No `isConnected` guard — orphan paints
+  from re-renders are cheap and unobservable.
 
 ### Keeping the rendered page small
 

@@ -16,6 +16,7 @@ import {
   isCacheFresh,
   parseIconLinks,
   pickBestIconCandidate,
+  sitesTooltip,
   maxDeclaredSize,
   usableCacheHit,
 } from '../../dist/site-icon.js';
@@ -340,4 +341,17 @@ test('dataUrlToBlob: returns null (never throws) on malformed base64', () => {
 
 test('dataUrlToBlob: returns null for a data: URL with no comma', () => {
   assert.equal(dataUrlToBlob('data:image/png;base64'), null);
+});
+
+// ---------- sitesTooltip ----------
+
+test('sitesTooltip: one URL per line up to the cap, then a count', () => {
+  assert.equal(sitesTooltip(['https://a/', 'https://b/']), 'https://a/\nhttps://b/');
+  const many = Array.from({ length: 13 }, (_, i) => `https://s${i}.example/`);
+  const lines = sitesTooltip(many).split('\n');
+  assert.equal(lines.length, 11);
+  assert.equal(lines[9], 'https://s9.example/');
+  assert.equal(lines[10], '(and 3 more)');
+  // Exactly at the cap: no count line.
+  assert.equal(sitesTooltip(many.slice(0, 10)).split('\n').length, 10);
 });

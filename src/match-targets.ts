@@ -4,9 +4,10 @@
 // purposes — favicon HTML discovery and open-in-new-tab click).
 //
 // Used by:
-//   - site-icon.ts — picks `representativeMatch(matching)` to drive
-//     favicon discovery (origin caching, page URL for HTML probe,
-//     click target).
+//   - site-icon.ts — takes `representativeMatches(matching)` (the
+//     first few distinct sites) to drive favicon discovery (origin
+//     caching, page URL for HTML probe, click target) — one icon per
+//     site.
 //   - script-details.ts / code-links.ts — call `matchTargetInfo(pattern)`
 //     per-pattern when linkifying `@match`/`@exclude`/`@include` values,
 //     falling back to `sameDirLinkUrl` for patterns that name no site.
@@ -121,11 +122,43 @@ export function representativeOrigin(matching: {
 export function representativeMatch(matching: {
   matches: string[];
 }): MatchTarget | null {
+  return representativeMatches(matching, 1)[0] ?? null;
+}
+
+// How many distinct sites a script's icon slot shows by default — the
+// collections-table limit, where the slot sits in a column beside the
+// name. The viewer heading has room for more and passes its own.
+export const MAX_SITE_ICONS = 3;
+
+// The first `limit` DISTINCT sites named by `matching.matches`, in
+// header order. Two patterns are the same site when their hosts match
+// after dropping a leading `www.`; the scheme is ignored, so
+// `http://www.example.com/*` and `https://example.com/*` yield one
+// entry (the first seen). Ports still distinguish — `localhost:3000`
+// and `localhost:8080` are different servers with different icons.
+export function representativeMatches(
+  matching: { matches: string[] },
+  limit: number = MAX_SITE_ICONS,
+): MatchTarget[] {
+  const out: MatchTarget[] = [];
+  const seen = new Set<string>();
   for (const m of matching.matches) {
+    if (out.length >= limit) break;
     const got = matchTargetInfo(m);
-    if (got) return got;
+    if (!got) continue;
+    const key = siteKey(got.origin);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(got);
   }
-  return null;
+  return out;
+}
+
+// Identity of a site for the purpose of "one icon per site": the
+// host[:port] with a leading `www.` removed and the scheme dropped.
+function siteKey(origin: string): string {
+  const host = origin.slice(origin.indexOf('://') + 3).toLowerCase();
+  return host.startsWith('www.') ? host.slice(4) : host;
 }
 
 // Per-pattern variant of `representativeMatch`. The linkifier calls

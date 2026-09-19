@@ -329,7 +329,7 @@ Both name the script the same way, pivoted for where they're read.
      - `Network access` (`@connect`) — directly under the match
        targets, because it's the same question asked outward: those
        rows say which pages the script reads, this one says where it
-       may send what it read. Monospace (hostnames, not prose) and
+       may send what it read. Same face as the rows around it, and
        deliberately unlinked — a `@connect` value is a matching rule
        (`self`, `*`, `*.example.com`), not an address.
    - `Local overrides` — every `@require` / `@resource` whose body was read
@@ -1084,6 +1084,12 @@ so the body header and the details panel agree.
   written as match patterns in practice and a click target is more
   useful than plain text. A pattern that names no site gets a second
   chance via the [same-directory fallback](#same-directory-fallback).
+  - Each pattern is led by its site's favicon (`renderPatternIconInto`
+    in [site-icons.md](site-icons.md)), linked to the same URL as the
+    text. A pattern with no site keeps the globe — linked when the
+    same-directory fallback applies, inert otherwise.
+  - Always a bulleted list, even for a single pattern, so these rows
+    read alike.
 - `Location` — anchor wrapping the path text. Href is the resolved
   location, except for `file://` scripts where it's `script.fileUrl`
   (the bare fs path isn't navigable). Display text stays that bare fs
