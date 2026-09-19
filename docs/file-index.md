@@ -214,7 +214,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, web-page auto-continue, View raw source, option off |
 | `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |
 | `tests/e2e/refresh-triggers.spec.ts` | The collections page's `?refresh_local` / `?refresh_file=<path>` triggers, incl. the no-match and bad-shape messages |
-| `tests/e2e/refresh-error.spec.ts` | A refresh that reads fine but can't be saved: the recorded reason, untouched scripts, sibling collections, and the page's message + banner |
+| `tests/e2e/refresh-error.spec.ts` | A refresh that reads fine but can't be saved: the recorded reason, untouched scripts, the rolled-back install, and the page's message + banner |
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, a web page reported rather than followed, `@require` tabs |

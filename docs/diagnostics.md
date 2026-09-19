@@ -213,6 +213,14 @@ verdict about a script's *fate* rather than its content.
 - **One string, one place**: `describeRefreshError` in
   `src/refresh-error.ts`, listed under
   [One string, one place](#one-string-one-place).
+- **The reason is ours, not Chrome's.** An out-of-quota write rejects
+  with `Resource::kQuotaBytes quota exceeded` (the exact text varies by
+  Chrome version), which is internal vocabulary.
+  - `writeLocal` in `script-store.ts` replaces it with
+    `storageFullMessage()` before it reaches any surface — see
+    [storage.md](storage.md#write-failure-report-dont-lose-it).
+  - Its heading matches the page banner's, so the two read as one
+    condition rather than two.
 
 Where it shows up:
 
@@ -369,6 +377,7 @@ constant, so the copies can't drift:
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
+| `storageFullMessage` (`script-store.ts`) | the out-of-storage reason, wherever a refused `chrome.storage.local` write is reported |
 | `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |
 | `markupResponseMessage` (`markup-response.ts`) | "we got a web page, not JavaScript", from the script fetchers and the `@require` gate alike |
 

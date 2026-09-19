@@ -1395,7 +1395,7 @@ async function runOwnParseChecks(
       toSet[scriptKey(id)] = merged;
       if (merged.status !== 'ok') flipped.push(merged);
     }
-    if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
+    if (Object.keys(toSet).length > 0) await writeLocal(toSet);
   });
   // Say so in the Log. This lives here rather than at a caller because
   // whichever pass wins the write is the one that knows — the deferred
@@ -1912,7 +1912,7 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
   // Write the new rows before dropping the old ones: an interrupted
   // migration then leaves both spellings present, and the re-run is a
   // no-op over the rows it already moved.
-  await chrome.storage.local.set(toSet);
+  await writeLocal(toSet);
   await chrome.storage.local.remove(toRemove);
   console.log(
     `[SourceMonkey] migrated ${toRemove.length - 1} collections and `
@@ -2140,7 +2140,7 @@ export async function createCollection(spec: NewCollectionSpec): Promise<AddColl
         displayName: name,
       };
       if (spec.localFiles === false) seed.localFiles = false;
-      await chrome.storage.local.set({
+      await writeLocal({
         [COLLECTIONS_INDEX_KEY]: [...collections.map((s) => s.id), id],
         [collectionKey(id)]: seed,
       });
@@ -2212,7 +2212,7 @@ async function createLocationCollection(
     };
     if (opts.localFiles === false) seed.localFiles = false;
     const nextIndex = [...collections.map((s) => s.id), id];
-    await chrome.storage.local.set({
+    await writeLocal({
       [COLLECTIONS_INDEX_KEY]: nextIndex,
       [collectionKey(id)]: seed,
     });
@@ -2250,7 +2250,7 @@ export async function isFirstRunComplete(): Promise<boolean> {
 // after the user deletes the seeded collections. Also called by the
 // test-surface reset so a cleared store isn't re-seeded.
 export async function markFirstRunComplete(): Promise<void> {
-  await chrome.storage.local.set({ [FIRST_RUN_DONE_KEY]: true });
+  await writeLocal({ [FIRST_RUN_DONE_KEY]: true });
 }
 
 // Where a single script should be installed: a specific container by
@@ -2373,19 +2373,83 @@ async function addScriptToContainer(
     if (isNew) {
       toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((s) => s.id), containerId];
     }
-    await chrome.storage.local.set(toSet);
+    await writeLocal(toSet);
     return { isNew, containerId, scriptId, nextContainer };
   });
   if (!seeded) return null;
   const { isNew, containerId, scriptId, nextContainer } = seeded;
 
-  const refreshed = await refreshCollection(containerId);
+  let refreshed: Awaited<ReturnType<typeof refreshCollection>>;
+  try {
+    refreshed = await refreshCollection(containerId);
+  } catch (err) {
+    // The seed above is a placeholder with no content and no header —
+    // it only becomes a script once this refresh writes the fetched
+    // body. When that write is refused (an exhausted storage quota is
+    // the realistic case — though anything the refresh throws lands
+    // here), leaving the seed behind installs a row that
+    // matches nothing, runs nothing, and shows "Not loaded yet" until
+    // the user notices and refreshes it by hand. Nothing else about the
+    // install has happened yet, so take the seed back out and let the
+    // install fail as the failure it is. A fetch that fails is
+    // different: the refresh then WRITES the row with its error, and
+    // that row is the honest record of an install that landed.
+    await unseedScript(scriptId, containerId, isNew);
+    throw err;
+  }
   if (refreshed) {
     await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
   }
   const finalCollection = refreshed?.collection ?? nextContainer;
   if (isNew) return { kind: 'newCollection', collection: finalCollection };
   return { kind: 'existingContainer', collection: finalCollection, scriptId };
+}
+
+// Undo `addScriptToContainer`'s seed after its refresh could not be
+// saved: drop the placeholder row and its slot in the container, and
+// the container itself (plus its index entry) when this install created
+// it. Re-read under the lock rather than replayed from the seed: another
+// tab can have installed into, or removed, the same container since.
+//
+// Every write here makes storage smaller — a `remove`, or a `set` of a
+// row with one id fewer — which Chrome accepts on a full quota, so this
+// works in exactly the state that made it necessary. Best effort all the
+// same: the caller is already reporting a failure, and a rollback that
+// can't land must not replace that report with its own.
+async function unseedScript(
+  scriptId: string,
+  containerId: string,
+  createdContainer: boolean,
+): Promise<void> {
+  try {
+    await mutate(async () => {
+      const container = await getRaw<StoredCollection>(collectionKey(containerId));
+      const remaining = container?.scriptIds.filter((id) => id !== scriptId) ?? [];
+      const dropContainer = createdContainer && remaining.length === 0;
+      const toRemove = [scriptKey(scriptId)];
+      const toSet: Record<string, unknown> = {};
+      if (container) {
+        if (dropContainer) {
+          toRemove.push(collectionKey(containerId));
+          const index = await readCollectionIndex();
+          toSet[COLLECTIONS_INDEX_KEY] = index.filter((id) => id !== containerId);
+        } else if (remaining.length !== container.scriptIds.length) {
+          toSet[collectionKey(containerId)] = { ...container, scriptIds: remaining };
+        }
+      }
+      // The `set` first: it is the only step Chrome can refuse, so if
+      // it does, nothing has changed. A `remove` can't be refused, so
+      // the pair only splits if the worker dies between them — leaving
+      // an unlisted row, which `reconcileScriptMembership` re-lists.
+      if (Object.keys(toSet).length > 0) await writeLocal(toSet);
+      await chrome.storage.local.remove(toRemove);
+      if (dropContainer) await setRefreshError(containerId, null);
+    });
+  } catch (err) {
+    // Not debug-gated: the state this leaves (a "Not loaded yet" row
+    // nothing will explain) is otherwise invisible.
+    console.info(`[SourceMonkey] could not undo a failed install: ${describeError(err)}`);
+  }
 }
 
 export const SCRIPT_GONE = 'This script no longer exists';
@@ -2464,7 +2528,7 @@ export async function moveScript(
       [scriptKey(scriptId)]: nextScript,
     };
     if (!dest) toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((c) => c.id), destId];
-    await chrome.storage.local.set(toSet);
+    await writeLocal(toSet);
     return {
       script: nextScript,
       localFilesChanged: collectionUsesLocalFiles(source) !== collectionUsesLocalFiles(nextDest),
@@ -2524,7 +2588,7 @@ export async function backfillCollectionDisplayNames(): Promise<void> {
     toSet[collectionKey(s.id)] = next;
   }
   if (Object.keys(toSet).length > 0) {
-    await chrome.storage.local.set(toSet);
+    await writeLocal(toSet);
   }
 }
 
@@ -2556,7 +2620,7 @@ export async function backfillUsesUnsafeWindow(): Promise<number> {
     toSet[scriptKey(script.id)] = next;
   }
   const changed = Object.keys(toSet).length;
-  if (changed > 0) await chrome.storage.local.set(toSet);
+  if (changed > 0) await writeLocal(toSet);
   return changed;
 }
 
@@ -2578,7 +2642,7 @@ export async function moveCollection(
     if (swapWith < 0 || swapWith >= ids.length) return;
     const next = ids.slice();
     [next[idx], next[swapWith]] = [next[swapWith]!, next[idx]!];
-    await chrome.storage.local.set({ [COLLECTIONS_INDEX_KEY]: next });
+    await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
   });
 }
 
@@ -2588,7 +2652,7 @@ export async function removeCollection(id: string): Promise<void> {
     const ids = await readCollectionIndex();
     const next = ids.filter((sid) => sid !== id);
     const removeKeys = [collectionKey(id), ...(collection?.scriptIds ?? []).map(scriptKey)];
-    await chrome.storage.local.set({ [COLLECTIONS_INDEX_KEY]: next });
+    await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
     await chrome.storage.local.remove(removeKeys);
     return next;
   });
@@ -2616,7 +2680,7 @@ export async function removeScript(id: string): Promise<void> {
         toSet[collectionKey(collection.id)] = { ...collection, scriptIds: nextIds };
       }
     }
-    if (Object.keys(toSet).length > 0) await chrome.storage.local.set(toSet);
+    if (Object.keys(toSet).length > 0) await writeLocal(toSet);
     await chrome.storage.local.remove(scriptKey(id));
   });
   // After the write, not inside it: the local write is the one that has
@@ -2770,7 +2834,7 @@ export async function reconcileScriptMembership(
       moved += add.length + drop.size;
     }
     if (moved === 0) return 0;
-    await chrome.storage.local.set(toSet);
+    await writeLocal(toSet);
     console.log(
       `[SourceMonkey] membership: reconciled ${moved} script listing(s) across `
       + `${Object.keys(toSet).length} collection(s)`,
@@ -2868,7 +2932,7 @@ export async function refreshCollection(
         lastRefreshedAt: now,
         scanError,
       };
-      await chrome.storage.local.set({ [collectionKey(id)]: nextCollection });
+      await writeLocal({ [collectionKey(id)]: nextCollection });
       return { collection: nextCollection, scripts: existingScripts };
     });
   }
@@ -3027,8 +3091,10 @@ export async function refreshCollection(
       // Placed where a real quota rejection lands — after everything was
       // fetched and reconciled, with nothing written — so the test
       // exercises the same state the production failure produces.
-      if (collectionWriteFailure !== null) throw new Error(collectionWriteFailure);
-      await chrome.storage.local.set(toSet);
+      if (collectionWriteFailure !== null) {
+        throw translateStorageError(new Error(collectionWriteFailure));
+      }
+      await writeLocal(toSet);
       if (droppedIds.length > 0) {
         await chrome.storage.local.remove(droppedIds.map(scriptKey));
       }
@@ -3323,7 +3389,7 @@ export async function refreshScript(
     // There's no collection row here to carry a "we checked" timestamp,
     // and that's fine: nothing reads a per-script one.
     if (!sameStoredValue(merged, cur)) {
-      await chrome.storage.local.set({ [scriptKey(scriptId)]: merged });
+      await writeLocal({ [scriptKey(scriptId)]: merged });
     }
     return merged;
   });
@@ -3586,6 +3652,48 @@ export function describeError(err: unknown): string {
   return String(err);
 }
 
+// Chrome's own wording for a `chrome.storage.local` write that would
+// exceed the extension's quota. The text has changed across versions
+// (`QUOTA_BYTES quota exceeded`, `Resource::kQuotaBytes quota
+// exceeded`), so match the constant part.
+const CHROME_QUOTA_REJECTION = /quota exceeded/i;
+
+// The one message for a write that didn't fit. Names the cause and the
+// fix, and takes the place of the internal-vocabulary wording Chrome
+// gives — a user reading `Resource::kQuotaBytes quota exceeded` in a
+// Log entry has nothing to act on. Two sentences, so both are
+// punctuated (docs/diagnostics.md#wording).
+export function storageFullMessage(): string {
+  const quota = chrome.storage.local.QUOTA_BYTES;
+  const limit = typeof quota === 'number' && quota > 0
+    ? ` (Chrome allows ${Math.round(quota / (1024 * 1024))} MB)`
+    : '';
+  // "Out of storage space" is also the collections banner's heading
+  // (`renderStorageBanner`), so the two read as one condition.
+  return `SourceMonkey is out of storage space${limit}. `
+    + 'Remove a script or collection you no longer need to free space.';
+}
+
+// Every `chrome.storage.local.set` in this module goes through here, so
+// an out-of-quota rejection reads the same wherever it surfaces — the
+// install callout, a Log entry, the collections banner. Any other
+// rejection is passed through as Chrome worded it.
+async function writeLocal(items: Record<string, unknown>): Promise<void> {
+  try {
+    await chrome.storage.local.set(items);
+  } catch (err) {
+    throw translateStorageError(err);
+  }
+}
+
+// Chrome's error rides along as `cause` for DevTools; `describeError`
+// reads only `.message`, so it never reaches a user-facing string.
+function translateStorageError(err: unknown): unknown {
+  return CHROME_QUOTA_REJECTION.test(describeError(err))
+    ? new Error(storageFullMessage(), { cause: err })
+    : err;
+}
+
 // Flip a collection's enabled flag without touching anything else. The
 // match-index listens for `collection:<id>` changes and re-evaluates
 // the effective enabled state of every script under this collection.
@@ -3597,7 +3705,7 @@ export async function setCollectionEnabled(
     const collection = await getRaw<StoredCollection>(collectionKey(id));
     if (!collection) return null;
     const next: StoredCollection = { ...collection, enabled };
-    await chrome.storage.local.set({ [collectionKey(id)]: next });
+    await writeLocal({ [collectionKey(id)]: next });
     return next;
   });
 }
@@ -3639,7 +3747,7 @@ export async function setCollectionOptions(
       next.displayName = name || inferred;
     }
     if (options.localFiles !== undefined) next.localFiles = options.localFiles;
-    await chrome.storage.local.set({ [collectionKey(id)]: next });
+    await writeLocal({ [collectionKey(id)]: next });
     return next;
   });
 }
@@ -3678,7 +3786,7 @@ export async function setVersionProbes(
     const next: StoredScript = { ...script };
     if (probes.length > 0) next.versionProbes = probes;
     else delete next.versionProbes;
-    await chrome.storage.local.set({ [scriptKey(id)]: next });
+    await writeLocal({ [scriptKey(id)]: next });
     return next;
   });
 }
@@ -3691,7 +3799,7 @@ export async function setScriptEnabled(
     const script = await getRaw<StoredScript>(scriptKey(id));
     if (!script) return null;
     const next: StoredScript = { ...script, enabled };
-    await chrome.storage.local.set({ [scriptKey(id)]: next });
+    await writeLocal({ [scriptKey(id)]: next });
     return next;
   });
 }
@@ -3716,6 +3824,6 @@ export async function setScriptsEnabled(
       toSet[scriptKey(u.id)] = { ...script, enabled: u.enabled };
     }
     if (Object.keys(toSet).length === 0) return;
-    await chrome.storage.local.set(toSet);
+    await writeLocal(toSet);
   });
 }

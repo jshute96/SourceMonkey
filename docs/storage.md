@@ -638,6 +638,46 @@ The write in step 5 is the last thing that can fail, and the one failure
   `refreshAllCollections` records each failure and keeps going rather
   than rejecting at the first, because an exhausted quota fails *every*
   collection — a first-failure abort would be the normal case.
+- **Chrome's wording is replaced.** Every `chrome.storage.local.set` in
+  `script-store.ts` goes through `writeLocal`, which turns Chrome's
+  `... quota exceeded` rejection into `storageFullMessage()` — the
+  cause and the fix, in one string, wherever the reason lands (Log
+  entry, install callout, collection section). Other rejections pass
+  through as worded.
+
+### Write failure during an install: take the seed back out
+
+`installScript` commits a placeholder row (`Not loaded yet`, no
+content, no header) before the refresh that loads it — see
+[Container collections](#container-collections).
+
+- **If that refresh throws**, the placeholder is removed again:
+  the row, its slot in the container's `scriptIds`, and — when this
+  install created the container — the container and its index entry.
+  The install then fails with the refresh's reason.
+- **Why**: a placeholder that never loaded matches nothing and runs
+  nothing; left in place it is a broken row the user has to notice and
+  refresh by hand. Nothing else about the install has happened yet, so
+  there is nothing to preserve.
+- **A fetch that fails is different**: the refresh then *writes* the
+  row with its error, and that row is the honest record of an install
+  that landed. Only a refresh that could not save at all is rolled back.
+- **Into an existing container**, the siblings and the container stay;
+  only the seed goes. The container keeps the refresh-error record its
+  refresh left (its siblings were re-read and not saved either), so its
+  section shows the message and a Refresh button as after any failed
+  refresh.
+- **Races across contexts are accepted**: the refresh runs outside the
+  lock, so another tab can dedup-reject its own install against a seed
+  that then vanishes, or move the seed (leaving a stale id in the
+  destination's `scriptIds`, which reads filter out). Both need a real
+  quota failure and a same-moment action elsewhere.
+- **Unlike `addCollection`**, whose seeded collection row stays with a
+  refresh-error message and a Refresh button (above): an empty
+  collection is a valid state, a content-less script row is not.
+- **Works on a full quota**: every write in the rollback shrinks
+  storage, which Chrome accepts. The `set` (the only refusable step)
+  goes first, so a refused rollback changes nothing.
 
 ### Scan failure: leave scripts untouched
 
