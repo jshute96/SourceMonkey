@@ -1683,15 +1683,13 @@ function makeCollection(over = {}) {
   };
 }
 
-test('collectActiveSpecs: invalid scripts never run; missing scripts run only when explicitly enabled', async () => {
+test('collectActiveSpecs: invalid scripts never run', async () => {
   const collections = new Map([['collection-1', makeCollection()]]);
   const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1', status: 'invalid', errorMessage: 'x' }),
-    makeScript({ id: 's2', status: 'missing', enabled: false }),
-    makeScript({ id: 's3', status: 'missing', enabled: true }),
-    makeScript({ id: 's4' }),
+    makeScript({ id: 's2' }),
   ], collections);
-  assert.deepEqual(specs.map((s) => s.id).sort(), ['s3', 's4']);
+  assert.deepEqual(specs.map((s) => s.id), ['s2']);
 });
 
 test('collectActiveSpecs: skips disabled scripts', async () => {

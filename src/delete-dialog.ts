@@ -26,7 +26,7 @@ import {
 } from './script-store.js';
 import { dlog } from './debug-log.js';
 import { makeCopyButton } from './copy-button.js';
-import { fileExists } from './directories.js';
+import { missingFiles } from './missing-files.js';
 import { isFileSchemeAccessAllowed } from './file-access.js';
 
 export interface DeleteDialogRequest {
@@ -207,8 +207,8 @@ function runDialog(
   // script file that goes turns the blocking message into the offer
   // to remove the entry, without closing and reopening the dialog.
   //
-  // Every file in the plan is probed each tick (an open without a
-  // read, `fileExists`), for the whole time the dialog is up. Not
+  // Every file in the plan is probed each tick (one directory listing
+  // per folder, `missingFiles`), for the whole time the dialog is up. Not
   // just the ones the user was told to delete: a file with a record
   // can be deleted by hand too, and Chrome's `exists` flag is only as
   // fresh as its last check — attempting it would fail after the
@@ -452,17 +452,17 @@ async function openPlan(script: StoredScript): Promise<{
 // from the rows' status — a row says `ok` until the collection's next
 // refresh, and this dialog is opened before that happens, typically
 // right after the user deleted a file by hand because it said to. The
-// probe opens each file without reading it, so polling is cheap.
+// probe is one directory listing per folder involved, so polling is
+// cheap; it never reports a file gone unless its folder listed and
+// the name wasn't there (`missingFiles`).
 //
 // With file access off, nothing is ever reported gone (see
-// `DeletePlan.gone`).
+// `DeletePlan.gone`). `missingFiles` already answers that way — the
+// listing fails — but the guard keeps the promise the dialog's
+// wording makes explicit rather than incidental.
 async function goneFiles(paths: readonly string[], fileAccess: boolean): Promise<Set<string>> {
-  const gone = new Set<string>();
-  if (!fileAccess) return gone;
-  await Promise.all(paths.map(async (path) => {
-    if (!(await fileExists(path))) gone.add(path);
-  }));
-  return gone;
+  if (!fileAccess) return new Set();
+  return missingFiles(paths);
 }
 
 function sameSet(a: Set<string>, b: Set<string>): boolean {

@@ -41,19 +41,11 @@ test('formatBytes: megabytes >= 1 MB, one decimal', () => {
 
 // ---------- formatScriptSize ----------
 
-test('formatScriptSize: missing status shows the cached content size', () => {
-  // The file is gone but we still hold its last-read bytes; reflect
-  // that in the size column. The Status cell (separately) shows MISSING.
-  assert.equal(formatScriptSize({ status: 'missing', size: 100 }), '100 B');
-});
-
 test('formatScriptSize: null size → "—" (unknown)', () => {
   // Only buildInitialErrorEntry produces size=null — the first fetch
   // failed with no prior content to fall back on. Render an em dash
-  // rather than "0 B" (wrong) or "MISSING" (conflates with the missing
-  // status).
+  // rather than "0 B" (wrong).
   assert.equal(formatScriptSize({ status: 'invalid', size: null }), '—');
-  assert.equal(formatScriptSize({ status: 'missing', size: null }), '—');
 });
 
 test('formatScriptSize: ok status renders the byte count', () => {
@@ -77,13 +69,12 @@ test('formatScriptSize: error with known size still renders the bytes', () => {
 // ---------- formatScriptStatusLabel ----------
 
 test('formatScriptStatusLabel: distinct labels per display status', () => {
-  // OK is the calm state; INVALID and MISSING are the persisted load
-  // failures; REFRESH FAILED means the script still runs from its cached
+  // OK is the calm state; INVALID is the persisted load failure;
+  // REFRESH FAILED means the script still runs from its cached
   // copy but the last update attempt failed; WARNING and ERROR come from
   // the per-script Log carrying entries at that level.
   assert.equal(formatScriptStatusLabel('ok'), 'OK');
   assert.equal(formatScriptStatusLabel('invalid'), 'INVALID');
-  assert.equal(formatScriptStatusLabel('missing'), 'MISSING');
   assert.equal(formatScriptStatusLabel('refresh-failed'), 'REFRESH FAILED');
   // OUTDATED: the script runs and is current with its own collection, but a
   // URL we deliberately don't update from declares a newer @version.
@@ -101,12 +92,6 @@ test('effectiveScriptStatus: invalid always wins', () => {
   assert.equal(effectiveScriptStatus({ status: 'invalid' }, 'info'), 'invalid');
   assert.equal(effectiveScriptStatus({ status: 'invalid' }, 'warning'), 'invalid');
   assert.equal(effectiveScriptStatus({ status: 'invalid' }, 'error'), 'invalid');
-});
-
-test('effectiveScriptStatus: missing wins over log-derived levels', () => {
-  assert.equal(effectiveScriptStatus({ status: 'missing' }, undefined), 'missing');
-  assert.equal(effectiveScriptStatus({ status: 'missing' }, 'warning'), 'missing');
-  assert.equal(effectiveScriptStatus({ status: 'missing' }, 'error'), 'missing');
 });
 
 test('effectiveScriptStatus: ok script reflects highest log level', () => {
@@ -131,14 +116,10 @@ test('effectiveScriptStatus: refreshError surfaces as refresh-failed', () => {
     effectiveScriptStatus({ status: 'ok', refreshError: 'permission denied' }, 'error'),
     'refresh-failed',
   );
-  // invalid / missing still win — the script genuinely can't run.
+  // invalid still wins — the script genuinely can't run.
   assert.equal(
     effectiveScriptStatus({ status: 'invalid', refreshError: 'x' }, undefined),
     'invalid',
-  );
-  assert.equal(
-    effectiveScriptStatus({ status: 'missing', refreshError: 'x' }, undefined),
-    'missing',
   );
 });
 
@@ -159,8 +140,7 @@ test('effectiveScriptStatus: outdated ranks under refresh-failed, over log level
 
 test('effectiveScriptStatus: a rejected registration ranks just under invalid', () => {
   // REJECTED means the script loaded fine but Chrome refused to
-  // register it, so it never runs — a can't-run state like INVALID,
-  // and above MISSING (which still injects its cached copy).
+  // register it, so it never runs — a can't-run state like INVALID.
   assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined, false, true), 'rejected');
   assert.equal(effectiveScriptStatus({ status: 'ok' }, 'error', false, true), 'rejected');
   assert.equal(effectiveScriptStatus({ status: 'ok' }, undefined, true, true), 'rejected');
@@ -168,7 +148,6 @@ test('effectiveScriptStatus: a rejected registration ranks just under invalid', 
     effectiveScriptStatus({ status: 'ok', refreshError: 'x' }, undefined, false, true),
     'rejected',
   );
-  assert.equal(effectiveScriptStatus({ status: 'missing' }, undefined, false, true), 'rejected');
   // INVALID still wins. The two can't co-occur in practice — an invalid
   // script is never offered to Chrome — but the order is defined.
   assert.equal(effectiveScriptStatus({ status: 'invalid' }, undefined, false, true), 'invalid');

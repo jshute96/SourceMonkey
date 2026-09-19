@@ -275,8 +275,8 @@ this race, because the pass before registration has it too:
   when `parseCheckKey` no longer matches — a newer refresh's content is
   not what we judged.
 - It also refuses when the stored row is **no longer `ok`**. The
-  fingerprint doesn't catch that on its own: `applyMissing` preserves
-  the content it is made of, so a verdict landing after a vanished file
+  fingerprint doesn't catch that on its own: `applyFetchError` preserves
+  the content it is made of, so a verdict landing after a failed read
   would otherwise resurrect the row as `ok`.
 - **A refused verdict still hands the caller the stored row**, rather
   than nothing. A caller that gets nothing back keeps the copy it read

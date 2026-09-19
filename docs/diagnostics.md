@@ -111,9 +111,9 @@ one fact in two fields, and a location left behind by a previous
 failure would point the reader at a line that has nothing to do with
 what the row now says.
 
-- `applyFetchError` and `applyMissing` route through it too, so a
-  content-derived location can't survive into a message about a file
-  that wouldn't load.
+- `applyFetchError` routes through it too, so a content-derived
+  location can't survive into a message about a file that wouldn't
+  load.
 - `validLocation` checks the shape on the way in, at the store and at
   the log. These rows are persisted and later become click targets; a
   malformed line number is not something to discover at render time.
@@ -311,8 +311,7 @@ verdicts about a script's content:
 
 - **Log rows about our own machinery** (`script-updater.ts`,
   `background.ts`, `injector.ts`) — `Could not check for updates`, not
-  `update check threw`; `This script was removed while it was being
-  refreshed`, not `row vanished`.
+  `update check threw`.
 - **Collection-level failures** — `This collection did not load`, not `scan
   failed`. "Scan" is the pipeline stage's name; the collections page never
   shows it.

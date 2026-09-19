@@ -525,16 +525,6 @@ test('emitScriptOutcomeLog: a changed failure reason does append', async () => {
   assert.deepEqual(log.map((e) => e.message), ['no metadata block', 'missing @name']);
 });
 
-test('emitScriptOutcomeLog: a vanished file logs at error level, on every check', async () => {
-  const gone = { ...OK_ROW, status: 'missing', enabled: false };
-  const log = await emitAll([[OK_ROW, gone], [gone, gone]]);
-  assert.equal(log.length, 2, 'the second check re-looked and it is still gone');
-  for (const entry of log) {
-    assert.equal(entry.level, 'error');
-    assert.equal(entry.message, 'Script file is missing');
-  }
-});
-
 test('emitScriptOutcomeLog: a refresh failure is a warning, on every check', async () => {
   // status stays 'ok': the cached copy is still injected, only the
   // update failed. The badge already reads REFRESH FAILED, which
@@ -579,11 +569,10 @@ test('emitScriptOutcomeLog: a broken row with no prior still logs', async () => 
   assert.equal(log[0].message, 'missing @name');
 });
 
-test('emitScriptOutcomeLog: a row that vanished mid-refresh is reported', async () => {
+test('emitScriptOutcomeLog: a row that vanished mid-refresh writes nothing', async () => {
+  // Its Log went with the row; an entry here would be an orphan.
   const log = await emitAll([[OK_ROW, null]]);
-  assert.equal(log.length, 1);
-  assert.equal(log[0].level, 'warning');
-  assert.equal(log[0].message, 'This script was removed while it was being refreshed');
+  assert.equal(log.length, 0);
 });
 
 test('emitScriptOutcomeLog: a cleared log gets its explanation back on the next check', async () => {

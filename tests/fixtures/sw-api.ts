@@ -211,7 +211,7 @@ export interface StoredScriptLike {
   // Where the script was fetched from — a `file://` URL for a
   // directory collection, the raw URL for the http kinds.
   fileUrl: string;
-  status: 'ok' | 'invalid' | 'missing';
+  status: 'ok' | 'invalid';
   errorMessage?: string;
   errorLocation?: DiagnosticLocationLike;
   refreshError?: string;
@@ -271,7 +271,7 @@ export interface DiagnosticLocationLike {
 }
 
 // `LoadState` from src/script-display.ts, same reasoning.
-export type LoadStateLike = 'ok' | 'invalid' | 'rejected' | 'missing' | 'refresh-failed' | 'outdated';
+export type LoadStateLike = 'ok' | 'invalid' | 'rejected' | 'refresh-failed' | 'outdated';
 
 // `ParseVerdict` from src/parse-check-protocol.ts, same reasoning.
 export interface ParseVerdictLike {

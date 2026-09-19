@@ -429,7 +429,7 @@ test.describe('deleting a local copy', () => {
     await page.close();
   });
 
-  test('a copy whose file has gone keeps only the plain trash can', async ({
+  test('a copy whose file has gone leaves on the next refresh', async ({
     extensionContext, extensionId, sm, downloadsDir,
   }) => {
     server.setRoute('/hello.user.js', scriptWith({ name: 'Hello' }));
@@ -452,17 +452,11 @@ test.describe('deleting a local copy', () => {
     await expect(section.locator('td.action-cell button.remove-script')).toHaveCount(1);
 
     // Deleting the file by hand, the way a user would when Chrome can no
-    // longer be asked to. The refresh leaves the row MISSING — an empty
-    // directory can't be told apart from an unreadable one, so the row
-    // is kept — and the row must not still offer to delete a file that
-    // has gone: the status cell's own trash can, which clears the
-    // record, is the whole answer now.
+    // longer be asked to. The directory mirrors the disk, so the next
+    // refresh drops the row — even though it was the only one.
     fs.rmSync(path.join(copiesDir, 'hello.user.js'));
     await sm.updateCollection(copies.id, 'manual');
-    await expect(section.locator('td.status-cell')).toContainText('MISSING');
-    await expect(section.locator('td.status-cell button.remove-script')).toHaveCount(1);
-    await expectGlyph(section.locator('td.status-cell button.remove-script'), 'record');
-    await expect(section.locator('td.action-cell button')).toHaveCount(0);
+    await expect(section.locator('tbody tr')).toHaveCount(0);
     await page.close();
   });
 

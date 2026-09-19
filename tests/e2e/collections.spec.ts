@@ -5,6 +5,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import fs from 'node:fs';
 
 test.describe('collections', () => {
   let scriptsDir: ScriptsDir;
@@ -191,10 +192,36 @@ test.describe('collections', () => {
     expect(await sm.getScriptLog(goingAway.id)).toHaveLength(0);
   });
 
-  test('emptying the directory keeps the rows as missing', async ({ sm }) => {
-    // An empty listing reads as "the folder moved or broke", not as
-    // "the user deleted everything", so the rows survive (disabled,
-    // content preserved) and recover if the files come back.
+  test('a single-script check drops a file the directory no longer lists', async ({ sm }) => {
+    // The per-script refresh (navigation, tab focus, the viewer's
+    // Refresh) lists the parent directory for size+mtime anyway, so a
+    // file that has gone is dropped there too — the same outcome as a
+    // collection refresh, rather than a "refresh failed" row that
+    // keeps running from its cached body.
+    for (const name of ['a.user.js', 'b.user.js']) {
+      scriptsDir.write({
+        relativePath: name,
+        meta: { name, match: ['https://example.com/*'] },
+        body: '',
+      });
+    }
+    const collection = await sm.addCollection(scriptsDir.path);
+    const rows = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+    const a = rows.find((s) => s.relativePath === 'a.user.js')!;
+
+    scriptsDir.remove('a.user.js');
+    await sm.updateScript(a.id, 'manual', 'force');
+    const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+    expect(after.map((s) => s.relativePath)).toEqual(['b.user.js']);
+    expect(await sm.getScriptLog(a.id)).toHaveLength(0);
+  });
+
+  test('emptying the directory drops the rows; losing the directory keeps them', async ({ sm }) => {
+    // A directory collection mirrors its directory: a successful scan
+    // that finds nothing drops every row, the same as an empty
+    // manifest. A directory that can't be listed at all is a scan
+    // failure, and a failed scan leaves every row alone — the two are
+    // told apart by whether Chrome returned a listing page.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: { name: 'A', match: ['https://example.com/*'] },
@@ -208,25 +235,27 @@ test.describe('collections', () => {
     const collection = await sm.addCollection(scriptsDir.path);
     expect((await sm.getCollectionWithScripts(collection!.id))!.scripts).toHaveLength(2);
 
+    // The directory itself goes away: Chrome answers with an error
+    // page, not a listing, so nothing is dropped.
+    const parked = `${scriptsDir.path}.parked`;
+    fs.renameSync(scriptsDir.path, parked);
+    try {
+      await sm.updateCollection(collection!.id, 'manual');
+      const lost = await sm.getCollectionWithScripts(collection!.id);
+      expect(lost!.scripts.map((s) => s.relativePath).sort()).toEqual(['a.user.js', 'b.user.js']);
+      expect(lost!.scripts.every((s) => s.status === 'ok')).toBe(true);
+      expect(lost!.collection.scanError).toBeTruthy();
+    } finally {
+      fs.renameSync(parked, scriptsDir.path);
+    }
+
+    // Back, and emptied: an empty listing is a real answer.
     scriptsDir.remove('a.user.js');
     scriptsDir.remove('b.user.js');
     await sm.updateCollection(collection!.id, 'manual');
-
     const after = await sm.getCollectionWithScripts(collection!.id);
-    expect(after!.scripts).toHaveLength(2);
-    expect(after!.scripts.every((s) => s.status === 'missing')).toBe(true);
-
-    // Put one back: the directory lists again, so it refetches and the
-    // one that is still absent is now known to be gone for good.
-    scriptsDir.write({
-      relativePath: 'a.user.js',
-      meta: { name: 'A', match: ['https://example.com/*'] },
-      body: '',
-    });
-    await sm.updateCollection(collection!.id, 'manual');
-    const back = await sm.getCollectionWithScripts(collection!.id);
-    expect(back!.scripts.map((s) => s.relativePath)).toEqual(['a.user.js']);
-    expect(back!.scripts[0].status).toBe('ok');
+    expect(after!.scripts).toHaveLength(0);
+    expect(after!.collection.scanError).toBeFalsy();
   });
 
   test('unreadable top-level directory preserves scripts and their enabled state', async ({ sm }) => {

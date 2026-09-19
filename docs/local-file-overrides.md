@@ -395,9 +395,17 @@ be silent, so several surfaces say so:
   and `@resource` only. The favicon slot is a 16×16 image with no room
   for a chip, and an icon served from the wrong place is a cosmetic
   surprise rather than a code-execution one.
-- **Log tab** — an `info` line (`… is loading from file://…`) when a
-  stand-in starts, stops, or changes on disk. Gated on `contentHash`, so an unchanged stand-in stays quiet
-  across the many opportunistic refreshes between edits.
+- **Log tab** — an `info` line when a stand-in starts, stops, or
+  changes on disk (`… is loading from file://…`, `… is no longer
+  loading from a local file; the remote version is loaded instead`).
+  Gated on
+  `contentHash`, so an unchanged stand-in stays quiet across the many
+  opportunistic refreshes between edits.
+- **A stand-in that has been deleted but not yet noticed** — the row
+  still names it until the next refresh. A `deleted` chip beside the
+  path in the `Local overrides` row says so, with the tooltip *This
+  file has been deleted. The next refresh will reload the remote
+  version.* See [missing-files.md](missing-files.md).
 
 The install preview does all of this too: the parse check resolves every
 declared file anyway, and a not-yet-published `@require` is exactly the
@@ -415,8 +423,9 @@ case that bites before install. Two caveats there:
 
 Log lines follow [diagnostics.md](diagnostics.md#wording):
 
-- `@require <ref> is loading from <file:// url>`
-- `@require <ref> is no longer loading from a local file`
+- `@require <ref> is loading from <file:// url>` (info)
+- `@require <ref> is no longer loading from a local file; the remote
+  version is loaded instead` (info)
 
 Same short form as the tab tooltip's second line, and the same `file://`
 URL rather than a bare path, so one fact doesn't read two ways depending

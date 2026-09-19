@@ -284,10 +284,10 @@ test.describe('local file overrides', () => {
     writeScript();
     const collection = await sm.addCollection(scriptsDir.path);
     const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
-    const localLines = async () =>
+    const localEntries = async () =>
       (await sm.getScriptLog(scriptId))
-        .filter((e) => /is (loading from file:|no longer loading)/.test(e.message))
-        .map((e) => e.message);
+        .filter((e) => /is (loading from file:|no longer loading)/.test(e.message));
+    const localLines = async () => (await localEntries()).map((e) => e.message);
 
     expect(await localLines()).toEqual([
       expect.stringMatching(/^@require .* is loading from file:\/\/.*\/util\.js$/),
@@ -309,12 +309,14 @@ test.describe('local file overrides', () => {
     await sm.updateCollection(collection!.id, 'manual');
     expect(await localLines()).toHaveLength(2);
 
-    // So is losing it.
+    // So is losing it — at info, like the rest: the script is back on
+    // what its `@require` names, which is not a fault.
     fs.rmSync(libPath);
     await sm.updateCollection(collection!.id, 'manual');
-    const lines = await localLines();
-    expect(lines).toHaveLength(3);
-    expect(lines[2]).toMatch(/is no longer loading from a local file$/);
+    const entries = await localEntries();
+    expect(entries).toHaveLength(3);
+    expect(entries[2].message).toMatch(/is no longer loading from a local file; the remote version is loaded instead$/);
+    expect(entries.map((e) => e.level)).toEqual(['info', 'info', 'info']);
   });
 
   // A `@require` may carry its expected hash in the URL fragment

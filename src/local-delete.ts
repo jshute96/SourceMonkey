@@ -57,15 +57,12 @@ export async function readCopiesSetting(): Promise<DownloadsCopiesSetting | null
 // all break the assumption in the same way; none of them is worth the
 // mess (see TODO.md).
 //
-// A `missing` row is refused too: its file has already gone, so there
-// is nothing to delete, and the plain trash can that clears the record
-// is what that row wants.
 export function deletableCopyPath(
-  script: Pick<StoredScript, 'fileUrl' | 'status'>,
+  script: Pick<StoredScript, 'fileUrl'>,
   collection: Pick<StoredCollection, 'path'> | null | undefined,
   setting: DownloadsCopiesSetting | null,
 ): string | null {
-  if (!setting || !collection || script.status === 'missing') return null;
+  if (!setting || !collection) return null;
   const dir = downloadsCopiesDir(setting.downloadsDir);
   if (!isCopiesDir(collection.path, dir)) return null;
   const path = locationFsPath(script.fileUrl);

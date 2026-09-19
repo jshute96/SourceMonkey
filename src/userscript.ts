@@ -195,6 +195,7 @@ import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
+import { markMissingFiles, missingFiles, scriptFileMissingHint } from './missing-files.js';
 import { renderDetails } from './script-details.js';
 
 // Install and Refresh run the load pipeline here in the page, so this
@@ -460,11 +461,11 @@ async function rehydrateAfterStorageChange(): Promise<void> {
     // instead — once a script is on screen, any earlier removal is
     // history and a later disappearance is someone else's.
     showMissing(
-      removedHere
+      removedHereMessage !== null
         // Anything the removal could not finish is painted WITH it, for
         // the same reason: a message set afterwards would be wiped by
         // the next pass.
-        ? [REMOVED_HERE, ...removedHereDetail].join(' ')
+        ? [removedHereMessage, ...removedHereDetail].join(' ')
         : SCRIPT_NOT_IN_STORAGE,
     );
     return;
@@ -605,14 +606,44 @@ async function onRefresh(): Promise<void> {
     // instead of starting a second fetch.
     // 'force': this is a real Refresh click, so check upstream now
     // rather than waiting out the probe interval.
-    const next = await updateScript(wanted, 'manual', 'force');
-    if (next && scriptId === wanted) {
-      await refreshLogId(wanted);
-      render(next);
-      // Re-anchor highlight + URL after the repaint. Scroll skipped so
-      // a Refresh doesn't yank the user's scroll position.
-      tabsView.applyHash(false);
+    // A local script's check can find its file gone and drop the row
+    // itself (docs/missing-files.md) — the outcome the `deleted`
+    // chip's tooltip promised. The storage event for that removal
+    // reaches `rehydrateAfterStorageChange` before `updateScript`
+    // returns, so the wording it should paint is set in advance rather
+    // than after: otherwise the generic not-found line lands first,
+    // and reads as a storage fault. `render` clears it again the
+    // moment the check comes back with a row, which is the usual case.
+    //
+    // Set only when the file IS gone right now (the same probe the
+    // chip uses), so a row that goes away for some other reason during
+    // the check — removed from another tab, say — isn't blamed on its
+    // file.
+    const local = !!currentScript && isFileUrl(currentScript.fileUrl)
+      && (await missingFiles([currentFilenamePath])).has(currentFilenamePath);
+    if (local) removedHereMessage = REMOVED_FILE_GONE;
+    let next: StoredScript | null;
+    try {
+      next = await updateScript(wanted, 'manual', 'force');
+    } catch (err) {
+      // No verdict, so no claim: a later removal by someone else must
+      // not be painted as this refresh's doing.
+      // Only our own claim: a trash can may have set its own meanwhile.
+      if (local && removedHereMessage === REMOVED_FILE_GONE) removedHereMessage = null;
+      throw err;
     }
+    if (scriptId !== wanted) return;
+    if (!next) {
+      // Driven from here too: `removeScript` writes nothing when the
+      // row was already gone, so there may be no event to wait for.
+      await rehydrateAfterStorageChange();
+      return;
+    }
+    await refreshLogId(wanted);
+    render(next);
+    // Re-anchor highlight + URL after the repaint. Scroll skipped so
+    // a Refresh doesn't yank the user's scroll position.
+    tabsView.applyHash(false);
   } finally {
     setGlyphButtonBusy(refreshBtn, false, REFRESH_LABELS);
   }
@@ -709,8 +740,9 @@ function paintEnabledOptimistically(changes: readonly ScriptEnableChange[]): voi
 function render(script: StoredScript): void {
   currentScript = script;
   // A script is on screen, so no removal is pending; the next time a
-  // row goes missing it is someone else's doing. See `removedHere`.
-  removedHere = false;
+  // row goes missing it is someone else's doing. See
+  // `removedHereMessage`.
+  removedHereMessage = null;
   removedHereDetail = [];
   controlsRowEl.hidden = false;
   // A missing collection row reads as ENABLED, matching
@@ -782,6 +814,12 @@ function render(script: StoredScript): void {
           text: displayLocation(currentFilenamePath),
           href: locationHref,
           trailing: filenameCopyBtn,
+          localFile: isFileUrl(script.fileUrl) && collectionPath
+            ? {
+                fsPath: currentFilenamePath,
+                missingHint: scriptFileMissingHint(collectionPath),
+              }
+            : undefined,
           // This href is a `.user.js` URL for nearly every installed
           // script, so a plain navigation would be captured and land
           // the user in a preview of the script they are already
@@ -796,6 +834,9 @@ function render(script: StoredScript): void {
     status: buildStatusCell(script),
     versionProbes: script.versionProbes,
   });
+  // After the panel is on screen: a "deleted" chip on the Location row
+  // or a Local overrides entry whose file has gone (missing-files.ts).
+  void markMissingFiles(summaryEl);
 
   if (!panelAnchorId) panelAnchorId = script.id;
   void repaintRelatedVersions({
@@ -1237,7 +1278,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       // Says the not-found state, if one is painted at all, is the
       // result the user asked for. `render` clears it as soon as a
       // script is back on screen, so the successor path pays nothing.
-      if (isCurrent) removedHere = true;
+      if (isCurrent) removedHereMessage = REMOVED_HERE;
       // Holds back the not-found paint on the way to the successor. The
       // listener sees a `scriptId` that no longer names a stored row
       // and would tear the whole page down — heading, details, panel,
@@ -1255,7 +1296,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
         await removeScript(id);
       } catch (err) {
         if (isCurrent) {
-          removedHere = false;
+          removedHereMessage = null;
           removedHereDetail = [];
           swappingAfterRemoval = false;
         }
@@ -1280,7 +1321,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
         // row was already gone, so there may be no event to wait for —
         // and waiting for one that never comes would leave the page
         // sitting on a table of rows it no longer has, with the trash
-        // can stuck disabled. `removedHere` makes the not-found state
+        // can stuck disabled. `removedHereMessage` makes the not-found state
         // read as the result the user asked for.
         await rehydrateAfterStorageChange();
         return;
@@ -1596,12 +1637,17 @@ function panelStatusChanged(changes: Record<string, unknown>): boolean {
 // anyway.
 let copiesSetting: DownloadsCopiesSetting | null = null;
 
-// The user removed the script this page is showing, from one of this
-// page's own trash cans. Without it the not-found state that follows
-// reads as "the store lost your script" rather than "that worked".
-let removedHere = false;
-
 const REMOVED_HERE = 'This script has been removed';
+const REMOVED_FILE_GONE = 'This script has been removed because its file was deleted';
+
+// Set while this page is the one making the script it shows go away —
+// a trash can, or a Refresh that may find the file deleted — to what
+// the not-found state that follows should say. Without it that state
+// reads as "the store lost your script" rather than "that worked".
+// Null when no removal of ours is pending. One value rather than a
+// flag plus a message, so the two can't disagree: whichever path set
+// it last is the one whose wording shows.
+let removedHereMessage: string | null = null;
 
 // Set while the copy on screen is being removed and a successor is
 // already picked out: `rehydrateAfterStorageChange` skips the not-found
@@ -1610,7 +1656,7 @@ const REMOVED_HERE = 'This script has been removed';
 let swappingAfterRemoval = false;
 
 // What that removal could not finish — today, dependency files a local
-// copy's deletion left on disk. Carried alongside `removedHere` rather
+// copy's deletion left on disk. Carried alongside `removedHereMessage` rather
 // than written to the message bar after the fact, for the reason
 // `rehydrateAfterStorageChange` gives. Cleared by `render`, with the
 // flag itself.
@@ -1869,7 +1915,7 @@ function requireBasename(url: string, ref: string): string {
 // Build the Status row content: an anchor whose href is `#Log` so
 // clicking switches the viewer to the Log tab via the regular
 // hashchange listener. Labeled with the effective status (INVALID /
-// REJECTED / MISSING / OUTDATED / ERROR / WARNING / OK) computed
+// REJECTED / OUTDATED / ERROR / WARNING / OK) computed
 // against the current log level and registration verdict.
 function buildStatusCell(script: StoredScript): Node {
   // The same verdict, wording, and hover text the panel's Status
@@ -2808,24 +2854,21 @@ function makeDeleteCopyControl(
   btn.onclick = async () => {
     const result = await openDeleteDialog({ script });
     if (!result) return;
-    // The record goes with the file, explicitly. A refresh would be the
-    // tidier story — the scan no longer finds the file — but a
-    // directory that is now EMPTY hits `rebuildCollection`'s
-    // empty-scan guard, which marks its rows `missing` rather than
-    // dropping them (an unreadable directory must not wipe the
-    // collection). We know why this file is gone, so we say so.
+    // The record goes with the file, explicitly. A refresh would find
+    // the file gone and drop the row too, but it would cost a scan of
+    // the directory, and we already know the answer.
     //
     // Both flags are set BEFORE the removal, not before the rehydrate:
     // the removal's own storage event can be delivered while the write
     // is still in flight, and a not-found state painted by that
     // listener has to read as the result the user asked for — see
-    // `removedHere` and the panel's own `remove`.
-    removedHere = true;
+    // `removedHereMessage` and the panel's own `remove`.
+    removedHereMessage = REMOVED_HERE;
     removedHereDetail = result.dependencyErrors;
     try {
       await removeScript(result.scriptId);
     } catch (err) {
-      removedHere = false;
+      removedHereMessage = null;
       removedHereDetail = [];
       setMessage(`The file was deleted, but its record could not be removed: ${describeError(err)}`, 'error');
       return;

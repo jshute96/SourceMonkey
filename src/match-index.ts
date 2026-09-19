@@ -1,8 +1,7 @@
 // In-memory index of every injectable userscript's matching info so the
 // background service worker can find matching scripts for a URL without
 // touching chrome.storage.local on every navigation. "Injectable" means
-// `status: 'ok'` or `status: 'missing'` (the latter participates only if
-// the user explicitly re-enables it — see toEntry).
+// `status: 'ok'` (see toEntry).
 //
 // Built once on first access (ensureLoaded()), then kept fresh by a
 // chrome.storage.local.onChanged listener. Storage I/O cost scales with
@@ -108,16 +107,9 @@ async function loadAll(): Promise<void> {
 }
 
 function toEntry(script: StoredScript): CacheEntry | null {
-  // `ok` scripts always participate. `missing` scripts participate too
-  // when the user has explicitly re-enabled them — their cached header /
-  // matching / body were captured the last time the file loaded
-  // cleanly, so the user is opting in to "run the last good copy". The
-  // per-script `enabled` defaults to false on the missing transition,
-  // so unattended missing rows still stay out of the cache via the
-  // enabled check in findMatchesForUrl.
-  // `error` rows never participate — their header may be unparsed or
-  // the file failed validation.
-  if (script.status !== 'ok' && script.status !== 'missing') return null;
+  // Only `ok` scripts participate. `invalid` rows never do — their
+  // header may be unparsed or the file failed validation.
+  if (script.status !== 'ok') return null;
   const name = scriptDisplayName(script);
   return {
     id: script.id,

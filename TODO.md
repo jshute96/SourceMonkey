@@ -213,12 +213,6 @@ The compile-only check is in (see
   whose offscreen document never works pays that build for every
   candidate on every sync. Asking the breaker first would make the
   degraded case free.
-- **Re-verify `missing` rows too.** The `runSync` gate only re-checks
-  candidates whose status is `ok`; a `missing` row re-enabled from its
-  cached body registers on whatever verdict it last had. Those bodies
-  were checked when they were `ok`, so the hole is narrow — but a row
-  stored before the check existed and then flipped to `missing` skips
-  it entirely.
 - **Don't fetch dependencies twice on install-from-preview.** The
   preview fills `previewFetchCache` to run its check; clicking Install
   then runs `addCollection` → `attachFiles` against the store's own cache,
@@ -879,6 +873,26 @@ the items with a trade-off worth recording:
   readability probe — unlike the search-roots box above it, which
   checks. Same probe would do.
 
+## Deleted files — follow-ups
+
+See [docs/missing-files.md](docs/missing-files.md).
+
+- **http(s) files that are really gone.** A 404 on refresh is treated
+  as a transient failure (`REFRESH FAILED`, keep running), because a
+  404 is not proof — but a script whose URL has 404'd on every refresh
+  for weeks is probably removed. A count of consecutive 404s on the
+  row could escalate the badge's wording to "probably removed" without
+  changing what runs.
+- **`@icon` stand-ins get no chip.** Same reasoning as their missing
+  `local` marker (docs/local-file-overrides.md): a 16×16 slot has no
+  room, and a wrong icon is cosmetic.
+- **The collections page only re-probes for deleted files on a
+  repaint.** Listings are memoised for a few seconds, so a burst of
+  storage writes costs one listing per folder — but a file deleted
+  while the page just sits there isn't noticed until something writes
+  to storage or the page is reloaded. A `visibilitychange` / `focus`
+  re-probe like the delete dialog's would close that.
+
 ## Deleting local copies — follow-ups
 
 See [docs/local-delete.md](docs/local-delete.md#whats-next); the items
@@ -1142,11 +1156,12 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 - Editing path: if we ever want in-app edits, we'll need either FSA
   handles (re-introduces per-session re-grant) or a Native Messaging
   helper. `file://` URLs are read-only from the extension side.
-- **Identity across a file that bounces.** A refresh now drops a script
-  the scan no longer reports, and the row's UUID goes with it — so a
-  file that vanishes and comes back (branch switch, an editor that saves
-  by unlink+rename, a sync client rewriting in place) returns as a fresh
-  row: `enabled: true`, empty Log, and its `gmval:` values orphaned
+- **Identity across a file that bounces.** A refresh drops a script
+  the scan no longer reports — the per-script refresh on a navigation
+  or tab focus included, which widens the window — and the row's UUID
+  goes with it, so a file that vanishes and comes back (branch switch,
+  an editor that saves by unlink+rename, a sync client rewriting in
+  place) returns as a fresh row: `enabled: true`, empty Log, and its `gmval:` values orphaned
   rather than restored (`gm-values.ts` deliberately keeps them for
   exactly that restore). Remembering `relativePath → id` for recently
   dropped rows on the collection row would close it; the cost is a
@@ -1445,6 +1460,5 @@ they follow are in
   the reason when the refresh that emptied it is the one being shown
   ("the last refresh removed the scripts this collection had"), which
   means the message needs to know what the refresh just did rather than
-  only what is stored now. Only reachable for a manifest collection: a
-  directory that scans completely empty marks its rows `missing` rather
-  than dropping them.
+  only what is stored now. Reachable for any collection kind now that
+  an empty scan drops rows too.

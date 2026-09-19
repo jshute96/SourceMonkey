@@ -36,6 +36,7 @@
 
 import { openInNewTabAnchor } from './code-links.js';
 import { makeCopyButton } from './copy-button.js';
+import { STAND_IN_MISSING_HINT, tagLocalFile } from './missing-files.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
 import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import type { StoredCollection } from './script-store.js';
@@ -63,6 +64,10 @@ export interface LocationRow {
   // Optional trailing control, e.g. the viewer's copy-to-clipboard
   // button. Moved into the cell on every render.
   trailing?: HTMLElement;
+  // For a `file://` location: the absolute path and what its deletion
+  // would mean, so the caller can run `markMissingFiles` over the
+  // panel after the render (see missing-files.ts).
+  localFile?: { fsPath: string; missingHint: string };
   // Intercepts activation of the location anchor. Both viewer modes
   // use it, because a plain navigation to a `.user.js` URL — http(s)
   // or file:// — is captured straight back into a preview (see
@@ -408,6 +413,9 @@ function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void
     // Which declaration it stood in for rides along as the tooltip,
     // in the URL display form every other declared ref uses.
     path.title = `Stands in for ${displayLocation(stripSriFragment(e.declared))}`;
+    // A stand-in the user has since deleted gets a chip saying so —
+    // until the next refresh, this row is still claiming to load it.
+    tagLocalFile(path, localPath, STAND_IN_MISSING_HINT);
     span.appendChild(path);
 
     // Copies the same path the row shows — for a local file that IS the
@@ -574,6 +582,7 @@ function locationCell(row: LocationRow): Node {
       });
     }
   }
+  if (row.localFile) tagLocalFile(pathEl, row.localFile.fsPath, row.localFile.missingHint);
   cell.appendChild(pathEl);
 
   // The caller's button is a single long-lived element; appendChild

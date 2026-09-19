@@ -19,7 +19,7 @@
 //
 // See [docs/script-identity.md].
 
-import { isContainerCollection, scriptAbsolutePath } from './directories.js';
+import { isContainerCollection, isFileUrl, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
   displayLocation,
@@ -40,6 +40,7 @@ import { getValue } from './userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
 import { setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton } from './glyph.js';
+import { markMissingFiles, scriptFileMissingHint, tagLocalFile } from './missing-files.js';
 import {
   allRelatedRows,
   enableChanges,
@@ -359,6 +360,10 @@ export function renderRelatedVersions(
   // the fit is across all of them, and a column measured before its
   // widest row existed would be too narrow for it.
   fitColumns(container);
+  // And after that: a "deleted" chip on any local row whose file has
+  // gone (missing-files.ts). Async, so it lands after the fit; the
+  // chip is short and the column has room for it.
+  void markMissingFiles(container);
 }
 
 // Whether the installed viewer's panel is folded down to its heading
@@ -847,11 +852,22 @@ function locationCell(
   const td = cell('col-location');
   const text = displayLocation(rel.script.relativePath);
   const title = locationTitle(rel, text);
+  // The element carrying the path is tagged with the file it names, so
+  // a deleted file gets its chip (see `markMissingFiles`).
+  const tagFile = (el: HTMLElement): void => {
+    if (!rel.collection || !isFileUrl(rel.script.fileUrl)) return;
+    tagLocalFile(
+      el,
+      scriptAbsolutePath(rel.collection.path, rel.script.relativePath),
+      scriptFileMissingHint(rel.collection.path),
+    );
+  };
   if (isCurrent || mode === 'installed') {
     const span = document.createElement('span');
     if (isCurrent) span.className = 'versions-current-marker';
     if (title) span.title = title;
     appendWithSlashBreaks(span, text);
+    tagFile(span);
     if (isCurrent) {
       const here = document.createElement('strong');
       here.className = 'versions-this-page';
@@ -866,6 +882,7 @@ function locationCell(
   a.href = viewerUrl(rel.script.id);
   if (title) a.title = title;
   appendWithSlashBreaks(a, text);
+  tagFile(a);
   td.appendChild(a);
   return td;
 }

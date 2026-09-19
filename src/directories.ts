@@ -106,6 +106,17 @@ export function newContainerPath(): string {
   return CONTAINER_PATH_PREFIX + crypto.randomUUID();
 }
 
+// A collection that is a local folder scanned for `*.user.js` files —
+// the kind whose listing is its source of truth, so a file it no
+// longer shows is dropped (see `rebuildCollection`). Everything else
+// (http(s) and GitHub, a manifest, a single-file container) names its
+// scripts some other way.
+export function isLocalDirectoryCollection(collectionPath: string): boolean {
+  return !isHttpUrl(collectionPath)
+    && !isManifestCollection(collectionPath)
+    && !isContainerCollection(collectionPath);
+}
+
 export function isContainerCollection(input: string): boolean {
   return input.startsWith(CONTAINER_PATH_PREFIX);
 }
@@ -535,34 +546,6 @@ async function isReadableFile(absolutePath: string): Promise<boolean> {
   return await canReadFileUrl(pathToFileUrl(absolutePath));
 }
 
-// Cheap "is there a file at this path" probe: the response is dropped
-// as soon as it arrives, so the file's bytes are never read. For the
-// delete dialog, which polls this while telling the user to delete a
-// file by hand (docs/local-delete.md).
-//
-// The caller acts on `false` — a file reported gone is dropped from
-// what it offers to delete — so false is only ever a rejected fetch,
-// which is how a page-context `file://` fetch reports a missing file.
-// Any response at all counts as present, whatever its status: the
-// sibling `fetchFileUrlTextFetch` sees status 0 on some `file://`
-// legs, and an unreadable-but-present file should stay listed rather
-// than be declared deleted. With file access off every fetch rejects,
-// so callers must not trust false without checking that first.
-export async function fileExists(absolutePath: string): Promise<boolean> {
-  let response: Response;
-  try {
-    response = await fetch(pathToFileUrl(absolutePath));
-  } catch {
-    return false;
-  }
-  try {
-    await response.body?.cancel();
-  } catch {
-    // The body was never wanted; a cancel that fails changes nothing.
-  }
-  return true;
-}
-
 // ---------- HTTP fetch (with conditional GETs) ----------
 
 export interface HttpFetchOptions {
@@ -714,6 +697,10 @@ export interface ListingEntry {
 // optional — entries without them parse but with size/mtime undefined,
 // at which point the refresh pipeline falls back to always-refetch
 // for those files.
+//
+// An empty result is ambiguous on its own — a listing with no rows, or
+// a page that isn't a listing at all — which is why `listDirectory`
+// checks `isDirectoryListing` first.
 export function parseListing(html: string): ListingEntry[] {
   const entries: ListingEntry[] = [];
   const re = /addRow\("((?:\\.|[^"\\])*)"\s*,\s*"(?:\\.|[^"\\])*"\s*,\s*(0|1|true|false)\b(?:\s*,\s*(-?\d+))?(?:\s*,\s*"(?:\\.|[^"\\])*")?(?:\s*,\s*(-?\d+))?/g;
@@ -777,6 +764,19 @@ export function resetDirectoryListingFetches(): void {
   listingFetches = 0;
 }
 
+// Is this page Chrome's directory listing at all? The listing page
+// opens with a `start("<path>")` call before any rows, and an empty
+// directory still has that. Anything without it — an error page, a
+// path that is now a file, a format Chrome changed under us — is
+// refused rather than read as "no entries", because those two answers
+// have opposite consequences for a refresh: an empty listing drops
+// every script in the collection, a failed one leaves them all alone.
+export function isDirectoryListing(html: string): boolean {
+  return /\bstart\s*\(\s*"/.test(html);
+}
+
+export const NOT_A_DIRECTORY_LISTING = 'Chrome did not return a directory listing for this folder';
+
 export async function listDirectory(
   absolutePath: string,
   cache?: DirectoryListingCache,
@@ -786,7 +786,11 @@ export async function listDirectory(
   const pending = (async () => {
     // Chrome only serves the directory listing for URLs ending with `/`.
     const url = pathToFileUrl(absolutePath) + '/';
-    const entries = parseListing(await fetchFileUrlText(url));
+    const html = await fetchFileUrlText(url);
+    if (!isDirectoryListing(html)) {
+      throw new Error(`Could not read ${url}: ${NOT_A_DIRECTORY_LISTING}`);
+    }
+    const entries = parseListing(html);
     // Counted after the fetch resolves, so the number means what its
     // name says. A throw leaves it alone.
     listingFetches += 1;
@@ -931,7 +935,11 @@ export async function scanForUserScripts(
     // produces an opaque "could not read" message. Probe by reading the
     // path as a plain file; if that succeeds we know the path exists
     // but isn't a userscript, so swap in a clearer message.
-    if (depth === 0 && await isReadableFile(absolutePath)) {
+    // Not when the listing was refused for its shape: Chrome serves a
+    // listing for a directory URL without the slash too, so the probe
+    // would "succeed" on a real folder and blame the user's path.
+    const shapeRefused = err instanceof Error && err.message.includes(NOT_A_DIRECTORY_LISTING);
+    if (depth === 0 && !shapeRefused && await isReadableFile(absolutePath)) {
       throw new Error(
         `${absolutePath} is a file, not a folder, and its name doesn't end in .user.js`,
       );

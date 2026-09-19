@@ -544,11 +544,10 @@ async function probeOneScript(
   policy: ProbePolicy,
 ): Promise<void> {
   // Only rows that are actually running get probed. An `invalid` row's
-  // header may not have parsed at all, and a `missing` one has no
-  // upstream question worth asking — the local copy is the problem.
-  // Their stored probes are left alone rather than cleared: MISSING and
-  // INVALID both outrank OUTDATED so nothing stale is on screen, and a
-  // row that recovers gets its annotation back without a refetch.
+  // header may not have parsed at all. Its stored probes are left alone
+  // rather than cleared: INVALID outranks OUTDATED so nothing stale is
+  // on screen, and a row that recovers gets its annotation back without
+  // a refetch.
   if (script.status !== 'ok') return;
   const loadedVersion = script.header ? getValue(script.header, 'version') : undefined;
   const targets = probeTargets(script.header, script.fileUrl);
@@ -692,8 +691,8 @@ function logScriptOutcome(
 //
 // Every failure the UI surfaces on a script row also lands here, so
 // clicking a red/amber badge always leads to an explanation: the entry
-// carries the `state` the badge shows (INVALID / MISSING / REFRESH
-// FAILED, and OK for the recovery) — see `loadStateLogEntry` for the
+// carries the `state` the badge shows (INVALID / REFRESH FAILED, and
+// OK for the recovery) — see `loadStateLogEntry` for the
 // phrasing.
 //
 // **One row per uneventful check, two when there's news.** A check
@@ -731,23 +730,21 @@ export function emitScriptOutcomeLog(
   // Written after the work, so both halves land together. The SW
   // console is where a check is bracketed live; the Log tab is a
   // record of what happened.
+  // A row that went away during the check — deleted by the user, or
+  // dropped by this very check because its file was no longer listed
+  // — has no Log any more: `removeScript` cleared it. Writing here
+  // would leave an orphan `log:` row for a script nothing displays.
+  // The SW console line in `logScriptOutcome` is the record.
+  if (!next) return;
   if (hasReportableOutcome(prior, next)) {
     logScriptEvent(scriptId, { level: 'info', source, message: 'Checking for updates' });
-  }
-  if (!next) {
-    logScriptEvent(scriptId, {
-      level: 'warning',
-      source,
-      message: 'This script was removed while it was being refreshed',
-    });
-    return;
   }
   // Before the state verdict, and not gated by it: a script can be
   // `invalid` for an unrelated reason and still have picked up a local
   // stand-in this pass, and that substitution is exactly what the user
   // needs to know about while debugging the failure.
-  for (const message of localFileLogMessages(prior, next)) {
-    logScriptEvent(scriptId, { level: 'info', source, message });
+  for (const entry of localFileLogMessages(prior, next)) {
+    logScriptEvent(scriptId, { ...entry, source });
   }
   const nextState = loadStateLogEntry(next);
   const priorState = prior ? loadStateLogEntry(prior) : null;
@@ -868,16 +865,15 @@ const NO_CHANGE_MESSAGE = 'Checked for updates — no change';
 // "should we announce the check?" decision and the "what do we report?"
 // decision are written once each rather than twice.
 //
-// True when: the row vanished mid-refresh, it's failing now, it was
-// failing before (so this pass genuinely re-fetched and re-validated —
-// an `invalid` row can't take the size+mtime skip), or the content
-// changed. False only for the healthy-and-unchanged case, whose whole
-// outcome is the one self-describing `NO_CHANGE_MESSAGE` row.
+// True when: it's failing now, it was failing before (so this pass
+// genuinely re-fetched and re-validated — an `invalid` row can't take
+// the size+mtime skip), or the content changed. False only for the
+// healthy-and-unchanged case, whose whole outcome is the one
+// self-describing `NO_CHANGE_MESSAGE` row.
 function hasReportableOutcome(
   prior: StoredScript | undefined,
-  next: StoredScript | null,
+  next: StoredScript,
 ): boolean {
-  if (!next) return true;
   if (loadStateLogEntry(next)) return true;
   if (prior && loadStateLogEntry(prior)) return true;
   // A local stand-in that appeared, vanished, or changed on disk is an
@@ -893,7 +889,6 @@ function hasReportableOutcome(
 // the parse started succeeding, or the server did.
 function recoveryMessage(prior: StoredScript): string {
   if (prior.status === 'invalid') return 'Loads cleanly again (was invalid)';
-  if (prior.status === 'missing') return 'Script file is back';
   return 'Refresh succeeded again (collection is reachable)';
 }
 

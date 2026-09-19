@@ -625,3 +625,32 @@ select.install-target {
 .copy-btn .check-icon { display: none; color: #166534; }
 .copy-btn.copied .copy-icon { display: none; }
 .copy-btn.copied .check-icon { display: block; }
+
+/* "deleted" chip after a local file path whose file is no longer on
+   disk (src/missing-files.ts). Sized like `.scheme-chip` above but
+   square-cornered like the viewer's tab marks, so it reads as a
+   remark on the path rather than a collection kind; red, because the
+   row is describing something that isn't there. */
+.missing-file-chip {
+  display: inline-block;
+  margin-left: 0.5em;
+  padding: 0 0.4em;
+  border-radius: 3px;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+  cursor: default;
+  /* `text-indent` inherits into an inline-block and would shove the
+     word out of the chip on the collections page's hanging-indent
+     name cells. */
+  text-indent: 0;
+}
+/* Inside a flex row that already spaces its children with `gap` (the
+   viewer's Location and Local overrides rows), the margin would double
+   the gap on the chip's left only. */
+.filename-cell > .missing-file-chip,
+.local-override-cell > .missing-file-chip { margin-left: 0; }

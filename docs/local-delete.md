@@ -96,9 +96,10 @@ files are deletable is on screen before anything is pressed.
   this script from SourceMonkey* (and any own dependency files still
   going), and Delete is on: it skips the script file, deletes those
   dependencies, and removes the entry.
-  - Found by probing the file (`fileExists`, which opens it without
-    reading its bytes), not from the row's `missing` status — that is
-    set by the next refresh, which hasn't happened yet.
+  - Found by probing the disk (`missingFiles` in
+    [missing-files.md](missing-files.md): one directory listing per
+    folder), not from the stored row, which says `ok` until the next
+    refresh drops it.
   - **The dialog watches every file it lists.** For as long as it is
     up, it re-probes each file about once a second — and at once when
     the window regains focus or its tab becomes visible, since the
@@ -167,16 +168,8 @@ need this?* from one collection's rows.
   is worth the mess (TODO.md).
 - The check is re-run when the dialog opens, not trusted from the
   button that opened it: the row can move or go missing in between.
-- A `missing` row is refused — its file has already gone, and the
-  ordinary trash can that clears the record is what that row wants.
-  - Deleting every copy in the directory by hand is how a row gets
-    there: an empty scan can't be told apart from an unreadable
-    directory, so `rebuildCollection` keeps the rows and marks them
-    missing.
-  - The collections page repaints rows in place, so its action cell is
-    reconciled on every sync (`syncScriptRow`). Left alone, a row that
-    had just gone missing kept its file-delete button beside the
-    record-delete one the status cell had grown.
+- The collections page repaints rows in place, so its action cell is
+  reconciled on every sync (`syncScriptRow`).
 - **POSIX paths only.** `locationFsPath` mangles a Windows `file:///C:/…`
   URL, so the path comparison never matches and no row offers a
   deletion — the same assumption the rest of `directories.ts` makes,
@@ -247,11 +240,10 @@ row with it.
 
 A refresh would be the tidier story — the scan no longer finds the file,
 which is exactly what `rebuildCollection` handles for a file deleted in
-a file manager. It is wrong here for one case: a directory the deletion
-leaves **empty** hits the empty-scan guard, which marks its rows
-`missing` rather than dropping them, so an unreadable directory can't
-wipe a collection. Deleting your only copy would leave a MISSING row
-behind. We know why this file went, so the record goes with it.
+a file manager, and it would drop the row. But the dialog has just
+deleted the file itself, so it knows the answer: removing the record
+directly saves a scan of the directory, and leaves nothing for the
+user to see flicker between "deleted" and gone.
 
 ## What's next
 

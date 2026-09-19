@@ -736,7 +736,7 @@ const res = (over = {}) => ({
 test('localFileLogMessages: a new stand-in is announced', () => {
   const next = { requires: [req({ localUrl: 'file:///s/util.js' })] };
   assert.deepEqual(localFileLogMessages(undefined, next), [
-    '@require https://cdn.example.com/util.js is loading from file:///s/util.js',
+    { level: 'info', message: '@require https://cdn.example.com/util.js is loading from file:///s/util.js' },
   ]);
 });
 
@@ -754,7 +754,11 @@ test('localFileLogMessages: an edited stand-in is announced again', () => {
 test('localFileLogMessages: losing the stand-in is announced', () => {
   const before = req({ localUrl: 'file:///s/util.js' });
   assert.deepEqual(localFileLogMessages({ requires: [before] }, { requires: [req()] }), [
-    '@require https://cdn.example.com/util.js is no longer loading from a local file',
+    {
+      level: 'info',
+      message: '@require https://cdn.example.com/util.js is no longer loading from a local file; '
+        + 'the remote version is loaded instead',
+    },
   ]);
 });
 
@@ -786,7 +790,7 @@ test('localFileLogMessages: duplicate-URL resources emit one line', () => {
     ],
   };
   assert.deepEqual(localFileLogMessages(undefined, next), [
-    '@resource https://cdn.example.com/util.js is loading from file:///s/util.js',
+    { level: 'info', message: '@resource https://cdn.example.com/util.js is loading from file:///s/util.js' },
   ]);
 });
 
@@ -801,6 +805,6 @@ test('localFileLogMessages: the ref is SRI-stripped and unescaped', () => {
     })],
   };
   assert.deepEqual(localFileLogMessages(undefined, next), [
-    '@require https://cdn.example.com/my lib/util.js is loading from file:///s/my lib/util.js',
+    { level: 'info', message: '@require https://cdn.example.com/my lib/util.js is loading from file:///s/my lib/util.js' },
   ]);
 });

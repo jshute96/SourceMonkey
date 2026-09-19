@@ -1033,10 +1033,8 @@ export async function buildRegistrationSpec(
 }
 
 // Pure: would this script be registered right now? Both the script's
-// own enabled flag and its parent collection's flag must be true. `ok`
-// scripts are eligible; `missing` scripts are eligible too when the
-// user has explicitly re-enabled them (the cached body + header from
-// the last good load is what gets injected). `error` scripts never run.
+// own enabled flag and its parent collection's flag must be true, and
+// the script must be `ok` — `invalid` scripts never run.
 //
 // Shared with `runSync`'s parse re-verification, which spends a compile
 // round trip per row and so must ask about exactly the rows that are
@@ -1046,7 +1044,7 @@ export function isRegistrationCandidate(
   script: StoredScript,
   collections: Map<string, StoredCollection>,
 ): boolean {
-  if (script.status !== 'ok' && script.status !== 'missing') return false;
+  if (script.status !== 'ok') return false;
   if (!isScriptEnabled(script)) return false;
   const collection = collections.get(script.collectionId);
   return !!collection && isCollectionEnabled(collection);
@@ -1761,8 +1759,8 @@ async function revalidateCandidates(
     // Says what we're about to DO, so it asks the same question
     // `collectActiveSpecs` will. `status !== 'ok'` isn't that question:
     // `verifyParseChecks` also hands back rows it refused to write, and
-    // a `missing` row the user re-enabled is registered from its cached
-    // body — which would print this line and then register it anyway.
+    // a disabled row is `ok` without being a candidate — which would
+    // print this line for a row that was never going to register.
     if (isRegistrationCandidate(row, collections)) continue;
     console.info(
       `[SourceMonkey] not registering ${row.relativePath}: ${row.errorMessage ?? 'it does not parse'}`,

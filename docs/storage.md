@@ -124,10 +124,10 @@ keys would look like a wiped profile.
     the user added, in its canonical spelling (`canonicalCollectionInput`:
     a `file://` URL collapses to its bare path, so one file on disk
     can't land as two rows); `fileUrl` is its URL form.
-- `status` — `'ok' | 'invalid' | 'missing'`.
-- `errorMessage?` — set when `status === 'invalid'`. Cleared on the
-  transition to `missing` (the row's body is preserved, but the prior
-  error reason is dropped — the file is simply gone).
+- `status` — `'ok' | 'invalid'`. A script whose file has vanished is
+  not a status — the row is dropped (see
+  [Vanished entries](#vanished-entries)).
+- `errorMessage?` — set when `status === 'invalid'`.
   - Message *text* is a snapshot of what the wording was when the row
     was parsed. Same for `startupLogs`, which the boot replay re-emits
     verbatim. A reworded message therefore reaches an existing row only
@@ -149,8 +149,7 @@ keys would look like a wiped profile.
 - `size` — UTF-8 byte length of the cached content. `0` is a valid
   value (an empty file is a real file). `null` only when the entry
   has never successfully loaded — i.e. its first fetch failed and
-  there's no cached body to size. `'missing'` rows keep their last
-  known size so the UI can still show how big the cached body is.
+  there's no cached body to size.
 - `contentHash?` — universal "last-change token": a deterministic
   hash of the fetched source bytes on the last successful load. Used
   by `buildScriptFromText` to decide whether a freshly fetched body
@@ -217,29 +216,12 @@ update-probe verdict to render the Status column.
   `script-store.ts`), a syntax error, a fetch failure, or a dependency
   that wouldn't load. The content-derived ones also carry an
   `errorLocation` — see [diagnostics.md](diagnostics.md).
-- `'missing'` — file was in the scan listing previously but no
-  longer is, **and** the latest scan came back completely empty (a
-  non-empty scan drops the row instead — see
-  [Vanished entries](#vanished-entries)). Behavior:
-  - On the **ok → missing** transition (and only then), `enabled`
-    flips to `false` so the script stops being injected by default.
-  - The row stays in storage with content + last known `size`
-    preserved so the viewer keeps working.
-  - If the file returns on a later refresh, the prior `enabled` is
-    preserved so the user's choice survives.
-  - The collections page surfaces a trash-can button on missing rows
-    (`removeScript`) for clearing records the user doesn't expect back.
-  - **Re-enabling** a missing row makes it run again from the cached
-    body — match-index and injector both treat enabled `missing` rows
-    as injectable, mirroring `ok`. Subsequent refreshes while the file
-    is still gone leave `enabled` alone, so the user's opt-in survives.
-
-On invalid or missing we **preserve the prior content** (headerText,
-bodyText, parsed header, matching). The viewer keeps working. The
-injector runs the script if and only if `enabled` is true and `status`
-is `ok` or `missing` — `invalid` rows never inject (the current parse
-result is bad, so the cached body might mean something different from
-what the metadata claims).
+On invalid we **preserve the prior content** (headerText, bodyText,
+parsed header, matching). The viewer keeps working. The injector runs
+the script if and only if `enabled` is true and `status` is `ok` —
+`invalid` rows never inject (the current parse result is bad, so the
+cached body might mean something different from what the metadata
+claims).
 
 ### Refresh failures: keep the good copy running
 
@@ -274,9 +256,8 @@ record the reason. Triggers:
 **Recovery** is automatic: the next refresh that lands valid content
 (or a conditional-GET 304 / matching size+mtime that proves the cached
 content is current again) clears `refreshError`. If the file is later
-confirmed *vanished* from its listing, the row goes away (or, on an
-empty scan, transitions to `missing` with the `refreshError` annotation
-dropped) — see [Vanished entries](#vanished-entries).
+confirmed *vanished* from its listing, the row goes away — see
+[Vanished entries](#vanished-entries).
 
 Both the failure and the recovery are copied into the script's own Log
 (warning and info respectively), so the badge is always explainable —
@@ -299,14 +280,11 @@ viewer render. Priority order (highest wins):
   injector's session-storage map (`src/script-rejection.ts`, and
   [injection.md](injection.md#rejected-registrations)). Ranks under
   `INVALID` — both mean "can't run", and the two can't co-occur since
-  an invalid script is never offered to Chrome — and above `MISSING`,
-  which still injects its cached copy. Rendered in red.
-- `MISSING` — `status === 'missing'`.
+  an invalid script is never offered to Chrome. Rendered in red.
 - `REFRESH FAILED` — `status === 'ok'` but `refreshError` is set (the
   script runs from its cached copy; the last update failed). Ranks
   above the log-derived levels — staleness is a distinct, specific
-  signal — but below `INVALID`/`MISSING`, which mean it can't run at
-  all. Rendered in amber, distinct from red `INVALID`.
+  signal — but below `INVALID`, which means it can't run at all. Rendered in amber, distinct from red `INVALID`.
 - `OUTDATED` — an update probe found a newer `@version` at a URL we
   deliberately don't update from. Same rationale (and same amber) as
   `REFRESH FAILED`, and ranks just under it: a collection we can't reach at
@@ -488,10 +466,19 @@ An entry in the prior state that the scan no longer reports is
 `scriptIds` stops listing it.
 
 - A successful scan is the collection saying what it holds *now*, so a
-  renamed or deleted file leaves rather than lingering as a `'missing'`
-  row the user has to clear by hand.
+  renamed or deleted file leaves rather than lingering as a row the
+  user has to clear by hand. That includes a scan that found
+  **nothing** — an empty directory, or one whose remaining files are
+  not `.user.js` — exactly as an empty manifest empties its collection.
 - A *failed* scan never gets here at all — see
   [Scan failure](#scan-failure-leave-scripts-untouched).
+- **Empty and failed are told apart at the listing.** Chrome's
+  `file://` directory listing page has a fixed shape (a `start(…)`
+  call, then a row per entry), and an empty directory still has it.
+  `listDirectory` refuses a page without it (`isDirectoryListing`) —
+  an error page for a directory that moved, a path that is now a file,
+  a format change — as a failed read, which becomes a `scanError`.
+  Only a real listing with no rows reaches the drop.
 - **A drop is not reversible.** The row's UUID goes with it, so a file
   that disappears and comes back (a branch switch, an editor that saves
   by unlink+rename) returns as a fresh row: `enabled: true`, an empty
@@ -499,24 +486,20 @@ An entry in the prior state that the scan no longer reports is
   price of not accumulating stale `MISSING` rows; preserving identity
   across a bounce is filed in `TODO.md`.
 
-The exception: a scan that came back **completely empty** for a
-collection that had scripts.
-
-- Those rows are tagged `'missing'` (content preserved, auto-disabled)
-  instead of dropped.
-- Wholesale emptiness is far more often a directory that moved, got
-  replaced, or listed strangely than every script being deleted at once.
-- Once the collection lists something again, the normal rule applies —
-  rows still absent from that listing are dropped, **including one the
-  user re-enabled** to run from its cached body.
-- So a collection-level refresh leaves `missing` rows all-or-nothing.
-  A table can still show a mix in between: `refreshScript` refetches one
-  file without enumerating the directory, so it can flip a single row
-  back to `ok` while its siblings stay `missing` until the next
-  collection refresh reconciles them.
-- **Manifest collections are exempt.** The manifest is an explicit list,
-  so an empty one is an explicit "nothing here", and entries drop as
-  usual.
+- **The per-script refresh drops too.** `refreshScript` lists the
+  file's parent directory anyway (for the size+mtime skip), so a local
+  directory script whose file that listing no longer shows — and whose
+  read then fails — is dropped there as well, same outcome whichever
+  refresh noticed. The read is required because this path runs on
+  every navigation and can catch an unlink-and-rename save mid-way; a
+  file that reads is not gone. A listing that failed leaves the row
+  alone; a manifest or single-file
+  collection has no listing to consult, so a vanished file there fails
+  its fetch and keeps running from the cached body with a
+  `refreshError`.
+- **Before any refresh runs**, every page that names a local file
+  probes the disk and marks a deleted one with a chip — see
+  [missing-files.md](missing-files.md).
 - **Container collections** never observe a vanished entry: the
   synthetic scan is built from the existing scripts. Per-script removal
   goes through `removeScript` instead.
@@ -775,9 +758,11 @@ content, no header) before the refresh that loads it — see
   is rewritten; per-collection rows untouched.
 - `removeScript(id)` — drop a single script row and remove its ID
   from the parent collection's `scriptIds`. Used by the collections page's
-  trash-can button on `'missing'` rows and (in container collections) on
-  every row. A refresh drops vanished rows the same way — both paths also
-  clear the script's session-storage Log rows.
+  trash-can button (container collections), the delete-local-file
+  dialog, and `refreshScript` when the directory
+  no longer lists the file. A collection refresh drops vanished rows
+  the same way — every path also clears the script's session-storage
+  Log rows.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildCollection`
   pipeline as the collection-level Refresh (so the two paths can't
@@ -786,9 +771,10 @@ content, no header) before the refresh that loads it — see
   scan. For file:// collections it does a targeted directory-listing
   lookup to populate the scan's size+mtime; for http(s):// and
   manifest collections it skips that step and relies on the conditional
-  GET inside `fetchOrSkipInParallel` instead. Doesn't enumerate the
-  whole parent dir, so it can't transition a script into `'missing'`
-  — that's the collection-level Refresh's job.
+  GET inside `fetchOrSkipInParallel` instead. When that listing is
+  read and no longer shows the file, and the fetch fails too, the row
+  is dropped right there (see [Vanished entries](#vanished-entries)); other files that went
+  are the collection-level Refresh's to notice.
 - `setCollectionEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
   flip the per-collection / per-script `enabled` flag with a single-row
   write. The match index picks up the change via `storage.onChanged`.
@@ -974,8 +960,8 @@ unit tests don't need a `chrome.storage` stub:
 
 - `rebuildCollection` — orchestrator that takes prior scripts + scan
   results + per-file fetch results and returns the new script list.
-- `buildScriptFromText`, `applyFetchError`, `applyMissing`,
-  `buildInitialErrorEntry` — per-script state transitions.
+- `buildScriptFromText`, `applyFetchError`, `buildInitialErrorEntry` —
+  per-script state transitions.
 - `validateHeader`, `distillMatching` — header-shape checks.
 
 Covered by `tests/unit/script-store.test.mjs`.
@@ -1040,17 +1026,13 @@ collection**:
   - Rows stay in stored scan order, which is by location — so the Name
     column does not read alphabetically.
   - Size shows the UTF-8 byte count of the cached content — including
-    a `"0 B"` for an empty file, and the prior size for `missing` /
-    `invalid` rows that retain their last-read body. Only rows that have
+    a `"0 B"` for an empty file, and the prior size for `invalid` rows
+    that retain their last-read body. Only rows that have
     never successfully loaded (`size == null`) render as `"—"`.
-  - Status shows one of `OK | INVALID | MISSING | WARNING | ERROR`
+  - Status shows one of `OK | INVALID | WARNING | ERROR`
     (see [Displayed status](#displayed-status-ui-level) for the
     priority rules). The label is a link to the script viewer's Log
     tab; the cell's `title` carries `errorMessage` for hover detail.
-  - Missing rows get a small trash-can button next to the Status
-    label. It calls `removeScript` to drop the row from storage (and
-    from the parent collection's `scriptIds`) — useful because a refresh
-    won't re-add a row whose file the scan no longer reports.
 
 ### The Add field
 
@@ -1273,10 +1255,9 @@ different questions:
   - any of the above whose row isn't `'ok'`. A script that *arrived*
     broken is still new, so it keeps its `New` chip and only loses the
     green.
-  - a row that transitioned to `'missing'`, or whose refresh just failed
-    (`refreshError` newly set, the cached body still running, `status`
-    still `'ok'`). Neither carries a chip: nothing was re-read, so there
-    is no update to announce.
+  - a row whose refresh just failed (`refreshError` newly set, the
+    cached body still running, `status` still `'ok'`). No chip: nothing
+    was re-read, so there is no update to announce.
 
 Rows whose state was unchanged are not tagged — this covers all three
 "no change" paths uniformly: the cheap pre-fetch skips (size+mtime,
@@ -1333,9 +1314,7 @@ too, from the snapshot, so the row is still recognizable at a glance.
 - **Where it doesn't reach.** A collection that loses its *last* script
   shows the "no scripts" message, which has no table to hang ghosts off,
   so the case that empties a whole table is the case with no explanation
-  on screen — filed in `TODO.md`. Only a manifest collection gets there:
-  a directory that scans completely empty has its rows marked `missing`
-  instead of dropped.
+  on screen — filed in `TODO.md`.
 
 ### In-place updates (no full re-render)
 

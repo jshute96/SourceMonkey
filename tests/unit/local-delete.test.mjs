@@ -56,7 +56,6 @@ test('deletableCopyPath refuses anything else', () => {
   assert.equal(at({ fileUrl: 'file:///home/me/scripts/a.user.js' }), null);
   assert.equal(at({ fileUrl: 'https://example.com/a.user.js' }), null);
   assert.equal(at({ fileUrl: `file://${COPIES}` }), null);
-  assert.equal(at({ status: 'missing' }), null);
   assert.equal(deletableCopyPath(script(), COPIES_COLLECTION, null), null);
 });
 

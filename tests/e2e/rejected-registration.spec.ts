@@ -233,8 +233,8 @@ test.describe('rejected registrations', () => {
   }) => {
     // The pure classifier is unit-tested; this is the wiring — that the
     // badge path actually reads the rejection map. Without it the row
-    // reads MISSING/amber, which shares a word with "the file vanished"
-    // and reads as "still waiting" when nothing is coming.
+    // reads MISSING/amber (the badge's "expected but never reported"
+    // state), which reads as "still waiting" when nothing is coming.
     dir.write({
       relativePath: 'bad-match.user.js',
       meta: {

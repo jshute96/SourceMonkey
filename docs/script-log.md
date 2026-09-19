@@ -55,7 +55,7 @@ interface LogEntry {
 
 `state` is set on entries that record a **state transition** rather
 than something the script did. Type `LoadState` (`script-display.ts`):
-`refresh-failed`, `invalid`, `missing`, `rejected`, `outdated`, and
+`refresh-failed`, `invalid`, `rejected`, `outdated`, and
 `ok` for the matching recovery — `warning` / `error` are excluded
 because they are derived *from* the sentinel. It drives two things:
 
@@ -103,7 +103,7 @@ Row vs. entry, deliberately separate:
 - Every write that moves the row into a load state (or back) appends
   the entry with that `state` in the same step.
 - Across a restart, `replayScriptLogsAtBoot` restates whatever is
-  still badged — `invalid` / `missing` / `refreshError` rows and a
+  still badged — `invalid` / `refreshError` rows and a
   persisted OUTDATED probe — so a badge never outlives its line.
 
 The viewer's table renders `tabId · source` together when `tabId` is
@@ -231,21 +231,18 @@ a row's persisted state to the entry it warrants:
 | Row state | `state` | Level | Message |
 | --- | --- | --- | --- |
 | `status: 'invalid'` | `invalid` | error | the row's `errorMessage` |
-| `status: 'missing'` | `missing` | error | `Script file is missing` |
 | `refreshError` (status still `ok`) | `refresh-failed` | warning | `Refresh failed: <reason>` |
 | otherwise | — | — | nothing to say |
 
 Why those levels:
 
-- `invalid` / `missing` mean **the script cannot run** — `invalid`
-  rows are never injected and `missing` rows are auto-disabled on the
-  transition. Error matches what the badge already claims.
+- `invalid` means **the script cannot run** — such rows are never
+  injected. Error matches what the badge already claims.
 - `refreshError` means the script **is** running, from its
   last-known-good copy; only the update failed. Warning, not error.
 - The level never reaches the badge: these entries carry a `state`, so
   they leave the `loglevel:` sentinel alone. The badge is INVALID /
-  MISSING / REFRESH FAILED straight from the row while the failure
-  lasts, and OK the moment the row recovers.
+  REFRESH FAILED straight from the row while the failure lasts, and OK the moment the row recovers.
 
 Every caller shares that mapping, so the same failure reads the same
 way whichever path reported it:
@@ -393,7 +390,6 @@ longer true. So the transition back to healthy gets an info entry
 naming what recovered:
 
 - `Loads cleanly again (was invalid)`
-- `Script file is back`
 - `Refresh succeeded again (collection is reachable)`
 - `This collection is readable again`
 - `Chrome accepted this script's registration — it runs again`
@@ -441,8 +437,6 @@ tracked in `TODO.md`.
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
     `@require` / `@resource` resolve or fetch failures.
-  - `Script file is missing` (error) — the file vanished from its
-    collection's listing.
   - `Refresh failed: <reason>` (warning) — a script that's still
     running from its cached copy but whose latest refresh failed
     (`status: ok` + `refreshError`; see
@@ -461,9 +455,11 @@ tracked in `TODO.md`.
   - All of the rows above are outcomes of a real check, so they are
     appended unconditionally — see
     [When the log stays quiet](#when-the-log-stays-quiet).
-  - `This script was removed while it was being refreshed` (warning) —
-    the script row was deleted while its refresh was in flight. Can
-    only happen once per row.
+  - A row that went away during its check (deleted by the user, or
+    dropped by the check itself because the directory no longer lists
+    its file) gets **no entry**: its Log was cleared with the row, and
+    an entry would be an orphan. The service-worker console line is the
+    record.
   - Collection / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source

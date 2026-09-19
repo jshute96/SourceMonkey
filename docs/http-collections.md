@@ -229,9 +229,9 @@ collection row is tracked in `TODO.md`.
 - **Detection**: if a manifest used to list a script and no longer
   does, the script row is **deleted**. The manifest is the user's
   source of truth — removing an entry is an explicit removal, and that
-  holds even when the new manifest is empty. (A directory collection
-  drops vanished files too, but keeps them as `missing` when its scan
-  comes back empty — see [storage.md](storage.md#vanished-entries).)
+  holds even when the new manifest is empty — the same rule a
+  directory collection follows (see
+  [storage.md](storage.md#vanished-entries)).
 - **Re-adding an entry mints a fresh row.** Identity isn't preserved
   across a delete + re-add — the new row gets a new UUID and starts
   `enabled: true`. Same for a directory file that is deleted and

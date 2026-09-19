@@ -89,7 +89,6 @@ are usually more details:
 | `OK` | Loaded and registered |
 | `INVALID` | The script can't run: bad or missing headers, a `@require` that wouldn't load, or a syntax error |
 | `REJECTED` | The script is fine, but Chrome refused to register it |
-| `MISSING` | The file is gone from its collection (deleted on disk, dropped from a manifest) |
 | `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
 | `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
 | `ERROR` / `WARNING` | Loaded fine, but this script has produced errors or warnings this session |

@@ -131,11 +131,14 @@ import {
 import {
   canonicalCollectionInput,
   isContainerCollection,
+  isFileUrl,
   isValidLocationShape,
   LOCATION_SHAPES,
   isSingleFileInput,
+  locationFsPath,
   normalizeCollectionInput,
 } from './directories.js';
+import { markMissingFiles, scriptFileMissingHint, tagLocalFile } from './missing-files.js';
 import {
   installGithubAuthListener,
   loadGithubAuthToken,
@@ -454,30 +457,6 @@ function paintStatusCell(
         : errorMessage;
   if (title) link.title = title;
   cell.appendChild(link);
-  // Trash-can affordance only on persisted-missing rows (the file
-  // genuinely vanished from its listing). A row that's merely flagged
-  // ERROR/WARNING via the log still has a backing file and shouldn't
-  // get the destructive button.
-  if (storedStatus === 'missing') {
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-script';
-    setDeleteIcon(removeBtn, 'record');
-    removeBtn.title = 'Remove this script record';
-    removeBtn.setAttribute('aria-label', 'Remove this script record');
-    // Defer the row → collectionId lookup until click time.
-    // paintStatusCell may be called before the cell is appended to its
-    // parent row (the initial render path builds the cell first and
-    // only inserts it afterwards), so a synchronous `closest('tr')`
-    // here would read null and the dispatcher would be left with no
-    // collectionId.
-    removeBtn.addEventListener('click', () => {
-      const row = removeBtn.closest<HTMLTableRowElement>('tr[data-script-id]');
-      const collectionId = row?.dataset.collectionId ?? '';
-      void onRemoveScript(scriptId, collectionId, removeBtn);
-    });
-    cell.appendChild(removeBtn);
-  }
 }
 
 function applyLogIdSuffixesToDom(): void {
@@ -610,7 +589,24 @@ async function repaintFromStorage(): Promise<void> {
     for (const section of ordered) collectionsEl.appendChild(section);
   }
   refreshMoveButtons();
+  markDeletedFiles();
 }
+
+// A "deleted" chip after the name of every local script whose file has
+// gone (missing-files.ts). Run after each paint and repaint: a
+// repaint follows every storage write, including the refresh that will
+// drop such a row, so the chip is short-lived by design — it is the
+// gap between the file going and SourceMonkey noticing.
+//
+// One directory listing per folder on the page — but not per repaint:
+// a repaint also follows an enable toggle, a log write, a refresh of
+// another collection, none of which touch the disk, so a listing read
+// in the last few seconds is reused. A deletion shows up on the first
+// repaint after that window, or on reload.
+function markDeletedFiles(): void {
+  void markMissingFiles(collectionsEl, DELETED_FILES_LISTING_MAX_AGE_MS);
+}
+const DELETED_FILES_LISTING_MAX_AGE_MS = 5000;
 
 // Update one already-rendered section from its stored collection row.
 // The section element itself is never replaced — that would take the
@@ -694,7 +690,6 @@ async function syncScriptRowsFromStorage(
   collectionOn: boolean,
   scripts: readonly StoredScript[],
 ): Promise<void> {
-  const inContainer = isContainerCollection(collection.path);
   const localFiles = localFileScope(collection);
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
@@ -719,7 +714,7 @@ async function syncScriptRowsFromStorage(
   for (const script of scripts) {
     const row = existing.get(script.id);
     if (row) {
-      syncScriptRow(row, script, collectionOn, inContainer, localFiles);
+      syncScriptRow(row, script, collectionOn, collection.path, localFiles);
       existing.delete(script.id);
     }
     // Whether the table has the trailing action column is settled by
@@ -727,7 +722,7 @@ async function syncScriptRowsFromStorage(
     // match, and a table whose whole point is local copies already has
     // one from the render that built it.
     ordered.push(row ?? renderScriptRow(
-      script, collectionOn, inContainer, localFiles, hasActionColumn,
+      script, collectionOn, collection.path, localFiles, hasActionColumn,
     ));
   }
   // Whatever is left in `existing` is a row whose script is gone. The
@@ -757,14 +752,15 @@ function syncScriptRow(
   row: HTMLTableRowElement,
   script: StoredScript,
   collectionOn: boolean,
-  inContainer: boolean,
+  collectionPath: string,
   localFiles: LocalFileScope,
 ): void {
+  const inContainer = isContainerCollection(collectionPath);
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
   // Like the Name cell below, the Status cell is only rebuilt when
   // what it shows moved. `paintStatusCell` discards and recreates the
-  // `<a>` (and the trash can on a missing row), so repainting it
+  // `<a>`, so repainting it
   // unconditionally would drop focus off it — and a repaint runs on any
   // structural write anywhere, including a background refresh of an
   // unrelated collection.
@@ -796,7 +792,7 @@ function syncScriptRow(
   // flash the globe placeholder on every unrelated repaint.
   const nameCell = row.querySelector<HTMLTableCellElement>('td.name-cell');
   if (nameCell && nameCellKeys.get(script.id) !== nameCellKey(script, localFiles)) {
-    fillNameCell(nameCell, script, inContainer, localFiles);
+    fillNameCell(nameCell, script, collectionPath, localFiles);
   }
 
   const scriptOn = isScriptEnabled(script);
@@ -1187,6 +1183,7 @@ async function render(): Promise<void> {
     collectionsEl.appendChild(await renderCollectionSection(collection));
   }
   refreshMoveButtons();
+  markDeletedFiles();
 }
 
 function emptyPlaceholder(): HTMLElement {
@@ -1381,7 +1378,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
 
   const tbody = document.createElement('tbody');
   for (const script of scripts) {
-    tbody.appendChild(renderScriptRow(script, collectionOn, inContainer, localFiles, withActions));
+    tbody.appendChild(renderScriptRow(script, collectionOn, collection.path, localFiles, withActions));
   }
   table.appendChild(tbody);
   return table;
@@ -1390,12 +1387,13 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
 function renderScriptRow(
   script: StoredScript,
   collectionOn: boolean,
-  inContainer: boolean,
+  collectionPath: string,
   localFiles: LocalFileScope,
   // The table has a trailing action column. Every row in such a table
   // gets the cell, empty or not, or the columns stop lining up.
   withActions: boolean,
 ): HTMLTableRowElement {
+  const inContainer = isContainerCollection(collectionPath);
   const scriptOn = isScriptEnabled(script);
 
   const tr = document.createElement('tr');
@@ -1419,7 +1417,7 @@ function renderScriptRow(
 
   const nameCell = document.createElement('td');
   nameCell.classList.add('name-cell');
-  fillNameCell(nameCell, script, inContainer, localFiles);
+  fillNameCell(nameCell, script, collectionPath, localFiles);
   tr.appendChild(nameCell);
 
   // For column parity with the live table. A container collection can't
@@ -1445,8 +1443,8 @@ function renderScriptRow(
   // Container rows always offer a remove button (every script inside a
   // container was added one-by-one and can be taken back out the same
   // way). A local copy offers one too, which deletes its file as well —
-  // the one place SourceMonkey can. Every other non-container row
-  // relies on paintStatusCell's trash affordance for `missing` rows.
+  // the one place SourceMonkey can. Every other row is the collection's
+  // to add or drop on refresh.
   if (withActions) {
     const actionCell = document.createElement('td');
     actionCell.className = 'action-cell';
@@ -1479,13 +1477,14 @@ function renderScriptRow(
 function fillNameCell(
   nameCell: HTMLTableCellElement,
   script: StoredScript,
-  inContainer: boolean,
+  collectionPath: string,
   // Where this script's collection allows local file overrides to come
-  // from. Threaded alongside `inContainer` — both are per-collection
-  // facts the row needs and neither is worth re-loading the collection
-  // row for.
+  // from. Threaded alongside the path — both are per-collection facts
+  // the row needs and neither is worth re-loading the collection row
+  // for.
   localFiles: LocalFileScope,
 ): void {
+  const inContainer = isContainerCollection(collectionPath);
   nameCell.textContent = '';
   // Slot for the favicon: a fixed-width container so the name
   // text always starts at the same x-position. renderSiteIconInto
@@ -1509,6 +1508,15 @@ function fillNameCell(
   a.href = viewerUrl(script.id);
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
+  // A local file that has been deleted gets a chip after the name,
+  // painted by `markMissingFiles` once the section is on screen.
+  if (isFileUrl(script.fileUrl)) {
+    tagLocalFile(
+      a,
+      locationFsPath(script.fileUrl),
+      scriptFileMissingHint(collectionPath),
+    );
+  }
   nameCell.appendChild(a);
   // Dupe-suffix span, populated from currentLogIds. Empty for unique
   // basenames so the column stays clean; non-empty (e.g. " #2") only
@@ -1580,12 +1588,9 @@ async function onDeleteCopy(script: StoredScript, btn: HTMLButtonElement): Promi
   if (!result) return;
   showPageError(null);
   btn.disabled = true;
-  // The record goes with the file. Not a refresh of the collection: a
-  // directory left EMPTY by the deletion hits `rebuildCollection`'s
-  // empty-scan guard, which marks its rows `missing` rather than
-  // dropping them — the guard is there so an unreadable directory
-  // can't wipe a collection, and here we know exactly why the file is
-  // gone.
+  // The record goes with the file. Not a refresh of the collection: it
+  // would drop the row too, but at the cost of a scan, and here we know
+  // exactly why the file is gone.
   //
   // Its own handler rather than `onRemoveScript`, which reports a
   // failure to the console: by the time this runs the FILE is already
@@ -2087,8 +2092,6 @@ async function onRefreshSubset(targets: RefreshTargets): Promise<void> {
 // Classification:
 //   - newly-added         → row-added (+ row-failed when it isn't ok)
 //   - dropped             → tombstone row
-//   - went missing        → row-failed, no chip (the file vanished but
-//                           the row stayed; that's a failure, not an update)
 //   - re-read             → row-updated (+ row-failed when it isn't ok)
 //   - status changed but no re-read (rare) → row-updated, likewise
 //   - refresh just failed (refreshError newly set / changed, while the
@@ -2142,10 +2145,6 @@ function classifyChange(
 ): RowChange | null {
   const failed = next.status !== 'ok';
   if (!prior) return { kind: 'added', failed };
-  if (next.status === 'missing' && prior.status !== 'missing') {
-    return { kind: null, failed: true };
-  }
-  if (next.status === 'missing') return null;             // was already missing
   // A fresh refresh failure (the cached body keeps running, so status
   // stays `ok` and loadedAt doesn't move) still deserves a red flash so
   // the user notices the collection went stale.
@@ -2197,9 +2196,7 @@ function addTombstones(
   localFiles: LocalFileScope,
 ): void {
   // No table to hang them off: the collection lost its last script and
-  // the block was swapped for the "no scripts" message. Only a manifest
-  // collection reaches this — a directory that scans completely empty
-  // has its rows marked `missing` rather than dropped.
+  // the block was swapped for the "no scripts" message.
   const tbody = section.querySelector<HTMLElement>(':scope > .script-block tbody');
   if (!tbody) return;
   const inContainer = !!section.querySelector('thead th[aria-label="Source"]');

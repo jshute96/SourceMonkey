@@ -17,12 +17,12 @@
 // error AND validateHeader returned null. Otherwise `status: 'invalid'`
 // with an `errorMessage`. On refresh, files that were known before but
 // no longer appear in the scan listing are dropped — row and storage key
-// both — whatever kind of collection they sat in. The one exception is a
-// scan that came back completely empty for a non-manifest collection:
-// that reads as a directory that moved or listed strangely rather than
-// every file being deleted at once, so those rows are marked
-// `status: 'missing'` instead. In every error/missing case we preserve
-// the previously loaded content so the viewer (and the injector) keep
+// both — whatever kind of collection they sat in, and however many
+// went: a successful scan is the collection saying what it holds now.
+// (A listing that isn't one — an error page, a moved directory — fails
+// the scan instead, and a failed scan touches nothing; see
+// `isDirectoryListing`.) In every error case we preserve the
+// previously loaded content so the viewer (and the injector) keep
 // working.
 //
 // Refresh failures get special, gentler handling so a transient
@@ -50,9 +50,10 @@ import {
   fetchHttpText,
   isContainerCollection,
   isHttpUrl,
-  isManifestCollection,
+  isLocalDirectoryCollection,
   isSingleFileInput,
   joinPath,
+  type ListingEntry,
   newContainerPath,
   normalizeCollectionInput,
   SINGLE_SCRIPT_USE_ADD_FIELD,
@@ -119,11 +120,10 @@ import { startPhaseTimer, timePhase, formatMs, timingNow } from './phase-timing.
 // metadata-block parse failure, header validation failure, fetch
 // failure, or a missing/broken @require / @resource. All of them
 // surface in the UI as INVALID (the user-facing label) because from
-// the user's perspective the script can't run. `missing` is reserved
-// for the narrower case where the script's own file vanished from
-// its listing — the row is preserved with its last-known content but the
-// file is gone.
-export type ScriptStatus = 'ok' | 'invalid' | 'missing';
+// the user's perspective the script can't run. A script whose own file
+// has vanished from its listing is not a status: the row is dropped
+// (docs/missing-files.md).
+export type ScriptStatus = 'ok' | 'invalid';
 
 export interface ScriptMatching {
   matches: string[];   // @match values
@@ -245,9 +245,9 @@ export interface StoredScript {
   resources?: StoredResource[];
   // Parse-time diagnostics (today: unknown @grant names). Only
   // populated for `status === 'ok'` rows; error rows don't run so the
-  // diagnostics would be dead bytes, and applyMissing / applyFetchError
-  // inherit whatever the prior `ok` row had (correct because they also
-  // preserve the body the diagnostics were derived from). Persisted so
+  // diagnostics would be dead bytes, and applyFetchError inherits
+  // whatever the prior `ok` row had (correct because it also
+  // preserves the body the diagnostics were derived from). Persisted so
   // the wrapper rebuild at every SW startup doesn't have to re-derive
   // them — and so the Log-tab emission at content-change time can read
   // them straight off the freshly built row.
@@ -690,9 +690,8 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
 //     (`status: 'ok'`) and record `refreshError` so the UI can flag
 //     REFRESH FAILED. A transient logout / network blip must never
 //     silently disable a working script.
-//   - prior was anything else (already invalid / a re-enabled missing
-//     row whose refetch failed): no good copy to protect, so flip to
-//     `invalid` with the message as before.
+//   - prior was anything else (already invalid): no good copy to
+//     protect, so flip to `invalid` with the message as before.
 export function applyFetchError(
   existing: StoredScript,
   errorMessage: string,
@@ -776,35 +775,6 @@ export function buildInitialInvalidEntry(args: {
   };
 }
 
-// Flip an existing entry to `missing`. Preserves content (including
-// the size of the cached body) for the viewer and the injector — the
-// file is gone but we still hold what we last read, so the size column
-// reflects that and is distinct from genuine "unknown size" rows.
-//
-// `enabled` only flips to false on the FIRST ok→missing transition —
-// i.e. only when `existing.status === 'ok'`. Once a row has left `ok`
-// (it's already `missing`, or it's `error` because an opportunistic
-// per-script refetch hit a vanished file before the directory-level
-// refresh ran), applyMissing leaves `enabled` alone. Otherwise we'd
-// silently clobber a user who has re-enabled a missing row to run from
-// the cached body: any subsequent refresh while the file is still gone
-// would re-disable it. If the file later returns, rebuildCollection
-// preserves whatever `enabled` value the user left in place.
-//
-// HTTP validators (httpEtag / httpLastModified) ride along untouched.
-// The conditional-GET path is gated on `prior.status === 'ok'`, so
-// stale validators are dormant; if the entry returns and fetches
-// cleanly, buildScriptFromText overwrites them from the fresh response.
-export function applyMissing(existing: StoredScript): StoredScript {
-  const next: StoredScript = { ...existing, status: 'missing' };
-  if (existing.status === 'ok') next.enabled = false;
-  setScriptError(next, undefined, undefined);
-  // A confirmed-vanished file subsumes any prior "refresh failed"
-  // annotation — the row is now MISSING, not "running but stale".
-  delete next.refreshError;
-  return next;
-}
-
 // The per-script Log entry a row's *persisted load state* warrants, or
 // null when the row is healthy (`ok` with no `refreshError`).
 //
@@ -824,9 +794,8 @@ export function applyMissing(existing: StoredScript): StoredScript {
 //
 // Levels (still recorded on the entry, though the Log tab's Status
 // cell shows the `state` word instead):
-//   - `invalid` / `missing` → **error**. The script cannot run: the
-//     injector skips `invalid` rows outright, and a `missing` row is
-//     auto-disabled on the transition.
+//   - `invalid` → **error**. The script cannot run: the injector skips
+//     `invalid` rows outright.
 //   - `refreshError` → **warning**. The script IS still running, from
 //     its last-known-good copy; only the *update* failed.
 export function loadStateLogEntry(
@@ -842,11 +811,6 @@ export function loadStateLogEntry(
       message: script.errorMessage ?? 'Unknown error',
       ...(script.errorLocation ? { location: script.errorLocation } : {}),
     };
-  }
-  if (script.status === 'missing') {
-    // Deliberately no location: a vanished file has no content, and
-    // `applyMissing` clears any location the row used to carry.
-    return { level: 'error', state: 'missing', message: script.errorMessage ?? 'Script file is missing' };
   }
   if (script.refreshError) {
     return { level: 'warning', state: 'refresh-failed', message: `Refresh failed: ${script.refreshError}` };
@@ -867,6 +831,10 @@ export function loadStateLogEntry(
 // Why it isn't noisy: `contentHash` gates the "still using it" case, so
 // a stand-in that hasn't changed says nothing on the dozens of
 // opportunistic refreshes between edits.
+//
+// All `info`, losing a stand-in included: the script is back on the
+// code its `@require` line names, which is not a fault. The line says
+// what is loaded now, so the switch is still on record.
 // How a declared reference reads in a Log line: the SRI hash tail
 // dropped (it's most of the line's width and nothing the reader can act
 // on) and percent-escapes decoded, so a URL carrying a script's name
@@ -877,8 +845,8 @@ const refText = (ref: string): string => displayLocation(stripSriFragment(ref));
 export function localFileLogMessages(
   prior: StoredScript | undefined,
   next: StoredScript,
-): string[] {
-  const out: string[] = [];
+): { level: LogLevel; message: string }[] {
+  const out: { level: LogLevel; message: string }[] = [];
   // Keyed by KIND + declared URL. The URL alone would collide: a
   // `@require` and a `@resource` pointing at the same URL is an
   // explicitly supported case (they share one fetch — see
@@ -903,11 +871,16 @@ export function localFileLogMessages(
       if (f.localUrl) {
         // Same file, same bytes as last pass → nothing happened.
         if (was?.localUrl === f.localUrl && was.contentHash === f.contentHash) continue;
-        out.push(
-          `@${kind} ${refText(f.ref)} is loading from ${displayLocation(f.localUrl)}`,
-        );
+        out.push({
+          level: 'info',
+          message: `@${kind} ${refText(f.ref)} is loading from ${displayLocation(f.localUrl)}`,
+        });
       } else if (was?.localUrl) {
-        out.push(`@${kind} ${refText(f.ref)} is no longer loading from a local file`);
+        out.push({
+          level: 'info',
+          message: `@${kind} ${refText(f.ref)} is no longer loading from a local file; `
+            + 'the remote version is loaded instead',
+        });
       }
     }
   }
@@ -917,7 +890,8 @@ export function localFileLogMessages(
   // Deduped because two `@resource` lines may name the same URL under
   // different names (deliberately — see `distillResources`), and both
   // entries would otherwise produce the identical line.
-  return [...new Set(out)];
+  const seen = new Set<string>();
+  return out.filter((e) => !seen.has(e.message) && seen.add(e.message));
 }
 
 // Resolve + fetch a script's `@require` bodies AND `@resource` blobs,
@@ -1377,10 +1351,11 @@ async function runOwnParseChecks(
       }
       // The verdict was formed against a row that was `ok`. A row that
       // has since left that state left it for a reason this check knows
-      // nothing about — the file vanished, a `@require` stopped loading
-      // — and writing our `status` over it would resurrect a state that
+      // nothing about — a read failed, a `@require` stopped loading —
+      // and writing our `status` over it would resurrect a state that
       // is no longer true. The fingerprint alone doesn't catch this:
-      // `applyMissing` preserves the content the fingerprint is made of.
+      // `applyFetchError` preserves the content the fingerprint is made
+      // of.
       if (current.status !== 'ok') {
         changed.set(id, current);
         continue;
@@ -1553,24 +1528,20 @@ interface RebuildArgs {
 
 // Pure orchestrator: given the prior state for a collection plus a
 // fresh scan and the per-file fetch results, return the new list of
-// `StoredScript`s in canonical order (scan order, then any entries that
-// fell off the listing tagged `missing`). Stable IDs come from looking
-// up by relativePath in `existing`. No I/O — easy to test.
+// `StoredScript`s in canonical order (scan order). Stable IDs come
+// from looking up by relativePath in `existing`. No I/O — easy to test.
 //
 // Vanished-entry handling — an entry the scan no longer reports is
 // dropped entirely (the `refreshCollection` caller then deletes the
 // storage row), because a successful scan is the collection telling us
 // what it holds now: a renamed or deleted file would otherwise linger
-// as a `missing` row the user has to clear by hand.
-//
-// The one exception is a scan that came back completely empty for a
-// collection that used to have scripts. An empty listing is far more
-// often a directory that moved, got replaced, or listed strangely than
-// every script in it being deleted at once, so those rows are tagged
-// `missing` and auto-disabled instead: the content is preserved, and
-// the row comes back to life if the files reappear. Manifest
-// collections are exempt — the manifest is an explicit list, so an
-// empty one is an explicit "nothing here".
+// as a row the user has to clear by hand. That holds for a scan that
+// found nothing at all, too — an empty directory, or one with no
+// `.user.js` files left in it, is as definite as an empty manifest.
+// What it does NOT hold for is a scan that failed, and that never
+// reaches here: `refreshCollection` records the `scanError` and leaves
+// every row alone. The listing reader is what keeps the two apart
+// (`isDirectoryListing` in directories.ts).
 export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript[]> {
   const newId = args.newId ?? (() => crypto.randomUUID());
   const recheckFiles = args.recheckFiles ?? 'all';
@@ -1599,9 +1570,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   // async work overlaps without putting every entry's dependency
   // payloads in flight at once, and the output order matches scan order.
   const entryTasks: (() => Promise<StoredScript>)[] = [];
-  const handledPaths = new Set<string>();
   for (const found of args.scan) {
-    handledPaths.add(found.relativePath);
     const prior = existingByPath.get(found.relativePath);
     const id = prior?.id ?? newId();
     const fileUrl = scriptFileUrl(args.collectionPath, found.relativePath);
@@ -1732,15 +1701,8 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   const out = await mapWithConcurrency(
     entryTasks, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, (task) => task());
 
-  // Anything in `existing` that the scan didn't see → dropped, unless
-  // the empty-scan guard above applies. See the header comment.
-  const dropVanished =
-    args.scan.length > 0 || isManifestCollection(args.collectionPath);
-  for (const e of args.existing) {
-    if (handledPaths.has(e.relativePath)) continue;
-    if (dropVanished) continue;
-    out.push(applyMissing(e));
-  }
+  // Anything in `existing` that the scan didn't see is dropped: it is
+  // simply not in `out`. See the header comment.
   return out;
 }
 
@@ -2565,8 +2527,8 @@ export async function moveScript(
 // rather than something that fires on its own.
 async function emitInitialLoadLog(script: StoredScript): Promise<void> {
   // `undefined` prior: everything this row loaded is news at add time.
-  for (const message of localFileLogMessages(undefined, script)) {
-    await appendScriptLog(script.id, { level: 'info', source: 'add', message });
+  for (const entry of localFileLogMessages(undefined, script)) {
+    await appendScriptLog(script.id, { ...entry, source: 'add' });
   }
   const entry = loadStateLogEntry(script);
   if (!entry) return;
@@ -2665,9 +2627,10 @@ export async function removeCollection(id: string): Promise<void> {
 
 // Drop a single script row from storage and remove its ID from the
 // parent collection's scriptIds list. Used by the collections-page
-// trash-can next to a `missing` row so the user can clear out records
-// for files that are gone for good — refreshCollection won't recreate
-// the row because it only adds entries the scan currently reports.
+// trash-cans (container rows, `missing` rows from older versions), the
+// delete-local-file dialog, and `refreshScript` when a directory no
+// longer lists the file — refreshCollection won't recreate the row
+// because it only adds entries the scan currently reports.
 export async function removeScript(id: string): Promise<void> {
   await mutate(async () => {
     const script = await getRaw<StoredScript>(scriptKey(id));
@@ -2845,9 +2808,8 @@ export async function reconcileScriptMembership(
 
 // Rescan a collection + refetch all of its scripts. Adds new files,
 // keeps known files (status updated based on fetch result), and drops
-// the ones the scan no longer reports — except when the scan came back
-// empty, where they're tagged `missing` instead (see
-// `rebuildCollection`). Persists the updated collection row plus every
+// the ones the scan no longer reports (see `rebuildCollection`).
+// Persists the updated collection row plus every
 // script row that actually changed, in one set call — see
 // `changedScriptRows`.
 //
@@ -2915,9 +2877,8 @@ export async function refreshCollection(
   // right now" — keep every existing script row, its content, and its
   // enabled state untouched. The collection row records the scanError so
   // the collections page can surface it. Without this guard, the
-  // rebuildCollection path below would mark every script `missing` (or, for
-  // manifest collections, drop them entirely) — both of which silently
-  // disable the scripts. That's the wrong call when the collection might
+  // rebuildCollection path below would drop every script — silently
+  // taking the scripts away. That's the wrong call when the collection might
   // just be a remote mount with timed-out credentials, a flaky network,
   // etc.; the user wants the scripts to stay enabled until the collection
   // is actually proven gone.
@@ -2972,8 +2933,7 @@ export async function refreshCollection(
   // concurrent enable toggle (setCollectionEnabled / setScriptEnabled)
   // that landed during the fetch isn't reverted by stale values
   // captured before it. Content (and any deliberate refresh-owned
-  // `enabled` change, e.g. applyMissing flipping a vanished script to
-  // disabled) is kept; we only re-apply the user's toggle when the
+  // `enabled` change) is kept; we only re-apply the user's toggle when the
   // persisted `enabled` actually changed vs the snapshot this refresh
   // started from — that's the signal a setScriptEnabled landed
   // mid-fetch.
@@ -3238,10 +3198,18 @@ export interface ScriptRefreshOptions extends RefreshOptions {
 // The single- file path additionally lists the file's parent dir once
 // so it has the size+mtime needed by the skip check.
 //
-// Note: does NOT re-scan the parent dir for VANISHED files, so this
-// can't promote a script to `missing` — that's the directory-level
-// Refresh's job. (If the file is gone, the fetch will fail and the
-// result is `status: 'invalid'`.)
+// A local-directory script whose file the parent listing no longer
+// shows, and whose read then fails, is dropped here, the same as the
+// directory-level Refresh would drop it: the listing is the directory
+// saying what it holds now, and this path lists it anyway for the
+// size+mtime skip. Only a listing that was read — a failed listing
+// leaves the scan bare and the row alone, and a manifest or
+// single-file collection has no listing to consult, so a vanished
+// file there fails its fetch and keeps running from the cached body
+// with a `refreshError`. The read is required too because this path
+// runs on every navigation and tab focus, so it can catch a file in
+// the gap of an unlink-and-rename save; one that reads fine is not
+// gone.
 //
 // Timed, because this is what the reload fast-path races against a
 // 500 ms window (docs/injection.md#reload-fast-path) and "it didn't
@@ -3299,10 +3267,9 @@ export async function refreshScript(
   const scan: { relativePath: string; size?: number; mtime?: number }[] = [
     { relativePath: prior.relativePath },
   ];
-  const usesListingStat =
-    !isHttpUrl(collectionRow.path) &&
-    !isManifestCollection(collectionRow.path) &&
-    !isContainerCollection(collectionRow.path);
+  const usesListingStat = isLocalDirectoryCollection(collectionRow.path);
+  // The parent listing was read and does not show the file.
+  let unlisted = false;
   if (usesListingStat) {
     const slash = prior.relativePath.lastIndexOf('/');
     const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
@@ -3315,16 +3282,23 @@ export async function refreshScript(
     const dirAbs = subDir ? joinPath(fsRoot, subDir) : fsRoot;
     // Read BEFORE the call, which is what populates the cache.
     const sharedListing = hasCachedListing(opts.batch?.listings, dirAbs);
+    let stat: ListingEntry | null | undefined;
     try {
-      const stat = await statFromListing(dirAbs, fileName, opts.batch?.listings);
-      if (stat) {
-        if (stat.size !== undefined) scan[0].size = stat.size;
-        if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
-      }
+      stat = await statFromListing(dirAbs, fileName, opts.batch?.listings);
     } catch {
       /* listing failed; scan stays bare → always-fetch */
     }
     if (sharedListing) timer.note('listing shared with batch');
+    // Listed, and not there. Not dropped yet: the fetch below runs
+    // anyway (a bare scan means always-fetch), and a file that is back
+    // by the time its body is read is a file mid-save — an editor that
+    // writes by unlink + rename — not a deleted one. Only a listing
+    // that lacked it AND a read that failed drops the row.
+    unlisted = stat === null;
+    if (stat) {
+      if (stat.size !== undefined) scan[0].size = stat.size;
+      if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
+    }
   }
   // One `file://` directory listing, shared across the batch when there
   // is one — so N scripts in the same folder list it once between them
@@ -3340,6 +3314,20 @@ export async function refreshScript(
     const one = [...fetchResults.values()][0];
     return one && 'unchanged' in one ? 'unchanged' : 'refetched';
   });
+  const fetched = fetchResults.get(prior.relativePath);
+  if (unlisted && fetched && 'ok' in fetched && !fetched.ok) {
+    // The directory doesn't list it and it can't be read: the file is
+    // gone. Dropped the way the collection-level refresh drops it
+    // (row, storage key, logs) — see the header comment. Callers
+    // already handle a null result as "the row went away during the
+    // check".
+    console.info(`[SourceMonkey] ${prior.relativePath}: file no longer in its directory; dropping the script`);
+    timer.note('file not in listing and unreadable; dropping');
+    await removeScript(scriptId);
+    timer.mark('drop');
+    timer.done();
+    return null;
+  }
   const result = await rebuildCollection({
     collectionId: prior.collectionId,
     collectionPath: collectionRow.path,
@@ -3408,8 +3396,8 @@ export async function refreshScript(
   // verdict. Not worth plumbing the per-entry decision back out for.
   // `null` when the row was deleted mid-refresh (see the write above).
   // Callers already have a story for it: `runScriptCheck` logs "row
-  // vanished" and the Log tab gets "This script was removed while it
-  // was being refreshed".
+  // vanished" to the SW console, and nothing to the script's Log, which
+  // went with the row.
   if (!written) return null;
   if (opts.parseCheck === 'defer') checkParsesInBackground(written);
   return written;
@@ -3422,8 +3410,7 @@ export async function refreshScript(
 //
 //   - `enabled` — only when it actually changed under us, which is the
 //     signal that a setScriptEnabled landed mid-fetch. Otherwise a
-//     deliberate refresh-owned change (applyMissing flipping a vanished
-//     script to disabled) has to win.
+//     deliberate refresh-owned change has to win.
 //   - `versionProbes` — always, because no refresh path ever produces
 //     them. They arrive only from setVersionProbes, so whatever is
 //     persisted now is by definition newer than what the refresh

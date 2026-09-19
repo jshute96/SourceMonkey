@@ -360,7 +360,7 @@ Both name the script the same way, pivoted for where they're read.
        doesn't include; that it was declared at all is the code view's
        story, where it has its own tab.
    - `Status` — installed mode only. `OK` / `INVALID` / `REJECTED` /
-     `MISSING` / `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
+     `REFRESH FAILED` / `OUTDATED` / `WARNING` / `ERROR`
      (see [storage.md → Displayed status](storage.md#displayed-status-ui-level)),
      color-coded.
      - The row's `title` carries Chrome's refusal reason for a
@@ -430,7 +430,7 @@ Clicking Refresh:
 3. Re-renders from the returned `StoredScript`.
 
 Failures (file gone, permission denied, etc.) flip status to
-`INVALID` (or `MISSING` for a vanished file) with the message exposed
+`INVALID` with the message exposed
 in the message line and the status cell's tooltip. The Log tab also
 gains an error-level entry carrying the same message (see
 [script-log.md](script-log.md#status-column-promotion)). The prior
@@ -545,6 +545,19 @@ repaint separately, as described above.
 If the URL has neither a `script` nor a `preview` param, or the ID
 doesn't resolve in the store, the viewer renders a "not available"
 message instead of crashing. The Refresh button is hidden.
+
+The wording depends on who made the row go (`removedHere`):
+
+- Someone else (another tab, a background refresh): *Script not found
+  in storage. Open it from the collections page.*
+- One of this page's own trash cans: *This script has been removed*,
+  plus anything the removal could not finish.
+- This page's Refresh, on a local script whose file had been deleted:
+  *This script has been removed because its file was deleted* — the
+  check drops such a row itself ([missing-files.md](missing-files.md)).
+  The wording is set before the check runs, because the removal's
+  storage event reaches the listener first; a check that returns a
+  row clears it again.
 
 ### Switching copies in place
 

@@ -205,9 +205,9 @@ the collection back on restores the prior state.
 ## In-memory match index
 
 `src/match-index.ts` keeps an in-memory `Map<scriptId, MatchedScript>`
-of every injectable script (`status: 'ok'`, or `'missing'` when the
-user has re-enabled it) so the background SW never hits
-`chrome.storage.local` on the navigation hot path.
+of every injectable script so the background SW never hits
+`chrome.storage.local` on the navigation hot path. Injectable means
+`status: 'ok'`.
 
 Lifecycle:
 
@@ -216,11 +216,10 @@ Lifecycle:
   disabled.
 - **Updates**: `installStorageListener()` registers a
   `chrome.storage.onChanged` listener that mutates the cache in place
-  on every `set`/`remove` of a `script:*` or `collection:*` key. `ok` and
-  `missing` scripts are kept (the latter so a user-re-enabled missing
-  row runs from its cached body); `error` entries get evicted. The
-  per-script `enabled` flag — checked in `findMatchesForUrl`, not at
-  cache build — is what actually gates a missing row. Collection changes
+  on every `set`/`remove` of a `script:*` or `collection:*` key. `ok`
+  scripts are kept; `error` entries get evicted. The per-script
+  `enabled` flag is checked in `findMatchesForUrl`, not at cache
+  build. Collection changes
   flip an in-memory `disabledCollections` set, which lets a collection toggle
   re-evaluate every script under it in O(1).
 - **Subscribers**: `onCacheChanged(fn)` lets the background SW re-badge

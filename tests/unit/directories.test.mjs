@@ -13,6 +13,7 @@ import {
   canonicalCollectionInput,
   fetchHttpText,
   parseListing,
+  isDirectoryListing,
   parseManifest,
   pathToFileUrl,
   joinPath,
@@ -85,6 +86,16 @@ test('parseListing decodes escaped names', () => {
 
 test('parseListing returns [] on unrelated HTML', () => {
   assert.deepEqual(parseListing('<html><body>nothing here</body></html>'), []);
+});
+
+test('isDirectoryListing tells an empty listing from a page that is not one', () => {
+  // The two parse to the same [] and mean opposite things to a refresh:
+  // an empty listing drops every script, a non-listing fails the scan.
+  assert.equal(isDirectoryListing('<script>start("/home/me/empty/");</script>'), true);
+  assert.equal(isDirectoryListing(
+    '<script>start("/x/");</script><script>addRow("a.user.js", "a.user.js", 0);</script>'), true);
+  assert.equal(isDirectoryListing('<html><body>nothing here</body></html>'), false);
+  assert.equal(isDirectoryListing(''), false);
 });
 
 test('pathToFileUrl percent-encodes segments and strips trailing slash', () => {
