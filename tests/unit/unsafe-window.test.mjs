@@ -51,7 +51,7 @@ import {
   resolveWorld,
 } from '../../dist/injector.js';
 import { emitGmBindings } from '../../dist/gm-bindings.js';
-import { extractStartupLogs } from '../../dist/script-store.js';
+import { ISOLATED_UNSAFE_WINDOW_WARNING, extractStartupLogs } from '../../dist/script-store.js';
 import { WRAPPER_BRIDGE, WRAPPER_GM_RUNTIME } from '../../dist/generated-wrappers.js';
 
 function makeHeader(tags) {
@@ -359,8 +359,7 @@ test('extractStartupLogs: warns on @grant unsafeWindow + @inject-into content', 
   ]));
   assert.equal(logs.length, 1);
   assert.equal(logs[0].level, 'warn');
-  assert.match(logs[0].message, /unsafeWindow/);
-  assert.match(logs[0].message, /NOT the page/);
+  assert.equal(logs[0].message, ISOLATED_UNSAFE_WINDOW_WARNING);
 });
 
 test('extractStartupLogs: @inject-into value is matched case-insensitively', () => {

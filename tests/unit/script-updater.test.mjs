@@ -464,6 +464,47 @@ test('framing: new content is announced, then reported', async () => {
   assert.match(log[1], /^Loaded new content/);
 });
 
+test('emitScriptOutcomeLog: a manual no-change check restates parse-time diagnostics', async () => {
+  // A parse-time warning is a property of the installed content, not an
+  // event: it stays true until the content changes. Logging it only on
+  // the refresh that first loaded the content left a misconfigured
+  // script with no Log line at all once that row scrolled away, was
+  // cleared, or the session it was written in ended — while the page
+  // console kept reporting the problem on every run.
+  const warned = {
+    ...OK_ROW,
+    startupLogs: [{ level: 'warn', message: 'unsafeWindow cannot reach the page' }],
+  };
+  const log = await emitAll([[warned, warned]]);
+  assert.deepEqual(log.map((e) => e.message), [
+    'Checked for updates — no change',
+    'unsafeWindow cannot reach the page',
+  ]);
+  assert.equal(log[1].level, 'warning');
+  assert.equal(log[1].source, 'parser');
+});
+
+test('emitScriptOutcomeLog: a background no-change check restates nothing', async () => {
+  // Same rule as the "no change" line it follows: nobody asked.
+  const warned = {
+    ...OK_ROW,
+    startupLogs: [{ level: 'warn', message: 'unsafeWindow cannot reach the page' }],
+  };
+  assert.deepEqual(await emitAll([[warned, warned]], 'auto'), []);
+});
+
+test('emitScriptOutcomeLog: new content states its diagnostics once, not twice', async () => {
+  // The changed-content branch replays them and returns, so the
+  // no-change restate above can't also fire for the same check.
+  const warned = {
+    ...OK_ROW,
+    loadedAt: OK_ROW.loadedAt + 1,
+    startupLogs: [{ level: 'warn', message: 'unsafeWindow cannot reach the page' }],
+  };
+  const log = await emitAll([[OK_ROW, warned]]);
+  assert.equal(log.filter((e) => e.message === 'unsafeWindow cannot reach the page').length, 1);
+});
+
 test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one does', async () => {
   // Both rows are unchanged since the prior check, so both must say so.
   // A broken script going quieter than a healthy one is the failure

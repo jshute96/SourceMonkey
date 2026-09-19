@@ -590,9 +590,15 @@ scripts in page context for the same reason.
 
 `none` wins over other `@grant` lines here exactly as it does for the
 bindings (`resolveGrants`): a script mixing `none` with `GM_setValue`
-is a plain `@grant none` script — MAIN world, no GM APIs — which is
-how Tampermonkey reads it. A `warning`-level startup log names the
-overridden grants so the author sees why they're missing.
+is a plain `@grant none` script — MAIN world, no GM APIs.
+
+- Violentmonkey reads it the same way, on both halves: its API wrapper
+  builds nothing (not even `unsafeWindow`) when `grant` contains
+  `none`, and the same test picks its page-context injection path.
+- It also flags the combination at install time — "`@grant none`
+  disables all other `@grant` keys". Our `warning`-level startup log is
+  the equivalent, naming the overridden grants so the author sees why
+  they're missing.
 
 #### `unsafeWindow` forces MAIN world
 

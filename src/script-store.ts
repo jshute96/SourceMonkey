@@ -352,6 +352,14 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
 // `@grant`-but-never-called dead grants). Anything that blocks
 // `validateHeader` belongs in there instead — error rows skip the
 // startup-logs attachment in `buildScriptFromText`.
+// Said when a script grants `unsafeWindow` and also declares
+// `@inject-into content`. Exported so the tests and any other surface
+// recognize it by identity rather than by matching its wording.
+export const ISOLATED_UNSAFE_WINDOW_WARNING =
+  'This script cannot reach the page through unsafeWindow. '
+  + '@inject-into content makes the script run isolated from main page content, so the '
+  + "page's variables read as undefined. Remove @inject-into content to reach them.";
+
 export function extractStartupLogs(
   header: ParsedHeader | null,
   relativePath: string,
@@ -404,13 +412,7 @@ export function extractStartupLogs(
       resolved.granted.has('unsafeWindow') &&
       (getValue(header, 'inject-into') ?? '').trim().toLowerCase() === 'content'
     ) {
-      logs.push({
-        level: 'warn',
-        message:
-          '@grant unsafeWindow with @inject-into content: unsafeWindow is the isolated ' +
-          "world's window, NOT the page's — page globals will read as undefined. " +
-          'Drop @inject-into content to reach the page.',
-      });
+      logs.push({ level: 'warn', message: ISOLATED_UNSAFE_WINDOW_WARNING });
     }
   }
   // A `@match` Chrome's grammar refuses. One of these would take the
